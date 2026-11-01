@@ -48,52 +48,64 @@ const page = {
   limit: z.int().positive().default(64),
 };
 
+const pathsRequestSchema = z.strictObject({
+  ...page,
+  collection: z.literal("paths"),
+  where: z
+    .strictObject({
+      node_ids: nodeIdsFilter.describe(
+        "Select terminal paths that visit any of these exact node identities. Omitted selects all; [] selects none.",
+      ),
+      end_kinds: z.array(applicationNodeSchema.shape.kind).optional(),
+    })
+    .default({}),
+});
+const nodesRequestSchema = z.strictObject({
+  ...page,
+  collection: z.literal("nodes"),
+  where: z
+    .strictObject({
+      node_ids: nodeIdsFilter,
+      kinds: z.array(applicationNodeSchema.shape.kind).optional(),
+    })
+    .default({}),
+  include_observations: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Opt into each selected node's complete retained observations, including properties and provenance.",
+    ),
+});
+const edgesRequestSchema = z.strictObject({
+  ...page,
+  collection: z.literal("edges"),
+  where: z
+    .strictObject({
+      node_ids: nodeIdsFilter.describe(
+        "Select edges whose source or target is one of these exact node identities. Omitted selects all; [] selects none.",
+      ),
+      relations: z.array(applicationEdgeSchema.shape.relation).optional(),
+    })
+    .default({}),
+});
+const seedMatchesRequestSchema = z.strictObject({
+  ...page,
+  collection: z.literal("seed_matches"),
+});
+const handoffsRequestSchema = z.strictObject({
+  ...page,
+  collection: z.literal("native_handoffs"),
+});
+
 /** Page one collection of a completed feature trace in its retained order. */
 export const featureTraceViewRequestSchema = z.discriminatedUnion(
   "collection",
   [
-    z.strictObject({
-      ...page,
-      collection: z.literal("paths"),
-      where: z
-        .strictObject({
-          node_ids: nodeIdsFilter.describe(
-            "Select terminal paths that visit any of these exact node identities. Omitted selects all; [] selects none.",
-          ),
-          end_kinds: z.array(applicationNodeSchema.shape.kind).optional(),
-        })
-        .default({}),
-    }),
-    z.strictObject({
-      ...page,
-      collection: z.literal("nodes"),
-      where: z
-        .strictObject({
-          node_ids: nodeIdsFilter,
-          kinds: z.array(applicationNodeSchema.shape.kind).optional(),
-        })
-        .default({}),
-      include_observations: z
-        .boolean()
-        .default(false)
-        .describe(
-          "Opt into each selected node's complete retained observations, including properties and provenance.",
-        ),
-    }),
-    z.strictObject({
-      ...page,
-      collection: z.literal("edges"),
-      where: z
-        .strictObject({
-          node_ids: nodeIdsFilter.describe(
-            "Select edges whose source or target is one of these exact node identities. Omitted selects all; [] selects none.",
-          ),
-          relations: z.array(applicationEdgeSchema.shape.relation).optional(),
-        })
-        .default({}),
-    }),
-    z.strictObject({ ...page, collection: z.literal("seed_matches") }),
-    z.strictObject({ ...page, collection: z.literal("native_handoffs") }),
+    pathsRequestSchema,
+    nodesRequestSchema,
+    edgesRequestSchema,
+    seedMatchesRequestSchema,
+    handoffsRequestSchema,
   ],
 );
 
@@ -111,14 +123,27 @@ const featureTraceNodeRowSchema = applicationNodeSchema
     observations: applicationNodeSchema.shape.observations.exactOptional(),
   });
 
-/** Rows owned by one collection; each is the producer's exact record or its compact node projection. */
-export const featureTraceViewItemsSchema = z.union([
-  z.array(trace.paths.element),
-  z.array(featureTraceNodeRowSchema),
-  z.array(applicationEdgeSchema),
-  z.array(trace.seed_matches.element),
-  z.array(trace.native_handoffs.element),
-]);
+/**
+ * Each collection's request bound to its own rows, so a reply cannot pair one
+ * collection with another's rows. Rows are the producer's exact records or the
+ * compact node projection.
+ */
+export const featureTraceViewCollections = {
+  paths: { request: pathsRequestSchema, rows: z.array(trace.paths.element) },
+  nodes: {
+    request: nodesRequestSchema,
+    rows: z.array(featureTraceNodeRowSchema),
+  },
+  edges: { request: edgesRequestSchema, rows: z.array(applicationEdgeSchema) },
+  seed_matches: {
+    request: seedMatchesRequestSchema,
+    rows: z.array(trace.seed_matches.element),
+  },
+  native_handoffs: {
+    request: handoffsRequestSchema,
+    rows: z.array(trace.native_handoffs.element),
+  },
+} as const;
 
 /** Trace identity and coverage repeated with every view so selected rows stay traceable. */
 export const featureTraceViewContextSchema = z.strictObject({
@@ -183,52 +208,79 @@ const nodeRow = (
   ...(includeObservations ? { observations: node.observations } : {}),
 });
 
-const pageRows = (
+/** One page per collection, built in its own branch so view and rows stay correlated. */
+const tracePage = <Shared extends object>(
   result: ApplicationFeatureTraceResult,
   view: FeatureTraceViewRequest,
+  shared: Shared,
 ) => {
+  const pageOf = <View extends FeatureTraceViewRequest, Row>(
+    selection: View,
+    { rows, total }: { readonly rows: Row[]; readonly total: number },
+  ) => ({
+    kind: "feature-trace" as const,
+    view: selection,
+    ...shared,
+    items: rows,
+    coverage: pageViewCoverage(selection.offset, rows.length, total),
+  });
   const all = () => true;
   if (view.collection === "seed_matches")
-    return selectViewRows(result.seed_matches, view, all, (row) => row);
+    return pageOf(
+      view,
+      selectViewRows(result.seed_matches, view, all, (row) => row),
+    );
   if (view.collection === "native_handoffs")
-    return selectViewRows(result.native_handoffs, view, all, (row) => row);
+    return pageOf(
+      view,
+      selectViewRows(result.native_handoffs, view, all, (row) => row),
+    );
   if (view.collection === "paths") {
     const nodes = selected(view.where.node_ids);
     const ends = selected<string>(view.where.end_kinds);
-    return selectViewRows(
-      result.paths,
+    return pageOf(
       view,
-      (path) =>
-        (ends === undefined || ends.has(path.end_kind)) &&
-        (nodes === undefined || path.node_ids.some((id) => nodes.has(id))),
-      (path) => path,
+      selectViewRows(
+        result.paths,
+        view,
+        (path) =>
+          (ends === undefined || ends.has(path.end_kind)) &&
+          (nodes === undefined || path.node_ids.some((id) => nodes.has(id))),
+        (path) => path,
+      ),
     );
   }
   const graph = result.graph;
   if (view.collection === "edges") {
     const nodes = selected(view.where.node_ids);
     const relations = selected(view.where.relations);
-    return selectViewRows<ApplicationEdge, ApplicationEdge>(
-      graph?.edges ?? [],
+    return pageOf(
       view,
-      (edge) =>
-        (relations === undefined || relations.has(edge.relation)) &&
-        (nodes === undefined ||
-          nodes.has(edge.source_node_id) ||
-          nodes.has(edge.target_node_id)),
-      (edge) => edge,
+      selectViewRows<ApplicationEdge, ApplicationEdge>(
+        graph?.edges ?? [],
+        view,
+        (edge) =>
+          (relations === undefined || relations.has(edge.relation)) &&
+          (nodes === undefined ||
+            nodes.has(edge.source_node_id) ||
+            nodes.has(edge.target_node_id)),
+        (edge) => edge,
+      ),
     );
   }
   const ids = selected(view.where.node_ids);
   const kinds = selected(view.where.kinds);
   const seeds = new Set(result.seed_matches.map(({ node_id: id }) => id));
-  return selectViewRows(
-    graph?.nodes ?? [],
+  return pageOf(
     view,
-    (node) =>
-      (ids === undefined || ids.has(node.node_id)) &&
-      (kinds === undefined || kinds.has(node.kind)),
-    (node) => nodeRow(node, seeds, view.include_observations),
+    selectViewRows(
+      graph?.nodes ?? [],
+      view,
+      (node) =>
+        (ids === undefined || ids.has(node.node_id)) &&
+        (kinds === undefined || kinds.has(node.kind)),
+      (node) => nodeRow(node, seeds, view.include_observations),
+    ),
   );
 };
 
@@ -293,13 +345,5 @@ export const projectFeatureTraceView = (
       },
       coverage: completeWithinViewCoverage(1, 1),
     });
-  const { rows, total } = pageRows(result, view);
-  return ok({
-    kind: "feature-trace" as const,
-    view,
-    ...shared,
-    ...context,
-    items: rows,
-    coverage: pageViewCoverage(view.offset, rows.length, total),
-  });
+  return ok(tracePage(result, view, { ...shared, ...context }));
 };

@@ -65,9 +65,8 @@ import {
 } from "./sourceToBundleView.js";
 import {
   featureTraceSummarySchema,
+  featureTraceViewCollections,
   featureTraceViewContextSchema,
-  featureTraceViewItemsSchema,
-  featureTraceViewRequestSchema,
 } from "./featureTraceView.js";
 import {
   gpuCodeObjectsViewRequestSchema,
@@ -959,15 +958,34 @@ export const featureTraceSummaryViewResultSchema = z.strictObject({
   parent_operation: z.literal("trace_application_feature"),
   summary: featureTraceSummarySchema,
 });
-export const featureTraceViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  ...featureTraceViewContextSchema.shape,
-  kind: z.literal("feature-trace"),
-  artifact: z.null(),
-  parent_operation: z.literal("trace_application_feature"),
-  view: featureTraceViewRequestSchema,
-  items: featureTraceViewItemsSchema,
-});
+const featureTracePage = <
+  Collection extends keyof typeof featureTraceViewCollections,
+>(
+  collection: Collection,
+) =>
+  z.strictObject({
+    ...viewResultBase,
+    ...featureTraceViewContextSchema.shape,
+    kind: z.literal("feature-trace"),
+    artifact: z.null(),
+    parent_operation: z.literal("trace_application_feature"),
+    view: featureTraceViewCollections[collection].request,
+    items: featureTraceViewCollections[collection].rows,
+  });
+// As with Mach-O pages, the kind tag keeps dispatch while each collection is
+// advertised with exactly its own rows.
+export const featureTraceViewResultSchema = z
+  .object({ kind: z.literal("feature-trace") })
+  .passthrough()
+  .pipe(
+    z.union([
+      featureTracePage("paths"),
+      featureTracePage("nodes"),
+      featureTracePage("edges"),
+      featureTracePage("seed_matches"),
+      featureTracePage("native_handoffs"),
+    ]),
+  );
 
 /** Bind the existing nested facet selection to its producer-owned rows. */
 const machoPage = <Facet extends keyof typeof machoViewRows>(facet: Facet) =>
