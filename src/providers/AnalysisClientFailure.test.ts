@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { FileOffsetPartialObservation } from "../domain/native/fileOffsetPartialObservation.js";
 import { analysisClientFailureForOperation } from "./AnalysisClientFailure.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { regexMatchingDeadlineError } from "../process/RegexMatcher.js";
 
 const observation: FileOffsetPartialObservation = {
   operation: "address_to_file_offset",
@@ -61,4 +63,23 @@ it("does not promote ordinary partial evidence into a completed result", () => {
     throw new Error("Expected the cleanup subtype");
   expect(attributed.partialObservation).toBe(observation);
   expect(attributed.completedObservation).toBeUndefined();
+});
+
+it("keeps a regex deadline's continuing-session guidance when attributing it to a provider operation", () => {
+  const attributed = analysisClientFailureForOperation(
+    regexMatchingDeadlineError("search_procedures"),
+    "hopper",
+    "search_procedures",
+  );
+  const continuing = projectAnalysisError(attributed);
+  expect(continuing.message).toContain("The service remains available.");
+  expect(continuing.remediation.action).toContain("retry in the same session");
+  const invocation = projectAnalysisError(attributed, "invocation");
+  expect(invocation.message).not.toContain("remains available");
+  expect(invocation.remediation.action).not.toContain("same session");
+  expect(invocation.details?.limit).toMatchObject({
+    setting: "regex.matching_deadline_ms",
+    scope: "rea-invocation",
+    environment: "REA_REGEX_MATCHING_DEADLINE_MS",
+  });
 });

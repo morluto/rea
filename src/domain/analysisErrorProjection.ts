@@ -50,23 +50,34 @@ import { providerRetryAction } from "./providerOperationHealth.js";
 import {
   primaryAnalysisError,
   resolvedAnalysisError,
+  type AnalysisCallerLifetime,
   type AnalysisError,
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
+import { invocationSettingLimit } from "./analysisSettingDefinitions.js";
 
-/** Project expected failures into exhaustive, secret-safe caller fields. */
+/**
+ * Project expected failures into exhaustive, secret-safe caller fields. The
+ * default describes a continuing caller, such as an MCP connection, and is
+ * also the adapter-independent form retained inside Evidence. An adapter that
+ * releases its provider session and runtime after this request, such as a
+ * one-shot CLI command, passes `"invocation"`.
+ */
 export const projectAnalysisError = (
   error: AnalysisError,
-): AnalysisErrorProjection => projectError(error, true);
+  callerLifetime: AnalysisCallerLifetime = "continuing",
+): AnalysisErrorProjection => projectError(error, true, callerLifetime);
 
 /** Cleanup history references output retained by its enclosing error owner. */
 export const projectAnalysisErrorWithoutCapturedOutput = (
   error: AnalysisError,
-): AnalysisErrorProjection => projectError(error, false);
+  callerLifetime: AnalysisCallerLifetime = "continuing",
+): AnalysisErrorProjection => projectError(error, false, callerLifetime);
 
 const projectError = (
   error: AnalysisError,
   includeCapturedOutput: boolean,
+  callerLifetime: AnalysisCallerLifetime,
 ): AnalysisErrorProjection => {
   const composed = error;
   error = resolvedAnalysisError(error);
@@ -97,7 +108,14 @@ const projectError = (
   const primaryDetails = errorDetails(primary);
   const details = {
     ...primaryDetails,
-    ...(primary.limit === undefined ? {} : { limit: { ...primary.limit } }),
+    ...(primary.limit === undefined
+      ? {}
+      : {
+          limit:
+            callerLifetime === "invocation"
+              ? { ...invocationSettingLimit(primary.limit) }
+              : { ...primary.limit },
+        }),
     ...(cleanupReport === undefined
       ? {}
       : { cleanup_report: jsonValueSchema.parse(cleanupReport) }),
@@ -144,11 +162,11 @@ const projectError = (
     cleanupRetry === undefined
       ? errorRecovery(error)
       : cleanupRetryRecovery(cleanupRetry);
-  const remediation = analysisErrorRemediationAction(error);
+  const remediation = analysisErrorRemediationAction(error, callerLifetime);
   return {
     code,
     category: analysisErrorCategory(error),
-    message: analysisErrorUserMessage(error),
+    message: analysisErrorUserMessage(error, callerLifetime),
     retryable:
       RETRYABLE_CODES.has(code) ||
       (error instanceof AnalysisCapabilityUnavailableError &&

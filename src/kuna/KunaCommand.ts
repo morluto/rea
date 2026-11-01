@@ -388,15 +388,20 @@ const commandFailure = (
     });
   else if (cause.reason === "timeout") {
     const { setting, ms } = request.deadline;
+    // The same run takes as long again, so only a longer deadline helps.
+    const remediationAction = `Raise ${setting} in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.`;
     primary = new AnalysisTimeoutError(operation, ms, {
       ...details,
       userMessage: `kuna ${subcommand} did not finish within ${setting} (${String(ms)} ms).`,
-      // The same run takes as long again, so only a longer deadline helps.
-      remediationAction: `Raise ${setting} in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.${
-        subcommand === "decompile"
-          ? " Within a session, pseudocode is also read from the project export once it finishes."
-          : ""
-      }`,
+      remediationAction,
+      // Only a session that outlives this request can read the later export.
+      ...(subcommand === "decompile"
+        ? {
+            continuingCallerGuidance: {
+              remediationAction: `${remediationAction} Within a session, pseudocode is also read from the project export once it finishes.`,
+            },
+          }
+        : {}),
     });
   }
   // The same input overflows the same fixed buffer; waiting cannot help.

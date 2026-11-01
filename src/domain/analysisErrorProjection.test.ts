@@ -39,6 +39,8 @@ import {
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
+import { analysisSettingLimit } from "./analysisSettingDefinitions.js";
+import { redactExplicitFailure } from "./explicitSensitiveFailure.js";
 
 describe("agent recovery metadata", () => {
   it("does not mark deterministic input validation as retryable", () => {
@@ -1330,4 +1332,159 @@ it("preserves ordinary configuration recovery and projects a producer-owned sess
     remediation: { action: "Repair the running session, then retry." },
   });
   expect(repairing.code).toBe("configuration_invalid");
+});
+
+describe("analysis error projection: caller lifetime", () => {
+  const continuingOnly = {
+    userMessage: "The fixture session remains usable.",
+    remediationAction: "Update the fixture runtime setting on this session.",
+  };
+
+  it.each([
+    new AnalysisTimeoutError("procedure_pseudo_code", 5000, {
+      userMessage: "Only this request stopped.",
+      remediationAction: "Rerun with a longer launch deadline.",
+      continuingCallerGuidance: continuingOnly,
+    }),
+    new ProviderAdapterError("fixture", "procedure_pseudo_code", {
+      userMessage: "Only this request stopped.",
+      remediationAction: "Rerun with a longer launch deadline.",
+      continuingCallerGuidance: continuingOnly,
+    }),
+    new AnalysisResourceConstraintError(
+      "search_strings",
+      "cpu",
+      "Only this request stopped.",
+      null,
+      {
+        remediationAction: "Rerun with a longer launch deadline.",
+        continuingCallerGuidance: continuingOnly,
+      },
+    ),
+  ])(
+    "states continuing-session guidance only to a continuing caller ($_tag)",
+    (error) => {
+      expect(projectAnalysisError(error)).toMatchObject({
+        message:
+          "Only this request stopped. The fixture session remains usable.",
+        remediation: {
+          action: "Update the fixture runtime setting on this session.",
+        },
+      });
+      const invocation = projectAnalysisError(error, "invocation");
+      expect(invocation).toMatchObject({
+        code: projectAnalysisError(error).code,
+        message: "Only this request stopped.",
+        remediation: { action: "Rerun with a longer launch deadline." },
+      });
+      expect(analysisErrorUserMessage(error, "invocation")).toBe(
+        "Only this request stopped.",
+      );
+      expect(analysisErrorRemediationAction(error, "invocation")).toBe(
+        "Rerun with a longer launch deadline.",
+      );
+    },
+  );
+
+  it("re-scopes a limit for a finished invocation and keeps its enforced facts", () => {
+    const limit = analysisSettingLimit(
+      "regex.matching_deadline_ms",
+      250,
+      "setting",
+    );
+    const error = new AnalysisResourceConstraintError(
+      "search_strings",
+      "cpu",
+      "Regex matching exceeded its deadline.",
+      null,
+      { limit },
+    );
+    expect(projectAnalysisError(error).details?.limit).toEqual(limit);
+    expect(projectAnalysisError(error, "invocation").details?.limit).toEqual({
+      setting: "regex.matching_deadline_ms",
+      effective_value: 250,
+      source: "setting",
+      unit: "ms",
+      minimum: limit.minimum,
+      maximum: limit.maximum,
+      applies_at: "next_invocation",
+      scope: "rea-invocation",
+      environment: "REA_REGEX_MATCHING_DEADLINE_MS",
+    });
+    // The error keeps its runtime facts for other projections.
+    expect(error.limit).toEqual(limit);
+  });
+
+  it("names a per-call parameter, not an environment, when a setting has no launch seed", () => {
+    const error = new AnalysisTimeoutError("inspect_wasm_artifact", 100, {
+      limit: analysisSettingLimit("wasm.command_timeout_ms", 100, "request"),
+    });
+    expect(projectAnalysisError(error, "invocation").details?.limit).toEqual(
+      expect.objectContaining({
+        setting: "wasm.command_timeout_ms",
+        source: "request",
+        parameter: "command_timeout_ms",
+        applies_at: "next_invocation",
+        scope: "rea-invocation",
+      }),
+    );
+    expect(
+      projectAnalysisError(error, "invocation").details?.limit,
+    ).not.toHaveProperty("environment");
+  });
+
+  it("leads a finished invocation's Hopper startup timeout with its launch environment", () => {
+    const error = new HopperTimeoutError(
+      30_000,
+      undefined,
+      undefined,
+      "not_started",
+      "launch",
+      undefined,
+      {
+        limit: analysisSettingLimit(
+          "hopper.startup_timeout_ms",
+          30_000,
+          undefined,
+        ),
+      },
+    );
+    expect(projectAnalysisError(error).remediation.action).toContain(
+      "update_analysis_settings with setting hopper.startup_timeout_ms",
+    );
+    const invocation = projectAnalysisError(error, "invocation");
+    expect(invocation.remediation.action).toContain(
+      "set REA_HOPPER_STARTUP_TIMEOUT_MS higher in the environment of a new REA invocation",
+    );
+    for (const continuingOnly of [
+      "update_analysis_settings",
+      "without restarting REA",
+      "MCP client",
+    ])
+      expect(invocation.remediation.action).not.toContain(continuingOnly);
+    expect(invocation.details?.limit).toMatchObject({
+      setting: "hopper.startup_timeout_ms",
+      scope: "rea-invocation",
+      environment: "REA_HOPPER_STARTUP_TIMEOUT_MS",
+    });
+  });
+
+  it("keeps continuing guidance through redaction and redacts its text", () => {
+    const error = new AnalysisTimeoutError("procedure_pseudo_code", 5000, {
+      userMessage: "Only this request stopped.",
+      remediationAction: "Rerun with a longer launch deadline.",
+      continuingCallerGuidance: {
+        userMessage: "The session for secret-token remains usable.",
+        remediationAction: "Retry secret-token on this session.",
+      },
+    });
+    const redacted = redactExplicitFailure(error, ["secret-token"]);
+    const continuing = JSON.stringify(projectAnalysisError(redacted));
+    expect(continuing).toContain("remains usable");
+    expect(continuing).toContain("on this session");
+    expect(continuing).not.toContain("secret-token");
+    expect(
+      JSON.stringify(projectAnalysisError(redacted, "invocation")),
+    ).not.toContain("remains usable");
+  });
 });

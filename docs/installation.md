@@ -1314,7 +1314,8 @@ fails with `provider_timeout` and that message; other Ghidra tools stay
 available. If the caller also cancels while the timeout settles, the session
 still closes and the message says so. Session reuse concerns an active MCP or
 library session; a standalone CLI command still closes its own session when it
-finishes. In MCP, `ghidra.decompile_timeout_seconds` can override the launch
+finishes, so its timeout names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` for a new
+invocation instead. In MCP, `ghidra.decompile_timeout_seconds` can override the launch
 value for newly accepted operations on the existing Program; explicit `null`
 removes the deadline. A transient timeout remains uncached so the same function
 can be retried after an update. See the

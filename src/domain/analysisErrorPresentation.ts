@@ -38,6 +38,7 @@ import { fixedAllowanceRemediation } from "./fixedAllowanceRemediation.js";
 import {
   primaryAnalysisError,
   resolvedAnalysisError,
+  type AnalysisCallerLifetime,
   type AnalysisError,
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
@@ -50,10 +51,17 @@ export const MCP_TRANSPORT_EVIDENCE_EXPORT =
 /** Next step when one MCP frame cannot carry a complete retained session bundle. */
 export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with get_evidence_bundle and detail: summary, then inspect compatible records through inspect_analysis_view using an exact Evidence reference. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
 
+/** Name the next step that is true for how long the caller keeps REA's runtime and session. */
 export const analysisErrorRemediationAction = (
   error: AnalysisError,
+  callerLifetime: AnalysisCallerLifetime = "continuing",
 ): string => {
   error = resolvedAnalysisError(error);
+  const continuing =
+    callerLifetime === "continuing"
+      ? error.continuingCallerGuidance?.remediationAction
+      : undefined;
+  if (continuing !== undefined) return continuing;
   if (
     (error instanceof ProviderAdapterError ||
       error instanceof AnalysisCapabilityUnavailableError) &&
@@ -124,7 +132,7 @@ export const analysisErrorRemediationAction = (
     return "Use an artifact within the capacity reported in details.detail. Changing output detail or retrying the unchanged input does not remove this boundary.";
   if (error instanceof HopperTimeoutError)
     return error.operation === undefined
-      ? "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, use update_analysis_settings with setting hopper.startup_timeout_ms and action set for the next startup attempt without restarting REA, or increase REA_HOPPER_STARTUP_TIMEOUT_MS for future REA processes. Allow at least that long in the MCP client. Resolve retained cleanup before reopening."
+      ? hopperStartupTimeoutRemediation(callerLifetime)
       : error.providerState === "busy"
         ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
         : "Check binary_session for Hopper health, then retry the operation.";
@@ -361,8 +369,21 @@ const STATIC_ERROR_CATEGORIES: Readonly<
   BinaryTargetError: "unavailable",
 };
 
-export const analysisErrorUserMessage = (error: AnalysisError): string => {
+/** Describe the request's outcome, adding continuing-caller facts only for that caller. */
+export const analysisErrorUserMessage = (
+  error: AnalysisError,
+  callerLifetime: AnalysisCallerLifetime = "continuing",
+): string => {
   error = resolvedAnalysisError(error);
+  const outcome = outcomeUserMessage(error);
+  const continuing =
+    callerLifetime === "continuing"
+      ? error.continuingCallerGuidance?.userMessage
+      : undefined;
+  return continuing === undefined ? outcome : `${outcome} ${continuing}`;
+};
+
+const outcomeUserMessage = (error: AnalysisError): string => {
   if (error instanceof AnalysisSnapshotMismatchError) return error.message;
   if (error instanceof AnalysisUnsupportedTargetError) return error.message;
   if (error instanceof AnalysisResourceConstraintError) return error.reason;
@@ -513,6 +534,14 @@ const standardErrorMessage = (tag: AnalysisErrorTag): string | undefined => {
     return "Analysis could not start or stopped unexpectedly. Run `rea doctor`, then try again.";
   return undefined;
 };
+
+/** A finished invocation has no runtime to update; only its launch environment applies. */
+const hopperStartupTimeoutRemediation = (
+  callerLifetime: AnalysisCallerLifetime,
+): string =>
+  callerLifetime === "continuing"
+    ? "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, use update_analysis_settings with setting hopper.startup_timeout_ms and action set for the next startup attempt without restarting REA, or increase REA_HOPPER_STARTUP_TIMEOUT_MS for future REA processes. Allow at least that long in the MCP client. Resolve retained cleanup before reopening."
+    : "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, set REA_HOPPER_STARTUP_TIMEOUT_MS higher in the environment of a new REA invocation, then rerun the command; that invocation starts Hopper again. Resolve retained cleanup before rerunning.";
 
 const timeoutUserMessage = (error: AnalysisTimeoutError): string =>
   `REA's ${error.operation} operation reached its ${String(error.timeoutMs)}ms server/provider deadline. This is not a client-side timeout; extending only the MCP client's deadline does not change this budget.`;

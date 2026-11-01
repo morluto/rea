@@ -60,6 +60,9 @@ export const analysisClientFailureContext = (
   return {
     cause,
     ...(cause.limit === undefined ? {} : { limit: cause.limit }),
+    ...(cause.continuingCallerGuidance === undefined
+      ? {}
+      : { continuingCallerGuidance: cause.continuingCallerGuidance }),
     ...(cause.cleanupPrimary === undefined
       ? {}
       : {

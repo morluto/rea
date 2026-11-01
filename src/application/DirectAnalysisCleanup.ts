@@ -11,12 +11,21 @@ import {
   withEvidenceCallerInputPath,
 } from "../domain/evidence.js";
 
+/**
+ * Project a one-shot failure for its invocation, which has released its
+ * provider session and runtime settings by the time the caller reads it.
+ */
+export const projectInvocationFailure = (
+  error: AnalysisError,
+): ReturnType<typeof projectAnalysisError> =>
+  projectAnalysisError(error, "invocation");
+
 /** Add the actual outer request path to authenticated partial Evidence. */
 export const projectDirectAnalysisFailure = (
   error: AnalysisError,
   callerInputPath: string,
 ): ReturnType<typeof projectAnalysisError> => {
-  const projection = projectAnalysisError(error);
+  const projection = projectInvocationFailure(error);
   const observation = tryParseEvidence(projection.details?.partial_observation);
   return observation === undefined
     ? projection
@@ -63,7 +72,7 @@ export const directAnalysisCleanupFailure = (
 ): JsonValue => {
   const project = (failure: AnalysisError) =>
     callerInputPath === undefined
-      ? projectAnalysisError(failure)
+      ? projectInvocationFailure(failure)
       : projectDirectAnalysisFailure(failure, callerInputPath);
   const cleanup = project(error);
   if (!result.ok) {

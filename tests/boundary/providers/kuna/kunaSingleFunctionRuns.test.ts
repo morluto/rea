@@ -311,6 +311,12 @@ it("names the setting that owns a single-function deadline", async () => {
       },
       details: { timeout_ms: 300 },
     });
+    // A finished invocation cannot read a later export from this session.
+    expect(
+      projectAnalysisError(result.error, "invocation").remediation.action,
+    ).toBe(
+      "Raise REA_KUNA_TIMEOUT_MS in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.",
+    );
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }
