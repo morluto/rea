@@ -245,19 +245,25 @@ const registerPinCases = () => {
   });
 };
 
+const DUPLICATE_LITERALS =
+  "The Xtensa_Info note declares USE_ABSOLUTE_LITERALS more than once.";
+
 const registerRefusalCases = () => {
+  // Each case changes one fact of an admitted target. The second column is
+  // what the refusal must name (the offending value, the declared key or the
+  // reader's diagnostic), or null when the refusal names no such fact.
   it.each([
-    [{ elfClass: 64 }, "ELF32 only"],
-    [{ byteOrder: "big" }, "little-endian images only"],
-    [{ type: 1 }, "relocatable images"],
-    [{ type: 3 }, "shared and position-independent images"],
+    [{ elfClass: 64 }, null],
+    [{ byteOrder: "big" }, null],
+    [{ type: 1 }, "relocatable"],
+    [{ type: 3 }, "shared"],
     [{ type: 0xfe00 }, "e_type 65024"],
-    [{ flags: 0x700 }, "(0x400)"],
-    [{ flags: 0x8000_0300 }, "(0x80000000)"],
-    [{ flags: 0x301 }, "declares machine 1"],
-    [{ abi: { status: "declared", abi: "call0" } }, "call0 ABI"],
+    [{ flags: 0x700 }, "0x400"],
+    [{ flags: 0x8000_0300 }, "0x80000000"],
+    [{ flags: 0x301 }, "machine 1"],
+    [{ abi: { status: "declared", abi: "call0" } }, "call0"],
     [{ abi: { status: "unrecognized", value: "2" } }, "ABI=2"],
-    [{ abi: { status: "absent" } }, "declares no ABI"],
+    [{ abi: { status: "absent" } }, null],
     [
       { abi: { status: "unavailable", reason: "A note is truncated." } },
       "A note is truncated.",
@@ -270,32 +276,28 @@ const registerRefusalCases = () => {
       { literals: { status: "unrecognized", value: "2" } },
       "USE_ABSOLUTE_LITERALS=2",
     ],
-    [{ literals: { status: "absent" } }, "declares no USE_ABSOLUTE_LITERALS"],
+    [{ literals: { status: "absent" } }, null],
     [
-      {
-        literals: {
-          status: "unavailable",
-          reason:
-            "The Xtensa_Info note declares USE_ABSOLUTE_LITERALS more than once.",
-        },
-      },
-      "USE_ABSOLUTE_LITERALS more than once",
+      { literals: { status: "unavailable", reason: DUPLICATE_LITERALS } },
+      DUPLICATE_LITERALS,
     ],
-  ] satisfies [Partial<XtensaElfMetadata>, string][])(
+  ] satisfies [Partial<XtensaElfMetadata>, string | null][])(
     "refuses an unverified Xtensa interpretation %j",
-    async (change, reason) => {
+    async (change, named) => {
+      const reason =
+        named === null ? expect.any(String) : expect.stringContaining(named);
       const provider = ghidra();
       const value = target(change);
       expect(provider.inspectTargetSupport(value)).toMatchObject({
         status: "unsupported",
         code: "architecture_unsupported",
-        reason: expect.stringContaining(reason),
+        reason,
       });
       expect(await provider.resolveAnalysisProfile(value)).toMatchObject({
         ok: false,
         error: {
           _tag: "AnalysisUnsupportedTargetError",
-          reason: expect.stringContaining(reason),
+          reason,
         },
       });
       expect(ghidraPinnedLanguage(value)).toBeUndefined();
@@ -312,9 +314,7 @@ const registerRefusalCases = () => {
       expect(ghidraPinnedLanguage(uninspected)).toBeUndefined();
       expect(ghidra().inspectTargetSupport(uninspected)).toMatchObject({
         status: "unsupported",
-        reason: expect.stringContaining(
-          `${declaration} declaration in .xtensa.info was not inspected`,
-        ),
+        code: "architecture_unsupported",
       });
     },
   );

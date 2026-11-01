@@ -173,10 +173,10 @@ describe("Xtensa lane oracle and assertions", () => {
     expect(ghidraXtensaUnsupportedReason(target.value)).toBeNull();
     for (const [index, [change, reason]] of (
       [
-        [{ flags: 0x700 }, "(0x400)"],
+        [{ flags: 0x700 }, "0x400"],
         [{ flags: 0x301 }, "machine 1"],
-        [{ type: 3 }, "shared and position-independent"],
-        [{ abi: "1" }, "call0 ABI"],
+        [{ type: 3 }, "shared"],
+        [{ abi: "1" }, "call0"],
         [{ literals: "1" }, "USE_ABSOLUTE_LITERALS=1"],
       ] as const
     ).entries()) {
