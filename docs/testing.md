@@ -365,6 +365,36 @@ Do not report the warm result as a cold-suite improvement, and do not enable
 the cache in coverage or benchmark CI without first showing that its
 instrumentation remains equivalent.
 
+## CodeQL production scope
+
+[The production configuration](../.github/codeql/production.yml) excludes
+`tests/`, `scripts/fixtures/`, `*.test.*`, `*.fixture.*`, `test_*.py`, and `*_test.py` inputs
+during extraction. It retains the default queries and the existing `local`
+threat model. Production source, bridges, runtime scripts, installation and
+release controllers, and Actions remain in scope for the configured languages.
+Verification scripts remain included unless they match an explicit test path;
+excluding the entire `scripts/` directory would hide shipped entrypoints.
+These exclusions do not change which behavioral tests CI executes. CodeQL's
+JavaScript/TypeScript, Python, and Actions lanes do not add shell, Java, or Swift
+analysis; their existing checks remain responsible for those languages.
+
+[The production workflow](../.github/workflows/codeql.yml) is inactive until a
+repository administrator disables CodeQL **default setup** and sets the Actions
+repository variable `REA_CODEQL_ADVANCED` to `true`. Disable default setup first:
+it rejects advanced CodeQL uploads. Then enable the variable and manually run
+**CodeQL production** on `main`; verify all three analyses complete before
+relying on the new scope. While the variable is unset, the existing default
+setup continues scanning. Adding the configuration file alone does not change
+default setup in this user-owned repository.
+
+Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
+jobs run one at a time. Complete SARIF reports are retained for seven days.
+For a scope comparison, use the same source SHA, CodeQL bundle, default query
+suite, and `local` threat model on both runs. Change only `paths-ignore`, inspect
+the extracted-file inventory and diagnostics, and retain both complete reports.
+Alert counts do not establish a false-positive rate or a speedup. Report elapsed
+time, CPU time, and process-family memory with their measurement limits.
+
 ## Choose verification for the change
 
 `test:local` is fast source-level feedback. For the strongest practical
