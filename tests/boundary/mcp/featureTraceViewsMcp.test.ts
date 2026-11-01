@@ -10,6 +10,10 @@ import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { deliverApplicationEvidence } from "../../../src/server/registerApplicationTools/helpers.js";
+import { traceApplicationFeatureEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { silentLogger } from "../../../src/logger.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -39,6 +43,8 @@ const writeApplication = async (): Promise<string> => {
       [
         'const {app,BrowserWindow,ipcMain}=require("electron");',
         'const fs=require("fs");',
+        'const audio=require("./audio.node");',
+        'const crypto=require("./crypto.node");',
         ...CHANNELS.map(
           (channel) =>
             `ipcMain.handle("${channel}",async(event,value)=>{fs.writeFileSync("/tmp/${channel}",value);return fetch("https://api.example.test/${channel}");});`,
@@ -55,6 +61,9 @@ contextBridge.exposeInMainWorld("api",{${CHANNELS.map(
       ).join(",")}});`,
     ),
     writeFile(join(root, "index.html"), "<!doctype html><html></html>\n"),
+    // Distinct opaque addon bytes give two content-identified native handoffs.
+    writeFile(join(root, "audio.node"), Buffer.from("rea-audio-addon")),
+    writeFile(join(root, "crypto.node"), Buffer.from("rea-crypto-addon")),
   ]);
   return root;
 };
@@ -227,7 +236,25 @@ const assertRetainedTracePages = async (
   expect(await collect({ collection: "seed_matches" })).toEqual(
     full.seed_matches,
   );
-  expect(await collect({ collection: "native_handoffs" })).toEqual([]);
+  expect(full.native_handoffs).toHaveLength(2);
+  expect(await collect({ collection: "native_handoffs" })).toEqual(
+    full.native_handoffs,
+  );
+  for (const [offset, handoff] of full.native_handoffs.entries())
+    expect(
+      await view({
+        kind: "feature-trace",
+        collection: "native_handoffs",
+        offset,
+        limit: 1,
+      }),
+    ).toMatchObject({
+      items: [handoff],
+      coverage: {
+        total: 2,
+        next_offset: offset === 0 ? 1 : null,
+      },
+    });
   const detailed = await collect({
     collection: "nodes",
     include_observations: true,
@@ -411,4 +438,91 @@ it("recovers an oversized completed trace through its retained paths page", asyn
   expect(summary.evidence.normalized_result).toMatchObject({
     parent_evidence_id: parent.evidence_id,
   });
+});
+
+it("names the retained trace and a smaller page when a selected page is oversized", async () => {
+  const budget = 64 * 1024;
+  const { session, inputs, reply } = await connect("full", budget);
+  const selection = {
+    kind: "feature-trace",
+    collection: "nodes",
+    include_observations: true,
+    limit: 64,
+  };
+  const failed = parseMcpToolError(
+    await reply("trace_application_feature", { ...inputs, view: selection }),
+  ).error;
+  expect(failed.code).toBe("resource_constraint");
+  const limits = z
+    .object({ details: z.object({ reported_limits: jsonObjectSchema }) })
+    .parse(failed).details.reported_limits;
+  const reference = z
+    .object({ kind: z.literal("retained-evidence"), evidence_id: z.string() })
+    .parse(limits.evidence_reference);
+  // The reference names the retained trace, not the page record that did not fit.
+  const parent = parseEvidence(session.evidenceById(reference.evidence_id));
+  expect(parent.operation).toBe("trace_application_feature");
+  const nodes = traced(parent).graph!.nodes;
+  const continuation = z
+    .object({
+      name: z.literal("inspect_analysis_view"),
+      arguments: toolContract("inspect_analysis_view").inputSchema,
+    })
+    .parse(limits.continuation);
+  expect(continuation.arguments).toMatchObject({
+    source: reference,
+    view: { ...selection, offset: 0, limit: 32 },
+  });
+  // The retained parent pages the same selection once the page fits.
+  const page = await reply(continuation.name, {
+    ...continuation.arguments,
+    view: { ...continuation.arguments.view, limit: 2 },
+  });
+  expect(page.isError, JSON.stringify(page).slice(0, 500)).not.toBe(true);
+  expect(bytes(page)).toBeLessThan(budget);
+  const view = analysisViewResultSchema.parse(
+    parseEvidence(page.structuredContent).normalized_result,
+  );
+  if (view.kind !== "feature-trace") throw new Error("Expected trace page");
+  expect((view.items as Row[]).map(({ node_id: id }) => id)).toEqual(
+    nodes.slice(0, 2).map(({ node_id: id }) => id),
+  );
+});
+
+it("commits no session facts when cancelled after the trace completes", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("No deep provider");
+  });
+  const traceExecution = traceApplicationFeatureEvidence(
+    JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+  );
+  if (!traceExecution.ok) throw traceExecution.error;
+  const artifactResources = new ArtifactResourceScope();
+  onTestFinished(() => artifactResources.close());
+  const before = session.exportEvidenceBundle();
+  for (const view of [undefined, { kind: "summary" } as const]) {
+    const cancelled = new AbortController();
+    cancelled.abort(new Error("client cancelled"));
+    // Cancellation can only arrive between completion and commit through this
+    // staging step, which the public workflow cannot schedule deterministically.
+    const delivered = await deliverApplicationEvidence(
+      { delivery: createToolResultDelivery(undefined) },
+      {
+        artifactResources,
+        logger: silentLogger,
+        evidenceById: (id) => session.evidenceById(id),
+        recordEvidence: (evidence) => session.recordEvidence(evidence),
+        recordEvidenceWithUnknown: undefined,
+      },
+      toolContract("trace_application_feature"),
+      traceExecution.value,
+      view,
+      cancelled.signal,
+    );
+    // Same contract as compare_source_to_bundle: a cancelled request leaves the session unchanged.
+    expect(parseMcpToolError(delivered)).toMatchObject({
+      error: { code: "cancelled" },
+    });
+    expect(session.exportEvidenceBundle()).toEqual(before);
+  }
 });

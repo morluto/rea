@@ -88,6 +88,7 @@ export class ToolResultDelivery {
     maximumResponseBytes: number,
     private readonly nativeContinuation: (
       evidence: Evidence,
+      selected?: JsonValue,
     ) => Readonly<Record<string, JsonValue>> = () => ({}),
   ) {
     this.maximumResponseBytes = maximumResponseBytes;
@@ -129,6 +130,29 @@ export class ToolResultDelivery {
                 },
                 ...this.nativeContinuation(evidence),
               }),
+        });
+  }
+
+  /**
+   * Deliver a caller-selected view of an already retained parent. Overflow
+   * recovery names that parent and a smaller page of the same selection,
+   * since the view record itself is not an analysis-view parent.
+   */
+  toSelectedViewToolResult(
+    view: Evidence,
+    selection: { readonly parent: Evidence; readonly request: JsonValue },
+    contract: ToolContract,
+    recorded: Result<unknown, AnalysisError> | undefined,
+  ): CallToolResult {
+    return recorded !== undefined && !recorded.ok
+      ? this.toErrorToolResult(recorded.error, contract.returnsTargetContent)
+      : this.successResult(view, contract, {
+          evidence_id: view.evidence_id,
+          evidence_reference: {
+            kind: "retained-evidence",
+            evidence_id: selection.parent.evidence_id,
+          },
+          ...this.nativeContinuation(selection.parent, selection.request),
         });
   }
 
