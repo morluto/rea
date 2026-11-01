@@ -292,17 +292,6 @@ limitation and reason IDs index that page's `items.messages` dictionary. Expand
 those references to recover exact text, repeated messages, and absent versus
 empty optional fields. Failed nodes retain their original error.
 
-For retained `inspect_native_instruction` Evidence, use
-`view: {"kind":"native-instruction-references","collection":"incoming_references","offset":0,"limit":64}`
-to page typed references to the exact code or data address. Select `references`
-for outgoing instruction references. Rows preserve their original indices and
-provider-reported kind and provenance. `items.state` distinguishes available,
-unavailable, and not-recorded collections; coverage is null in the latter two
-cases. The fixed 1 MiB page projection allowance leaves room for Evidence and
-MCP encoding. An oversized single row remains in the complete parent, which
-can be exported. Page exhaustion describes retained rows, not discovery or
-runtime access.
-
 These views reference complete source context through `source_context.digest`
 and caveat counts. Read it using the same parent with
 `view: {"kind":"native-context","facet":"overview"}`. The other facets are
@@ -318,6 +307,17 @@ caveats have been inspected, interpretations beyond the returned facts remain
 unknown. Exhausted pages describe the recorded observations and do not establish
 complete native discovery. The same views work through the CLI with historical
 Evidence files or bundles and require no live provider.
+
+For retained `inspect_native_instruction` Evidence, use
+`view: {"kind":"native-instruction-references","collection":"incoming_references","offset":0,"limit":64}`
+to page typed references to the exact code or data address. Select `references`
+for outgoing instruction references. Rows preserve their original indices and
+provider-reported kind and provenance. `items.state` distinguishes available,
+unavailable, and not-recorded collections; coverage is null in the latter two
+cases. The fixed 1 MiB page projection allowance leaves room for Evidence and
+MCP encoding. An oversized single row remains in the complete parent, which
+can be exported. Page exhaustion describes retained rows, not discovery or
+runtime access.
 
 For oversized native function Evidence, `details.reported_limits.continuation`
 contains a ready-to-call `inspect_analysis_view` request for the retained

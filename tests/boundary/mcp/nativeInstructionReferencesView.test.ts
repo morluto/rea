@@ -1,5 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { afterAll, expect, it } from "vitest";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
@@ -10,9 +12,13 @@ import {
 } from "../../../src/domain/analysisView/analysisView.js";
 import { ok } from "../../../src/domain/result.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { z } from "zod";
 
+const validation = createMcpSchemaValidation();
+afterAll(() => validation.clear());
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 const row = {
   source_address: "0x2000",
@@ -26,7 +32,14 @@ const row = {
   data: true,
   provenance: "fixture",
 };
-const instruction = (incoming: "rows" | "unavailable" | "not-recorded") => ({
+const referenceRows = Array.from({ length: 500 }, (_, index) => ({
+  ...row,
+  // Keep one duplicate to prove that paging preserves distinct row identities.
+  source_address: `0x${(0x2000 + Math.max(0, index - 1)).toString(16)}`,
+}));
+const instruction = (
+  incoming: "rows" | "empty" | "unavailable" | "not-recorded",
+) => ({
   address: "0x1000",
   status: "data",
   procedure: null,
@@ -45,16 +58,90 @@ const instruction = (incoming: "rows" | "unavailable" | "not-recorded") => ({
   },
   references: [],
   ...(incoming === "rows"
-    ? { incoming_references: Array.from({ length: 500 }, () => row) }
-    : incoming === "unavailable"
-      ? { incoming_references: null }
-      : {}),
+    ? { incoming_references: referenceRows }
+    : incoming === "empty"
+      ? { incoming_references: [] }
+      : incoming === "unavailable"
+        ? { incoming_references: null }
+        : {}),
   limitations: ["static observations only"],
 });
 
-it.each(["rows", "unavailable", "not-recorded"] as const)(
-  "retains and pages %s instruction references through MCP",
-  async (incoming) => {
+const checkContinuation = async (
+  client: Client,
+  schema: Readonly<Record<string, unknown>>,
+  continuation: {
+    name: "inspect_analysis_view";
+    arguments: z.output<typeof inspectAnalysisViewInputSchema>;
+  },
+  source: { kind: "retained-evidence"; evidence_id: string },
+) => {
+  const path = join(
+    await createTestTempDirectory("rea-instruction-view-"),
+    "bundle.json",
+  );
+  const exported = await client.callTool({
+    name: "export_evidence_bundle",
+    arguments: { path },
+  });
+  expect(exported.isError, JSON.stringify(exported.content)).not.toBe(true);
+  const bundle = JSON.parse(await readFile(path, "utf8")) as {
+    records: unknown[];
+  };
+  const parent = bundle.records
+    .map(parseEvidence)
+    .find((record) => record.evidence_id === source.evidence_id);
+  if (parent === undefined)
+    throw new Error("Missing retained instruction parent");
+  const original = z
+    .object({ incoming_references: z.array(z.unknown()) })
+    .parse(parent.normalized_result).incoming_references;
+  const recovered: unknown[] = [];
+  let request = continuation.arguments;
+  for (;;) {
+    const response = await client.callTool({
+      name: continuation.name,
+      arguments: request,
+    });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    expect(
+      validation.assertions.validate(schema, response.structuredContent),
+      JSON.stringify(validation.assertions.errors),
+    ).toBe(true);
+    const page = analysisViewResultSchema.parse(
+      parseEvidence(response.structuredContent).normalized_result,
+    );
+    if (
+      page.kind !== "native-instruction-references" ||
+      page.items.state !== "available" ||
+      page.coverage === null
+    )
+      throw new Error("Expected an available instruction reference page");
+    expect(page.parent_evidence_id).toBe(source.evidence_id);
+    for (const item of page.items.rows) {
+      expect(item.source_index).toBe(recovered.length);
+      recovered.push(item.value);
+    }
+    if (page.coverage.exhausted) break;
+    expect(page.coverage.next_offset).toBe(recovered.length);
+    request = {
+      ...request,
+      view: {
+        kind: "native-instruction-references",
+        collection: "incoming_references",
+        offset: recovered.length,
+        limit: 64,
+      },
+    };
+  }
+  expect(recovered).toEqual(original);
+  expect(original).toEqual(referenceRows);
+};
+
+it.each(["full", "compact"] as const)(
+  "retains and pages instruction reference states through %s MCP",
+  async (profile) => {
+    let incoming: "rows" | "empty" | "unavailable" | "not-recorded" = "rows";
     let reads = 0;
     const session = createTestBinarySession(() => ({
       execute: async () => {
@@ -65,7 +152,13 @@ it.each(["rows", "unavailable", "not-recorded"] as const)(
     }));
     const server = createServer(
       { kind: "session", session },
-      { delivery: createToolResultDelivery(32 * 1024) },
+      {
+        delivery: createToolResultDelivery(64 * 1024),
+        environment: {
+          REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+          REA_MCP_OUTPUT_SCHEMA_PROFILE: profile,
+        },
+      },
     );
     const client = new Client({
       name: "instruction-reference-pages",
@@ -76,6 +169,14 @@ it.each(["rows", "unavailable", "not-recorded"] as const)(
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
+      const advertised = (await client.listTools()).tools.find(
+        (tool) => tool.name === "inspect_analysis_view",
+      );
+      if (!advertised?.outputSchema)
+        throw new Error("Missing advertised view schema");
+      expect(
+        validation.assertions.validateSchema(advertised.outputSchema),
+      ).toBe(true);
       expect(
         (
           await client.callTool({
@@ -84,71 +185,99 @@ it.each(["rows", "unavailable", "not-recorded"] as const)(
           })
         ).isError,
       ).not.toBe(true);
-      const result = await client.callTool({
-        name: "inspect_native_instruction",
-        arguments: { address: "0x1000" },
-      });
-      let source: { kind: "retained-evidence"; evidence_id: string };
-      if (incoming === "rows") {
-        const error = parseMcpToolError(result).error;
-        expect(error.code).toBe("resource_constraint");
-        const continuation = z
-          .object({
-            reported_limits: z.object({
-              continuation: z.object({
-                name: z.literal("inspect_analysis_view"),
-                arguments: inspectAnalysisViewInputSchema,
-              }),
-            }),
-          })
-          .parse(error.details).reported_limits.continuation;
-        expect(continuation.arguments.view).toMatchObject({
-          kind: "native-instruction-references",
-          collection: "incoming_references",
+      for (incoming of [
+        "rows",
+        "empty",
+        "unavailable",
+        "not-recorded",
+      ] as const) {
+        const result = await client.callTool({
+          name: "inspect_native_instruction",
+          arguments: { address: "0x1000" },
         });
-        source = continuation.arguments.source as typeof source;
-      } else {
-        expect(result.isError).not.toBe(true);
-        source = {
-          kind: "retained-evidence",
-          evidence_id: parseEvidence(result.structuredContent).evidence_id,
-        };
-      }
-      const before = reads;
-      const reply = await client.callTool({
-        name: "inspect_analysis_view",
-        arguments: {
-          source,
-          view: {
+        let source: { kind: "retained-evidence"; evidence_id: string };
+        if (incoming === "rows") {
+          const error = parseMcpToolError(result).error;
+          expect(error.code).toBe("resource_constraint");
+          const continuation = z
+            .object({
+              reported_limits: z.object({
+                continuation: z.object({
+                  name: z.literal("inspect_analysis_view"),
+                  arguments: inspectAnalysisViewInputSchema,
+                }),
+              }),
+            })
+            .parse(error.details).reported_limits.continuation;
+          expect(continuation.arguments.view).toMatchObject({
             kind: "native-instruction-references",
             collection: "incoming_references",
-            offset: incoming === "rows" ? 1 : 0,
-            limit: 1,
+            offset: 0,
+          });
+          source = continuation.arguments.source as typeof source;
+          const before = reads;
+          await checkContinuation(
+            client,
+            advertised.outputSchema,
+            continuation,
+            source,
+          );
+          expect(reads).toBe(before);
+        } else {
+          expect(result.isError).not.toBe(true);
+          source = {
+            kind: "retained-evidence",
+            evidence_id: parseEvidence(result.structuredContent).evidence_id,
+          };
+        }
+        const before = reads;
+        const reply = await client.callTool({
+          name: "inspect_analysis_view",
+          arguments: {
+            source,
+            view: {
+              kind: "native-instruction-references",
+              collection: "incoming_references",
+              offset: incoming === "rows" ? 1 : 0,
+              limit: 1,
+            },
           },
-        },
-      });
-      expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
-      const page = analysisViewResultSchema.parse(
-        parseEvidence(reply.structuredContent).normalized_result,
-      );
-      expect(page).toMatchObject({
-        parent_evidence_id: source.evidence_id,
-        instruction: { status: "data", address: "0x1000" },
-      });
-      if (incoming === "rows")
-        expect(page).toMatchObject({
-          items: {
-            state: "available",
-            rows: [{ source_index: 1, value: row }],
-          },
-          coverage: { total: 500, next_offset: 2 },
         });
-      else
+        expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
+        expect(
+          validation.assertions.validate(
+            advertised.outputSchema,
+            reply.structuredContent,
+          ),
+          JSON.stringify(validation.assertions.errors),
+        ).toBe(true);
+        const page = analysisViewResultSchema.parse(
+          parseEvidence(reply.structuredContent).normalized_result,
+        );
         expect(page).toMatchObject({
-          items: { state: incoming, rows: null },
-          coverage: null,
+          parent_evidence_id: source.evidence_id,
+          instruction: { status: "data", address: "0x1000" },
         });
-      expect(reads).toBe(before);
+        if (incoming === "rows")
+          expect(page).toMatchObject({
+            items: {
+              state: "available",
+              rows: [{ source_index: 1, value: row }],
+            },
+            coverage: { total: 500, next_offset: 2 },
+          });
+        else if (incoming === "empty")
+          expect(page).toMatchObject({
+            items: { state: "available", rows: [] },
+            coverage: { total: 0, exhausted: true },
+          });
+        else
+          expect(page).toMatchObject({
+            items: { state: incoming, rows: null },
+            coverage: null,
+          });
+        expect(reads).toBe(before);
+      }
     } finally {
       await Promise.all([client.close(), server.close()]);
       const closed = await session.close();
