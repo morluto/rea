@@ -306,6 +306,21 @@ Kimi Code also discovers personal skills in `~/.agents/skills` and project-local
 and verifies the matching skill files through the normal shared-skill flow.
 Start a new Kimi Code session to pick up MCP and skill changes.
 
+## LM Studio
+
+For [LM Studio](https://lmstudio.ai/docs/app/mcp), setup writes `mcpServers.rea`
+into `mcp.json` in the LM Studio home directory. Setup finds that directory as
+LM Studio does: the path stored in `~/.lmstudio-home-pointer`, otherwise
+`~/.cache/lm-studio` when it exists, otherwise `~/.lmstudio`. Setup only reads
+the pointer file. LM Studio parses `mcp.json` as strict JSON, so setup rejects
+a file with comments, trailing commas, or a byte order mark without a backup
+or a write. The entry carries `command`, `args`, and `env`, and setup keeps
+every other server. Local models often have small context windows, so setup
+selects `REA_MCP_INPUT_SCHEMA_PROFILE=compact` unless the stored entry or the
+setup environment selects a profile explicitly. Doctor reports an entry with no
+explicit profile as stale, as for Kimi Code. Loading this registration in
+LM Studio and real REA tool calls through it remain unverified.
+
 ## Pi
 
 For [Pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md),
