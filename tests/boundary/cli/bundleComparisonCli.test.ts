@@ -119,17 +119,9 @@ cliTest(
         right_evidence_id: different.records[0]!.evidence_id,
       },
     ];
+    const pairArgs = ["compare", leftPath, changedPath, "--record_pairs"];
     const compareWithPairs = (value: string) =>
-      cli.run({
-        arguments: [
-          "compare",
-          leftPath,
-          changedPath,
-          "--record_pairs",
-          value,
-          "--json",
-        ],
-      });
+      cli.run({ arguments: [...pairArgs, value, "--json"] });
     const paired = await compareWithPairs(JSON.stringify(pairs));
     expect(paired.exitCode).toBe(0);
     const pairedResult = bundleComparisonResultSchema.parse(paired.json);
