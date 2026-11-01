@@ -1254,6 +1254,96 @@ const bundled = async (
   return root;
 };
 
+describe("ReleaseExposureReader text encodings", () => {
+  const marker = "-----BEGIN PRIVATE KEY-----\n";
+
+  const utf16 = (text: string, order: "le" | "be"): Buffer => {
+    const little = Buffer.from(`\ufeff${text}`, "utf16le");
+    return order === "le" ? little : Buffer.from(little).swap16();
+  };
+
+  const visited = async (path: string) => {
+    const reader = new ReleaseExposureReader();
+    try {
+      const texts: string[] = [];
+      const result = await reader.inspect({ path }, undefined, (text) => {
+        texts.push(text);
+      });
+      if (!result.ok) throw result.error;
+      return { texts, members: result.value.text_members };
+    } finally {
+      await reader.close();
+    }
+  };
+
+  it.each(["le", "be"] as const)(
+    "decodes UTF-16 %s members instead of scanning NUL-interleaved bytes",
+    async (order) => {
+      const root = await createTestTempDirectory("rea-release-exposure-text-");
+      const plist = `<?xml version="1.0" encoding="UTF-16"?><plist><string>${marker}</string></plist>`;
+      await writeFile(join(root, "Info.plist"), utf16(plist, order));
+      await writeFile(join(root, "credentials"), utf16(marker, order));
+      const { texts, members } = await visited(root);
+      expect(texts.sort()).toEqual([marker, plist].sort());
+      expect(members).toEqual({ scanned: 2, skipped: 0 });
+    },
+  );
+
+  it("counts wide text it cannot decode as skipped, whatever the member declares", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-text-");
+    const wide = Buffer.from(marker, "utf16le");
+    await writeFile(join(root, "bomless.plist"), wide);
+    await writeFile(join(root, "bomless.js"), wide);
+    await writeFile(
+      join(root, "wide.plist"),
+      Buffer.concat([
+        Buffer.from([0xff, 0xfe, 0, 0]),
+        Buffer.from(
+          [...marker].flatMap((char) => [char.charCodeAt(0), 0, 0, 0]),
+        ),
+      ]),
+    );
+    const { texts, members } = await visited(root);
+    expect(texts).toEqual([]);
+    expect(members).toEqual({ scanned: 0, skipped: 3 });
+  });
+
+  it("keeps a binary plist's ASCII strings in the scan", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-text-");
+    const bytes = Buffer.concat([
+      Buffer.from("bplist00"),
+      Buffer.from([0]),
+      Buffer.from(marker),
+    ]);
+    await writeFile(join(root, "Info.plist"), bytes);
+    const { texts, members } = await visited(root);
+    expect(texts.join("")).toContain(marker);
+    expect(members).toEqual({ scanned: 1, skipped: 0 });
+  });
+
+  it("reads an inline map from a UTF-16 script", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-text-");
+    const map = Buffer.from(
+      JSON.stringify({
+        version: 3,
+        sources: ["src/app.ts"],
+        sourcesContent: ["export {};"],
+        mappings: "",
+      }),
+    ).toString("base64");
+    await writeFile(
+      join(root, "app.js"),
+      utf16(
+        `console.log(1);\n//# sourceMappingURL=data:application/json;base64,${map}\n`,
+        "le",
+      ),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.text_members).toEqual({ scanned: 1, skipped: 0 });
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+  });
+});
+
 describe("ReleaseExposureReader text recognition", () => {
   const marker = "-----BEGIN PRIVATE KEY-----\n";
 

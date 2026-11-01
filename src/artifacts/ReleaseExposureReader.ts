@@ -53,9 +53,11 @@ import {
   readMachoHeaderPrefixFacts,
 } from "../domain/apple/machoContainer.js";
 import { inspectPeCodeViewFromBuffer } from "../domain/binaryTarget.js";
+import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
+import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../domain/investigationProviders.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -868,7 +870,13 @@ const examineMapMember = async (
     ? member
     : { ...member, logical: `${member.logical}.js.map` };
   const loaded = await examineMap(state, declared);
-  if (loaded?.kind === "bytes") scanText(state, member, loaded.bytes);
+  if (loaded?.kind === "bytes")
+    scanText(
+      state,
+      member,
+      loaded.bytes.length,
+      decodeMemberText(loaded.bytes),
+    );
   else state.skippedText += 1;
   return loaded?.kind !== "unread";
 };
@@ -1038,9 +1046,12 @@ const examineTextMember = async (
     Math.min(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES, remaining),
   );
   if (loaded.kind === "bytes") {
-    scanText(state, member, loaded.bytes);
-    if (isJavaScriptMember(member))
-      examineInlineMaps(state, member, loaded.bytes);
+    const text = decodeMemberText(loaded.bytes);
+    scanText(state, member, loaded.bytes.length, text);
+    if (isJavaScriptMember(member)) {
+      if (text === null) state.skippedMaps += 1;
+      else examineInlineMaps(state, member, text);
+    }
   } else {
     state.skippedText += 1;
     if (isJavaScriptMember(member)) state.skippedMaps += 1;
@@ -1065,16 +1076,18 @@ const examineProbedText = async (
         ? probe.prefix
         : null;
   if (prefix === null) state.skippedText += 1;
-  else if (prefix.length > 0 && !prefix.includes(0))
+  else if (
+    prefix.length > 0 &&
+    (!prefix.includes(0) || byteOrderMarkEncoding(prefix) !== null)
+  )
     await examineTextMember(state, member);
 };
 
 const examineInlineMaps = (
   state: ScanState,
   member: MemberView,
-  bytes: Buffer,
+  source: string,
 ): void => {
-  const source = bytes.toString("utf8");
   const parsed = parseJavaScriptSource(source, member.logical);
   if (parsed === null) {
     state.skippedMaps += 1;
@@ -1160,22 +1173,38 @@ const noteUnreachedMapTargets = (state: ScanState): void => {
     if (!state.examinedMaps.has(target)) state.skippedMaps += 1;
 };
 
+/**
+ * The text a member's bytes encode, or null when they cannot be read as text.
+ * A member's kind says nothing about its encoding: NULs that no byte order mark
+ * explains are not UTF-8, so a scan of them would match nothing and still count
+ * as complete. A binary plist is the exception, because its ASCII strings are
+ * stored in the raw bytes.
+ */
+const decodeMemberText = (bytes: Buffer): string | null => {
+  const encoding = byteOrderMarkEncoding(bytes);
+  if (encoding === "utf-32") return null;
+  if (encoding !== null) return new TextDecoder(encoding).decode(bytes);
+  if (hasBinaryNul(bytes) && !hasBinaryPlistSignature(bytes)) return null;
+  return bytes.toString("utf8");
+};
+
 const scanText = (
   state: ScanState,
   member: MemberView,
-  bytes: Buffer,
+  byteLength: number,
+  text: string | null,
 ): void => {
   if (
-    bytes.length > MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES ||
-    state.textBytes + bytes.length > MAX_RELEASE_EXPOSURE_TEXT_BYTES ||
-    (hasBinaryNul(bytes) && !isDeclaredText(member.kind))
+    byteLength > MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES ||
+    state.textBytes + byteLength > MAX_RELEASE_EXPOSURE_TEXT_BYTES ||
+    text === null
   ) {
     state.skippedText += 1;
     return;
   }
-  state.textBytes += bytes.length;
+  state.textBytes += byteLength;
   state.scannedText += 1;
-  state.visitText(bytes.toString("utf8"), member.location);
+  state.visitText(text, member.location);
 };
 
 /**
