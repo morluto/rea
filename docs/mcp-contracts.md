@@ -361,7 +361,9 @@ target-scoped unknown; creating one in a target-free session does not infer a
 target from its supporting Evidence.
 Duplicate creation is a nonretryable `invalid_request`; use the existing head
 or update it with its current `expected_revision`. A stale update remains a
-retryable `revision_conflict`.
+retryable `revision_conflict`. An `update_unknown` revision keeps the unknown’s
+original `scope_digest`. Its mutation Evidence subject is the active binary
+analysis target, or null without one, so it can differ from the unknown’s scope.
 
 When `record_unknown` or `update_unknown` commits but its complete reply exceeds
 the response budget, `details.reported_limits.committed_unknown` identifies the

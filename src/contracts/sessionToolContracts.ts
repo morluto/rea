@@ -163,7 +163,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "update_unknown",
-    "Append one immutable full-state revision and mutation evidence. Requires exact expected_revision; stale concurrent writers fail instead of overwriting newer analysis.",
+    "Append one immutable full-state revision and mutation evidence. The unknown retains its original scope; the mutation Evidence subject is the active binary analysis target, or null without one, and can differ from that scope. Requires exact expected_revision; stale concurrent writers fail instead of overwriting newer analysis.",
     updateUnknownInputSchema,
   ),
   session(
