@@ -73,11 +73,14 @@ class FakeMacHopperHost implements MacHopperInstallHost {
   hostVersion: string | undefined = "14.5";
   appMinimum: string | undefined = "12.4";
   appMinimumFailure: Error | undefined;
+  appMinimumReads = 0;
   macosVersion = () => Promise.resolve(this.hostVersion);
-  minimumSystemVersion = () =>
-    this.appMinimumFailure === undefined
+  minimumSystemVersion = () => {
+    this.appMinimumReads += 1;
+    return this.appMinimumFailure === undefined
       ? Promise.resolve(this.appMinimum)
       : Promise.reject(this.appMinimumFailure);
+  };
   destinationExists = () => Promise.resolve(this.existing);
   installBundle = (
     _source: string,
@@ -306,6 +309,20 @@ describe("macOS Hopper release host requirements", () => {
       expect(host.opens).toBe(0);
       expect(host.unmounts).toBe(1);
       expect(host.cleanups).toBe(1);
+    },
+  );
+
+  it.each(["invalid_signature", "unverified_publisher"] as const)(
+    "reads the app's requirement only after its signature checks pass: %s",
+    async (verification) => {
+      const host = new FakeMacHopperHost();
+      host.verification = verification;
+
+      expect(await installMacHopper({}, host)).toMatchObject({
+        status: "failed",
+      });
+      expect(host.appMinimumReads).toBe(0);
+      expect(host.installs).toBe(0);
     },
   );
 

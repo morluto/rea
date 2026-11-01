@@ -83,8 +83,10 @@ export interface MacHopperBundleInstallOperations {
   removeStagingRoot(path: string): Promise<void>;
 }
 
-/** Stable network and command effects disclosed before macOS Hopper setup. */
+/** Stable effects and checks disclosed before macOS Hopper setup. */
 export const macHopperInstallDisclosure = {
+  detail:
+    "Download the official Hopper package, verify it, and install it. Before the download, and again from the signed app before copying, setup compares the release's minimum macOS version with this Mac's and stops if this Mac is older. Hopper may show its demo or license prompt when first opened.",
   networkOrigins: [HOPPER_RELEASES_URL, HOPPER_DOWNLOAD_PREFIX] as const,
   commands: [
     "hdiutil attach -readonly -nobrowse -mountpoint <private-mount> <verified-hopper.dmg>",

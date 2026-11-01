@@ -7,6 +7,7 @@ import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
 import { discoverSetupState } from "./SetupPlan.js";
+import { macHopperInstallDisclosure } from "./MacHopper.js";
 import {
   parseLinuxDistribution,
   type LinuxDistribution,
@@ -734,12 +735,11 @@ describe("setup Hopper install eligibility", () => {
         { ...options(false, true), dryRun: true },
         host,
       );
+      // The installer owns the disclosed check; its refusal is tested there.
       expect(
         plan.plannedActions.find(({ kind }) => kind === "install_hopper")
           ?.detail,
-      ).toContain(
-        "setup compares the release's minimum macOS version with this Mac's and stops if this Mac is older",
-      );
+      ).toBe(macHopperInstallDisclosure.detail);
     },
   );
 });
