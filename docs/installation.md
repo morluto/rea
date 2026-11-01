@@ -689,12 +689,19 @@ for installation. Setup cannot prompt when its output is redirected or during a
 container image build. To approve Hopper installation without prompts, run
 `rea setup --yes --install-hopper`.
 
-If the Linux package download receives an HTTP failure, setup includes the
-observed HTTP status in its `download_failed` diagnostic. The status does not
-establish the underlying cause or guarantee that retrying will succeed.
+If a Hopper request fails on macOS or Linux, the setup result's `download`
+field names the request (`release_feed`, `package` or `public_key`), its `url`,
+and the observed outcome `kind`: `http_status` with `httpStatus`, `timeout`,
+`network`, `response_too_large`, or `url_refused`. The remediation names the
+same URL and outcome. HTTP 404 or 410 means the file is missing, so an
+immediate retry is unlikely to help; 5xx, 408 and 429 indicate a temporary
+service failure. The status does not establish the underlying cause or guarantee
+that retrying will succeed. Doctor and Linux launches report the same request
+and status when publisher verification cannot download the current package.
 
 Hopper metadata and package downloads require HTTPS throughout the redirect
-chain; a redirect to HTTP is refused before that destination is requested.
+chain; a redirect to HTTP or to a URL carrying credentials is refused before
+that destination is requested, and those credentials are not reported.
 
 On macOS, approved setup downloads the official DMG, checks its published size
 and digest, validates the application bundle, and atomically installs it to
@@ -1314,7 +1321,8 @@ fails with `provider_timeout` and that message; other Ghidra tools stay
 available. If the caller also cancels while the timeout settles, the session
 still closes and the message says so. Session reuse concerns an active MCP or
 library session; a standalone CLI command still closes its own session when it
-finishes. In MCP, `ghidra.decompile_timeout_seconds` can override the launch
+finishes, so its timeout names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` for a new
+invocation instead. In MCP, `ghidra.decompile_timeout_seconds` can override the launch
 value for newly accepted operations on the existing Program; explicit `null`
 removes the deadline. A transient timeout remains uncached so the same function
 can be retried after an update. See the

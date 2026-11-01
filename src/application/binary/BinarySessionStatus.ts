@@ -72,11 +72,7 @@ export const currentRouteCapability = (
   const unavailable = runtimeUnavailability.get(descriptor.operation);
   return unavailable === undefined
     ? descriptor
-    : {
-        ...descriptor,
-        available: false as const,
-        reason: unavailable.reason,
-      };
+    : runtimeUnavailable(descriptor, unavailable.reason);
 };
 
 /** Project internal provider routing state into the caller-visible session status. */
@@ -185,6 +181,19 @@ export const binarySessionStatus = async ({
         ...common,
         ...binaryTargetSummary(target),
       };
+};
+
+/** A runtime observation replaces the declared state and its repair instruction. */
+const runtimeUnavailable = (
+  descriptor: CapabilityDescriptor,
+  reason: string,
+): CapabilityDescriptor => {
+  if (descriptor.available) {
+    const { availabilityCode: _available, ...declared } = descriptor;
+    return { ...declared, available: false, reason };
+  }
+  const { remediation: _superseded, ...declared } = descriptor;
+  return { ...declared, reason };
 };
 
 /** Capability surfaces a registration may narrow without hiding provider facts. */
@@ -347,7 +356,11 @@ type CapabilityProjection = Omit<
   "operation" | "available" | "reason"
 > & { readonly operation: string } & (
     | { readonly available: true; readonly reason: null }
-    | { readonly available: false; readonly reason: string }
+    | {
+        readonly available: false;
+        readonly reason: string;
+        readonly remediation?: string;
+      }
   );
 type ProviderCapabilityGroup = ProviderCapabilitySet["groups"][number];
 
@@ -397,6 +410,9 @@ export const providerCapabilitySets = (
             available: false as const,
             reason: descriptor.reason,
             availability_code: availabilityCode,
+            ...(descriptor.remediation === undefined
+              ? {}
+              : { remediation: descriptor.remediation }),
           };
       const key = JSON.stringify([
         effects,
@@ -404,6 +420,7 @@ export const providerCapabilitySets = (
         status.available,
         status.reason,
         status.availability_code,
+        status.available ? null : (status.remediation ?? null),
       ]);
       const group = groups.get(key);
       if (group === undefined)

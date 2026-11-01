@@ -263,6 +263,11 @@ type CapabilityAvailability =
       readonly available: false;
       readonly reason: string;
       readonly availabilityCode?: ProviderRejectionCode;
+      /**
+       * Repair instruction from the readiness owner that made this operation
+       * unavailable. Static capability facts omit it.
+       */
+      readonly remediation?: string;
     };
 
 export type CapabilityDescriptor = CapabilityAvailability & {
@@ -309,7 +314,10 @@ export type ProviderAvailability =
   | {
       readonly status: "unavailable";
       readonly code: ProviderRejectionCode;
+      /** What the owner observed; not a repair instruction. */
       readonly reason: string;
+      /** The owner's repair instruction for this exact failure. */
+      readonly remediation: string;
       readonly diagnostics: Readonly<Record<string, JsonValue>>;
     };
 
