@@ -435,6 +435,11 @@ posix.each(["cancellation", "deadline"] as const)(
       );
       if (interruption === "cancellation")
         expect(result.error.cause).toBe("stop the lookup");
+      // The candidate it was checking names the location that stalled.
+      expect(result.error.diagnostics).toEqual({
+        phase: "executable_lookup",
+        executable_lookup_candidate: executable,
+      });
       expect(run).not.toHaveBeenCalled();
       // Closing does not wait for the abandoned file-system call.
       await within(service.close(), "service close");

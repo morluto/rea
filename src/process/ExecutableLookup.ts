@@ -25,6 +25,8 @@ export type ExecutableLookup =
   | {
       readonly status: "interrupted";
       readonly by: "cancellation" | "deadline";
+      /** The path being checked when the lookup stopped. */
+      readonly candidate: string;
     };
 
 /** Optional bounds for one lookup. */
@@ -96,7 +98,7 @@ export const lookupExecutable = async (
         continue;
       }
       const metadata = await interruption.race(stat(candidate));
-      if (metadata.status === "interrupted") return metadata;
+      if (metadata.status === "interrupted") return { ...metadata, candidate };
       if (metadata.status === "rejected") {
         const code = systemErrorCode(metadata.cause);
         if (explicit && (code === "EACCES" || code === "EPERM"))
@@ -116,7 +118,8 @@ export const lookupExecutable = async (
       const executable = await interruption.race(
         access(candidate, fsConstants.X_OK),
       );
-      if (executable.status === "interrupted") return executable;
+      if (executable.status === "interrupted")
+        return { ...executable, candidate };
       if (executable.status === "fulfilled")
         return { status: "found", path: candidate };
       checked.push(

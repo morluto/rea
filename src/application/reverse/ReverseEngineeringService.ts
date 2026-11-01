@@ -909,15 +909,24 @@ export class ReverseEngineeringService {
       environment.PATH,
       { signal, timeoutMs },
     );
-    if (lookup.status === "interrupted")
+    if (lookup.status === "interrupted") {
+      // The path being checked names the PATH location that stalled.
+      const diagnostics = {
+        phase: "executable_lookup",
+        executable_lookup_candidate: lookup.candidate,
+      };
       return err(
         lookup.by === "cancellation"
-          ? new AnalysisCancelledError(operation, { cause: signal?.reason })
+          ? new AnalysisCancelledError(operation, {
+              cause: signal?.reason,
+              diagnostics,
+            })
           : new AnalysisTimeoutError(operation, timeoutMs, {
-              diagnostics: { phase: "executable_lookup" },
+              diagnostics,
               ...reverseCommandTimeoutGuidance(timeoutMs),
             }),
       );
+    }
     // The command launch reports an executable that cannot be selected.
     if (lookup.status !== "found")
       return ok(
