@@ -39,7 +39,9 @@ import type { SetupHopperInstallFailure } from "./SetupInstallFailure.js";
 import {
   throwIfSetupCancelled,
   withSetupCancellation,
+  setupOutcomeSnapshot,
 } from "./SetupCancellation.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 
 /** Discover, approve, and apply setup actions idempotently. */
 export const runSetup = async (
@@ -50,11 +52,14 @@ export const runSetup = async (
   let result: SetupResult | undefined;
   let primaryFailure: unknown;
   let threw = false;
+  const settledEffects: JsonValue[] = [];
   try {
     throwIfSetupCancelled(options.signal);
     result = await runSetupWorkflow(
       options,
-      withSetupCancellation(host, options.signal),
+      withSetupCancellation(host, options.signal, (operation, value) => {
+        settledEffects.push({ operation, result: value });
+      }),
       confirm,
     );
     throwIfSetupCancelled(options.signal);
@@ -78,6 +83,23 @@ export const runSetup = async (
     });
   }
   if (threw) {
+    if (primaryFailure instanceof AnalysisError && options.signal?.aborted)
+      primaryFailure.retainDiagnostics({
+        setup_effects: settledEffects,
+        ...(result === undefined
+          ? {}
+          : {
+              setup_result: setupOutcomeSnapshot({
+                status: result.status,
+                plannedActions: result.plannedActions,
+                appliedActions: result.appliedActions,
+                clients: result.clients,
+                remediation: result.remediation,
+                code: result.code,
+                download: result.download,
+              }),
+            }),
+      });
     if (cleanup === undefined) throw primaryFailure;
     if (primaryFailure instanceof AnalysisError)
       throw analysisErrorWithCleanupFailure(
