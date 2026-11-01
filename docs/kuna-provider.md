@@ -1,6 +1,6 @@
 # Kuna provider
 
-[Kuna](https://github.com/Noelo-Lab/kuna) is an Apache-2.0 decompiler distributed as one `kuna` executable. For a new installation, use Kuna 1.986, REA's recommended verified release. REA uses a `kuna` you supply; it does not download, install, update or bundle Kuna. REA accepts other releases, which it reports as unverified in `rea doctor` and in each analysis profile. The 1.986 real-provider checks ran on macOS arm64; Linux and other hosts have not been verified with that release.
+[Kuna](https://github.com/Noelo-Lab/kuna) is an Apache-2.0 decompiler distributed as one `kuna` executable. For a new installation, use Kuna 1.988, REA's recommended verified release. REA uses a `kuna` you supply; it does not download, install, update or bundle Kuna. REA accepts other releases, which it reports as unverified in `rea doctor` and in each analysis profile. The verified-release flag compares the reported version; it does not authenticate the executable. The 1.988 real-provider checks ran on macOS arm64; Linux and other hosts have not been verified with that release.
 
 Kuna is static: it reads the selected image and never executes it.
 

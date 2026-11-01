@@ -1581,6 +1581,11 @@ symbols and stripped on macOS arm64, including the Ghidra comparison and owned
 cleanup. Linux and other hosts have not been verified with 1.986; this check is
 not a repeat of the larger 1.833 matrix.
 
+Kuna 1.988 passed the real-provider lane on macOS arm64 with the generated
+Mach-O fixture and caller-built symbol-bearing and stripped x86-64 ELF fixtures.
+Linux and other hosts have not been verified with 1.988; this is not a repeat
+of the larger 1.833 matrix.
+
 ## DOS Ghidra analysis
 
 `npm run verify:ghidra:dos` requires the supported Ghidra and JDK installation
