@@ -1,18 +1,34 @@
 import { createHash } from "node:crypto";
 
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type {
+  BinaryTarget,
+  RawBinaryLoad,
+} from "../domain/binaryTargetTypes.js";
+import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 
 const hash = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 
-export const fixtureRawBinaryLoadImage = (): {
+/**
+ * An ARM raw-binary target, its snapshot facts and the import Ghidra reports
+ * for it, all derived from `bytes` mapped at the load's base. The default is
+ * a legacy load of an ARM `bx lr` at its entry.
+ */
+export const fixtureRawBinaryLoadImage = (
+  bytes: Buffer = Buffer.from("1eff2fe1", "hex"),
+  rawLoad: RawBinaryLoad = {
+    baseAddress: "0x8000000",
+    entryPoint: "0x8000000",
+    entrySource: { kind: "caller" },
+  },
+): {
   snapshot: { sha256: string; bytes: number };
   target: Extract<BinaryTarget, { format: "raw-binary" }>;
   observation: NativeLoadImageObservation;
 } => {
-  const bytes = Buffer.from("1eff2fe1", "hex");
   const digest = hash(bytes);
+  const last = BigInt(rawLoad.baseAddress) + BigInt(bytes.length) - 1n;
   return {
     snapshot: { sha256: digest, bytes: bytes.length },
     target: {
@@ -22,12 +38,12 @@ export const fixtureRawBinaryLoadImage = (): {
       format: "raw-binary",
       architecture: "arm",
       availableArchitectures: ["arm"],
-      entryPoint: "0x8000000",
-      entryPointSource: "0x08000000",
+      rawLoad,
     },
     observation: {
       executable_format: "Raw Binary",
-      language_id: "ARM:LE:32:v7",
+      language_id: ghidraRawBinaryLanguage("arm", rawLoad.architectureVariant)
+        .languageId,
       compiler_spec_id: "default",
       image_base: "0x0",
       default_address_space: "ram",
@@ -42,8 +58,8 @@ export const fixtureRawBinaryLoadImage = (): {
       mappings: [
         {
           block: "ram",
-          start: "0x8000000",
-          end: "0x8000003",
+          start: rawLoad.baseAddress,
+          end: `0x${last.toString(16)}`,
           address_space: "ram",
           initialized: true,
           loaded: true,
@@ -58,7 +74,7 @@ export const fixtureRawBinaryLoadImage = (): {
         },
       ],
       relocations: [],
-      entry_points: ["0x8000000"],
+      entry_points: [rawLoad.entryPoint],
       entry_context: [],
     },
   };

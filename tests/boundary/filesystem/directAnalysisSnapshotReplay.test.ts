@@ -558,9 +558,11 @@ const verifyWindowsSnapshotAdmission = async (
   const arguments_ = { pattern: "fixture", document: "fixture" };
   const options = {
     snapshotPath: fixture.snapshotPath,
-    formatHint: "raw-binary" as const,
-    architecture: "6502" as const,
-    entryPoint: "0x8001",
+    loadSelection: {
+      format: "raw-binary" as const,
+      architecture: "6502" as const,
+      entryPoint: "0x8001",
+    },
   };
   const first = await runDirectAnalysis(
     dependencies,

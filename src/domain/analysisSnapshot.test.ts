@@ -22,6 +22,11 @@ import {
   RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
+import {
+  admittedRawLoad,
+  rawLoadAtEntry,
+  vectorTableWords,
+} from "./rawBinary.fixture.js";
 
 const snapshotWithHistoricalEvidence = () => {
   const target = snapshotTarget(ANALYSIS_SNAPSHOT_TARGET);
@@ -143,27 +148,46 @@ describe("analysis snapshot target identity", () => {
   );
 
   it("partitions raw snapshots and query identities by the canonical entry", () => {
-    const target: BinaryTarget = {
+    const target: Extract<BinaryTarget, { format: "raw-binary" }> = {
       path: "/fixture/image.bin",
       sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
       kind: "executable",
       format: "raw-binary",
       architecture: "arm",
       availableArchitectures: ["arm"],
-      entryPoint: "0x8000000",
-      entryPointSource: "0x08000000",
+      rawLoad: {
+        baseAddress: "0x8000000",
+        entryPoint: "0x8000000",
+        entrySource: { kind: "caller" },
+      },
     };
     const snapshot = snapshotTarget(target);
     const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
-    const changed = {
+    // Pinned at d6f88becd: a load based at its caller-selected entry keeps
+    // this snapshot target and query identity.
+    expect(snapshot).toStrictEqual({
+      sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+      kind: "executable",
+      architecture: "arm",
+      format: "raw-binary",
+      entry_point: "0x8000000",
+    });
+    expect(analysisQueryId(snapshot, binding, "list_procedures", {})).toBe(
+      "query_01cf2c417f0eeab7c65168418bd10966431dd38b7c977191e7e9379088dc2c20",
+    );
+    const changed: Extract<BinaryTarget, { format: "raw-binary" }> = {
       ...target,
-      entryPoint: "0x9000000",
-      entryPointSource: "0x09000000",
+      rawLoad: {
+        baseAddress: "0x9000000",
+        entryPoint: "0x9000000",
+        entrySource: { kind: "caller" },
+      },
     };
+    // Another spelling of the same entry is the same load.
     expect(
       snapshotMatchesTarget(snapshot, {
         ...target,
-        entryPointSource: "0x8000000",
+        rawLoad: rawLoadAtEntry("0x08000000"),
       }),
     ).toBe(true);
     expect(snapshotMatchesTarget(snapshot, changed)).toBe(false);
@@ -177,16 +201,92 @@ describe("analysis snapshot target identity", () => {
       workflow_entries: [],
       evidence_bundle: createEvidenceBundle([]),
     });
-    expect(parsed.target).toHaveProperty("entry_point", target.entryPoint);
+    expect(parsed.target).toHaveProperty(
+      "entry_point",
+      target.rawLoad.entryPoint,
+    );
     const { entry_point: _entry, ...legacy } = {
       ...snapshot,
-      entry_point: target.entryPoint,
+      entry_point: target.rawLoad.entryPoint,
     };
     expect(
       analysisSnapshotSchema.safeParse({ ...parsed, target: legacy }).success,
     ).toBe(false);
     expect(snapshotTarget(ANALYSIS_SNAPSHOT_TARGET)).not.toHaveProperty(
       "entry_point",
+    );
+  });
+});
+
+describe("analysis snapshot M-profile raw identity", () => {
+  const target = (
+    baseAddress: string,
+  ): Extract<BinaryTarget, { format: "raw-binary" }> => ({
+    path: "/fixture/flash.bin",
+    sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+    kind: "executable",
+    format: "raw-binary",
+    architecture: "arm",
+    availableArchitectures: ["arm"],
+    rawLoad: admittedRawLoad(
+      {
+        architecture: "arm",
+        architectureVariant: "armv7-m",
+        entryPoint: undefined,
+        baseAddress,
+        fileBytes: 0x400,
+      },
+      vectorTableWords(0x20005000, 0x080001c5),
+    ),
+  });
+
+  it("commits the resolved load and keeps spellings out of identity", () => {
+    const snapshot = snapshotTarget(target("0x08000000"));
+    expect(snapshot).toStrictEqual({
+      sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+      kind: "executable",
+      architecture: "arm",
+      format: "raw-binary",
+      entry_point: "0x80001c4",
+      raw_load: {
+        version: 1,
+        base_address: "0x8000000",
+        architecture_variant: "armv7-m",
+        vector_table_address: "0x8000000",
+        entries: [
+          {
+            address: "0x80001c4",
+            isa_mode: "thumb",
+            role: "reset",
+            basis: "vector-table",
+          },
+        ],
+      },
+    });
+    const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+    expect(
+      analysisSnapshotSchema.parse({
+        target: snapshot,
+        binding,
+        entries: [],
+        workflow_entries: [],
+        evidence_bundle: createEvidenceBundle([]),
+      }).target,
+    ).toStrictEqual(snapshot);
+    expect(snapshotMatchesTarget(snapshot, target("0x8000000"))).toBe(true);
+  });
+
+  it("partitions by base and from a legacy load at the same entry", () => {
+    const snapshot = snapshotTarget(target("0x08000000"));
+    const moved = target("0x07ffff00");
+    expect(moved.rawLoad.entryPoint).toBe("0x80001c4");
+    expect(snapshotMatchesTarget(snapshot, moved)).toBe(false);
+    if (snapshot.format !== "raw-binary") throw new Error("expected raw");
+    const { raw_load: _identity, ...legacy } = snapshot;
+    expect(snapshotMatchesTarget(legacy, target("0x08000000"))).toBe(false);
+    const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+    expect(analysisQueryId(snapshot, binding, "list_procedures", {})).not.toBe(
+      analysisQueryId(legacy, binding, "list_procedures", {}),
     );
   });
 });

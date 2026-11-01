@@ -15,8 +15,10 @@ import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import {
   directAnalysisOptionsFromCli,
+  nativeLoadSelectionFromCli,
   nativeOpenOptionFields,
   snapshotSelectionOption,
+  type NativeOpenCliFlags,
 } from "./options.js";
 import type { CliInstance } from "./types.js";
 import {
@@ -33,7 +35,6 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { javascriptApplicationOptions } from "../cliObservationOptions.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { localPathStringSchema } from "../domain/localPath.js";
-import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.js";
 
@@ -255,19 +256,11 @@ const registerDecompileCommand = (
 /** Select static JavaScript analysis only when no binary-analysis option applies. */
 const routesToJavaScriptAnalysis = async (
   path: string,
-  options: {
-    readonly snapshot?: string | undefined;
-    readonly "target-format"?: ExecutableFormatHint | undefined;
-    readonly architecture?: string | undefined;
-    readonly "entry-point"?: string | undefined;
-    readonly provider?: string | undefined;
-  },
+  options: NativeOpenCliFlags,
 ): Promise<boolean> =>
   options.provider === undefined &&
   options.snapshot === undefined &&
-  options["target-format"] === undefined &&
-  options.architecture === undefined &&
-  options["entry-point"] === undefined &&
+  Object.keys(nativeLoadSelectionFromCli(options)).length === 0 &&
   (await isJavaScriptApplicationPath(path));
 
 const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {

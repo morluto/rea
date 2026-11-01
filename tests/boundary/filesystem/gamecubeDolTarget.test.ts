@@ -14,7 +14,7 @@ describe("gamecube-dol admission", () => {
     await writeFile(join(directory, "game.dol"), bytes);
     const target = await parseBinaryTarget("game.dol", {
       cwd: directory,
-      formatHint: "gamecube-dol",
+      loadSelection: { format: "gamecube-dol" },
     });
     expect(target).toMatchObject({
       ok: true,
@@ -38,8 +38,7 @@ describe("gamecube-dol admission", () => {
     await writeFile(join(directory, "game.dol"), buildGamecubeDol());
     const target = await parseBinaryTarget("game.dol", {
       cwd: directory,
-      formatHint: "gamecube-dol",
-      architecture: "x86",
+      loadSelection: { format: "gamecube-dol", architecture: "x86" },
     });
     expect(target.ok).toBe(false);
     if (!target.ok)
@@ -53,8 +52,7 @@ describe("gamecube-dol admission", () => {
     await writeFile(join(directory, "game.dol"), buildGamecubeDol());
     const target = await parseBinaryTarget("game.dol", {
       cwd: directory,
-      formatHint: "gamecube-dol",
-      entryPoint: "0x80003104",
+      loadSelection: { format: "gamecube-dol", entryPoint: "0x80003104" },
     });
     expect(target.ok).toBe(false);
     if (!target.ok)
@@ -68,7 +66,7 @@ describe("gamecube-dol admission", () => {
     await writeFile(join(directory, "bad.dol"), Buffer.alloc(0x100));
     const target = await parseBinaryTarget("bad.dol", {
       cwd: directory,
-      formatHint: "gamecube-dol",
+      loadSelection: { format: "gamecube-dol" },
     });
     expect(target.ok).toBe(false);
     if (!target.ok)
@@ -89,7 +87,7 @@ describe("gamecube-dol admission", () => {
     await truncate(path, 2 * 1024 ** 3);
     const target = await parseBinaryTarget("huge.dol", {
       cwd: directory,
-      formatHint: "gamecube-dol",
+      loadSelection: { format: "gamecube-dol" },
     });
     expect(target.ok).toBe(false);
     if (!target.ok)

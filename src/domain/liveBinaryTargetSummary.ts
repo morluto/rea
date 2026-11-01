@@ -8,8 +8,11 @@ import {
 import { digestSchema } from "./digests.js";
 import {
   binaryArchitectureSchema,
+  rawBinaryBaseAddressSchema,
   rawBinaryEntryPointSchema,
+  rawBinaryVectorTableAddressSchema,
 } from "./rawBinary.js";
+import { architectureVariantSchema } from "./architectureVariant.js";
 import { ZIP_PACKAGE_FORMATS } from "./zipPackageFormat.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
@@ -47,8 +50,19 @@ export const liveBinaryTargetSummaryVariants = [
     format: z.literal("raw-binary"),
     architecture: binaryArchitectureSchema,
     entry_point: rawBinaryEntryPointSchema.describe(
-      "Canonical caller-selected address where raw file offset 0 is mapped and execution is seeded.",
+      "Canonical code entry where execution is seeded. Raw file offset 0 is also mapped here unless base_address is present.",
     ),
+    base_address: rawBinaryBaseAddressSchema
+      .exactOptional()
+      .describe(
+        "Canonical address of raw file offset 0. Present when the load names a separate base or an architecture_variant.",
+      ),
+    architecture_variant: architectureVariantSchema.exactOptional(),
+    vector_table_address: rawBinaryVectorTableAddressSchema
+      .exactOptional()
+      .describe(
+        "Canonical address of the vector table whose Reset word gave entry_point. Present only when entry_point was omitted.",
+      ),
   }),
   z.object({
     ...executable,

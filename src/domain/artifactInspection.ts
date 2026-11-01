@@ -417,10 +417,11 @@ const fitProbes = (
       entryPoint: image.load,
       fileBytes: row.declared_size,
     });
-    if (!admitted.ok) continue;
+    // A selected entry never leaves admission waiting on a vector-table read.
+    if (!admitted.ok || "admit" in admitted.value) continue;
     rawProbe = {
       operation: "open_binary",
-      rationale: `Extract ${JSON.stringify(row.logical_path)} with extract_artifact, then open those uncompressed, unciphered bytes with format raw-binary, architecture ${admitted.value.architecture} and entry_point ${admitted.value.entryPoint}. This maps offset 0 and seeds analysis at that address; the declared entry is absent or equal to load.`,
+      rationale: `Extract ${JSON.stringify(row.logical_path)} with extract_artifact, then open those uncompressed, unciphered bytes with format raw-binary, architecture ${admitted.value.architecture} and entry_point ${admitted.value.load.entryPoint}. This maps offset 0 and seeds analysis at that address; the declared entry is absent or equal to load.`,
       authority: "native-analysis-provider",
     };
     break;

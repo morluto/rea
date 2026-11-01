@@ -713,7 +713,7 @@ describe("binary target I/O: ESP flash layouts", () => {
     ]);
     expect(
       await parseBinaryTarget(partial, {
-        formatHint: "esp-flash-image",
+        loadSelection: { format: "esp-flash-image" },
         espFlash: { flashOffset: 0x1000 },
       }),
     ).toMatchObject({
@@ -735,7 +735,7 @@ describe("binary target I/O: ESP flash layouts", () => {
       ],
       [
         {
-          formatHint: "esp-flash-image",
+          loadSelection: { format: "esp-flash-image" },
           espFlash: { partitionTableOffset: 0x8800 },
         },
         "partition_table_offset must be a multiple of 0x1000, as ESP-IDF requires",
@@ -751,7 +751,9 @@ describe("binary target I/O: ESP flash layouts", () => {
       });
     // Ciphertext is not recognized as a layout: unknown, not malformed.
     expect(
-      await parseBinaryTarget(noise, { formatHint: "esp-flash-image" }),
+      await parseBinaryTarget(noise, {
+        loadSelection: { format: "esp-flash-image" },
+      }),
     ).toMatchObject({
       ok: false,
       error: {

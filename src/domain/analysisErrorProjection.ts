@@ -745,6 +745,7 @@ const lifecycleErrorDetails = (
       ...(error.constraint === undefined
         ? {}
         : { constraint: error.constraint }),
+      ...(error.field === undefined ? {} : { field: error.field }),
       ...(error.infoPlist === undefined ? {} : { info_plist: error.infoPlist }),
       ...(error.probedPaths === undefined
         ? {}
