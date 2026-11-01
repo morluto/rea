@@ -146,7 +146,11 @@ export const execFileFailureCapturedOutput = (
   ...(failure.stderrBytes === undefined
     ? {}
     : { stderr_bytes: failure.stderrBytes }),
-  exit_code: typeof failure.code === "number" ? failure.code : null,
+  // An exit status of output that was not fully collected is not reported.
+  exit_code:
+    failure.collectionFailure !== true && typeof failure.code === "number"
+      ? failure.code
+      : null,
   signal: failure.signal,
   truncated: failure.outputTruncated,
   ...capturedInvalidUtf8(failure),

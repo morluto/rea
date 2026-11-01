@@ -536,6 +536,48 @@ posix(
 );
 
 posix(
+  "reports no exit status in a probe's captured output when that output was not fully collected",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    let stopped = false;
+    const owner = {
+      stop: async () =>
+        stopped
+          ? { status: "stopped" as const }
+          : { status: "incomplete" as const, reason: "probe still running" },
+    } as unknown as ProviderProcessSupervisor;
+    const runOwned = vi.fn(
+      async (request: { readonly arguments: readonly string[] }) => {
+        if (request.arguments[0] !== "-v") return providerSnapshot();
+        // The probe exits 0, but neither its output nor its cleanup completes.
+        throw new OwnedCommandFailure(
+          "process",
+          "probe output and cleanup failed",
+          providerSnapshot({
+            stdout: { text: "", bytes: 0, observedBytes: 0 },
+          }),
+          "probe still running",
+          { collectionFailure: true },
+          ["pid:9"],
+          owner,
+        );
+      },
+    );
+    const service = new TestReverseEngineeringService({
+      runOwned,
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: executable },
+    });
+    const result = await service.executeRizinCommand({ path, command: "iI" });
+    if (result.ok) throw new Error("Expected the probe's cleanup to end it");
+    expect(result.error._tag).toBe("AnalysisOutputError");
+    expect(result.error.capturedOutput).toMatchObject({ exit_code: null });
+    stopped = true;
+    expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
+  },
+);
+
+posix(
   "ends the call without running anything when hashing the executable reaches the deadline",
   async () => {
     const { executable, path } = await rizinExecutableFixture();
