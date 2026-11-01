@@ -44,6 +44,7 @@ const checkElfVisibility = async (
       .normalized_result,
   ).toMatchObject({
     items: [{ source_index: 1, visibility: "protected" }],
+    unknowns: [],
   });
   const report = nativeExportsSchema.parse(parent.normalized_result);
   if (report.format !== "elf") throw new Error("Expected ELF report");
