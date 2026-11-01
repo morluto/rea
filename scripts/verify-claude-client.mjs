@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { createCatalogIdentity } from "../dist/catalogIdentity.js";
@@ -308,7 +308,8 @@ await withVerifierCleanup(async () => {
             parsed.plannedActions.every(
               (a) =>
                 a.target === configPath ||
-                isPathWithinRoot(skillDirectory, a.target),
+                (isAbsolute(a.target) &&
+                  isPathWithinRoot(skillDirectory, a.target)),
             ),
           );
         }

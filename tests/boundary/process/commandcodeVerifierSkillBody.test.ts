@@ -27,7 +27,7 @@ posix.each([
       const commands = String.raw`
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { TOOL_CONTRACTS } from "REPLACE_CONTRACTS";
+import { TOOL_CONTRACTS } from REPLACE_CONTRACTS;
 
 let setup = 0;
 export async function createVerifierCommands() {
@@ -75,8 +75,8 @@ export async function createVerifierCommands() {
 }
 `.replace(
         "REPLACE_CONTRACTS",
-        fileURLToPath(
-          new URL("../../../dist/contracts/toolContracts.js", import.meta.url),
+        JSON.stringify(
+          new URL("../../../dist/contracts/toolContracts.js", import.meta.url).href,
         ),
       );
       await writeFile(join(state, "commands.mjs"), commands);
