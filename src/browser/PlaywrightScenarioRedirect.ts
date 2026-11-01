@@ -21,14 +21,18 @@ export type ScenarioRedirectResponse = Omit<
 
 /** A request step's redirect answer, as the browser's network service reported it. */
 export interface ScenarioRedirectObservation {
-  /** Whether the redirect response was handed to the network capture. */
+  /** Whether the step's own redirect response was handed to the network capture; false once attribution is in doubt. */
   delivered(): boolean;
   stop(): Promise<void>;
 }
 
+/** The statuses Fetch redirects on; other 3xx answers, such as 300, are ordinary responses. */
+const FETCH_REDIRECT_STATUSES: ReadonlySet<number> = new Set([
+  301, 302, 303, 307, 308,
+]);
+
 const isRedirect = (answer: RedirectAnswer): boolean =>
-  answer.status >= 300 &&
-  answer.status < 400 &&
+  FETCH_REDIRECT_STATUSES.has(answer.status) &&
   Object.keys(answer.headers).some((name) => name.toLowerCase() === "location");
 
 /**
@@ -43,9 +47,6 @@ const redirectResponse = (
   request: Request,
   answer: RedirectAnswer,
 ): ScenarioRedirectResponse => {
-  const headersArray = Object.entries(answer.headers).flatMap(([name, value]) =>
-    value.split("\n").map((single) => ({ name, value: single })),
-  );
   return {
     request: () => request,
     url: () => request.url(),
@@ -60,7 +61,11 @@ const redirectResponse = (
           ];
         }),
       ),
-    headersArray: async () => headersArray,
+    // Expanded only when the capture selects header values and admits them.
+    headersArray: async () =>
+      Object.entries(answer.headers).flatMap(([name, value]) =>
+        value.split("\n").map((single) => ({ name, value: single })),
+      ),
     body: () =>
       Promise.reject(new Error("A redirect response has no readable body.")),
   };
@@ -156,7 +161,7 @@ export const observeScenarioRedirect = async (input: {
   page.on("request", onRequest);
 
   return {
-    delivered: () => delivered,
+    delivered: () => delivered && !ambiguous,
     stop: async () => {
       page.off("request", onRequest);
       session.off("Network.requestWillBeSent", onWillBeSent);

@@ -95,8 +95,9 @@ describe("request step redirect observation", () => {
     dispatch(session);
     answer(session, 307, { location: "/next" });
     expect(responses).toHaveLength(0);
-    emitter.emit("request", fakeRequest());
-    emitter.emit("request", fakeRequest());
+    const request = fakeRequest();
+    emitter.emit("request", request);
+    emitter.emit("request", request);
     expect(responses).toHaveLength(1);
     expect(observation!.delivered()).toBe(true);
     await observation!.stop();
@@ -109,6 +110,8 @@ describe("request step redirect observation", () => {
     emitter.emit("request", fakeRequest());
     answer(session, 200, { location: "/x" });
     answer(session, 304, { etag: "v1" });
+    // Fetch does not redirect on 300; its answer is an ordinary response.
+    answer(session, 300, { location: "/choices" });
     answer(session, 302, {});
     answer(session, 302, { location: "/other" }, "9.9");
     expect(responses).toHaveLength(0);
@@ -126,6 +129,18 @@ describe("request step redirect observation", () => {
     emitter.emit("request", fakeRequest());
     answer(session, 302, { location: "/destination" }, "1.1");
     expect(responses).toHaveLength(0);
+    expect(observation!.delivered()).toBe(false);
+    await observation!.stop();
+  });
+
+  it("withdraws its claim when a second identical dispatch follows an early answer", async () => {
+    const { page, emitter, session, responses } = setup();
+    const observation = await observe(page, responses);
+    dispatch(session, "1.1");
+    emitter.emit("request", fakeRequest());
+    answer(session, 302, { location: "/background" }, "1.1");
+    expect(observation!.delivered()).toBe(true);
+    dispatch(session, "1.2");
     expect(observation!.delivered()).toBe(false);
     await observation!.stop();
   });
@@ -156,5 +171,32 @@ describe("request step redirect observation", () => {
     const { page: enabling } = setup(session);
     await expect(observe(enabling, [])).resolves.toBeUndefined();
     expect(session.detach).toHaveBeenCalledOnce();
+  });
+
+  it("detaches a session that attaches after the bounded wait, without delivering anything", async () => {
+    vi.useFakeTimers();
+    try {
+      const session = new FakeSession();
+      let attach: (value: FakeSession) => void = () => {};
+      const slow = new Promise<FakeSession>((resolve) => {
+        attach = resolve;
+      });
+      const page = Object.assign(new EventEmitter(), {
+        context: () => ({ newCDPSession: () => slow }),
+      }) as unknown as Page;
+      const responses: ScenarioRedirectResponse[] = [];
+      const pending = observe(page, responses);
+      await vi.advanceTimersByTimeAsync(2_500);
+      await expect(pending).resolves.toBeUndefined();
+      expect(session.detach).not.toHaveBeenCalled();
+      attach(session);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(session.detach).toHaveBeenCalledOnce();
+      dispatch(session);
+      answer(session, 302, { location: "/destination" });
+      expect(responses).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
