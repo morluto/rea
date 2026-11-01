@@ -1,10 +1,20 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
-import { inventoryArtifact } from "../../../tests/fixtures/artifactInventory.js";
+import {
+  inventoryArtifact,
+  withArtifactResourceScope,
+} from "../../../tests/fixtures/artifactInventory.js";
+import { extractArtifact } from "../extraction/ArtifactExtraction.js";
+import {
+  artifactEdgeId,
+  artifactGraphDigest,
+  artifactIdForContent,
+  artifactManifestId,
+} from "../../domain/artifactIdentity.js";
 import { compareArtifacts } from "../../domain/artifactComparison.js";
 import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEvidence.js";
 import { projectAppleInventory } from "../../domain/apple/appleApplication.js";
@@ -238,4 +248,173 @@ describe("directly selected executable formats", () => {
       expect(embedded).toEqual(direct);
     },
   );
+});
+
+type Inventory = Awaited<ReturnType<typeof inventoryArtifact>>;
+
+const zipInventoryEvidence = (path: string, inventory: Inventory) =>
+  createEvidence(
+    { path, sha256: inventory.manifest.root_sha256, format: "zip" },
+    { id: "rea-artifact-graph", name: "artifact inventory", version: "1" },
+    {
+      operation: "inventory_artifact",
+      parameters: {},
+      result: inventory,
+      confidence: "observed",
+      authority: "shipped-artifact",
+    },
+  );
+
+// Identifiers are ASCII, so code-unit order is the canonical order.
+const byCodeUnit = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+/**
+ * Rebuild an inventory page as earlier releases committed it, when virtual
+ * directory nodes shared the raw-content identity domain.
+ */
+const withLegacyVirtualIdentities = (current: Inventory): Inventory => {
+  const legacyId = new Map(
+    current.nodes
+      .filter((node) => node.content_state === "virtual")
+      .map((node) => [node.artifact_id, artifactIdForContent(node.sha256)]),
+  );
+  const relabel = <T extends string | null>(id: T): T =>
+    ((id !== null ? legacyId.get(id) : undefined) ?? id) as T;
+  const nodes = current.nodes
+    .map((node) => ({ ...node, artifact_id: relabel(node.artifact_id) }))
+    .sort((left, right) => byCodeUnit(left.artifact_id, right.artifact_id));
+  const occurrences = current.occurrences.map((occurrence) => ({
+    ...occurrence,
+    artifact_id: relabel(occurrence.artifact_id),
+  }));
+  const edges = current.edges
+    .map((edge) => {
+      const occurrence = occurrences.find(
+        (item) => item.occurrence_id === edge.occurrence_id,
+      );
+      const parent_artifact_id = relabel(edge.parent_artifact_id);
+      return {
+        ...edge,
+        parent_artifact_id,
+        edge_id:
+          occurrence === undefined
+            ? edge.edge_id
+            : artifactEdgeId({ ...edge, parent_artifact_id }, occurrence),
+      };
+    })
+    .sort((left, right) => byCodeUnit(left.edge_id, right.edge_id));
+  const graph_sha256 = artifactGraphDigest({
+    nodes,
+    occurrences,
+    edges,
+    contradictions: current.integrity_contradictions,
+  });
+  return {
+    ...current,
+    nodes,
+    occurrences,
+    edges,
+    manifest: {
+      ...current.manifest,
+      graph_sha256,
+      manifest_id: artifactManifestId(
+        current.manifest.root_artifact_id,
+        graph_sha256,
+      ),
+    },
+  };
+};
+
+const writeZip = async (
+  prefix: string,
+  entries: readonly (readonly [name: string, content: string | null])[],
+) => {
+  const directory = await createTestTempDirectory(prefix);
+  const path = join(directory, "fixture.zip");
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  const options = { lastModDate: new Date("2020-01-01T00:00:00Z") };
+  for (const [name, content] of entries)
+    await (content === null
+      ? writer.add(name, undefined, { ...options, directory: true })
+      : writer.add(name, new TextReader(content), options));
+  await writeFile(path, await writer.close());
+  return { directory, path };
+};
+
+describe("virtual directory identity", () => {
+  // The exact canonical JSON hashed to fingerprint an empty directory.
+  const directoryFingerprint = '{"children":[],"kind":"directory"}';
+
+  it.each([
+    ["directory-first", false],
+    ["file-first", true],
+  ] as const)(
+    "keeps a file holding a directory fingerprint distinct from the directory (%s)",
+    async (_order, fileFirst) => {
+      const entries = [
+        ["empty/", null],
+        ["payload.json", directoryFingerprint],
+      ] as const;
+      const { directory, path } = await writeZip(
+        "rea-virtual-identity-",
+        fileFirst ? [...entries].reverse() : entries,
+      );
+      const inventory = await inventoryArtifact(path);
+      const node = (logicalPath: string) => {
+        const occurrence = inventory.occurrences.find(
+          (item) => item.logical_path === logicalPath,
+        );
+        return inventory.nodes.find(
+          (item) => item.artifact_id === occurrence?.artifact_id,
+        );
+      };
+      const file = node("payload.json");
+      const empty = node("empty");
+      expect(file).toMatchObject({
+        format: "file",
+        size: Buffer.byteLength(directoryFingerprint),
+        content_state: "embedded",
+      });
+      expect(empty).toMatchObject({
+        format: "directory",
+        size: 0,
+        content_state: "virtual",
+      });
+      // Same digest input, different representation: identities must differ.
+      expect(empty?.sha256).toBe(file?.sha256);
+      expect(empty?.artifact_id).not.toBe(file?.artifact_id);
+      expect(() =>
+        parseArtifactInventoryEvidence(zipInventoryEvidence(path, inventory)),
+      ).not.toThrow();
+
+      const output = join(directory, "out");
+      await withArtifactResourceScope((resourceScope) =>
+        extractArtifact({
+          inputPath: path,
+          inputFormat: "zip",
+          outputRoot: output,
+          environment: {},
+          integrityPolicy: "fail",
+          resourceScope,
+        }),
+      );
+      expect(await readFile(join(output, "payload.json"), "utf8")).toBe(
+        directoryFingerprint,
+      );
+    },
+  );
+
+  it("still accepts retained Evidence with a legacy virtual directory identity", async () => {
+    const { path } = await writeZip("rea-legacy-identity-", [
+      ["empty/", null],
+      ["payload.txt", "payload\n"],
+    ]);
+    const current = await inventoryArtifact(path);
+    const legacy = withLegacyVirtualIdentities(current);
+    expect(legacy.nodes).not.toEqual(current.nodes);
+    expect(() =>
+      parseArtifactInventoryEvidence(zipInventoryEvidence(path, legacy)),
+    ).not.toThrow();
+  });
 });
