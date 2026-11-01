@@ -108,3 +108,4 @@ jobs:
           npm ci
           npm run build:cached
           node scripts/verify-real-ghidra-warning-attribution.mjs
+          npm run test:focused -- src/ghidra/GhidraRawProfileDigest.test.ts src/ghidra/GhidraProvider.behavior.test.ts src/ghidra/GhidraSnapshotCache.test.ts

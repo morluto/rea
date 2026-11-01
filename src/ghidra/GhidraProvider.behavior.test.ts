@@ -455,6 +455,7 @@ describe("Ghidra raw-binary profile", () => {
       entry_point: "0x8001",
       language_selection: "caller-supplied-v1",
       load_image_evidence: "independent-raw-mapping-context-v4",
+      indirect_branch_inventory: "listing-computed-jumps-typed-warning-address-v2",
     });
     expect(
       ghidra
@@ -1159,6 +1160,7 @@ describe("Ghidra client projection", () => {
       compiler_spec_id: "auto-default",
       call_relationship_coverage: "function-body-call-coverage-v5",
       function_dossier_coverage: "observed-facets-and-call-relationships-v1",
+      indirect_branch_inventory: "listing-computed-jumps-typed-warning-address-v2",
     });
 
     const result = await ghidra

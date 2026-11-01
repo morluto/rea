@@ -49,7 +49,7 @@ describe("raw-binary analysis profile digest", () => {
         "source-mappings-entry-context-relocation-symbol-v3",
       instruction_status: "unlisted-address-without-decode-v1",
       indirect_branch_inventory:
-        "listing-computed-jumps-decompiler-comment-warnings-bounded-v2",
+        "listing-computed-jumps-typed-warning-address-v2",
       analyzer_preset: "ghidra-default",
     });
   });
