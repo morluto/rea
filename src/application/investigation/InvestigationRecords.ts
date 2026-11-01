@@ -48,6 +48,23 @@ export class InvestigationRecords
     return this.#evidence.statistics();
   }
 
+  /** Check live headroom before constructing a recovery representation. */
+  admitRecoveryObservation(
+    input: unknown,
+    operation: string,
+    additional: {
+      readonly valueBytes: number;
+      readonly serializedUtf16Bytes: number;
+    },
+  ): Result<void, AnalysisError> {
+    return admitInvestigationAuthentication(
+      input,
+      operation,
+      this.retentionPolicy,
+      additional,
+    );
+  }
+
   /** Record immutable Evidence idempotently; reject conflicting content. */
   recordEvidence(
     evidence: Evidence,

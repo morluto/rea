@@ -58,6 +58,7 @@ export const registerArtifactComparisonTool = (
           const recordedSources = recordEvidenceSources(
             (source) => session.recordEvidence(source),
             [left, right],
+            { evidence, hasEvidence: session.hasEvidence.bind(session) },
           );
           if (!recordedSources.ok)
             return server.delivery.toCallToolResult(recordedSources, contract);

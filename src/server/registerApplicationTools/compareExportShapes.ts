@@ -43,6 +43,7 @@ export const registerCompareJavaScriptExportShapesTool = (
           const recorded = recordEvidenceSources(
             options.recordEvidence,
             result.value.sources,
+            { evidence: result.value.evidence },
           );
           if (!recorded.ok)
             return server.delivery.toCallToolResult(recorded, contract);

@@ -1043,6 +1043,15 @@ Native call tracing and process capture retain available observations in
 `details.partial_observation` on failure, including when cleanup succeeds.
 The observation reports its partial coverage; cleanup details describe host
 state separately from the execution failure.
+When a completed observation cannot be published because recording a source
+failed, the original source failure remains the error. `partial_observation`
+can carry the failed source and `completed_observation` carries the completed
+result, with `source_closure: "not-established"`. A retained reference is
+reported only when its owning ledger confirms it; an inline result with
+`retention: "unknown"` makes no claim about ledger membership. If an
+observation cannot fit the MCP response, its corresponding `_omitted` detail
+reports the delivery limit. Cleanup failure and other completed source failures
+remain visible separately.
 For these tools, cancellation observed during result finalization or owned
 cleanup also returns typed cancellation with the available observations.
 A normal target exit does not establish request completion. Incomplete cleanup

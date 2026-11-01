@@ -718,6 +718,12 @@ export const createServer = (
     enhanced: () =>
       registerEnhancedTools(server, {
         ...analysisOptions,
+        ...(session === undefined
+          ? {}
+          : { hasEvidence: session.hasEvidence.bind(session) }),
+        ...(session === undefined
+          ? {}
+          : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
         analysisProfile:
           session === undefined
             ? undefined

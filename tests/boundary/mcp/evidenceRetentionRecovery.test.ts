@@ -11,6 +11,7 @@ import { BinarySession } from "../../../src/application/binary/BinarySession.js"
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { safeParseEvidence } from "../../../src/domain/evidenceValidation.js";
+import { recoveryOmissionRemediation } from "../../../src/domain/analysisErrorProjection.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -98,6 +99,12 @@ it.each(["compact", "full"] as const)(
       if (!authenticated.ok) throw authenticated.error;
       expect(session.hasEvidence(authenticated.value.evidence_id)).toBe(false);
       expect(records.statistics().evidenceRecords).toBe(0);
+      expect(error.remediation.action).toContain(
+        "Unretained Evidence is not included in the exported investigation",
+      );
+      expect(error.remediation.action).toContain(
+        "if present in this response, save it separately",
+      );
       expect(error.details).not.toHaveProperty("evidence_reference");
       const bundle = await client.callTool({
         name: "get_evidence_bundle",
@@ -168,10 +175,16 @@ it("keeps an oversized unretained observation failure bounded and the connection
         partial_observation_omitted: {
           reason: "mcp-response-limit",
           constraint: "receive-buffer",
+          retention: "unretained",
         },
       },
     });
-    expect(error.remediation.action).toContain("not retained");
+    expect(error.remediation.action).toContain(
+      recoveryOmissionRemediation("unretained"),
+    );
+    expect(error.remediation.action).toContain(
+      "if present in this response, save it separately",
+    );
     expect(error.details).not.toHaveProperty("partial_observation");
     expect(error.details).not.toHaveProperty("evidence_reference");
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(

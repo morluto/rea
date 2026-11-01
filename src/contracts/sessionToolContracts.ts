@@ -186,7 +186,7 @@ export const SESSION_TOOL_CONTRACTS = [
   },
   session(
     "inspect_address_context",
-    "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input or a resource constraint retains its canonical error and recovery alongside any successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
+    "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input, source Evidence integrity, or a resource constraint retains its canonical error and recovery alongside successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
     addressContextInputSchema,
   ),
 ] as const satisfies readonly ToolContract[];

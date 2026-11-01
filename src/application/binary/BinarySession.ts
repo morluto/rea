@@ -47,6 +47,7 @@ import {
 } from "./SessionProviderPolicy.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { recordEvidenceSources } from "../investigation/recordEvidenceSources.js";
+import { recoverProviderSourceFailure } from "../investigation/sourcePublicationRecovery.js";
 import { BinarySessionRecords } from "./BinarySessionRecords.js";
 import { binarySessionStatus } from "./BinarySessionStatus.js";
 import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
@@ -1301,8 +1302,33 @@ export class BinarySession
     arguments_: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    return this.#trackedExecute(name, arguments_, options);
+  }
+
+  /** Preserve the one-shot caller's Evidence identity if source retention fails. */
+  executeForDirectObservation(
+    name: Parameters<AnalysisOperationPort["execute"]>[0],
+    arguments_: Readonly<Record<string, JsonValue>>,
+    evidenceParameters: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    return this.#trackedExecute(name, arguments_, options, evidenceParameters);
+  }
+
+  #trackedExecute(
+    name: Parameters<AnalysisOperationPort["execute"]>[0],
+    arguments_: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+    recoveryParameters?: Readonly<Record<string, JsonValue>>,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const generation = this.#transitionGeneration;
-    const call = this.#execute(name, arguments_, options, this.#transition);
+    const call = this.#execute(
+      name,
+      arguments_,
+      options,
+      this.#transition,
+      recoveryParameters,
+    );
     this.#calls.set(call, generation);
     return call.finally(() => this.#calls.delete(call));
   }
@@ -1374,6 +1400,7 @@ export class BinarySession
     arguments_: Readonly<Record<string, JsonValue>>,
     options: ExecutionOptions | undefined,
     transition: Promise<void>,
+    recoveryParameters?: Readonly<Record<string, JsonValue>>,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const transitioned = await this.#waitForTransition(
       name,
@@ -1450,7 +1477,24 @@ export class BinarySession
         (source) => this.recordEvidence(source),
         execution.value.sourceEvidence,
       );
-      if (!sourcesRecorded.ok) return sourcesRecorded;
+      if (!sourcesRecorded.ok) {
+        recoverProviderSourceFailure({
+          error: sourcesRecorded.error,
+          operation: name,
+          parameters: recoveryParameters ?? arguments_,
+          execution: {
+            ...execution.value,
+            sourceEvidence: execution.value.sourceEvidence,
+            subject:
+              execution.value.subject === undefined
+                ? active.target
+                : execution.value.subject,
+          },
+          admit: this.admitRecoveryObservation.bind(this),
+          hasEvidence: this.hasEvidence.bind(this),
+        });
+        return sourcesRecorded;
+      }
     }
     if (
       execution.ok &&

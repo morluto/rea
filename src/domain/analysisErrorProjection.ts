@@ -49,6 +49,7 @@ import { providerRetryAction } from "./providerOperationHealth.js";
 import {
   primaryAnalysisError,
   resolvedAnalysisError,
+  sourcePublicationRecoveryOf,
   type AnalysisError,
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
@@ -57,37 +58,141 @@ import {
 export const projectAnalysisError = (
   error: AnalysisError,
 ): AnalysisErrorProjection =>
-  projectError(error, { capturedOutput: true, partialObservation: true });
+  projectError(error, {
+    capturedOutput: true,
+    partialObservation: true,
+    secondary: true,
+  });
 
 /** Cleanup history references output retained by its enclosing error owner. */
 export const projectAnalysisErrorWithoutCapturedOutput = (
   error: AnalysisError,
 ): AnalysisErrorProjection =>
-  projectError(error, { capturedOutput: false, partialObservation: true });
+  projectError(error, {
+    capturedOutput: false,
+    partialObservation: true,
+    secondary: true,
+  });
 
 /** Bounded fallback when the completed observation itself cannot be delivered. */
 export const projectAnalysisErrorWithoutPartialObservation = (
   error: AnalysisError,
 ): AnalysisErrorProjection =>
-  projectError(error, { capturedOutput: true, partialObservation: false });
+  projectError(error, {
+    capturedOutput: true,
+    partialObservation: false,
+    secondary: true,
+  });
 
-/** Omit only explicitly unretained Evidence when a complete reply cannot fit. */
+/** Cleanup diagnostics reference facts carried by the enclosing error. */
+export const projectAnalysisErrorForCleanupHistory = (
+  error: AnalysisError,
+): AnalysisErrorProjection =>
+  projectError(error, {
+    capturedOutput: false,
+    partialObservation: false,
+    secondary: false,
+  });
+
+export interface UnretainedEvidenceCandidate {
+  readonly field: "partial_observation" | "completed_observation";
+  readonly secondaryPath: readonly number[];
+  readonly value: JsonValue;
+}
+
+/** Enumerate recoveries owned by this projection, including secondary failures. */
+export function* unretainedEvidenceCandidates(
+  projected: AnalysisErrorProjection,
+  secondaryPath: readonly number[] = [],
+): Generator<UnretainedEvidenceCandidate> {
+  for (const field of [
+    "partial_observation",
+    "completed_observation",
+  ] as const) {
+    const value = projected.details?.[field];
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value) &&
+      (value.kind === "unretained-evidence" ||
+        value.kind === "unretained-observation" ||
+        value.kind === "inline-evidence")
+    )
+      yield { field, secondaryPath, value };
+  }
+  const secondary = projected.details?.secondary_failures;
+  if (!Array.isArray(secondary)) return;
+  for (const [index, failure] of secondary.entries()) {
+    if (
+      typeof failure !== "object" ||
+      failure === null ||
+      Array.isArray(failure)
+    )
+      continue;
+    const remediation = failure.remediation;
+    if (
+      typeof remediation !== "object" ||
+      remediation === null ||
+      Array.isArray(remediation) ||
+      typeof remediation.action !== "string"
+    )
+      continue;
+    yield* unretainedEvidenceCandidates(
+      failure as unknown as AnalysisErrorProjection,
+      [...secondaryPath, index],
+    );
+  }
+}
+
+/** Omit one explicitly unretained recovery when a complete reply cannot fit. */
 export const omitUnretainedEvidenceFromError = (
   projected: AnalysisErrorProjection,
   limit: {
     readonly constraint: "receive-buffer" | "string-length";
     readonly bytesAtLeast: number;
   },
+  candidate: UnretainedEvidenceCandidate,
 ): AnalysisErrorProjection | undefined => {
-  const partial = projected.details?.partial_observation;
+  const { field, secondaryPath } = candidate;
+  if (secondaryPath.length > 0) {
+    const [index, ...rest] = secondaryPath;
+    const secondary = projected.details?.secondary_failures;
+    if (!Array.isArray(secondary) || index === undefined) return undefined;
+    const failure = secondary[index];
+    if (
+      typeof failure !== "object" ||
+      failure === null ||
+      Array.isArray(failure)
+    )
+      return undefined;
+    const omitted = omitUnretainedEvidenceFromError(
+      failure as unknown as AnalysisErrorProjection,
+      limit,
+      { ...candidate, secondaryPath: rest },
+    );
+    if (omitted === undefined) return undefined;
+    return {
+      ...projected,
+      details: {
+        ...projected.details,
+        secondary_failures: secondary.map((item, i) =>
+          i === index ? omitted : item,
+        ),
+      },
+    };
+  }
+  const partial = projected.details?.[field];
   if (
     typeof partial !== "object" ||
     partial === null ||
     Array.isArray(partial) ||
-    partial.kind !== "unretained-evidence"
-  )
+    (partial.kind !== "unretained-evidence" &&
+      partial.kind !== "unretained-observation" &&
+      partial.kind !== "inline-evidence")
+  ) {
     return undefined;
-  const { partial_observation: _partial, ...details } = projected.details!;
+  }
+  const { [field]: _partial, ...details } = projected.details!;
   const evidence = partial.evidence;
   const evidenceId =
     typeof evidence === "object" &&
@@ -95,29 +200,47 @@ export const omitUnretainedEvidenceFromError = (
     !Array.isArray(evidence)
       ? evidence.evidence_id
       : undefined;
+  const retention =
+    partial.kind === "inline-evidence"
+      ? typeof partial.retention === "string"
+        ? partial.retention
+        : "unknown"
+      : "unretained";
   return {
     ...projected,
     remediation: {
-      action: `${projected.remediation.action} The completed observation was not retained and could not fit within MCP delivery limits.`,
+      action: `${projected.remediation.action} ${recoveryOmissionRemediation(retention)}`,
     },
     details: {
       ...details,
-      partial_observation_omitted: {
+      [`${field}_omitted`]: {
         reason: "mcp-response-limit",
-        retention: "unretained",
+        retention,
         constraint: limit.constraint,
         original_response_bytes_at_least: limit.bytesAtLeast,
         ...(typeof evidenceId === "string" ? { evidence_id: evidenceId } : {}),
+        ...(field === "completed_observation"
+          ? { source_closure: "not-established" }
+          : {}),
       },
     },
   };
 };
+
+/** Explain the delivered omission without inferring ledger membership. */
+export const recoveryOmissionRemediation = (retention: string): string =>
+  retention === "unretained"
+    ? "The omitted observation was not retained and could not fit within MCP delivery limits."
+    : retention === "unknown"
+      ? "The omitted observation's retention is unknown, and it could not fit within MCP delivery limits."
+      : "The observation could not fit within MCP delivery limits.";
 
 const projectError = (
   error: AnalysisError,
   options: {
     readonly capturedOutput: boolean;
     readonly partialObservation: boolean;
+    readonly secondary: boolean;
   },
 ): AnalysisErrorProjection => {
   const composed = error;
@@ -130,8 +253,30 @@ const projectError = (
     diagnosticSource = diagnosticSource.cleanupPrimary;
   const diagnostics = diagnosticSource.diagnostics;
   const capturedOutput = composed.capturedOutput ?? error.capturedOutput;
+  const publication = sourcePublicationRecoveryOf(composed);
+  const secondary = new Set<AnalysisError>();
+  for (
+    let owner: AnalysisError | undefined = composed;
+    owner !== undefined;
+    owner = owner.cleanupPrimary
+  ) {
+    for (const failure of owner.secondaryFailures) secondary.add(failure);
+  }
   const partialObservation =
-    composed.partialObservation ?? error.partialObservation;
+    composed.partialObservation ??
+    error.partialObservation ??
+    publication?.source;
+  const completedSourceObservation =
+    publication?.completed.kind === "omitted"
+      ? undefined
+      : publication?.completed;
+  const completedSourceOmission =
+    publication?.completed.kind === "omitted"
+      ? {
+          reason: publication.completed.reason,
+          source_closure: publication.completed.source_closure,
+        }
+      : undefined;
   // A finalizer can add a report above the semantic primary, including while
   // its cleanup is pending or beneath another cleanup composition.
   let cleanupReport = composed.cleanupReport;
@@ -150,6 +295,13 @@ const projectError = (
   const details = {
     ...primaryDetails,
     ...(primary.limit === undefined ? {} : { limit: { ...primary.limit } }),
+    ...(!options.secondary || secondary.size === 0
+      ? {}
+      : {
+          secondary_failures: [...secondary].map((failure) =>
+            projectError(failure, { ...options, secondary: false }),
+          ),
+        }),
     ...(cleanupReport === undefined
       ? {}
       : { cleanup_report: jsonValueSchema.parse(cleanupReport) }),
@@ -189,6 +341,18 @@ const projectError = (
             ? partialObservation
             : jsonValueSchema.parse(partialObservation),
         }),
+    ...(!options.partialObservation || completedSourceObservation === undefined
+      ? {}
+      : {
+          completed_observation: isImmutableJsonSnapshot(
+            completedSourceObservation,
+          )
+            ? completedSourceObservation
+            : jsonValueSchema.parse(completedSourceObservation),
+        }),
+    ...(!options.partialObservation || completedSourceOmission === undefined
+      ? {}
+      : { completed_observation_omitted: completedSourceOmission }),
   };
   // The retained cleanup owner's retry precedes the failed operation's hint.
   const cleanupRetry = error.cleanupRetry;
@@ -197,6 +361,21 @@ const projectError = (
       ? errorRecovery(error)
       : cleanupRetryRecovery(cleanupRetry);
   const remediation = analysisErrorRemediationAction(error);
+  const includesUnretainedEvidence =
+    options.partialObservation &&
+    [partialObservation, completedSourceObservation].some(
+      (observation) =>
+        typeof observation === "object" &&
+        observation !== null &&
+        "kind" in observation &&
+        observation.kind === "unretained-evidence",
+    );
+  const retentionGuidance =
+    error instanceof AnalysisResourceConstraintError &&
+    error.resource === "capacity" &&
+    includesUnretainedEvidence
+      ? " Unretained Evidence is not included in the exported investigation; if present in this response, save it separately."
+      : "";
   return {
     code,
     category: analysisErrorCategory(error),
@@ -211,8 +390,8 @@ const projectError = (
     remediation: {
       action:
         cleanupRetry === undefined
-          ? remediation
-          : `${remediation} ${cleanupRetryRemediation(cleanupRetry)}`,
+          ? `${remediation}${retentionGuidance}`
+          : `${remediation}${retentionGuidance} ${cleanupRetryRemediation(cleanupRetry)}`,
     },
     ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),

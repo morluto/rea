@@ -323,8 +323,11 @@ describe("one-shot finalization cancellation", () => {
     async (closeFails) => {
       const [path] = await createBinarySessionTargets();
       const controller = new AbortController();
+      const failure = new AnalysisTimeoutError("read_bytes", 100, {
+        capturedOutput: primaryError.capturedOutput,
+      });
       const { dependencies } = factories({
-        executionError: primaryError,
+        executionError: failure,
         onClose: () => controller.abort({ later: true }),
         ...(closeFails ? { cleanupError } : {}),
       });
@@ -337,9 +340,9 @@ describe("one-shot finalization cancellation", () => {
       ).then(projectCliAnalysisResult);
       expect(result).toMatchObject({
         code: closeFails ? "cleanup_incomplete" : "provider_timeout",
-        message: projectAnalysisError(primaryError).message,
+        message: projectAnalysisError(failure).message,
         details: {
-          captured_output: primaryError.capturedOutput,
+          captured_output: failure.capturedOutput,
           ...(closeFails
             ? { cleanup_error: projectAnalysisError(cleanupError) }
             : {}),
@@ -709,12 +712,13 @@ it.each(["complete", "summary"] as const)(
 it("preserves a managed provider failure when cancellation arrives during close", async () => {
   const [path] = await createBinarySessionTargets();
   const controller = new AbortController();
+  const reason = new Error("later cancellation");
   const failure = new AnalysisInputError("inspect_managed_members", undefined, [
     { path: ["path"], reason: "invalid_format" },
   ]);
   const { dependencies, session } = factories({
     executionError: failure,
-    onClose: () => controller.abort(new Error("later cancellation")),
+    onClose: () => controller.abort(reason),
   });
   const result = await runProviderAnalysis(
     dependencies,
@@ -728,6 +732,13 @@ it("preserves a managed provider failure when cancellation arrives during close"
     error: "Analysis failed",
     ...projectAnalysisError(failure),
   });
+  expect(
+    failure.secondaryFailures.some(
+      (secondary) =>
+        secondary instanceof AnalysisCancelledError &&
+        secondary.cause === reason,
+    ),
+  ).toBe(true);
   expect(session.activeTarget()).toBeUndefined();
 });
 

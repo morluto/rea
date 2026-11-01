@@ -1,5 +1,6 @@
 import type { EvidenceWriter } from "./InvestigationRecordPort.js";
 import type { Evidence } from "../../domain/evidence.js";
+import { preserveCompletedSourceEvidence } from "./sourcePublicationRecovery.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
@@ -51,10 +52,22 @@ export const retainAnalysisResultSources = <Value>(
 export const recordEvidenceSources = (
   recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
   sources: readonly Evidence[],
+  completed?: {
+    readonly evidence: Evidence;
+    readonly hasEvidence?: (id: string) => boolean;
+  },
 ): Result<null, AnalysisError> => {
   for (const source of sources) {
     const recorded = recordEvidence?.(source);
-    if (recorded !== undefined && !recorded.ok) return recorded;
+    if (recorded !== undefined && !recorded.ok) {
+      if (completed !== undefined)
+        preserveCompletedSourceEvidence(
+          recorded.error,
+          completed.evidence,
+          completed.hasEvidence,
+        );
+      return recorded;
+    }
   }
   return ok(null);
 };

@@ -87,6 +87,7 @@ export const registerCompareSourceToBundleTool = (
           const recorded = recordEvidenceSources(
             options.recordEvidence,
             result.value.sources,
+            { evidence: selected.value },
           );
           if (!recorded.ok)
             return server.delivery.toCallToolResult(recorded, contract);
