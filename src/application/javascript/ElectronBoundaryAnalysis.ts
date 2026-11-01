@@ -1,7 +1,10 @@
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { ElectronIpcFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
-import { ELECTRON_MODULE } from "../../domain/javascript/javascriptElectronMemberWrites.js";
+import {
+  ELECTRON_MODULE,
+  ELECTRON_REFERENCE_KINDS,
+} from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -117,18 +120,6 @@ export const createElectronIpcContext = (
   });
   return { records, owners, states, pairings };
 };
-
-/**
- * The reference kinds that load a module by package specifier. A `worker` or
- * `service-worker` reference records a URL relative to the importing source, so
- * `new Worker(new URL("electron", import.meta.url))` names a local file and is
- * not an Electron module.
- */
-const ELECTRON_REFERENCE_KINDS: ReadonlySet<string> = new Set([
-  "static-import",
-  "dynamic-import",
-  "require",
-]);
 
 /**
  * Whether any analyzed source names an Electron module. The same
