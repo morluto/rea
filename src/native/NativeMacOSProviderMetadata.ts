@@ -1,16 +1,9 @@
-import type {
-  CapabilityDescriptor,
-  ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacosProviderIdentity.js";
+import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
+import { APPLE_DISPATCH_TARGET_APPLICABILITY } from "../domain/native/objcSwiftMetadata.js";
 
-/** Public identity committed by macOS-native inspection observations. */
-export const NATIVE_MACOS_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
-  id: "native-macos",
-  name: "macOS native inspection utilities",
-  version: null,
-});
 /** Source-owned commitment for the pure Apple dispatch metadata reader. */
 export const APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE = createAnalysisProfile(
   {
@@ -51,7 +44,10 @@ export const nativeMacOSCapabilities = (
         provider: NATIVE_MACOS_PROVIDER_IDENTITY,
         operation: contract.name,
         ...(contract.name === "inspect_native_dispatch_metadata"
-          ? { analysisProfile: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE }
+          ? {
+              analysisProfile: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
+              targetApplicability: APPLE_DISPATCH_TARGET_APPLICABILITY,
+            }
           : {}),
         ...availability,
         effects: Object.freeze({

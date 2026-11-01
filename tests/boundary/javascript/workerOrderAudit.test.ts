@@ -20,6 +20,8 @@ import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { staticCheckpointFacts } from "../../fixtures/javascriptWorkerCheckpoint.js";
 
+// The observer is attached before the protocol reader. A queued microtask
+// runs after both readers have synchronously processed the current chunk.
 const observeWorkerFrames = (
   stdout: Readable | null | undefined,
   observe: (frame: JavaScriptWorkerMessage, beforeEof: boolean) => void,
@@ -205,9 +207,12 @@ it("clears a consumed resource frame before the next reusable worker job", async
           `${ready} let count=0; require("node:readline").createInterface({input:process.stdin}).on("line", line => { const {id}=JSON.parse(line); const first=++count===1; const response={kind:"failure",id,reason:first?"resource":"output",resource:first?"memory":null,limits:null,message:first?"first resource response":"second job output response"}; process.stdout.write(JSON.stringify(response)+"\\n"); if(!first)setInterval(()=>{},1000); });`,
         ],
       });
-      launched.process.stdout?.on("data", (chunk: Buffer | string) => {
-        if (String(chunk).includes("second job output response"))
-          setTimeout(() => controller.abort("abort after second response"), 5);
+      observeWorkerFrames(launched.process.stdout, (frame) => {
+        if (
+          frame.kind === "failure" &&
+          frame.message === "second job output response"
+        )
+          queueMicrotask(() => controller.abort("abort after second response"));
       });
       return launched;
     },
@@ -288,9 +293,12 @@ it("retains coalesced static evidence when abort follows a resource frame", asyn
           `${ready} const fs=require("node:fs"); const {createHash}=require("node:crypto"); const staticFacts=JSON.parse(${JSON.stringify(encodedStatic)}); require("node:readline").createInterface({input:process.stdin}).on("line", line => { const request=JSON.parse(line); if(!request.file)return; const text=JSON.stringify(staticFacts); fs.writeFileSync(request.id+".static.json",text); const frames=[{kind:"static",id:request.id,bytes:Buffer.byteLength(text),sha256:createHash("sha256").update(text).digest("hex")},{kind:"failure",id:request.id,reason:"resource",resource:"memory",limits:null,message:"resource failure before abort"}]; process.stdout.write(frames.map(frame=>JSON.stringify(frame)).join("\\n")+"\\n"); });`,
         ],
       });
-      launched.process.stdout?.on("data", (chunk: Buffer | string) => {
-        if (String(chunk).includes("resource failure before abort"))
-          setTimeout(() => controller.abort(null), 5);
+      observeWorkerFrames(launched.process.stdout, (frame) => {
+        if (
+          frame.kind === "failure" &&
+          frame.message === "resource failure before abort"
+        )
+          queueMicrotask(() => controller.abort(null));
       });
       return launched;
     },
@@ -1039,10 +1047,13 @@ it("preserves a complete current-job failure parsed before caller abort", async 
           `${ready} process.stdin.once("data", chunk => { const id=JSON.parse(String(chunk)).id; process.stdout.write(JSON.stringify({kind:"phase",id,phase:"parse"})+"\\n"); setTimeout(() => process.stdout.write(JSON.stringify({kind:"failure",id,reason:"output",resource:null,limits:null,message:"complete current-job failure"})+"\\n"),1); setInterval(()=>{},1000); });`,
         ],
       });
-      launched.process.stdout?.on("data", (chunk: Buffer | string) => {
-        if (String(chunk).includes("complete current-job failure")) {
+      observeWorkerFrames(launched.process.stdout, (frame) => {
+        if (
+          frame.kind === "failure" &&
+          frame.message === "complete current-job failure"
+        ) {
           completeFrameSeen = true;
-          setTimeout(() => controller.abort("abort after parsed failure"), 5);
+          queueMicrotask(() => controller.abort("abort after parsed failure"));
         }
       });
       return launched;
@@ -1081,10 +1092,13 @@ it("does not let a wrong-job failure frame override later caller abort", async (
           `${ready} process.stdin.once("data", () => { const id="00000000-0000-4000-8000-000000000000"; process.stdout.write(JSON.stringify({kind:"failure",id,reason:"output",resource:null,limits:null,message:"unrelated job failure"})+"\\n"); setInterval(()=>{},1000); });`,
         ],
       });
-      launched.process.stdout?.on("data", (chunk: Buffer | string) => {
-        if (String(chunk).includes("unrelated job failure")) {
+      observeWorkerFrames(launched.process.stdout, (frame) => {
+        if (
+          frame.kind === "failure" &&
+          frame.message === "unrelated job failure"
+        ) {
           completeFrameSeen = true;
-          setTimeout(() => controller.abort(reason), 5);
+          queueMicrotask(() => controller.abort(reason));
         }
       });
       return launched;

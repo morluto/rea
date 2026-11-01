@@ -55,6 +55,16 @@ describe("rea mcp --http", () => {
         stdout += chunk.toString("utf8");
       });
       const first = await openSession(started.url, "streamable-http-boundary");
+      expect(() =>
+        assertAdvertisedMcpContracts(
+          ["binary_session"],
+          [first.toolDefinition, first.toolDefinition],
+        ),
+      ).toThrow();
+      const { name } = first.toolDefinition;
+      expect(() =>
+        assertAdvertisedMcpContracts(["binary_session"], [{ name }]),
+      ).toThrow();
       await expectIdentity(first);
       await first.transport.terminateSession();
       expect(first.transport.sessionId).toBeUndefined();

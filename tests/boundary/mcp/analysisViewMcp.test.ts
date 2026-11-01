@@ -13,7 +13,6 @@ import {
 } from "../../fixtures/historicalHar.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { afterAll, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -34,7 +33,6 @@ import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
 } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
-import { createServer } from "../../../src/server/createServer.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 import {
   analysisViewJavaScriptEvidence,
@@ -52,6 +50,7 @@ import {
 } from "../../fixtures/analysisView.js";
 import { BOOK_ROWS } from "../../fixtures/environmentStateWrites.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createLinkedIl2cppMetadataFixture } from "../../fixtures/il2cpp/metadata.js";
 import {
   createIl2cppBinaryFixture,
@@ -80,35 +79,24 @@ const connect = async (
   const session = createTestBinarySession(() => {
     throw new Error("selected views must not start a deep provider");
   });
-  const server = createServer(
-    { kind: "session", session },
-    {
+  return createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "analysis-view-mcp", version: "1" },
+    schemaValidator: schemaValidation,
+    serverOptions: {
       // These schema conformance cases exercise full nested constraints.
       environment: {
         ...process.env,
         REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-        ...(maximumInputElements === undefined
-          ? {}
-          : { REA_MCP_MAX_INPUT_ELEMENTS: String(maximumInputElements) }),
+        REA_MCP_MAX_INPUT_ELEMENTS:
+          maximumInputElements === undefined
+            ? process.env.REA_MCP_MAX_INPUT_ELEMENTS
+            : String(maximumInputElements),
       },
       ...(binaryLayout === undefined ? {} : { binaryLayout }),
       ...(webNetworkCapture === undefined ? {} : { webNetworkCapture }),
     },
-  );
-  const client = new Client(
-    { name: "analysis-view-mcp", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return { client, session };
 };
 
 it("selects every IL2CPP native type reference by rendered name with stable row identity", async () => {

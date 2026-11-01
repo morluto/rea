@@ -28,6 +28,7 @@ const setAdd = bindBuiltinMethod(Set.prototype.add);
 const hasOwnProperty = bindBuiltinMethod(Object.prototype.hasOwnProperty);
 
 const { isProxy } = require("node:util").types;
+const { createHash } = require("node:crypto");
 const { EventEmitter: NodeEventEmitter } = require("node:events");
 const nodeEventEmitterMethods = Object.create(null);
 for (const method of [
@@ -1244,6 +1245,59 @@ const boundaries = createElectronActiveBoundaryPatches({
   recordRuntime,
   shape,
 });
+
+// Admit only this provider's exact launch tail and Playwright's owned prefix.
+// Caller arguments remain opaque, including repeated hook paths and debug flags.
+const restoreApplicationArgv = () => {
+  const handoff = process.env.REA_ELECTRON_CAPTURE_ARGV;
+  if (handoff === undefined) return;
+  delete process.env.REA_ELECTRON_CAPTURE_ARGV;
+  const plan = JSON.parse(handoff);
+  if (
+    plan === null ||
+    typeof plan !== "object" ||
+    !Number.isSafeInteger(plan.length) ||
+    plan.length < 3 ||
+    typeof plan.sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(plan.sha256)
+  )
+    throw new Error("Capture argument handoff is not this hook's launch plan");
+  const tailIndex = process.argv.length - plan.length;
+  const prefixIndex = process.argv[1] === "--no-sandbox" ? 2 : 1;
+  if (
+    tailIndex !== prefixIndex + 2 ||
+    process.argv[prefixIndex] !== "--inspect=0" ||
+    process.argv[prefixIndex + 1] !== "--remote-debugging-port=0" ||
+    process.argv[tailIndex] !== "-r" ||
+    process.argv[tailIndex + 1] !== __filename ||
+    typeof process.argv[tailIndex + 2] !== "string" ||
+    process.argv[tailIndex + 2].length === 0
+  )
+    throw new Error("Observed argv does not match Playwright's capture prefix");
+  const tail = sliceArguments(process.argv, tailIndex);
+  if (
+    createHash("sha256").update(JSON.stringify(tail)).digest("hex") !==
+    plan.sha256
+  )
+    throw new Error(
+      "Observed argv does not match the capture argument handoff",
+    );
+  for (let index = 2; index < tail.length; index++)
+    process.argv[index - 1] = tail[index];
+  process.argv.length = tail.length - 1;
+};
+
+try {
+  restoreApplicationArgv();
+} catch (cause) {
+  globalThis.__reaElectronActiveHookError = true;
+  recordRuntime(
+    "error",
+    cause instanceof Error ? cause.message : String(cause),
+    "failed",
+    { target: "active-hook-arguments", error: true },
+  );
+}
 
 try {
   const electron = require("electron");

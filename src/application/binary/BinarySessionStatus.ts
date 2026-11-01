@@ -1,5 +1,7 @@
 import { z } from "zod";
+import type { InvestigationStatistics } from "../../domain/investigationLifecycle.js";
 import { artifactTargetRefusal } from "../../domain/apple/artifactTargetApplicability.js";
+import { targetApplicabilityRefusal } from "../../domain/targetApplicability.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
@@ -26,6 +28,7 @@ import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js"
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 
 interface BinarySessionStatusInput {
+  readonly investigation: InvestigationStatistics;
   readonly target: BinaryTarget | undefined;
   readonly bundleResourceRoot?: ResolvedAppBundleResourceRoot;
   readonly resourceCapabilities?: readonly CapabilityDescriptor[];
@@ -46,6 +49,7 @@ interface BinarySessionStatusInput {
 
 /** Project internal provider routing state into the caller-visible session status. */
 export const binarySessionStatus = async ({
+  investigation,
   target,
   bundleResourceRoot,
   resourceCapabilities = [],
@@ -73,7 +77,12 @@ export const binarySessionStatus = async ({
       const targetRefusal =
         target === undefined
           ? undefined
-          : artifactTargetRefusal(descriptor.operation, target);
+          : descriptor.targetApplicability === undefined
+            ? artifactTargetRefusal(descriptor.operation, target)
+            : targetApplicabilityRefusal(
+                descriptor.targetApplicability,
+                target,
+              );
       if (targetRefusal !== undefined && descriptor.available)
         return {
           ...descriptor,
@@ -130,6 +139,7 @@ export const binarySessionStatus = async ({
               },
         );
   const common = {
+    investigation,
     cleanup_pending: cleanupPending,
     capabilities,
     analysis_provider_binding: analysisProviderBinding,

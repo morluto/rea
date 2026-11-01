@@ -91,6 +91,7 @@ it.each(
       tool: "open_project",
       argv: ["open-jeb-project", "sample.apk", "--json"],
       input: { path: "sample.apk" },
+      providerInput: { file_path: "sample.apk" },
     },
   ].flatMap((request) =>
     ["metadata-refusal", "primary-refusal", "success"].map((stage) => ({
@@ -100,7 +101,7 @@ it.each(
   ),
 )(
   "preserves $operation attribution and primary payload with $stage",
-  async ({ operation, tool, argv, input, stage }) => {
+  async ({ operation, tool, argv, input, providerInput, stage }) => {
     const refusal = {
       success: false,
       message: "Selected stage refused",
@@ -158,6 +159,10 @@ it.each(
       expect(fixture.calls).toEqual(
         stage === "primary-refusal" ? [tool] : [tool, "get_client_information"],
       );
+      expect(fixture.requests[0]).toEqual({
+        name: tool,
+        arguments: providerInput ?? input,
+      });
     } finally {
       await processes.shutdown();
       await fixture.close();

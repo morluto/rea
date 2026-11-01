@@ -25,9 +25,13 @@ import {
 } from "./BinarySessionStatus.js";
 import {
   APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
-  NATIVE_MACOS_PROVIDER_IDENTITY,
   nativeMacOSCapabilities,
 } from "../../native/NativeMacOSProviderMetadata.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../native/NativeMacosProviderIdentity.js";
+import {
+  buildCapabilityInventory,
+  MULTI_MODE_REMEDIATION,
+} from "../CapabilityInventory.js";
 
 const projectedStatusSchema = z.object({
   capabilities: sessionProviderFacts.shape.capabilities,
@@ -172,6 +176,14 @@ const projectStatus = async (
     candidateStatuses: async () => candidates,
   };
   return binarySessionStatus({
+    investigation: {
+      evidence_records: 0,
+      unknown_revisions: 0,
+      unknown_heads: 0,
+      retained_representation_bytes: 0,
+      maximum_representation_bytes: 0,
+      persistence: "memory",
+    },
     target: options.target,
     route,
     router,
@@ -508,6 +520,146 @@ it.each(["elf", "pe"] as const)(
     ]);
   },
 );
+
+const dispatchTarget = (format: "elf" | "mach-o"): BinaryTarget => ({
+  kind: "executable",
+  format,
+  path: "/fixture",
+  sha256: "a".repeat(64),
+  architecture: "x86_64",
+  availableArchitectures: ["x86_64"],
+});
+
+it.each([
+  { format: "elf", symbols: false, nativeAvailable: false, route: false },
+  { format: "elf", symbols: true, nativeAvailable: false, route: true },
+  { format: "mach-o", symbols: false, nativeAvailable: true, route: true },
+] as const)(
+  "projects $format dispatch applicability and symbol fallback ($symbols)",
+  async ({ format, symbols, nativeAvailable, route }) => {
+    const target = dispatchTarget(format);
+    const native = nativeMacOSCapabilities("darwin").find(
+      (item) => item.operation === "inspect_native_dispatch_metadata",
+    );
+    if (native === undefined) throw new Error("Missing native dispatch reader");
+    const capabilities = [
+      native,
+      descriptor(providerA, "decode_interface_builder", []),
+      descriptor(providerA, "procedure_address", []),
+      descriptor(providerA, "procedure_callees", []),
+      ...(symbols ? [descriptor(providerA, "list_names", [])] : []),
+    ];
+    const status = await projectStatus(capabilities, [], { target });
+    const parsed = projectedStatusSchema.parse(status);
+    const projected = expandCanonicalCapabilities(parsed.capabilities).find(
+      (item) => item.operation === "inspect_native_dispatch_metadata",
+    );
+    expect(projected).toMatchObject({
+      available: nativeAvailable,
+      availability_code: nativeAvailable ? null : "target_format_unsupported",
+    });
+    const inventory = buildCapabilityInventory(status, {
+      processCaptureEnabled: false,
+    });
+    const dispatch = inventory.find(
+      (item) => item.name === "inspect_native_dispatch_metadata",
+    );
+    expect(dispatch?.available).toBe(route);
+    const trace = inventory.find(
+      (item) => item.name === "trace_native_ui_action",
+    );
+    expect(
+      trace?.modes?.find((mode) => mode.name === "native_seed_call_trace"),
+    ).toMatchObject({
+      available: route,
+      missing_operations: route
+        ? []
+        : ["inspect_native_dispatch_metadata", "list_names"],
+    });
+    if (!route) {
+      expect(trace?.remediation).toBe(MULTI_MODE_REMEDIATION);
+      const authored = trace?.modes?.find(
+        (mode) => mode.name === "authored_ui_dispatch",
+      );
+      const nativeSeed = trace?.modes?.find(
+        (mode) => mode.name === "native_seed_call_trace",
+      );
+      expect(authored?.remediation).not.toBe(nativeSeed?.remediation);
+      expect(authored?.missing_operations).toContain(
+        "decode_interface_builder",
+      );
+    }
+  },
+);
+
+it("does not impose the Apple reader's target rule on another provider", async () => {
+  const target = dispatchTarget("elf");
+  const status = await projectStatus(
+    [descriptor(providerA, "inspect_native_dispatch_metadata", [])],
+    [],
+    { target },
+  );
+  const projected = expandCanonicalCapabilities(
+    projectedStatusSchema.parse(status).capabilities,
+  );
+  expect(projected).toMatchObject([
+    { operation: "inspect_native_dispatch_metadata", available: true },
+  ]);
+  const inventory = buildCapabilityInventory(status, {
+    processCaptureEnabled: false,
+  });
+  expect(
+    inventory.find((item) => item.name === "inspect_native_dispatch_metadata"),
+  ).toMatchObject({ available: true });
+});
+
+it("keeps distinct recovery for an unbound non-bundle session", async () => {
+  const native = nativeMacOSCapabilities("darwin").find(
+    (item) => item.operation === "inspect_native_dispatch_metadata",
+  );
+  if (native === undefined) throw new Error("Missing native dispatch reader");
+  const status = await projectStatus(
+    [native, descriptor(providerA, "decode_interface_builder", [])],
+    [],
+    { target: dispatchTarget("mach-o") },
+  );
+  const inventory = buildCapabilityInventory(status, {
+    processCaptureEnabled: false,
+  });
+  const trace = inventory.find(
+    (item) => item.name === "trace_native_ui_action",
+  );
+  expect(trace).toMatchObject({
+    available: false,
+    reason: "provider_unavailable",
+    remediation: MULTI_MODE_REMEDIATION,
+  });
+  const authored = trace?.modes?.find(
+    (mode) => mode.name === "authored_ui_dispatch",
+  );
+  const nativeSeed = trace?.modes?.find(
+    (mode) => mode.name === "native_seed_call_trace",
+  );
+  expect(authored?.missing_operations).toContain("decode_interface_builder");
+  expect(nativeSeed?.missing_operations).toContain("procedure_address");
+  expect(authored?.remediation).not.toBe(nativeSeed?.remediation);
+});
+
+it("keeps host unavailability ahead of target applicability", async () => {
+  const native = nativeMacOSCapabilities("linux").find(
+    (item) => item.operation === "inspect_native_dispatch_metadata",
+  );
+  if (native === undefined) throw new Error("Missing native dispatch reader");
+  const target = dispatchTarget("elf");
+  const projected = await project([native], [], new Map(), target);
+  expect(expandCanonicalCapabilities(projected.capabilities)).toMatchObject([
+    {
+      operation: "inspect_native_dispatch_metadata",
+      available: false,
+      availability_code: "unsupported_host",
+    },
+  ]);
+});
 
 describe("binary session summary projection", () => {
   it("keeps each candidate's status, code and reason in summary without diagnostics or capability sets", async () => {

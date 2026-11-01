@@ -117,14 +117,22 @@ const TARGETS: TargetFixtures = {
   hsp: { ...archive, format: "hsp" },
   "app-pack": { ...archive, format: "app-pack" },
   asar: { ...archive, format: "asar" },
+  ines: { ...archive, format: "ines" },
   "godot-pck": { ...archive, format: "godot-pck" },
   unityfs: { ...archive, format: "unityfs" },
   uimage: { ...archive, format: "uimage" },
+  uf2: { ...archive, format: "uf2" },
+  dfuse: { ...archive, format: "dfuse" },
   dmg: { ...archive, format: "dmg" },
   pkg: { ...archive, format: "pkg" },
   "intel-hex": { ...archive, format: "intel-hex" },
   srec: { ...archive, format: "srec" },
   "esp-image": { ...archive, format: "esp-image" },
+  "esp-flash-image": {
+    ...archive,
+    format: "esp-flash-image",
+    espFlash: { selected: true, flashOffset: null, partitionTableOffset: null },
+  },
   fit: { ...archive, format: "fit" },
   plist: { ...artifact, format: "plist" },
   javascript: { ...artifact, format: "javascript" },
@@ -169,9 +177,13 @@ describe("target format vocabularies", () => {
   );
 
   it.each(executableFormatHintSchema.options)(
-    "admits the caller-selected %s hint only as an executable target format",
+    "admits the caller-selected %s hint only as its own target format",
     (hint) => {
-      expect(TARGETS[hint]).toMatchObject({ format: hint, kind: "executable" });
+      // An ESP flash dump is the one caller-selected format read as an archive.
+      expect(TARGETS[hint]).toMatchObject({
+        format: hint,
+        kind: hint === "esp-flash-image" ? "archive" : "executable",
+      });
     },
   );
 });

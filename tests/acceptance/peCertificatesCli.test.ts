@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -33,7 +34,16 @@ cliTest.for(["pubkey", "signature"])(
     expect(invalid.exitCode).toBe(1);
     expect(invalid.json).toMatchObject({
       code: "invalid_request",
-      details: { operation: "inspect_pe_certificates" },
+      details: {
+        operation: "inspect_pe_certificates",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining("padding"),
+          }),
+        ],
+      },
     });
     // Only zero the advertised unused bit; all ASN.1 lengths stay unchanged.
     const last = at + marker.length - 1;
@@ -126,10 +136,9 @@ cliTest(
   "resolves a relative PE path against the working directory",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pe-cert-cli-rel-");
-    await writeFile(
-      join(root, "unsigned.exe"),
-      peWithoutCertificateTableFixture(),
-    );
+    const path = join(root, "unsigned.exe");
+    const bytes = peWithoutCertificateTableFixture();
+    await writeFile(path, bytes);
     const result = await cli.run({
       arguments: ["inspect-pe-certificates", "unsigned.exe", "--json"],
       cwd: root,
@@ -138,8 +147,25 @@ cliTest(
     const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
       result.json,
     );
-    expect(evidence.normalized_result.table).toBeNull();
-    expect(evidence.subject?.local_path).toBe(join(root, "unsigned.exe"));
+    expect(evidence).toMatchObject({
+      confidence: "observed",
+      subject: { local_path: path, format: "pe", architecture: "x86" },
+      normalized_result: {
+        artifact: {
+          path,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          bytes: bytes.length,
+        },
+        format: "pe32",
+        machine: 0x14c,
+        table: null,
+        entries: [],
+        coverage: { status: "complete", examined_entries: 0, certificates: 0 },
+        limitations: expect.arrayContaining([
+          expect.stringContaining("IMAGE_DIRECTORY_ENTRY_SECURITY is absent"),
+        ]),
+      },
+    });
   },
 );
 
@@ -318,5 +344,48 @@ cliTest.for([
     expect(remediation.action).toContain(
       "Repeating the unchanged request fails the same way",
     );
+  },
+);
+
+cliTest.for([
+  [0x13, "REA@Fixture"],
+  [0x16, "REAéFixture"],
+] as const)(
+  "rejects an invalid certificate name alphabet for tag %i through the public CLI",
+  async ([tag, name], { cli }) => {
+    const root = await createTestTempDirectory("rea-pe-cert-name-alphabet-");
+    const path = join(root, "name.exe");
+    const payload = pkcs7SignedDataFixture(name);
+    const content = Buffer.from(name, "utf8");
+    const marker = Buffer.concat([
+      Buffer.from([0x0c, content.length]),
+      content,
+    ]);
+    const at = payload.indexOf(marker);
+    expect(at).toBeGreaterThanOrEqual(0);
+    payload[at] = tag;
+    await writeFile(path, peCertificateFixture(false, payload));
+    const invalid = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.json).toMatchObject({
+      code: "invalid_request",
+      details: { operation: "inspect_pe_certificates" },
+    });
+    // Only restore the string tag: the same bytes are valid UTF8String content.
+    payload[at] = 0x0c;
+    await writeFile(path, peCertificateFixture(false, payload));
+    const valid = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect(valid.exitCode, valid.stderr).toBe(0);
+    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
+      valid.json,
+    );
+    expect(
+      evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.issuer
+        .attributes[0]?.value,
+    ).toBe(name);
   },
 );

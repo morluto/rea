@@ -1,4 +1,5 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createHash } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -21,6 +22,8 @@ import {
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
+import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
+import { AnalysisSnapshotMismatchError } from "../../../src/domain/evidenceErrors.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
@@ -543,6 +546,156 @@ describe("binary_session detail over MCP", () => {
     });
     expect(rejected.isError).toBe(true);
     expect(starts).toEqual([]);
+  });
+});
+
+it("reports confirmed snapshot binding differences and keeps the active session", async () => {
+  const testDirectory = await createTestTempDirectory(
+    "rea-snapshot-mismatch-mcp-",
+  );
+  const first = join(testDirectory, "first.hop");
+  const second = join(testDirectory, "second.hop");
+  const snapshotPath = join(testDirectory, "analysis.json");
+  await writeFile(first, "first fixture");
+  await writeFile(second, "second fixture");
+  const sha = (value: string) =>
+    createHash("sha256").update(value).digest("hex");
+  let revision = 1;
+  const alphaProfile = createAnalysisProfile(
+    { id: "alpha", name: "alpha provider", version: "1" },
+    { revision: 1 },
+  );
+  const betaProfile = createAnalysisProfile(
+    { id: "beta", name: "beta provider", version: "1" },
+    { fixture: "beta" },
+  );
+  const alpha = candidate("alpha", []);
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...alpha,
+        resolveAnalysisProfile: () =>
+          Promise.resolve(
+            ok({
+              profile: createAnalysisProfile(
+                { id: "alpha", name: "alpha provider", version: "1" },
+                { revision },
+              ),
+            }),
+          ),
+      },
+      candidate("beta", []),
+    ]),
+  );
+  const server = createServer({ kind: "session", session });
+  const mcp = new Client({ name: "snapshot-mismatch", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  const call = (name: string, args: Record<string, unknown>) =>
+    mcp.callTool({ name, arguments: args });
+  expect(
+    (await call("open_binary", { path: first, provider_id: "alpha" })).isError,
+  ).not.toBe(true);
+  expect(
+    (await call("close_binary", { snapshot_path: snapshotPath })).isError,
+  ).not.toBe(true);
+  expect(
+    (await call("open_binary", { path: first, provider_id: "alpha" })).isError,
+  ).not.toBe(true);
+
+  const mismatch = async (path: string, provider: string) => {
+    const result = await call("open_binary", {
+      path,
+      provider_id: provider,
+      snapshot_path: snapshotPath,
+    });
+    expect(result.isError).toBe(true);
+    const error = parseMcpToolError(result).error;
+    expect(error.code).toBe("evidence_integrity_mismatch");
+    expect(error.remediation.action).toBe(
+      analysisErrorRemediationAction(new AnalysisSnapshotMismatchError("")),
+    );
+    expect((await call("binary_session", {})).structuredContent).toMatchObject({
+      result: {
+        open: true,
+        path: first,
+        analysis_provider_binding: {
+          analysis_profile: { digest: alphaProfile.digest },
+        },
+      },
+    });
+    return error.details?.binding_mismatch;
+  };
+  expect(await mismatch(second, "alpha")).toEqual({
+    target: {
+      snapshot: expect.objectContaining({ sha256: sha("first fixture") }),
+      selected: expect.objectContaining({ sha256: sha("second fixture") }),
+    },
+  });
+  const otherProvider = await mismatch(first, "beta");
+  expect(otherProvider).toMatchObject({
+    provider: { snapshot: { id: "alpha" }, selected: { id: "beta" } },
+    profile_digest: {
+      snapshot: alphaProfile.digest,
+      selected: betaProfile.digest,
+    },
+  });
+  expect(otherProvider).not.toHaveProperty("target");
+  revision = 2;
+  const otherProfile = await mismatch(first, "alpha");
+  expect(otherProfile).toMatchObject({
+    profile_digest: {
+      snapshot: expect.any(String),
+      selected: expect.any(String),
+    },
+  });
+  expect(otherProfile).not.toHaveProperty("provider");
+  expect(otherProfile).not.toHaveProperty("target");
+  const combined = await mismatch(second, "beta");
+  expect(combined).toMatchObject({
+    target: {
+      snapshot: { sha256: sha("first fixture") },
+      selected: { sha256: sha("second fixture") },
+    },
+    provider: { snapshot: { id: "alpha" }, selected: { id: "beta" } },
+  });
+  expect((await call("address_name", { address: "0x10" })).isError).not.toBe(
+    true,
+  );
+
+  revision = 1;
+  const raw = join(testDirectory, "raw.bin");
+  const rawSnapshot = join(testDirectory, "raw-snapshot.json");
+  await writeFile(raw, Buffer.from([0, 1, 2, 3]));
+  const rawTarget = {
+    path: raw,
+    provider_id: "alpha",
+    format: "raw-binary",
+    architecture: "arm64",
+  };
+  expect(
+    (await call("open_binary", { ...rawTarget, entry_point: "0x1000" }))
+      .isError,
+  ).not.toBe(true);
+  expect(
+    (await call("close_binary", { snapshot_path: rawSnapshot })).isError,
+  ).not.toBe(true);
+  const differentEntry = await call("open_binary", {
+    ...rawTarget,
+    entry_point: "0x2000",
+    snapshot_path: rawSnapshot,
+  });
+  expect(differentEntry.isError).toBe(true);
+  expect(parseMcpToolError(differentEntry).error.details).toMatchObject({
+    binding_mismatch: {
+      target: {
+        snapshot: { entry_point: "0x1000" },
+        selected: { entry_point: "0x2000" },
+      },
+    },
   });
 });
 

@@ -398,7 +398,7 @@ it.each([
     const workspace =
       stage === "root"
         ? null
-        : (expect.stringMatching(/\/rea-flutter-[^/]+$/u) as unknown);
+        : (expect.stringMatching(/[/\\]rea-flutter-[^/\\]+$/u) as unknown);
     const location = { workspace_path: workspace, path: workspace };
     expect(projectAnalysisError(result.error)).toMatchObject(
       code === "ENOSPC"

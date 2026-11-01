@@ -89,6 +89,7 @@ describe("loadEnvironmentState", () => {
     const notEvidence = loadEnvironmentState({}, source);
     if (notEvidence.ok || !(notEvidence.error instanceof AnalysisInputError))
       throw new Error("Expected an input refusal");
+    expect(notEvidence.error.issues.length).toBeGreaterThan(0);
     expect(
       notEvidence.error.issues.every((issue) => issue.path[0] === "state"),
     ).toBe(true);

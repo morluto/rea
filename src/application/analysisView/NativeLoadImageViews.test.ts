@@ -302,6 +302,7 @@ it("rejects collection-inapplicable fields and malformed sibling facts even for 
   ).toBe(false);
   const report = source();
   const parent = {
+    predicateType: "rea.analysis",
     evidenceId: "ev_" + "b".repeat(64),
     operation: "inspect_native_load_image",
     normalizedResult: report,
