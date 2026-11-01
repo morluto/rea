@@ -748,11 +748,9 @@ describe("Ghidra Windows platform support", () => {
       status: "unavailable",
       code: "runtime_missing",
       reason,
+      remediation: expect.any(String),
       diagnostics: {
-        windows_native_failure: {
-          stage: "artifact",
-          remediation: expect.any(String),
-        },
+        windows_native_failure: { stage: "artifact" },
         windows_security: {
           job_object_process_ownership: expect.objectContaining({
             available: false,
@@ -853,11 +851,9 @@ describe("Windows Ghidra native failure diagnostics", () => {
         reason: expect.stringContaining(
           "Windows native controls are unavailable",
         ),
+        remediation: expect.any(String),
         diagnostics: {
-          windows_native_failure: {
-            stage: failureStage,
-            remediation: expect.any(String),
-          },
+          windows_native_failure: { stage: failureStage },
           windows_security: {
             job_object_process_ownership: expect.objectContaining({
               available: false,

@@ -50,7 +50,6 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
-import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 
 /**
  * Families IDA admits today. Every other family is refused, including families
@@ -202,86 +201,70 @@ export class IdaProvider implements AnalysisProviderCandidate {
       registration_path: this.config.idaMcpConfigPath ?? null,
       live_connection_probed: false,
     };
-    const unavailableCapabilities = (
-      reason: string,
-      code: ProviderRejectionCode,
-    ) =>
-      capabilities.map((capability) =>
+    // Readiness-gated operations carry the same owner observation and repair.
+    const unavailable = (
+      availability: Extract<ProviderAvailability, { status: "unavailable" }>,
+    ): AnalysisProviderReadinessSnapshot => ({
+      availability,
+      capabilities: capabilities.map((capability) =>
         capability.available
           ? {
               ...capability,
               available: false as const,
-              reason,
-              availabilityCode: code,
+              reason: availability.reason,
+              availabilityCode: availability.code,
+              remediation: availability.remediation,
             }
           : capability,
-      );
+      ),
+    });
     if (!config.ok) {
       const failure = projectAnalysisError(config.error);
-      return {
-        availability: {
-          status: "unavailable",
-          code:
-            this.config.idaMcpConfigPath === undefined
-              ? "not_configured"
-              : "open_options_invalid",
-          reason: failure.message,
-          diagnostics: {
-            ...registrationDiagnostics,
-            configuration_details: failure.details ?? null,
-            configuration_remediation: failure.remediation.action,
-          },
-        },
-        capabilities: unavailableCapabilities(
-          failure.message,
+      return unavailable({
+        status: "unavailable",
+        code:
           this.config.idaMcpConfigPath === undefined
             ? "not_configured"
             : "open_options_invalid",
-        ),
-      };
+        reason: failure.message,
+        remediation: failure.remediation.action,
+        diagnostics: {
+          ...registrationDiagnostics,
+          configuration_details: failure.details ?? null,
+        },
+      });
     }
     if (config.value.mode === "headless") {
       const { privacy, unusable } = await inspectIdaWorkspaceReadiness(
         config.value.workspaceRoot,
       );
       if (!privacy.available)
-        return {
-          availability: {
-            status: "unavailable" as const,
-            code: privacy.code,
-            reason: privacy.reason,
-            diagnostics: {
-              ...registrationDiagnostics,
-              mode: "headless",
-              private_workspace_available: false,
-              windows_native_failure: {
-                stage: privacy.failureStage,
-                remediation: privacy.remediation,
-              },
-            },
+        return unavailable({
+          status: "unavailable",
+          code: privacy.code,
+          reason: privacy.reason,
+          remediation: privacy.remediation,
+          diagnostics: {
+            ...registrationDiagnostics,
+            mode: "headless",
+            private_workspace_available: false,
+            windows_native_failure: { stage: privacy.failureStage },
           },
-          capabilities: unavailableCapabilities(privacy.reason, privacy.code),
-        };
+        });
       if (unusable !== undefined)
-        return {
-          availability: {
-            status: "unavailable" as const,
-            code: "open_options_invalid" as const,
-            reason: unusable,
-            diagnostics: {
-              ...registrationDiagnostics,
-              mode: "headless",
-              workspace_root: config.value.workspaceRoot ?? null,
-              private_workspace_available: false,
-              configuration_remediation:
-                "Set workspaceRoot to an existing directory REA can create entries in, or omit it to use the system temporary directory; see docs/ida-provider.md.",
-            },
+        return unavailable({
+          status: "unavailable",
+          code: "open_options_invalid",
+          reason: unusable,
+          remediation:
+            "Set workspaceRoot to an existing directory REA can create entries in, or omit it to use the system temporary directory; see docs/ida-provider.md.",
+          diagnostics: {
+            ...registrationDiagnostics,
+            mode: "headless",
+            workspace_root: config.value.workspaceRoot ?? null,
+            private_workspace_available: false,
           },
-          capabilities: unavailableCapabilities(
-            unusable,
-            "open_options_invalid",
-          ),
-        };
+        });
     }
     return {
       availability: {

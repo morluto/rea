@@ -34,6 +34,7 @@ import {
   locateWiresharkTool,
   resolvePcapTools,
   pcapConfigurationAvailability,
+  PCAP_TOOL_REMEDIATION,
   pcapToolUnavailable,
   wiresharkExecutableIdentity,
   type PcapToolSelection,
@@ -555,6 +556,8 @@ export class PcapProvider {
           code: "unsupported_host",
           reason:
             "No enforceable native memory boundary is available for capture summaries on this host.",
+          remediation:
+            "Run packet-capture summaries on Linux with util-linux prlimit, or on Windows with owned Job Objects.",
           diagnostics: client,
         };
       await this.prepareCaptureBound("inspect_pcap_client", signal);
@@ -579,6 +582,7 @@ export class PcapProvider {
             ? "executable_missing"
             : "version_unresolved",
         reason: cause instanceof Error ? cause.message : String(cause),
+        remediation: PCAP_TOOL_REMEDIATION,
         diagnostics: {},
       };
     }

@@ -746,9 +746,10 @@ missing from the complete inventory; it is not an implicit unavailable entry.
 `summary` keeps open state, target identity, the binding, current-route
 `capabilities`, run, activity and health status, and each provider candidate's
 identity, selection, and availability and target-support `status`, `code`, and
-`reason`. It lists the fields it leaves out in `omitted_fields`: provider
-`diagnostics`, candidate `capabilities`, and each tool group's static `surface`,
-`effects`, and `annotations`. Omitted fields are not empty or false.
+`reason`. It lists the fields it leaves out in `omitted_fields`: an unavailable
+candidate's `remediation`, provider `diagnostics`, candidate `capabilities`, and
+each tool group's static `surface`, `effects`, and `annotations`. Omitted fields
+are not empty or false.
 `detail: "complete"` returns them inline, groups tools by those flags too, and
 has no `omitted_fields`. The output schema keys each result's candidate,
 tool-group and omission fields by its `detail`. CLI `capabilities` and
@@ -801,7 +802,9 @@ set, `shared_limitations` is the ordered common prefix; append a group's ordered
 `effects` arrays use the same true-only closed-vocabulary rule as tool
 availability. Expand every group operation while retaining its provider
 identity, availability, reason, rejection code, effects, and ordered
-limitations.
+limitations. An unavailable group carries `remediation` when its readiness
+owner supplied a repair instruction; `tool_availability` uses that instruction
+rather than the failure description.
 
 `binary_session.analysis_provider_candidates` is authoritative for deep-engine
 discovery. Each candidate's capability sets, returned with complete detail,

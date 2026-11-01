@@ -23,6 +23,8 @@ import type { JsonValue } from "../domain/jsonValue.js";
 export const ADB_BINARY_ENV = "REA_ADB_PATH";
 
 const VERSION_TIMEOUT_MS = 10_000;
+
+const ADB_VERSION_REMEDIATION = `Set ${ADB_BINARY_ENV} to an Android SDK Platform-Tools adb binary whose \`adb version\` reports its version, or put one on PATH`;
 const VERSION_MAX_OUTPUT_BYTES = 64 * 1024;
 
 /** How the adb binary was selected for this provider instance. */
@@ -61,6 +63,7 @@ export const resolveAdbBinary = async (
     throw new AdbConfigurationFailure(
       "not_absolute",
       `${ADB_BINARY_ENV} must be an absolute path to the adb binary`,
+      `Set ${ADB_BINARY_ENV} to an absolute adb executable path, or unset it to use adb from PATH`,
       { configured_path: configured },
     );
   return {
@@ -93,10 +96,10 @@ const resolveWindowsAdb = async (
     throw new AdbConfigurationFailure(
       failure.kind === "missing" ? "binary_missing" : "binary_unresolved",
       "The adb binary could not be selected from the Windows PATH/PATHEXT",
+      `Set ${ADB_BINARY_ENV} to an absolute adb executable, or add it to PATH/PATHEXT`,
       {
         selected_binary: "adb",
         path_source: "path",
-        remediation: `Set ${ADB_BINARY_ENV} to an absolute adb executable, or add it to PATH/PATHEXT`,
         ...(failure.kind === "invalid_extension"
           ? { invalid_extension: failure.extension }
           : {}),
@@ -123,10 +126,12 @@ export type AdbConfigurationFailureCode =
   | "binary_not_executable"
   | "version_unresolved";
 
+/** Why the selected adb binary is unusable, with the owner's repair instruction. */
 export class AdbConfigurationFailure extends Error {
   constructor(
     readonly code: AdbConfigurationFailureCode,
     message: string,
+    readonly remediation: string,
     readonly diagnostics: Readonly<Record<string, JsonValue>> = {},
     options?: ErrorOptions,
   ) {
@@ -181,6 +186,7 @@ export const inspectAdbClient = async (
       throw new AdbConfigurationFailure(
         "version_unresolved",
         "The selected adb binary exited successfully but did not report a recognizable protocol or build version",
+        ADB_VERSION_REMEDIATION,
         {
           selected_binary: selection.binary,
           path_source: selection.pathSource,
@@ -237,10 +243,10 @@ export const inspectAdbClient = async (
       throw new AdbConfigurationFailure(
         "binary_missing",
         `The selected adb binary was not found: ${selection.binary}`,
+        `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary`,
         {
           selected_binary: selection.binary,
           path_source: selection.pathSource,
-          remediation: `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary`,
         },
         { cause },
       );
@@ -248,17 +254,18 @@ export const inspectAdbClient = async (
       throw new AdbConfigurationFailure(
         "binary_not_executable",
         `Execution of the selected adb binary was denied (${failure.code}): ${selection.binary}`,
+        `Check file type and execute permission for ${ADB_BINARY_ENV} or select an executable adb binary`,
         {
           selected_binary: selection.binary,
           path_source: selection.pathSource,
           filesystem_error: failure.code,
-          remediation: `Check file type and execute permission for ${ADB_BINARY_ENV} or select an executable adb binary`,
         },
         { cause },
       );
     throw new AdbConfigurationFailure(
       "version_unresolved",
       "The selected adb binary did not report a usable version",
+      ADB_VERSION_REMEDIATION,
       {
         selected_binary: selection.binary,
         ...(failure === undefined
@@ -287,10 +294,10 @@ const rejectionCodeOf = (
 
 export const adbConfigurationAvailability = (
   cause: AdbConfigurationFailure,
-): ProviderAvailability =>
-  ({
-    status: "unavailable",
-    code: rejectionCodeOf(cause.code),
-    reason: cause.message,
-    diagnostics: { ...cause.diagnostics },
-  }) as ProviderAvailability;
+): ProviderAvailability => ({
+  status: "unavailable",
+  code: rejectionCodeOf(cause.code),
+  reason: cause.message,
+  remediation: `${cause.remediation}.`,
+  diagnostics: { ...cause.diagnostics },
+});

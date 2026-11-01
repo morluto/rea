@@ -1,22 +1,20 @@
 import { AnalysisCapabilityUnavailableError } from "./analysisErrorCore.js";
 import type { JsonValue } from "./jsonValue.js";
 
-/** Convert a provider's host configuration failure into actionable refusal evidence. */
+/** Project a provider-owned configuration failure and its repair instruction. */
 export const providerConfigurationRefusal = (
   providerId: string,
   operation: string,
   failure: Error & {
+    readonly remediation: string;
     readonly diagnostics?: Readonly<Record<string, JsonValue>>;
   },
 ): AnalysisCapabilityUnavailableError => {
-  const remediation = failure.diagnostics?.remediation;
-  const reason =
-    typeof remediation === "string"
-      ? `${failure.message}. ${remediation}.`
-      : `${failure.message}.`;
+  const reason = `${failure.message}. ${failure.remediation}.`;
   return new AnalysisCapabilityUnavailableError(providerId, operation, reason, {
     cause: failure,
     userMessage: reason,
+    remediationAction: `${failure.remediation}.`,
     diagnostics: failure.diagnostics,
   });
 };
