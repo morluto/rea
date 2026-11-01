@@ -313,11 +313,46 @@ cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
         },
       ],
     });
+    const selectedPage = parseEvidence(page.structuredContent)
+      .normalized_result as {
+      items: Record<string, unknown>[];
+    };
+    expect(selectedPage.items[0]).not.toHaveProperty("limitations");
     expect(parseEvidence(page.structuredContent).locations).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: "artifact-path" }),
       ]),
     );
+    const withoutBytes = await call("match_native_functions", {
+      left: reference(left.evidence_id),
+      right: reference(right.evidence_id),
+    });
+    expect(withoutBytes.isError, JSON.stringify(withoutBytes)).not.toBe(true);
+    const missingParent = parseEvidence(withoutBytes.structuredContent)
+      .normalized_result as { parent_evidence_id: string };
+    const missingPage = await call("inspect_analysis_view", {
+      source: reference(missingParent.parent_evidence_id),
+      view: {
+        kind: "function-matches",
+        collection: "functions",
+        sides: ["left"],
+        names: ["main"],
+      },
+    });
+    expect(missingPage.isError, JSON.stringify(missingPage)).not.toBe(true);
+    expect(
+      parseEvidence(missingPage.structuredContent).normalized_result,
+    ).toMatchObject({
+      items: [
+        {
+          name: "main",
+          body_sha256: null,
+          limitations: [
+            "No complete unambiguous bytes for the observed function body.",
+          ],
+        },
+      ],
+    });
     const compared = await call(
       "compare_functions",
       report.matches[0]!.compare_functions_input!,

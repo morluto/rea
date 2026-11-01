@@ -217,6 +217,7 @@ const selectedItems = (
           "body_bytes",
           "dossier_evidence_id",
           "evidence_links",
+          "limitations",
         ];
   const fields = new Set<string>(view.fields ?? defaults);
   const columns = (row: Readonly<Record<string, JsonValue>>) =>
