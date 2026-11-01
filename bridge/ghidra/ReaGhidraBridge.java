@@ -1250,6 +1250,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     if (component.getDataType() instanceof ghidra.program.model.data.BitFieldDataType bitfield) {
                         field.addProperty("bit_size", bitfield.getBitSize());
                         field.addProperty("bit_offset", bitfield.getBitOffset());
+                        JsonObject bitField = new JsonObject();
+                        bitField.addProperty("base_type_id", bitfield.getBaseDataType().getPathName());
+                        bitField.addProperty("declared_bit_size", bitfield.getDeclaredBitSize());
+                        bitField.addProperty("component_type_lookup", typeLookupResult(bitfield));
+                        bitField.addProperty("base_type_lookup", typeLookupResult(bitfield.getBaseDataType()));
+                        field.add("bit_field", bitField);
                     }
                     field.addProperty("status", "observed");
                     field.addProperty("flexible_tail", "unknown");
@@ -1280,12 +1286,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("members", members);
         result.addProperty("total_fields", totalFields);
         result.addProperty("truncated", totalFields > 20_000);
-        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Nested and recursive types retain category-path identities for separate inspection.", "At most 20000 fields or enum members are serialized per type to bound provider output. total_fields and truncated report omissions. Enum values preserve Ghidra's signed long representation.")));
+        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Component type paths do not necessarily identify separately registered types; bit-field lookups report whether the manager resolves equivalent types.", "At most 20000 fields or enum members are serialized per type to bound provider output. total_fields and truncated report omissions. Enum values preserve Ghidra's signed long representation.")));
         if (type != null) {
             JsonObject metadata = analysisExtensions.inspectDataType(currentProgram, type, address, monitor);
             if (metadata != null) result.add("metadata_recovery", metadata);
         }
         return result;
+    }
+
+    private String typeLookupResult(DataType type) {
+        DataType resolved = currentProgram.getDataTypeManager().getDataType(type.getPathName());
+        return resolved == null ? "not-found" : resolved.isEquivalent(type) ? "equivalent" : "different";
     }
 
     private JsonObject instructionReference(Reference reference) {

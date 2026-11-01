@@ -128,6 +128,15 @@ rea inspect-native-data-type <binary> --type /MyStruct --provider ghidra
 rea inspect-native-data-type <binary> --address <typed-data-address> --provider ghidra
 ```
 
+Ghidra bit-field components may have a `type_id` that is not a registered
+database type. When `bit_field` is present, `base_type_id` is the provider's
+base type and the lookup fields report whether the manager resolves equivalent
+types at those exact paths. `bit_size` is the effective width;
+`declared_bit_size` can be larger. `bit_offset` is the least-significant-bit
+offset within the base type, not a byte-order-independent offset from the start
+of the containing structure. Missing `bit_field` details are unreported, not
+proof that a component is not a bit-field.
+
 Instruction facts include bytes, length, decoder text, ordered register/scalar/
 address tokens, typed references and flow destinations. Mid-instruction, data,
 outside-memory and unlisted addresses have separate outcomes. For Ghidra,
