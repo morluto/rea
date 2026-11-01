@@ -255,13 +255,16 @@ interface CString {
   readonly limited: boolean;
 }
 
-/** Longest dynamic string scanned for its terminator. */
-const DYNAMIC_STRING_SCAN_BYTES = 65536;
+/**
+ * Longest ELF string scanned for its terminator. Each string is hashed and
+ * serialized as one JSON value, so this also bounds its escaped expansion.
+ */
+const ELF_STRING_SCAN_BYTES = 65536;
 
 /** Why an unreadable string has no name, short of being outside or empty. */
-const unreadString = (observed: CString): string =>
+const unreadString = (observed: Pick<CString, "limited">): string =>
   observed.limited
-    ? `has no terminator within the ${String(DYNAMIC_STRING_SCAN_BYTES)}-byte string scan limit`
+    ? `has no terminator within the ${String(ELF_STRING_SCAN_BYTES)}-byte string scan limit`
     : "is unterminated";
 
 /**
@@ -306,7 +309,7 @@ class DynamicStrings {
     const observed = observeElfStringTableEntry(
       this.table,
       offset,
-      DYNAMIC_STRING_SCAN_BYTES,
+      ELF_STRING_SCAN_BYTES,
     );
     this.#charge("scanned", observed.examinedBytes);
     let entry: CString;
@@ -317,7 +320,7 @@ class DynamicStrings {
         name: null,
         truncated: true,
         outside: false,
-        limited: observed.examinedBytes === DYNAMIC_STRING_SCAN_BYTES,
+        limited: observed.examinedBytes === ELF_STRING_SCAN_BYTES,
       };
     else {
       this.#charge("retained", observed.contentBytes);
@@ -1028,12 +1031,14 @@ const parseInterpreter = (
   }
   try {
     const body = reader.range(interp.offset, interp.bytes, "PT_INTERP");
-    const observed = observeElfStringTableEntry(body, 0, interp.bytes);
+    const observed = observeElfStringTableEntry(body, 0, ELF_STRING_SCAN_BYTES);
     if (observed.state !== "terminated" || observed.bytes === null) {
       issues.push({
         code: "name_unreadable",
         location: hex(interp.offset),
-        message: "PT_INTERP path is unterminated",
+        message: `PT_INTERP path ${unreadString({
+          limited: interp.bytes > ELF_STRING_SCAN_BYTES,
+        })}`,
       });
       return { status: "unreadable", path: null, location: interp };
     }

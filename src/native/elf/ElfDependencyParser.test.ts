@@ -704,6 +704,59 @@ it("keeps the inventory when PT_INTERP points outside the file", () => {
   expect(report.needed.map((entry) => entry.name)).toEqual(defaultNeeded);
 });
 
+/** Point PT_INTERP at appended 0x01 bytes, optionally ending in a NUL. */
+const longInterpreter = (
+  length: number,
+  terminated: boolean,
+): { readonly bytes: Buffer; readonly offset: number } => {
+  const template = elfDependencyFixture({ bits: 64, little: true });
+  const program = elf64ProgramHeader(template, 3);
+  const offset = template.length;
+  const bytes = Buffer.concat([template, Buffer.alloc(length, 1)]);
+  if (terminated) bytes[bytes.length - 1] = 0;
+  bytes.writeBigUInt64LE(BigInt(offset), program + 8);
+  bytes.writeBigUInt64LE(BigInt(length), program + 32);
+  return { bytes, offset };
+};
+
+it.each([
+  ["no terminator", false],
+  ["a terminator past the scan limit", true],
+] as const)(
+  "keeps the inventory when a PT_INTERP path has %s",
+  (_label, terminated) => {
+    const { bytes, offset } = longInterpreter(65537, terminated);
+    const report = parse(bytes);
+    expect(report.interpreter).toEqual({
+      status: "unreadable",
+      path: null,
+      location: { offset, bytes: 65537 },
+    });
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual({
+      code: "name_unreadable",
+      location: `0x${offset.toString(16)}`,
+      message:
+        "PT_INTERP path has no terminator within the 65536-byte string scan limit",
+    });
+    expect(report.needed.map((entry) => entry.name)).toEqual(defaultNeeded);
+  },
+);
+
+it("reports a PT_INTERP segment that fits the scan limit as unterminated", () => {
+  const report = parse(longInterpreter(65536, false).bytes);
+  expect(report.interpreter.status).toBe("unreadable");
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({ message: "PT_INTERP path is unterminated" }),
+  );
+});
+
+it("reports a PT_INTERP path that ends at the last scanned byte", () => {
+  const report = parse(longInterpreter(65536, true).bytes);
+  expect(report.interpreter.status).toBe("present");
+  expect(report.interpreter.path).toHaveLength(65535);
+});
+
 it("marks an empty PT_INTERP path unreadable with partial coverage", () => {
   const report = parse(elfDependencyFixture({ interpreter: "" }));
   expect(report.interpreter.status).toBe("unreadable");

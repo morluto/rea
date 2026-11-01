@@ -77,9 +77,10 @@ path, SHA-256, and byte count as a partial observation. Cyclic `vn_next` /
 `vna_next` chains, duplicate unique dynamic tags, malformed ELF headers, and
 unsupported ELF extended numbering return no complete inventory.
 
-Unreadable dynamic strings, unterminated `PT_INTERP` paths, and tables that
-cannot be located from section headers or `DT_*` tags are reported as partial
-coverage with `issues`. A GNU version chain whose links and declared count
+Each dynamic string and `PT_INTERP` path is scanned for its terminator across at
+most 65536 bytes. Unreadable dynamic strings, `PT_INTERP` paths that are
+unterminated or end past that limit, and tables that cannot be located from
+section headers or `DT_*` tags are reported as partial coverage with `issues`. A GNU version chain whose links and declared count
 disagree keeps the records read before the conflict, marks that table
 `unreadable`, and reports partial coverage. `$ORIGIN`, `$LIB`, and `$PLATFORM` remain unexpanded.
 Derived version maxima do not establish ABI compatibility.
