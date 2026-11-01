@@ -31,8 +31,23 @@ const FETCH_REDIRECT_STATUSES: ReadonlySet<number> = new Set([
   301, 302, 303, 307, 308,
 ]);
 
+/**
+ * Chromium refuses response headers beyond 256 KiB, so a genuine redirect
+ * answer is smaller. Measure the raw report before any copy or expansion; a
+ * larger one is not recovered and the step discloses the gap instead.
+ */
+const MAX_REDIRECT_HEADER_CHARACTERS = 256 * 1024;
+
+const rawHeaderCharacters = (headers: Readonly<Record<string, string>>) => {
+  let total = 0;
+  for (const name in headers)
+    total += name.length + (headers[name]?.length ?? 0);
+  return total;
+};
+
 const isRedirect = (answer: RedirectAnswer): boolean =>
   FETCH_REDIRECT_STATUSES.has(answer.status) &&
+  rawHeaderCharacters(answer.headers) <= MAX_REDIRECT_HEADER_CHARACTERS &&
   Object.keys(answer.headers).some((name) => name.toLowerCase() === "location");
 
 /**
@@ -47,12 +62,13 @@ const redirectResponse = (
   request: Request,
   answer: RedirectAnswer,
 ): ScenarioRedirectResponse => {
+  let flattened: Record<string, string> | undefined;
   return {
     request: () => request,
     url: () => request.url(),
     status: () => answer.status,
     headers: () =>
-      Object.fromEntries(
+      (flattened ??= Object.fromEntries(
         Object.entries(answer.headers).map(([name, value]) => {
           const lower = name.toLowerCase();
           return [
@@ -60,7 +76,7 @@ const redirectResponse = (
             lower === "set-cookie" ? value : value.split("\n").join(", "),
           ];
         }),
-      ),
+      )),
     // Expanded only when the capture selects header values and admits them.
     headersArray: async () =>
       Object.entries(answer.headers).flatMap(([name, value]) =>

@@ -118,6 +118,25 @@ describe("request step redirect observation", () => {
     expect(observation!.delivered()).toBe(false);
     await observation!.stop();
   });
+});
+
+describe("request step redirect observation bounds", () => {
+  it("does not recover an answer whose raw headers exceed the bound, and builds the header map once", async () => {
+    const { page, emitter, session, responses } = setup();
+    const observation = await observe(page, responses);
+    dispatch(session);
+    emitter.emit("request", fakeRequest());
+    answer(session, 302, {
+      location: "/destination",
+      "x-large": "v\n".repeat(200 * 1024),
+    });
+    expect(responses).toHaveLength(0);
+    expect(observation!.delivered()).toBe(false);
+    answer(session, 302, { location: "/destination" });
+    expect(responses).toHaveLength(1);
+    expect(responses[0]!.headers()).toBe(responses[0]!.headers());
+    await observation!.stop();
+  });
 
   it("does not attribute a redirect to either of two identical dispatches", async () => {
     const { page, emitter, session, responses } = setup();
