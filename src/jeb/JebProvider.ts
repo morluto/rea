@@ -1,3 +1,4 @@
+import { JEB_PROVIDER_IDENTITY } from "./JebProviderIdentity.js";
 import {
   JebMcpAcquisitionCleanupFailure,
   JebMcpPhysicalFailure,
@@ -40,12 +41,6 @@ import {
 } from "./JebMcpConnection.js";
 
 const JEB_CONNECTION_REMEDIATION = `Start a JEB client serving MCP (default ${DEFAULT_JEB_MCP_ENDPOINT}) or set REA_JEB_MCP_URL to the running endpoint.`;
-
-export const JEB_PROVIDER_IDENTITY: ProviderIdentity = {
-  id: "jeb",
-  name: "JEB",
-  version: null,
-} as const;
 
 export interface JebProviderOptions {
   /** Caller environment carrying REA_JEB_MCP_URL. */
