@@ -148,6 +148,48 @@ it("reports unknown extraction coverage for an unlisted virtual filesystem", asy
   }
 });
 
+it("extracts remote specifiers whose escapes differ only in hex case", async () => {
+  const root = await createTestTempDirectory("rea-deno-escape-case-");
+  const path = join(root, "app");
+  await writeFile(
+    path,
+    denoElf(
+      buildDenoSection({
+        specifiers: [
+          { text: "https://example.com/a:b.ts", id: 1 },
+          { text: "https://example.com/a%3ab.ts", id: 2 },
+        ],
+        remoteModules: [
+          { specifierId: 1, data: "first" },
+          { specifierId: 2, data: "second" },
+        ],
+      }),
+    ),
+  );
+  const resourceScope = new ArtifactResourceScope();
+  try {
+    const extracted = await extractArtifact({
+      inputPath: path,
+      inputFormat: "elf",
+      outputRoot: join(root, "out"),
+      environment: process.env,
+      integrityPolicy: "fail",
+      resourceScope,
+    });
+    expect(
+      await readFile(
+        join(extracted.output_root, "deno-remote/example.com/a%3Ab.ts"),
+        "utf8",
+      ),
+    ).toBe("first");
+    expect(
+      await readFile(join(extracted.output_root, "deno-remote/1"), "utf8"),
+    ).toBe("second");
+  } finally {
+    await resourceScope.close();
+  }
+});
+
 it("publishes a remote module with a port to a Windows destination", async () => {
   const root = await createTestTempDirectory("rea-deno-remote-port-");
   const path = join(root, "app");

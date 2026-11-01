@@ -542,11 +542,11 @@ const remoteDestination = (
     };
   }
   // A specifier is generated into a path, so its spelling can follow every
-  // destination. The original stays in `sourcePath`.
-  const portable = normalized.replace(
-    NON_PORTABLE_PATH_CHARACTERS,
-    encodeURIComponent,
-  );
+  // destination. The original stays in `sourcePath`. One hex case makes escapes
+  // that a case-insensitive disk would merge equal, so the registry sees them.
+  const portable = normalized
+    .replace(NON_PORTABLE_PATH_CHARACTERS, encodeURIComponent)
+    .replace(/%[0-9a-f]{2}/giu, (escape) => escape.toUpperCase());
   if (
     !remoteConcretePaths(portable, module).every((path) =>
       denoLogicalPathFits(path),

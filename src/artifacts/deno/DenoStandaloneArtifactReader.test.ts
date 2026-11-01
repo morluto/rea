@@ -381,6 +381,48 @@ it("indexes a remote path that collides once its colon is encoded", async () => 
   });
 });
 
+it.each([
+  [
+    "a colon",
+    "https://example.com/a:b.ts",
+    "https://example.com/a%3ab.ts",
+    "deno-remote/example.com/a%3Ab.ts",
+  ],
+  [
+    "a query",
+    "https://example.com/a?b",
+    "https://example.com/a%3fb",
+    "deno-remote/example.com/a%3Fb",
+  ],
+  ["a backslash", "x:a\\b", "x%3aa%5cb", "x%3Aa%5Cb"],
+])(
+  "indexes a specifier whose escape differs from %s only in hex case",
+  async (_label, first, second, path) => {
+    const snapshot = await inventoryOf(
+      "remote-escape-case",
+      denoElf(
+        buildDenoSection({
+          specifiers: [
+            { text: first, id: 1 },
+            { text: second, id: 2 },
+          ],
+          remoteModules: [
+            { specifierId: 1, data: "first" },
+            { specifierId: 2, data: "second" },
+          ],
+        }),
+      ),
+    );
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === path),
+    ).toMatchObject({ format_metadata: { source_path: first } });
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === "deno-remote/1"),
+    ).toMatchObject({ format_metadata: { source_path: second } });
+    expect(snapshot.limitations.join("\n")).not.toContain("case folding");
+  },
+);
+
 it("reports unknown coverage when the virtual filesystem cannot be listed", async () => {
   const snapshot = await inventoryOf(
     "unlisted-vfs",
