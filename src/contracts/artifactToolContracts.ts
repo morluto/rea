@@ -3,6 +3,10 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
 import { artifactOutputSchemas } from "./toolOutputSchemaGroups.js";
+import {
+  DEFAULT_DRY_RUN_PLAN_ENTRY_LIMIT,
+  MAX_DRY_RUN_PLAN_ENTRY_LIMIT,
+} from "../domain/artifactGraph.js";
 import { artifactIntegrityPolicySchema } from "../domain/artifactIntegrityPolicy.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { toolContractMetadata } from "./toolEffects.js";
@@ -27,28 +31,121 @@ export const artifactInspectionInputSchema =
       ),
   });
 
-/** Extraction needs no selector: it materializes every regular child file. */
-export const artifactExtractionInputSchema = z.strictObject({
+const refineArtifactExtractionInput = (
+  value: {
+    readonly dry_run?: boolean;
+    readonly plan_offset?: number;
+    readonly plan_limit?: number;
+  },
+  context: z.RefinementCtx,
+): void => {
+  if (value.dry_run === true) return;
+  if (value.plan_offset !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["plan_offset"],
+      message: "plan_offset requires dry_run=true.",
+    });
+  }
+  if (value.plan_limit !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["plan_limit"],
+      message: "plan_limit requires dry_run=true.",
+    });
+  }
+};
+
+const artifactExtractionInputShapeSchema = z.strictObject({
   integrity_policy: artifactIntegrityPolicySchema,
+  dry_run: z
+    .boolean()
+    .exactOptional()
+    .describe(
+      "When true, validate destination admission, path collisions, and reader entries and return a bounded extraction plan without creating destination files or directories.",
+    ),
+  plan_offset: z
+    .int()
+    .min(0)
+    .exactOptional()
+    .describe(
+      "Zero-based start index into dry-run plan.entries when dry_run is true (default 0).",
+    ),
+  plan_limit: z
+    .int()
+    .min(1)
+    .max(MAX_DRY_RUN_PLAN_ENTRY_LIMIT)
+    .exactOptional()
+    .describe(
+      `Maximum number of dry-run plan.entries items returned per page when dry_run is true (default ${String(DEFAULT_DRY_RUN_PLAN_ENTRY_LIMIT)}, max ${String(MAX_DRY_RUN_PLAN_ENTRY_LIMIT)}).`,
+    ),
 });
+
+/** Extraction needs no selector: it materializes every regular child file. */
+export const artifactExtractionInputSchema =
+  artifactExtractionInputShapeSchema.superRefine(refineArtifactExtractionInput);
 
 /** Provider input containing the destination chosen by the local adapter. */
 export const artifactExtractionExecutionSchema =
-  artifactExtractionInputSchema.extend({
-    output_root: localPathStringSchema,
-  });
+  artifactExtractionInputShapeSchema
+    .extend({
+      output_root: localPathStringSchema,
+    })
+    .superRefine(refineArtifactExtractionInput);
 
 const exampleInputSchema = z.record(z.string(), jsonValueSchema);
-const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
-  inspect_artifact: { detail: "summary" },
-  extract_artifact: {},
-  decode_interface_builder: {},
-  inspect_asset_catalog: { offset: 0, limit: 1000 },
-  inspect_keyed_archive: { path: "Contents/Resources/Model.plist" },
-  trace_dylib_resolution: {
-    roots: ["Contents/MacOS/App"],
-    architecture: "arm64",
-  },
+const examples: Readonly<
+  Record<
+    string,
+    readonly {
+      readonly title: string;
+      readonly input: Readonly<Record<string, unknown>>;
+    }[]
+  >
+> = {
+  inspect_artifact: [
+    {
+      title: "Example inspect artifact request",
+      input: { detail: "summary" },
+    },
+  ],
+  extract_artifact: [
+    {
+      title: "Example extract artifact request",
+      input: {},
+    },
+    {
+      title: "Example extract artifact dry-run plan request",
+      input: { dry_run: true },
+    },
+  ],
+  decode_interface_builder: [
+    {
+      title: "Example decode interface builder request",
+      input: {},
+    },
+  ],
+  inspect_asset_catalog: [
+    {
+      title: "Example inspect asset catalog request",
+      input: { offset: 0, limit: 1000 },
+    },
+  ],
+  inspect_keyed_archive: [
+    {
+      title: "Example inspect keyed archive request",
+      input: { path: "Contents/Resources/Model.plist" },
+    },
+  ],
+  trace_dylib_resolution: [
+    {
+      title: "Example trace dylib resolution request",
+      input: {
+        roots: ["Contents/MacOS/App"],
+        architecture: "arm64",
+      },
+    },
+  ],
 };
 
 const artifact = <
@@ -70,12 +167,17 @@ const artifact = <
     ...(retainedSummary === undefined ? {} : { retainedSummary }),
     inputSchema,
     outputSchema,
-    examples: [
-      {
-        title: `Example ${name.replaceAll("_", " ")} request`,
-        input: exampleInputSchema.parse(examples[name] ?? {}),
-      },
-    ],
+    examples: (
+      examples[name] ?? [
+        {
+          title: `Example ${name.replaceAll("_", " ")} request`,
+          input: {},
+        },
+      ]
+    ).map((entry) => ({
+      title: entry.title,
+      input: exampleInputSchema.parse(entry.input),
+    })),
   } satisfies ToolContract<Name, Schema, typeof outputSchema>;
 };
 
@@ -89,7 +191,7 @@ export const ARTIFACT_TOOL_CONTRACTS = [
   ),
   artifact(
     "extract_artifact",
-    "Extract regular files (including Node.js SEA scripts and assets) exposed by a supported active archive reader into a fresh temporary directory chosen by REA. A nested archive exposed as a file is copied as a file; inspect and extract it separately to unpack its contents. The result includes its location. DMG extraction is unavailable; use a caller-managed read-only mount on macOS to access its files. Rejects traversal and symlink escapes, never overwrites, and verifies cleanup. Integrity mismatches fail by default; record-and-continue extracts the observed bytes and returns each mismatch as an explicitly untrusted integrity contradiction.",
+    "Extract regular files (including Node.js SEA scripts and assets) exposed by a supported active archive reader into a fresh temporary directory chosen by REA, or pass dry_run=true to return a non-destructive extraction plan (planned, unsupported, and unresolved entries plus declared and observed content-byte estimates) without creating destination files or directories. A nested archive exposed as a file is copied as a file; inspect and extract it separately to unpack its contents. The result includes its location. DMG extraction is unavailable; use a caller-managed read-only mount on macOS to access its files. Rejects traversal and symlink escapes, never overwrites, and verifies cleanup. Integrity mismatches fail by default; record-and-continue extracts the observed bytes and returns each mismatch as an explicitly untrusted integrity contradiction.",
     artifactExtractionInputSchema,
   ),
   artifact(

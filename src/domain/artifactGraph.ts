@@ -279,11 +279,59 @@ const artifactExtractionManifestSchema = z.object({
   output_root_alias: z.literal("$OUTPUT_ROOT"),
 });
 
+/** One planned or non-materialized entry reported by a dry-run extraction plan. */
+export const artifactExtractionPlanEntrySchema = z.strictObject({
+  occurrence_id: occurrenceIdSchema,
+  logical_path: boundedRelativePathSchema,
+  entry_kind: z.enum(["file", "directory", "symlink", "slice", "metadata"]),
+  status: z.enum(["planned", "unsupported", "unresolved"]),
+  reason: z.string().min(1).nullable(),
+  observed_bytes: z.int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
+  declared_bytes: z.int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
+});
+
+/** Labeled byte and entry totals for a dry-run extraction plan. */
+export const artifactExtractionPlanTotalsSchema = z.strictObject({
+  planned_files: z.int().min(0),
+  unsupported_entries: z.int().min(0),
+  unresolved_entries: z.int().min(0),
+  observed_bytes_estimate: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+  declared_bytes_estimate: z
+    .int()
+    .min(0)
+    .max(Number.MAX_SAFE_INTEGER)
+    .nullable(),
+  byte_totals_basis: z.literal("declared-and-observed-content-estimates"),
+  byte_totals_note: z.string().min(1),
+});
+
+export const DEFAULT_DRY_RUN_PLAN_ENTRY_LIMIT = 500;
+export const MAX_DRY_RUN_PLAN_ENTRY_LIMIT = 1_000;
+
+/** Paging metadata for bounded dry-run extraction plan entry delivery. */
+export const artifactExtractionPlanPageSchema = z.strictObject({
+  total_entries: z.int().min(0),
+  offset: z.int().min(0),
+  limit: z.int().min(1).max(MAX_DRY_RUN_PLAN_ENTRY_LIMIT),
+  returned_entries: z.int().min(0),
+  next_offset: z.int().min(0).nullable(),
+  truncated: z.boolean(),
+});
+
+/** Dry-run extraction plan without destination filesystem writes. */
+export const artifactExtractionPlanSchema = z.strictObject({
+  entries: z.array(artifactExtractionPlanEntrySchema),
+  page: artifactExtractionPlanPageSchema.exactOptional(),
+  totals: artifactExtractionPlanTotalsSchema,
+});
+
 /** Safe extraction observation with containment and cleanup verification. */
 export const artifactExtractionResultSchema = z.object({
   manifest: artifactGraphManifestSchema,
   extraction_manifest: artifactExtractionManifestSchema,
   output_root: z.string().min(1),
+  dry_run: z.boolean().exactOptional(),
+  plan: artifactExtractionPlanSchema.exactOptional(),
   artifacts: z.array(extractedArtifactSchema),
   containment_verified: z.boolean(),
   cleanup: z.object({
@@ -320,4 +368,14 @@ export type ArtifactInventoryResult = z.infer<
 /** Parsed paginated extraction result. */
 export type ArtifactExtractionResult = z.infer<
   typeof artifactExtractionResultSchema
+>;
+
+/** Parsed dry-run extraction plan entry. */
+export type ArtifactExtractionPlanEntry = z.infer<
+  typeof artifactExtractionPlanEntrySchema
+>;
+
+/** Parsed dry-run extraction plan. */
+export type ArtifactExtractionPlan = z.infer<
+  typeof artifactExtractionPlanSchema
 >;

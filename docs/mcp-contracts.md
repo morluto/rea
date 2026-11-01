@@ -1499,6 +1499,24 @@ Extraction materializes regular files exposed by the active archive reader.
 Its temporary parent follows the filesystem semantics of `TMPDIR`, including
 POSIX symlinks followed by `..`. A destination inside a directory source is
 refused before copying; select a temporary parent outside that source.
+Pass `dry_run: true` to `extract_artifact` (or `--dry-run` on
+`rea extract-artifact <path> --dry-run --json`) to validate destination
+admission, path collisions, component/path length limits, and reader entries
+without creating destination files or directories. The returned `plan.entries`
+list classifies each child occurrence as `planned` (regular file or slice ready
+to write), `unsupported` (directories, logical metadata declarations, or nested
+archive members that single-container extraction does not expand), or
+`unresolved` (symlinks, case-folding or length-limit paths that cannot be
+verified without creating files, or non-file entries that drifted from the
+inventory snapshot). `plan.page` bounds `plan.entries` per call (`plan_offset` / `--plan-offset` default `0`,
+`plan_limit` / `--plan-limit` default `500`, maximum `1000`, also capped by serialized page byte budget) and reports `total_entries`,
+`offset`, `limit`, `returned_entries`, `next_offset`, and `truncated` while
+`plan.totals` always summarizes the complete inventory. `plan.totals` reports
+`planned_files`, `unsupported_entries`, `unresolved_entries`,
+`observed_bytes_estimate`, and `declared_bytes_estimate` with
+`byte_totals_basis: "declared-and-observed-content-estimates"`; these byte
+totals measure archive content bytes rather than filesystem allocation or
+disk-block usage.
 When that reader exposes a nested archive as a file, extraction copies the
 archive file; inspect and extract that file separately to unpack its contents.
 Extraction retains inventory and materialization traversal limitations in its

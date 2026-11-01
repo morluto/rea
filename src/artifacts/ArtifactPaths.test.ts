@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ArtifactPathRegistry,
   destinationCaseCollision,
+  destinationCaseCollisions,
   DestinationCaseCollisionFailure,
   annotateEnglishUnicodeCaseCollisions,
   ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION,
@@ -187,6 +188,60 @@ it.each([["app.js"], ["app.js", "App.js"], ["other.js"]])(
     expect(destinationCaseCollision("res/app.js", names)).toBeUndefined();
   },
 );
+
+it("rejects ASCII case collisions in case-insensitive registries while leaving non-ASCII case folds to destination table resolution", () => {
+  const winCollision = destinationCaseCollision("res/ς.txt", ["σ.txt"]);
+  expect(winCollision).toBeInstanceOf(DestinationCaseCollisionFailure);
+  expect(winCollision).toMatchObject({
+    reason: "path",
+    requestedPath: "res/ς.txt",
+    existingPath: "res/σ.txt",
+  });
+
+  const registry = new ArtifactPathRegistry({
+    caseInsensitive: true,
+  });
+  registry.add("Foo.txt", "file");
+  expect(() => registry.add("foo.txt", "file")).toThrow(
+    DestinationCaseCollisionFailure,
+  );
+  registry.add("σ.txt", "file");
+  expect(() => registry.add("ς.txt", "file")).not.toThrow();
+  registry.add("𐐀.txt", "file");
+  expect(() => registry.add("𐐨.txt", "file")).not.toThrow();
+  registry.add("ß.txt", "file");
+  expect(() => registry.add("SS.txt", "file")).not.toThrow();
+
+  registry.add("straße.txt", "file");
+  expect(() => registry.add("strasse.txt", "file")).not.toThrow();
+
+  const unresolved = destinationCaseCollisions([
+    "σ.txt",
+    "ς.txt",
+    "𐐀.txt",
+    "𐐨.txt",
+    "ß.txt",
+    "SS.txt",
+    "straße.txt",
+    "strasse.txt",
+  ]);
+  expect(unresolved.get("ς.txt")?.[0]).toMatchObject({
+    prefix: "ς.txt",
+    other: "σ.txt",
+  });
+  expect(unresolved.get("𐐨.txt")?.[0]).toMatchObject({
+    prefix: "𐐨.txt",
+    other: "𐐀.txt",
+  });
+  expect(unresolved.get("ß.txt")?.[0]).toMatchObject({
+    prefix: "ß.txt",
+    other: "SS.txt",
+  });
+  expect(unresolved.get("straße.txt")?.[0]).toMatchObject({
+    prefix: "straße.txt",
+    other: "strasse.txt",
+  });
+});
 
 it("reserves prefix capacity atomically without declaring destination kinds", () => {
   const registry = new ArtifactPathRegistry({ maxParts: 4, maxNodes: 3 });

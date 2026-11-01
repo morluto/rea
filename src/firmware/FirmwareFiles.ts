@@ -59,6 +59,10 @@ const throwIfFirmwareInventoryCancelled = (
 export class FirmwareFileAccess {
   readonly #resources = new ArtifactResourceScope();
 
+  get resources(): ArtifactResourceScope {
+    return this.#resources;
+  }
+
   /** Retry retained descriptors without closing admission for future operations. */
   retryCleanup(): Promise<void> {
     return this.#resources.retryCleanup();
@@ -300,11 +304,7 @@ export class FirmwareFileAccess {
 
 /** Observed state of a producer report that cannot supply analysis Evidence. */
 type FirmwareReportState =
-  | "missing"
-  | "empty"
-  | "oversized"
-  | "invalid_json"
-  | "not_regular_file";
+  "missing" | "empty" | "oversized" | "invalid_json" | "not_regular_file";
 
 const firmwareReportFailure = (
   operation: string,

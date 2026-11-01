@@ -10,8 +10,10 @@ import {
   publishCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
+import { MAX_DRY_RUN_PLAN_ENTRY_LIMIT } from "../domain/artifactGraph.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
 import { z } from "incur";
 
@@ -264,23 +266,82 @@ const registerExtractionCommand = (
         .enum(["fail", "record-and-continue"])
         .default("fail")
         .describe("Behavior when declared artifact integrity does not match"),
+      dryRun: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Plan extraction without creating destination files or directories; reports planned, unsupported, and unresolved entries plus declared and observed content-byte estimates (for example: rea extract-artifact ./app.asar --dry-run --json)",
+        ),
+      planOffset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe(
+          "Zero-based entry offset when paging a dry-run extraction plan (requires --dry-run)",
+        ),
+      planLimit: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_DRY_RUN_PLAN_ENTRY_LIMIT)
+        .optional()
+        .describe(
+          `Maximum dry-run plan entries to return per page (1..${String(MAX_DRY_RUN_PLAN_ENTRY_LIMIT)}; requires --dry-run)`,
+        ),
       ...espFlashSelectionOptions,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "extract-artifact", () =>
-        runProviderAnalysis(
+      logCliCommand(logger, "extract-artifact", () => {
+        if (
+          !options.dryRun &&
+          (options.planOffset !== undefined || options.planLimit !== undefined)
+        ) {
+          return Promise.resolve(
+            projectAnalysisError(
+              new AnalysisInputError("extract_artifact", undefined, [
+                ...(options.planOffset !== undefined
+                  ? [
+                      {
+                        path: ["plan_offset"],
+                        reason: "invalid_value" as const,
+                        message: "plan_offset requires dry_run=true.",
+                      },
+                    ]
+                  : []),
+                ...(options.planLimit !== undefined
+                  ? [
+                      {
+                        path: ["plan_limit"],
+                        reason: "invalid_value" as const,
+                        message: "plan_limit requires dry_run=true.",
+                      },
+                    ]
+                  : []),
+              ]),
+            ),
+          );
+        }
+        return runProviderAnalysis(
           args.path,
           "extract_artifact",
           {
             integrity_policy: options.integrityPolicy,
+            ...(options.dryRun ? { dry_run: true } : {}),
+            ...(options.planOffset === undefined
+              ? {}
+              : { plan_offset: options.planOffset }),
+            ...(options.planLimit === undefined
+              ? {}
+              : { plan_limit: options.planLimit }),
             output_root: createArtifactExtractionDestination(),
           },
           logger,
           undefined,
           undefined,
           espFlashTargetSelection(options),
-        ).then(projectCliAnalysisResult),
-      ),
+        ).then(projectCliAnalysisResult);
+      }),
   });
 };
 

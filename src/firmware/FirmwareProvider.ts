@@ -351,9 +351,9 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           cause: signal.reason,
         });
       if (request.operation === "extract_firmware")
-        await SafeOutputTree.checkDestination(
-          request.input.output_directory,
-        ).catch((cause: unknown) => {
+        await SafeOutputTree.checkDestination(request.input.output_directory, {
+          resourceScope: this.#files.resources,
+        }).catch((cause: unknown) => {
           throw outputDirectoryAdmissionRefusal(
             request.operation,
             "output_directory",

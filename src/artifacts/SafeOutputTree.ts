@@ -6,6 +6,7 @@ import {
   chmod,
   mkdir,
   open,
+  opendir,
   readdir,
   realpath,
   stat,
@@ -13,7 +14,9 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type { Readable } from "node:stream";
+import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
 
 import {
@@ -21,6 +24,7 @@ import {
   DestinationPathUnrepresentableFailure,
   destinationCaseCollision,
   normalizeArtifactPath,
+  type DestinationCaseSensitivity,
 } from "./ArtifactPaths.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -146,7 +150,13 @@ export class SafeOutputTree {
   }
 
   /** Read-only early admission; create() still rechecks and acquires exclusively. */
-  static async checkDestination(outputRoot: string): Promise<void> {
+  static async checkDestination(
+    outputRoot: string,
+    options: { readonly resourceScope?: ArtifactResourceScope } = {},
+  ): Promise<{
+    readonly caseSensitivity: DestinationCaseSensitivity;
+    readonly canonicalOutput: string;
+  }> {
     const { canonicalOutput } = await this.resolveDestination(outputRoot);
     const existing = await lstat(canonicalOutput).catch((cause: unknown) => {
       if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
@@ -154,7 +164,9 @@ export class SafeOutputTree {
       if (
         cause instanceof Error &&
         "code" in cause &&
-        ["ENOTDIR", "EACCES", "EPERM"].includes(String(cause.code))
+        ["ENOTDIR", "EACCES", "EPERM", "EINVAL", "ENAMETOOLONG"].includes(
+          String(cause.code),
+        )
       )
         throw new SafeOutputTreeDestinationRefusal(
           "Output path is unavailable",
@@ -164,21 +176,31 @@ export class SafeOutputTree {
     });
     if (existing !== undefined)
       throw new SafeOutputTreeDestinationRefusal("Output root already exists");
-    await access(
-      dirname(canonicalOutput),
-      constants.W_OK | constants.X_OK,
-    ).catch((cause: unknown) => {
-      if (
-        cause instanceof Error &&
-        "code" in cause &&
-        ["EACCES", "EPERM", "ENOENT", "ENOTDIR"].includes(String(cause.code))
-      )
-        throw new SafeOutputTreeDestinationRefusal(
-          "Output parent is not writable",
-          { cause },
-        );
-      throw cause;
-    });
+    const parent = dirname(canonicalOutput);
+    await access(parent, constants.W_OK | constants.X_OK).catch(
+      (cause: unknown) => {
+        if (
+          cause instanceof Error &&
+          "code" in cause &&
+          ["EACCES", "EPERM", "ENOENT", "ENOTDIR"].includes(String(cause.code))
+        )
+          throw new SafeOutputTreeDestinationRefusal(
+            "Output parent is not writable",
+            { cause },
+          );
+        throw cause;
+      },
+    );
+    return {
+      caseSensitivity:
+        options.resourceScope === undefined
+          ? "unknown"
+          : await observeDirectoryCaseSensitivity(
+              parent,
+              options.resourceScope,
+            ),
+      canonicalOutput,
+    };
   }
 
   /** Resolve an admissible parent without acquiring output; create rechecks it. */
@@ -186,6 +208,10 @@ export class SafeOutputTree {
     if (!isAbsolute(outputRoot))
       throw new SafeOutputTreeDestinationRefusal(
         "Output root must be absolute",
+      );
+    if (hasUnpairedSurrogate(outputRoot))
+      throw new SafeOutputTreeDestinationRefusal(
+        "Extraction output root contains unpaired UTF-16 surrogates",
       );
     // Path syntax follows the host; `platform` selects only the name policy.
     const requested = absoluteCallerPath(outputRoot);
@@ -724,11 +750,44 @@ const writeAll = async (
   }
 };
 
-const normalizeDestinationPath = (
+const WINDOWS_RESERVED_SEGMENT =
+  /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu;
+
+/**
+ * Validate and normalize a logical extraction path using the destination
+ * filesystem's path-safety rules before or during extraction.
+ */
+const hasUnpairedSurrogate = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        index += 1;
+        continue;
+      }
+      return true;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) return true;
+  }
+  return false;
+};
+
+export const normalizeDestinationPath = (
   relativePath: string,
-  platform: NodeJS.Platform,
+  platform: NodeJS.Platform = process.platform,
 ): string => {
+  if (hasUnpairedSurrogate(relativePath))
+    throw new ArtifactReaderFailure(
+      "path",
+      `Destination filesystem cannot materialize artifact path with unpaired UTF-16 surrogates: ${JSON.stringify(relativePath)}; host UTF-8 encoding replaces lone surrogates with U+FFFD.`,
+    );
   const path = normalizeArtifactPath(relativePath);
+  if (hasUnpairedSurrogate(path))
+    throw new ArtifactReaderFailure(
+      "path",
+      `Destination filesystem cannot materialize artifact path with unpaired UTF-16 surrogates: ${JSON.stringify(path)}; host UTF-8 encoding replaces lone surrogates with U+FFFD.`,
+    );
   if (platform === "win32" && path.includes("\\"))
     throw new ArtifactReaderFailure(
       "path",
@@ -744,7 +803,109 @@ const normalizeDestinationPath = (
       "path",
       `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; Windows names cannot contain U+0001-U+001F.`,
     );
+  if (platform === "win32" && /["<>|?*]/u.test(path))
+    throw new ArtifactReaderFailure(
+      "path",
+      `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; Windows names cannot contain '"', '<', '>', '|', '?', or '*'.`,
+    );
+  if (platform === "win32") {
+    for (const segment of path.split("/")) {
+      if (/[. ]$/u.test(segment))
+        throw new ArtifactReaderFailure(
+          "path",
+          `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; Windows path segments cannot end with '.' or ' '.`,
+        );
+      if (WINDOWS_RESERVED_SEGMENT.test(segment))
+        throw new ArtifactReaderFailure(
+          "path",
+          `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; ${JSON.stringify(segment)} is a Windows reserved device name.`,
+        );
+    }
+  }
   return path;
+};
+
+const toggleFirstAsciiLetter = (value: string): string | undefined => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0x41 && code <= 0x5a) {
+      return `${value.slice(0, index)}${String.fromCharCode(code + 0x20)}${value.slice(index + 1)}`;
+    }
+    if (code >= 0x61 && code <= 0x7a) {
+      return `${value.slice(0, index)}${String.fromCharCode(code - 0x20)}${value.slice(index + 1)}`;
+    }
+  }
+  return undefined;
+};
+
+const MAX_CASE_PROBE_ENTRIES = 256;
+
+/**
+ * Observe whether an existing directory resolves case-folded entry lookups to
+ * the same inode without creating entries or inferring from parent mounts.
+ */
+const observeDirectoryCaseSensitivity = async (
+  directory: string,
+  resourceScope: ArtifactResourceScope,
+): Promise<DestinationCaseSensitivity> => {
+  const dir = await opendir(directory).catch(() => undefined);
+  if (dir === undefined) return "unknown";
+  const owner = new OwnedDirectoryHandle(dir);
+  let caseSensitivity: DestinationCaseSensitivity = "unknown";
+  try {
+    let scanned = 0;
+    let remainingMatch: string | undefined;
+    while (true) {
+      const dirent = await owner.handle.read();
+      if (dirent === null) {
+        caseSensitivity =
+          remainingMatch === undefined ? "unknown" : "case-insensitive";
+        break;
+      }
+      if (scanned >= MAX_CASE_PROBE_ENTRIES) {
+        caseSensitivity = "unknown";
+        break;
+      }
+      scanned += 1;
+      if (remainingMatch !== undefined) {
+        if (dirent.name === remainingMatch) {
+          caseSensitivity = "case-sensitive";
+          break;
+        }
+        continue;
+      }
+      const toggled = toggleFirstAsciiLetter(dirent.name);
+      if (toggled === undefined) continue;
+      const [original, candidate] = await Promise.all([
+        lstat(join(directory, dirent.name), { bigint: true }).catch(
+          () => undefined,
+        ),
+        lstat(join(directory, toggled), { bigint: true }).catch(
+          () => undefined,
+        ),
+      ]);
+      if (original === undefined) continue;
+      if (
+        candidate === undefined ||
+        candidate.dev !== original.dev ||
+        candidate.ino !== original.ino
+      ) {
+        caseSensitivity = "case-sensitive";
+        break;
+      }
+      remainingMatch = toggled;
+    }
+  } catch {
+    caseSensitivity = "unknown";
+  }
+  const cleanup = await resourceScope.release({
+    kind: "directory-handle",
+    resource: directory,
+    handle: owner,
+  });
+  if (cleanup.kind === "failed")
+    throw resourceScope.cleanupFailure({ kind: "completed" }, [cleanup]);
+  return caseSensitivity;
 };
 
 const abortIfNeeded = (signal?: AbortSignal): void => {

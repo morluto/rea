@@ -20,6 +20,11 @@ import {
   createOwnedArtifactClient,
   withArtifactClient,
 } from "../../../support/artifactClientScope.js";
+import { registerArtifactCommands } from "../../../../src/cli/artifactCommands.js";
+import type { CliInstance } from "../../../../src/cli/types.js";
+import type { DirectAnalysis } from "../../../../src/composition/directAnalysis.js";
+import { ok } from "../../../../src/domain/result.js";
+import pino from "pino";
 
 describe("artifact extraction", () => {
   it.skipIf(process.platform === "win32").each(["file/..", "missing"])(
@@ -159,6 +164,180 @@ describe("artifact extraction", () => {
       "relocated-output",
       "source.app",
     ]);
+  });
+});
+
+describe("artifact extraction dry-run", () => {
+  it("supports dry_run extraction planning and refuses existing destinations without creating files", async () => {
+    const root = await createTestTempDirectory("rea-extract-dry-run-boundary-");
+    const source = join(root, "source.app");
+    await mkdir(join(source, "nested"), { recursive: true });
+    await writeFile(join(source, "nested", "item.txt"), "hello world\n");
+    const targetValue = await target(source);
+    const plannedOutput = join(root, "planned-output");
+
+    const dryResult = await createOwnedArtifactClient(targetValue).execute(
+      "extract_artifact",
+      artifactExtractionExecutionSchema.parse({
+        output_root: plannedOutput,
+        dry_run: true,
+      }),
+    );
+    if (!dryResult.ok) throw dryResult.error;
+    const parsedDry = artifactExtractionResultSchema.parse(
+      dryResult.value.result,
+    );
+    expect(parsedDry.dry_run).toBe(true);
+    expect(parsedDry.artifacts).toEqual([
+      expect.objectContaining({
+        relative_path: "Info.plist",
+        bytes_written: 0,
+        created: false,
+      }),
+      expect.objectContaining({
+        relative_path: "Main",
+        bytes_written: 0,
+        created: false,
+      }),
+      expect.objectContaining({
+        relative_path: "nested/item.txt",
+        bytes_written: 0,
+        created: false,
+      }),
+    ]);
+    expect(parsedDry.plan).toMatchObject({
+      entries: [
+        expect.objectContaining({
+          logical_path: "Info.plist",
+          entry_kind: "file",
+          status: "planned",
+        }),
+        expect.objectContaining({
+          logical_path: "Main",
+          entry_kind: "file",
+          status: "planned",
+        }),
+        expect.objectContaining({
+          logical_path: "nested",
+          entry_kind: "directory",
+          status: "unsupported",
+        }),
+        expect.objectContaining({
+          logical_path: "nested/item.txt",
+          entry_kind: "file",
+          status: "planned",
+          observed_bytes: 12,
+          declared_bytes: 12,
+        }),
+      ],
+      totals: {
+        planned_files: 3,
+        unsupported_entries: 1,
+        unresolved_entries: 0,
+        byte_totals_basis: "declared-and-observed-content-estimates",
+      },
+    });
+    await expect(access(plannedOutput)).rejects.toThrow();
+    expect(await readdir(root)).toEqual(["source.app"]);
+
+    await mkdir(plannedOutput);
+    const existingRefusal = await createOwnedArtifactClient(
+      targetValue,
+    ).execute(
+      "extract_artifact",
+      artifactExtractionExecutionSchema.parse({
+        output_root: plannedOutput,
+        dry_run: true,
+      }),
+    );
+    expect(existingRefusal).toMatchObject({
+      ok: false,
+      error: { _tag: "ArtifactOperationError", reason: "path" },
+    });
+  });
+});
+
+describe("artifact extraction dry-run CLI", () => {
+  it("exposes --plan-offset and --plan-limit on CLI extract-artifact and requires --dry-run", async () => {
+    const source = "/tmp/fake-source.app";
+    const registeredCommands = new Map<
+      string,
+      {
+        run: (context: {
+          args: { path: string };
+          options: {
+            integrityPolicy: "fail" | "record-and-continue";
+            dryRun: boolean;
+            planOffset?: number;
+            planLimit?: number;
+          };
+        }) => Promise<unknown>;
+      }
+    >();
+    const fakeCli = {
+      command: (name: string, definition: { run: unknown }) => {
+        registeredCommands.set(name, definition as never);
+      },
+    } as unknown as CliInstance;
+    const providerCalls: {
+      path: string;
+      operation: string;
+      params: unknown;
+    }[] = [];
+    registerArtifactCommands(fakeCli, pino({ level: "silent" }), (async (
+      targetPath: string,
+      operation: string,
+      params: unknown,
+    ) => {
+      providerCalls.push({ path: targetPath, operation, params });
+      return ok({} as never);
+    }) as unknown as DirectAnalysis["runProviderAnalysis"]);
+    const extractCmd = registeredCommands.get("extract-artifact");
+    expect(extractCmd).toBeDefined();
+
+    const rejectedWithoutDryRun = await extractCmd!.run({
+      args: { path: source },
+      options: {
+        integrityPolicy: "fail",
+        dryRun: false,
+        planOffset: 10,
+      },
+    });
+    expect(providerCalls).toHaveLength(0);
+    expect(rejectedWithoutDryRun).toMatchObject({
+      category: "invalid_input",
+      code: "invalid_request",
+      details: {
+        operation: "extract_artifact",
+        issues: [
+          {
+            path: ["plan_offset"],
+            message: "plan_offset requires dry_run=true.",
+          },
+        ],
+      },
+    });
+
+    await extractCmd!.run({
+      args: { path: source },
+      options: {
+        integrityPolicy: "fail",
+        dryRun: true,
+        planOffset: 10,
+        planLimit: 25,
+      },
+    });
+    expect(providerCalls).toHaveLength(1);
+    expect(providerCalls[0]).toMatchObject({
+      path: source,
+      operation: "extract_artifact",
+      params: {
+        integrity_policy: "fail",
+        dry_run: true,
+        plan_offset: 10,
+        plan_limit: 25,
+      },
+    });
   });
 });
 const inventory = async (targetValue: BinaryTarget) => {
