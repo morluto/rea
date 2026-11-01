@@ -39,6 +39,7 @@ const parentOf = (
 ) => {
   const evidence = analysisViewCaptureEvidence(capture);
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     normalizedResult: evidence.normalized_result,
@@ -854,6 +855,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
   expect(
     projectAnalysisView(
       {
+        predicateType: layout.predicate_type,
         evidenceId: layout.evidence_id,
         operation: layout.operation,
         normalizedResult: layout.normalized_result,
@@ -871,6 +873,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
     expect(
       projectAnalysisView(
         {
+          predicateType: "rea.analysis",
           evidenceId: `ev_${"a".repeat(64)}`,
           operation: "inspect_web_network_capture",
           normalizedResult,
