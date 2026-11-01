@@ -126,7 +126,8 @@ that answers. Each call therefore launches the executable twice, the probe and
 then the command. If the command then fails to start, for example with `E2BIG`
 because its arguments exceed the host's launch limit, the call returns no
 Evidence; the error's `details.diagnostics` keep `provider`, the tool and
-version, and the `provider_*` parameters above. A probe that is cancelled, or
+version, the selected `provider_executable`, and the `provider_*` parameters
+above. A probe that is cancelled, or
 whose cleanup is incomplete, keeps the executable path and SHA-256 there; a hash
 that is cancelled or reaches the deadline keeps the executable path; and a lookup
 that is cancelled or reaches the deadline keeps the path it was checking, as

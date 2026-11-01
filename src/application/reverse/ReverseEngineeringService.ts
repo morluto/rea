@@ -694,10 +694,12 @@ export class ReverseEngineeringService {
     }
     if (earlyFailure !== undefined) {
       // Without command output there is no Evidence to carry what the lookup,
-      // hash and probe observed, so the failure keeps it.
+      // hash and probe observed, so the failure keeps it beside the
+      // executable the caller selected.
       if (identification.observed)
         earlyFailure.retainDiagnostics({
           provider: identification.identity,
+          provider_executable: command,
           ...identification.parameters,
         });
       return err(this.#registerCleanupFailure(earlyFailure, cleanupOwner));

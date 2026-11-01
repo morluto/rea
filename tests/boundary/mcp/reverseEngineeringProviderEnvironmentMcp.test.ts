@@ -203,6 +203,7 @@ it("keeps the probe's identification when the command then fails to start", asyn
         details: {
           diagnostics: {
             ...scenario.diagnostics,
+            provider_executable: "rizin",
             provider_executable_path: executable,
             provider_executable_sha256: digest,
             provider_version_banner: scenario.banner,
