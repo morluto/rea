@@ -1352,6 +1352,10 @@ describe("ReleaseExposureReader source spellings", () => {
     expect(scanned.source_maps.embedded).toBe(0);
     expect(scanned.coverage).toBe("unknown");
     expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+    expect(scanned.extractable.readable_members).toBe(1);
+    expect(scanned.extractable.samples).toEqual([
+      expect.stringContaining("inner.asar"),
+    ]);
   });
 
   it("reopens a decomposed compressed .NET member", async () => {

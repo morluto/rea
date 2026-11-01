@@ -482,13 +482,19 @@ const scanOccurrences = async (
       continue;
     }
     // A nested package that inventory recognized but did not expand was
-    // never assessed, so its members leave coverage unknown.
+    // never assessed, so its members leave coverage unknown. The nested
+    // package itself is still an unencrypted member of its parent that
+    // inventory already read, so it counts as a readable payload.
     if (
       packageKind !== null &&
       !parentsWithChildren.has(occurrence.occurrence_id)
     ) {
       state.formats.add(packageKind);
       noteUnexaminedPackage(state);
+      if (!occurrence.encrypted) {
+        state.readable += 1;
+        pushSample(state.memberSamples, location);
+      }
       pushLimitation(state, `Nested package ${location} was not expanded.`);
       continue;
     }
