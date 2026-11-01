@@ -109,6 +109,21 @@ const estimateXmlPlistExpansion = (
 };
 
 /**
+ * Index of the "]" closing an empty DOCTYPE internal subset opened at
+ * `open`, allowing only XML whitespace between the brackets. An empty subset
+ * declares nothing, so nothing in it can expand.
+ */
+const emptyInternalSubsetEnd = (
+  xml: string,
+  open: number,
+): number | undefined => {
+  let close = open + 1;
+  while (close < xml.length && " \t\r\n".includes(xml[close] ?? "x"))
+    close += 1;
+  return xml[close] === "]" ? close : undefined;
+};
+
+/**
  * Consume each XML span once; malformed tokens cannot restart suffix scans.
  * Each token reports the DOM node it creates (none for an end tag), whether
  * character data, which becomes a text node, precedes it, and the references
@@ -186,7 +201,11 @@ function* xmlPreflightTokens(xml: string): Generator<{
       } else if (character === '"' || character === "'") quote = character;
       else if (character === ">") break;
       else if (character === "=") attributes += 1;
-      else if (doctype && character === "[") internalSubset = true;
+      else if (doctype && character === "[") {
+        const emptySubsetEnd = emptyInternalSubsetEnd(xml, end);
+        if (emptySubsetEnd === undefined) internalSubset = true;
+        else end = emptySubsetEnd;
+      }
     }
     if (end === xml.length) return;
     cursor = end + 1;
