@@ -75,9 +75,9 @@ import {
   existingProjectCapabilities,
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   windowsP0Capabilities,
-  GHIDRA_PROVIDER_IDENTITY,
   WINDOWS_P0_NATIVE_PE_ARCHITECTURES,
 } from "./GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
 import {
   createGhidraProviderClient,
   admitGhidraClient,

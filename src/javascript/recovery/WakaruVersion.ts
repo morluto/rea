@@ -1,5 +1,6 @@
 import { satisfies, valid } from "semver";
-import { WAKARU_ACCEPTED_RANGE, WAKARU_RELEASE } from "./WakaruRelease.js";
+import { WAKARU_ACCEPTED_RANGE } from "./WakaruRelease.js";
+import { WAKARU_RELEASE } from "./WakaruProviderIdentity.js";
 
 /** Admission of one observed `wakaru --version` banner. */
 export type WakaruVersionAdmission =

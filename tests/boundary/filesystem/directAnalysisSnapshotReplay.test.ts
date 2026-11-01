@@ -47,10 +47,8 @@ import { isProfilelessNativeDispatchSnapshot } from "../../../src/application/bi
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  CAPABILITIES as GHIDRA_CAPABILITIES,
-  GHIDRA_PROVIDER_IDENTITY,
-} from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { CAPABILITIES as GHIDRA_CAPABILITIES } from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderMetadata.js";
 import { nativeInventoryRowsSchemas } from "../../../src/domain/native/nativeInventory.js";
 import { APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE } from "../../../src/native/NativeMacOSProviderMetadata.js";
 

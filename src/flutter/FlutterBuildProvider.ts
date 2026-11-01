@@ -1,3 +1,4 @@
+import { FLUTTER_PROVIDER_IDENTITY } from "./FlutterProviderIdentity.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
@@ -65,13 +66,6 @@ import {
 } from "./DartElf.js";
 import { readElfBuildIds } from "./ElfBuildId.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
-
-/** Stable identity for the Flutter build-identification provider. */
-export const FLUTTER_PROVIDER_IDENTITY = {
-  id: "flutter",
-  name: "Flutter build identification",
-  version: null,
-} as const;
 
 const APK_METADATA_READ_MAX_BYTES = 8 * 1024 * 1024;
 const LIBRARY_MAX_BYTES = 256 * 1024 * 1024;
