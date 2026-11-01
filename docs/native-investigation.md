@@ -1152,6 +1152,11 @@ and slice commitments establish the same canonical entry. The result reports
 remain separate dimensions. Equal numeric addresses without applicable coordinate
 commitments do not establish same-entry correspondence. Inspect the retained
 source Evidence and coverage when correspondence remains ambiguous.
+When both inputs authenticate to the same Evidence ID and an applicable entry
+comparison is unavailable, the match reports `method: "same-evidence"`.
+This identifies one selected observation, not a correspondence between distinct
+records or proof of complete analysis. Unavailable facets and unestablished
+call coverage remain unknown.
 To aggregate already-retained comparison results, pass their exact IDs to
 `find_changed_behavior`, for example:
 
