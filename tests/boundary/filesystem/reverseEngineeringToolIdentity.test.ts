@@ -438,6 +438,24 @@ posix(
         },
       ),
     ).resolves.toEqual({ status: "missing", checked: [`${failing} (EIO)`] });
+    // Native searches differ at a stale NFS handle, so the lookup stops and
+    // a launch by name lets the host's search decide.
+    await expect(
+      lookupExecutable(
+        "rizin",
+        cwd,
+        `${unexecutable}${delimiter}${directory}`,
+        {
+          stat: async (target) => {
+            if (target === failing)
+              throw Object.assign(new Error("stale handle"), {
+                code: "ESTALE",
+              });
+            return stat(target);
+          },
+        },
+      ),
+    ).resolves.toEqual({ status: "missing", checked: [`${failing} (ESTALE)`] });
   },
 );
 

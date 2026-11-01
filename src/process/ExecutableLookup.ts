@@ -43,10 +43,11 @@ export interface ExecutableLookupBounds {
  * contains a path separator is the selected path; PATH search continues past
  * a missing file, a non-directory and a denied directory, and an existing file
  * without execute permission is not a match. Any other error, such as a
- * symlink loop, ends the search, as it ends a spawned search, while an entry
- * too long for the native path buffer is skipped before it is checked, as a
- * spawned search skips it. The working directory is read only when the search
- * reaches a
+ * symlink loop, ends the search, as it ends a spawned search, while on Linux
+ * and macOS an entry too long for the native path buffer is skipped before it
+ * is checked, as their spawned searches skip it. Where native searches differ,
+ * the lookup stops, so a launch by name lets the host's own search decide. The
+ * working directory is read only when the search reaches a
  * relative command or PATH entry, since it may have been removed. When that
  * read fails, a relative PATH entry is checked as written, against the
  * process's working directory, which the kernel still resolves (even `..`
@@ -87,7 +88,7 @@ export const lookupExecutable = async (
     const checked: string[] = [];
     for (const entry of entries) {
       const entryBytes = Buffer.byteLength(entry);
-      if (!explicit && entryBytes >= PATH_MAX) {
+      if (!explicit && PATH_MAX !== undefined && entryBytes >= PATH_MAX) {
         checked.push(`a PATH entry of ${entryBytes} bytes (skipped)`);
         continue;
       }
@@ -191,24 +192,23 @@ const lookupInterruption = (
 };
 
 /**
- * The errors a spawned PATH search moves past; it stops at any other, such as
- * a symlink loop or an I/O error, so a later candidate would not run.
+ * The errors every native PATH search moves past: glibc's and musl's execvp,
+ * Android's bionic and libuv's own search on macOS. At any other error, such
+ * as a symlink loop, a stale NFS handle or an I/O error, some of them stop,
+ * so the lookup stops and the launch by name lets the host's search decide.
  */
 const searchMovesPast = (code: string | undefined): boolean =>
-  code === "ENOENT" ||
-  code === "ENOTDIR" ||
-  code === "EACCES" ||
-  // glibc's execvp, which a spawned search uses on Linux, also moves past
-  // these; libuv's own search on macOS does not.
-  (process.platform === "linux" &&
-    (code === "ESTALE" || code === "ENODEV" || code === "ETIMEDOUT"));
+  code === "ENOENT" || code === "ENOTDIR" || code === "EACCES";
 
 /**
- * A spawned search skips a PATH entry of at least PATH_MAX bytes, which its
- * path buffer cannot hold (glibc's execvp on Linux, libuv on macOS); a
- * shorter entry with an over-long component still fails with ENAMETOOLONG.
+ * The PATH entry length, in bytes, from which the host's native search skips
+ * an entry its path buffer cannot hold: execvp on Linux (glibc and musl) and
+ * libuv on macOS. A shorter entry with an over-long component still fails
+ * with ENAMETOOLONG. Elsewhere, as on Android, nothing is skipped by length.
  */
-const PATH_MAX = process.platform === "linux" ? 4096 : 1024;
+const PATH_MAX = (
+  { linux: 4096, darwin: 1024 } as Partial<Record<NodeJS.Platform, number>>
+)[process.platform];
 
 const systemErrorCode = (cause: unknown): string | undefined =>
   typeof cause === "object" &&
