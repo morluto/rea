@@ -76,6 +76,12 @@ export const prepareSessionExecution = (
         active.route.binding?.identity.id ?? active.route.identity.id,
         operation,
         capability?.reason ?? "operation is not declared by this provider",
+        capability?.remediation === undefined
+          ? undefined
+          : {
+              userMessage: capability.reason,
+              remediationAction: capability.remediation,
+            },
       ),
     );
   }
