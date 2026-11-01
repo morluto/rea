@@ -29,6 +29,14 @@ export async function verifyGhidraBoundaries(
 ) {
   const options = { timeout: 180000 };
   const catalog = await client.listTools();
+  const annotation = catalog.tools.find(
+    (tool) => tool.name === "annotate_native_function",
+  );
+  assert.match(
+    annotation?.description ?? "",
+    /interior address.*containing function.*function entry.*procedure_address/u,
+    "The annotation catalog must explain where an interior selector edits",
+  );
   const ajv = new Ajv({ strict: false });
   addFormats(ajv);
   const validators = new Map();

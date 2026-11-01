@@ -156,6 +156,15 @@ export async function verifyGhidraEntryAliases({
       alias.address,
       "Explicit interior addresses keep their existing containment semantics",
     );
+    const interiorEdit = await call("annotate_native_function", {
+      procedure: interior.address,
+      comment: "Selected by interior address",
+    });
+    assert.equal(interiorEdit.annotations.address, alias.address);
+    assert.equal(
+      interiorEdit.annotations.comment,
+      "Selected by interior address",
+    );
     const edited = await call("annotate_native_function", {
       procedure: alias.value,
       comment: "Selected by imported entry alias",

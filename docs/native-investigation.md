@@ -1137,7 +1137,9 @@ handle-based path admission. See [Windows Ghidra P0](windows-ghidra-p0.md) and
 [issue #527](https://github.com/morluto/rea/issues/527).
 On Linux and macOS, `annotate_native_function` atomically edits a function name
 and entry comments in the ephemeral database, returning refreshed analysis
-without changing executable bytes. Annotation text must contain no NUL or
+without changing executable bytes. A Ghidra address inside a function selects
+the containing function; the name and comments are changed at its entry, not
+at the selected instruction. Annotation text must contain no NUL or
 unpaired Unicode surrogate; a rejection identifies the field and UTF-16 index
 and leaves every annotation unchanged. CRLF, supplementary Unicode characters,
 and combining characters are preserved. Windows P0 remains read-only. Ghidra has no
