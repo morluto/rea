@@ -113,7 +113,9 @@ has `provider_identity: "banner"`. The
 probe's exit status and output, each stream cut to 2,048 UTF-8 bytes in the
 same way, are recorded in `provider_version_probe`,
 where `stdout_invalid_utf8` and `stderr_invalid_utf8` mark output that was not
-valid UTF-8 and so holds replacement characters.
+valid UTF-8 and so holds replacement characters, and `completion_status` is
+`unknown`, as for the command, when the probe's output was not fully collected
+or the probe was killed, signalled or left no exit code.
 Each call's lookup, hash and probe use that call's `command_timeout_ms` budget
 and cancellation; a lookup or hash that reaches the deadline ends the call
 without running the command. A hash that fails for another reason, for example

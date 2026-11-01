@@ -1203,6 +1203,7 @@ const versionProbeDiagnostics = (
         readonly stdout: string;
         readonly stderr: string;
         readonly signal?: string | null;
+        readonly killed?: boolean;
         readonly outputTruncated?: boolean;
         readonly collectionFailure?: boolean;
         readonly stdoutInvalidUtf8?: boolean;
@@ -1230,6 +1231,15 @@ const versionProbeDiagnostics = (
     stderr: stderr.text,
     output_truncated:
       output?.outputTruncated === true || stdout.truncated || stderr.truncated,
+    // As for the command: output that was not fully collected, or a probe that
+    // was killed, signalled or left no exit code, did not observably complete.
+    completion_status:
+      output?.collectionFailure !== true &&
+      output?.killed !== true &&
+      (output?.signal ?? null) === null &&
+      typeof code === "number"
+        ? "complete"
+        : "unknown",
     // Invalid UTF-8 is decoded as replacement characters; these mark it.
     stdout_invalid_utf8: output?.stdoutInvalidUtf8 === true,
     stderr_invalid_utf8: output?.stderrInvalidUtf8 === true,

@@ -281,6 +281,7 @@ posix(
           stdout: "usage: tool [options]\n",
           stderr: "unknown option -v\n",
           output_truncated: false,
+          completion_status: "complete",
         },
       });
       expect(result.value.parameters).not.toHaveProperty(
@@ -907,6 +908,7 @@ posix(
     expect(first.value.provider.version).toBeNull();
     expect(first.value.parameters.provider_version_probe).toMatchObject({
       exit_code: null,
+      completion_status: "unknown",
     });
   },
 );
@@ -955,6 +957,7 @@ posix.each([
     expect(result.value.parameters.provider_version_probe).toMatchObject({
       exit_code: outcome === "failed" ? 2 : null,
       error_code: outcome === "timed-out" ? "ETIMEDOUT" : null,
+      completion_status: outcome === "failed" ? "complete" : "unknown",
       stdout_invalid_utf8: invalid.stdout,
       stderr_invalid_utf8: invalid.stderr,
     });
