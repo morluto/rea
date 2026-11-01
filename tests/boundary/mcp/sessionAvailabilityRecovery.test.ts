@@ -21,6 +21,10 @@ import {
   inferredUnavailabilityReason,
   runtimeFailureReason,
 } from "../../../src/application/binary/SessionRuntimeAvailability.js";
+import {
+  EXISTING_PROJECT_READ_ONLY,
+  EXISTING_PROJECT_READ_ONLY_REMEDIATION,
+} from "../../../src/ghidra/GhidraProviderCapabilities.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
@@ -438,6 +442,7 @@ const connectScripted = async (options: {
   readonly respondAuxiliary?: { current: Responder };
   /** Operations the fixture declares unavailable, with their declared reason. */
   readonly declaredRefusals?: Readonly<Record<string, string>>;
+  readonly declaredRemediation?: Readonly<Record<string, string>>;
   readonly families?: string;
 }) => {
   const [path] = await createBinarySessionTargets();
@@ -448,13 +453,17 @@ const connectScripted = async (options: {
         ok({ profile: createAnalysisProfile(FIXTURE, { fixture: true }) }),
       ),
     capabilities: () =>
-      options.operations.map((operation) =>
-        liveCapability(
+      options.operations.map((operation) => {
+        const descriptor = liveCapability(
           FIXTURE,
           operation,
           options.declaredRefusals?.[operation],
-        ),
-      ),
+        );
+        const remediation = options.declaredRemediation?.[operation];
+        return descriptor.available || remediation === undefined
+          ? descriptor
+          : { ...descriptor, remediation };
+      }),
     createClient: () => ({
       execute: (operation) =>
         operation === "health"
@@ -531,6 +540,48 @@ const DIRECT_OPERATIONS = [
 ] as const;
 const ADDRESS = { address: "0x1000", document: "fixture" };
 const PROCEDURE = { procedure: "main" };
+
+it("delivers a declared read-only recovery without changing the selected session", async () => {
+  const calls: string[] = [];
+  const { client } = await connectScripted({
+    operations: ["address_name", "set_address_name"],
+    declaredRefusals: { set_address_name: EXISTING_PROJECT_READ_ONLY },
+    declaredRemediation: {
+      set_address_name: EXISTING_PROJECT_READ_ONLY_REMEDIATION,
+    },
+    respond: {
+      current: (operation) => {
+        calls.push(operation);
+        return Promise.resolve(observed("original"));
+      },
+    },
+  });
+  const before = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  const refused = await client.callTool({
+    name: "set_address_name",
+    arguments: { address: "0x1000", name: "new_name" },
+  });
+  const error = parseMcpToolError(refused).error;
+  expect(error.code).toBe("capability_unavailable");
+  expect(error.details?.reason).toBe(EXISTING_PROJECT_READ_ONLY);
+  expect(error.message).toBe(EXISTING_PROJECT_READ_ONLY);
+  expect(error.remediation.action).toBe(EXISTING_PROJECT_READ_ONLY_REMEDIATION);
+  expect(error.remediation.action).toContain("REA_GHIDRA_PROJECT_PATH");
+  expect(error.remediation.action).toContain("REA_GHIDRA_PROGRAM_NAME");
+  expect(calls).not.toContain("set_address_name");
+  const after = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  const state = (reply: typeof before) =>
+    toolContract("binary_session").outputSchema.parse(reply.structuredContent)
+      .result.analysis_run;
+  expect(state(before)).toBeDefined();
+  expect(state(after)).toEqual(state(before));
+});
 
 it("returns provider-inferred siblings to declared availability after one success", async () => {
   let broken = false;

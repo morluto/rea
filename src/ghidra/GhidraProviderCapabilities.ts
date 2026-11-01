@@ -221,6 +221,14 @@ export const EXISTING_PROJECT_WINDOWS_UNAVAILABLE =
 export const EXISTING_PROJECT_WINDOWS_REMEDIATION =
   "Unset REA_GHIDRA_PROJECT_PATH in the environment that starts REA to import targets into an ephemeral project, or open the existing project on a supported Linux or macOS host; restart REA after changing the environment.";
 
+/** Existing-project observations cannot be edited through REA. */
+export const EXISTING_PROJECT_READ_ONLY =
+  "Existing Ghidra project sessions are read-only.";
+
+/** An editable fresh import is a separate analysis, not the saved project. */
+export const EXISTING_PROJECT_READ_ONLY_REMEDIATION =
+  "To keep the saved project analysis, continue read-only; REA cannot edit it. To use a separate editable Ghidra session, unset REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME in the environment that starts REA, restart REA, and reopen the target. A fresh import is ephemeral and does not carry the selected project's saved annotations.";
+
 /** Read-only project mode retains precise unavailable mutation capabilities. */
 export const existingProjectCapabilities = (
   platform: NodeJS.Platform,
@@ -246,8 +254,9 @@ export const existingProjectCapabilities = (
         ...capability,
         limitations,
         available: false,
-        reason: "Existing Ghidra project sessions are read-only.",
+        reason: EXISTING_PROJECT_READ_ONLY,
         availabilityCode: "open_options_invalid",
+        remediation: EXISTING_PROJECT_READ_ONLY_REMEDIATION,
       };
     return { ...capability, limitations };
   });
