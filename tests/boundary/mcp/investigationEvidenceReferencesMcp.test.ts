@@ -1,4 +1,9 @@
-import { expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { expect, it, onTestFinished } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import {
@@ -13,6 +18,7 @@ import {
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
+import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -191,3 +197,67 @@ it("reports missing or wrong-kind records without recording a successful workflo
   expect(wrong.isError).toBe(true);
   expect(session.exportEvidenceBundle().records).toHaveLength(1);
 });
+
+it("reports missing sources for a retained dossier with a large link set", async () => {
+  const client = new Client({
+    name: "large-evidence-links-test",
+    version: "1",
+  });
+  onTestFinished(() => client.close());
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: [resolve("scripts/rea.mjs"), "mcp"],
+    }),
+  );
+  const base = FUNCTION_COMPARISON_EXAMPLE.left;
+  if (base.subject === null) throw new Error("Missing fixture subject");
+  const links = Array.from(
+    { length: 150_000 },
+    (_, index) => `ev_${index.toString(16).padStart(64, "0")}`,
+  );
+  const source = createEvidence(
+    {
+      path: base.subject.local_path,
+      sha256: base.subject.digest.sha256,
+      format: base.subject.format,
+    },
+    base.provider,
+    {
+      operation: "analyze_function",
+      parameters: base.parameters,
+      result: base.normalized_result,
+      confidence: base.confidence,
+      authority: base.authority,
+      relationshipCoverage: { status: "complete" },
+      evidenceLinks: links,
+    },
+  );
+  const directory = await mkdtemp(join(tmpdir(), "rea-large-links-"));
+  onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "bundle.json");
+  await writeFile(path, JSON.stringify(createEvidenceBundle([source])));
+  const imported = await client.callTool({
+    name: "import_evidence_bundle",
+    arguments: { path },
+  });
+  expect(imported.isError, JSON.stringify(imported)).not.toBe(true);
+
+  const result = await client.callTool({
+    name: "build_call_path",
+    arguments: {
+      functions: [reference(source)],
+      start: { address: "0x1000" },
+      goal: { address: "0x1000" },
+    },
+  });
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      details: {
+        reason: "missing",
+        evidence_id: links.at(-1),
+        reference_scope: "retained-closure",
+      },
+    },
+  });
+}, 30_000);
