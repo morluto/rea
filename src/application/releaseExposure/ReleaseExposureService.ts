@@ -695,7 +695,7 @@ const GO_FLAG_SETTING =
 const GO_FLAG_FIELD = /(?:[^\s"']|"[^"]*"|'[^']*')+/gu;
 /** A path after a flag prefix, whitespace, `=`, or `,`, as in `-isystem/opt/x`. */
 const GO_FLAG_PATH =
-  /(?:^|[\s=,])(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT]))?((?:\.{1,2}\/|\/|[A-Za-z]:[\\/])[^=,]+)/gu;
+  /(?:^|[\s=,])(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT]))?((?:\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\{2}[^\\\s=,]+\\)[^=,]+)/gu;
 
 /** Paths in one flag value, with a quoted path kept whole up to the next flag. */
 const goFlagPaths = (value: string): string[] =>

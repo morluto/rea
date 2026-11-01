@@ -882,6 +882,34 @@ describe("ReleaseExposureService cleanup", () => {
   });
 });
 
+describe("ReleaseExposureService Go UNC paths", () => {
+  it("reports UNC roots retained in Go flags", async () => {
+    const module = (value: string) => ({
+      path: "github.com/acme/app",
+      main: null,
+      dependencies: [],
+      settings: [{ key: "CGO_CFLAGS", value }],
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    });
+    const report = await goReport(
+      module(
+        String.raw`-O2 -I\\buildhost\sdk\include "-isystem \\buildhost\my sdk\include"`,
+      ),
+    );
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual([
+      String.raw`\\buildhost\sdk\include`,
+      String.raw`\\buildhost\my sdk\include`,
+    ]);
+    expect(
+      await goStatus(module(String.raw`-DNAME=\\ -DHOST=\\buildhost`)),
+    ).toBe("not_observed");
+  });
+});
+
 describe("ReleaseExposureService Go paths", () => {
   it("keeps Go paths with spaces and attached compiler flags whole", async () => {
     const report = await goReport({
