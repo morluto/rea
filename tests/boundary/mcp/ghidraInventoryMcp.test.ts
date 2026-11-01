@@ -651,3 +651,49 @@ it("returns a procedure once with the exact-entry names its search matched", asy
     await harness.close();
   }
 });
+
+it("keeps a namespaced entry name that matched by its leaf spelling", async () => {
+  // procedure_address accepts a symbol's leaf or qualified spelling, so the
+  // bridge matches both and reports the qualified one.
+  const output = jsonValueSchema.parse([
+    {
+      address: "0x101400",
+      value: "outer::impl",
+      matched_aliases: ["ns::audit_alias"],
+    },
+    { address: "0x101440", value: "alpha::same" },
+  ]);
+  const harness = await connectGhidraMcp("ghidra-namespaced-aliases", () =>
+    Promise.resolve(ok(output)),
+  );
+  try {
+    const [aliasRow, primaryRow] = output as unknown[];
+    for (const [arguments_, expected] of [
+      [
+        {
+          pattern: "^(audit_alias|same)$",
+          mode: "regex",
+          case_sensitive: true,
+        },
+        output,
+      ],
+      // The host folding pass checks reported qualified spellings, which end
+      // with the leaf the bridge matched.
+      [{ pattern: "AUDIT_ALIAS" }, [aliasRow]],
+      [{ pattern: "SAME" }, [primaryRow]],
+    ] as const) {
+      const reply = await harness.mcp.callTool({
+        name: "search_procedures",
+        arguments: arguments_,
+      });
+      expect(reply.isError, JSON.stringify(arguments_)).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, reply.structuredContent)
+          .normalized_result,
+        JSON.stringify(arguments_),
+      ).toEqual(expected);
+    }
+  } finally {
+    await harness.close();
+  }
+});

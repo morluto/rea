@@ -37,8 +37,10 @@ export const ghidraAsciiLiteralCandidate = (pattern: string): string | null => {
 
 /**
  * Apply Node's folding to the bridge's candidate rows, including the secondary
- * names a procedure row matched. Leave invalid rows present so the inventory
- * owner retains its output error.
+ * names a procedure row matched. The bridge matches leaf and qualified
+ * spellings but reports qualified ones; a leaf ends its qualified spelling, so
+ * a literal is found in one only if it is found in the other. Leave invalid
+ * rows present so the inventory owner retains its output error.
  */
 export const filterGhidraLiteralCandidates = (
   value: JsonValue,

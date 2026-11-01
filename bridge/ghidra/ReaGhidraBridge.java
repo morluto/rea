@@ -2292,12 +2292,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // procedure under its primary name.
             for (FunctionEntry entry : procedures()) {
                 monitor.checkCancelled();
-                JsonArray aliases = matchingEntryAliases(entry, matcher);
-                if (aliases.size() == 0 && !matcher.matches(entry.item.value)) {
+                ProcedureNameMatch match = matchProcedureNames(entry, matcher);
+                if (!match.matched()) {
                     continue;
                 }
                 JsonObject item = resultItem(entry.item, null);
-                if (aliases.size() > 0) item.add("matched_aliases", aliases);
+                if (!match.aliases().isEmpty()) {
+                    JsonArray aliases = new JsonArray();
+                    for (String alias : match.aliases()) aliases.add(alias);
+                    item.add("matched_aliases", aliases);
+                }
                 items.add(item);
             }
             return items;
@@ -2313,20 +2317,33 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     /**
-     * Qualified names of the other symbols at a procedure's exact entry that
-     * match, in sorted order. resolveProcedure accepts these names; a label
-     * inside the body never names the procedure.
+     * The one definition of the names that select a procedure, shared by exact
+     * lookup and search: its primary name and every other symbol at its exact
+     * entry, each in leaf or namespace-qualified spelling. A label inside the
+     * body never names the procedure. Matching secondary symbols are reported
+     * by their qualified names, sorted.
      */
-    private JsonArray matchingEntryAliases(FunctionEntry entry, ValueMatcher matcher) throws Exception {
-        Set<String> matched = new TreeSet<>();
-        for (Symbol symbol : currentProgram.getSymbolTable().getSymbols(entry.function.getEntryPoint())) {
+    private ProcedureNameMatch matchProcedureNames(FunctionEntry entry, ValueMatcher matcher) throws Exception {
+        Function function = entry.function;
+        boolean primary = spellingMatches(function.getName(), entry.item.value, matcher);
+        Set<String> aliases = null;
+        for (Symbol symbol : currentProgram.getSymbolTable().getSymbols(function.getEntryPoint())) {
             monitor.checkCancelled();
-            String name = symbol.getName(true);
-            if (!name.equals(entry.item.value) && matcher.matches(name)) matched.add(name);
+            String qualified = symbol.getName(true);
+            if (!spellingMatches(symbol.getName(), qualified, matcher)) continue;
+            if (qualified.equals(entry.item.value)) {
+                primary = true;
+                continue;
+            }
+            if (aliases == null) aliases = new TreeSet<>();
+            aliases.add(qualified);
         }
-        JsonArray result = new JsonArray();
-        for (String name : matched) result.add(name);
-        return result;
+        return new ProcedureNameMatch(primary, aliases == null ? List.of() : List.copyOf(aliases));
+    }
+
+    /** A leaf is the suffix of its qualified spelling, so a literal found in it is found in both. */
+    private static boolean spellingMatches(String leaf, String qualified, ValueMatcher matcher) {
+        return matcher.matches(qualified) || (!leaf.equals(qualified) && matcher.matches(leaf));
     }
 
     private List<InventoryItem> names() throws Exception {
@@ -2431,26 +2448,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // exact symbol name, even when every character is a hexadecimal digit.
         boolean explicitAddress = isExplicitReaAddress(value);
         if (!explicitAddress) {
+            // Imported labels (for example Mach-O _main) can share a function
+            // entry without becoming its primary symbol; search accepts the same.
+            ValueMatcher selector = value::equals;
             List<Function> matches = new ArrayList<>();
             for (FunctionEntry entry : procedures()) {
                 monitor.checkCancelled();
-                Function function = entry.function;
-                Symbol symbol = function.getSymbol();
-                String qualified = symbol == null ? function.getName() : symbol.getName(true);
-                boolean matchesName = function.getName().equals(value) || qualified.equals(value);
-                if (!matchesName) {
-                    // Imported labels (for example Mach-O _main) can share a
-                    // function entry without becoming its primary symbol. Only
-                    // exact entries qualify; an interior label is not a selector.
-                    for (Symbol entrySymbol : currentProgram.getSymbolTable().getSymbols(function.getEntryPoint())) {
-                        monitor.checkCancelled();
-                        if (entrySymbol.getName().equals(value) || entrySymbol.getName(true).equals(value)) {
-                            matchesName = true;
-                            break;
-                        }
-                    }
-                }
-                if (matchesName) matches.add(function);
+                if (matchProcedureNames(entry, selector).matched()) matches.add(entry.function);
             }
             if (matches.size() > 1)
                 throw new RequestFailure("ambiguous", "Ghidra procedure name is ambiguous: " + value +
@@ -5167,6 +5171,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private record AddressNameConflict(Namespace namespace, String leaf, List<Address> requesters, List<Address> holders) {}
     private record AddressNameFailure(String reason, AddressNameConflict conflict) {}
     private record FunctionEntry(Function function, InventoryItem item) {}
+    private record ProcedureNameMatch(boolean primary, List<String> aliases) {
+        boolean matched() {
+            return primary || !aliases.isEmpty();
+        }
+    }
     private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage, boolean decompilerFailed) {}
     private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls) {}
     private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}
