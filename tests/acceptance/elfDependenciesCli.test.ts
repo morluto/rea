@@ -65,6 +65,7 @@ cliTest(
       coverage: { status: "complete" },
     });
     expect(evidence.subject?.local_path).toBe(join(root, "program"));
+    expect(evidence.caller_input_path).toBe("program");
   },
 );
 

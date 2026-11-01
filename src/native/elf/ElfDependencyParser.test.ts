@@ -373,6 +373,32 @@ it("fails cyclic GNU version requirement chains without a complete inventory", (
   );
 });
 
+it("reports GNU version tables with an unsupported revision as unreadable", () => {
+  const verneed = parse(
+    elfDependencyFixture({ unsupportedVersionRevision: "verneed" }),
+  );
+  expect(verneed.coverage.status).toBe("partial");
+  expect(verneed.version_requirements).toMatchObject({
+    status: "unreadable",
+    files: [],
+  });
+  expect(
+    verneed.imports.some((entry) => entry.version?.status === "resolved"),
+  ).toBe(false);
+  expect(verneed.issues).toContainEqual(
+    expect.objectContaining({ code: "version_unresolved" }),
+  );
+
+  const verdef = parse(
+    elfDependencyFixture({ unsupportedVersionRevision: "verdef" }),
+  );
+  expect(verdef.coverage.status).toBe("partial");
+  expect(verdef.version_definitions).toMatchObject({
+    status: "unreadable",
+    names: [],
+  });
+});
+
 it("reports a GNU version chain that continues past its declared count", () => {
   const verneed = parse(
     elfDependencyFixture({ danglingVersionLink: "verneed" }),

@@ -191,6 +191,7 @@ export const registerBinaryDiagnosticsCommands = (
           CLI_COMMANDS.inspectElfDependencies,
           async () =>
             deliverCliAnalysisEvidence({
+              callerInputPath: args.path,
               run: () =>
                 dependencies.inspect(
                   {

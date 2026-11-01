@@ -1230,6 +1230,11 @@ const parseVerneed = (
         fail("GNU version requirement chain leaves its table");
       chargeVersion();
       const at = table.offset + offset;
+      const revision = reader.u16(at);
+      if (revision !== 1)
+        fail(
+          `GNU version requirement revision ${String(revision)} is unsupported`,
+        );
       const auxiliaryCount = reader.u16(at + 2);
       const fileOffset = reader.u32(at + 4);
       const auxiliaryOffset = reader.u32(at + 8);
@@ -1365,6 +1370,11 @@ const parseVerdef = (
         fail("GNU version definition chain leaves its table");
       chargeVersion();
       const at = table.offset + offset;
+      const revision = reader.u16(at);
+      if (revision !== 1)
+        fail(
+          `GNU version definition revision ${String(revision)} is unsupported`,
+        );
       const flags = reader.u16(at + 2);
       const index = reader.u16(at + 4) & 0x7fff;
       const aux = reader.u32(at + 12);

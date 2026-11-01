@@ -99,6 +99,8 @@ export interface ElfDependencyFixtureOptions {
   readonly cyclicVernaux?: boolean;
   /** Gives the final record of this chain a nonzero link past its count. */
   readonly danglingVersionLink?: "verneed" | "vernaux" | "verdef";
+  /** Writes revision 0 into the first record of this table. */
+  readonly unsupportedVersionRevision?: "verneed" | "verdef";
   readonly truncateDynstr?: boolean;
   readonly duplicateSoname?: boolean;
   /** Declares this section's size past the end of the file. */
@@ -208,9 +210,10 @@ const verneedRecord = (
   little: boolean,
   cyclicAux: boolean,
   finalAuxLink = 0,
+  revision = 1,
 ): Buffer => {
   const header = Buffer.alloc(16);
-  write16(header, 0, 1, little);
+  write16(header, 0, revision, little);
   write16(header, 2, versions.length, little);
   write32(header, 4, fileOffset, little);
   write32(header, 8, 16, little);
@@ -236,9 +239,10 @@ const verdefRecord = (
   hash: number,
   next: number,
   little: boolean,
+  revision = 1,
 ): Buffer => {
   const bytes = Buffer.alloc(28);
-  write16(bytes, 0, 1, little);
+  write16(bytes, 0, revision, little);
   write16(bytes, 2, flags, little);
   write16(bytes, 4, index, little);
   write16(bytes, 6, 1, little);
@@ -368,6 +372,7 @@ interface FixtureConfig {
   readonly cyclicVerneed: boolean;
   readonly cyclicVernaux: boolean;
   readonly danglingVersionLink: ElfDependencyFixtureOptions["danglingVersionLink"];
+  readonly unsupportedVersionRevision: ElfDependencyFixtureOptions["unsupportedVersionRevision"];
   readonly truncateDynstr: boolean;
   readonly duplicateSoname: boolean;
   readonly wideNameOffset: number | undefined;
@@ -458,6 +463,7 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     cyclicVerneed: options.cyclicVerneed === true,
     cyclicVernaux: options.cyclicVernaux === true,
     danglingVersionLink: options.danglingVersionLink,
+    unsupportedVersionRevision: options.unsupportedVersionRevision,
     truncateDynstr: options.truncateDynstr === true,
     duplicateSoname: options.duplicateSoname === true,
     wideNameOffset: options.wideNameOffset,
@@ -520,6 +526,7 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
         little,
         config.cyclicVernaux && index === 0,
         last && config.danglingVersionLink === "vernaux" ? 16 : 0,
+        index === 0 && config.unsupportedVersionRevision === "verneed" ? 0 : 1,
       );
     }),
   );
@@ -552,6 +559,7 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
             ? 28
             : 0,
           little,
+          index === 0 && config.unsupportedVersionRevision === "verdef" ? 0 : 1,
         ),
       ),
     ),
