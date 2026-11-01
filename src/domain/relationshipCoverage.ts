@@ -4,14 +4,10 @@ import { fixedTupleSchema } from "./fixedTupleSchema.js";
 
 const diagnostics = z.array(z.string().min(1)).min(1).exactOptional();
 /** Discovery describes possible static calls beyond the returned provider graph. */
-export const relationshipDiscoveryDirectionSchema = z.discriminatedUnion(
-  "status",
-  [
-    z.strictObject({ status: z.literal("complete") }),
-    z.strictObject({ status: z.literal("partial"), reason: z.string().min(1) }),
-    z.strictObject({ status: z.literal("unknown"), reason: z.string().min(1) }),
-  ],
-);
+export const relationshipDiscoveryDirectionSchema = z.strictObject({
+  status: z.enum(["complete", "partial", "unknown"]),
+  reason: z.string().min(1).exactOptional(),
+});
 export const relationshipDiscoverySchema = z.strictObject({
   callers: relationshipDiscoveryDirectionSchema.exactOptional(),
   callees: relationshipDiscoveryDirectionSchema.exactOptional(),
@@ -51,7 +47,9 @@ export const relationshipCoverageSchema = z.discriminatedUnion("status", [
 
 export type RelationshipCoverage = z.infer<typeof relationshipCoverageSchema>;
 
-export type RelationshipDiscoveryStatus = "complete" | "partial" | "unknown";
+export type RelationshipDiscoveryStatus = z.infer<
+  typeof relationshipDiscoveryDirectionSchema
+>["status"];
 
 /** Combine discovery facts without treating missing historical metadata as proof. */
 export const combineRelationshipDiscovery = (
