@@ -42,6 +42,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { requiresNativeSourceAdmissionBeforeReplay } from "./binary/AnalysisSnapshotCache.js";
 import { classifyBinaryTargetFilesystemFailure } from "./BinaryTargetResolver.js";
 import {
+  snapshotBindingMismatch,
   snapshotEvidenceForQuery,
   snapshotMatchesTarget,
 } from "../domain/analysisSnapshot.js";
@@ -746,6 +747,7 @@ const prepareSnapshot = async (options: {
     return err(
       new AnalysisSnapshotMismatchError(
         "Analysis snapshot target does not match the requested binary",
+        snapshotBindingMismatch(loaded.value, target.value, undefined),
       ),
     );
   return ok({ snapshot: loaded.value, target: target.value });

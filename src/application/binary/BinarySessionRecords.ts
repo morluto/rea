@@ -48,6 +48,7 @@ import { workflowAnalysisProfile } from "../WorkflowAnalysisProfile.js";
 import {
   hasOnlyProfilelessNativeDispatchEntries,
   isProfilelessNativeDispatchSnapshot,
+  profilelessSnapshotMismatch,
 } from "./ProfilelessNativeWorkflowSnapshot.js";
 
 const SNAPSHOT_MUTATION_RECOVERY =
@@ -274,7 +275,8 @@ export abstract class BinarySessionRecords {
     )
       return err(
         new AnalysisSnapshotMismatchError(
-          "Analysis snapshot profile_mismatch: the snapshot is not bound to the active native dispatch reader",
+          "Analysis snapshot is not bound to the active native dispatch reader",
+          profilelessSnapshotMismatch(snapshot, active.target, profile),
         ),
       );
     const imported = this.#snapshot.import(
@@ -295,11 +297,11 @@ export abstract class BinarySessionRecords {
     return imported;
   }
 
-  protected matchesSnapshot(
+  protected snapshotMismatch(
     target: BinaryTarget,
     profile: AnalysisProfileCommitment | null,
-  ): boolean {
-    return this.#snapshot.matches(target, profile ?? undefined);
+  ) {
+    return this.#snapshot.mismatch(target, profile ?? undefined);
   }
 
   protected selectSnapshot(

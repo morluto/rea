@@ -8,6 +8,7 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import type { RecordUnknownInput } from "../../../src/domain/residualUnknown.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { HopperStartError } from "../../../src/domain/hopperErrors.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -906,7 +907,17 @@ describe("replay of exact immutable calls", () => {
     expect(mismatch.importAnalysisSnapshot(snapshot.value).ok).toBe(true);
     const opened = await mismatch.open(second);
     expect(opened.ok).toBe(false);
-    if (!opened.ok) expect(opened.error._tag).toBe("EvidenceIntegrityError");
+    if (!opened.ok) {
+      expect(opened.error._tag).toBe("EvidenceIntegrityError");
+      expect(projectAnalysisError(opened.error).details).toMatchObject({
+        binding_mismatch: {
+          target: {
+            snapshot: { sha256: snapshot.value.target.sha256 },
+            selected: { sha256: expect.any(String) },
+          },
+        },
+      });
+    }
     await mismatch.close();
 
     const profileMismatchCalls: string[] = [];
@@ -933,7 +944,15 @@ describe("replay of exact immutable calls", () => {
     expect(profileOpened.ok).toBe(false);
     if (!profileOpened.ok) {
       expect(profileOpened.error._tag).toBe("EvidenceIntegrityError");
-      expect(profileOpened.error.message).toContain("profile_mismatch");
+      expect(profileOpened.error.message).toContain("Analysis snapshot");
+      expect(projectAnalysisError(profileOpened.error).details).toMatchObject({
+        binding_mismatch: {
+          profile_digest: {
+            snapshot: snapshot.value.binding.analysis_profile.digest,
+            selected: expect.any(String),
+          },
+        },
+      });
     }
     expect(profileMismatchCalls).toEqual([]);
     await profileMismatch.close();
@@ -946,8 +965,17 @@ describe("replay of exact immutable calls", () => {
       snapshot.value,
     );
     expect(activeImport.ok).toBe(false);
-    if (!activeImport.ok)
-      expect(activeImport.error.message).toContain("profile_mismatch");
+    if (!activeImport.ok) {
+      expect(activeImport.error.message).toContain("Analysis snapshot");
+      expect(projectAnalysisError(activeImport.error).details).toMatchObject({
+        binding_mismatch: {
+          profile_digest: {
+            snapshot: snapshot.value.binding.analysis_profile.digest,
+            selected: expect.any(String),
+          },
+        },
+      });
+    }
     await activeProfileMismatch.close();
   });
 });

@@ -1,6 +1,8 @@
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { readFile, symlink, writeFile } from "node:fs/promises";
@@ -1196,6 +1198,18 @@ describe("snapshot replay provider identity", () => {
     expect(changedProfileResult).not.toEqual(first);
     expect(changedProfileResult).toMatchObject({
       code: "evidence_integrity_mismatch",
+      details: {
+        binding_mismatch: {
+          provider: {
+            snapshot: { version: "launcher-sha256:fixture" },
+            selected: { version: "launcher-sha256:changed" },
+          },
+          profile_digest: {
+            snapshot: expect.any(String),
+            selected: expect.any(String),
+          },
+        },
+      },
     });
     expect(fixture.starts).toEqual(startsAfterFirst);
     expect(fixture.calls).toEqual(callsAfterFirst);
@@ -1223,6 +1237,38 @@ describe("snapshot replay provider identity", () => {
     expect(changedProviderResult).not.toEqual(first);
     expect(changedProviderResult).toMatchObject({
       code: "evidence_integrity_mismatch",
+      details: {
+        binding_mismatch: {
+          provider: {
+            snapshot: { id: IDENTITY.id },
+            selected: { id: "other-provider" },
+          },
+        },
+      },
+    });
+    expect(fixture.starts).toEqual(startsAfterFirst);
+    expect(fixture.calls).toEqual(callsAfterFirst);
+
+    const changedTarget = join(dirname(fixture.path), "changed.hop");
+    await writeFile(changedTarget, "different target");
+    const changedTargetResult = await runDirectAnalysis(
+      dependencies,
+      changedTarget,
+      "search_strings",
+      { pattern: "fixture", document: "fixture" },
+      { snapshotPath: fixture.snapshotPath },
+    ).then(projectCliAnalysisResult);
+    expect(changedTargetResult).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      details: {
+        binding_mismatch: {
+          target: {
+            snapshot: { sha256: firstSnapshot.value.target.sha256 },
+            selected: { sha256: expect.any(String) },
+          },
+          profile_comparison: "not_compared",
+        },
+      },
     });
     expect(fixture.starts).toEqual(startsAfterFirst);
     expect(fixture.calls).toEqual(callsAfterFirst);
@@ -1358,6 +1404,50 @@ describe("workflow snapshot profile and cancellation binding", () => {
   });
 });
 
+const expectReaderBindingMismatch = (
+  error: AnalysisError,
+  selectedVersion: string,
+  snapshotDigest: string,
+): void => {
+  expect(projectAnalysisError(error).details).toMatchObject({
+    binding_mismatch: {
+      provider: {
+        snapshot: { version: "apple-metadata-reader-older" },
+        selected: { version: selectedVersion },
+      },
+      profile_digest: { snapshot: snapshotDigest },
+    },
+  });
+};
+
+const expectProfilelessOperationMismatch = (
+  session: BinarySession,
+  target: BinaryTarget,
+  snapshot: AnalysisSnapshot,
+): void => {
+  const wrongOperation = structuredClone(snapshot);
+  wrongOperation.workflow_entries[0]!.operation = "inspect_native_api";
+  wrongOperation.workflow_entries[0]!.query_id = analysisQueryId(
+    wrongOperation.target,
+    wrongOperation.binding,
+    "inspect_native_api",
+    wrongOperation.workflow_entries[0]!.parameters,
+  );
+  expect(
+    isProfilelessNativeDispatchSnapshot(
+      wrongOperation,
+      target,
+      APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
+    ),
+  ).toBe(false);
+  const rejected = session.importAnalysisSnapshot(wrongOperation);
+  expect(rejected.ok).toBe(false);
+  if (!rejected.ok)
+    expect(projectAnalysisError(rejected.error).details).toMatchObject({
+      binding_mismatch: { workflow_scope: "incompatible" },
+    });
+};
+
 const expectProfilelessWorkflowSnapshotRejections = async (
   path: string,
   provider: AnalysisProvider,
@@ -1389,28 +1479,16 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   ).toBe(false);
   const rejectedReader = session.importAnalysisSnapshot(wrongReader);
   expect(rejectedReader.ok).toBe(false);
-  if (!rejectedReader.ok)
-    expect(rejectedReader.error.message).toContain("profile_mismatch");
+  if (!rejectedReader.ok) {
+    expect(rejectedReader.error.message).toContain("Analysis snapshot");
+    expectReaderBindingMismatch(
+      rejectedReader.error,
+      readerIdentity.version,
+      otherReaderProfile.digest,
+    );
+  }
 
-  const wrongOperation = structuredClone(snapshot);
-  wrongOperation.workflow_entries[0]!.operation = "inspect_native_api";
-  wrongOperation.workflow_entries[0]!.query_id = analysisQueryId(
-    wrongOperation.target,
-    wrongOperation.binding,
-    "inspect_native_api",
-    wrongOperation.workflow_entries[0]!.parameters,
-  );
-  expect(
-    isProfilelessNativeDispatchSnapshot(
-      wrongOperation,
-      opened.value,
-      APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
-    ),
-  ).toBe(false);
-  const rejectedOperation = session.importAnalysisSnapshot(wrongOperation);
-  expect(rejectedOperation.ok).toBe(false);
-  if (!rejectedOperation.ok)
-    expect(rejectedOperation.error.message).toContain("profile_mismatch");
+  expectProfilelessOperationMismatch(session, opened.value, snapshot);
 
   const mixedOperation = "inspect_native_api";
   const mixedProfile = workflowAnalysisProfile(
@@ -1448,7 +1526,7 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   ).toBe(false);
   expect(rejectedMixed.ok).toBe(false);
   if (!rejectedMixed.ok)
-    expect(rejectedMixed.error.message).toContain("profile_mismatch");
+    expect(rejectedMixed.error.message).toContain("Analysis snapshot");
 
   const deepProfile = createAnalysisProfile(
     { id: "ghidra", name: "Ghidra", version: "fixture-version" },
@@ -1508,7 +1586,7 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   const rejectedDeepOnly = session.importAnalysisSnapshot(deepSnapshot);
   expect(rejectedDeepOnly.ok).toBe(false);
   if (!rejectedDeepOnly.ok)
-    expect(rejectedDeepOnly.error.message).toContain("profile_mismatch");
+    expect(rejectedDeepOnly.error.message).toContain("Analysis snapshot");
 };
 
 it("retains a native dispatch workflow snapshot without a deep provider profile", async () => {

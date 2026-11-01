@@ -20,6 +20,7 @@ import {
   createAnalysisSnapshotEntry,
   createAnalysisSnapshotWorkflowEntry,
   snapshotBinding,
+  snapshotBindingMismatch,
   snapshotMatchesProfile,
   snapshotMatchesTarget,
   snapshotTarget,
@@ -30,6 +31,7 @@ import {
   type AnalysisSnapshotWorkflowEntry,
   type AnalysisSnapshotBinding,
   type AnalysisSnapshotTarget,
+  type SnapshotBindingMismatch,
 } from "../../domain/analysisSnapshot.js";
 import type {
   AnalysisExecution,
@@ -165,6 +167,21 @@ export class AnalysisSnapshotCache {
         profile !== undefined &&
         snapshotMatchesTarget(this.#target, target) &&
         snapshotMatchesProfile(this.#binding, profile))
+    );
+  }
+
+  /** Explain staged mismatch without treating missing binding facts as absent. */
+  mismatch(
+    target: BinaryTarget,
+    profile: AnalysisProfileCommitment | undefined,
+  ): SnapshotBindingMismatch | undefined {
+    if (this.matches(target, profile)) return undefined;
+    if (this.#target === undefined || this.#binding === undefined)
+      return { staged_binding: "incomplete" };
+    return snapshotBindingMismatch(
+      { target: this.#target, binding: this.#binding },
+      target,
+      profile,
     );
   }
 
@@ -395,7 +412,8 @@ export class AnalysisSnapshotCache {
     )
       return err(
         new AnalysisSnapshotMismatchError(
-          "Analysis snapshot profile_mismatch: target, provider, or analysis profile does not match the active binary",
+          "Analysis snapshot target, provider, or analysis profile does not match the active binary",
+          snapshotBindingMismatch(validated, active.target, active.profile),
         ),
       );
     const importedEvidence = mergeEvidence(validated.evidence_bundle);
