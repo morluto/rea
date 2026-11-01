@@ -5,7 +5,9 @@ import {
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
+import { admitFilesystemObservationRoots } from "../../process/capture/FilesystemSnapshot.js";
 import { processCaptureOwnershipUnavailableReason } from "../../process/capture/ProcessCaptureCapability.js";
+import { createProcessSensitiveOutput } from "../../process/capture/ProcessSensitiveOutput.js";
 import { resolveProcessScenarioRuntimePaths } from "../../process/capture/ProcessScenarioRuntimeValidation.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
@@ -39,11 +41,25 @@ export const prepareProcessScenarioPlan = async (
         { userMessage: ownershipReason },
       ),
     );
+  const cancelled = () =>
+    err(
+      new AnalysisCancelledError("capture_process_scenario", {
+        cause: signal?.reason,
+      }),
+    );
+  const aborted = () => signal?.aborted === true;
   try {
     const { dry_run: _dryRun, ...resolved } =
       await resolveProcessScenarioRuntimePaths(scenario, environment, platform);
+    if (aborted()) return cancelled();
+    const privacy = createProcessSensitiveOutput(scenario);
+    if (!privacy.ok) return err(privacy.error);
+    const admitted = await admitFilesystemObservationRoots(resolved, signal);
+    if (!admitted.ok) return admitted;
+    if (aborted()) return cancelled();
     return ok(resolved);
   } catch (cause: unknown) {
+    if (aborted()) return cancelled();
     return err(
       cause instanceof AnalysisError
         ? cause

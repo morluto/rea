@@ -16,6 +16,7 @@ import {
 } from "../../domain/process/processCaptureParsing.js";
 import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import {
+  processScenarioPlanProjection,
   processScenarioPlanSchema,
   type ProcessScenario,
 } from "../../domain/process/processScenario.js";
@@ -118,7 +119,7 @@ export const createProcessScenarioPlanEvidence = (
 ) => {
   const plan = processScenarioPlanSchema.parse({
     status: "planned",
-    scenario,
+    scenario: processScenarioPlanProjection(scenario),
     ambient_environment: "inherited-at-run",
   });
   return createEvidence(undefined, PROCESS_PROVIDER, {
