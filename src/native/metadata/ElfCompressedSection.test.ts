@@ -94,6 +94,7 @@ describe("ELF compressed section payloads", () => {
     expect(decoded).toMatchObject({
       state: "malformed",
       message: "ELF compressed section-name table header is truncated",
+      inflatedBytes: 0,
     });
   });
 
@@ -121,6 +122,7 @@ describe("ELF compressed section payloads", () => {
     expect(decoded).toMatchObject({
       state: "malformed",
       message: "ELF sample section size is inconsistent",
+      inflatedBytes: plain.length + 1,
     });
   });
 
@@ -161,6 +163,7 @@ describe("ELF compressed section payloads", () => {
     ).toMatchObject({
       state: "malformed",
       message: "ELF .zdebug_info section is not a GNU ZLIB compressed section",
+      inflatedBytes: 0,
     });
   });
 });

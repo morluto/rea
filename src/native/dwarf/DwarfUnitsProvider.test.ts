@@ -395,6 +395,71 @@ it("charges failed decompression attempts against the shared allowance", () => {
   }
 });
 
+it("keeps the inflate allowance after a truncated optional section header", async () => {
+  const named = namedUnit({ name: "kept.c" });
+  const read = await inspect(
+    elfImage({
+      sections: [
+        { name: ".debug_line_str", body: Buffer.alloc(4), flags: 0x800n },
+        {
+          name: ".debug_info",
+          body: elfCompressedBody(named.info, "zlib"),
+          flags: 0x800n,
+        },
+        { name: ".debug_abbrev", body: named.abbrev },
+      ],
+    }),
+  );
+  expect(read.ok).toBe(true);
+  if (!read.ok) throw read.error;
+  expect(read.value.units[0]?.name.value).toBe("kept.c");
+  expect(read.value.omissions).toContainEqual(
+    expect.objectContaining({
+      name: ".debug_line_str",
+      reason: expect.stringContaining("truncated"),
+    }),
+  );
+});
+
+it("keeps units after a corrupt optional compressed stream", async () => {
+  const named = namedUnit({ name: "kept.c" });
+  const corrupt = elfCompressedBody(Buffer.from("abc"), "zlib");
+  corrupt[corrupt.length - 1] = (corrupt.at(-1) ?? 0) ^ 1;
+  const read = await inspect(
+    elfImage({
+      sections: [
+        { name: ".debug_line_str", body: corrupt, flags: 0x800n },
+        {
+          name: ".debug_info",
+          body: elfCompressedBody(named.info, "zlib"),
+          flags: 0x800n,
+        },
+        { name: ".debug_abbrev", body: named.abbrev },
+      ],
+    }),
+  );
+  expect(read.ok).toBe(true);
+  if (!read.ok) throw read.error;
+  expect(read.value.units[0]?.name.value).toBe("kept.c");
+});
+
+it("reads a populated .debug_info that follows an empty copy", async () => {
+  const named = namedUnit({ name: "second.c" });
+  const read = await inspect(
+    elfImage({
+      sections: [
+        { name: ".debug_info", body: Buffer.alloc(0), type: 1 },
+        { name: ".debug_info", body: named.info },
+        { name: ".debug_abbrev", body: named.abbrev },
+      ],
+    }),
+  );
+  expect(read.ok).toBe(true);
+  if (!read.ok) throw read.error;
+  expect(read.value.units[0]?.name.value).toBe("second.c");
+  expect(read.value.coverage.status).toBe("complete");
+});
+
 it("keeps units when an optional compressed section cannot be read", async () => {
   const named = namedUnit({ name: "kept.c" });
   const read = await inspect(
@@ -513,6 +578,42 @@ it("keeps a section that stores no bytes as no_debug_info for this file", async 
     status: "no_debug_info",
     reason: expect.stringContaining("no file-backed .debug_info"),
   });
+});
+
+it("keeps an empty PROGBITS .debug_info as no_debug_info", async () => {
+  const read = await inspect(
+    elfImage({
+      sections: [{ name: ".debug_info", body: Buffer.alloc(0), type: 1 }],
+    }),
+  );
+  expect(read.ok).toBe(true);
+  if (!read.ok) throw read.error;
+  expect(read.value.coverage.status).toBe("no_debug_info");
+  expect(read.value.sections).toEqual([]);
+  expect(read.value.omissions).toContainEqual({
+    name: ".debug_info",
+    reason: ".debug_info stores no bytes",
+  });
+});
+
+it("reads units from an unmapped Mach-O __DWARF segment", async () => {
+  const named = namedUnit({ name: "unmapped.c" });
+  const bytes = macho64({
+    cpuType: CPU_X86_64,
+    sections: [
+      { name: "__debug_info", body: named.info },
+      { name: "__debug_abbrev", body: named.abbrev },
+    ],
+  });
+  // LC_SEGMENT_64 retains its file range but has no VM mapping or protections.
+  bytes.writeBigUInt64LE(0n, 32 + 32);
+  bytes.writeUInt32LE(0, 32 + 56);
+  bytes.writeUInt32LE(0, 32 + 60);
+  const read = await inspect(bytes);
+  expect(read.ok).toBe(true);
+  if (!read.ok) throw read.error;
+  expect(read.value.coverage.status).toBe("complete");
+  expect(read.value.units[0]?.name.value).toBe("unmapped.c");
 });
 
 it("reports unread .debug_info copies as partial and groups repeated omissions", async () => {

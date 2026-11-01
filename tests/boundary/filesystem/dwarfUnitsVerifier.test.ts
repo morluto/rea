@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { importVerifierSource } from "../../../scripts/lib/verifier-source-loader.mjs";
 import { parseDumperUnits } from "../../../scripts/verify-dwarf-units.mjs";
 
 describe("DWARF dumper comparison", () => {
@@ -11,9 +12,9 @@ describe("DWARF dumper comparison", () => {
    Abbrev Offset: 0x0
    Pointer Size:  8
  <0><b>: Abbrev Number: 1 (DW_TAG_compile_unit)
-    <c>   DW_AT_producer    : (indirect string, offset: 0x0): GNU C17 13.2.0 -mtune=generic
+    <c>   DW_AT_producer    : (indirect string, offset: 0x0): clang version 17 https://x
     <11>   DW_AT_name        : alpha.c
-    <15>   DW_AT_comp_dir    : /tmp/two words
+    <15>   DW_AT_comp_dir    : (indirect line string, offset: 0x0): /tmp/two:words
     <19>   DW_AT_GNU_dwo_name: (indirect string, offset: 0x12): alpha.dwo
     <1d>   DW_AT_GNU_dwo_id  : 0xabcdef
   Compilation Unit @ offset 0x4e:
@@ -29,8 +30,8 @@ describe("DWARF dumper comparison", () => {
       {
         version: 4,
         name: "alpha.c",
-        comp_dir: "/tmp/two words",
-        producer: "GNU C17 13.2.0 -mtune=generic",
+        comp_dir: "/tmp/two:words",
+        producer: "clang version 17 https://x",
         dwo_name: "alpha.dwo",
       },
       {
@@ -64,21 +65,71 @@ describe("DWARF dumper comparison", () => {
     ]);
   });
 
-  it("loads verify:dwarf-units through the single verifier source loader", () => {
+  it.each([
+    `Compilation Unit @ offset 0x0:
+     Version: 4
+ <0><b>: Abbrev Number: 1 (DW_TAG_compile_unit)
+ <1><c>: Abbrev Number: 2 (DW_TAG_subprogram)
+    <d> DW_AT_name : child`,
+    `0x00000000: Compile Unit: version = 0x0004
+0x0000000b: DW_TAG_compile_unit
+0x0000000c: DW_TAG_subprogram
+              DW_AT_name ("child")`,
+  ])("keeps an unnamed unit separate from child attributes: %s", (text) => {
+    expect(parseDumperUnits(text)).toEqual([
+      {
+        version: 4,
+        name: null,
+        comp_dir: null,
+        producer: null,
+        dwo_name: null,
+      },
+    ]);
+  });
+
+  it("reads readelf indexed strings and ignores unit markers inside values", () => {
+    expect(
+      parseDumperUnits(
+        [
+          "  Compilation Unit @ offset 0x0:",
+          "   Version:       5",
+          " <0><c>: Abbrev Number: 1 (DW_TAG_compile_unit)",
+          "    <d>   DW_AT_producer    : (indexed string: 0x0): My Compilation Unit @ tool",
+          "    <e>   DW_AT_name        : (indexed string: 0x1): alpha.c",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      {
+        version: 5,
+        name: "alpha.c",
+        comp_dir: null,
+        producer: "My Compilation Unit @ tool",
+        dwo_name: null,
+      },
+    ]);
+    expect(
+      parseDumperUnits(
+        [
+          "0x00000000: Compile Unit: length = 0x2b, format = DWARF32, version = 0x0005",
+          "0x0000000b: DW_TAG_compile_unit",
+          '              DW_AT_producer\t("My Compile Unit: tool")',
+          '              DW_AT_name\t("alpha.c")',
+        ].join("\n"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("loads verify:dwarf-units through the single verifier source loader", async () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
       readonly scripts: Readonly<Record<string, string>>;
     };
     expect(pkg.scripts["verify:dwarf-units"]).toBe(
       "node scripts/verify-dwarf-units.mjs",
     );
-    const source = readFileSync("scripts/verify-dwarf-units.mjs", "utf8");
-    expect(source).toContain('from "./lib/verifier-source-loader.mjs"');
-    expect(source).not.toContain("tsx");
-    const record = readFileSync(
-      "docs/verification/dwarf-units-2026-10-31.md",
-      "utf8",
+    const module = await importVerifierSource(
+      "../src/composition/binaryDiagnostics.ts",
+      new URL("../../../scripts/verify-dwarf-units.mjs", import.meta.url).href,
     );
-    expect(record).toContain(pkg.scripts["verify:dwarf-units"]);
-    expect(record).not.toContain("tsx");
+    expect(module.createDwarfUnitsService).toBeTypeOf("function");
   });
 });

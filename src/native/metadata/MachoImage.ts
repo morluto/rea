@@ -214,9 +214,14 @@ const machoImageSection = ({
     fileDelta >= 0n &&
     fileDelta <= segmentFileSize &&
     sectionSize <= segmentFileSize - fileDelta;
+  const declaredRange = declaredFileRange(
+    fileBytes,
+    sectionOffset,
+    sectionSize,
+  );
   const range = unmapped
     ? { offset: 0, size: 0, file_backed: false }
-    : declaredFileRange(fileBytes, sectionOffset, sectionSize);
+    : declaredRange;
   const fileBacked =
     range.file_backed && !zeroFill && inSegmentMemory && inSegmentFile;
   const readOnly =
@@ -235,6 +240,7 @@ const machoImageSection = ({
     segment_unmapped: segmentUnmapped,
     ...range,
     file_backed: fileBacked,
+    on_disk: declaredRange.file_backed && !zeroFill && inSegmentFile,
     read_only: readOnly,
     compressed: false,
   };

@@ -210,6 +210,26 @@ const storedCandidate = (
   uncompressedSize: size,
 });
 
+/**
+ * A section that stores no bytes satisfies nothing: a `.debug_info` with an
+ * empty body is no contents, so a later populated copy is still selectable.
+ */
+const settle = (
+  candidate: Candidate,
+  satisfied: Set<DwarfSectionRole>,
+): Candidate => {
+  if (candidate.unread !== null) return candidate;
+  if (candidate.role === ".debug_info" && candidate.body.length === 0)
+    return unread(
+      candidate.name,
+      candidate.role,
+      "no_contents",
+      `${candidate.name} stores no bytes`,
+    );
+  satisfied.add(candidate.role);
+  return candidate;
+};
+
 const admitDecoded = (
   name: string,
   role: DwarfSectionRole,
@@ -227,10 +247,10 @@ const admitDecoded = (
     throw new DwarfSectionAllowanceFailure(name, demanded, budget.allowance);
   }
   if (decoded.state === "malformed") {
-    // A failed stream may have produced its entire permitted output before
-    // failing its checksum. The decoder exposes no partial byte count, so
-    // conservatively charge the full remaining allowance for the attempt.
-    budget.used = budget.allowance;
+    // A failed stream may have produced its entire declared output before
+    // failing its checksum, and the decoder exposes no partial byte count, so
+    // charge the declared size. Rejected headers never inflate and charge 0.
+    budget.used += decoded.inflatedBytes;
     return unread(name, role, "unreadable", decoded.message);
   }
   if (decoded.state === "unsupported")
@@ -312,7 +332,12 @@ const debugInfoAvailability = (
   const matches = candidates.filter(({ role }) => role === ".debug_info");
   if (matches.length === 0) return { state: "absent" };
   if (matches.some((candidate) => candidate.unread === null))
-    return { state: "read", unreadCopies: matches.length - 1 };
+    return {
+      state: "read",
+      unreadCopies: matches.filter(
+        ({ unread }) => unread !== null && unread.kind !== "no_contents",
+      ).length,
+    };
   const reason = matches.find(({ unread }) => unread?.kind === "unreadable")
     ?.unread?.reason;
   return reason === undefined
@@ -437,8 +462,9 @@ const locateElf = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
     const gnuZlib = name.startsWith(".zdebug_");
     const compressed = (section.flags & SHF_COMPRESSED) !== 0n;
     if (!compressed && !gnuZlib) {
-      satisfied.add(role);
-      candidates.push(storedCandidate(name, role, offset, size, stored));
+      candidates.push(
+        settle(storedCandidate(name, role, offset, size, stored), satisfied),
+      );
       continue;
     }
     const decoded = compressed
@@ -468,8 +494,7 @@ const locateElf = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
           : "unknown"
       } is unsupported`,
     );
-    if (candidate.unread === null) satisfied.add(role);
-    candidates.push(candidate);
+    candidates.push(settle(candidate, satisfied));
   }
   return {
     format: "elf",
@@ -496,8 +521,7 @@ const adoptStored = (
   if (satisfied.has(role))
     return unread(name, role, "duplicate", DUPLICATE_SECTION);
   if (!gnuZdebugName(name)) {
-    satisfied.add(role);
-    return storedCandidate(name, role, offset, size, stored);
+    return settle(storedCandidate(name, role, offset, size, stored), satisfied);
   }
   const candidate = admitDecoded(
     name,
@@ -508,8 +532,7 @@ const adoptStored = (
     budget,
     `${subject} compression is unsupported`,
   );
-  if (candidate.unread === null) satisfied.add(role);
-  return candidate;
+  return settle(candidate, satisfied);
 };
 
 const locatePe = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
@@ -689,10 +712,8 @@ const locateMacho = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
       candidates.push(outsideFile(name, role));
       continue;
     }
-    const offset = section.file_backed
-      ? section.offset
-      : Number(section.declared_range.offset);
-    const size = section.file_backed ? section.size : 0;
+    const offset = Number(section.declared_range.offset);
+    const size = Number(section.declared_range.size);
     candidates.push(
       adoptStored(
         name,
@@ -727,7 +748,7 @@ const machoReadable = (
   section: Extract<ImageSection, { format: "macho" }>,
   fileBytes: number,
 ): boolean =>
-  section.file_backed ||
+  section.on_disk ||
   (section.size === 0 &&
     !section.segment_unmapped &&
     section.declared_range.size === 0n &&

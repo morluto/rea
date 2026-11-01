@@ -112,6 +112,8 @@ export type ImageSection = {
       };
       readonly segment_mapping: FileMapping | null;
       readonly segment_unmapped: boolean;
+      /** Non-zero-fill bytes within the file and the segment's file range. */
+      readonly on_disk: boolean;
     }
 );
 

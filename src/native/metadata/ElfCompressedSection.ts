@@ -12,7 +12,12 @@ export type ElfCompressedSectionResult =
       readonly compression: "none" | "zlib" | "zstd";
     }
   | { readonly state: "unsupported"; readonly compressionType: number }
-  | { readonly state: "malformed"; readonly message: string }
+  | {
+      readonly state: "malformed";
+      readonly message: string;
+      /** Declared output bytes of an inflation attempt; 0 when none started. */
+      readonly inflatedBytes: number;
+    }
   | {
       readonly state: "limit";
       readonly requiredBytes: bigint;
@@ -41,7 +46,11 @@ export const decodeElfCompressedSection = (
 
   const headerBytes = bits === 64 ? 24 : 12;
   if (bytes.length < headerBytes)
-    return { state: "malformed", message: `${subject} header is truncated` };
+    return {
+      state: "malformed",
+      message: `${subject} header is truncated`,
+      inflatedBytes: 0,
+    };
   const compressionType = little
     ? bytes.readUInt32LE(0)
     : bytes.readUInt32BE(0);
@@ -85,6 +94,7 @@ export const decodeElfGnuZlibSection = (
     return {
       state: "malformed",
       message: `${subject} is not a GNU ZLIB compressed section`,
+      inflatedBytes: 0,
     };
   const declaredSize = bytes.readBigUInt64BE(4);
   if (declaredSize > BigInt(maximumDecodedBytes))
@@ -117,6 +127,7 @@ const inflateDeclared = (
   } catch (cause: unknown) {
     return {
       state: "malformed",
+      inflatedBytes: expected,
       message: `${subject} could not be decompressed: ${cause instanceof Error ? cause.message : "invalid compressed data"}`,
     };
   }
@@ -124,6 +135,7 @@ const inflateDeclared = (
     return {
       state: "malformed",
       message: `${subject} size is inconsistent`,
+      inflatedBytes: expected,
     };
   return { state: "available", bytes: decoded, compressed: true, compression };
 };

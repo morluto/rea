@@ -1,5 +1,4 @@
 /** Compile a two-file C fixture and compare compile-unit facts with a DWARF dumper. */
-import { execFileSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
@@ -10,19 +9,27 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { existsSync, realpathSync } from "node:fs";
+import { delimiter, join } from "node:path";
+import { accessSync, constants, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
-const commandExists = (name) => {
-  try {
-    execFileSync("/usr/bin/which", [name], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-};
+const commandExists = (name) =>
+  (name.includes("/")
+    ? [name]
+    : (process.env.PATH ?? "")
+        .split(delimiter)
+        .map((directory) => join(directory, name))
+  ).some((path) => {
+    try {
+      accessSync(path, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 
 const compiler = ["clang", "gcc"].find((name) => commandExists(name));
 const dumper = [
@@ -33,11 +40,7 @@ const dumper = [
   "/usr/bin/dwarfdump",
   "dwarfdump",
   "readelf",
-].find(
-  (name) =>
-    name !== undefined &&
-    (name.includes("/") ? existsSync(name) : commandExists(name)),
-);
+].find((name) => name !== undefined && commandExists(name));
 
 const ELF_TARGET = ["-target", "x86_64-unknown-linux-gnu"];
 const PE_TARGET = ["-target", "x86_64-w64-mingw32"];
@@ -123,9 +126,14 @@ const variants = [
 const quoted = (line) => {
   const match = /"((?:\\.|[^"\\])*)"/u.exec(line);
   if (match?.[1] !== undefined) return match[1].replace(/\\"/gu, '"');
-  const colon = line.lastIndexOf(":");
-  if (colon < 0) return null;
-  const tail = line.slice(colon + 1).trim();
+  const attribute = /\bDW_AT_\w+\s*:\s*(.*)$/u.exec(line);
+  if (attribute === null) return null;
+  const tail = attribute[1]
+    .replace(
+      /^\((?:indirect (?:line )?string, offset|indexed string): 0x[0-9a-f]+\):\s*/iu,
+      "",
+    )
+    .trim();
   return tail === "" ? null : tail;
 };
 
@@ -154,16 +162,23 @@ const versionOf = (line) => {
 export const parseDumperUnits = (text) => {
   const units = [];
   let current = null;
+  let collecting = false;
   const push = () => {
     if (current !== null) units.push(current);
   };
   for (const line of text.split(/\r?\n/u)) {
-    const version = versionOf(line);
-    const header = /Compilation Unit|Compile Unit/u.test(line);
+    // Attribute values are producer text, never unit structure.
+    const isAttribute = attribute(line) !== null;
+    const version = isAttribute ? null : versionOf(line);
+    const header =
+      !isAttribute &&
+      /^\s*Compilation Unit @|^\s*0x[0-9a-f]+:\s+Compile Unit:/u.test(line);
     const tagged =
+      !isAttribute &&
       /TAG_compile_unit|DW_TAG_compile_unit|DW_TAG_skeleton_unit/u.test(line);
     if (header || (tagged && version !== null)) {
       push();
+      collecting = true;
       current = {
         version,
         name: null,
@@ -178,6 +193,15 @@ export const parseDumperUnits = (text) => {
       current.version = version;
       continue;
     }
+    const readelfDie = /^\s*<(\d+)><[0-9a-f]+>:/iu.exec(line);
+    const llvmDie = /^\s*0x[0-9a-f]+:\s+(DW_TAG_\w+)/iu.exec(line);
+    if (
+      (readelfDie !== null && Number(readelfDie[1]) > 0) ||
+      (llvmDie !== null &&
+        !["DW_TAG_compile_unit", "DW_TAG_skeleton_unit"].includes(llvmDie[1]))
+    )
+      collecting = false;
+    if (!collecting) continue;
     const fact = attribute(line);
     if (fact !== null && current[fact.key] === null)
       current[fact.key] = fact.value;
@@ -186,37 +210,42 @@ export const parseDumperUnits = (text) => {
   return units;
 };
 
-const run = (command, args, cwd) => {
+/** A variant this host cannot build; a timeout or crash is not one. */
+class UnavailableVariant extends Error {}
+
+const run = async (commands, command, args, cwd) => {
   try {
-    return execFileSync(command, args, {
+    const { stdout } = await commands.exec(command, args, {
       cwd,
-      encoding: "utf8",
       timeout: 120000,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdin: "closed-pipe",
     });
+    return stdout;
   } catch (cause) {
+    if (!(cause instanceof Error) || cause.name !== "VerifierCommandExitError")
+      throw cause;
     const stderr =
-      cause instanceof Error && "stderr" in cause
-        ? String(cause.stderr).trim()
+      cause instanceof Error && "snapshot" in cause
+        ? cause.snapshot.stderr.text.trim()
         : "";
     const stdout =
-      cause instanceof Error && "stdout" in cause
-        ? String(cause.stdout).trim()
+      cause instanceof Error && "snapshot" in cause
+        ? cause.snapshot.stdout.text.trim()
         : "";
     const detail = [stderr, stdout].filter((part) => part !== "").join("\n");
     const message = cause instanceof Error ? cause.message : String(cause);
-    throw new Error(detail === "" ? message : detail);
+    throw new UnavailableVariant(detail === "" ? message : detail);
   }
 };
 
-const dumpUnits = (binary) => {
+const dumpUnits = async (commands, binary) => {
   if (dumper === undefined) throw new Error("No DWARF dumper is installed");
   const base = dumper.split("/").at(-1);
   const args =
     base === "readelf"
       ? ["--debug-dump=info", binary]
       : ["--debug-info", binary];
-  return parseDumperUnits(run(dumper, args, undefined));
+  return parseDumperUnits(await run(commands, dumper, args, undefined));
 };
 
 const inspectUnits = async (binary) => {
@@ -255,11 +284,12 @@ const inspectUnits = async (binary) => {
 const isElf = async (path) =>
   (await readFile(path)).subarray(0, 4).toString("binary") === "\u007fELF";
 
-const linkPe = (directory, objects) => {
+const linkPe = async (commands, directory, objects) => {
   if (!commandExists("ld.lld"))
-    throw new Error("ld.lld is absent, so no PE image was linked");
+    throw new UnavailableVariant("ld.lld is absent, so no PE image was linked");
   const output = join(directory, "program.exe");
-  run(
+  await run(
+    commands,
     "ld.lld",
     [
       "-m",
@@ -285,20 +315,34 @@ const linkArgs = (variant) => {
   return [];
 };
 
-const compileVariant = async (directory, variant) => {
-  if (compiler === undefined) throw new Error("clang or gcc is not installed");
+const compileVariant = async (commands, directory, variant) => {
+  if (compiler === undefined)
+    throw new UnavailableVariant("clang or gcc is not installed");
   await writeFixture(directory);
   const objects = [join(directory, "alpha.o"), join(directory, "beta.o")];
-  run(compiler, [...variant.args, "-c", "alpha.c", "-o", "alpha.o"], directory);
-  run(compiler, [...variant.args, "-c", "beta.c", "-o", "beta.o"], directory);
+  await run(
+    commands,
+    compiler,
+    [...variant.args, "-c", "alpha.c", "-o", "alpha.o"],
+    directory,
+  );
+  await run(
+    commands,
+    compiler,
+    [...variant.args, "-c", "beta.c", "-o", "beta.o"],
+    directory,
+  );
   let binaries = objects;
   if (variant.args.includes(PE_TARGET[1])) {
-    binaries = linkPe(directory, objects);
+    binaries = await linkPe(commands, directory, objects);
   } else if (await isElf(objects[0])) {
     if (!commandExists("ld.lld"))
-      throw new Error("ld.lld is absent, so ELF relocations were not applied");
+      throw new UnavailableVariant(
+        "ld.lld is absent, so ELF relocations were not applied",
+      );
     const output = join(directory, "program");
-    run(
+    await run(
+      commands,
       "ld.lld",
       ["-e", "alpha", ...linkArgs(variant), ...objects, "-o", output],
       directory,
@@ -325,7 +369,7 @@ const writeFixture = async (directory) => {
 const issueCodes = (unit) => unit.issues.map(({ code }) => code);
 
 /** Files the dumper reads and `inspect_dwarf_units` must not claim to resolve. */
-const checkBoundaries = async (root) => {
+const checkBoundaries = async (commands, root) => {
   const directory = join(root, "boundaries");
   await mkdir(directory);
   await writeFixture(directory);
@@ -335,14 +379,25 @@ const checkBoundaries = async (root) => {
     "-g",
     "-c",
   ];
-  run(compiler, [...elf, "alpha.c", "-o", "alpha.o"], directory);
-  run(compiler, [...elf, "beta.c", "-o", "beta.o"], directory);
-  run(
+  await run(
+    commands,
+    compiler,
+    [...elf, "alpha.c", "-o", "alpha.o"],
+    directory,
+  );
+  await run(commands, compiler, [...elf, "beta.c", "-o", "beta.o"], directory);
+  await run(
+    commands,
     compiler,
     [...elf, "-gsplit-dwarf", "alpha.c", "-o", "split.o"],
     directory,
   );
-  run("ld.lld", ["-r", "alpha.o", "beta.o", "-o", "merged.o"], directory);
+  await run(
+    commands,
+    "ld.lld",
+    ["-r", "alpha.o", "beta.o", "-o", "merged.o"],
+    directory,
+  );
   const rows = [];
 
   const single = (await inspectUnits(join(directory, "alpha.o"))).report;
@@ -359,7 +414,8 @@ const checkBoundaries = async (root) => {
 
   const merged = (await inspectUnits(join(directory, "merged.o"))).report;
   if (
-    merged.total_units !== dumpUnits(join(directory, "merged.o")).length ||
+    merged.total_units !==
+      (await dumpUnits(commands, join(directory, "merged.o"))).length ||
     merged.units.some(
       (unit) =>
         unit.abbrev_offset !== null ||
@@ -421,11 +477,13 @@ const invokedDirectly = () => {
 };
 
 const main = async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-dwarf-units-"));
+  const commands = await createVerifierCommands();
+  let root;
   const checked = [];
   const skipped = [];
   const boundaries = [];
-  try {
+  await withVerifierCleanup(async () => {
+    root = await mkdtemp(join(tmpdir(), "rea-dwarf-units-"));
     if (compiler === undefined || dumper === undefined) {
       skipped.push({
         id: "all",
@@ -440,8 +498,9 @@ const main = async () => {
         await mkdir(directory);
         let binaries;
         try {
-          binaries = await compileVariant(directory, variant);
+          binaries = await compileVariant(commands, directory, variant);
         } catch (cause) {
+          if (!(cause instanceof UnavailableVariant)) throw cause;
           const reason = cause instanceof Error ? cause.message : String(cause);
           skipped.push({
             id: variant.id,
@@ -456,7 +515,7 @@ const main = async () => {
         const infoCompression = new Set();
         const offsetSizes = new Set();
         for (const binary of binaries) {
-          const dumped = dumpUnits(binary);
+          const dumped = await dumpUnits(commands, binary);
           const inspected = await inspectUnits(binary);
           if (
             dumped.length === 0 ||
@@ -498,7 +557,7 @@ const main = async () => {
           throw new Error(`${variant.id} did not exercise it: ${failure}`);
         checked.push(row);
       }
-      boundaries.push(...(await checkBoundaries(root)));
+      boundaries.push(...(await checkBoundaries(commands, root)));
     }
     if (checked.length === 0)
       throw new Error(
@@ -511,9 +570,13 @@ const main = async () => {
         2,
       ),
     );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  }, [
+    // The directory stays when a command tree could not be stopped.
+    async () => {
+      await commands.close();
+      if (root !== undefined) await rm(root, { recursive: true, force: true });
+    },
+  ]);
 };
 
 if (invokedDirectly()) await main();
