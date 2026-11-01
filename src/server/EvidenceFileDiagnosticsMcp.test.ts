@@ -3,10 +3,10 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { analysisViewCaptureEvidence } from "../../../tests/fixtures/analysisView.js";
-import { createApplicationMcpHarness } from "../../../tests/fixtures/applicationMcpHarness.js";
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import type { Evidence } from "../../domain/evidence.js";
+import { analysisViewCaptureEvidence } from "../../tests/fixtures/analysisView.js";
+import { createApplicationMcpHarness } from "../../tests/fixtures/applicationMcpHarness.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import type { Evidence } from "../domain/evidence.js";
 
 /**
  * Issue #8453 is about the delivered MCP error, not only the reader's result. On
