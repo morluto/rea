@@ -19,6 +19,7 @@ import { isImmutableJsonSnapshot } from "../../domain/immutableJson.js";
 import { ok } from "../../domain/result.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { readEvidenceFileSource } from "./evidenceFileSource.js";
+import type { Evidence } from "../../domain/evidence.js";
 
 describe("evidence-file source reads", () => {
   it("owns immutable authentication proofs for selected records and related bundle parents", async () => {
@@ -331,4 +332,63 @@ it("keeps bundle-selection errors useful when operation labels exceed the reply 
       `${record.evidence_id} (operation omitted)`,
     );
   expect(encoded).not.toContain(operation);
+});
+
+describe("malformed Evidence file diagnostics (#8453)", () => {
+  /**
+   * A malformed file can carry tens of thousands of field issues. Projecting all
+   * of them expanded the error past the MCP response budget, which replaced the
+   * typed file error and its path with a transport `resource_constraint`. The
+   * reader now bounds the projected issues and says how many were omitted.
+   */
+  const manyIssues = (count: number): Evidence => {
+    const source = structuredClone(analysisViewCaptureEvidence());
+    return {
+      ...source,
+      limitations: Array.from({ length: count }, (_value, index) => index),
+    } as unknown as Evidence;
+  };
+
+  it("keeps the typed file error and path with bounded diagnostics", async () => {
+    const root = await createTestTempDirectory("rea-evidence-many-issues-");
+    const path = join(root, "many.json");
+    await writeFile(path, JSON.stringify(manyIssues(125_000)));
+    const result = await readEvidenceFileSource(path);
+    if (result.ok) throw new Error("expected a rejected file");
+    expect(result.error).toMatchObject({
+      _tag: "EvidenceFileError",
+      reason: "wrong-kind",
+      path,
+    });
+    const issues = (result.error as { contentIssues?: readonly unknown[] })
+      .contentIssues;
+    expect(issues).toBeDefined();
+    // Bounded: far below the 125,000 source issues, and small enough for the
+    // default MCP response budget.
+    expect(issues?.length ?? 0).toBeLessThan(1_000);
+    expect(Buffer.byteLength(JSON.stringify(issues), "utf8")).toBeLessThan(
+      1 << 20,
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        path: [],
+        message: expect.stringContaining("field issues were omitted"),
+      }),
+    );
+  });
+
+  it("projects every issue when they fit the budget", async () => {
+    const root = await createTestTempDirectory("rea-evidence-few-issues-");
+    const path = join(root, "few.json");
+    await writeFile(path, JSON.stringify(manyIssues(3)));
+    const result = await readEvidenceFileSource(path);
+    if (result.ok) throw new Error("expected a rejected file");
+    const issues = (
+      result.error as { contentIssues?: readonly { message?: string }[] }
+    ).contentIssues;
+    expect(issues).toHaveLength(3);
+    expect(issues?.some(({ message }) => message?.includes("omitted"))).toBe(
+      false,
+    );
+  });
 });
