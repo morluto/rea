@@ -16,6 +16,12 @@ const SHF_ALLOC = 0x2n;
 const SHF_EXECINSTR = 0x4n;
 /** Names are display only; a larger section-name table is left unread. */
 const SECTION_NAMES_MAX_BYTES = 64 * 1024;
+/**
+ * The allocated sections the sweep keeps: SHN_LORESERVE, from which ELF counts
+ * sections through section zero. NOBITS headers take no file bytes, so the
+ * file size alone would not bound the records.
+ */
+const ALLOCATED_SECTIONS_MAX = 0xff00;
 
 /** One allocated, non-empty section: the only facts the sweep keeps. */
 interface Allocated {
@@ -88,6 +94,7 @@ const executableOverlaps = (sorted: readonly Allocated[]): Pair[] => {
 export const elfSectionOverlapCollector = () => {
   const allocated: Allocated[] = [];
   let names: ElfSectionHeader | undefined;
+  let exceeded = false;
   return {
     visit(
       section: ElfSectionHeader,
@@ -101,6 +108,10 @@ export const elfSectionOverlapCollector = () => {
         section.size === 0n
       )
         return;
+      if (allocated.length === ALLOCATED_SECTIONS_MAX) {
+        exceeded = true;
+        return;
+      }
       allocated.push({
         index,
         type: section.type,
@@ -114,6 +125,11 @@ export const elfSectionOverlapCollector = () => {
     *finish(
       fileSize: number,
     ): Generator<ElfDeclarationRead, ElfSectionOverlap, Buffer> {
+      if (exceeded)
+        return {
+          status: "unavailable",
+          reason: `the section table declares more than ${String(ALLOCATED_SECTIONS_MAX)} allocated sections, the most the overlap check keeps`,
+        };
       const sorted = allocated.sort((first, second) =>
         first.address === second.address
           ? first.index - second.index

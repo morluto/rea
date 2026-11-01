@@ -33,22 +33,22 @@ that ISA.
 Provider selection returns the specific unsupported constraint rather than
 guessing a compatible profile:
 
-| Declaration                                                                | Outcome                                                                                                              |
-| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Little-endian ELF64 `ET_EXEC`, double-float ABI                            | admitted, `RISCV:LE:64:default` + `gcc`, lane `elf64-exec-le-double-float-generic-v1`                                |
-| Little-endian ELF32 `ET_EXEC`, double-float ABI                            | admitted, `RISCV:LE:32:default` + `gcc`, lane `elf32-exec-le-double-float-generic-v1`                                |
-| Little-endian ELF32 `ET_EXEC`, soft-float ABI, decoded extensions only     | admitted, `RISCV:LE:32:default` + `gcc` with the `__rea_ilp32` prototype, lane `elf32-exec-le-soft-float-generic-v1` |
-| ELF32 soft-float ABI without `Tag_RISCV_arch`, or with any other extension | refused; the reason names the extensions outside the decoded set                                                     |
-| ELF32 single-float ABI (ilp32f)                                            | refused until its [written policy](#ilp32f) is implemented and verified                                              |
-| ELF64 soft- or single-float ABI (lp64, lp64f), or the quad-float ABI       | refused; no verified calling-convention policy                                                                       |
-| Big-endian                                                                 | refused; Ghidra 12.1.4 ships no big-endian RISC-V language                                                           |
-| `ET_REL`, `ET_DYN`, other `e_type`                                         | refused with the declared value                                                                                      |
-| `EF_RISCV_RVE`                                                             | refused; the embedded 16-register profile (x0–x15) needs its own processor specification                             |
-| `EF_RISCV_TSO`                                                             | refused; the total-store-order memory model is unverified here                                                       |
-| Reserved or newer `e_flags` bits                                           | refused with the offending bits named                                                                                |
-| One NOBITS section covering a code section from its start                  | admitted if no other section overlaps either; REA prepares the [memory map](#load-layout) before analysis            |
-| Any other section overlap involving executable code                        | refused; the reason names the two sections that cause the refusal, with their ranges                                 |
-| A section table that cannot be read                                        | refused with the read failure; REA rejects most malformed tables when it opens the file                              |
+| Declaration                                                                      | Outcome                                                                                                              |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Little-endian ELF64 `ET_EXEC`, double-float ABI                                  | admitted, `RISCV:LE:64:default` + `gcc`, lane `elf64-exec-le-double-float-generic-v1`                                |
+| Little-endian ELF32 `ET_EXEC`, double-float ABI                                  | admitted, `RISCV:LE:32:default` + `gcc`, lane `elf32-exec-le-double-float-generic-v1`                                |
+| Little-endian ELF32 `ET_EXEC`, soft-float ABI, decoded extensions only           | admitted, `RISCV:LE:32:default` + `gcc` with the `__rea_ilp32` prototype, lane `elf32-exec-le-soft-float-generic-v1` |
+| ELF32 soft-float ABI without `Tag_RISCV_arch`, or with any other extension       | refused; the reason names the extensions outside the decoded set                                                     |
+| ELF32 single-float ABI (ilp32f)                                                  | refused until its [written policy](#ilp32f) is implemented and verified                                              |
+| ELF64 soft- or single-float ABI (lp64, lp64f), or the quad-float ABI             | refused; no verified calling-convention policy                                                                       |
+| Big-endian                                                                       | refused; Ghidra 12.1.4 ships no big-endian RISC-V language                                                           |
+| `ET_REL`, `ET_DYN`, other `e_type`                                               | refused with the declared value                                                                                      |
+| `EF_RISCV_RVE`                                                                   | refused; the embedded 16-register profile (x0–x15) needs its own processor specification                             |
+| `EF_RISCV_TSO`                                                                   | refused; the total-store-order memory model is unverified here                                                       |
+| Reserved or newer `e_flags` bits                                                 | refused with the offending bits named                                                                                |
+| One NOBITS section covering a code section from its start                        | admitted if no other section overlaps either; REA prepares the [memory map](#load-layout) before analysis            |
+| Any other section overlap involving executable code                              | refused; the reason names the two sections that cause the refusal, with their ranges                                 |
+| A section table that cannot be read, or with more than 65,280 allocated sections | refused with the read failure or the count; REA rejects most malformed tables when it opens the file                 |
 
 `e_type` and the [section overlaps](#load-layout) are the load-shape
 declarations this lane reads; program headers are not. A fixed-address
@@ -257,8 +257,10 @@ the lane admits.
 ## Load layout
 
 Section addresses are load addresses in a fixed-address image, so the target
-reader also records any allocated range that an executable section shares with
-another section. ESP-IDF builds such overlaps. For ESP32-C5, C6, C61, H2, H21
+reader also checks whether an executable section shares allocated addresses
+with another section. The check keeps at most 65,280 allocated sections
+(`SHN_LORESERVE`); a table with more is refused like a table that cannot be
+read. ESP-IDF builds such overlaps. For ESP32-C5, C6, C61, H2, H21
 and H4, flash text and rodata share one virtual window from `0x42000020`, and
 the linker script reserves the text's addresses in the rodata segment with the
 NOBITS section `.flash_rodata_dummy`. For C5 and C61, a second NOBITS section,

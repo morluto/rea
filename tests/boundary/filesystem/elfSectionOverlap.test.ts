@@ -128,7 +128,10 @@ const elf = (
   bytes.writeUInt32LE(elfClass === 64 ? 0x5 : 0x1, layout.flags);
   bytes.writeUInt16LE(layout.ehsize, layout.counts);
   bytes.writeUInt16LE(layout.shentsize, layout.counts + 6);
-  bytes.writeUInt16LE(1 + all.length, layout.counts + 8);
+  // From SHN_LORESERVE on, ELF counts sections through section zero's size.
+  const count = 1 + all.length;
+  bytes.writeUInt16LE(count < 0xff00 ? count : 0, layout.counts + 8);
+  if (count >= 0xff00) word(count, SECTION_TABLE + layout.sh.size);
   bytes.writeUInt16LE(
     options.names === false ? 0 : all.length,
     layout.counts + 10,
@@ -372,6 +375,35 @@ describe("ELF section tables at the reader's bounds", () => {
     });
     expect(refusal).toContain(
       "Sections section [2] (executable, 0x42000020, 0x4 bytes) and section [1]",
+    );
+  });
+
+  // Disjoint NOBITS sections, so only the number of records matters.
+  const disjoint = (count: number): Section[] =>
+    Array.from({ length: count }, (_, index) => ({
+      ...reservation,
+      address: 0x42000020 + index * 0x100,
+    }));
+
+  it("keeps 65,280 allocated sections, the most the overlap check keeps", async () => {
+    const { overlap, refusal } = await resolve(
+      elf(disjoint(0xff00), { names: false }),
+    );
+    expect(overlap).toEqual({ status: "none" });
+    expect(refusal).toBeNull();
+  });
+
+  it("refuses a table with more allocated sections than the overlap check keeps", async () => {
+    const { overlap, refusal } = await resolve(
+      elf(disjoint(0xff01), { names: false }),
+    );
+    expect(overlap).toEqual({
+      status: "unavailable",
+      reason:
+        "the section table declares more than 65280 allocated sections, the most the overlap check keeps",
+    });
+    expect(refusal).toContain(
+      "requires a readable section table: the section table declares more than 65280 allocated sections",
     );
   });
 
