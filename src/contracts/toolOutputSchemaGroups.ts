@@ -42,7 +42,10 @@ import {
 } from "../domain/investigationLifecycle.js";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
-import { evidenceBundleSummarySchema } from "../domain/evidenceRecordSummary.js";
+import {
+  evidenceBundleSummarySchema,
+  evidenceRecordSelectionSchema,
+} from "../domain/evidenceRecordSummary.js";
 import { liveBinaryTargetSummaryVariants } from "../domain/liveBinaryTargetSummary.js";
 import { nativeFunctionAnnotationsSchema } from "../domain/native/nativeFunctionAnnotations.js";
 import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
@@ -574,7 +577,11 @@ export const sessionOutputSchemas = {
   ),
   export_evidence_bundle: lifecycleResultOf(evidenceBundleExportReceiptSchema),
   get_evidence_bundle: lifecycleResultOf(
-    z.union([evidenceBundleSchema, evidenceBundleSummarySchema]),
+    z.union([
+      evidenceBundleSchema,
+      evidenceBundleSummarySchema,
+      evidenceRecordSelectionSchema,
+    ]),
   ),
   get_navigation_context: lifecycleResultOf(
     z.object({
