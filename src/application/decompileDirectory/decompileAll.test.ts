@@ -399,7 +399,7 @@ describe("decompile_all inventory limitations", () => {
       { name: "Foo::", limit: 1 },
     );
     expect(created.ok).toBe(true);
-    if (!created.ok) return;
+    if (!created.ok) throw created.error;
     expect(created.value).toMatchObject({
       inventory_limitations: ["first inventory limitation"],
       counts: { selected: 2, excluded: 1, requested: 1, remaining: 1 },
@@ -419,6 +419,13 @@ describe("decompile_all inventory limitations", () => {
       inventory_limitations: ["first inventory limitation"],
     });
     expect(firstIndex.limitations).toEqual([]);
+    expect(firstIndex.functions).toHaveLength(1);
+    expect(firstIndex.functions[0]?.limitations).toContain(
+      "terminal call may cut the body",
+    );
+    expect(firstIndex.functions[0]?.limitations).not.toContain(
+      "first inventory limitation",
+    );
 
     const resumed = await run(
       harness({ listLimitations: ["second inventory limitation"] }).tools,
@@ -426,7 +433,7 @@ describe("decompile_all inventory limitations", () => {
       { resume: true, name: "Bar::" },
     );
     expect(resumed.ok).toBe(true);
-    if (!resumed.ok) return;
+    if (!resumed.ok) throw resumed.error;
     expect(resumed.value).toMatchObject({
       inventory_limitations: ["second inventory limitation"],
       counts: { selected: 1, excluded: 2, requested: 1, remaining: 0 },
@@ -442,6 +449,18 @@ describe("decompile_all inventory limitations", () => {
     expect(
       resumedIndex.functions.map((record) => record.address).sort(),
     ).toEqual(["0x1000", "0x3000"]);
+    expect(
+      resumedIndex.functions.every((record) =>
+        record.limitations?.includes("terminal call may cut the body"),
+      ),
+    ).toBe(true);
+    expect(
+      resumedIndex.functions.every(
+        (record) =>
+          !record.limitations?.includes("first inventory limitation") &&
+          !record.limitations?.includes("second inventory limitation"),
+      ),
+    ).toBe(true);
     expect(resumedIndex.limitations).toEqual([]);
   });
 });
