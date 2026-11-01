@@ -45,6 +45,8 @@ import { processStartConfigurationSchema } from "./processStart.js";
 import { parseJebMcpEndpoint } from "./jebMcpEndpoint.js";
 
 const environmentSchema = z.object({
+  // Validated by the Go operation so MCP can repair an invalid launch seed.
+  REA_GO_MAX_BUILD_INFO_BYTES: z.string().optional(),
   ...debuggerSessionLimitEnvironmentShape,
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
   REA_BRIDGE_MAX_REQUEST_BYTES: bridgeMaxRequestBytesSchema.optional(),

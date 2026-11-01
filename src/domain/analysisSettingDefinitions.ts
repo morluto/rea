@@ -3,6 +3,8 @@ import type { AnalysisSettingId } from "./analysisSettings.js";
 import {
   DEFAULT_ASAR_MAX_HEADER_BYTES,
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
+  DEFAULT_GO_MAX_BUILD_INFO_BYTES,
+  MAXIMUM_GO_MAX_BUILD_INFO_BYTES,
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
   MAX_NODE_TIMER_DELAY_MS,
@@ -48,6 +50,16 @@ const timer = {
 } as const;
 /** Metadata aggregates existing owner definitions; no environment mutation or engine discovery. */
 export const ANALYSIS_SETTINGS = {
+  "go.max_build_info_bytes": {
+    environment: "REA_GO_MAX_BUILD_INFO_BYTES",
+    defaultValue: DEFAULT_GO_MAX_BUILD_INFO_BYTES,
+    minimum: 1,
+    maximum: MAXIMUM_GO_MAX_BUILD_INFO_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "go-build-info",
+    operations: ["inspect_go_binary"],
+  },
   "asar.max_header_bytes": {
     environment: "REA_ASAR_MAX_HEADER_BYTES",
     defaultValue: DEFAULT_ASAR_MAX_HEADER_BYTES,

@@ -133,7 +133,7 @@ Legacy string descriptors and contents may use the declared file-backed PE
 headers. A descriptor or string may also cross adjacent loader mappings when
 their virtual ranges cover every requested byte and identify one contiguous
 file range. Gaps, conflicting file aliases and nonempty zero-fill overlap remain
-invalid. Discovery policy and the aggregate 1 MiB string-content limit are
+invalid. Discovery policy and the default aggregate 1 MiB string-content limit are
 unchanged. These are static reads over REA's native mapping facts; they do not
 establish Windows/Linux loading or parity with Go's standard reader, whose
 [Go 1.24.0 ELF/PE readers](https://github.com/golang/go/blob/go1.24.0/src/debug/buildinfo/buildinfo.go#L445)
@@ -188,7 +188,7 @@ and `reported_limits.maximum_input_bytes`. Select a suitable input within that
 fixed allowance; changing an output-write or transport budget does not admit it.
 
 Resource guards bound the selected file and cumulative header searches to 256 MiB
-each, aggregate embedded string contents to 1 MiB (varint length prefixes are
+each, aggregate embedded string contents to 1 MiB by default (varint length prefixes are
 framing and do not count toward this allowance), structural table decoding to
 16 MiB and the complete normalized metadata report to 8 MiB. Inline strings must
 also fit within their actual mapped source range. Identical search spans with
@@ -200,6 +200,32 @@ its [response transport budget](mcp-contracts.md), which counts both text and
 structured content; a report within the metadata limit can still require export
 from retained Evidence. These limits are not operating-system memory or CPU
 isolation.
+
+For an aggregate string refusal, MCP errors include `details.limit` for
+`go.max_build_info_bytes`, including its effective value and source. Raise it
+with `update_analysis_settings`, then retry the same `inspect_go_binary` call:
+
+```json
+{
+  "changes": [
+    { "setting": "go.max_build_info_bytes", "action": "set", "value": 2097152 }
+  ]
+}
+```
+
+The setting accepts integer byte counts from 1 through 16,777,216 (16 MiB).
+It applies to the next accepted operation; in-flight inspections keep their
+original value. Reset restores the launch baseline. For CLI and future REA
+processes, set `REA_GO_MAX_BUILD_INFO_BYTES` to a positive decimal byte count.
+An invalid launch value refuses Go inspection rather than falling back; MCP
+remains available to set a valid runtime override. Reset exposes that invalid
+launch value again. Setup forwards an explicitly selected launch seed.
+
+The 16 MiB ceiling is a REA policy: decoding retains source bytes, text, base64
+and parsed module records. It is not a Go format limit or a process-memory
+guarantee. The separate 8 MiB complete-report limit still applies and may be
+reached before the admission ceiling, even with summary delivery. File-size,
+header-search, structural and transport guards also remain independently enforced.
 
 Embedded metadata is evidence of file content. It does not authenticate a
 compiler, dependency, commit or supply chain, and it does not establish runtime

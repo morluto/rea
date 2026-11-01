@@ -318,7 +318,8 @@ const modules = {
   ),
   desktopApplication: service(() => createDesktopApplicationService()),
   goBinary: service(
-    ({ options }) => options.goBinary ?? createGoBinaryService(),
+    ({ environment, options, settings }) =>
+      options.goBinary ?? createGoBinaryService(environment, settings),
   ),
   rustBinary: service(
     ({ options }) => options.rustBinary ?? createRustBinaryService(),

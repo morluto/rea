@@ -161,6 +161,7 @@ cannot partially apply. Clients coordinating writes can supply
 
 | Runtime setting                                               | Application point                                                      |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `go.max_build_info_bytes`                                     | Next `inspect_go_binary` request; 1 MiB default, 16 MiB policy ceiling |
 | `asar.max_header_bytes`                                       | Next archive operation, including full JavaScript application analysis |
 | `ghidra.startup_timeout_ms`, `hopper.startup_timeout_ms`      | Next provider startup attempt                                          |
 | `ghidra.decompile_timeout_seconds`                            | Next operation on the existing Ghidra Program; `null` means unbounded  |

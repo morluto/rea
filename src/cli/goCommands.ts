@@ -33,7 +33,7 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
-        const service = createGoBinaryService();
+        const service = createGoBinaryService(process.env);
         return await logCliCommand(
           logger,
           CLI_COMMANDS.inspectGoBinary,
