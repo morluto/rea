@@ -453,6 +453,40 @@ affected consumer.
   ability to discover it. Run the matching real-provider and agent lanes when
   their respective claims require them.
 
+### Checking installers and publisher downloads
+
+When changing setup or investigating an install failure, check the stages affected
+by the change:
+
+1. **Does REA support installation on this host?** Check the distribution and CPU
+   architecture, including an unsupported case. Recognizing RPM or DEB packages
+   does not mean REA can install on every related distribution. Check prompts in
+   a terminal and with redirected output; image builds cannot answer interactive
+   prompts. `doctor` checks health; `setup` installs.
+2. **Does the downloaded package match the publisher's metadata?** Record the
+   release version, package format, URL and check date. Verify the signature and
+   compare the launcher hash inside that package with the feed and installed
+   launcher. Check each format you claim works: a passing DEB check says nothing
+   about the RPM. Old fixtures cannot catch a newly published package mismatch.
+   Test both an invalid signature and a valid signature with a mismatched launcher
+   hash; setup must reject either before running the package manager.
+3. **Can download failures be diagnosed?** Use REA's request headers and timeout.
+   Check whether the setup result identifies the failed URL, HTTP status or
+   timeout, and next action; report missing details. Use controlled failures for
+   repeatable tests. A fast download on one network does not rule out a timeout
+   elsewhere, and curl with different headers may get a different response.
+4. **Does the installed provider run?** Check package-manager prerequisites and
+   run doctor for the selected provider. For Linux Hopper, check Python and REA's
+   private Xvfb display separately from package installation. Where relevant,
+   test an unusable `/tmp/.X11-unix` and a blocked user/mount namespace fallback.
+   Starting an extra X server does not test the display REA creates and cleans up.
+
+For a full Linux Hopper setup check, run `npm run verify:setup:linux` on a clean
+root Linux runner. Set `REA_VERIFY_SERVER_COMMAND` to the installed REA command.
+This checks setup, doctor, CLI/MCP analysis and repeated setup on that runner.
+Report which host, package format and steps you tested. Inspecting a Linux package
+on macOS verifies package contents, not a working Linux installation.
+
 ## Test design and pruning
 
 Prefer real public CLI/MCP workflows, then production-boundary integration,
