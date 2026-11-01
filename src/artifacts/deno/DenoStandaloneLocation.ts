@@ -303,14 +303,30 @@ const locateIntelTrailers = async (
       )
         continue;
       const length = Number(claimed);
-      if (length > sliceEnd - offset || length < DENO_SECTION_MAGIC.length)
-        continue;
+      if (length < DENO_SECTION_MAGIC.length) continue;
       const marker = await readExact(
         carrier,
         offset,
         DENO_SECTION_MAGIC.length,
       );
       if (marker === undefined || !marker.equals(DENO_SECTION_MAGIC)) continue;
+      if (length > sliceEnd - offset) {
+        // A marker-confirmed trailer whose payload runs past the slice is a
+        // truncated Deno app. Sentinels inside a confirmed payload are that
+        // payload's data. Otherwise a confirmed trailer after this payload
+        // start lies inside the claimed payload, so the enclosing app cannot
+        // be read and the inner one must not be reported in its place.
+        const isData = trailers.some(
+          (trailer) =>
+            sentinelStart >= trailer.offset &&
+            sentinelStart < trailer.offset + trailer.length,
+        );
+        if (!isData && trailers.some((t) => t.sentinelOffset >= offset))
+          throw denoCarrierFailure(
+            "Intel Mach-O Deno trailer is truncated and encloses another Deno trailer",
+          );
+        continue;
+      }
       const end = offset + length;
       trailers = trailers.filter(
         (trailer) =>

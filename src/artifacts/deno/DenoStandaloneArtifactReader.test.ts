@@ -343,6 +343,36 @@ it.each([
   );
 });
 
+it.each([
+  [
+    "a wildcard",
+    "https://example.com/mod.ts?exports=*",
+    "mod.ts%3Fexports%3D%2A",
+  ],
+  ["a pipe", "file:///src/a%7Cb.ts", null],
+  ["a quote", "file:///src/a%22b.ts", null],
+  ["angle brackets", "file:///src/a%3Cb%3E.ts", null],
+  ["a file query mark", "file:///src/a%3Fb.ts", null],
+])("encodes %s as a Windows-safe remote path", async (_label, url, tail) => {
+  const snapshot = await inventoryOf(
+    "remote-windows-reserved",
+    denoElf(
+      buildDenoSection({
+        specifiers: [{ text: url, id: 1 }],
+        remoteModules: [{ specifierId: 1, data: "body" }],
+      }),
+    ),
+  );
+  const row = snapshot.occurrences.find(
+    (candidate) =>
+      (candidate.format_metadata as { source_path?: string }).source_path ===
+      url,
+  );
+  expect(row?.logical_path).not.toMatch(/[*?"<>|:\\]/u);
+  if (tail !== null)
+    expect(row?.logical_path).toBe(`deno-remote/example.com/${tail}`);
+});
+
 it("encodes a colon in a specifier that is not a host path", async () => {
   const snapshot = await inventoryOf(
     "remote-jsr",
@@ -1063,6 +1093,17 @@ it("treats a nested Intel sentinel as asset data when its length overruns the ap
   ).resolves.toMatchObject({
     status: "present",
     location: { length: outer.length },
+  });
+});
+
+it("fails closed when the enclosing Intel trailer is truncated around a nested app", async () => {
+  const { outer } = nestedIntelApp();
+  const bytes = denoIntelTrailer(outer).subarray(0, -1);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "format" },
   });
 });
 

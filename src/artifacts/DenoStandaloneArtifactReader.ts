@@ -48,8 +48,13 @@ import {
 const MAX_DENO_LOGICAL_PATH_NODES = 250_000;
 const UNLISTED_VFS_LIMITATION =
   "The Deno compile virtual filesystem could not be listed, so its files are not inventoried.";
-/** Characters a Windows destination refuses in a generated path. */
-const NON_PORTABLE_PATH_CHARACTERS = /[:\\\u0001-\u001f]/gu;
+/**
+ * Characters a Windows destination refuses in a file name, other than the
+ * separator. All are ASCII, so each is one uppercase percent escape.
+ */
+const NON_PORTABLE_PATH_CHARACTERS = /[:\\*?"<>|\u0001-\u001f]/gu;
+const percentEscape = (character: string): string =>
+  `%${character.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`;
 export const MAX_DENO_RETAINED_BYTES = 256 * 1024 * 1024;
 
 interface RemoteDestination {
@@ -545,7 +550,7 @@ const remoteDestination = (
   // destination. The original stays in `sourcePath`. One hex case makes escapes
   // that a case-insensitive disk would merge equal, so the registry sees them.
   const portable = normalized
-    .replace(NON_PORTABLE_PATH_CHARACTERS, encodeURIComponent)
+    .replace(NON_PORTABLE_PATH_CHARACTERS, percentEscape)
     .replace(/%[0-9a-f]{2}/giu, (escape) => escape.toUpperCase());
   if (
     !remoteConcretePaths(portable, module).every((path) =>
