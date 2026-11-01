@@ -1164,6 +1164,16 @@ or `unrepresentable` (beyond the exact JSON integer range). Initialization, not
 the loaded flag, decides whether source bytes can exist, so an initialized
 file-backed overlay still maps.
 
+`search_bytes` continuations reuse `cursor`. The bridge binds that cursor to
+the target, analysis profile (including a selected Ghidra project), pattern,
+mask, bounds, and document. A mismatch returns `invalid_request` attributed to
+`cursor`. The message names that binding and states that the one-way cursor
+does not identify which value differs. Select the original context or omit
+the cursor. The call still matches the input schema, so there is no
+`inspect_input_contract` recovery.
+`details.issues[0].observed.differing_component` is `unknown`, and `bound_to`
+lists the bound components.
+
 For constructor-populated pointer or resource slots, a static zero is not proof
 of a later null value. Inspect the slot's `xrefs` and the writer's assembly or
 pseudocode, retaining uncertainty about execution order and runtime values.

@@ -330,10 +330,17 @@ Each match reports its address, segment, unique source file offset (or null),
 and containing procedure (or null).
 
 Pages default to 100 matches and accept 1 to 1000. Pass `next_cursor` as `cursor`
-with the same target, profile, pattern, mask and bounds to continue. `complete`
-means no further matches remain. `searched.blocks` and `searched.bytes` describe
-the inclusive memory ranges examined for this page, including lookahead for the
-next match. Coverage can overlap between pages; do not sum it as unique memory.
+with the same target, analysis profile or selected project, pattern, mask,
+bounds, and document to continue. A cursor from a different binding is
+rejected. The message names those bound values and states that the cursor does
+not identify which one differs; select the original context or start a new
+search without the cursor. The request matches the input schema, so the error
+carries no `inspect_input_contract` recovery. `details.issues[0].path` is
+`cursor`, and `details.issues[0].observed.differing_component` is `unknown`.
+`complete` means no further matches remain. `searched.blocks` and
+`searched.bytes` describe the inclusive memory ranges examined for this page,
+including lookahead for the next match. Coverage can overlap between pages; do
+not sum it as unique memory.
 `searched.skipped_uninitialized` lists eligible uninitialized blocks on every
 page. These blocks are never searched. Cancellation returns a typed error,
 discards the active Ghidra database, and does not return a successful partial page.

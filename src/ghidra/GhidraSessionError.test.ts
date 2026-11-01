@@ -41,6 +41,36 @@ it.each(["decompile_failed", "future_remote_failure"])(
   },
 );
 
+it("scopes a byte-search cursor mismatch to the request", () => {
+  const factory = bindGhidraSessionFailure((scope) =>
+    createGhidraDiagnostics({
+      scope,
+      targetPath: "/selected/target",
+      targetSha256: "a".repeat(64),
+      transport: "unix-socket",
+      providerVersion: "12.1.4",
+      profileDigest: "b".repeat(64),
+      runtimeRoot: "/owned/runtime",
+      snapshot: {
+        stdout: { text: "engine diagnostic", bytes: 17, observedBytes: 17 },
+        stderr: { text: "", bytes: 0, observedBytes: 0 },
+        exitCode: null,
+        signal: null,
+      },
+      previous: {},
+    }),
+  );
+  const failure = factory("remote", "cursor mismatch", undefined, {
+    remoteCode: "byte_search_cursor_mismatch",
+  });
+  expect(failure.diagnostics).toMatchObject({
+    diagnostic_scope: "request",
+    remote_code: "byte_search_cursor_mismatch",
+  });
+  expect(failure.diagnostics).not.toHaveProperty("stdout");
+  expect(failure.diagnostics).not.toHaveProperty("stderr");
+});
+
 it("reports truncated cyclic causes in serializable diagnostics", () => {
   const cause = new Error("cyclic launcher failure");
   cause.cause = cause;

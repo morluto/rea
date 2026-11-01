@@ -813,8 +813,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String cursor = params.has("cursor") ? requireString(params, "cursor") : null;
         Address resume = null;
         if (cursor != null) {
+            // The prefix is a one-way digest of target, profile, pattern,
+            // mask, bounds, and document. A mismatch cannot name which one
+            // differs, so this code reports the binding instead of schema repair.
             if (!cursor.startsWith(binding + ":"))
-                throw new RequestFailure("invalid_request", "Byte search cursor does not match the target and query");
+                throw new RequestFailure("byte_search_cursor_mismatch",
+                    "Byte search cursor does not match this search. It is bound to the target, analysis profile (including a selected Ghidra project), pattern, mask, bounds, and document, and does not identify which of those differs.");
             resume = parseReaAddress(cursor.substring(binding.length() + 1));
             MemoryBlock resumedBlock = currentProgram.getMemory().getBlock(resume);
             Address bound = start == null ? end : start;

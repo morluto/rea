@@ -112,6 +112,10 @@ import {
   type GhidraSessionError,
 } from "./GhidraSessionError.js";
 import {
+  ghidraByteSearchCursorMismatch,
+  isGhidraByteSearchCursorMismatch,
+} from "./GhidraByteSearchCursorFailure.js";
+import {
   ghidraFileOffsetOutcome,
   ghidraFileOffsetUnavailable,
 } from "./GhidraFileOffsetFailure.js";
@@ -1123,6 +1127,14 @@ const projectPrimarySessionError = (
       typeof request?.address === "string" ? request.address : undefined,
       context,
     );
+  // A schema-valid cursor for another bound context is not a malformed
+  // argument. The one-way digest cannot name the differing component.
+  if (
+    operation === "search_bytes" &&
+    failure.kind === "remote" &&
+    isGhidraByteSearchCursorMismatch(failure.remoteCode)
+  )
+    return ghidraByteSearchCursorMismatch(operation, failure.message, context);
   if (
     operation === "annotate_native_function" &&
     failure.kind === "remote" &&
