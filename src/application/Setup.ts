@@ -285,6 +285,9 @@ const runSetupWorkflow = async (
   if (!approved && confirm !== undefined && !options.structured) {
     const decision = await confirm?.(plannedActions, {
       stage: "confirm",
+      ...(manualRemediation === undefined
+        ? {}
+        : { remediation: manualRemediation }),
       clientStates,
       selectedClientIds,
       clientSelectionAllowed: false,

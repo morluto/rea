@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { parse as parseToml } from "smol-toml";
 
+import { manualRegistrationRemediation } from "../../../src/application/SupportedClients.js";
 import type { SetupResult } from "../../../src/application/SetupTypes.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -86,13 +87,15 @@ const clientStates = [
 
 const agentActions = actions.filter(({ kind }) => kind !== "install_hopper");
 
-const runSetupDryRunInTty = async (
+const runSetupInTty = async (
   home: string,
   arguments_: readonly string[],
+  approval?: boolean,
+  environment: NodeJS.ProcessEnv = {},
 ): Promise<{ readonly exitCode: number; readonly output: string }> => {
   const terminal = spawn(
     process.execPath,
-    ["scripts/rea.mjs", "setup", "--dry-run", ...arguments_],
+    ["scripts/rea.mjs", "setup", ...arguments_],
     {
       cwd: process.cwd(),
       env: {
@@ -102,6 +105,7 @@ const runSetupDryRunInTty = async (
         XDG_CONFIG_HOME: join(home, ".config"),
         REA_LOG_LEVEL: "silent",
         NO_COLOR: "1",
+        ...environment,
       },
       name: "xterm-256color",
       cols: 120,
@@ -109,13 +113,22 @@ const runSetupDryRunInTty = async (
     },
   );
   let output = "";
+  let answered = false;
   terminal.onData((data) => {
     output += data;
+    if (
+      approval !== undefined &&
+      !answered &&
+      output.includes("Apply this change?")
+    ) {
+      answered = true;
+      terminal.write(approval ? "\r" : "\u001b[C\r");
+    }
   });
   const exitCode = await new Promise<number>((resolvePromise, reject) => {
     const timeout = setTimeout(() => {
       terminal.kill();
-      reject(new Error(`TTY dry run timed out after output:\n${output}`));
+      reject(new Error(`TTY setup timed out after output:\n${output}`));
     }, 15_000);
     terminal.onExit(({ exitCode: code }) => {
       clearTimeout(timeout);
@@ -125,10 +138,64 @@ const runSetupDryRunInTty = async (
   return { exitCode, output };
 };
 
+describe("manual connector approval", () => {
+  it.skipIf(process.platform === "win32").each([true, false])(
+    "discloses the manual step before approval (apply: %s)",
+    async (approved) => {
+      const home = await createTestTempDirectory("rea-cli-setup-manual-");
+      const bin = join(home, "bin");
+      await mkdir(bin);
+      const hopper = join(bin, "hopper");
+      await writeFile(
+        hopper,
+        "#!/bin/sh\necho 'Hopper Disassembler v6.0.0'\n",
+        { mode: 0o755 },
+      );
+      // Linux's executable probe runs ldd before accepting this inert launcher.
+      await writeFile(join(bin, "ldd"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      for (const runner of ["npx", "npm", "bun"])
+        await writeFile(join(bin, runner), "#!/bin/sh\nexit 99\n", {
+          mode: 0o755,
+        });
+      const { output, exitCode } = await runSetupInTty(
+        home,
+        ["--client", "grok_bot"],
+        approved,
+        {
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          HOPPER_LAUNCHER_PATH: hopper,
+          DSH_HOME: join(home, ".dsh"),
+          DSH_AGENTS_HOME: join(home, ".dsh-agents"),
+          XDG_DATA_HOME: join(home, ".local/share"),
+          XDG_CACHE_HOME: join(home, ".cache"),
+          XDG_STATE_HOME: join(home, ".local/state"),
+        },
+      );
+      const prompt = output.indexOf("Apply this change?");
+      const remediation = manualRegistrationRemediation("grok_bot");
+      expect(remediation).toBeDefined();
+      expect(prompt, output).toBeGreaterThan(0);
+      expect(output.slice(0, prompt)).toContain(remediation);
+      const skill = join(
+        home,
+        ".agents/skills/reverse-engineer-anything/SKILL.md",
+      );
+      if (approved) {
+        expect(exitCode, output).toBe(1);
+        expect(await readFile(skill, "utf8")).not.toBe("");
+      } else {
+        expect(exitCode, output).toBe(0);
+        await expect(access(skill)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+    },
+  );
+});
+
 describe("TTY setup dry run", () => {
   it("prints the plan and no-mutation notice for a TTY dry run", async () => {
     const home = await createTestTempDirectory("rea-cli-setup-dry-run-");
-    const { exitCode, output } = await runSetupDryRunInTty(home, [
+    const { exitCode, output } = await runSetupInTty(home, [
+      "--dry-run",
       "--client",
       "codex",
       "--skill=false",
@@ -159,7 +226,8 @@ describe("TTY setup dry run", () => {
       process.platform === "win32" ? "junction" : "dir",
     );
 
-    const { exitCode, output } = await runSetupDryRunInTty(home, [
+    const { exitCode, output } = await runSetupInTty(home, [
+      "--dry-run",
       "--client",
       "claude_code",
     ]);
