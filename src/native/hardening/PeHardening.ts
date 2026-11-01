@@ -25,7 +25,6 @@ const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY = 0x0080;
 const IMAGE_DLLCHARACTERISTICS_NX_COMPAT = 0x0100;
 const IMAGE_DLLCHARACTERISTICS_NO_SEH = 0x0400;
 const IMAGE_DLLCHARACTERISTICS_GUARD_CF = 0x4000;
-const IMAGE_GUARD_CF_INSTRUMENTED = 0x100;
 const CERTIFICATE_DIRECTORY = 4;
 const DEBUG_DIRECTORY = 6;
 
@@ -189,7 +188,7 @@ const cfgRow = (bits: 32 | 64, report: PeLoadConfig): BinaryHardeningRow => {
       null,
       "IMAGE_GUARD_CF_INSTRUMENTED is a linker claim. GuardFlags is outside Size, so the claim is unknown.",
     );
-  const set = (flags.raw & IMAGE_GUARD_CF_INSTRUMENTED) !== 0;
+  const set = flags.flags.includes("IMAGE_GUARD_CF_INSTRUMENTED");
   return row(
     "cfg_instrumented",
     set ? "enabled" : "disabled",
