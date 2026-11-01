@@ -175,6 +175,19 @@ it("keeps child regions and both copies of a duplicated name", async () => {
     ]),
   );
   expect(paths.filter((path) => path === "main.ts")).toHaveLength(2);
+  const region = snapshot.occurrences.find(
+    (row) => row.logical_path === "main.ts.deno-transpiled",
+  );
+  expect(region?.format_metadata).toMatchObject({ role: "vfs-transpiled" });
+  const file = snapshot.occurrences.find(
+    (row) =>
+      row.logical_path === "main.ts" &&
+      row.format_metadata?.kind === "deno-standalone-entry" &&
+      region?.format_metadata?.kind === "deno-standalone-entry" &&
+      row.format_metadata.index === region.format_metadata.index,
+  );
+  expect(file?.format_metadata).toMatchObject({ role: "vfs-file" });
+  expect(region?.parent_occurrence_id).not.toBe(file?.occurrence_id);
 });
 
 it("accepts identical duplicate sections and rejects differing ones", async () => {
@@ -800,6 +813,151 @@ it("keeps searching the same window after a rejected Intel sentinel", async () =
     location: {
       embedding: "mach-o-intel-trailer",
       length: section.length,
+    },
+  });
+});
+
+const intelApp = (entrypoint: string, contents: Buffer): Buffer =>
+  buildDenoSection({
+    metadata: { ...defaultDenoMetadata(), entrypoint_key: entrypoint },
+    vfs: [{ File: { n: entrypoint, o: [0, contents.length], u: true } }],
+    vfsFileData: contents,
+  });
+
+/** An outer app whose asset is an Intel Deno executable, past one search chunk. */
+const nestedIntelApp = (): {
+  readonly outer: Buffer;
+  readonly asset: Buffer;
+} => {
+  const source = Buffer.from("console.log('outer')\n");
+  const asset = denoIntelTrailer(
+    intelApp("inner.ts", Buffer.from("console.log('inner')\n")),
+  );
+  const padding = Buffer.alloc(2 * 1024 * 1024);
+  const outer = buildDenoSection({
+    metadata: { ...defaultDenoMetadata(), entrypoint_key: "outer.ts" },
+    vfs: [
+      { File: { n: "outer.ts", o: [0, source.length], u: true } },
+      {
+        File: {
+          n: "padding.bin",
+          o: [source.length, padding.length],
+          u: false,
+        },
+      },
+      {
+        File: {
+          n: "inner-app",
+          o: [source.length + padding.length, asset.length],
+          u: false,
+        },
+      },
+    ],
+    vfsFileData: Buffer.concat([source, padding, asset]),
+  });
+  return { outer, asset };
+};
+
+it("reads the enclosing app of an Intel Deno executable embedded as an asset", async () => {
+  const { outer, asset } = nestedIntelApp();
+  const bytes = denoIntelTrailer(outer);
+  const snapshot = await inventoryOf("nested", bytes);
+  expect(snapshot.manifest.root_format).toBe("deno-standalone");
+  const root = snapshot.occurrences.find((row) => row.logical_path === ".");
+  expect(root?.format_metadata).toMatchObject({
+    embedding: "mach-o-intel-trailer",
+    section_offset: bytes.length - outer.length,
+    section_length: outer.length,
+    entrypoint_key: "outer.ts",
+  });
+  const paths = snapshot.occurrences.map((row) => row.logical_path);
+  expect(paths).toEqual(expect.arrayContaining(["outer.ts", "inner-app"]));
+  expect(paths).not.toContain("inner.ts");
+  const member = snapshot.occurrences.find(
+    (row) => row.logical_path === "inner-app",
+  );
+  expect(
+    snapshot.nodes.find((node) => node.artifact_id === member?.artifact_id)
+      ?.sha256,
+  ).toBe(createHash("sha256").update(asset).digest("hex"));
+});
+
+it("treats a nested Intel sentinel as asset data when its length overruns the app", async () => {
+  const inner = intelApp("inner.ts", Buffer.from("inner\n"));
+  const asset = denoIntelTrailer(inner);
+  asset.writeBigUInt64LE(
+    BigInt(inner.length + 64),
+    asset.length - inner.length - 8,
+  );
+  const outer = buildDenoSection({
+    vfs: [{ File: { n: "main.ts", o: [0, asset.length], u: false } }],
+    vfsFileData: asset,
+  });
+  const bytes = Buffer.concat([denoIntelTrailer(outer), Buffer.alloc(128)]);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: { length: outer.length },
+  });
+});
+
+const intelTrailerRecord = (section: Buffer): Buffer => {
+  const length = Buffer.alloc(8);
+  length.writeBigUInt64LE(BigInt(section.length));
+  return Buffer.concat([
+    Buffer.from("<~sui-data~>", "latin1"),
+    Buffer.from([0xef, 0xbe, 0xad, 0xde]),
+    length,
+    section,
+  ]);
+};
+
+const sideBySideIntelTrailers = (second: Buffer): Buffer =>
+  Buffer.concat([
+    denoIntelTrailer(intelApp("main.ts", Buffer.from("first\n"))),
+    intelTrailerRecord(second),
+  ]);
+
+it("fails closed on side-by-side Intel trailers with different bytes", async () => {
+  const bytes = sideBySideIntelTrailers(
+    intelApp("main.ts", Buffer.from("other\n")),
+  );
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "format" },
+  });
+});
+
+it("accepts side-by-side Intel trailers with identical bytes", async () => {
+  const second = intelApp("main.ts", Buffer.from("first\n"));
+  const bytes = sideBySideIntelTrailers(second);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: {
+      embedding: "mach-o-intel-trailer",
+      length: second.length,
+    },
+  });
+});
+
+it("refuses a confirmed Intel trailer when the allowance ends the outer search", async () => {
+  const bytes = Buffer.concat([
+    denoMachO([], { architecture: "x64" }),
+    rejectedIntelSentinels(MAX_DENO_INTEL_TRAILER_SENTINELS),
+    intelTrailerRecord(buildDenoSection()),
+  ]);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "limit",
+      boundary: "capacity",
     },
   });
 });

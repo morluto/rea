@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -9,6 +9,7 @@ import {
   buildDenoSection,
   defaultDenoMetadata,
   denoElf,
+  denoIntelTrailer,
 } from "../../../src/artifacts/deno/DenoStandalone.fixture.js";
 import { MAX_DENO_PATH_COMPONENT_BYTES } from "../../../src/artifacts/deno/DenoVirtualFs.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
@@ -59,6 +60,95 @@ it("extracts stored Deno virtual files through the safe output tree", async () =
     expect(
       await readFile(join(extracted.output_root, "asset.txt"), "utf8"),
     ).toBe(asset);
+  } finally {
+    await resourceScope.close();
+  }
+});
+
+it("does not write embedded environment values or certificate bytes as files", async () => {
+  const root = await createTestTempDirectory("rea-deno-env-");
+  const path = join(root, "app");
+  const secret = "embedded-env-value";
+  const certificate = "embedded-ca-bytes";
+  await writeFile(
+    path,
+    denoElf(
+      buildDenoSection({
+        metadata: {
+          ...defaultDenoMetadata(),
+          env_vars_from_env_file: { REA_DENO_TOKEN: secret },
+          ca_data: [...Buffer.from(certificate)],
+        },
+        vfs: [{ File: { n: "main.ts", o: [0, source.length], u: true } }],
+        vfsFileData: Buffer.from(source),
+      }),
+    ),
+  );
+  const resourceScope = new ArtifactResourceScope();
+  try {
+    await extractArtifact({
+      inputPath: path,
+      inputFormat: "elf",
+      outputRoot: join(root, "out"),
+      environment: process.env,
+      integrityPolicy: "fail",
+      resourceScope,
+    });
+    const written = await readdir(join(root, "out"), {
+      recursive: true,
+      withFileTypes: true,
+    });
+    const files = written.filter((entry) => entry.isFile());
+    expect(files.map((entry) => entry.name)).toContain("main.ts");
+    for (const file of files) {
+      const contents = await readFile(join(file.parentPath, file.name));
+      expect(contents.includes(secret)).toBe(false);
+      expect(contents.includes(certificate)).toBe(false);
+    }
+  } finally {
+    await resourceScope.close();
+  }
+});
+
+it("extracts the enclosing app of a nested Intel Deno executable", async () => {
+  const root = await createTestTempDirectory("rea-deno-nested-intel-");
+  const path = join(root, "app");
+  const inner = denoIntelTrailer(
+    buildDenoSection({
+      vfs: [{ File: { n: "inner.ts", o: [0, asset.length], u: true } }],
+      vfsFileData: Buffer.from(asset),
+    }),
+  );
+  await writeFile(
+    path,
+    denoIntelTrailer(
+      buildDenoSection({
+        vfs: [
+          { File: { n: "main.ts", o: [0, source.length], u: true } },
+          { File: { n: "inner-app", o: [source.length, inner.length] } },
+        ],
+        vfsFileData: Buffer.concat([Buffer.from(source), inner]),
+      }),
+    ),
+  );
+  const resourceScope = new ArtifactResourceScope();
+  try {
+    const extracted = await extractArtifact({
+      inputPath: path,
+      inputFormat: "mach-o",
+      outputRoot: join(root, "out"),
+      environment: process.env,
+      integrityPolicy: "fail",
+      resourceScope,
+    });
+    expect(await readFile(join(extracted.output_root, "main.ts"), "utf8")).toBe(
+      source,
+    );
+    const written = await readFile(join(extracted.output_root, "inner-app"));
+    expect(written.equals(inner)).toBe(true);
+    await expect(
+      readFile(join(extracted.output_root, "inner.ts")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     await resourceScope.close();
   }

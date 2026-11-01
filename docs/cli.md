@@ -1324,7 +1324,8 @@ sourcemaps and bytecode without running the executable. See
 [Bun standalone executables](bun-standalone.md) for layout coverage and limits.
 
 Deno compile executables use the same commands to inventory and materialize the
-embedded virtual filesystem, remote modules, and recorded options. Environment-file
-values and certificate bytes are counted and not copied. The npm snapshot length
-is reported and not decoded, and the executable is not run. See
+embedded virtual filesystem, remote modules, and recorded options. Inventory retains
+embedded environment-file values and certificate bytes in local Evidence with their
+counts and byte lengths, and extraction does not write them as files. The npm snapshot
+length is reported and not decoded, and the executable is not run. See
 [Deno compile executables](deno-standalone.md).

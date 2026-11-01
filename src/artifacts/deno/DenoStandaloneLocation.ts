@@ -52,7 +52,7 @@ const ELF_NOTE_OWNER = Buffer.from("SUI\0", "latin1");
 const ELF_NOTE_TYPE = 0x53554901;
 const PE_HEADER_PROBE_BYTES = 64 * 1024;
 const INTEL_CHUNK_BYTES = 1024 * 1024;
-/** Rejected trailer candidates examined before the search stops. */
+/** Trailer candidates examined before the search stops. */
 export const MAX_DENO_INTEL_TRAILER_SENTINELS = 64;
 const INTEL_SENTINEL = Buffer.concat([
   Buffer.from("<~sui-data~>", "latin1"),
@@ -82,6 +82,10 @@ interface SectionRange {
   readonly offset: number;
   readonly length: number;
   readonly embedding: DenoStandaloneLocation["embedding"];
+}
+
+interface IntelTrailer extends SectionRange {
+  readonly sentinelOffset: number;
 }
 
 interface Carrier {
@@ -237,8 +241,7 @@ const locateMachOSlice = async (
     throw denoCarrierFailure("Mach-O load commands are truncated");
   const cpu = fatCpu ?? table.header.cpuType;
   if (found.length > 0 || cpu === CPU_TYPE_ARM64) return found;
-  const trailer = await locateIntelTrailer(carrier, base, sliceSize);
-  return trailer === undefined ? found : [trailer];
+  return locateIntelTrailers(carrier, base, sliceSize);
 };
 
 /**
@@ -246,40 +249,50 @@ const locateMachOSlice = async (
  * signature may follow the payload, so the payload need not end at EOF. A
  * sentinel whose payload does not open with `d3n0l4nd` is not a Deno trailer:
  * the libsui constant appears in the runtime, and claiming it would fail
- * closed instead of leaving the image to native inventory. A rejected
- * sentinel stays in the current window. Each byte is read at most once, and
- * the search ends at the sentinel allowance with no confirmed trailer.
+ * closed instead of leaving the image to native inventory.
+ *
+ * A confirmed trailer does not end the search: a virtual file can itself be
+ * an Intel Deno executable, and the backward search meets that asset's
+ * sentinel before the sentinel of the app that stores it. Sentinels inside a
+ * confirmed payload are that payload's data, so only the remaining trailers
+ * are returned, and `collapseRanges` rejects any that differ. Each byte is
+ * read at most once. When the slice cannot be searched to its start, a
+ * confirmed trailer is refused because an enclosing one may remain unread,
+ * and with none confirmed the image stays with native inventory.
  */
-const locateIntelTrailer = async (
+const locateIntelTrailers = async (
   carrier: Carrier,
   base: number,
   sliceSize: number,
-): Promise<SectionRange | undefined> => {
+): Promise<SectionRange[]> => {
   const overlap = INTEL_SENTINEL.length + 8;
   let position = base + sliceSize;
   let tail = Buffer.alloc(0);
   let examined = 0;
+  let trailers: IntelTrailer[] = [];
   while (position > base) {
     abortIfNeeded(carrier.signal);
     const chunkStart = Math.max(base, position - INTEL_CHUNK_BYTES);
     const chunk = await readExact(carrier, chunkStart, position - chunkStart);
-    if (chunk === undefined) return undefined;
+    if (chunk === undefined) {
+      if (trailers.length > 0)
+        throw denoCarrierFailure("Intel Mach-O slice is truncated");
+      return [];
+    }
     const window = tail.length === 0 ? chunk : Buffer.concat([chunk, tail]);
     let searchFrom = chunk.length - 1;
     while (searchFrom >= 0) {
       const index = window.lastIndexOf(INTEL_SENTINEL, searchFrom);
       if (index < 0 || index > searchFrom) break;
       examined += 1;
-      if (examined > MAX_DENO_INTEL_TRAILER_SENTINELS) return undefined;
+      if (examined > MAX_DENO_INTEL_TRAILER_SENTINELS) {
+        if (trailers.length > 0) throw denoIntelSentinelLimit();
+        return [];
+      }
       const lengthAt = index + INTEL_SENTINEL.length;
       const sentinelStart = chunkStart + index;
-      const reject = (): void => {
-        searchFrom = index === 0 ? -1 : index - 1;
-      };
-      if (lengthAt + 8 > window.length) {
-        reject();
-        continue;
-      }
+      searchFrom = index - 1;
+      if (lengthAt + 8 > window.length) continue;
       const claimed = window.readBigUInt64LE(lengthAt);
       const sliceEnd = base + sliceSize;
       const offset = sentinelStart + INTEL_SENTINEL.length + 8;
@@ -287,30 +300,33 @@ const locateIntelTrailer = async (
         claimed > BigInt(Number.MAX_SAFE_INTEGER) ||
         offset < base ||
         offset > sliceEnd
-      ) {
-        reject();
+      )
         continue;
-      }
       const length = Number(claimed);
-      if (length > sliceEnd - offset || length < DENO_SECTION_MAGIC.length) {
-        reject();
+      if (length > sliceEnd - offset || length < DENO_SECTION_MAGIC.length)
         continue;
-      }
       const marker = await readExact(
         carrier,
         offset,
         DENO_SECTION_MAGIC.length,
       );
-      if (marker === undefined || !marker.equals(DENO_SECTION_MAGIC)) {
-        reject();
-        continue;
-      }
-      return { offset, length, embedding: "mach-o-intel-trailer" };
+      if (marker === undefined || !marker.equals(DENO_SECTION_MAGIC)) continue;
+      const end = offset + length;
+      trailers = trailers.filter(
+        (trailer) =>
+          trailer.sentinelOffset < offset || trailer.sentinelOffset >= end,
+      );
+      trailers.push({
+        sentinelOffset: sentinelStart,
+        offset,
+        length,
+        embedding: "mach-o-intel-trailer",
+      });
     }
     tail = Buffer.from(chunk.subarray(0, Math.min(chunk.length, overlap)));
     position = chunkStart;
   }
-  return undefined;
+  return trailers;
 };
 
 interface ElfNoteTable {
@@ -704,6 +720,12 @@ const denoLimit = (
     boundary,
     userMessage: message,
   });
+
+const denoIntelSentinelLimit = (): ArtifactReaderFailure =>
+  denoLimit(
+    `Deno compile Intel trailer search exceeds the fixed ${String(MAX_DENO_INTEL_TRAILER_SENTINELS)}-sentinel allowance before reaching the start of the image, so an enclosing trailer may remain unread. This release has no runtime override.`,
+    "capacity",
+  );
 
 const denoElfNoteLimit = (): ArtifactReaderFailure =>
   denoLimit(

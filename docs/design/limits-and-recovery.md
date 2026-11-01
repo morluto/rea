@@ -410,7 +410,7 @@ relative path, a path component longer than 255 UTF-8 bytes
 than 512 UTF-8 bytes (`MAX_DENO_LOGICAL_PATH_BYTES`, half of the Darwin
 `PATH_MAX`) uses an indexed path and keeps the original spelling when that
 spelling is within the name allowance. Component and path lengths include the
-`.deno-*` suffix of the child regions a member has. A descendant has no source
+`.deno-*` suffix of the stored regions a member has. A descendant has no source
 path when an ancestor spelling was not retained. Cancellation is checked before
 the virtual-filesystem walk. The walk does not yield, so it does not observe a
 cancellation that arrives while it is running; the retained allowance bounds its
@@ -433,7 +433,9 @@ another table can still hold the note. At most 256 notes are examined
 (`MAX_INSPECT_ELF_NOTE_ENTRIES`). A damaged table or the note ceiling is a
 refusal only when a `SUI` note was also confirmed. Intel Mach-O trailer search
 reads each scanned byte at most once and examines at most 64 `<~sui-data~>`
-sentinels. PE location walks the resource directories to the named payload and
+sentinels (`MAX_DENO_INTEL_TRAILER_SENTINELS`). The search continues past a
+confirmed trailer, because an enclosing trailer can hold it as a stored file, so
+reaching that allowance after a confirmation is a refusal. PE location walks the resource directories to the named payload and
 does not read the image whole, so a PE of any size is located when the
 `D3N0L4ND` payload is within the 512 MiB resource reader ceiling. A larger
 payload, or a confirmed resource that cannot be resolved, is a named refusal.
