@@ -265,13 +265,7 @@ describe("Electron fuse wire reading", () => {
 describe("ELF embedded ASAR integrity applicability", () => {
   it("preserves an enabled ASAR integrity fuse without claiming enforcement on ELF", async () => {
     const root = await createTestTempDirectory("rea-electron-fuses-elf-asar-");
-    const fuses = [
-      0x30,
-      0x30,
-      0x30,
-      0x30,
-      0x31,
-    ];
+    const fuses = [0x30, 0x30, 0x30, 0x30, 0x31];
     const image = elfFuseImage(fuses);
     const path = join(root, "electron");
     await writeFile(path, image.bytes);

@@ -390,7 +390,9 @@ const report = {
     "Linux reverse HTTP/3 capture verification for mitmproxy 12.2.3, aioquic 1.2.0 and guest cURL",
   limitations: [
     ...(inspectExisting
-      ? ["Existing capture producer provenance was not authenticated by this attempt."]
+      ? [
+          "Existing capture producer provenance was not authenticated by this attempt.",
+        ]
       : []),
     "No local/WireGuard, browser, QUIC v2, migration, 0-RTT, mTLS or replay claim.",
     "No HAR, interruption, certificate-failure or body-completeness coverage in this profile.",

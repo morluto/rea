@@ -1,4 +1,8 @@
-import { currentClientRegistrationCommand } from "./application/ClientRegistrationIdentity.js";
+import {
+  currentClientRegistrationCommand,
+  invokingPackageRunner,
+  withoutPackageRunnerIdentity,
+} from "./application/ClientRegistrationIdentity.js";
 import { UpdateCommandRunner } from "./application/UpdateCommandRunner.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,10 +19,6 @@ import { systemSetupHost } from "./application/SetupHost.js";
 import { systemUninstallHost } from "./application/Uninstall.js";
 import { createSystemDoctorHost } from "./doctorRuntime.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
-import {
-  invokingPackageRunner,
-  withoutPackageRunnerIdentity,
-} from "./application/ClientRegistrationIdentity.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -58,7 +58,10 @@ it("plans setup and uninstall against selected home and client overrides", async
   vi.stubEnv("CODEX_HOME", join(root, "ambient-codex"));
   vi.stubEnv("npm_command", "other");
   try {
-    const doctor = createDoctorHostFixture({ homeDirectory: environment.HOME });
+    const doctor = createDoctorHostFixture({
+      homeDirectory: environment.HOME,
+      platform: process.platform,
+    });
     const host = systemSetupHost(doctor, environment);
     const result = await runSetup(
       {
@@ -87,7 +90,10 @@ it("plans setup and uninstall against selected home and client overrides", async
       ]),
     );
     expect(host.registrationCommand).toEqual(
-      currentClientRegistrationCommand({ platform: "win32", environment }),
+      currentClientRegistrationCommand({
+        platform: process.platform,
+        environment,
+      }),
     );
     const clients = await systemUninstallHost(
       environment.HOME,

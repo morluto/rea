@@ -95,7 +95,7 @@ const vendor = (
   return { fetch };
 };
 const failed = (status: number, cancel?: () => void) => () =>
-  new Response(new ReadableStream({ ...(cancel ? { cancel } : {}) }), {
+  new Response(new ReadableStream(cancel ? { cancel } : {}), {
     status,
   });
 

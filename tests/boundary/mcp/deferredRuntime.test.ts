@@ -641,6 +641,10 @@ const copyCompiledPackage = async (prefix: string): Promise<string> => {
   await cp(resolve("dist"), join(directory, "dist"), { recursive: true });
   await mkdir(join(directory, "scripts/lib"), { recursive: true });
   await cp(resolve("scripts/rea.mjs"), join(directory, "scripts/rea.mjs"));
+  await cp(
+    resolve("scripts/lib/cli-runtime-files.mjs"),
+    join(directory, "scripts/lib/cli-runtime-files.mjs"),
+  );
   // The launcher imports its process-environment owner, as the package ships it.
   await cp(
     resolve("scripts/lib/cli-process-environment.mjs"),

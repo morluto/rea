@@ -37,6 +37,11 @@ export interface SetupInitialState {
 export type ClientConfigurationResult =
   | {
       readonly status: "failed";
+      readonly reason: "plugin";
+      readonly detail: string;
+    }
+  | {
+      readonly status: "failed";
       readonly reason: "registration_ownership";
       readonly detail: string;
     }
@@ -111,6 +116,12 @@ export interface SetupHost {
   readonly registrationCommand: readonly string[];
   /** Why client registration cannot proceed from this host. */
   readonly registrationCommandBlocker?: string;
+  /** Client-owned plugin installers can replace the direct-registration action. */
+  clientSetupAction?(clientId: string): SetupAction | undefined;
+  prepareClientSetup?(
+    installHopper: boolean,
+    environment: SetupProviderEnvironment,
+  ): void;
   readonly nodeVersion: string;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
@@ -230,6 +241,7 @@ export interface SetupAction {
 
 /** Explicit authorization supplied by an interactive or unattended CLI adapter. */
 export interface SetupOptions {
+  readonly signal?: AbortSignal;
   readonly approved: boolean;
   readonly installHopper: boolean;
   readonly structured: boolean;

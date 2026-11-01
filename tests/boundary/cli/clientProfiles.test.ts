@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "Claude Code routes an empty config directory to its home registration",
+  "Claude Code direct setup routes an empty config directory to its home registration",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-claude-empty-config-dir-");
     const home = join(root, "home");
@@ -36,7 +36,15 @@ cliTest(
         timeoutMs: 20_000,
       });
     const setup = (flags: readonly string[] = []) =>
-      run(["setup", "--client", "claude_code", ...flags, "--json"]);
+      run([
+        "setup",
+        "--client",
+        "claude_code",
+        "--skill-client",
+        "claude_code",
+        ...flags,
+        "--json",
+      ]);
 
     const planned = await setup(["--dry-run"]);
     expect(planned.exitCode, planned.stderr).toBe(0);

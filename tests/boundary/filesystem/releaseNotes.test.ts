@@ -528,11 +528,7 @@ it("accepts Release Please lockfile refreshes without allowing product changes",
     join(f.directory, "package-lock.json"),
     '{"lockfileVersion":3}',
   );
-  await git(f.directory, [
-    "add",
-    "CHANGELOG.md",
-    "package-lock.json",
-  ]);
+  await git(f.directory, ["add", "CHANGELOG.md", "package-lock.json"]);
   await git(f.directory, ["commit", "-m", "chore: release lockfiles"]);
   await f.invoke(["check", "--manifest", f.manifest, "--source", "HEAD"]);
 });
