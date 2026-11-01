@@ -374,6 +374,11 @@ threat model. Production source, bridges, runtime scripts, installation and
 release controllers, and Actions remain in scope for the configured languages.
 Verification scripts remain included unless they match an explicit test path;
 excluding the entire `scripts/` directory would hide shipped entrypoints.
+The `paths` list retains repository-root traversal and explicitly includes
+`docs/.vitepress/`, which JavaScript extraction otherwise skips as a hidden
+directory. Keep directory entries here: the shared Python extractor does not
+accept individual files as traversal roots. When changing this list, compare the
+complete production file inventory as well as alert counts.
 These exclusions do not change which behavioral tests CI executes. CodeQL's
 JavaScript/TypeScript, Python, and Actions lanes do not add shell, Java, or Swift
 analysis; their existing checks remain responsible for those languages.
@@ -390,7 +395,7 @@ default setup in this user-owned repository.
 Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
 jobs run one at a time. Complete SARIF reports are retained for seven days.
 For a scope comparison, use the same source SHA, CodeQL bundle, default query
-suite, and `local` threat model on both runs. Change only `paths-ignore`, inspect
+suite, and `local` threat model on both runs. Change only extraction paths, inspect
 the extracted-file inventory and diagnostics, and retain both complete reports.
 Alert counts do not establish a false-positive rate or a speedup. Report elapsed
 time, CPU time, and process-family memory with their measurement limits.
