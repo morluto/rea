@@ -18,6 +18,8 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 
 /** Recover bounded static property reads, writes, spreads, and destructuring. */
 export const collectJavaScriptSemanticObjects = (
@@ -150,6 +152,12 @@ const collectDestructuring = (
   output: JavaScriptSemanticObjectOperation[],
 ): void => {
   const source = expressionObjectIdentity(initializer, state);
+  // Capture the RHS at its actual read, before later effects widen the binding.
+  // Retain only path presence, not a second container inventory in the IR.
+  const sourceValue =
+    initializer == null
+      ? undefined
+      : evaluateSemanticExpression(initializer, state, initializer);
   const pending: {
     readonly pattern: t.Node;
     readonly path: readonly string[];
@@ -188,6 +196,10 @@ const collectDestructuring = (
       {
         node: occurrence,
         kind: "destructure",
+        sourcePresence:
+          sourceValue === undefined
+            ? "unknown-coverage"
+            : semanticSlotAtPath(sourceValue, path).presence,
         ownerCallableId,
         objectBindingId: source.bindingId,
         targetBindingId:
@@ -203,6 +215,7 @@ const collectDestructuring = (
 
 interface AddObjectOperationInput {
   readonly node: t.Node;
+  readonly sourcePresence?: JavaScriptSemanticObjectOperation["sourcePresence"];
   readonly kind: JavaScriptSemanticObjectOperation["kind"];
   readonly ownerCallableId: string | null;
   readonly objectBindingId: string | null;
@@ -224,6 +237,9 @@ const addObjectOperation = (
       String(input.node.end ?? -1),
     ].join(":"),
     kind: input.kind,
+    ...(input.sourcePresence === undefined
+      ? {}
+      : { sourcePresence: input.sourcePresence }),
     location: range(input.node),
     ownerCallableId: input.ownerCallableId,
     objectBindingId: input.objectBindingId,
