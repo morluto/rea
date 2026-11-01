@@ -19,6 +19,7 @@ import {
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import {
+  assembleReleaseExposureReport,
   MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
   MAX_RELEASE_EXPOSURE_INVENTORY_ENTRIES,
   MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
@@ -26,6 +27,7 @@ import {
   MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES,
   MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES,
   PACKAGED_NATIVE_IMAGES,
+  type ReleaseExposureScan,
 } from "../domain/releaseExposure.js";
 import { ReleaseExposureReader } from "./ReleaseExposureReader.js";
 
@@ -914,6 +916,34 @@ describe("ReleaseExposureReader mixed maps and sibling paths", () => {
     },
   );
 
+  it("keeps an embedded leaf beside a leaf with malformed mappings", async () => {
+    const root = await createTestTempDirectory("rea-release-malformed-leaf-");
+    const path = join(root, "app.js.map");
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 3,
+        sections: [
+          {
+            offset: { line: 0, column: 0 },
+            map: JSON.parse(embeddedSourceMap().toString("utf8")) as unknown,
+          },
+          {
+            offset: { line: 1, column: 0 },
+            map: { version: 3, sources: ["b.js"], names: [], mappings: "AA" },
+          },
+        ],
+      }),
+    );
+    const scanned = await inspect(path);
+    expect(scanned.source_maps).toMatchObject({
+      embedded: 1,
+      embedded_paths: [path],
+      unparsed: 1,
+    });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
   it.skipIf(process.platform === "win32")(
     "preserves symlink/.. traversal for linker maps and named companions",
     async () => {
@@ -1283,6 +1313,7 @@ describe("ReleaseExposureReader source spellings", () => {
     );
     const scanned = await inspect(root);
     expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
     expect(scanned.text_members.scanned).toBeGreaterThan(0);
     expect(scanned.text_members.skipped).toBe(0);
     expect(scanned.extractable).toMatchObject({ unreadable_members: 0 });
@@ -1304,6 +1335,23 @@ describe("ReleaseExposureReader source spellings", () => {
     );
     const scanned = await inspect(join(root, "app.asar"));
     expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(scanned.source_maps.embedded_paths).toHaveLength(1);
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
+  it("keeps a nested ASAR that was not expanded unknown", async () => {
+    const root = await createTestTempDirectory("rea-release-nested-asar-");
+    const inner = asarArchive([
+      { name: "app.js.map", bytes: embeddedSourceMap() },
+    ]);
+    await writeFile(
+      join(root, "app.asar"),
+      asarArchive([{ name: "inner.asar", bytes: inner }]),
+    );
+    const scanned = await inspect(join(root, "app.asar"));
+    expect(scanned.source_maps.embedded).toBe(0);
+    expect(scanned.coverage).toBe("unknown");
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
   });
 
   it("reopens a decomposed compressed .NET member", async () => {
@@ -1886,6 +1934,16 @@ describe("ReleaseExposureReader member identity", () => {
     expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
   });
 });
+
+const sourceMapSourcesStatus = (scan: ReleaseExposureScan) =>
+  assembleReleaseExposureReport(scan, {
+    electron_family: "not_electron",
+    fuse_images: [],
+    go_images: [],
+    rust_images: [],
+    credential_markers: { hits: [], omitted_hits: 0 },
+  }).checks.find((check) => check.id === "javascript.source_map_sources")
+    ?.status;
 
 const inspect = async (path: string) => {
   const reader = new ReleaseExposureReader();

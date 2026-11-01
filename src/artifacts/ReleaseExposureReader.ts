@@ -481,6 +481,17 @@ const scanOccurrences = async (
         );
       continue;
     }
+    // A nested package that inventory recognized but did not expand was
+    // never assessed, so its members leave coverage unknown.
+    if (
+      packageKind !== null &&
+      !parentsWithChildren.has(occurrence.occurrence_id)
+    ) {
+      state.formats.add(packageKind);
+      noteUnexaminedPackage(state);
+      pushLimitation(state, `Nested package ${location} was not expanded.`);
+      continue;
+    }
     await examineMember(state, {
       logical,
       format: nativeFormat ?? format,
@@ -926,14 +937,20 @@ const readSourceMap = (
       pushSample(state.plainPaths, map.location);
     }
   } catch (cause) {
-    if (
-      cause instanceof SourceMapFormatFailure &&
-      cause.reason === "unsupported"
-    ) {
-      const envelope = inspectSourceMapEnvelope(
-        JSON.parse(sourceMapJsonText(bytes.toString("utf8"))),
-      );
-      const leaves = envelope.status === "invalid" ? [] : envelope.leaves;
+    // Any format failure may still leave independently valid indexed leaves.
+    if (cause instanceof SourceMapFormatFailure) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(sourceMapJsonText(bytes.toString("utf8")));
+      } catch {
+        parsed = undefined;
+      }
+      const envelope =
+        parsed === undefined ? undefined : inspectSourceMapEnvelope(parsed);
+      const leaves =
+        envelope === undefined || envelope.status === "invalid"
+          ? []
+          : envelope.leaves;
       const budget = { records: 0 };
       let embedded = false;
       for (const leaf of leaves) {
