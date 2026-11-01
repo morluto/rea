@@ -109,27 +109,31 @@ export const registerSessionStatusTool = (
         return server.delivery.toCallToolResult(err(cause), contract);
       }
       const statusObject = jsonObjectSchema.parse(status);
-      // Availability must be derived from the complete provider facts: an
+      // Availability is derived from the complete provider facts: an
       // advertised composed tool still depends on direct operations the
-      // registration hides. Narrow the public report only after this.
-      const toolAvailability = buildCapabilityInventory(status, {
-        ...availabilityPolicy(),
-        ...(availabilityResults.android === undefined
-          ? {}
-          : { androidAnalysisAvailability: availabilityResults.android }),
-        ...(availabilityResults.adb === undefined
-          ? {}
-          : { adbAnalysisAvailability: availabilityResults.adb }),
-        ...(availabilityResults.apktool === undefined
-          ? {}
-          : { apktoolAnalysisAvailability: availabilityResults.apktool }),
-        ...(availabilityResults.jeb === undefined
-          ? {}
-          : { jebAnalysisAvailability: availabilityResults.jeb }),
-        ...(availabilityResults.evmLimiter === undefined
-          ? {}
-          : { evmLimiterAvailability: availabilityResults.evmLimiter }),
-      }).filter(({ name }) => server.advertisesTool(name));
+      // registration hides. Advertisement narrows only the public report.
+      const toolAvailability = buildCapabilityInventory(
+        status,
+        {
+          ...availabilityPolicy(),
+          ...(availabilityResults.android === undefined
+            ? {}
+            : { androidAnalysisAvailability: availabilityResults.android }),
+          ...(availabilityResults.adb === undefined
+            ? {}
+            : { adbAnalysisAvailability: availabilityResults.adb }),
+          ...(availabilityResults.apktool === undefined
+            ? {}
+            : { apktoolAnalysisAvailability: availabilityResults.apktool }),
+          ...(availabilityResults.jeb === undefined
+            ? {}
+            : { jebAnalysisAvailability: availabilityResults.jeb }),
+          ...(availabilityResults.evmLimiter === undefined
+            ? {}
+            : { evmLimiterAvailability: availabilityResults.evmLimiter }),
+        },
+        (name) => server.advertisesTool(name),
+      );
       const serverIdentity = createServerIdentity({
         startedAt,
         commandPath: CURRENT_ENTRYPOINT_PATH,

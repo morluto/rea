@@ -33,6 +33,7 @@ export const connectGhidraMcp = async (
     readonly sessionTarget?: GhidraSessionInfo["target"];
     readonly attestDosTargetSnapshot?: ReturnType<GhidraProviderClientFactory>["attestDosTargetSnapshot"];
     readonly close?: ReturnType<GhidraProviderClientFactory>["close"];
+    readonly environment?: Readonly<NodeJS.ProcessEnv>;
   } = {},
 ) => {
   const calls: GhidraOperation[] = [];
@@ -77,6 +78,7 @@ export const connectGhidraMcp = async (
       environment: {
         ...process.env,
         REA_MCP_MAX_INPUT_ELEMENTS: process.env.REA_MCP_MAX_INPUT_ELEMENTS,
+        ...fixture.environment,
       },
     },
   });

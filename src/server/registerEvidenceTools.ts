@@ -84,6 +84,8 @@ export const registerEvidenceTools = (
                 analysis.execute(contract.name, executionParameters, {
                   signal: context.mcpReq.signal,
                   progress,
+                  isOperationAdvertised: (operation) =>
+                    server.advertisesTool(operation),
                 }),
             );
             await reportOperationEnd(progress, contract.name, execution.ok);

@@ -475,6 +475,9 @@ const providerErrorDetails = (
       provider_id: error.providerId,
       operation: error.operation,
       reason: error.reason,
+      ...(error.alternatives.length === 0
+        ? {}
+        : { alternatives: [...error.alternatives] }),
     };
   if (error instanceof ProviderSelectionError)
     return {

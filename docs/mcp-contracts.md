@@ -742,6 +742,17 @@ requirements. Compare the union of group names with `tools/list` when checking
 that a client received the full catalog. An operation absent from all groups is
 missing from the complete inventory; it is not an implicit unavailable entry.
 
+A `provider_missing` group may also list `alternatives`: advertised tools the
+current provider makes available for part of that operation's question. When
+the provider does not declare `next_address` or `prev_address`, they list
+whichever of `inspect_native_instruction`, `read_function_instructions` and
+`procedure_assembly` qualify. These answer instruction-level questions only:
+none navigates arbitrary analyzed objects such as data or addresses outside a
+procedure, and neither listing order nor address plus length proves executed
+control flow. Calling the missing operation returns `capability_unavailable`
+with the same tools in `details.alternatives` and a remediation stating each
+one's scope. Without a qualifying alternative, both keep their generic advice.
+
 `detail` selects the projection and the result echoes it. The default
 `summary` keeps open state, target identity, the binding, current-route
 `capabilities`, run, activity and health status, and each provider candidate's

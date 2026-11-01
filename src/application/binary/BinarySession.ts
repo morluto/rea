@@ -1403,6 +1403,7 @@ export class BinarySession
       operation: name,
       parameters: arguments_,
       nativeSourceAdmitted: this.#active?.nativeSourceAdmitted === true,
+      isOperationAdvertised: options?.isOperationAdvertised,
       unboundOperationError: (operation, route) =>
         this.#providerRouter.unboundOperationError(operation, route),
       lookupSnapshot: (target, profile, operation, parameters) =>
