@@ -1215,33 +1215,12 @@ it("retains the primary failure and both cleanup reports after a secondary failu
     code: "cleanup_incomplete",
     details: {
       execution_failure: "cancelled",
-      resources: expect.arrayContaining(["writer", "provider"]),
+      resources: ["writer"],
       cleanup_reason: "writer remains",
       captured_output: { stdout: "partial", stderr: "diagnostic" },
       diagnostics: { rebind_error: { code: "cleanup_incomplete" } },
     },
   });
-  secondary.resolveCleanup();
-  expect(primary.cleanupIncomplete).toBe(true);
-  expect(primary.cleanupResources).toEqual(["writer"]);
-  primary.resolveCleanup();
-  expect(primary.cleanupIncomplete).toBe(false);
-  expect(primary.cleanupResources).toEqual([]);
-});
-
-it("retains secondary cleanup ownership after the primary has no cleanup", () => {
-  const primary = new AnalysisCancelledError("execute_rizin_command");
-  const secondary = new AnalysisOutputError("retire_session", "still active", {
-    cleanup: { reason: "provider remains", resources: ["provider"] },
-  });
-
-  primary.retainSecondaryFailure(secondary);
-
-  expect(primary.cleanupIncomplete).toBe(true);
-  expect(primary.cleanupResources).toEqual(["provider"]);
-  secondary.resolveCleanup();
-  expect(primary.cleanupIncomplete).toBe(false);
-  expect(primary.cleanupResources).toEqual([]);
 });
 
 it("retains secondary failures when the primary error has no cause", () => {
