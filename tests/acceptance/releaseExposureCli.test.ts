@@ -2,11 +2,17 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { RELEASE_EXPOSURE_TOOL_CONTRACTS } from "../../src/contracts/releaseExposureToolContracts.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const PLANTED_SOURCE = "release-exposure-planted-secret-7c2e9a";
+const releaseExposureContract = RELEASE_EXPOSURE_TOOL_CONTRACTS.find(
+  (contract) => contract.name === "audit_release_exposure",
+);
+if (releaseExposureContract === undefined)
+  throw new Error("Missing release exposure contract");
+const outputSchema = releaseExposureContract.outputSchema;
 
 cliTest(
   "exits 3 when a shipped source map embeds sources",
@@ -28,9 +34,7 @@ cliTest(
       arguments: ["audit-release-exposure", root, "--json"],
     });
     expect(clean.exitCode, clean.stderr).toBe(0);
-    const evidence = toolContract("audit_release_exposure").outputSchema.parse(
-      clean.json,
-    );
+    const evidence = outputSchema.parse(clean.json);
     const report = evidence.normalized_result;
     expect(
       report.checks.find(
@@ -63,6 +67,41 @@ cliTest(
 );
 
 cliTest(
+  "gates a marker in a text file outside the extension list",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-release-exposure-key-");
+    await writeFile(join(root, "hello.txt"), "hello\n");
+    await writeFile(
+      join(root, ".env.production"),
+      "-----BEGIN PRIVATE KEY-----\n",
+    );
+    const result = await cli.run({
+      arguments: [
+        "audit-release-exposure",
+        root,
+        "--fail_on",
+        "high",
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(3);
+    expect(
+      outputSchema
+        .parse(result.json)
+        .normalized_result.checks.find(
+          (check) => check.id === "text.credential_markers",
+        ),
+    ).toMatchObject({
+      status: "exposed",
+      locations: [
+        { kind: "artifact-path", path: join(root, ".env.production") },
+      ],
+    });
+  },
+  60_000,
+);
+
+cliTest(
   "keeps a clean directory at exit 0 when the gate is high",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-release-exposure-clean-");
@@ -77,9 +116,7 @@ cliTest(
       ],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const report = toolContract("audit_release_exposure").outputSchema.parse(
-      result.json,
-    ).normalized_result;
+    const report = outputSchema.parse(result.json).normalized_result;
     expect(report.summary.no_exposure_observed_in_assessed_checks).toBe(true);
     expect(report.summary.by_status.not_assessed).toBe(3);
   },

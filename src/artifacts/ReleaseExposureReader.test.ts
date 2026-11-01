@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import type { Dirent } from "node:fs";
 import { mkdir, symlink, truncate, writeFile } from "node:fs/promises";
@@ -19,6 +20,7 @@ import {
 import {
   MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
   MAX_RELEASE_EXPOSURE_INVENTORY_ENTRIES,
+  MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
   MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES,
   MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES,
   MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES,
@@ -327,7 +329,7 @@ describe("ReleaseExposureReader", () => {
         undefined,
         (text, location) => visited.set(location, text),
       );
-      if (!result.ok) throw new Error(result.error.message);
+      if (!result.ok) throw result.error;
       expect(result.value.source_maps.embedded).toBe(1);
       expect(
         result.value.debug_companions.paths.some((path) =>
@@ -368,6 +370,20 @@ describe("ReleaseExposureReader", () => {
     );
     expect(JSON.stringify(directory)).not.toContain(PLANTED_SOURCE);
     expect(JSON.stringify(directory)).not.toContain(PLANTED_KEY);
+  });
+
+  it("carries the inventoried digest of each native image", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-digest-");
+    const elf = Buffer.alloc(64);
+    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    await writeFile(join(root, "app"), elf);
+    const sha256 = createHash("sha256").update(elf).digest("hex");
+    expect((await inspect(root)).native_images).toEqual([
+      { path: join(root, "app"), format: "elf", sha256 },
+    ]);
+    expect((await inspect(join(root, "app"))).native_images).toEqual([
+      { path: join(root, "app"), format: "elf", sha256 },
+    ]);
   });
 
   it("registers native images larger than the text budget and parses PE debug records", async () => {
@@ -551,8 +567,7 @@ describe("ReleaseExposureReader member reads", () => {
         undefined,
         ignoreText,
       );
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
+      if (result.ok) throw new Error("Expected a failed audit.");
       expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
     } finally {
       stableRead.impl = real;
@@ -632,8 +647,7 @@ describe("ReleaseExposureReader limits", () => {
         undefined,
         ignoreText,
       );
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
+      if (result.ok) throw new Error("Expected a failed audit.");
       expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
     } finally {
       inventoryRead.impl = undefined;
@@ -749,8 +763,7 @@ describe("ReleaseExposureReader package cleanup", () => {
         undefined,
         ignoreText,
       );
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
+      if (result.ok) throw new Error("Expected a failed audit.");
       expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
       expect(created).toBe(1);
       expect(listed).toBe(false);
@@ -800,8 +813,7 @@ describe("ReleaseExposureReader package cleanup", () => {
               }
             : ignoreText,
         );
-        expect(result.ok).toBe(false);
-        if (result.ok) return;
+        if (result.ok) throw new Error("Expected a failed audit.");
         expect(result.error.cleanupIncomplete).toBe(true);
         expect(result.error.cleanupResources).toContain(archive);
         if (scanFails)
@@ -1037,7 +1049,6 @@ describe("ReleaseExposureReader acquisition and sibling review regressions", () 
         undefined,
         ignoreText,
       );
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       expect(opened).toBe(0);
       expect(result.value.coverage).toBe("unknown");
@@ -1171,6 +1182,123 @@ const bundled = async (
   await writeFile(join(root, "app.dll"), dotnetBundleFixture(files).bytes);
   return root;
 };
+
+describe("ReleaseExposureReader text recognition", () => {
+  const marker = "-----BEGIN PRIVATE KEY-----\n";
+
+  it("scans a text file whose name is outside the extension list", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-text-");
+    await writeFile(join(root, ".env.production"), marker);
+    await writeFile(join(root, "server.key"), marker);
+    await writeFile(join(root, "credentials"), marker);
+    await writeFile(
+      join(root, "image.dat"),
+      Buffer.concat([Buffer.from("PNG"), Buffer.alloc(16)]),
+    );
+    await writeFile(join(root, "empty"), "");
+    const scanned = await inspect(root);
+    expect(scanned.textLocations.sort()).toEqual([
+      join(root, ".env.production"),
+      join(root, "credentials"),
+      join(root, "server.key"),
+    ]);
+    expect(scanned.text_members).toEqual({ scanned: 3, skipped: 0 });
+  });
+
+  it("scans text past the probe prefix and counts text past the member allowance", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-text-");
+    await writeFile(
+      join(root, "long"),
+      Buffer.alloc(MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES * 2, 0x20),
+    );
+    await writeFile(
+      join(root, "oversized"),
+      Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1, 0x20),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.textLocations).toEqual([join(root, "long")]);
+    expect(scanned.text_members).toEqual({ scanned: 1, skipped: 1 });
+  });
+
+  it("recognizes a package member by content", async () => {
+    const root = await bundled([
+      { path: "credentials", bytes: Buffer.from(marker) },
+      { path: "payload", bytes: Buffer.alloc(32) },
+    ]);
+    const scanned = await inspect(root);
+    const host = join(root, "app.dll");
+    expect(scanned.textLocations).toContain(`${host}/credentials`);
+    expect(scanned.textLocations).not.toContain(`${host}/payload`);
+  });
+
+  it("leaves text undecided when a file could not be probed", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-text-");
+    const opaque = join(root, "credentials");
+    await writeFile(opaque, marker);
+    const reader = new ReleaseExposureReader();
+    let denied = 0;
+    const real = stableRead.impl;
+    stableRead.impl = async (...args) => {
+      const [path] = args;
+      if (path !== opaque && real !== undefined) return real(...args);
+      denied += 1;
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
+    };
+    try {
+      const result = await reader.inspect(
+        { path: root },
+        undefined,
+        ignoreText,
+      );
+      if (!result.ok) throw result.error;
+      expect(denied).toBe(1);
+      expect(result.value.text_members.skipped).toBe(1);
+    } finally {
+      stableRead.impl = real;
+      await reader.close();
+    }
+  });
+});
+
+describe("ReleaseExposureReader package traversal coverage", () => {
+  it("keeps a package reader's unknown coverage for an unexpanded member", async () => {
+    const root = await bundled([
+      { path: "notes.txt", bytes: Buffer.from("plain\n") },
+    ]);
+    const opaque = "An opaque archive was not expanded.";
+    const actual = await vi.importActual<
+      typeof import("./inventory/ArtifactInventory.js")
+    >("./inventory/ArtifactInventory.js");
+    let inventoried = false;
+    inventoryRead.impl = async (...args) => {
+      const inventory = await actual.inventoryArtifact(...args);
+      inventoried = true;
+      return inventory;
+    };
+    let reported = 0;
+    createdReaders.wrap = (source) => {
+      const entries = source.entries.bind(source);
+      source.entries = (signal, options) => {
+        // Inventory finished, so only this audit's own listing sees the gap.
+        if (inventoried) {
+          reported += 1;
+          options?.onCoverage?.({ status: "unknown", limitations: [opaque] });
+        }
+        return entries(signal, options);
+      };
+      return source;
+    };
+    try {
+      const scanned = await inspect(root);
+      expect(reported).toBeGreaterThan(0);
+      expect(scanned.coverage).toBe("unknown");
+      expect(scanned.limitations).toContain(opaque);
+    } finally {
+      inventoryRead.impl = undefined;
+      createdReaders.wrap = undefined;
+    }
+  });
+});
 
 describe("ReleaseExposureReader unexpanded packages", () => {
   it("does not count an oversized binary entry as a text member", async () => {
@@ -1356,8 +1484,7 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
         undefined,
         ignoreText,
       );
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
+      if (result.ok) throw new Error("Expected a failed audit.");
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanupResources).toContain(
         `directory beside the selected file: ${root}`,
@@ -1400,7 +1527,7 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
         undefined,
         ignoreText,
       );
-      if (!result.ok) throw new Error(result.error.message);
+      if (!result.ok) throw result.error;
       expect(result.value.pdb).toMatchObject({ failed: 1, paths: [] });
       expect(result.value.coverage).toBe("unknown");
     } finally {
@@ -1463,7 +1590,7 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
           undefined,
           ignoreText,
         );
-        expect(result.ok).toBe(true);
+        if (!result.ok) throw result.error;
         regularFiles.failUntil = regularFiles.closes + 1;
         await expect(reader.close()).rejects.toSatisfy(
           (error: unknown) =>
@@ -1571,7 +1698,7 @@ describe("ReleaseExposureReader same-name members", () => {
         },
       );
       await reader.close();
-      expect(result.ok).toBe(true);
+      if (!result.ok) throw result.error;
       expect(texts).toEqual(expect.arrayContaining(["harmless", "marker"]));
     } finally {
       createdReaders.wrap = undefined;
@@ -1586,7 +1713,7 @@ const inspect = async (path: string) => {
     const result = await reader.inspect({ path }, undefined, (_, location) => {
       textLocations.push(location);
     });
-    if (!result.ok) throw new Error(result.error.message);
+    if (!result.ok) throw result.error;
     return { ...result.value, textLocations };
   } finally {
     await reader.close();

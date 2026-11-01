@@ -41,7 +41,7 @@ export const RELEASE_EXPOSURE_ALLOWANCES = [
   `Selected file reads stop at ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes.`,
   `Text member scans read at most ${String(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES)} bytes each and ${String(MAX_RELEASE_EXPOSURE_TEXT_BYTES)} bytes in total.`,
   `Source map scans read at most ${String(MAX_RELEASE_EXPOSURE_SOURCE_MAPS)} maps and ${String(MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES)} bytes each. sourcesContent text is counted and then dropped.`,
-  `Other package members are identified from their first ${String(MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES)} bytes. Up to ${String(MAX_RELEASE_EXPOSURE_PACKAGED_PE_READS)} packaged PE images are read for debug records, ${String(MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES)} bytes each.`,
+  `Other files and package members are identified from their first ${String(MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES)} bytes, and those without a NUL byte in that prefix are scanned as text. Up to ${String(MAX_RELEASE_EXPOSURE_PACKAGED_PE_READS)} packaged PE images are read for debug records, ${String(MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES)} bytes each.`,
   `Go, Rust, and Electron fuse readers run on at most ${String(MAX_RELEASE_EXPOSURE_NATIVE_IMAGES)} native images.`,
 ] as const;
 
@@ -321,6 +321,8 @@ export interface ReleaseExposureTargetFact {
 export interface ReleaseExposureNativeImage {
   readonly path: string;
   readonly format: "elf" | "mach-o" | "mach-o-universal" | "pe";
+  /** Digest from inventory, when the audit has one to bind owner reads to. */
+  readonly sha256?: string;
 }
 
 export interface ReleaseExposureFuseCandidate {
@@ -538,6 +540,11 @@ const FUSE_SUBJECTS = {
     safe: "restricted_to_app_asar",
   },
 } as const;
+
+/** Fuse implication subjects that decide an Electron check. */
+export const RELEASE_EXPOSURE_FUSE_SUBJECTS = Object.values(FUSE_SUBJECTS).map(
+  (spec) => spec.subject,
+);
 
 const fuseCheck = (
   id: keyof typeof FUSE_SUBJECTS,

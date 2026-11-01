@@ -35,7 +35,7 @@ The audit composes existing readers. It does not reread Electron fuse bytes itse
 | `packaging.extractable_payload` | A Bun, Node SEA, PyInstaller, .NET bundle, or ASAR has a readable member | low      |
 | `native.debug_companions`       | A `.pdb`, `.dSYM`, `.debug`, or linker `.map` ships beside the release   | medium   |
 | `native.pdb_path`               | A PE CodeView record names a PDB path                                    | low      |
-| `go.build_paths`                | Go build info contains file paths. Module names can remain               | low      |
+| `go.build_paths`                | Go build info or its build flags contain file paths                      | low      |
 | `rust.dependency_metadata`      | cargo-auditable metadata is present                                      | low      |
 | `text.credential_markers`       | A text member contains a provider-prefixed marker                        | high     |
 | `native.hardening`              | Not assessed in this audit                                               |          |
@@ -46,7 +46,7 @@ The audit composes existing readers. It does not reread Electron fuse bytes itse
 
 `native.hardening`, `macho.hardened_runtime`, and `android.manifest` stay `not_assessed`. Their next probes are `inspect_binary_hardening`, `inspect_signature`, and `inspect_android_package`.
 
-Source map text is counted and then dropped. A selected file is read through the stable artifact reader. Text and source-map members stay inside the allowances listed under `coverage.allowances`, and each kind has its own allowance, so binary members cannot use up the read that a later source map needs. Native images on disk are registered from inventory classification and are not limited to those allowances. Package members that are neither text nor source maps are identified from a bounded header, and only a PE is read further, for its debug records. Skipped members are listed under `coverage.omitted`. When the selection is a file, the parent directory is listed up to a fixed entry allowance for sibling `.pdb`, `.dSYM`, `.debug`, and linker `.map` debug companions.
+Source map text is counted and then dropped. A selected file is read through the stable artifact reader. Text and source-map members stay inside the allowances listed under `coverage.allowances`, and each kind has its own allowance, so binary members cannot use up the read that a later source map needs. Native images on disk are registered from inventory classification and are not limited to those allowances. Other files and package members are identified from a bounded header. A header with no NUL byte is scanned as text, so names such as `.env.production`, `server.key`, and `credentials` do not depend on an extension list. UTF-16 text has NUL bytes and is not recognized this way. A file whose header could not be read leaves `text.credential_markers` undecided. Among binary package members, only a PE is read further, for its debug records. Skipped members are listed under `coverage.omitted`. When the selection is a file, the parent directory is listed up to a fixed entry allowance for sibling `.pdb`, `.dSYM`, `.debug`, and linker `.map` debug companions.
 
 Inventory stops at 65,536 entries or 2 GiB of hashed bytes, and member coverage then stays `unknown`. A declared integrity value that disagrees with the bytes does not stop the audit, because signing an unpacked native module after packaging is routine. The contradiction is recorded in the limitations and the audit continues.
 
@@ -58,6 +58,8 @@ A `.map` too large to parse is a linker map when its header cannot begin a JSON 
 
 ## Status
 
-`exposed` means the check's condition was observed. `not_observed` means that condition was absent in a completed scan. `not_applicable` means the check does not apply to this artifact, for example Electron fuses on a directory that is not an Electron app. `unknown` means the check could not be decided, including a missing fuse sentinel on an Electron target, Electron fuses on a selected ASAR (which does not include the executable that holds them), a PE inside a package that was too large to read, Go or Rust metadata on a native image stored inside a package, and Go or Rust metadata that was not present. Absence of that metadata is not proof the binary is something else. `not_assessed` means this audit did not run the check.
+`exposed` means the check's condition was observed. `not_observed` means that condition was absent in a completed scan. `not_applicable` means the check does not apply to this artifact, for example Electron fuses on a directory that is not an Electron app. `unknown` means the check could not be decided, including a missing fuse sentinel on an Electron target, a universal binary with a slice that has no sentinel or an undecided fuse, a file that changed after inventory, Electron fuses on a selected ASAR (which does not include the executable that holds them), a PE inside a package that was too large to read, Go or Rust metadata on a native image stored inside a package, and Go or Rust metadata that was not present. Absence of that metadata is not proof the binary is something else. `not_assessed` means this audit did not run the check.
+
+Cancellation during a Go, Rust, fuse, or desktop read returns a typed cancellation error. Its partial observation holds the report with completed facts, and checks whose readers did not run are `unknown`. Cancellation during the member scan itself returns no partial report.
 
 Severity is `null` unless the status is `exposed`.

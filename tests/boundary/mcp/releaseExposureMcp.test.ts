@@ -2,13 +2,19 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { RELEASE_EXPOSURE_TOOL_CONTRACTS } from "../../../src/contracts/releaseExposureToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
 const PLANTED_SOURCE = "release-exposure-planted-secret-7c2e9a";
+const releaseExposureContract = RELEASE_EXPOSURE_TOOL_CONTRACTS.find(
+  (contract) => contract.name === "audit_release_exposure",
+);
+if (releaseExposureContract === undefined)
+  throw new Error("Missing release exposure contract");
+const outputSchema = releaseExposureContract.outputSchema;
 
 mcpTest(
   "advertises and reads release exposure without changing the artifact",
@@ -46,9 +52,7 @@ mcpTest(
         { toolDefinition: definition },
       );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract(
-        "audit_release_exposure",
-      ).outputSchema.parse(response.structuredContent);
+      const evidence = outputSchema.parse(response.structuredContent);
       expect(
         evidence.normalized_result.checks.find(
           (check) => check.id === "javascript.source_map_sources",

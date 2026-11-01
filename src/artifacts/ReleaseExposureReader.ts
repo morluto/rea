@@ -23,6 +23,7 @@ import {
   type ArtifactFilePrimaryFacts,
 } from "./ArtifactFileOperation.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
+import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
 import { inventoryArtifact } from "./inventory/ArtifactInventory.js";
 import {
@@ -432,8 +433,10 @@ const scanOccurrences = async (
     if (onDisk && nativeFormat !== null) {
       if (!state.native.has(location)) {
         state.native.set(location, nativeFormat);
+        const sha256 = shaOf(occurrence, nodeSha);
+        if (sha256 !== undefined) state.nativeDigests.set(location, sha256);
         if (nativeFormat === "pe")
-          await examinePdb(location, shaOf(occurrence, nodeSha), state, input);
+          await examinePdb(location, sha256, state, input);
         await scanEmbeddedPackage(
           input,
           occurrence,
@@ -488,10 +491,10 @@ const scanOccurrences = async (
   }
   if (!input.directory) await scanSiblings(input, state);
   const kind = targetKind(input.path, rootFormat, input.directory);
-  const nativeImages = [...state.native.entries()].map(([path, format]) => ({
-    path,
-    format,
-  }));
+  const nativeImages = [...state.native.entries()].map(([path, format]) => {
+    const sha256 = state.nativeDigests.get(path);
+    return { path, format, ...(sha256 === undefined ? {} : { sha256 }) };
+  });
   return {
     target: {
       selected_path: input.path,
@@ -635,6 +638,7 @@ interface ScanState {
   embeddedProbes: number;
   unprobedImages: number;
   native: Map<string, NativeFormat>;
+  nativeDigests: Map<string, string>;
   limitations: string[];
   mapsRead: number;
   visitText: ReleaseExposureTextVisitor;
@@ -668,6 +672,7 @@ const createState = (visitText: ReleaseExposureTextVisitor): ScanState => ({
   embeddedProbes: 0,
   unprobedImages: 0,
   native: new Map(),
+  nativeDigests: new Map(),
   limitations: [],
   mapsRead: 0,
   visitText,
@@ -735,7 +740,11 @@ const examineSelectedFile = async (
   bytes: Buffer,
 ): Promise<void> => {
   const nativeFormat = asNativeFormat(rootFormat) ?? sniffNativeFormat(bytes);
-  if (nativeFormat !== null) state.native.set(input.path, nativeFormat);
+  if (nativeFormat !== null) {
+    state.native.set(input.path, nativeFormat);
+    if (input.sha256 !== null)
+      state.nativeDigests.set(input.path, input.sha256);
+  }
   if (nativeFormat === "pe") readPdb(state, bytes, input.path);
   await examineMember(state, {
     logical: basename(input.path),
@@ -767,6 +776,12 @@ const examineMember = async (
     readable = await examineTextMember(state, member);
   else if (packageFormat !== null)
     readable = await examinePackagedBinary(state, member);
+  else if (asNativeFormat(member.format) === null)
+    await examineProbedText(
+      state,
+      member,
+      await member.read(MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES),
+    );
   if (packageFormat === null) return;
   if (!readable) {
     state.unreadable += 1;
@@ -788,6 +803,7 @@ const noteUnreadMember = (state: ScanState, member: MemberView): void => {
 const noteUnreadBinary = (state: ScanState, member: MemberView): void => {
   const native = asNativeFormat(member.format);
   if (native !== null) state.packagedNative += 1;
+  else state.skippedText += 1;
   if (native === "pe" || PE_MEMBER_NAME.test(member.logical))
     notePeNotExamined(state, member.location);
 };
@@ -945,6 +961,27 @@ const examineTextMember = async (
   return loaded.kind !== "unread";
 };
 
+/**
+ * Recognize text from bounded content. A name such as `.env.production`,
+ * `server.key`, or `credentials` is not a complete statement of what a file is.
+ * Content that could not be probed leaves text coverage undecided.
+ */
+const examineProbedText = async (
+  state: ScanState,
+  member: MemberView,
+  probe: MemberRead,
+): Promise<void> => {
+  const prefix =
+    probe.kind === "bytes"
+      ? probe.bytes
+      : probe.kind === "over_allowance"
+        ? probe.prefix
+        : null;
+  if (prefix === null) state.skippedText += 1;
+  else if (prefix.length > 0 && !prefix.includes(0))
+    await examineTextMember(state, member);
+};
+
 const examineInlineMaps = (
   state: ScanState,
   member: MemberView,
@@ -1032,6 +1069,7 @@ const examinePackagedBinary = async (
       notePeNotExamined(state, member.location);
   }
   if (native !== null) state.packagedNative += 1;
+  else await examineProbedText(state, member, probe);
   if (native !== "pe") return true;
   if (state.packagedPeReads >= MAX_RELEASE_EXPOSURE_PACKAGED_PE_READS) {
     notePeNotExamined(state, member.location);
@@ -1475,9 +1513,10 @@ const containerEntries = async (
 ): Promise<readonly ArtifactEntry[]> => {
   if (container.entries !== null) return container.entries;
   const listed: ArtifactEntry[] = [];
+  const traversal = new ArtifactTraversalObservation();
   let count = 0;
   let truncated = false;
-  for await (const entry of container.reader.entries(signal)) {
+  for await (const entry of container.reader.entries(signal, traversal)) {
     count += 1;
     if (count > CONTAINER_LIST_LIMIT) {
       if (!truncated) {
@@ -1496,6 +1535,10 @@ const containerEntries = async (
     if (sameName === undefined) container.byPath.set(entry.path, [entry]);
     else sameName.push(entry);
   }
+  const coverage = traversal.snapshot();
+  if (coverage.status === "unknown") state.coverageUnknown = true;
+  for (const limitation of coverage.limitations)
+    pushLimitation(state, limitation);
   container.entries = listed;
   return listed;
 };

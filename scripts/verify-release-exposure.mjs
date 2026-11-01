@@ -16,6 +16,7 @@ const { ELECTRON_FUSE_SENTINEL } = await importVerifierSource(
 const PLANTED_SOURCE = "release-exposure-planted-secret-7c2e9a";
 const OUTPUT = resolve("docs/verification/release-exposure-2026-10-31.md");
 const TEXT_MEMBER_BYTES = 256 * 1024;
+const ELECTRON_FUSES_VERSION = "2.1.3";
 
 const asarArchive = (files) => {
   let offset = 0;
@@ -156,10 +157,19 @@ const table = (checks) => {
 const installFuses = async (root) => {
   const prefix = join(root, "fuses");
   await mkdir(prefix);
-  await exec("npm", ["install", "--prefix", prefix, "@electron/fuses"], {
-    encoding: "utf8",
-    timeout: 180000,
-  });
+  await exec(
+    "npm",
+    [
+      "install",
+      "--prefix",
+      prefix,
+      `@electron/fuses@${ELECTRON_FUSES_VERSION}`,
+    ],
+    {
+      encoding: "utf8",
+      timeout: 180000,
+    },
+  );
   const packageJson = JSON.parse(
     await readFile(
       join(prefix, "node_modules", "@electron", "fuses", "package.json"),

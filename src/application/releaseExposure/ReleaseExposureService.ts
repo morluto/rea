@@ -7,19 +7,24 @@ import type { GoBinaryService } from "../go/GoBinaryService.js";
 import type { RustBinaryService } from "../rust/RustBinaryService.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { desktopApplicationSchema } from "../../domain/desktopApplication.js";
 import { desktopPathConventions } from "../../domain/nativeConvention.js";
-import { electronFuseReportSchema } from "../../domain/electron/electronFuses.js";
+import {
+  electronFuseReportSchema,
+  type ElectronFuseReport,
+} from "../../domain/electron/electronFuses.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { evidenceSubjectFormatSchema } from "../../domain/evidenceSubject.js";
 import { goBinarySchema, type GoBinary } from "../../domain/go/goBinary.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
   scanCredentialMarkers,
   type CredentialMarkerHit,
@@ -28,6 +33,7 @@ import {
   assembleReleaseExposureReport,
   auditReleaseExposureInputSchema,
   MAX_RELEASE_EXPOSURE_NATIVE_IMAGES,
+  RELEASE_EXPOSURE_FUSE_SUBJECTS,
   RELEASE_EXPOSURE_OPERATION,
   type FuseImageFact,
   type MetadataImageFact,
@@ -68,11 +74,7 @@ export class ReleaseExposureService {
       if (result.status !== "rejected" || owner === undefined) return [];
       return [{ owner: owner[0], cause: result.reason }];
     });
-    if (failures.length === 0) return;
-    throw new AggregateError(
-      failures.map((failure) => failure.cause),
-      `Release exposure cleanup failed: ${failures.map((failure) => failure.owner).join(", ")}.`,
-    );
+    if (failures.length > 0) throw ownerCloseFailure(failures);
   }
 
   /** Audit one selected artifact. One owner failure stays on that check. */
@@ -106,11 +108,10 @@ export class ReleaseExposureService {
     );
     if (!scanned.ok) return scanned;
     const owned = await this.#owners(scanned.value, options);
-    if (!owned.ok) return owned;
     let report;
     try {
-      report = assembleReleaseExposureReport(owned.value.scan, {
-        ...owned.value.facts,
+      report = assembleReleaseExposureReport(owned.scan, {
+        ...owned.facts,
         credential_markers: {
           hits: markerHits,
           omitted_hits: omittedMarkerHits,
@@ -118,88 +119,114 @@ export class ReleaseExposureService {
       });
     } catch (cause) {
       return err(
-        new AnalysisOutputError(
-          RELEASE_EXPOSURE_OPERATION,
-          "Release exposure report did not match its schema.",
-          { cause },
-        ),
+        owned.cancelled ??
+          new AnalysisOutputError(
+            RELEASE_EXPOSURE_OPERATION,
+            "Release exposure report did not match its schema.",
+            { cause },
+          ),
       );
     }
     const format = evidenceSubjectFormatSchema.safeParse(
       scanned.value.subject.format,
     );
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: scanned.value.subject.path,
-          sha256: scanned.value.subject.sha256,
-          format: format.success ? format.data : "file",
+    const evidence = createEvidence(
+      {
+        path: scanned.value.subject.path,
+        sha256: scanned.value.subject.sha256,
+        format: format.success ? format.data : "file",
+      },
+      RELEASE_EXPOSURE_PROVIDER,
+      {
+        operation: RELEASE_EXPOSURE_OPERATION,
+        parameters: {
+          path: input.value.path,
+          max_file_bytes: input.value.max_file_bytes,
         },
-        RELEASE_EXPOSURE_PROVIDER,
-        {
-          operation: RELEASE_EXPOSURE_OPERATION,
-          parameters: {
-            path: input.value.path,
-            max_file_bytes: input.value.max_file_bytes,
+        result: report,
+        confidence: "observed",
+        authority: "shipped-artifact",
+        limitations: report.limitations,
+        locations: [
+          {
+            kind: "artifact-path",
+            path: scanned.value.target.selected_path,
           },
-          result: report,
-          confidence: "observed",
-          authority: "shipped-artifact",
-          limitations: report.limitations,
-          locations: [
-            {
-              kind: "artifact-path",
-              path: scanned.value.target.selected_path,
-            },
-          ],
-        },
-      ),
-      options?.signal,
+        ],
+      },
     );
+    if (owned.cancelled !== undefined)
+      return err(owned.cancelled.retainPartialObservation(evidence));
+    return completeProviderEvidence(evidence, options?.signal);
   }
 
+  /**
+   * Run each owner in order. After cancellation the remaining owners do not
+   * run, and their facts stay failed so those checks report unknown.
+   */
   async #owners(
     scan: ReleaseExposureScan,
     options: ExecutionOptions | undefined,
-  ): Promise<
-    Result<
-      {
-        readonly scan: ReleaseExposureScan;
-        readonly facts: Omit<ReleaseExposureOwnerFacts, "credential_markers">;
-      },
-      AnalysisError
-    >
-  > {
-    const desktop = await this.#desktopFamily(scan, options);
-    if (!desktop.ok) return desktop;
-    const prepared = limitNativeSample(scan, desktop.value.archivePaths);
+  ): Promise<OwnerOutcome> {
+    const stopped: { error?: AnalysisError } = {};
+    const settle = async <Fact>(
+      read: () => Promise<Result<Fact, AnalysisError>>,
+      notRun: Fact,
+    ): Promise<Fact> => {
+      if (stopped.error !== undefined) return notRun;
+      const result = await read();
+      if (result.ok) return result.value;
+      stopped.error = result.error;
+      return notRun;
+    };
+    const desktop = await settle(() => this.#desktopFamily(scan, options), {
+      family: "unknown",
+      reason: OWNER_NOT_RUN,
+      archivePaths: [],
+    });
+    const prepared = limitNativeSample(scan, desktop.archivePaths);
+    const inventoried = new Set(
+      scan.native_images.flatMap((image) =>
+        image.sha256 === undefined ? [] : [image.sha256],
+      ),
+    );
     const fuseImages: FuseImageFact[] = [];
-    for (const candidate of prepared.scan.fuse_candidates) {
-      const image = await this.#fuseImage(candidate, options);
-      if (!image.ok) return image;
-      fuseImages.push(image.value);
-    }
+    for (const candidate of prepared.scan.fuse_candidates)
+      fuseImages.push(
+        await settle(() => this.#fuseImage(candidate, inventoried, options), {
+          kind: "failed",
+          role: candidate.role,
+          path: candidate.path,
+          reason: OWNER_NOT_RUN,
+        }),
+      );
     const goImages: MetadataImageFact[] = [];
     const rustImages: MetadataImageFact[] = [];
     for (const image of prepared.scan.native_images) {
-      const go = await this.#goImage(image, options);
-      if (!go.ok) return go;
-      goImages.push(go.value);
-      const rust = await this.#rustImage(image, options);
-      if (!rust.ok) return rust;
-      rustImages.push(rust.value);
+      const notRun = failedMetadata(OWNER_NOT_RUN, image.path);
+      goImages.push(await settle(() => this.#goImage(image, options), notRun));
+      rustImages.push(
+        await settle(() => this.#rustImage(image, options), notRun),
+      );
     }
-    return ok({
-      scan: prepared.scan,
+    return {
+      scan:
+        stopped.error === undefined
+          ? prepared.scan
+          : {
+              ...prepared.scan,
+              limitations: [...prepared.scan.limitations, OWNER_NOT_RUN],
+            },
       facts: {
-        electron_family: desktop.value.family,
-        electron_family_reason: desktop.value.reason,
+        electron_family: desktop.family,
+        electron_family_reason: desktop.reason,
         electron_executable_included: prepared.electronExecutableIncluded,
         fuse_images: fuseImages,
         go_images: goImages,
         rust_images: rustImages,
       },
-    });
+      cancelled: stopped.error,
+    };
   }
 
   async #desktopFamily(
@@ -242,6 +269,7 @@ export class ReleaseExposureService {
 
   async #fuseImage(
     candidate: ReleaseExposureFuseCandidate,
+    inventoried: ReadonlySet<string>,
     options: ExecutionOptions | undefined,
   ): Promise<Result<FuseImageFact, AnalysisError>> {
     let result: Result<Evidence, AnalysisError>;
@@ -285,14 +313,20 @@ export class ReleaseExposureService {
         path: candidate.path,
         reason: "Electron fuse report did not match its schema.",
       });
+    // An app bundle resolves to a file the audit did not select by path, so
+    // its digest is compared with every inventoried native image.
+    if (inventoried.size > 0 && !inventoried.has(report.data.artifact.sha256))
+      return ok({
+        kind: "failed",
+        role: candidate.role,
+        path: candidate.path,
+        reason: IMAGE_CHANGED,
+      });
     return ok({
       kind: "report",
       role: candidate.role,
       path: candidate.path,
-      implications: report.data.runtime_implications.map((item) => ({
-        subject: item.subject,
-        outcome: item.outcome,
-      })),
+      implications: fuseImplications(report.data),
     });
   }
 
@@ -318,6 +352,8 @@ export class ReleaseExposureService {
         const report = goBinarySchema.safeParse(value.normalized_result);
         if (!report.success)
           return failedMetadata("Go build metadata did not match its schema.");
+        if (imageChanged(image, report.data.artifact.sha256))
+          return failedMetadata(IMAGE_CHANGED);
         if (report.data.build_info === null) return { kind: "absent" };
         return {
           kind: "paths",
@@ -349,6 +385,8 @@ export class ReleaseExposureService {
           return failedMetadata(
             "Rust dependency metadata did not match its schema.",
           );
+        if (imageChanged(image, report.data.artifact.sha256))
+          return failedMetadata(IMAGE_CHANGED);
         if (report.data.auditable_metadata === null) return { kind: "absent" };
         return {
           kind: "packages",
@@ -393,6 +431,96 @@ export class ReleaseExposureService {
     }
   }
 }
+
+const OWNER_NOT_RUN =
+  "The audit was cancelled before this reader ran. Its checks are unknown.";
+const IMAGE_CHANGED =
+  "The file changed after inventory, so its findings were not attached.";
+
+interface OwnerOutcome {
+  readonly scan: ReleaseExposureScan;
+  readonly facts: Omit<ReleaseExposureOwnerFacts, "credential_markers">;
+  readonly cancelled: AnalysisError | undefined;
+}
+
+/** Combine owner close failures without losing typed cleanup ownership. */
+const ownerCloseFailure = (
+  failures: readonly { readonly owner: string; readonly cause: unknown }[],
+): unknown => {
+  const [first] = failures;
+  if (failures.length === 1 && first !== undefined) return first.cause;
+  const typed = failures.flatMap(({ cause }) =>
+    cause instanceof AnalysisError ? [cause] : [],
+  );
+  const aggregate = new ProviderCleanupError(
+    RELEASE_EXPOSURE_PROVIDER.id,
+    [...new Set(typed.flatMap((cause) => cause.cleanupResources))],
+    {
+      failures: failures.map(({ owner, cause }) => ({
+        owner,
+        failure:
+          cause instanceof AnalysisError
+            ? projectAnalysisError(cause)
+            : {
+                message: cause instanceof Error ? cause.message : String(cause),
+              },
+      })),
+    },
+    {
+      cause: new AggregateError(
+        failures.map(({ cause }) => cause),
+        `Release exposure cleanup failed: ${failures.map(({ owner }) => owner).join(", ")}.`,
+      ),
+      operation: RELEASE_EXPOSURE_OPERATION,
+    },
+  );
+  const live = typed.filter((cause) => cause.cleanupIncomplete);
+  // An opaque rejection supplies no release authority, so it stays incomplete.
+  if (live.length === failures.length) aggregate.bindCleanupDependencies(live);
+  return aggregate;
+};
+
+const imageChanged = (
+  image: ReleaseExposureNativeImage,
+  sha256: string,
+): boolean => image.sha256 !== undefined && image.sha256 !== sha256;
+
+/**
+ * Keep decided implications and add unknown for each subject a sentinel or
+ * slice left undecided, so one safe slice cannot stand for a universal file.
+ * An image with no sentinel at all stays without implications.
+ */
+const fuseImplications = (
+  report: ElectronFuseReport,
+): NonNullable<FuseImageFact["implications"]> => {
+  const decided = report.runtime_implications.map((item) => ({
+    subject: item.subject,
+    outcome: item.outcome,
+  }));
+  if (report.slices.every((slice) => slice.sentinels.length === 0))
+    return decided;
+  const decides = (subject: string, slice: number, offset: number): boolean =>
+    report.runtime_implications.some(
+      (item) =>
+        item.subject === subject &&
+        item.slice_index === slice &&
+        item.sentinel_offset === offset,
+    );
+  const undecided = RELEASE_EXPOSURE_FUSE_SUBJECTS.filter((subject) =>
+    report.slices.some(
+      (slice) =>
+        slice.sentinels.length === 0 ||
+        slice.sentinels.some(
+          (sentinel) =>
+            !decides(subject, slice.index, sentinel.sentinel_offset),
+        ),
+    ),
+  );
+  return [
+    ...decided,
+    ...undecided.map((subject) => ({ subject, outcome: "unknown" })),
+  ];
+};
 
 const failedMetadata = (reason: string, path?: string): MetadataImageFact => ({
   kind: "failed",
@@ -533,6 +661,12 @@ const filesystemPath = (value: string | null | undefined): string | null => {
   return null;
 };
 
+/** Go build settings whose values are compiler, linker, or cgo flags. */
+const GO_FLAG_SETTING = /^(?:CGO_[A-Z]+FLAGS|-asmflags|-gcflags|-ldflags)$/u;
+/** A path value after a flag prefix, `=`, `,`, or a quote, as in `-I/opt/include`. */
+const GO_FLAG_PATH =
+  /(?:^|[\s=,"'])(?:-[BFIL])?((?:\.{1,2}\/|\/|[A-Za-z]:[\\/])[^\s,"']+)/gu;
+
 const goPaths = (
   module: NonNullable<GoBinary["build_info"]>["module"],
 ): string[] => {
@@ -547,6 +681,10 @@ const goPaths = (
   for (const dependency of module.dependencies) {
     add(dependency.path);
     add(dependency.replacement?.path);
+  }
+  for (const setting of module.settings) {
+    if (!GO_FLAG_SETTING.test(setting.key)) continue;
+    for (const match of setting.value.matchAll(GO_FLAG_PATH)) add(match[1]);
   }
   return [...paths];
 };
