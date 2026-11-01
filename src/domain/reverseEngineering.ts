@@ -78,7 +78,7 @@ export const objdumpInputSchema = z.discriminatedUnion("operation", [
 const rizinNameSchema = z
   .string()
   .regex(
-    /^[A-Za-z0-9][A-Za-z0-9_.+-]*$/u,
+    /^[A-Za-z0-9][A-Za-z0-9_.+\-]*$/u,
     "must be a Rizin name: letters, digits, '_', '.', '+' or '-', starting with a letter or digit",
   );
 
