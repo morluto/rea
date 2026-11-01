@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
+import { TRACE_FEATURE_REFERENCE_LIMITATION } from "../../../src/application/WorkflowEvidence.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
@@ -336,9 +337,11 @@ describe("trace_feature reference coverage", () => {
   it("reports the address-only scope when a match has no references", async () => {
     const output = await trace(provider({ emptyXrefsOf: "0x10" }));
 
-    expect(output.limitations).toContain(
-      "Reference queries cover only each matched start address, not interior string bytes. Empty references and truncated: false do not establish complete reference coverage.",
-    );
+    expect(output.normalized_result).toEqual(expectedTrace([], [], ["0x10"]));
+    expect(output.limitations).toContain(TRACE_FEATURE_REFERENCE_LIMITATION);
+    expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(/start address/);
+    expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(/interior string bytes/);
+    expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(/truncated: false/);
   });
 
   it("marks the trace truncated for the target whose references the provider capped", async () => {

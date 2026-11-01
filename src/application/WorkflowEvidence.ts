@@ -184,6 +184,10 @@ export const executeComposedWorkflow = async (
   );
 };
 
+/** Scope of the exact-address reference lookups composed by trace_feature. */
+export const TRACE_FEATURE_REFERENCE_LIMITATION =
+  "Reference queries cover only each matched start address, not interior string bytes. Empty references and truncated: false do not establish complete reference coverage.";
+
 /** Build the shared Evidence record for a successful composed binary workflow. */
 export const createWorkflowEvidence = (input: {
   readonly target: BinaryTarget | undefined;
@@ -213,9 +217,7 @@ export const createWorkflowEvidence = (input: {
     limitations: [
       "Derived by an REA composed workflow.",
       ...(input.operation === "trace_feature"
-        ? [
-            "Reference queries cover only each matched start address, not interior string bytes. Empty references and truncated: false do not establish complete reference coverage.",
-          ]
+        ? [TRACE_FEATURE_REFERENCE_LIMITATION]
         : []),
       ...input.upstreamLimitations,
     ],
