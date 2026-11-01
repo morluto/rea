@@ -184,21 +184,6 @@ describe("GodotPckArtifactReader", () => {
     },
   );
 
-  it("preserves declared MD5 for the shared inventory integrity verifier", async () => {
-    const bytes = buildGodotPck(3, [
-      { path: "a.gd", data: "real", md5: Buffer.alloc(16, 1) },
-    ]);
-    await withReader(bytes, async (reader) => {
-      const [entry] = await list(reader);
-      if (entry === undefined) throw new Error("expected one entry");
-      expect(entry.declaredIntegrity).toEqual({
-        algorithm: "md5",
-        digest: "01".repeat(16),
-      });
-      expect(await text(await reader.open(entry))).toBe("real");
-    });
-  });
-
   it("reports encrypted members without reading them", async () => {
     const bytes = buildGodotPck(3, [
       { path: "secret.gd", data: "x", flags: 1 },

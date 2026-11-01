@@ -137,7 +137,7 @@ it("distinguishes a full candidate set from omitted conflicts", () => {
 describe("FlutterEngineStringScanner", () => {
   it("collects a full clang line within the 500-character bound", () => {
     assertSingleToolchainLine(
-      "Android (5900059 based on r365631c1) clang version 9.0.8 (https://android.googlesource.com/toolchain/llvm-project 207d7abc1a2abf3ef8d4301736d6a7ebc224a290) (based on LLVM 9.0.8svn)",
+      "Android (5900059 based on r365631c) clang version 9.0.8 (https://android.googlesource.com/toolchain/llvm-project 207d7abc1a2abf3ef8d4301736d6a7ebc224a290) (based on LLVM 9.0.8svn)",
     );
   });
 
@@ -156,13 +156,6 @@ describe("FlutterEngineStringScanner", () => {
     );
   });
 });
-
-describe("FlutterEngineStringScanner toolchain behavior", () => {
-  it("collects the labeled Android clang line", () => {
-    assertSingleToolchainLine(
-      "Android (5900059 based on r365631c) clang version 9.0.8 (https://android.googlesource.com/toolchain/llvm-project 207d7abc) (based on LLVM 9.0.8svn)",
-    );
-  });
 
   it("does not claim a toolchain cap for unrelated overlong strings", () => {
     const scanner = new FlutterEngineStringScanner();

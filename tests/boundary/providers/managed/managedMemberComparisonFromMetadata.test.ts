@@ -36,8 +36,12 @@ it("selects namespace-bearing nested declarations from parsed type facts and com
   expect(selected.result.methods).toHaveLength(2);
   expect(selected.result.fields).toHaveLength(2);
   const comparison = compareManagedMembers(selected, selected);
+  expect(comparison.methods).toHaveLength(2);
+  expect(comparison.fields).toHaveLength(2);
   expect(
-    comparison.methods.every(({ match }) => match.status === "matched"),
+    [...comparison.methods, ...comparison.fields].every(
+      ({ match }) => match.status === "matched",
+    ),
   ).toBe(true);
   expect(comparison.summary).toMatchObject({ added: 0, removed: 0 });
   expect(
@@ -2569,62 +2573,43 @@ describe("managed member comparison of ownerless members", () => {
     }
   });
 
-  it("keeps a resolved copy out of the declared round when an ownerless competitor is on the left, as main does", () => {
-    const base = inspect(buildManagedPeFixture(), "/tmp/ownerless-left.dll");
-    const [method] = base.result.methods;
-    if (method === undefined) throw new Error("Expected a fixture method");
-    const ownerless = {
-      ...method,
-      declaring_type: null,
-      declaring_type_token: null,
-    };
-    // The left holds the resolved Foo and an ownerless Foo with the same CIL
-    // and signature; the right holds only the resolved Foo. The ownerless
-    // Foo's owner may be the resolved one, so the three stay ambiguous.
-    const withOwnerless = {
-      ...base,
-      result: { ...base.result, methods: [method, ownerless], fields: [] },
-    };
-    const resolvedOnly = {
-      ...base,
-      result: { ...base.result, methods: [method], fields: [] },
-    };
+  it.each(["left", "right"] as const)(
+    "keeps a resolved copy out of the declared round when an ownerless competitor is on the %s",
+    (side) => {
+      const base = inspect(
+        buildManagedPeFixture(),
+        `/tmp/ownerless-${side}.dll`,
+      );
+      const [method] = base.result.methods;
+      if (method === undefined) throw new Error("Expected a fixture method");
+      const ownerless = {
+        ...method,
+        declaring_type: null,
+        declaring_type_token: null,
+      };
+      // The ownerless Foo may belong to the same type as the resolved Foo,
+      // so both comparison directions must leave the three members ambiguous.
+      const withOwnerless = {
+        ...base,
+        result: { ...base.result, methods: [method, ownerless], fields: [] },
+      };
+      const resolvedOnly = {
+        ...base,
+        result: { ...base.result, methods: [method], fields: [] },
+      };
 
-    const result = compareManagedMembers(withOwnerless, resolvedOnly);
+      const result =
+        side === "left"
+          ? compareManagedMembers(withOwnerless, resolvedOnly)
+          : compareManagedMembers(resolvedOnly, withOwnerless);
 
-    expect(result.matching.ambiguous).toBe(1);
-    expect(
-      result.methods.filter(({ match }) => match.status === "matched"),
-    ).toEqual([]);
-    expect(result.summary).toMatchObject({ added: 0, removed: 0 });
-  });
-
-  it("keeps a resolved copy out of the declared round when an ownerless competitor is on the right, as main does", () => {
-    const base = inspect(buildManagedPeFixture(), "/tmp/ownerless-right.dll");
-    const [method] = base.result.methods;
-    if (method === undefined) throw new Error("Expected a fixture method");
-    const ownerless = {
-      ...method,
-      declaring_type: null,
-      declaring_type_token: null,
-    };
-    const withOwnerless = {
-      ...base,
-      result: { ...base.result, methods: [method, ownerless], fields: [] },
-    };
-    const resolvedOnly = {
-      ...base,
-      result: { ...base.result, methods: [method], fields: [] },
-    };
-
-    const result = compareManagedMembers(resolvedOnly, withOwnerless);
-
-    expect(result.matching.ambiguous).toBe(1);
-    expect(
-      result.methods.filter(({ match }) => match.status === "matched"),
-    ).toEqual([]);
-    expect(result.summary).toMatchObject({ added: 0, removed: 0 });
-  });
+      expect(result.matching.ambiguous).toBe(1);
+      expect(
+        result.methods.filter(({ match }) => match.status === "matched"),
+      ).toEqual([]);
+      expect(result.summary).toMatchObject({ added: 0, removed: 0 });
+    },
+  );
 
   it("keeps an ownerless method ambiguous beside a resolved method of the same shape", () => {
     const base = inspect(buildManagedPeFixture(), "/tmp/ownerless-shape.dll");

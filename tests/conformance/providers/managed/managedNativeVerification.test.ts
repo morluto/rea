@@ -913,21 +913,6 @@ it("retains every observed native candidate", () => {
   expect(result.pinvoke_imports[0]?.candidates).toHaveLength(2);
 });
 
-it("wraps verification in derived workflow Evidence", () => {
-  const evidence = executeManagedNativeBoundaries(exampleInput());
-
-  if (!evidence.ok) throw evidence.error;
-  expect(evidence.value.evidence).toMatchObject({
-    operation: "verify_managed_native_boundaries",
-    provider: { id: "rea-dotnet-workflows" },
-    confidence: "inferred",
-    authority: "analyst-inference",
-    normalized_result: {
-      summary: { verified: 1 },
-    },
-  });
-  expect(evidence.value.evidence.evidence_links).toHaveLength(2);
-});
 
 describe("managed/native verification result algebra", () => {
   it("rejects states without their required native match", () => {

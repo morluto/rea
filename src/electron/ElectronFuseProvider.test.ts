@@ -266,11 +266,11 @@ describe("ELF embedded ASAR integrity applicability", () => {
   it("preserves an enabled ASAR integrity fuse without claiming enforcement on ELF", async () => {
     const root = await createTestTempDirectory("rea-electron-fuses-elf-asar-");
     const fuses = [
-      ELECTRON_FUSE_STATE_BYTES.disabled,
-      ELECTRON_FUSE_STATE_BYTES.disabled,
-      ELECTRON_FUSE_STATE_BYTES.disabled,
-      ELECTRON_FUSE_STATE_BYTES.disabled,
-      ELECTRON_FUSE_STATE_BYTES.enabled,
+      0x30,
+      0x30,
+      0x30,
+      0x30,
+      0x31,
     ];
     const image = elfFuseImage(fuses);
     const path = join(root, "electron");
@@ -281,7 +281,7 @@ describe("ELF embedded ASAR integrity applicability", () => {
       index: 4,
       name: "EnableEmbeddedAsarIntegrityValidation",
       state: "enabled",
-      raw_byte: ELECTRON_FUSE_STATE_BYTES.enabled,
+      raw_byte: 0x31,
     });
     expect(
       report.runtime_implications.find(
