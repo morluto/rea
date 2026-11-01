@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  LabeledStringScanner,
+  FlutterEngineStringScanner,
   SnapshotHashScanner,
 } from "./FlutterPayloadScan.js";
 
@@ -30,6 +30,16 @@ const realSnapshotSection = (hash: string): Uint8Array =>
     0x00,
     ...Array.from(hash, (character) => character.charCodeAt(0)),
   ]);
+
+const assertSingleToolchainLine = (line: string): void => {
+  const scanner = new FlutterEngineStringScanner();
+  scanner.push(
+    Uint8Array.from(
+      Array.from(`\x00${line}\x00`, (character) => character.charCodeAt(0)),
+    ),
+  );
+  expect(scanner.result().toolchainLines).toEqual([line]);
+};
 
 describe("SnapshotHashScanner", () => {
   it("reads the hash from real vm and isolate sections that agree", () => {
@@ -124,16 +134,7 @@ it("distinguishes a full candidate set from omitted conflicts", () => {
   expect(scanner.result().candidates).toHaveLength(64);
 });
 
-describe("LabeledStringScanner", () => {
-  const assertSingleToolchainLine = (line: string): void => {
-    const scanner = new LabeledStringScanner();
-    scanner.push(
-      Uint8Array.from(
-        Array.from(`\x00${line}\x00`, (character) => character.charCodeAt(0)),
-      ),
-    );
-    expect(scanner.result().toolchainLines).toEqual([line]);
-  };
+describe("FlutterEngineStringScanner", () => {
   it("collects a full clang line within the 500-character bound", () => {
     assertSingleToolchainLine(
       "Android (5900059 based on r365631c1) clang version 9.0.8 (https://android.googlesource.com/toolchain/llvm-project 207d7abc1a2abf3ef8d4301736d6a7ebc224a290) (based on LLVM 9.0.8svn)",
@@ -141,7 +142,7 @@ describe("LabeledStringScanner", () => {
   });
 
   it("reads a labeled Dart VM version string when a build carries one", () => {
-    const scanner = new LabeledStringScanner();
+    const scanner = new FlutterEngineStringScanner();
     scanner.push(
       Uint8Array.from(
         Array.from(
@@ -154,7 +155,9 @@ describe("LabeledStringScanner", () => {
       "Dart VM version: 3.1.0 (stable) somewhere",
     );
   });
+});
 
+describe("FlutterEngineStringScanner toolchain behavior", () => {
   it("collects the labeled Android clang line", () => {
     assertSingleToolchainLine(
       "Android (5900059 based on r365631c) clang version 9.0.8 (https://android.googlesource.com/toolchain/llvm-project 207d7abc) (based on LLVM 9.0.8svn)",
@@ -162,7 +165,7 @@ describe("LabeledStringScanner", () => {
   });
 
   it("does not claim a toolchain cap for unrelated overlong strings", () => {
-    const scanner = new LabeledStringScanner();
+    const scanner = new FlutterEngineStringScanner();
     const license = `Apache License Version 2.0 ${"x".repeat(700)}`;
     scanner.push(
       Uint8Array.from(
@@ -183,7 +186,7 @@ describe("LabeledStringScanner", () => {
       [`Dart VM version: ${"3".repeat(700)}`, false, true],
       [`based on LLVM 9 ${"x".repeat(700)}`, true, false],
     ] as const) {
-      const scanner = new LabeledStringScanner();
+      const scanner = new FlutterEngineStringScanner();
       scanner.push(
         Uint8Array.from(
           Array.from(`\x00${text}\x00`, (character) => character.charCodeAt(0)),
@@ -212,7 +215,7 @@ describe("LabeledStringScanner", () => {
       for (const suffix of ["", "x", "x".repeat(1000)]) {
         const payload = Buffer.from(`${line}${suffix}\x00`);
         for (const chunkSize of [1, 7, payload.length]) {
-          const scanner = new LabeledStringScanner();
+          const scanner = new FlutterEngineStringScanner();
           for (let offset = 0; offset < payload.length; offset += chunkSize)
             scanner.push(payload.subarray(offset, offset + chunkSize));
           const valid = suffix === "";
@@ -229,12 +232,101 @@ describe("LabeledStringScanner", () => {
 
   it("preserves whitespace and separates distinct Dart-label omissions", () => {
     assertSingleToolchainLine("based on LLVM 9  ");
-    const scanner = new LabeledStringScanner();
+    const scanner = new FlutterEngineStringScanner();
     scanner.push(Buffer.from("Dart VM version: 3.1\0Dart VM version: 3.2\0"));
     expect(scanner.result()).toMatchObject({
       dartVersion: "Dart VM version: 3.1",
       dartVersionCapped: true,
       toolchainCapped: false,
+    });
+  });
+});
+
+describe("Dart Version::String recognition", () => {
+  const sourceDefinedDartVersions = [
+    '3.7.2 (stable) (Tue Mar 11 04:27:50 2025 -0700) on "android_arm64"',
+    "2.14.0-151.0.dev (dev) (Tue May 25 10:58:39 2021 -0700)",
+    '1.24.3 (Mon Jan  2 00:00:00 2017 +0000) on "linux_x64"',
+    '1.24.3-dev.151.0 (Mon Jan  2 00:00:00 2017 +0000) on "linux_x64"',
+  ];
+
+  it.each(sourceDefinedDartVersions)(
+    "reads a complete source-defined Dart version across every split",
+    (version) => {
+      const payload = Buffer.from(`\x00${version}\x00`);
+      for (let split = 1; split < payload.length; split += 1) {
+        const scanner = new FlutterEngineStringScanner();
+        scanner.push(payload.subarray(0, split));
+        scanner.push(payload.subarray(split));
+        expect(scanner.result(), `split at ${split}`).toMatchObject({
+          dartVersion: version,
+          dartVersionCapped: false,
+        });
+      }
+    },
+  );
+
+  it.each([
+    '3.7.2 (canary) (Tue Mar 11 04:27:50 2025 -0700) on "android_arm64"',
+    '03.7.2 (stable) (Tue Mar 11 04:27:50 2025 -0700) on "android_arm64"',
+    '3.7.2 (stable) (not a build time) on "android_arm64"',
+    "3.7.2 (stable) (Tue Mar 11 04:27:50 2025 -0700) extra",
+    '3.7.2 (stable) (Tue Mar 11 04:27:50 2025 -0700) on "../arm64"',
+    '3.7.2+local (stable) (Tue Mar 11 04:27:50 2025 -0700) on "android_arm64"',
+    "3.7.2-151.0.dev (stable) (Tue Mar 11 04:27:50 2025 -0700)",
+    '1.24.3 (Mon Jan  2 00:00:00 2017 +0000) on "linux_x64" extra',
+    '1.24.3-151.0.dev (Mon Jan  2 00:00:00 2017 +0000) on "linux_x64"',
+    `${sourceDefinedDartVersions[0]}${"x".repeat(200)}`,
+  ])(
+    "ignores an unlabeled run outside the Dart VM source grammar: %s",
+    (text) => {
+      const scanner = new FlutterEngineStringScanner();
+      scanner.push(Buffer.from(`\x00${text}\x00`));
+      expect(scanner.result()).toMatchObject({
+        dartVersion: null,
+        dartVersionCapped: false,
+      });
+    },
+  );
+
+  it("deduplicates repeated exact labeled and source version strings", () => {
+    const versions = [
+      "Dart VM version: 3.7.2 (stable) somewhere",
+      sourceDefinedDartVersions[0]!,
+    ];
+    for (const version of versions) {
+      const scanner = new FlutterEngineStringScanner();
+      scanner.push(Buffer.from(`\x00${version}\x00${version}\x00`));
+      expect(scanner.result()).toMatchObject({
+        dartVersion: version,
+        dartVersionCapped: false,
+      });
+    }
+  });
+
+  it("caps distinct labeled and source versions while retaining the first", () => {
+    const labeled = "Dart VM version: 3.7.2 (stable) somewhere";
+    const scanner = new FlutterEngineStringScanner();
+    scanner.push(
+      Buffer.from(
+        `\x00${labeled}\x00${labeled}\x00${sourceDefinedDartVersions[0]}\x00${sourceDefinedDartVersions[1]}\x00`,
+      ),
+    );
+    expect(scanner.result()).toMatchObject({
+      dartVersion: labeled,
+      dartVersionCapped: true,
+      toolchainCapped: false,
+    });
+  });
+
+  it("leaves unmatched unlabeled runs unknown without setting the cap", () => {
+    const scanner = new FlutterEngineStringScanner();
+    scanner.push(
+      Buffer.from("\x00Apache License Version 2.0\x003.7.2 (preview)\x00"),
+    );
+    expect(scanner.result()).toMatchObject({
+      dartVersion: null,
+      dartVersionCapped: false,
     });
   });
 });
