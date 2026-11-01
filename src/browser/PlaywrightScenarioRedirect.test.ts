@@ -161,6 +161,11 @@ describe("request step redirect observation bounds", () => {
     expect(observation!.delivered()).toBe(true);
     dispatch(session, "1.2");
     expect(observation!.delivered()).toBe(false);
+    // Later answers and dispatches cannot restore attribution.
+    dispatch(session, "1.3");
+    answer(session, 302, { location: "/later" }, "1.3");
+    expect(responses).toHaveLength(1);
+    expect(observation!.delivered()).toBe(false);
     await observation!.stop();
   });
 

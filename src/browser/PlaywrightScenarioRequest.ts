@@ -459,7 +459,7 @@ export const performScenarioRequest = async (input: {
       throw new ScenarioRequestError(
         `Request step ${action.step_id} was answered with a redirect, which request steps do not follow; a write may already have been applied. ${
           recorded
-            ? "The capture records the redirect and, with header values selected, its Location."
+            ? "The browser reported the redirect to network capture; its status and, with header values selected, its Location appear in the network events unless an event budget omitted them."
             : "The browser may withhold the redirect status and Location from network capture."
         }`,
       );
@@ -476,7 +476,9 @@ export const performScenarioRequest = async (input: {
     throw cause;
   } finally {
     if (protectResponse !== undefined) page.off("request", watch);
-    await redirect?.stop();
+    // Listeners stop now; the bounded CDP detach must not keep the route
+    // guard installed, so it is awaited only after the route is removed.
+    const detaching = redirect?.stop();
     try {
       await page.unroute(matches, gate);
     } catch (cause: unknown) {
@@ -487,6 +489,8 @@ export const performScenarioRequest = async (input: {
           { cause: primaryFailure.cause },
         );
       throw cause;
+    } finally {
+      await detaching;
     }
   }
   if (action.save.length > 0) {

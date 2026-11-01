@@ -21,7 +21,7 @@ export type ScenarioRedirectResponse = Omit<
 
 /** A request step's redirect answer, as the browser's network service reported it. */
 export interface ScenarioRedirectObservation {
-  /** Whether the step's own redirect response was handed to the network capture; false once attribution is in doubt. */
+  /** Whether the step's own redirect response was offered to the network capture, which still applies its event budgets; false once attribution is in doubt. */
   delivered(): boolean;
   stop(): Promise<void>;
 }
@@ -156,8 +156,13 @@ export const observeScenarioRedirect = async (input: {
     ) {
       // The same transport identity names the redirect target afterwards, so
       // a second dispatch of the URL cannot be told from the first one.
-      if (dispatched.size > 0 && !dispatched.has(event.requestId))
+      if (ambiguous) return;
+      if (dispatched.size > 0 && !dispatched.has(event.requestId)) {
+        // Attribution is lost for good; stop retaining transport identities.
         ambiguous = true;
+        dispatched.clear();
+        return;
+      }
       dispatched.add(event.requestId);
     }
   };
@@ -178,6 +183,7 @@ export const observeScenarioRedirect = async (input: {
 
   return {
     delivered: () => delivered && !ambiguous,
+    /** Stops listening before the first await; the returned detach is bounded and never rejects. */
     stop: async () => {
       page.off("request", onRequest);
       session.off("Network.requestWillBeSent", onWillBeSent);

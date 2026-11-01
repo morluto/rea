@@ -478,6 +478,12 @@ describe("request step confinement", () => {
     ).rejects.toThrow("the page moved");
     expect(calls).toHaveLength(1);
   });
+});
+
+describe("request step redirect capture", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
 
   it("hands a redirect the browser reported to network capture instead of disclosing a gap", async () => {
     const parsed = scenario([requestStep({})]);
@@ -488,9 +494,21 @@ describe("request step confinement", () => {
     });
     const base = fakePage({});
     const emitter = new EventEmitter();
+    // A detach that only finishes once the route guard is gone: a step that
+    // awaited it first would wait for the bounded timeout instead.
+    let releaseDetach: () => void = () => {};
+    session.detach.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDetach = resolve;
+        }),
+    );
     const page = Object.assign(emitter, base, {
       on: emitter.on.bind(emitter),
       off: emitter.off.bind(emitter),
+      unroute: async () => {
+        releaseDetach();
+      },
       context: () => ({ newCDPSession: async () => session }),
     }) as unknown as Page;
     const url = `${ORIGIN}/api/folders`;
@@ -513,6 +531,7 @@ describe("request step confinement", () => {
     });
     const onOpaqueRedirect = vi.fn();
     const onRedirectResponse = vi.fn();
+    const started = Date.now();
     await expect(
       performPlaywrightScenarioAction({
         page,
@@ -522,11 +541,12 @@ describe("request step confinement", () => {
         onOpaqueRedirect,
         onRedirectResponse,
       }),
-    ).rejects.toThrow("The capture records the redirect");
+    ).rejects.toThrow("The browser reported the redirect to network capture");
     expect(onRedirectResponse).toHaveBeenCalledOnce();
     expect(onRedirectResponse.mock.calls[0]![0].status()).toBe(302);
     expect(onOpaqueRedirect).not.toHaveBeenCalled();
     expect(session.detach).toHaveBeenCalledOnce();
+    expect(Date.now() - started).toBeLessThan(1_500);
   });
 
   it("sends nothing when its time runs out while header values are read, or the step is cancelled", async () => {
