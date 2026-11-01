@@ -216,10 +216,13 @@ const searchPathSchema = z.strictObject({
   tokens: z.array(searchTokenSchema),
 });
 
+/** A dynamic string offset: ELF64 values may exceed 32 bits. */
+const stringOffset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+
 const neededEntrySchema = z.strictObject({
   index: uint,
   name: z.string().min(1).nullable(),
-  name_offset: uint,
+  name_offset: stringOffset,
 });
 
 const versionNeedSchema = z.strictObject({
@@ -300,7 +303,7 @@ export const elfDependenciesReportSchema = z.strictObject({
     soname: z
       .strictObject({
         name: z.string().min(1).nullable(),
-        name_offset: uint,
+        name_offset: stringOffset,
       })
       .nullable(),
     rpath: searchPathSchema.nullable(),

@@ -523,6 +523,23 @@ it("keeps readable names and marks truncated dynstr coverage partial", () => {
   expect(report.needed.map((entry) => entry.name)).toEqual(defaultNeeded);
 });
 
+it("keeps readable results when an ELF64 name offset exceeds 32 bits", () => {
+  const report = parse(
+    elfDependencyFixture({ bits: 64, wideNameOffset: 0x100000000 }),
+  );
+  expect(report.needed[0]).toMatchObject({
+    name: null,
+    name_offset: 0x100000000,
+  });
+  expect(report.dynamic?.soname).toMatchObject({
+    name: null,
+    name_offset: 0x100000000,
+  });
+  expect(report.needed.slice(1).map((entry) => entry.name)).toEqual(
+    defaultNeeded.slice(1),
+  );
+});
+
 it("rejects duplicate unique dynamic tags", () => {
   expect(() => parse(elfDependencyFixture({ duplicateSoname: true }))).toThrow(
     /Duplicate dynamic tag/u,

@@ -80,6 +80,8 @@ export interface ElfDependencyFixtureOptions {
   readonly machine?: number;
   readonly interpreter?: string | null;
   readonly needed?: readonly string[];
+  /** Replaces the first DT_NEEDED and the DT_SONAME string offsets. */
+  readonly wideNameOffset?: number;
   readonly soname?: string | null;
   readonly rpath?: string | null;
   readonly runpath?: string | null;
@@ -368,6 +370,7 @@ interface FixtureConfig {
   readonly danglingVersionLink: ElfDependencyFixtureOptions["danglingVersionLink"];
   readonly truncateDynstr: boolean;
   readonly duplicateSoname: boolean;
+  readonly wideNameOffset: number | undefined;
   readonly oversizedSection: string | undefined;
   readonly displacedSection: string | undefined;
   readonly omitHashTag: boolean;
@@ -457,6 +460,7 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     danglingVersionLink: options.danglingVersionLink,
     truncateDynstr: options.truncateDynstr === true,
     duplicateSoname: options.duplicateSoname === true,
+    wideNameOffset: options.wideNameOffset,
     oversizedSection: options.oversizedSection,
     displacedSection: options.displacedSection,
     omitHashTag: options.omitHashTag === true,
@@ -576,9 +580,11 @@ const buildDynamicTags = (
   const addTag = (tag: number, value: number): void => {
     tags.push(dynamicEntry(tag, value, bits, little));
   };
-  tables.neededOffsets.forEach((offset) => addTag(1, offset));
+  tables.neededOffsets.forEach((offset, index) =>
+    addTag(1, index === 0 ? (config.wideNameOffset ?? offset) : offset),
+  );
   if (config.soname !== null) {
-    addTag(14, tables.sonameOffset);
+    addTag(14, config.wideNameOffset ?? tables.sonameOffset);
     if (config.duplicateSoname) addTag(14, tables.sonameOffset);
   }
   if (config.rpath !== null) addTag(15, tables.rpathOffset);
