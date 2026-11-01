@@ -146,16 +146,17 @@ symbolic link loop, a stale network file handle or an I/O error, at least one
 of the searches of glibc, musl, Android and libuv stops, so the lookup stops
 there. The
 command then runs by name, with the version unknown, and the host's own search
-decides what runs. A found file that does not start, with `ENOENT`, is one a
-native search moves past, as when a script's interpreter is missing. The
-command then also runs as selected, with the version unknown, and a limitation
-names that file. When the host refuses to inspect an explicitly selected path
-(`EACCES` or `EPERM`), the command runs that path with the version unknown, and
-Evidence or the launch failure keeps it as `provider_executable_path`. A lookup
-that stops waiting for a stalled file-system call leaves that call running; a
-later lookup of the same path waits for it instead of starting another. A hash
-also ends at the deadline or on cancellation while the file's open is still
-pending.
+decides what runs. A found file that does not start with `ENOENT` or `EACCES`,
+as when a script's interpreter is missing or not executable, is one a native
+search moves past. The command then also runs as selected, with the version
+unknown, and a limitation names that file. When the host refuses to inspect an
+explicitly selected path (`EACCES` or `EPERM`), the command runs that path with
+the version unknown, and Evidence or the launch failure keeps it as
+`provider_executable_path`. A lookup or hash that stops waiting for a stalled
+`stat` or `access` leaves that call running; a later lookup or hash of the same
+path waits for it instead of starting another. A hash also ends at the deadline
+or on cancellation while the file's open is still pending, and a later hash of
+the same path waits for that open to return before it opens the file again.
 
 Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override. A typed failure's `captured_output` marks a stream that held invalid UTF-8 with `stdout_invalid_utf8` or `stderr_invalid_utf8`.
 

@@ -588,15 +588,20 @@ posix(
     const release = gate();
     const finished = gate();
     const checks: string[] = [];
+    const started: Promise<Stats>[] = [];
     // One stat function for every lookup, as in production.
-    const stalling = async (target: string): Promise<Stats> => {
+    const stalling = (target: string): Promise<Stats> => {
       checks.push(target);
-      try {
-        if (target === executable) await release.opened;
-        return await stat(target);
-      } finally {
-        if (target === executable) finished.open();
-      }
+      const check = (async () => {
+        try {
+          if (target === executable) await release.opened;
+          return await stat(target);
+        } finally {
+          if (target === executable) finished.open();
+        }
+      })();
+      started.push(check);
+      return check;
     };
     const run = versionProbeRunner(() => "rizin 0.9.1 @ linux-x86-64");
     const service = new TestReverseEngineeringService({
@@ -628,7 +633,7 @@ posix(
       expect(checksOfExecutable()).toBe(1);
       expect(run).not.toHaveBeenCalled();
       release.open();
-      await finished.opened;
+      await within(finished.opened, "the stalled check after its release");
       await new Promise((resolve) => setImmediate(resolve));
       const result = await within(
         service.executeRizinCommand({ path, command: "iI" }),
@@ -639,21 +644,29 @@ posix(
       expect(result.value.provider.version).toBe("0.9.1");
     } finally {
       release.open();
+      await Promise.allSettled(started);
       await service.close();
     }
   },
 );
 
-posix(
-  "runs the command as selected when the file the lookup found does not start, as a spawned search would",
-  async () => {
+posix.each([
+  ["ENOENT", "its interpreter is missing", undefined],
+  ["EACCES", "its interpreter is not executable", 0o644],
+] as const)(
+  "runs the command as selected when the file the lookup found does not start with %s, because %s, as a spawned search would",
+  async (code, _cause, interpreterMode) => {
     const directory = await createTestTempDirectory("rea-rizin-unstarted-");
     const broken = join(directory, "broken");
     const working = join(directory, "working");
     await mkdir(broken);
     await mkdir(working);
-    // The interpreter is missing, so the host fails to start the script with ENOENT.
-    await writeFile(join(broken, "rizin"), "#!/nonexistent/rea-sh\n", {
+    // The host fails to start the script: its interpreter is absent, or
+    // present without execute permission.
+    const interpreter = join(directory, "rea-sh");
+    if (interpreterMode !== undefined)
+      await writeFile(interpreter, "#!/bin/sh\n", { mode: interpreterMode });
+    await writeFile(join(broken, "rizin"), `#!${interpreter}\n`, {
       mode: 0o755,
     });
     await writeFile(
@@ -689,7 +702,7 @@ posix(
       );
       expect(result.value.limitations).toContainEqual(
         expect.stringContaining(
-          `${join(broken, "rizin")}, which the lookup found, did not start (ENOENT)`,
+          `${join(broken, "rizin")}, which the lookup found, did not start (${code})`,
         ),
       );
     } finally {

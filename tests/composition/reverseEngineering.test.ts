@@ -625,6 +625,67 @@ it.each(["deadline", "cancellation"] as const)(
   },
 );
 
+it("makes a hash wait for an earlier open of the same path that has not returned", async () => {
+  const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
+  let returnOpen: (() => void) | undefined;
+  const opened: Readable[] = [];
+  // The first open stalls until the test returns it; a later one reads "x".
+  const open = () => {
+    const stream =
+      opened.length === 0
+        ? new Readable({
+            construct(callback) {
+              returnOpen = () => callback();
+            },
+            read() {},
+          })
+        : Readable.from([Buffer.from("x")]);
+    opened.push(stream);
+    return stream as unknown as ReturnType<
+      typeof import("node:fs").createReadStream
+    >;
+  };
+  const path = "/tmp/rea-unreturned-open";
+  for (const _attempt of [1, 2])
+    await expect(
+      digestFile(path, undefined, stat, 50, open),
+    ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+  // The second hash waited for the first open instead of starting another.
+  expect(opened).toHaveLength(1);
+  returnOpen?.();
+  await expect(digestFile(path, undefined, stat, 1_000, open)).resolves.toBe(
+    createHash("sha256").update("x").digest("hex"),
+  );
+  expect(opened).toHaveLength(2);
+});
+
+it("shares a stalled stat between hashes of the same path", async () => {
+  let stats = 0;
+  let answer: (() => void) | undefined;
+  const answered = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  const stat = async (): Promise<Stats> => {
+    stats += 1;
+    await answered;
+    return { isFile: () => true } as Stats;
+  };
+  const open = () =>
+    Readable.from([Buffer.from("x")]) as unknown as ReturnType<
+      typeof import("node:fs").createReadStream
+    >;
+  try {
+    for (const _attempt of [1, 2])
+      await expect(
+        digestFile("/tmp/rea-stalled-stat", undefined, stat, 50, open),
+      ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+    expect(stats).toBe(1);
+  } finally {
+    answer?.();
+    await answered;
+  }
+});
+
 it("retains an explicit null reason when digest admission is already cancelled", async () => {
   const controller = new AbortController();
   controller.abort(null);

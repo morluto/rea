@@ -50,7 +50,11 @@ import {
 } from "../../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { boundedUtf8Text } from "../../process/boundedUtf8Text.js";
-import { lookupExecutable } from "../../process/ExecutableLookup.js";
+import {
+  lookupExecutable,
+  searchMovesPast,
+} from "../../process/ExecutableLookup.js";
+import { shareFileCall } from "../../process/SharedFileCall.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 
@@ -1014,12 +1018,12 @@ export class ReverseEngineeringService {
     // A probe that ends the call keeps the path and digest it ran from.
     if (!outcome.ok) return err(outcome.error.retainDiagnostics(parameters));
     const completed = outcome.value;
-    // A spawned PATH search moves past a file that fails to start with
-    // ENOENT, so the command runs as selected and the host decides what runs.
+    // A spawned PATH search moves past a file that fails to start this way,
+    // so the command runs as selected and the host decides what runs.
     if (completed.status === "not-started")
       return ok(
         unidentified(
-          `${lookup.path}, which the lookup found, did not start (ENOENT), as when a script's interpreter is missing; the command runs \`${profile.executable}\` as selected, so the host decides what runs`,
+          `${lookup.path}, which the lookup found, did not start (${completed.code}), as when a script's interpreter is missing or not executable; the command runs \`${profile.executable}\` as selected, so the host decides what runs`,
         ),
       );
     if (completed.status !== "read" && completed.status !== "unrecognized")
@@ -1158,8 +1162,10 @@ export class ReverseEngineeringService {
             cleanupOwner,
           ),
         );
-      // The file did not start, as when a script's interpreter is missing.
-      if (code === "ENOENT") return ok({ status: "not-started" });
+      // The file did not start, with an error a native PATH search moves
+      // past, as when a script's interpreter is missing or not executable.
+      if (typeof code === "string" && searchMovesPast(code))
+        return ok({ status: "not-started", code });
       // Both runners report the call's deadline as ETIMEDOUT, even when the
       // stop signal also ended the process.
       return ok({
@@ -1209,8 +1215,8 @@ type VersionProbeOutcome =
       readonly status: "failed" | "timed-out" | "undecodable";
       readonly diagnostics: Readonly<Record<string, JsonValue>>;
     }
-  /** The host could not start the file, with ENOENT. */
-  | { readonly status: "not-started" };
+  /** The host did not start the file, with an error its PATH search moves past. */
+  | { readonly status: "not-started"; readonly code: string };
 
 /** Why a probe that read no usable banner leaves the version unknown. */
 /** Observations read before the command cannot bind the tool that ran. */
@@ -1475,6 +1481,14 @@ const reverseCommandTimeoutGuidance = (
   } The new value applies on the next call; no restart is required. The ${String(MAX_COMBINED_OUTPUT_BYTES)} byte (16 MiB) combined output cap has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
 
+/**
+ * Opens that have not returned, by stream factory and path. Destroying a
+ * stream cannot cancel its open, which a stalled mount can hold, with a libuv
+ * worker, indefinitely; a later hash of the same path waits for that open
+ * instead of starting another, so stalled opens stay bounded by the paths.
+ */
+const unreturnedOpens = new WeakMap<object, Map<string, Promise<void>>>();
+
 export const digestFile = async (
   path: string,
   signal?: AbortSignal,
@@ -1485,15 +1499,29 @@ export const digestFile = async (
   ) => ReturnType<typeof createReadStream> = createReadStream,
 ): Promise<string> => {
   const startedAt = performance.now();
+  const remaining = (): number =>
+    Math.max(0, Math.ceil(timeoutMs - (performance.now() - startedAt)));
   const info = await statWithDeadline(path, signal, stat, timeoutMs);
   if (!info.isFile())
     throw Object.assign(new Error("Artifact digest requires a regular file"), {
       code: "EINVAL",
     });
-  const remainingMs = Math.max(
-    0,
-    Math.ceil(timeoutMs - (performance.now() - startedAt)),
-  );
+  const opens = unreturnedOpens.get(open) ?? new Map<string, Promise<void>>();
+  unreturnedOpens.set(open, opens);
+  for (
+    let earlier = opens.get(path);
+    earlier !== undefined;
+    earlier = opens.get(path)
+  ) {
+    const pending = earlier;
+    await settleWithDeadline(
+      () => pending,
+      signal,
+      remaining(),
+      "Artifact digest timed out",
+    );
+  }
+  const remainingMs = remaining();
   if (remainingMs === 0)
     throw Object.assign(new Error("Artifact digest timed out"), {
       code: "ETIMEDOUT",
@@ -1501,6 +1529,15 @@ export const digestFile = async (
   return new Promise<string>((resolveDigest, rejectDigest) => {
     const hash = createHash("sha256");
     const stream = open(path);
+    const returned = new Promise<void>((resolve) => {
+      stream.once("open", () => resolve());
+      stream.once("error", () => resolve());
+      stream.once("close", () => resolve());
+    });
+    opens.set(path, returned);
+    void returned.then(() => {
+      if (opens.get(path) === returned) opens.delete(path);
+    });
     // A stream destroyed while its open is pending reports the error only
     // after that open returns, which a stalled mount can delay indefinitely.
     // The deadline and cancellation therefore end the wait themselves; the
@@ -1603,25 +1640,29 @@ const commandFailureCode = (cause: unknown): string | number | undefined => {
     : undefined;
 };
 
-const statWithDeadline = (
-  path: string,
+/**
+ * Wait for one step of a hash within its deadline and cancellation. A step that
+ * a stalled mount holds keeps running after the wait ends.
+ */
+const settleWithDeadline = <Value>(
+  start: () => Promise<Value>,
   signal: AbortSignal | undefined,
-  stat: (path: string) => Promise<Stats>,
   timeoutMs: number,
-): Promise<Stats> => {
+  timeoutMessage: string,
+): Promise<Value> => {
   if (signal?.aborted)
     return Promise.reject(
       new AnalysisCancelledError("artifact_digest", { cause: signal.reason }),
     );
-  return new Promise<Stats>((resolveStat, rejectStat) => {
+  return new Promise<Value>((resolveValue, rejectValue) => {
     let settled = false;
-    const finish = (outcome: Result<Stats, unknown>): void => {
+    const finish = (outcome: Result<Value, unknown>): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
-      if (outcome.ok) resolveStat(outcome.value);
-      else rejectStat(outcome.error);
+      if (outcome.ok) resolveValue(outcome.value);
+      else rejectValue(outcome.error);
     };
     const abort = (): void =>
       finish(
@@ -1635,7 +1676,7 @@ const statWithDeadline = (
       () =>
         finish(
           err(
-            Object.assign(new Error("Artifact stat timed out"), {
+            Object.assign(new Error(timeoutMessage), {
               code: "ETIMEDOUT",
             }),
           ),
@@ -1648,10 +1689,10 @@ const statWithDeadline = (
       return;
     }
     // Promise handlers stay attached after timeout/cancellation so a delayed
-    // stat rejection is observed and cannot become an unhandled rejection.
+    // rejection is observed and cannot become an unhandled rejection.
     try {
-      void stat(path).then(
-        (info) => finish(ok(info)),
+      void start().then(
+        (value) => finish(ok(value)),
         (cause: unknown) => finish(err(cause)),
       );
     } catch (cause) {
@@ -1659,3 +1700,17 @@ const statWithDeadline = (
     }
   });
 };
+
+// Later hashes of the path share a stat that a stalled mount holds.
+const statWithDeadline = (
+  path: string,
+  signal: AbortSignal | undefined,
+  stat: (path: string) => Promise<Stats>,
+  timeoutMs: number,
+): Promise<Stats> =>
+  settleWithDeadline(
+    () => shareFileCall(stat, path, () => stat(path)),
+    signal,
+    timeoutMs,
+    "Artifact stat timed out",
+  );
