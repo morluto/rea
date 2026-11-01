@@ -27,7 +27,9 @@ it("preserves the source when an inline result with unknown retention exceeds de
     name: "compare_application_versions",
     arguments: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   });
-  expect(parseMcpToolError(response).error).toMatchObject({
+  const error = parseMcpToolError(response).error;
+  expect(error.remediation.action).toContain("retention is unknown");
+  expect(error).toMatchObject({
     code: "resource_constraint",
     details: {
       partial_observation: { kind: "unretained-evidence" },

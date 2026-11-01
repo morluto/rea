@@ -200,21 +200,28 @@ export const omitUnretainedEvidenceFromError = (
     !Array.isArray(evidence)
       ? evidence.evidence_id
       : undefined;
+  const retention =
+    partial.kind === "inline-evidence"
+      ? typeof partial.retention === "string"
+        ? partial.retention
+        : "unknown"
+      : "unretained";
+  const omission =
+    retention === "unretained"
+      ? "The omitted observation was not retained and could not fit within MCP delivery limits."
+      : retention === "unknown"
+        ? "The omitted observation's retention is unknown, and it could not fit within MCP delivery limits."
+        : "The observation could not fit within MCP delivery limits.";
   return {
     ...projected,
     remediation: {
-      action: `${projected.remediation.action} The observation could not fit within MCP delivery limits.`,
+      action: `${projected.remediation.action} ${omission}`,
     },
     details: {
       ...details,
       [`${field}_omitted`]: {
         reason: "mcp-response-limit",
-        retention:
-          partial.kind === "inline-evidence"
-            ? typeof partial.retention === "string"
-              ? partial.retention
-              : "unknown"
-            : "unretained",
+        retention,
         constraint: limit.constraint,
         original_response_bytes_at_least: limit.bytesAtLeast,
         ...(typeof evidenceId === "string" ? { evidence_id: evidenceId } : {}),
