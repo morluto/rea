@@ -638,6 +638,11 @@ numbering gaps leave coverage unknown; a DfuSe suffix CRC mismatch follows
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
 Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
 
+A provider switch or different target can retire the active Ghidra database and discard
+its edits, even if the new provider fails on a later call. Same-target,
+same-profile reopen keeps the active database. Retained annotation Evidence
+records what happened; it does not restore the edits.
+
 For `compare_functions`, obtain `analyze_function` Evidence before and after the
 edit while the MCP session is open; annotation Evidence is not a comparison
 input. Export the needed Evidence before close if comparison will happen later.
