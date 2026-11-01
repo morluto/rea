@@ -45,7 +45,7 @@ struct ProcessRunTokenSnapshotProbe {
     let zombieIdentity = readProcessIdentities(
       pids: [42],
       snapshot: ProcessSnapshot(
-        metadata: [42: ProcessMetadata(identity: "start:42", effectiveUid: 501, lifecycle: "zombie", parentPid: 7, processGroupId: 9, pointerSize: 8)],
+        metadata: [42: ProcessMetadata(identity: "start:42", effectiveUid: 501, lifecycle: "zombie", parentPid: 7, processGroupId: 9, pointerSize: 8, name: "probe-name")],
         failure: nil
       )
     )
@@ -58,7 +58,8 @@ struct ProcessRunTokenSnapshotProbe {
       "invalidPidIsUnavailable": invalidIdentity.first?.state == "unavailable" && invalidIdentity.first?.reason == "invalid_process_id",
       "zombieLifecycleIsSeparateFromIdentity": zombieIdentity.first?.state == "readable" && zombieIdentity.first?.identity == "start:42" && zombieIdentity.first?.lifecycle == "zombie",
       "effectiveUidComesFromNativeIdentity": zombieIdentity.first?.effective_uid == 501,
-      "nativeRelationIsSeparateFromIdentity": zombieIdentity.first?.relation?.parent_pid == 7 && zombieIdentity.first?.relation?.process_group_id == 9
+      "nativeRelationIsSeparateFromIdentity": zombieIdentity.first?.relation?.parent_pid == 7 && zombieIdentity.first?.relation?.process_group_id == 9,
+      "nativeNameIsSeparateFromIdentity": zombieIdentity.first?.name == "probe-name" && absentIdentities.first?.name == nil && failedIdentities.first?.name == nil
     ]
     let data = try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys])
     FileHandle.standardOutput.write(data)

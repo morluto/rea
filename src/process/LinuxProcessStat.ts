@@ -3,6 +3,8 @@ import type { ProcessLifecycle } from "./ProcessLifecycle.js";
 /** Native process facts parsed from one Linux `/proc/<pid>/stat` record. */
 export interface LinuxProcessStat {
   readonly pid: number;
+  /** The kernel's short command name (comm), possibly truncated; display only. */
+  readonly name: string;
   readonly startTime: string;
   readonly lifecycle: ProcessLifecycle | undefined;
   readonly parentPid: number;
@@ -81,6 +83,7 @@ export const parseLinuxProcessStat = (
 
   return {
     pid,
+    name: value.slice(commandStart + 1, commandEnd),
     startTime,
     lifecycle,
     parentPid,
