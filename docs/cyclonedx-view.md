@@ -17,13 +17,14 @@ Components use Package URLs:
   path stay separators. Other characters outside the URL unreserved set are
   percent-encoded. The namespace and name are lowercased. A Go `h1:` sum is
   a directory hash, so it is the property `rea:go:sum` and is not a `hashes`
-  entry. When a replacement is a module path, the component is the replacement
-  and `rea:go:original` records the original module. When that path cannot
-  name a Package URL, the property is the recorded path and
-  `rea:go:original-sum` keeps its sum. A local path, such as
-  `./dep` or an absolute path, has no module identity, so the component has no
-  Package URL. Its `bom-ref` is `go-module:<index>`, `rea:go:original` records
-  the module it replaces, and the path stays unknown.
+  entry. When a replacement is a module path, the component is the replacement.
+  `rea:go:original-path`, `rea:go:original-version` and `rea:go:original-sum`
+  keep the replaced module as recorded, because a Package URL lowercases the
+  path. `rea:go:original` is that module's Package URL, and it is absent when
+  the path cannot name one. A local path, such as `./dep` or an absolute path,
+  has no module identity. Neither does a malformed path, such as one with an
+  empty, `.` or `..` segment. Such a component has no Package URL, its
+  `bom-ref` is `go-module:<index>`, and the path stays unknown.
 - Rust crates from crates.io use `pkg:cargo/<name>@<version>`. A slash in a
   crate name is encoded. `pkg:cargo` resolves to crates.io, so a `local`, `git`
   or other source has no Package URL. Its `bom-ref` is `rust-package:<index>`,
@@ -41,10 +42,14 @@ to `main-module-edges`.
 establish that nothing else is linked.
 
 The view keeps artifact identity, the parent Evidence id, a view digest,
-coverage, limitations and the unknowns carried by the parent. Those unknowns
-are also document properties named `rea:unknown`, next to `rea:evidence_id`.
+coverage, limitations and the unknowns carried by the parent. Unknowns and
+limitations are also document properties named `rea:unknown` and
+`rea:limitation`, next to `rea:evidence_id`, so an extracted document keeps
+them.
 The document does not page. A document larger than 1,048,576 bytes is refused.
-The refusal names `export_evidence_bundle`.
+Recorded fields are counted before any Package URL or document is built, so
+`document_bytes` in a refusal is exact or a lower bound, as
+`document_bytes_bound` states. The refusal names `export_evidence_bundle`.
 
 One parent produces one document. Several parents are not merged, and SPDX is
 not produced.

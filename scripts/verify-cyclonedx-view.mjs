@@ -3,14 +3,13 @@
 // checks the CycloneDX 1.6 document against the pinned official schema plus
 // @cyclonedx/cyclonedx-library. The schema and the library stay in this run.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
 const { inspectAnalysisView } = await importVerifierSource(
   new URL(
@@ -36,7 +35,6 @@ const { PrivateRuntimeRoot } = await importVerifierSource(
   import.meta.url,
 );
 
-const execute = promisify(execFile);
 const require = createRequire(import.meta.url);
 const Ajv = require("ajv");
 const addFormats = require("ajv-formats");
@@ -62,26 +60,13 @@ const SCHEMA_FETCH_TIMEOUT_MS = 120_000;
 // The pinned bom-1.6 schema is 262597 bytes. Stop before an unbounded body.
 const SCHEMA_MAX_BYTES = 512 * 1024;
 
-const run = async (command, args, options = {}) => {
-  try {
-    return await execute(command, args, {
-      timeout: 120_000,
-      maxBuffer: 8 * 1024 * 1024,
-      ...options,
-    });
-  } catch (cause) {
-    const stderr = Buffer.isBuffer(cause?.stderr)
-      ? cause.stderr.toString("utf8")
-      : String(cause?.stderr ?? "");
-    const stdout = Buffer.isBuffer(cause?.stdout)
-      ? cause.stdout.toString("utf8")
-      : String(cause?.stdout ?? "");
-    throw new Error(
-      `${command} ${args.join(" ")} failed.\n${stderr || stdout || cause?.message || cause}`,
-      { cause },
-    );
-  }
-};
+const commands = await createVerifierCommands();
+const run = (command, args, options = {}) =>
+  commands.exec(command, args, {
+    timeout: 120_000,
+    maxBuffer: 8 * 1024 * 1024,
+    ...options,
+  });
 
 const readBoundedBody = async (response, name) => {
   const declared = response.headers.get("content-length");
@@ -336,16 +321,21 @@ await withVerifierCleanup(async () => {
         module.replacement !== null && directoryPath(module.replacement.path),
     );
     assert.ok(localReplacement, "Go fixture should record a local replacement");
-    assert.equal(
-      projected.document.components.some((component) =>
-        component.properties?.some(
-          (property) =>
-            property.name === "rea:go:original" &&
-            property.value ===
-              golangPackageUrl(localReplacement.path, localReplacement.version),
-        ),
+    const replaced = projected.document.components.find((component) =>
+      component.properties?.some(
+        (property) =>
+          property.name === "rea:go:original" &&
+          property.value ===
+            golangPackageUrl(localReplacement.path, localReplacement.version),
       ),
-      true,
+    );
+    assert.ok(replaced, "Go document should keep the replaced module");
+    assert.deepEqual(
+      ["rea:go:original-path", "rea:go:original-version"].map(
+        (name) =>
+          replaced.properties.find((property) => property.name === name)?.value,
+      ),
+      [localReplacement.path, localReplacement.version],
     );
     const documentText = JSON.stringify(projected.document);
     assert.equal(documentText.includes("pkg:golang/."), false);
@@ -513,6 +503,12 @@ await withVerifierCleanup(async () => {
   report.cyclonedxCli =
     cli === null ? { status: "absent" } : { status: "present", version: cli };
   report.ajv = { version: "8.20.0", formats: "3.0.1", strict: false };
-}, [() => root.close()]);
+}, [
+  // A failed process stop retains its owner and leaves the root in place.
+  async () => {
+    await commands.close();
+    await root.close();
+  },
+]);
 
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);

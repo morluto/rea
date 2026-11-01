@@ -131,10 +131,14 @@ mcpTest(
         "bom-ref": "rust-package:1",
       });
       expect(sample).not.toHaveProperty("purl");
-      expect(documentText).toContain(
-        "Rust package sample 0.1.0 from source local has no Package URL " +
-          "because pkg:cargo names a crates.io package.",
+      expect(sample?.properties).toEqual(
+        expect.arrayContaining([{ name: "rea:cargo:source", value: "local" }]),
       );
+      expect(
+        result.unknowns.filter((message) =>
+          ["sample", "0.1.0", "local"].every((fact) => message.includes(fact)),
+        ),
+      ).toHaveLength(1);
     } finally {
       await session.close();
     }

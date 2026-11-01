@@ -9,7 +9,11 @@ import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
 import type { GoModule } from "../go/goBinary.js";
 import { goBinarySchema } from "../go/goBinary.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
-import { cargoPackageUrl, golangPackageUrl } from "../packageUrl.js";
+import {
+  cargoPackageUrl,
+  golangPackageUrl,
+  packageUrlBytes,
+} from "../packageUrl.js";
 import { err, ok, type Result } from "../result.js";
 import type { RustPackage } from "../rust/rustBinary.js";
 import { rustBinarySchema } from "../rust/rustBinary.js";
@@ -180,24 +184,14 @@ const uniqueRefs = (refs: readonly (string | undefined)[]): string[] => {
   return selected;
 };
 
-/**
- * Go's directory-path syntax, checked the same way on every host: `.`, `..`,
- * `./`, `../`, a rooted path, or a Windows drive prefix. It is not a module path.
- */
-const isGoDirectoryPath = (path: string): boolean =>
-  path === "." ||
-  path === ".." ||
-  path.startsWith("./") ||
-  path.startsWith("../") ||
-  path.startsWith(".\\") ||
-  path.startsWith("..\\") ||
-  path.startsWith("/") ||
-  path.startsWith("\\") ||
-  /^[A-Za-z]:/u.test(path);
+/** An empty, `.` or `..` segment: empty, rooted, relative or trailing-slash paths. */
+const UNUSABLE_GO_SEGMENT = /(?:^|\/)\.{0,2}(?:\/|$)/u;
+/** Windows directory syntax, checked the same way on every host. */
+const WINDOWS_DIRECTORY_PREFIX = /^(?:\.{0,2}\\|[A-Za-z]:)/u;
 
-/** A path that can name a Package URL. Empty and directory paths cannot. */
+/** A path that can name a Package URL. Every segment must name something. */
 const isGoModulePath = (path: string): boolean =>
-  path.length > 0 && !isGoDirectoryPath(path);
+  !UNUSABLE_GO_SEGMENT.test(path) && !WINDOWS_DIRECTORY_PREFIX.test(path);
 
 /**
  * The parsed replacement is the component, including a directory or other
@@ -244,12 +238,16 @@ const goComponentProperties = (
   if (sum !== undefined) properties.push({ name: "rea:go:sum", value: sum });
   const original = published.original;
   if (original === null) return properties;
-  properties.push({
-    name: "rea:go:original",
-    value: isGoModulePath(original.path)
-      ? golangPackageUrl(original.path, original.version)
-      : original.path,
-  });
+  if (isGoModulePath(original.path))
+    properties.push({
+      name: "rea:go:original",
+      value: golangPackageUrl(original.path, original.version),
+    });
+  // A Package URL lowercases the path, and a malformed path has none.
+  properties.push(
+    { name: "rea:go:original-path", value: original.path },
+    { name: "rea:go:original-version", value: original.version },
+  );
   const originalSum = presentSum(original.sum);
   if (originalSum !== undefined)
     properties.push({ name: "rea:go:original-sum", value: originalSum });
@@ -280,13 +278,56 @@ const libraryComponent = (
   ...(properties.length > 0 ? { properties: [...properties] } : {}),
 });
 
-const documentAllowanceExceeded = (bytes: number, bound: "" | "at least ") =>
+/** UTF-8 bytes of a JSON string body. An escape counts as at least two bytes. */
+const jsonTextBytes = (value: string): number => {
+  let bytes = Buffer.byteLength(value, "utf8");
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x22 || code === 0x5c) bytes += 1;
+  }
+  return bytes;
+};
+
+/** The smallest serialized component, before its strings. */
+const EMPTY_COMPONENT_BYTES = JSON.stringify({
+  type: "library",
+  "bom-ref": "",
+  name: "",
+}).length;
+/** A Package URL is the `purl`, the `bom-ref` and a composition entry. */
+const PACKAGE_URL_OCCURRENCES = 3;
+
+/**
+ * Lower bound on document bytes, stopping once past the allowance. It reads
+ * recorded fields only, so a refusal needs no Package URL or serialization.
+ */
+const documentBytesAtLeast = <Row>(
+  start: number,
+  rows: readonly Row[],
+  rowBytes: (row: Row) => number,
+): number => {
+  let total = start;
+  for (const row of rows) {
+    if (total > CYCLONEDX_DOCUMENT_BYTE_LIMIT) break;
+    total += rowBytes(row);
+  }
+  return total;
+};
+
+const documentAllowanceExceeded = (
+  bytes: number,
+  bound: "exact" | "lower_bound",
+) =>
   err(
     new AnalysisResourceConstraintError(
       INSPECT_ANALYSIS_VIEW_OPERATION,
       "transport",
-      `The CycloneDX document is ${bound}${String(bytes)} bytes and exceeds the ${String(CYCLONEDX_DOCUMENT_BYTE_LIMIT)}-byte CycloneDX document allowance. This view does not page. Export the parent Evidence with export_evidence_bundle.`,
-      { document_bytes: bytes, limit_bytes: CYCLONEDX_DOCUMENT_BYTE_LIMIT },
+      `The CycloneDX document is ${bound === "lower_bound" ? "at least " : ""}${String(bytes)} bytes and exceeds the ${String(CYCLONEDX_DOCUMENT_BYTE_LIMIT)}-byte CycloneDX document allowance. This view does not page. Export the parent Evidence with export_evidence_bundle.`,
+      {
+        document_bytes: bytes,
+        document_bytes_bound: bound,
+        limit_bytes: CYCLONEDX_DOCUMENT_BYTE_LIMIT,
+      },
       fixedAllowanceOptions("The CycloneDX document allowance", "bytes"),
     ),
   );
@@ -368,6 +409,7 @@ const projectSizedDocument = (
       { name: "rea:evidence_id", value: parent.evidenceId },
       ...documentProperties,
       ...unknowns.map((value) => ({ name: "rea:unknown", value })),
+      ...limitations.map((value) => ({ name: "rea:limitation", value })),
     ],
   };
   const parsedDocument = cycloneDxDocumentSchema.safeParse(draft);
@@ -385,7 +427,7 @@ const projectSizedDocument = (
   const document = parsedDocument.data;
   const bytes = Buffer.byteLength(JSON.stringify(document), "utf8");
   if (bytes > CYCLONEDX_DOCUMENT_BYTE_LIMIT)
-    return documentAllowanceExceeded(bytes, "");
+    return documentAllowanceExceeded(bytes, "exact");
   return ok({
     kind: "cyclonedx" as const,
     view,
@@ -400,6 +442,20 @@ const projectSizedDocument = (
     document,
   });
 };
+
+const goIdentityBytes = (identity: GoModuleIdentity): number =>
+  jsonTextBytes(identity.path) +
+  jsonTextBytes(identity.version) +
+  jsonTextBytes(identity.sum ?? "");
+
+const goComponentBytes = ({ component, original }: PublishedGoModule): number =>
+  EMPTY_COMPONENT_BYTES +
+  goIdentityBytes(component) +
+  (original === null ? 0 : goIdentityBytes(original)) +
+  (isGoModulePath(component.path)
+    ? PACKAGE_URL_OCCURRENCES *
+      packageUrlBytes("golang", component.path, component.version)
+    : 0);
 
 const projectGoCycloneDx = (
   parent: AnalysisViewParent,
@@ -428,6 +484,9 @@ const projectGoCycloneDx = (
     ...(info?.module.dependencies ?? []),
   ];
   const published = modules.map(publishedGoModule);
+  const minimumBytes = documentBytesAtLeast(0, published, goComponentBytes);
+  if (minimumBytes > CYCLONEDX_DOCUMENT_BYTE_LIMIT)
+    return documentAllowanceExceeded(minimumBytes, "lower_bound");
   const refKeys = published.map((item, index) =>
     isGoModulePath(item.component.path)
       ? golangPackageUrl(item.component.path, item.component.version)
@@ -487,6 +546,15 @@ const projectGoCycloneDx = (
   );
 };
 
+const rustPackageBytes = (pkg: RustPackage): number =>
+  EMPTY_COMPONENT_BYTES +
+  jsonTextBytes(pkg.name) +
+  jsonTextBytes(pkg.version) +
+  jsonTextBytes(pkg.source) +
+  (pkg.source === CRATES_IO_SOURCE
+    ? PACKAGE_URL_OCCURRENCES * packageUrlBytes("cargo", pkg.name, pkg.version)
+    : 0);
+
 const rustScope = (
   kind: RustPackage["kind"],
 ): "required" | "excluded" | undefined =>
@@ -521,6 +589,9 @@ const projectRustCycloneDx = (
   );
   if (!subject.ok) return subject;
   const packages = report.auditable_metadata?.packages ?? [];
+  const minimumBytes = documentBytesAtLeast(0, packages, rustPackageBytes);
+  if (minimumBytes > CYCLONEDX_DOCUMENT_BYTE_LIMIT)
+    return documentAllowanceExceeded(minimumBytes, "lower_bound");
   const purls = packages.map(cratesIoPackageUrl);
   const refKeys = packages.map(
     (_, index) => purls[index] ?? `rust-package:${String(index)}`,
@@ -528,16 +599,14 @@ const projectRustCycloneDx = (
   const refs = bomRefsFor(refKeys);
   // Edges expand small indices into full refs, so a report inside its own limit
   // can describe a document far past V8's string limit. Count before expanding.
-  const dependencyRefBytes = packages.reduce(
-    (total, pkg) =>
-      [...new Set(pkg.dependencies)].reduce(
-        (sum, target) => sum + Buffer.byteLength(refs[target] ?? "", "utf8"),
-        total,
-      ),
-    0,
+  const expandedBytes = documentBytesAtLeast(minimumBytes, packages, (pkg) =>
+    [...new Set(pkg.dependencies)].reduce(
+      (sum, target) => sum + (refs[target]?.length ?? 0),
+      0,
+    ),
   );
-  if (dependencyRefBytes > CYCLONEDX_DOCUMENT_BYTE_LIMIT)
-    return documentAllowanceExceeded(dependencyRefBytes, "at least ");
+  if (expandedBytes > CYCLONEDX_DOCUMENT_BYTE_LIMIT)
+    return documentAllowanceExceeded(expandedBytes, "lower_bound");
   const components = packages.map((pkg, index) =>
     libraryComponent(
       refs[index] ?? `rust-package:${String(index)}`,

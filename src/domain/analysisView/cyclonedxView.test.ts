@@ -124,6 +124,47 @@ const rustMetadata = (
     },
   });
 
+const refusedAllowance = (operation: string, report: unknown) => {
+  const result = projectAnalysisView(parentFor(operation, report), VIEW);
+  if (result.ok) throw new Error("Expected the document allowance");
+  if (!(result.error instanceof AnalysisResourceConstraintError))
+    throw result.error;
+  return result.error;
+};
+
+const cratesIoPackage = (name: string, dependencies: number[] = []) => ({
+  name,
+  version: "1.0.0",
+  source: "crates.io",
+  kind: "runtime" as const,
+  dependencies,
+  features: null,
+  root: false,
+});
+
+const goModuleList = (dependencies: GoModule[]) =>
+  goReport({
+    path: "example.com/tool",
+    main: goModule("example.com/tool", "v0.0.0"),
+    dependencies,
+    settings: [],
+    unparsed_lines: [],
+    unparsed_line_bytes_base64: [],
+    complete: true,
+  });
+
+const propertyValues = (
+  properties: readonly { name: string; value: string }[] | undefined,
+  name: string,
+) =>
+  (properties ?? []).flatMap((property) =>
+    property.name === name ? [property.value] : [],
+  );
+
+/** Unknowns that carry this recorded value, without freezing their sentence. */
+const unknownsNaming = (unknowns: readonly string[], ...facts: string[]) =>
+  unknowns.filter((message) => facts.every((fact) => message.includes(fact)));
+
 const projectRust = (report: RustBinary) => {
   const result = projectAnalysisView(
     parentFor("inspect_rust_binary", report),
@@ -195,6 +236,8 @@ it("projects Go modules with Package URLs, replacements and main-module edges", 
       name: "rea:go:original",
       value: "pkg:golang/example.com/legacy@v2.0.0%2Bincompatible",
     },
+    { name: "rea:go:original-path", value: "example.com/legacy" },
+    { name: "rea:go:original-version", value: "v2.0.0+incompatible" },
     { name: "rea:go:original-sum", value: "h1:original" },
   ]);
   expect(view.document.dependencies).toEqual([
@@ -226,30 +269,61 @@ it("projects Go modules with Package URLs, replacements and main-module edges", 
       { name: "rea:go:graph", value: "main-module-edges" },
     ]),
   );
-  expect(view.limitations.join(" ")).toContain("no module graph");
-  expect(view.limitations.join(" ")).toContain("does not establish");
   expect(JSON.stringify(view.document)).not.toContain('"complete"');
 });
 
-it("marks partial Go module coverage incomplete and absent build info unknown", () => {
-  const partial = projectGo(
-    goReport({
-      path: "example.com/tool",
-      main: null,
-      dependencies: [goModule("example.com/dep", "v1.0.0")],
-      settings: [],
-      unparsed_lines: ["?"],
-      unparsed_line_bytes_base64: [],
-      complete: false,
-    }),
+it("carries reader limitations into the standalone Go and Rust documents", () => {
+  const go = projectGo(goReport(null));
+  expect(go.limitations).toContain("go reader note");
+  expect(propertyValues(go.document.properties, "rea:limitation")).toEqual(
+    go.limitations,
   );
+
+  const rust = rustMetadata([], [], [], null);
+  const note = "format revision 9 read with the revision 8 schema";
+  const view = projectRust({ ...rust, limitations: [note] });
+  expect(propertyValues(view.document.properties, "rea:limitation")).toEqual(
+    expect.arrayContaining([note]),
+  );
+  expect(propertyValues(view.document.properties, "rea:limitation")).toEqual(
+    view.limitations,
+  );
+});
+
+it("keeps the omission notice when reader limitations overflow the budget", () => {
+  const view = projectGo({
+    ...goReport(null),
+    limitations: Array.from(
+      { length: 400 },
+      (_, index) => `${String(index)} ${"n".repeat(1_000)}`,
+    ),
+  });
+  const delivered = propertyValues(view.document.properties, "rea:limitation");
+  expect(delivered).toEqual(view.limitations);
+  expect(delivered.length).toBeLessThan(400);
+  expect(unknownsNaming(delivered, view.parent_evidence_id)).toHaveLength(1);
+});
+
+it("marks partial Go module coverage incomplete and absent build info unknown", () => {
+  const partialReport = goReport({
+    path: "example.com/tool",
+    main: null,
+    dependencies: [goModule("example.com/dep", "v1.0.0")],
+    settings: [],
+    unparsed_lines: ["?"],
+    unparsed_line_bytes_base64: [],
+    complete: false,
+  });
+  const partial = projectGo(partialReport);
   expect(partial.source_coverage).toEqual({
     aggregate: "incomplete",
     records: "partial",
   });
   expect(partial.document.compositions[0]?.aggregate).toBe("incomplete");
   expect(partial.document.dependencies).toBeUndefined();
-  expect(partial.unknowns.join(" ")).toContain("not parsed");
+  expect(partial.unknowns).toEqual(
+    expect.arrayContaining([...goBinaryUnknowns(partialReport).values]),
+  );
 
   const absentReport = goReport(null);
   const absent = projectGo(absentReport);
@@ -269,17 +343,16 @@ it("marks partial Go module coverage incomplete and absent build info unknown", 
 });
 
 it("does not report an embedded list for parse-complete GOPATH metadata", () => {
-  const view = projectGo(
-    goReport({
-      path: "example.com/tool",
-      main: null,
-      dependencies: [],
-      settings: [{ key: "GOOS", value: "linux" }],
-      unparsed_lines: [],
-      unparsed_line_bytes_base64: [],
-      complete: true,
-    }),
-  );
+  const report = goReport({
+    path: "example.com/tool",
+    main: null,
+    dependencies: [],
+    settings: [{ key: "GOOS", value: "linux" }],
+    unparsed_lines: [],
+    unparsed_line_bytes_base64: [],
+    complete: true,
+  });
+  const view = projectGo(report);
   expect(view.source_coverage).toEqual({
     aggregate: "unknown",
     records: "absent",
@@ -287,7 +360,9 @@ it("does not report an embedded list for parse-complete GOPATH metadata", () => 
   expect(view.document.components).toEqual([]);
   expect(view.document.dependencies).toBeUndefined();
   expect(view.document.compositions[0]?.aggregate).toBe("unknown");
-  expect(view.unknowns.join(" ")).toContain("No main module was decoded");
+  expect(view.unknowns).toEqual(
+    expect.arrayContaining([...goBinaryUnknowns(report).values]),
+  );
 });
 
 it("omits an unparsed Go dependency list instead of claiming it is empty", () => {
@@ -368,76 +443,141 @@ it("refuses a CycloneDX version the specification cannot carry", () => {
   expect(result.ok).toBe(false);
   if (result.ok || !(result.error instanceof AnalysisInputError))
     throw new Error("Expected a representation refusal");
-  expect(result.error.issues[0]?.message).toContain("1024");
+  expect(result.error.issues[0]).toMatchObject({
+    path: ["document"],
+    reason: "invalid_value",
+  });
 });
 
 it("refuses a CycloneDX document past the fixed byte allowance", () => {
   const path = `example.com/${"m".repeat(120)}`;
-  const dependencies = Array.from({ length: 1800 }, (_, index) =>
-    goModule(`${path}/m${String(index)}`, "v1.0.0", "h1:sum"),
-  );
-  const result = projectAnalysisView(
-    parentFor(
-      "inspect_go_binary",
-      goReport({
-        path: "example.com/tool",
-        main: goModule("example.com/tool", "v0.0.0"),
-        dependencies,
-        settings: [],
-        unparsed_lines: [],
-        unparsed_line_bytes_base64: [],
-        complete: true,
-      }),
+  const error = refusedAllowance(
+    "inspect_go_binary",
+    goModuleList(
+      Array.from({ length: 1400 }, (_, index) =>
+        goModule(`${path}/m${String(index)}`, "v1.0.0", "h1:sum"),
+      ),
     ),
-    VIEW,
   );
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("Expected the document allowance");
-  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-  expect(result.error.message).toContain("export_evidence_bundle");
-  expect(result.error.message).toContain(String(CYCLONEDX_DOCUMENT_BYTE_LIMIT));
-  if (!(result.error instanceof AnalysisResourceConstraintError))
-    throw result.error;
-  expect(result.error.fixedAllowance).toEqual({
+  expect(error.message).toContain("export_evidence_bundle");
+  expect(error.reportedLimits).toMatchObject({
+    document_bytes_bound: "exact",
+    limit_bytes: CYCLONEDX_DOCUMENT_BYTE_LIMIT,
+  });
+  expect(error.reportedLimits?.document_bytes).toBeGreaterThan(
+    CYCLONEDX_DOCUMENT_BYTE_LIMIT,
+  );
+  expect(error.fixedAllowance).toEqual({
     name: "The CycloneDX document allowance",
     kind: "bytes",
   });
-  expect(result.error.retryable).toBe(false);
+  expect(error.retryable).toBe(false);
+});
+
+const LOWER_BOUND = { document_bytes_bound: "lower_bound" } as const;
+
+it.each([
+  ["plain bytes", "x".repeat(CYCLONEDX_DOCUMENT_BYTE_LIMIT)],
+  ["percent encoding triples", "é".repeat(100_000)],
+])("refuses Rust identity before a Package URL: %s", (_label, name) => {
+  const error = refusedAllowance(
+    "inspect_rust_binary",
+    rustMetadata([cratesIoPackage(name)], [], [], null),
+  );
+  expect(error.reportedLimits).toMatchObject(LOWER_BOUND);
+});
+
+it.each([
+  ["plain bytes", "n".repeat(CYCLONEDX_DOCUMENT_BYTE_LIMIT + 1)],
+  ["JSON escapes", `"`.repeat(CYCLONEDX_DOCUMENT_BYTE_LIMIT / 2 + 1)],
+])("refuses a Rust name with no Package URL or edges: %s", (_label, name) => {
+  const error = refusedAllowance(
+    "inspect_rust_binary",
+    rustMetadata([{ ...cratesIoPackage(name), source: "local" }], [], [], null),
+  );
+  expect(error.reportedLimits).toMatchObject(LOWER_BOUND);
+});
+
+it("refuses Go identity before a Package URL, counting replaced modules", () => {
+  const large = "m".repeat(CYCLONEDX_DOCUMENT_BYTE_LIMIT);
+  expect(
+    refusedAllowance(
+      "inspect_go_binary",
+      goModuleList([goModule(`example.com/${large}`, "v1.0.0")]),
+    ).reportedLimits,
+  ).toMatchObject(LOWER_BOUND);
+  expect(
+    refusedAllowance(
+      "inspect_go_binary",
+      goModuleList([goModule(`./${large}`, "v1.0.0")]),
+    ).reportedLimits,
+  ).toMatchObject(LOWER_BOUND);
+  expect(
+    refusedAllowance(
+      "inspect_go_binary",
+      goModuleList([
+        goModule(`example.com/${large}`, "v1.0.0", null, {
+          path: "./dep",
+          version: "(devel)",
+          sum: null,
+        }),
+      ]),
+    ).reportedLimits,
+  ).toMatchObject(LOWER_BOUND);
+});
+
+it("refuses many small components before building any of them", () => {
+  const error = refusedAllowance(
+    "inspect_go_binary",
+    goModuleList(
+      Array.from({ length: 40_000 }, (_, index) =>
+        goModule(`e/${String(index)}`, "v1"),
+      ),
+    ),
+  );
+  expect(error.reportedLimits).toMatchObject(LOWER_BOUND);
+});
+
+it("never refuses early for a document inside the allowance", () => {
+  // The name and four Package URL copies land just under the allowance.
+  const view = projectRust(
+    rustMetadata([cratesIoPackage("n".repeat(208_000))], [], [], null),
+  );
+  const bytes = Buffer.byteLength(JSON.stringify(view.document), "utf8");
+  expect(bytes).toBeGreaterThan(CYCLONEDX_DOCUMENT_BYTE_LIMIT - 8_000);
+  expect(bytes).toBeLessThanOrEqual(CYCLONEDX_DOCUMENT_BYTE_LIMIT);
+
+  const refused = refusedAllowance(
+    "inspect_rust_binary",
+    rustMetadata([cratesIoPackage("n".repeat(215_000))], [], [], null),
+  );
+  expect(refused.reportedLimits).toMatchObject({
+    document_bytes_bound: "exact",
+  });
 });
 
 it("refuses a dense Rust graph before expanding its edges", () => {
   const count = 300;
   const indices = Array.from({ length: count }, (_, index) => index);
   const name = "n".repeat(4_000);
-  const result = projectAnalysisView(
-    parentFor(
-      "inspect_rust_binary",
-      rustMetadata(
-        indices.map((index) => ({
-          name: `${name}${String(index)}`,
-          version: "1.0.0",
-          source: "crates.io",
-          kind: "runtime" as const,
-          dependencies: indices.slice(0, index),
-          features: null,
-          root: index === count - 1,
-        })),
-        indices.flatMap((from_index) =>
-          indices
-            .slice(0, from_index)
-            .map((to_index) => ({ from_index, to_index })),
-        ),
-        [],
-        count - 1,
+  const error = refusedAllowance(
+    "inspect_rust_binary",
+    rustMetadata(
+      indices.map((index) => ({
+        ...cratesIoPackage(`${name}${String(index)}`, indices.slice(0, index)),
+        root: index === count - 1,
+      })),
+      indices.flatMap((from_index) =>
+        indices
+          .slice(0, from_index)
+          .map((to_index) => ({ from_index, to_index })),
       ),
+      [],
+      count - 1,
     ),
-    VIEW,
   );
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("Expected the document allowance");
-  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-  expect(result.error.message).toContain("at least");
-  expect(result.error.message).toContain("export_evidence_bundle");
+  expect(error.reportedLimits).toMatchObject(LOWER_BOUND);
+  expect(error.message).toContain("export_evidence_bundle");
 });
 
 it("projects Rust edges, build scope and duplicate Package URLs", () => {
@@ -505,11 +645,10 @@ it("projects Rust edges, build scope and duplicate Package URLs", () => {
     undefined,
     serde,
   ]);
-  expect(first.unknowns).toEqual(
-    expect.arrayContaining([
-      "Rust package app 0.1.0 from source local has no Package URL because pkg:cargo names a crates.io package.",
-    ]),
+  expect(unknownsNaming(first.unknowns, "app", "0.1.0", "local")).toHaveLength(
+    1,
   );
+  expect(unknownsNaming(first.unknowns, "serde")).toEqual([]);
   expect(first.document.dependencies).toEqual([
     { ref: serde, dependsOn: [] },
     {
@@ -555,7 +694,6 @@ it("keeps missing Rust metadata unknown instead of an empty inventory", () => {
   });
   expect(view.document.components).toEqual([]);
   expect(view.document.dependencies).toBeUndefined();
-  expect(view.unknowns.join(" ")).toContain("does not establish an empty");
 });
 
 it("refuses a CycloneDX view of a parent that is neither Go nor Rust", () => {
@@ -654,6 +792,8 @@ it("keeps a local Go path unknown and retains a module identity", () => {
   expect(view.document.components[1]?.properties).toEqual([
     { name: "rea:go:sum", value: "h1:local" },
     { name: "rea:go:original", value: "pkg:golang/example.com/dep@v0.1.0" },
+    { name: "rea:go:original-path", value: "example.com/dep" },
+    { name: "rea:go:original-version", value: "v0.1.0" },
     { name: "rea:go:original-sum", value: "h1:original" },
     { name: "rea:go:local-replacement", value: "./dep" },
   ]);
@@ -667,27 +807,19 @@ it("keeps a local Go path unknown and retains a module identity", () => {
   ]);
   expect(view.document.components[6]?.properties).toEqual([
     { name: "rea:go:sum", value: "h1:fork" },
-    { name: "rea:go:original", value: "./local" },
+    { name: "rea:go:original-path", value: "./local" },
+    { name: "rea:go:original-version", value: "v0.0.0" },
     { name: "rea:go:original-sum", value: "h1:local-sum" },
   ]);
-  expect(view.unknowns.join("\n")).toContain(
-    "Go replacement path ./dep has no module identity.",
-  );
-  expect(view.unknowns.join("\n")).toContain(
-    "Go replacement path /home/alice/dep has no module identity.",
-  );
-  expect(view.unknowns.join("\n")).toContain(
-    "Go replacement path C:/src/dep has no module identity.",
-  );
-  expect(view.unknowns.join("\n")).toContain(
-    "Go replacement path .\\dep has no module identity.",
-  );
-  expect(view.unknowns.join("\n")).toContain(
-    "Go module path ../dependency has no module identity.",
-  );
-  expect(view.unknowns.join("\n")).toContain(
-    "Go module path ./local has no module identity; the replacement module is kept.",
-  );
+  for (const path of [
+    "./dep",
+    "/home/alice/dep",
+    "C:/src/dep",
+    ".\\dep",
+    "../dependency",
+    "./local",
+  ])
+    expect(unknownsNaming(view.unknowns, `${path} `), path).toHaveLength(1);
   expect(view.document.dependencies).toEqual([
     {
       ref: "pkg:golang/example.com/tool@%28devel%29",
@@ -754,7 +886,8 @@ it("keeps an empty Go path unknown and versions a replacement as itself", () => 
   });
   expect(view.document.components[1]?.properties).toEqual([
     { name: "rea:go:sum", value: "h1:local-dep" },
-    { name: "rea:go:original", value: "" },
+    { name: "rea:go:original-path", value: "" },
+    { name: "rea:go:original-version", value: "v1" },
     { name: "rea:go:original-sum", value: "h1:dep" },
     { name: "rea:go:local-replacement", value: "./dep" },
   ]);
@@ -769,6 +902,8 @@ it("keeps an empty Go path unknown and versions a replacement as itself", () => 
         name: "rea:go:original",
         value: "pkg:golang/example.com/kept@v1.0.0",
       },
+      { name: "rea:go:original-path", value: "example.com/kept" },
+      { name: "rea:go:original-version", value: "v1.0.0" },
       { name: "rea:go:original-sum", value: "h1:kept" },
       { name: "rea:go:local-replacement", value: "" },
     ],
@@ -780,7 +915,8 @@ it("keeps an empty Go path unknown and versions a replacement as itself", () => 
     purl: fork,
     properties: [
       { name: "rea:go:sum", value: "h1:fork" },
-      { name: "rea:go:original", value: "" },
+      { name: "rea:go:original-path", value: "" },
+      { name: "rea:go:original-version", value: "v0.0.0" },
       { name: "rea:go:original-sum", value: "h1:empty-original" },
     ],
   });
@@ -791,15 +927,56 @@ it("keeps an empty Go path unknown and versions a replacement as itself", () => 
       dependsOn: ["go-module:1", "go-module:2", fork],
     },
   ]);
-  const unknowns = view.unknowns.join("\n");
-  expect(unknowns).toContain('Go module path "" has no module identity.');
-  expect(unknowns).toContain('Go replacement path "" has no module identity.');
-  expect(unknowns).toContain(
-    "Go replacement path ./dep has no module identity.",
+  expect(unknownsNaming(view.unknowns, '""')).toHaveLength(3);
+  expect(unknownsNaming(view.unknowns, "./dep ")).toHaveLength(1);
+});
+
+it("keeps malformed Go module paths unknown with their recorded values", () => {
+  const malformed = [
+    "example.com/",
+    "example.com//dep",
+    "example.com/./dep",
+    "example.com/../dep",
+  ];
+  const view = projectGo(
+    goModuleList(malformed.map((path) => goModule(path, "v1.0.0", "h1:sum"))),
   );
-  expect(unknowns).toContain(
-    'Go module path "" has no module identity; the replacement module is kept.',
+  const components = view.document.components.slice(1);
+  expect(components.map((component) => component.name)).toEqual(malformed);
+  expect(components.map((component) => component["bom-ref"])).toEqual([
+    "go-module:1",
+    "go-module:2",
+    "go-module:3",
+    "go-module:4",
+  ]);
+  expect(components.every((component) => component.purl === undefined)).toBe(
+    true,
   );
+  for (const path of malformed)
+    expect(unknownsNaming(view.unknowns, `${path} `), path).toHaveLength(1);
+});
+
+it("keeps a replaced Go module exact when its identity is normalized or malformed", () => {
+  const fork = { path: "example.com/fork", version: "v1.2.3", sum: null };
+  const view = projectGo(
+    goModuleList([
+      goModule("github.com/Azure/Legacy", "v2.0.0+incompatible", null, fork),
+      goModule("example.com/", "v1.0.0", null, fork),
+    ]),
+  );
+  expect(view.document.components[1]?.properties).toEqual([
+    {
+      name: "rea:go:original",
+      value: "pkg:golang/github.com/azure/legacy@v2.0.0%2Bincompatible",
+    },
+    { name: "rea:go:original-path", value: "github.com/Azure/Legacy" },
+    { name: "rea:go:original-version", value: "v2.0.0+incompatible" },
+  ]);
+  expect(view.document.components[2]?.properties).toEqual([
+    { name: "rea:go:original-path", value: "example.com/" },
+    { name: "rea:go:original-version", value: "v1.0.0" },
+  ]);
+  expect(unknownsNaming(view.unknowns, "example.com/")).toHaveLength(1);
 });
 
 it("names a Windows artifact path the same way on every host", () => {

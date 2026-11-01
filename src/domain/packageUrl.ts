@@ -31,7 +31,34 @@ export const encodePackageUrlComponent = (value: string): string => {
 export const encodePackageUrlNamespace = (value: string): string =>
   value.split("/").map(encodePackageUrlComponent).join("/");
 
+/** Length of the encoded text, counted without building it. */
+const encodedBytes = (value: string, keepSlashes: boolean): number => {
+  let bytes = 0;
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    bytes +=
+      isUnreserved(code) || (keepSlashes && code === 0x2f)
+        ? 1
+        : 3 * Buffer.byteLength(character, "utf8");
+  }
+  return bytes;
+};
+
 export type PackageUrlType = "golang" | "cargo";
+
+/** Length of `formatPackageUrl`, so a caller can bound it before building it. */
+export const packageUrlBytes = (
+  type: PackageUrlType,
+  name: string,
+  version: string,
+): number => {
+  const golang = type === "golang";
+  return (
+    `pkg:${type}/`.length +
+    encodedBytes(golang ? name.toLowerCase() : name, golang) +
+    (version.length === 0 ? 0 : 1 + encodedBytes(version, false))
+  );
+};
 
 /** `pkg:<type>/<name>@<version>`, omitting `@` when the version is empty. */
 export const formatPackageUrl = (

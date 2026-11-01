@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { cargoPackageUrl, golangPackageUrl } from "./packageUrl.js";
+import {
+  cargoPackageUrl,
+  golangPackageUrl,
+  packageUrlBytes,
+} from "./packageUrl.js";
 
 it.each([
   [
@@ -44,4 +48,20 @@ it.each([
   ],
 ] as const)("encodes %s", (_label, actual, expected) => {
   expect(actual).toBe(expected);
+});
+
+it.each([
+  ["golang", "github.com/Azure/go-autorest", "v0.11.29"],
+  ["golang", "example.com/café", "v2.0.0+incompatible"],
+  ["golang", "example.com/\u212Aelvin", ""],
+  ["cargo", "foo/bar", "1.0.0"],
+  ["cargo", "crate😀\uD800", "(devel)"],
+] as const)("sizes %s %s exactly", (type, name, version) => {
+  const url =
+    type === "golang"
+      ? golangPackageUrl(name, version)
+      : cargoPackageUrl(name, version);
+  expect(packageUrlBytes(type, name, version)).toBe(
+    Buffer.byteLength(url, "utf8"),
+  );
 });

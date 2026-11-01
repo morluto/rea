@@ -6,7 +6,9 @@ checked the documents. The npm script is
 `node scripts/verify-cyclonedx-view.mjs`. It loads project source through
 `scripts/lib/verifier-source-loader.mjs`. Node printed
 `ExperimentalWarning: stripTypeScriptTypes is an experimental feature` during
-that load.
+that load. Compiler and package commands ran through
+`scripts/lib/verify-commands.mjs`, and its cleanup finished before the
+temporary root closed.
 
 This shell's `node -v` was `v24.22.1`, matching `.nvmrc`. The verifier report's
 `node` field was `v24.22.1`. This shell's `npm -v` was `11.16.0`, matching
@@ -32,7 +34,7 @@ installed only inside the verifier temporary directory.
 
 `go version` was `go version go1.26.5 darwin/arm64`. The fixture was
 `example.com/tool` with `GOPROXY=off` and `replace example.com/dep => ./dep`.
-The projection was deterministic, 1539 bytes, with composition aggregate
+The projection was deterministic, 2573 bytes, with composition aggregate
 `unknown` and records `present`. Schema and consumer checks accepted it.
 
 | Component                                 | Role                                                            |
@@ -41,7 +43,9 @@ The projection was deterministic, 1539 bytes, with composition aggregate
 | `./dep` with no Package URL               | local replacement, with `rea:go:original` for `example.com/dep` |
 
 The compiler's replacement path was `./dep`. The document's only Package URL
-was the main module. No component carried a `hashes` entry.
+was the main module. No component carried a `hashes` entry. The replaced
+module's `rea:go:original-path` and `rea:go:original-version` matched the
+parsed record.
 
 ## Rust
 
@@ -50,7 +54,7 @@ was `cargo 1.97.1 (c980f4866 2026-06-30)`. `cargo auditable --version` was not
 a cargo command before the run, so the verifier installed `cargo-auditable`
 with `cargo install --locked` into its temporary root. The list line it
 recorded was `cargo-auditable v0.7.7:`. The projection was deterministic,
-1693 bytes, with composition aggregate `unknown` and records `present`.
+3098 bytes, with composition aggregate `unknown` and records `present`.
 Schema and consumer checks accepted it.
 
 | Package | Version | Kind in the embedded record |
