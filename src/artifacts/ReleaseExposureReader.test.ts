@@ -4,6 +4,7 @@ import { deflateRawSync } from "node:zlib";
 import type { Dirent } from "node:fs";
 import { mkdir, symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
@@ -2056,6 +2057,55 @@ describe("ReleaseExposureReader member identity", () => {
     await writeFile(
       join(root, "app.js"),
       "const value = 1;\n//# sourceMappingURL=debug.json\n",
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+  });
+
+  it.each([
+    ["app.js", "debug.json", { embedded: 1, skipped: 0 }],
+    ["z.js", "a.json", { embedded: 0, skipped: 1 }],
+  ])(
+    "follows %s through a file: URL to the inventoried member %s",
+    async (script, map, expected) => {
+      const root = await createTestTempDirectory("rea-release-file-url-map-");
+      const url = pathToFileURL(join(root, map)).href;
+      await writeFile(
+        join(root, script),
+        `const value = 1;\n//# sourceMappingURL=${url}\n`,
+      );
+      await writeFile(join(root, map), embeddedSourceMap());
+      const scanned = await inspect(root);
+      expect(scanned.source_maps).toMatchObject(expected);
+    },
+  );
+
+  it.each(["debug.json", "debug.js.map"])(
+    "counts a file: URL to %s outside the installation as skipped",
+    async (map) => {
+      const root = await createTestTempDirectory("rea-release-file-url-gone-");
+      const outside = await createTestTempDirectory(
+        "rea-release-file-url-out-",
+      );
+      const url = pathToFileURL(join(outside, map)).href;
+      await writeFile(
+        join(root, "app.js"),
+        `const value = 1;\n//# sourceMappingURL=${url}\n`,
+      );
+      const scanned = await inspect(root);
+      expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+    },
+  );
+
+  it("counts a malformed file: URL as skipped and ignores a remote map", async () => {
+    const root = await createTestTempDirectory("rea-release-file-url-bad-");
+    await writeFile(
+      join(root, "bad.js"),
+      "const value = 1;\n//# sourceMappingURL=file:///release%2Fdebug.json\n",
+    );
+    await writeFile(
+      join(root, "remote.js"),
+      "const value = 2;\n//# sourceMappingURL=https://example.com/debug.json\n",
     );
     const scanned = await inspect(root);
     expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });

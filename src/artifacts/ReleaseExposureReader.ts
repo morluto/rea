@@ -2,6 +2,7 @@ import type { Dirent } from "node:fs";
 import { lstat, opendir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 import type {
   ReleaseExposurePort,
@@ -1133,12 +1134,23 @@ const examineInlineMaps = (
  * recognized by name is examined as a member; any other local target is
  * recorded so it is examined as a map when it is reached. A target already
  * examined as ordinary text was not assessed as a map, so coverage is unknown.
+ * A `file:` URL names one absolute location rather than a path beside the
+ * script, so even a `.map` target stays unassessed until that location is
+ * reached. Any other scheme is remote.
  */
 const noteLocalMapReference = (
   state: ScanState,
   member: MemberView,
   url: string,
 ): void => {
+  if (/^file:/iu.test(url)) {
+    try {
+      noteMapTarget(state, fileURLToPath(url));
+    } catch {
+      state.skippedMaps += 1;
+    }
+    return;
+  }
   if (/^[a-z][a-z0-9+.-]+:/iu.test(url)) return;
   const path = url.replace(/[?#].*$/su, "");
   if (path.length === 0 || isSourceMap(path, "file")) return;
@@ -1149,7 +1161,11 @@ const noteLocalMapReference = (
     state.skippedMaps += 1;
     return;
   }
-  const target = memberLocationKey(resolve(dirname(member.location), decoded));
+  noteMapTarget(state, resolve(dirname(member.location), decoded));
+};
+
+const noteMapTarget = (state: ScanState, location: string): void => {
+  const target = memberLocationKey(location);
   if (state.examinedMaps.has(target)) return;
   if (state.examinedLocations.has(target)) state.skippedMaps += 1;
   else state.mapTargets.add(target);
