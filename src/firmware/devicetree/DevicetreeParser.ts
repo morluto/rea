@@ -76,8 +76,10 @@ export const parseDevicetree = (
     { start: 0, end: headerBytes },
   ];
   const range = (start: number, size: number) => {
-    if (size < 0 || start < headerBytes || start > end - size)
+    if (size < 0 || (size > 0 && start < headerBytes) || start > end - size)
       malformed("FDT block outside totalsize");
+    // An empty extent occupies no bytes and cannot overlap another block.
+    if (size === 0) return;
     const r = { start, end: start + size };
     if (ranges.some((other) => r.start < other.end && other.start < r.end))
       malformed("Overlapping FDT blocks");
@@ -91,9 +93,10 @@ export const parseDevicetree = (
     header.size_dt_struct === null
       ? Math.min(
           end,
-          ...[header.off_dt_strings, header.off_mem_rsvmap].filter(
-            (n) => n > header.off_dt_struct,
-          ),
+          ...[
+            ...(header.size_dt_strings > 0 ? [header.off_dt_strings] : []),
+            header.off_mem_rsvmap,
+          ].filter((n) => n > header.off_dt_struct),
         )
       : header.off_dt_struct + header.size_dt_struct;
   range(header.off_dt_struct, structEnd - header.off_dt_struct);
@@ -101,7 +104,10 @@ export const parseDevicetree = (
   let cursor = header.off_mem_rsvmap;
   const reservationEnd = Math.min(
     end,
-    ...[header.off_dt_struct, header.off_dt_strings].filter((n) => n >= cursor),
+    ...[
+      header.off_dt_struct,
+      ...(header.size_dt_strings > 0 ? [header.off_dt_strings] : []),
+    ].filter((n) => n >= cursor),
   );
   if (ranges.some((r) => cursor >= r.start && cursor < r.end))
     malformed("Reservation block overlaps another FDT block");

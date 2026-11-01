@@ -8,6 +8,7 @@ import { DevicetreeLimitFailure, parseDevicetree } from "./DevicetreeParser.js";
 import {
   cells,
   devicetreeFixture,
+  emptyStringsAtReservationBoundaryFixture,
   type FixtureNode,
 } from "./Devicetree.fixture.js";
 const parse = (b: Buffer, limits = {}) =>
@@ -246,6 +247,42 @@ it("rejects unterminated reservations and unknown tokens", () => {
   token.writeUInt32BE(0x12345678, 72);
   expect(() => parse(token)).toThrow("Unknown FDT token");
 });
+it.each([16, 17] as const)(
+  "accepts an empty strings block at the reservation boundary in v%s",
+  (version) => {
+    const report = parse(emptyStringsAtReservationBoundaryFixture(version));
+    expect(report.nodes).toHaveLength(1);
+    expect(report.reservations).toEqual([]);
+  },
+);
+it.each([
+  [16, 0],
+  [16, 44],
+  [16, 60],
+  [16, 72],
+  [17, 0],
+  [17, 44],
+  [17, 60],
+  [17, 72],
+] as const)(
+  "accepts a v%s empty strings block at offset %s",
+  (version, offset) => {
+    const bytes = emptyStringsAtReservationBoundaryFixture(version);
+    bytes.writeUInt32BE(offset, 12);
+    expect(parse(bytes)).toMatchObject({
+      nodes: [{ path: "/" }],
+      reservations: [],
+    });
+  },
+);
+it.each([16, 17] as const)(
+  "rejects an empty strings offset beyond totalsize in v%s",
+  (version) => {
+    const bytes = emptyStringsAtReservationBoundaryFixture(version);
+    bytes.writeUInt32BE(bytes.length + 1, 12);
+    expect(() => parse(bytes)).toThrow("FDT block outside totalsize");
+  },
+);
 it("bounds expansion of repeated paths before allocation", () => {
   const longName = "a".repeat(4096);
   let node: FixtureNode = { name: longName };
