@@ -197,3 +197,14 @@ it("reserves prefix capacity atomically without declaring destination kinds", ()
   registry.add("a/b", "file");
   expect(() => registry.add("a/b", "directory")).toThrow();
 });
+
+it("reports a file prefix conflict without inserting the candidate", () => {
+  const registry = new ArtifactPathRegistry({ maxParts: 4, maxNodes: 2 });
+  registry.reservePath("a/b");
+  expect(registry.conflicts("a/b")).toBe(true);
+  expect(registry.conflicts("a")).toBe(true);
+  expect(registry.conflicts("a/b/c")).toBe(true);
+  expect(registry.conflicts("a/c")).toBe(false);
+  expect(registry.conflicts("z")).toBe(false);
+  expect(() => registry.reservePath("z")).toThrow();
+});

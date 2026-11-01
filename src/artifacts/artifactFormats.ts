@@ -17,6 +17,8 @@ import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
+import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
+import { DenoStandaloneArtifactReader } from "./DenoStandaloneArtifactReader.js";
 import { DfuSeArtifactReader } from "./DfuSeArtifactReader.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
@@ -94,6 +96,10 @@ function admittedAs(
   kind: "bun-standalone",
   options: ArtifactReaderConstruction,
 ): BunStandaloneAdmission | ReturnType<typeof sourceOf>;
+function admittedAs(
+  kind: "deno-standalone",
+  options: ArtifactReaderConstruction,
+): DenoStandaloneAdmission | ReturnType<typeof sourceOf>;
 function admittedAs(
   kind: "godot-pck",
   options: ArtifactReaderConstruction,
@@ -228,6 +234,17 @@ const NON_ZIP_FORMATS = {
       new BunStandaloneArtifactReader(
         path,
         admittedAs("bun-standalone", options),
+      ),
+  }),
+  "deno-standalone": container("deno-standalone", {
+    retainClassifiedSource: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Deno compile inventory reports the embedded virtual filesystem, remote modules, and recorded options. Environment-file values and CA certificate bytes are retained in local Evidence with their counts and byte lengths. The npm snapshot is not decoded, and the executable is not run.",
+    createReader: (path, options) =>
+      new DenoStandaloneArtifactReader(
+        path,
+        admittedAs("deno-standalone", options),
       ),
   }),
   dmg: container("dmg", {

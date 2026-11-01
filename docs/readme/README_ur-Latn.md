@@ -222,6 +222,7 @@ Mazeed tools aur host support target par depend karte hain:
 | Packages aur resources  | File inventories, digests, plists, Apple bundle structure aur extracted resources                 | [Artifact aur JavaScript guide](../javascript-artifact-reconstruction.md), [Apple applications](../apple-application-analysis.md) |
 | Process behavior        | Terminal output, interactions, exit aur filesystem observations aur runs ka comparison            | Native PTY ke saath Linux/macOS; [process capture](../process-capture.md)                                                         |
 | PyInstaller executables | CArchive members, Python version, entry scripts aur extracted bytecode                            | Koi additional tool nahi (sirf static analysis); [Python packaged applications](../python-packaged-applications.md)               |
+| Deno compile binaries   | Virtual files, entry point, recorded options, npm snapshot length                                 | Static inspection; [Deno compile executables](../deno-standalone.md)                                                              |
 
 Static JavaScript aur .NET inspection di hui files ko application chalaye baghair
 parhti hai. Runtime capture aapki user permissions se selected target ko chalata
