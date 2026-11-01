@@ -1,6 +1,8 @@
 import * as t from "@babel/types";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
+import { childNodes } from "./javascriptSemanticTraversal.js";
+
 /** Syntax alone can establish an exit, but never a branch's contextual truth. */
 export type ElectronStatementFallthrough =
   | { readonly kind: "exit" }
