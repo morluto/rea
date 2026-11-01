@@ -71,6 +71,48 @@ export const projectAnalysisErrorWithoutPartialObservation = (
 ): AnalysisErrorProjection =>
   projectError(error, { capturedOutput: true, partialObservation: false });
 
+/** Omit only explicitly unretained Evidence when a complete reply cannot fit. */
+export const omitUnretainedEvidenceFromError = (
+  projected: AnalysisErrorProjection,
+  limit: {
+    readonly constraint: "receive-buffer" | "string-length";
+    readonly bytesAtLeast: number;
+  },
+): AnalysisErrorProjection | undefined => {
+  const partial = projected.details?.partial_observation;
+  if (
+    typeof partial !== "object" ||
+    partial === null ||
+    Array.isArray(partial) ||
+    partial.kind !== "unretained-evidence"
+  )
+    return undefined;
+  const { partial_observation: _partial, ...details } = projected.details!;
+  const evidence = partial.evidence;
+  const evidenceId =
+    typeof evidence === "object" &&
+    evidence !== null &&
+    !Array.isArray(evidence)
+      ? evidence.evidence_id
+      : undefined;
+  return {
+    ...projected,
+    remediation: {
+      action: `${projected.remediation.action} The completed observation was not retained and could not fit within MCP delivery limits.`,
+    },
+    details: {
+      ...details,
+      partial_observation_omitted: {
+        reason: "mcp-response-limit",
+        retention: "unretained",
+        constraint: limit.constraint,
+        original_response_bytes_at_least: limit.bytesAtLeast,
+        ...(typeof evidenceId === "string" ? { evidence_id: evidenceId } : {}),
+      },
+    },
+  };
+};
+
 const projectError = (
   error: AnalysisError,
   options: {

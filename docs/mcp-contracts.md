@@ -1357,6 +1357,14 @@ alongside the other facet outcomes. Use `current_document`,
 `current_address`, and `current_procedure` for direct single-field lookups; use
 the aggregate tools when you need related context together.
 
+If unretained facet Evidence makes the context response exceed an MCP delivery
+limit, REA omits those partial records in estimated size order until the reply
+fits. Each affected facet identifies its unretained omission and the delivery
+constraint; other facets and partials remain in the response when they fit. The
+size estimate is used only for ordering and can omit more records than a perfect
+wire-size ordering would. If the remaining context still cannot fit, call the
+needed address operations individually and follow their delivery diagnostics.
+
 ## Integrity attribution and reconstruction claims
 
 Artifact comparison results include `integrity_mismatch_evidence_ids`, naming

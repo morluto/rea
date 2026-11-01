@@ -6,6 +6,7 @@ import type { EvidenceWriter } from "../application/investigation/InvestigationR
 import type { Evidence } from "../domain/evidence.js";
 import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
+  omitUnretainedEvidenceFromError,
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
@@ -26,6 +27,7 @@ import {
   MCP_RESULT_STRING_LIMIT,
   NODE_MAX_STRING_LENGTH,
   TARGET_CONTENT_RESULT_META,
+  type ToolResultEncoding,
 } from "./toolResultEncoding.js";
 
 /** Project a response-budget refusal without labeling REA's reserved string limit as Node's ceiling. */
@@ -100,12 +102,17 @@ export class ToolResultDelivery {
     result: Result<JsonValue, AnalysisError>,
     contract: ToolContract,
     recovery: Readonly<Record<string, JsonValue>> = {},
+    alternatives?: (
+      failure: Extract<ToolResultEncoding, { readonly ok: false }>,
+      budgetBytes: number,
+    ) => Iterable<JsonValue>,
   ): CallToolResult {
     return result.ok
       ? this.successResult(
           contract.kind === "session" ? { result: result.value } : result.value,
           contract,
           recovery,
+          alternatives,
         )
       : this.toErrorToolResult(result.error, contract.returnsTargetContent);
   }
@@ -189,39 +196,20 @@ export class ToolResultDelivery {
       "error-text",
       targetContent,
     );
-    const partial = projected.details?.partial_observation;
-    if (
-      !encoded.ok &&
-      typeof partial === "object" &&
-      partial !== null &&
-      !Array.isArray(partial) &&
-      partial.kind === "unretained-evidence"
-    ) {
-      const { partial_observation: _partial, ...details } = projected.details!;
-      const compact = {
-        ...projected,
-        remediation: {
-          action: `${projected.remediation.action} The completed observation was not retained and could not fit within MCP delivery limits.`,
-        },
-        details: {
-          ...details,
-          partial_observation_omitted: {
-            reason: "mcp-response-limit",
-            constraint: encoded.constraint,
-            response_bytes_at_least: encoded.bytesAtLeast,
-          },
-        },
-      };
-      const compactContent = { error: compact };
-      const compactEncoded = encodeToolResult(
-        compactContent,
-        this.resultBudgetBytes,
-        "error-text",
-        targetContent,
-      );
-      if (compactEncoded.ok) {
-        structuredContent = compactContent;
-        encoded = compactEncoded;
+    if (!encoded.ok) {
+      const compact = omitUnretainedEvidenceFromError(projected, encoded);
+      if (compact !== undefined) {
+        const compactContent = { error: compact };
+        const compactEncoded = encodeToolResult(
+          compactContent,
+          this.resultBudgetBytes,
+          "error-text",
+          targetContent,
+        );
+        if (compactEncoded.ok) {
+          structuredContent = compactContent;
+          encoded = compactEncoded;
+        }
       }
     }
     // The transport retains an oversized projected error before replacing it
@@ -238,13 +226,31 @@ export class ToolResultDelivery {
     value: JsonValue,
     contract: ToolContract,
     recovery: Readonly<Record<string, JsonValue>> = {},
+    alternatives?: (
+      failure: Extract<ToolResultEncoding, { readonly ok: false }>,
+      budgetBytes: number,
+    ) => Iterable<JsonValue>,
   ): CallToolResult {
-    const encoded = encodeToolResult(
+    let encoded = encodeToolResult(
       value,
       this.resultBudgetBytes,
       "structured-and-text",
       contract.returnsTargetContent,
     );
+    if (!encoded.ok && alternatives !== undefined)
+      for (const candidate of alternatives(encoded, this.resultBudgetBytes)) {
+        const candidateEncoding = encodeToolResult(
+          candidate,
+          this.resultBudgetBytes,
+          "structured-and-text",
+          contract.returnsTargetContent,
+        );
+        if (candidateEncoding.ok) {
+          value = candidate;
+          encoded = candidateEncoding;
+          break;
+        }
+      }
     if (encoded.ok)
       return {
         content: [{ type: "text", text: encoded.text }],
@@ -267,7 +273,9 @@ export class ToolResultDelivery {
                 ? evidenceBundleSummary(value)
                   ? MCP_TRANSPORT_EVIDENCE_EXPORT
                   : MCP_TRANSPORT_EVIDENCE_DISCOVERY
-                : "Use complete CLI JSON output to consume the analysis.";
+                : contract.name === "inspect_address_context"
+                  ? "Call address_name, resolve_containing_procedure, comment, inline_comment, or list_bookmarks individually for the needed facets, and follow their delivery diagnostics."
+                  : "Use complete CLI JSON output to consume the analysis.";
     const projected = mcpResponseOverflowProjection({
       completed: true,
       constraint: encoded.constraint,
