@@ -50,10 +50,8 @@ import {
 } from "./HopperCallerReconciliation.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 
-import {
-  hopperCapabilities,
-  HOPPER_PROVIDER_IDENTITY,
-} from "./HopperProviderCapabilities.js";
+import { hopperCapabilities } from "./HopperProviderCapabilities.js";
+import { HOPPER_PROVIDER_IDENTITY } from "./HopperProviderMetadata.js";
 
 /** Concrete analysis provider backed by REA's private Hopper bridge. */
 export class HopperProvider implements AnalysisProviderCandidate {

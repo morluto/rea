@@ -26,6 +26,32 @@ export const importSpecifier = (node) => {
   }
 };
 
+/** Whether this declaration selects only types, without runtime value bindings. */
+const isTypeOnly = (node) => {
+  switch (node.type) {
+    case "TSImportType":
+      return true;
+    case "ImportDeclaration":
+      return (
+        node.importKind === "type" ||
+        (node.specifiers.length > 0 &&
+          node.specifiers.every((specifier) => specifier.importKind === "type"))
+      );
+    case "TSImportEqualsDeclaration":
+      return node.importKind === "type";
+    case "ExportNamedDeclaration":
+      return (
+        node.exportKind === "type" ||
+        (node.specifiers.length > 0 &&
+          node.specifiers.every((specifier) => specifier.exportKind === "type"))
+      );
+    case "ExportAllDeclaration":
+      return node.exportKind === "type";
+    default:
+      return false;
+  }
+};
+
 /**
  * Static import and re-export specifiers in source order.
  * Comments and string literals are not imports. Non-string dynamic imports
@@ -37,7 +63,11 @@ export const readImportSpecifiers = (source) => {
   traverseFast(tree, (node) => {
     const specifier = importSpecifier(node);
     if (specifier === undefined) return;
-    specifiers.push({ specifier, line: node.loc?.start.line ?? 1 });
+    specifiers.push({
+      specifier,
+      line: node.loc?.start.line ?? 1,
+      typeOnly: isTypeOnly(node),
+    });
   });
   return specifiers;
 };

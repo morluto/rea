@@ -35,12 +35,39 @@ const computed = import(name);
 import "node:fs";
 `);
     expect(facts).toEqual([
-      { specifier: "./types.js", line: 1 },
-      { specifier: "./all.js", line: 2 },
-      { specifier: "./equals.js", line: 3 },
-      { specifier: "./query.js", line: 4 },
-      { specifier: "./template.js", line: 5 },
-      { specifier: "node:fs", line: 7 },
+      { specifier: "./types.js", line: 1, typeOnly: true },
+      { specifier: "./all.js", line: 2, typeOnly: false },
+      { specifier: "./equals.js", line: 3, typeOnly: false },
+      { specifier: "./query.js", line: 4, typeOnly: true },
+      { specifier: "./template.js", line: 5, typeOnly: false },
+      { specifier: "node:fs", line: 7, typeOnly: false },
+    ]);
+  });
+
+  it.each([
+    ['import type Default from "./owner.js";', true],
+    ['import type * as Namespace from "./owner.js";', true],
+    ['import { type Port, type Other as Alias } from "./owner.js";', true],
+    ['import { type Port, Constructor as Alias } from "./owner.js";', false],
+    ['import Default, { type Port } from "./owner.js";', false],
+    ['import {} from "./owner.js";', false],
+    ['import "./owner.js";', false],
+    ['export type { Port } from "./owner.js";', true],
+    ['export { type Port, type Other as Alias } from "./owner.js";', true],
+    ['export { type Port, Constructor as Alias } from "./owner.js";', false],
+    ['export {} from "./owner.js";', false],
+    ['export type * from "./owner.js";', true],
+    ['export type * as Namespace from "./owner.js";', true],
+    ['export * as Namespace from "./owner.js";', false],
+    ['import type Owner = require("./owner.js");', true],
+    ['import Owner = require("./owner.js");', false],
+    ['type Port = import("./owner.js").Port;', true],
+    ['type Constructor = typeof import("./owner.js").Constructor;', true],
+    ['const Owner = import("./owner.js");', false],
+    ["const Owner = import(`./owner.js`);", false],
+  ])("derives runtime ownership from %s", (source, typeOnly) => {
+    expect(readImportSpecifiers(source)).toEqual([
+      { specifier: "./owner.js", line: 1, typeOnly },
     ]);
   });
 

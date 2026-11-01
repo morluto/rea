@@ -2,6 +2,8 @@
 export interface ImportSpecifierFact {
   readonly specifier: string;
   readonly line: number;
+  /** True when this declaration selects only types, without value bindings. */
+  readonly typeOnly: boolean;
 }
 
 /** Static string specifier on one import or re-export node, when it has one. */
