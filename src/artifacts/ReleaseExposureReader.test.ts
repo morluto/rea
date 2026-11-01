@@ -1288,6 +1288,24 @@ describe("ReleaseExposureReader source spellings", () => {
     expect(scanned.extractable).toMatchObject({ unreadable_members: 0 });
   });
 
+  it("follows a percent-encoded decomposed map name in an ASAR", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-nfd-map-");
+    await writeFile(
+      join(root, "app.asar"),
+      asarArchive([
+        {
+          name: "app.js",
+          bytes: Buffer.from(
+            "const value = 1;\n//# sourceMappingURL=cafe%CC%81.json\n",
+          ),
+        },
+        { name: `${decomposed}.json`, bytes: embeddedSourceMap() },
+      ]),
+    );
+    const scanned = await inspect(join(root, "app.asar"));
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+  });
+
   it("reopens a decomposed compressed .NET member", async () => {
     const stored = deflateRawSync(Buffer.from(key));
     const root = await createTestTempDirectory("rea-release-exposure-nfd-");
@@ -1857,6 +1875,16 @@ describe("ReleaseExposureReader member identity", () => {
       expect(scanned.source_maps).toMatchObject(expected);
     },
   );
+
+  it("counts a declared map target that never ships as skipped", async () => {
+    const root = await createTestTempDirectory("rea-release-missing-map-");
+    await writeFile(
+      join(root, "app.js"),
+      "const value = 1;\n//# sourceMappingURL=debug.json\n",
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+  });
 });
 
 const inspect = async (path: string) => {

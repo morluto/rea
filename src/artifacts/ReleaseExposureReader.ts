@@ -504,6 +504,7 @@ const scanOccurrences = async (
     });
   }
   if (!input.directory) await scanSiblings(input, state);
+  noteUnreachedMapTargets(state);
   const kind = targetKind(input.path, rootFormat, input.directory);
   const nativeImages = [...state.native.entries()].map(([path, format]) => {
     const sha256 = state.nativeDigests.get(path);
@@ -573,7 +574,7 @@ const scanOccurrences = async (
               subject: "source maps",
               count: state.skippedMaps,
               reason:
-                "A source map exceeded the map count or byte allowance, could not be read, or was past the package entry cap; inline CSS source-map directives are not inspected.",
+                "A source map exceeded the map count or byte allowance, could not be read, was past the package entry cap, or was declared but not found; inline CSS source-map directives are not inspected.",
             },
           ]
         : []),
@@ -659,6 +660,8 @@ interface ScanState {
   mapTargets: Set<string>;
   /** Members already examined as something other than a source map. */
   examinedLocations: Set<string>;
+  /** Members already examined as a source map. */
+  examinedMaps: Set<string>;
   visitText: ReleaseExposureTextVisitor;
 }
 
@@ -695,6 +698,7 @@ const createState = (visitText: ReleaseExposureTextVisitor): ScanState => ({
   mapsRead: 0,
   mapTargets: new Set(),
   examinedLocations: new Set(),
+  examinedMaps: new Set(),
   visitText,
 });
 
@@ -790,7 +794,9 @@ const examineMember = async (
   if (packageFormat !== null) state.formats.add(packageFormat);
   let readable = false;
   const map = isDeclaredMap(state, member);
-  if (!map) state.examinedLocations.add(resolve(member.location));
+  (map ? state.examinedMaps : state.examinedLocations).add(
+    memberLocationKey(member.location),
+  );
   if (member.encrypted) noteUnreadMember(state, member);
   else if (map) readable = await examineMapMember(state, member);
   else if (isText(member.logical, member.kind))
@@ -1074,14 +1080,29 @@ const noteLocalMapReference = (
     state.skippedMaps += 1;
     return;
   }
-  const target = resolve(dirname(member.location), decoded);
+  const target = memberLocationKey(resolve(dirname(member.location), decoded));
+  if (state.examinedMaps.has(target)) return;
   if (state.examinedLocations.has(target)) state.skippedMaps += 1;
   else state.mapTargets.add(target);
 };
 
+/**
+ * Lookup identity for a member location. Inventory reports logical paths in
+ * NFC, so a declared target spelled in another normalization form still
+ * names the same member. The declared URL itself is left as written.
+ */
+const memberLocationKey = (location: string): string =>
+  logicalPathNfc(resolve(location));
+
 const isDeclaredMap = (state: ScanState, member: MemberView): boolean =>
   isSourceMap(member.logical, member.kind) ||
-  state.mapTargets.has(resolve(member.location));
+  state.mapTargets.has(memberLocationKey(member.location));
+
+/** A declared map target that was never reached was not assessed. */
+const noteUnreachedMapTargets = (state: ScanState): void => {
+  for (const target of state.mapTargets)
+    if (!state.examinedMaps.has(target)) state.skippedMaps += 1;
+};
 
 const scanText = (
   state: ScanState,
