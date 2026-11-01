@@ -210,7 +210,10 @@ const finalizeStaticAnalysis = (
       value.specifier !== null &&
       value.operation === "load" &&
       ELECTRON_REFERENCE_KINDS.has(value.kind) &&
-      ELECTRON_MODULE.test(value.specifier),
+      ELECTRON_MODULE.test(value.specifier) &&
+      // A `require` whose specifier is a recovered bundle module key loads a
+      // module inside the artifact; `"electron"` may be that module's local ID.
+      !accumulator.moduleRangeIndex.hasKey(value.specifier),
   );
   const resourceLimits = [...bindings.valueResourceLimits].sort();
   const coverage: JavaScriptStaticCoverage = {

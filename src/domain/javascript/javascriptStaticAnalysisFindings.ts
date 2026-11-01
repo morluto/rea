@@ -21,6 +21,7 @@ interface ModuleRangeTreeNode {
 export class JavaScriptModuleRangeIndex {
   private readonly root: ModuleRangeTreeNode = {};
   private readonly end: number;
+  private readonly keys = new Set<string>();
   private nextOrder = 0;
 
   /** Create an empty offset index bounded by the analyzed source length. */
@@ -28,10 +29,20 @@ export class JavaScriptModuleRangeIndex {
     this.end = Math.max(1, sourceLength + 1);
   }
 
+  /**
+   * Whether `key` names a recovered bundle module. A `require` whose specifier is
+   * a bundle module key loads a module inside the artifact, so the key is not a
+   * package specifier even when it reads like one.
+   */
+  hasKey(key: string): boolean {
+    return this.keys.has(key);
+  }
+
   /** Add a module range in the same discovery order used by the analysis pass. */
   add(range: JavaScriptModuleRange): void {
     const indexed = { order: this.nextOrder, range };
     this.nextOrder += 1;
+    this.keys.add(range.key);
     const start = Math.max(0, range.start);
     const end = Math.min(this.end, range.end + 1);
     if (start < end) this.insert(this.root, 0, this.end, start, end, indexed);
