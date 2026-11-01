@@ -2,7 +2,6 @@ import { analysisProfilesEqual } from "../../domain/analysisProfile.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import {
   snapshotBindingMismatch,
-  snapshotMatchesBinding,
   type AnalysisSnapshot,
   type SnapshotBindingMismatch,
 } from "../../domain/analysisSnapshot.js";
@@ -30,27 +29,21 @@ export const profilelessNativeDispatchProfile = (
   return structuredClone(profile);
 };
 
-/** Require only exact native dispatch workflow observations for this target/profile. */
-export const isProfilelessNativeDispatchSnapshot = (
-  snapshot: AnalysisSnapshot,
-  target: BinaryTarget,
-  profile: AnalysisProfileCommitment,
-): boolean =>
-  snapshotMatchesBinding(snapshot, target, profile) &&
-  snapshot.entries.length === 0 &&
-  hasOnlyProfilelessNativeDispatchEntries(snapshot.workflow_entries, profile);
-
 /** Preserve the difference between a binding mismatch and incompatible contents. */
 export const profilelessSnapshotMismatch = (
   snapshot: AnalysisSnapshot,
   target: BinaryTarget,
   profile: AnalysisProfileCommitment | undefined,
-): SnapshotBindingMismatch => {
+): SnapshotBindingMismatch | undefined => {
   const mismatch = snapshotBindingMismatch(snapshot, target, profile);
-  return profile !== undefined &&
-    snapshotMatchesBinding(snapshot, target, profile)
-    ? { ...mismatch, workflow_scope: "incompatible" }
-    : mismatch;
+  if (mismatch !== undefined) return mismatch;
+  if (
+    profile === undefined ||
+    snapshot.entries.length !== 0 ||
+    !hasOnlyProfilelessNativeDispatchEntries(snapshot.workflow_entries, profile)
+  )
+    return { workflow_scope: "incompatible" };
+  return undefined;
 };
 
 /** Reject mixed operations and entries derived from a different source profile. */

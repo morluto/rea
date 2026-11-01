@@ -9,7 +9,6 @@ import type { AnalysisProviderSelector } from "../../domain/providerSelection.js
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import {
   snapshotBindingMismatch,
-  snapshotMatchesBinding,
   snapshotMatchesTarget,
   snapshotTarget,
   type SnapshotBindingMismatch,
@@ -25,7 +24,6 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, type Result } from "../../domain/result.js";
 import type { SessionProviderRoute } from "./SessionProviderRouter.js";
 import {
-  isProfilelessNativeDispatchSnapshot,
   profilelessSnapshotMismatch,
   profilelessNativeDispatchProfile,
 } from "./ProfilelessNativeWorkflowSnapshot.js";
@@ -183,27 +181,21 @@ const validateSnapshot = ({
   current,
   stagedSnapshotMismatch,
 }: ValidateSnapshotInput): EvidenceIntegrityError | undefined => {
-  if (
-    snapshot !== undefined &&
-    (profile === null
-      ? profilelessWorkflowProfile === undefined ||
-        !isProfilelessNativeDispatchSnapshot(
-          snapshot,
-          target,
-          profilelessWorkflowProfile,
-        )
-      : !snapshotMatchesBinding(snapshot, target, profile))
-  )
-    return new AnalysisSnapshotMismatchError(
-      "Analysis snapshot target, provider, or analysis profile does not match the requested binary",
+  if (snapshot !== undefined) {
+    const mismatch =
       profile === null
         ? profilelessSnapshotMismatch(
             snapshot,
             target,
             profilelessWorkflowProfile,
           )
-        : snapshotBindingMismatch(snapshot, target, profile),
-    );
+        : snapshotBindingMismatch(snapshot, target, profile);
+    if (mismatch !== undefined)
+      return new AnalysisSnapshotMismatchError(
+        "Analysis snapshot target, provider, or analysis profile does not match the requested binary",
+        mismatch,
+      );
+  }
   const stagedMismatch =
     current === undefined
       ? stagedSnapshotMismatch(

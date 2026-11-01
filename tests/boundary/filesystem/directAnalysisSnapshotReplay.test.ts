@@ -2,7 +2,6 @@ import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.j
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
-import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { readFile, symlink, writeFile } from "node:fs/promises";
@@ -45,7 +44,6 @@ import {
 } from "../../fixtures/binarySession.js";
 import { routeProviderIdentity } from "../../../src/application/binary/SessionProviderPolicy.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
-import { isProfilelessNativeDispatchSnapshot } from "../../../src/application/binary/ProfilelessNativeWorkflowSnapshot.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -1422,7 +1420,6 @@ const expectReaderBindingMismatch = (
 
 const expectProfilelessOperationMismatch = (
   session: BinarySession,
-  target: BinaryTarget,
   snapshot: AnalysisSnapshot,
 ): void => {
   const wrongOperation = structuredClone(snapshot);
@@ -1433,13 +1430,6 @@ const expectProfilelessOperationMismatch = (
     "inspect_native_api",
     wrongOperation.workflow_entries[0]!.parameters,
   );
-  expect(
-    isProfilelessNativeDispatchSnapshot(
-      wrongOperation,
-      target,
-      APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
-    ),
-  ).toBe(false);
   const rejected = session.importAnalysisSnapshot(wrongOperation);
   expect(rejected.ok).toBe(false);
   if (!rejected.ok)
@@ -1470,13 +1460,6 @@ const expectProfilelessWorkflowSnapshotRejections = async (
     provider: otherReaderProfile.provider,
     analysis_profile: otherReaderProfile,
   };
-  expect(
-    isProfilelessNativeDispatchSnapshot(
-      wrongReader,
-      opened.value,
-      APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
-    ),
-  ).toBe(false);
   const rejectedReader = session.importAnalysisSnapshot(wrongReader);
   expect(rejectedReader.ok).toBe(false);
   if (!rejectedReader.ok) {
@@ -1487,7 +1470,7 @@ const expectProfilelessWorkflowSnapshotRejections = async (
     );
   }
 
-  expectProfilelessOperationMismatch(session, opened.value, snapshot);
+  expectProfilelessOperationMismatch(session, snapshot);
 
   const mixedOperation = "inspect_native_api";
   const mixedProfile = workflowAnalysisProfile(
@@ -1516,13 +1499,6 @@ const expectProfilelessWorkflowSnapshotRejections = async (
     ],
   };
   const rejectedMixed = session.importAnalysisSnapshot(mixedSnapshot);
-  expect(
-    isProfilelessNativeDispatchSnapshot(
-      mixedSnapshot as AnalysisSnapshot,
-      opened.value,
-      APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
-    ),
-  ).toBe(false);
   expect(rejectedMixed.ok).toBe(false);
   if (!rejectedMixed.ok)
     expect(projectAnalysisError(rejectedMixed.error).details).toMatchObject({

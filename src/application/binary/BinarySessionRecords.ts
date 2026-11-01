@@ -47,7 +47,6 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { workflowAnalysisProfile } from "../WorkflowAnalysisProfile.js";
 import {
   hasOnlyProfilelessNativeDispatchEntries,
-  isProfilelessNativeDispatchSnapshot,
   profilelessSnapshotMismatch,
 } from "./ProfilelessNativeWorkflowSnapshot.js";
 
@@ -268,17 +267,20 @@ export abstract class BinarySessionRecords {
         ),
       );
     const profile = active?.profile ?? active?.profilelessWorkflowProfile;
-    if (
-      active?.profile === null &&
-      (profile === undefined ||
-        !isProfilelessNativeDispatchSnapshot(snapshot, active.target, profile))
-    )
-      return err(
-        new AnalysisSnapshotMismatchError(
-          "Analysis snapshot is not bound to the active native dispatch reader",
-          profilelessSnapshotMismatch(snapshot, active.target, profile),
-        ),
+    if (active?.profile === null) {
+      const mismatch = profilelessSnapshotMismatch(
+        snapshot,
+        active.target,
+        profile,
       );
+      if (mismatch !== undefined)
+        return err(
+          new AnalysisSnapshotMismatchError(
+            "Analysis snapshot is not bound to the active native dispatch reader",
+            mismatch,
+          ),
+        );
+    }
     const imported = this.#snapshot.import(
       snapshot,
       active === undefined

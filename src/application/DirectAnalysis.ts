@@ -44,7 +44,6 @@ import { classifyBinaryTargetFilesystemFailure } from "./BinaryTargetResolver.js
 import {
   snapshotBindingMismatch,
   snapshotEvidenceForQuery,
-  snapshotMatchesTarget,
 } from "../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { profilelessNativeDispatchProfile } from "./binary/ProfilelessNativeWorkflowSnapshot.js";
@@ -743,11 +742,16 @@ const prepareSnapshot = async (options: {
     ...targetSelection(options),
   });
   if (!target.ok) return target;
-  if (!snapshotMatchesTarget(loaded.value.target, target.value))
+  const mismatch = snapshotBindingMismatch(
+    loaded.value,
+    target.value,
+    undefined,
+  );
+  if (mismatch?.target !== undefined)
     return err(
       new AnalysisSnapshotMismatchError(
         "Analysis snapshot target does not match the requested binary",
-        snapshotBindingMismatch(loaded.value, target.value, undefined),
+        mismatch,
       ),
     );
   return ok({ snapshot: loaded.value, target: target.value });
