@@ -143,6 +143,68 @@ export const adaptCliOutputArgumentsForIncur = (
   return adapted;
 };
 
+/**
+ * Detect a project-scoped Amp registration before Incur dispatches it.
+ * Incur's `mcp add` parses `--no-global` into `global: false` and honors it
+ * for its package-runner agents, but its Amp writer always writes the global
+ * settings file and ignores the flag. The scan mirrors Incur's parsing: only
+ * the spaced `--agent` form counts, `--command`/`-c` consumes its value, and
+ * Amp registers by default when no agent is given, so a bare project-scoped
+ * request would still write global Amp settings. Discovery requests are not
+ * registrations: `classifyMcpAddDiscovery` below is the single owner of the
+ * discovery classification, so the guard cannot drift from the routing it
+ * mirrors.
+ */
+// ponytail: reject instead of implementing project-scoped Amp registration.
+// Ceiling: `mcp add --no-global` with Amp fails until Incur supports Amp
+// project scope. Upgrade: drop this guard and its rea.mjs wiring once the
+// dependency writes project Amp settings, and cover that path instead.
+/**
+ * How `mcp add` answers a request instead of registering it. Single owner
+ * for the discovery flags: the Amp-scope guard and the `mcp add` routing in
+ * `cli.ts` both consume this classification, so a new discovery switch
+ * cannot diverge between the guard and the routing. Precedence matches the
+ * routing: bypass flags skip the `mcp add` special-casing entirely, and
+ * version beats schema inside it.
+ */
+export type McpAddDiscoveryHandling = "bypass" | "version" | "schema";
+
+export const classifyMcpAddDiscovery = (
+  flags: ReadonlySet<string>,
+): McpAddDiscoveryHandling | undefined => {
+  if (
+    flags.has("--help") ||
+    flags.has("-h") ||
+    flags.has("--llms") ||
+    flags.has("--llms-full")
+  )
+    return "bypass";
+  if (flags.has("--version")) return "version";
+  if (flags.has("--schema")) return "schema";
+  return undefined;
+};
+
+export const isProjectScopedAmpRegistration = (
+  arguments_: readonly string[],
+): boolean => {
+  const { command, flags } = splitIncurBuiltinArguments(arguments_);
+  if (command[0] !== "mcp" || command[1] !== "add") return false;
+  if (classifyMcpAddDiscovery(flags) !== undefined) return false;
+  const rest = command.slice(2);
+  if (!rest.includes("--no-global")) return false;
+  const agents: string[] = [];
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index]!;
+    if ((token === "--command" || token === "-c") && index + 1 < rest.length)
+      index += 1;
+    else if (token === "--agent" && index + 1 < rest.length) {
+      agents.push(rest[index + 1]!);
+      index += 1;
+    }
+  }
+  return agents.length === 0 || agents.includes("amp");
+};
+
 /** Select production doctor using the same normalized builtin argument owner as CLI dispatch. */
 export const productionMcpDoctorArguments = (
   arguments_: readonly string[],
