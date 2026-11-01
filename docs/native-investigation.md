@@ -134,8 +134,9 @@ base type and the lookup fields report whether the manager resolves equivalent
 types at those exact paths. `bit_size` is the effective width;
 `declared_bit_size` can be larger. `bit_offset` is the least-significant-bit
 offset within the base type, not a byte-order-independent offset from the start
-of the containing structure. Missing `bit_field` details are unreported, not
-proof that a component is not a bit-field.
+of the containing structure. Account for the component's storage size and byte
+order before applying that offset to a larger word. Missing `bit_field` details
+are unreported, not proof that a component is not a bit-field.
 
 Instruction facts include bytes, length, decoder text, ordered register/scalar/
 address tokens, typed references and flow destinations. Mid-instruction, data,
