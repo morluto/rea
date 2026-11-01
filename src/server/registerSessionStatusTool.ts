@@ -160,6 +160,7 @@ export const registerSessionStatusTool = (
                     server.advertisesTool(operation),
                   ),
             toolAvailability,
+            toolAvailabilityScope: input.tool_availability_scope,
             serverIdentity,
             clientFeatures,
           }),
@@ -176,19 +177,30 @@ const projectSessionStatus = (options: {
     Record<string, import("../domain/jsonValue.js").JsonValue>
   >;
   readonly toolAvailability: readonly ToolAvailability[];
+  readonly toolAvailabilityScope: "all" | "unavailable";
   readonly serverIdentity: ReturnType<typeof createServerIdentity>;
   readonly clientFeatures: ClientFeatureAvailability;
-}) =>
-  jsonObjectSchema.parse({
+}) => {
+  const inventory = compactToolAvailability(
+    options.toolAvailability,
+    options.detail,
+  );
+  return jsonObjectSchema.parse({
     ...options.status,
     detail: options.detail,
     ...(options.detail === "summary"
       ? { omitted_fields: [...BINARY_SESSION_SUMMARY_OMITTED_FIELDS] }
       : {}),
-    tool_availability: compactToolAvailability(
-      options.toolAvailability,
-      options.detail,
-    ),
+    tool_availability:
+      options.toolAvailabilityScope === "unavailable"
+        ? {
+            ...inventory,
+            groups: inventory.groups.filter(
+              (group) => group.available === false,
+            ),
+          }
+        : inventory,
     client_features: options.clientFeatures,
     server_identity: options.serverIdentity,
   });
+};

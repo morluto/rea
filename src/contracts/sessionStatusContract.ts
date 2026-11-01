@@ -36,4 +36,10 @@ export const binarySessionInputSchema = z.strictObject({
       "Absolute local filesystem path expected for the running server; relative paths are rejected.",
     )
     .optional(),
+  tool_availability_scope: z
+    .enum(["all", "unavailable"])
+    .default("all")
+    .describe(
+      "all (default) keeps every group of the tool_availability inventory. unavailable keeps only the groups whose tools are currently unavailable, so callers that only need what is blocking them skip the available inventory; client_requirements is unchanged.",
+    ),
 });
