@@ -615,6 +615,30 @@ cached result. `close_binary` accepts `snapshot_path` and optional
 `overwrite: true` to save before releasing provider resources. A failed save
 leaves the session open so the caller can resolve the output failure.
 
+When a validated snapshot does not match the selected binding, the error's
+`details.binding_mismatch` reports confirmed target identities, provider
+identities, or profile digests that differ. `snapshot` is the saved value and
+`selected` is the requested value. Multiple differences can be reported. A
+`profile_comparison: "not_compared"` means the profile was not available at
+that boundary; it does not establish a match. A profileless snapshot can report
+`workflow_scope: "incompatible"` even when its target and profile match.
+Choose a matching target, provider, and profile, or analyze without the snapshot
+and save a new one for the intended binding.
+
+For a profile mismatch, the saved snapshot contains
+`binding.analysis_profile.parameters`. If `binary_session` reports an active
+profile whose digest matches `binding_mismatch.profile_digest.selected`, its
+`analysis_provider_binding.analysis_profile.parameters` can be compared with
+those saved parameters. A rejected switch leaves the previous session active,
+so its profile may be different from the attempted selection; check the digest
+before using it for this comparison. A configuration difference does not by
+itself establish why analysis results differ.
+
+If no target is open and you intend to inspect the selected binding, open that
+target without the snapshot, then check its profile digest in `binary_session`
+before comparing parameters. This may start the selected provider; the saved
+snapshot remains a separate file.
+
 If a selected snapshot's file descriptor cannot close, `open_binary` reports
 `cleanup_incomplete`. `binary_session` reports `cleanup_pending` even when no
 target opened. Retry `close_binary` to release the retained descriptor before

@@ -473,14 +473,72 @@ export const snapshotMatchesProfile = (
   committedProvidersEqual(binding.provider, profile.provider) &&
   analysisProfilesEqual(binding.analysis_profile, profile);
 
-/** Require an exact target and selected provider/profile cache partition. */
-export const snapshotMatchesBinding = (
+/** Confirmed differences in the same target and profile commitments used for replay. */
+export interface SnapshotBindingMismatch {
+  readonly target?: {
+    readonly snapshot: AnalysisSnapshotTarget;
+    readonly selected: AnalysisSnapshotTarget;
+  };
+  readonly provider?: {
+    readonly snapshot: AnalysisSnapshotBinding["provider"];
+    readonly selected: AnalysisProfileCommitment["provider"];
+  };
+  readonly profile_digest?: {
+    readonly snapshot: string;
+    readonly selected: string;
+  };
+  /** A selected profile was not available at this validation boundary. */
+  readonly profile_comparison?: "not_compared";
+  /** A matching profileless binding contains workflows outside its permitted scope. */
+  readonly workflow_scope?: "incompatible";
+  /** Staged internal state has no complete binding to compare. */
+  readonly staged_binding?: "incomplete";
+}
+
+/** Explain only comparisons made against authenticated binding facts. */
+export const snapshotBindingMismatch = (
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
   target: BinaryTarget,
-  profile: AnalysisProfileCommitment,
-): boolean =>
-  snapshotMatchesTarget(snapshot.target, target) &&
-  snapshotMatchesProfile(snapshot.binding, profile);
+  profile: AnalysisProfileCommitment | undefined,
+): SnapshotBindingMismatch | undefined => {
+  const targetMatches = snapshotMatchesTarget(snapshot.target, target);
+  const profileMatches =
+    profile !== undefined && snapshotMatchesProfile(snapshot.binding, profile);
+  if (targetMatches && profileMatches) return undefined;
+  return {
+    ...(targetMatches
+      ? {}
+      : {
+          target: {
+            snapshot: { ...snapshot.target },
+            selected: snapshotTarget(target),
+          },
+        }),
+    ...(profile === undefined
+      ? { profile_comparison: "not_compared" as const }
+      : {
+          ...(committedProvidersEqual(
+            snapshot.binding.provider,
+            profile.provider,
+          )
+            ? {}
+            : {
+                provider: {
+                  snapshot: { ...snapshot.binding.provider },
+                  selected: { ...profile.provider },
+                },
+              }),
+          ...(profileMatches
+            ? {}
+            : {
+                profile_digest: {
+                  snapshot: snapshot.binding.analysis_profile.digest,
+                  selected: profile.digest,
+                },
+              }),
+        }),
+  };
+};
 
 /** Find exact persisted CLI Evidence without starting an analysis provider. */
 export const snapshotEvidenceForQuery = (
@@ -502,7 +560,7 @@ export const snapshotEvidenceForQuery = (
     provider,
     evidenceProfile,
   } = query;
-  if (!snapshotMatchesBinding(snapshot, target, bindingProfile))
+  if (snapshotBindingMismatch(snapshot, target, bindingProfile) !== undefined)
     return undefined;
   const encodedParameters = canonicalJson(parameters);
   const queryId = analysisQueryId(
