@@ -3,7 +3,7 @@ import { expect } from "vitest";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest.for(["", " \t "])(
-  "rejects blank Electron application_root (%j) before filesystem or provider work",
+  "rejects blank Electron application_root (%j) as invalid input",
   async (applicationRoot, { cli }) => {
     const response = await cli.run({
       arguments: [

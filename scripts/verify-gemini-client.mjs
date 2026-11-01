@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../dist/contracts/toolContracts.js";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
@@ -150,13 +151,21 @@ await withVerifierCleanup(async () => {
         if (args.includes("--dry-run")) {
           assert(parsed.plannedActions.some((a) => a.target === configPath));
           assert(
-            parsed.plannedActions.some((a) =>
-              a.target.startsWith(join(profile, ".agents", "skills") + sep),
-            ),
+            parsed.plannedActions.some((a) => {
+              const skills = join(profile, ".agents", "skills");
+              return (
+                isAbsolute(a.target) &&
+                relative(skills, a.target) !== "" &&
+                isPathWithinRoot(skills, a.target)
+              );
+            }),
           );
           assert(
-            parsed.plannedActions.every((a) =>
-              a.target.startsWith(profile + sep),
+            parsed.plannedActions.every(
+              (a) =>
+                isAbsolute(a.target) &&
+                relative(profile, a.target) !== "" &&
+                isPathWithinRoot(profile, a.target),
             ),
           );
         }

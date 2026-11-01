@@ -1423,12 +1423,12 @@ budgets.
 
 ## ADB device acquisition
 
-`npm run verify:adb` exercises every ADB operation against a live device or
+`npm run verify:adb` exercises ADB observation and transfer operations against a live device or
 emulator through the caller's adb binary (`REA_ADB_PATH` or PATH). No SDK
-installation or emulator management is involved; the device-mutating tools
-run only in the explicit lifecycle section (`--install-apk` drives a
-lane-owned install → resolve → start → observe → force-stop → uninstall
-probe). `--pull` acquires a real package and re-digests the pulled files on
+installation or emulator management is involved. `--install-apk` is unavailable
+until the selected APK identity and device cleanup ownership can be established
+safely. The transfer probe creates and removes a temporary device file. `--pull`
+acquires a real package and re-digests the pulled files on
 disk against the returned SHA-256 values; `--serial` selects a device when
 several are attached.
 

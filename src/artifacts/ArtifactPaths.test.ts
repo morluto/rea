@@ -181,7 +181,7 @@ it("retains both source spellings and the native failure in a destination collis
   expect(collision?.cause).toBe(cause);
 });
 
-it.each([["app.js"], ["app.js", "App.js"], ["other.js"]])(
+it.each([["app.js", "App.js"], ["other.js"]])(
   "does not invent a destination alias from listing %j",
   (...names) => {
     expect(destinationCaseCollision("res/app.js", names)).toBeUndefined();

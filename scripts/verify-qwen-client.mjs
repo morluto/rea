@@ -9,9 +9,10 @@ import {
   symlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
@@ -133,8 +134,11 @@ await withVerifierCleanup(async () => {
         assert(
           result.plannedActions.every(
             (a) =>
-              a.target.startsWith(profile + sep) ||
-              a.target.startsWith(sharedSkills + sep),
+              isAbsolute(a.target) &&
+              ((relative(profile, a.target) !== "" &&
+                isPathWithinRoot(profile, a.target)) ||
+                (relative(sharedSkills, a.target) !== "" &&
+                  isPathWithinRoot(sharedSkills, a.target))),
           ),
         );
       await writeFile(

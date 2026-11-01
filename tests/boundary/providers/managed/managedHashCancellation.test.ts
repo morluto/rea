@@ -94,6 +94,7 @@ it.each([
           code: "cleanup_incomplete",
           details: { diagnostics: { primary_error: { code: "cancelled" } } },
         });
+        expect(cancelled.error.cleanupPrimary?.cause).toBe(reason);
         expect(cancelledHandle?.fd).toBeGreaterThanOrEqual(0);
         const readsBeforeRetry = readCount;
         const blocked = await client.execute("inspect_managed_members", {});

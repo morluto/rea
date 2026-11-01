@@ -67,7 +67,7 @@ const emitMainWebMcpTools = (
         description: "Search orders; authorization=Bearer tool-secret",
         frameId: "frame-main",
         backendNodeId: 42,
-        inputSchema: options.webMcpInputSchema ?? {
+        inputSchema: {
           type: "object",
           properties: inputSchemaProperties,
           required: ["orderId"],

@@ -85,7 +85,11 @@ const registerParserAdvertisementInventoryTests = (): void => {
   it("require exactly the inputs whose omission the parser rejects", async () => {
     const cli = createCli({});
     const mismatches: string[] = [];
-    for (const command of createCliInventory(cli).primary) {
+    const primary = createCliInventory(cli).primary;
+    expect(primary).toEqual(
+      expect.arrayContaining(["inspect-pcap-client", "inspect-pcap-capture"]),
+    );
+    for (const command of primary) {
       const advertised = await advertisedSchema(cli, command);
       for (const group of INPUT_GROUPS) {
         const parser = parserSchema(cli, command, group);

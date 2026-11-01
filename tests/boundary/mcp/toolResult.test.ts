@@ -372,7 +372,7 @@ describe("tool result projection", () => {
         .details,
     ).not.toHaveProperty("launch_rejection");
   });
-  it("projects bounded private-display coordinates without raw stderr", () => {
+  it("projects private-display diagnostic fields and stderr byte count", () => {
     const result = delivery.toCallToolResult(
       err(
         new HopperProcessError(80, {
@@ -405,6 +405,7 @@ describe("tool result projection", () => {
             mount_read_only: true,
             wsl: true,
             strategy: "user-mount-namespace",
+            xvfb_stderr_bytes: 512,
           },
         },
       },

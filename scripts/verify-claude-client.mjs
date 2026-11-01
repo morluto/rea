@@ -15,6 +15,7 @@ import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../dist/contracts/toolContracts.js";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
@@ -306,7 +307,8 @@ await withVerifierCleanup(async () => {
           assert(
             parsed.plannedActions.every(
               (a) =>
-                a.target === configPath || a.target.startsWith(skillDirectory),
+                a.target === configPath ||
+                isPathWithinRoot(skillDirectory, a.target),
             ),
           );
         }
