@@ -47,6 +47,34 @@ interface BinarySessionStatusInput {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * One route capability as the session currently reports it: target
+ * applicability and observed runtime unavailability override the declaration.
+ */
+export const currentRouteCapability = (
+  descriptor: CapabilityDescriptor,
+  target: BinaryTarget | undefined,
+  runtimeUnavailability: ReadonlyMap<string, { readonly reason: string }>,
+) => {
+  const targetRefusal =
+    target === undefined
+      ? undefined
+      : descriptor.targetApplicability === undefined
+        ? artifactTargetRefusal(descriptor.operation, target)
+        : targetApplicabilityRefusal(descriptor.targetApplicability, target);
+  if (targetRefusal !== undefined && descriptor.available)
+    return {
+      ...descriptor,
+      available: false as const,
+      availabilityCode: targetRefusal.code,
+      reason: targetRefusal.reason,
+    };
+  const unavailable = runtimeUnavailability.get(descriptor.operation);
+  return unavailable === undefined
+    ? descriptor
+    : runtimeUnavailable(descriptor, unavailable.reason);
+};
+
 /** Project internal provider routing state into the caller-visible session status. */
 export const binarySessionStatus = async ({
   investigation,
@@ -73,28 +101,9 @@ export const binarySessionStatus = async ({
     .sort((left, right) =>
       compareUnicodeCodePoints(left.operation, right.operation),
     )
-    .map((descriptor) => {
-      const targetRefusal =
-        target === undefined
-          ? undefined
-          : descriptor.targetApplicability === undefined
-            ? artifactTargetRefusal(descriptor.operation, target)
-            : targetApplicabilityRefusal(
-                descriptor.targetApplicability,
-                target,
-              );
-      if (targetRefusal !== undefined && descriptor.available)
-        return {
-          ...descriptor,
-          available: false as const,
-          availabilityCode: targetRefusal.code,
-          reason: targetRefusal.reason,
-        };
-      const unavailable = runtimeUnavailability.get(descriptor.operation);
-      return unavailable === undefined
-        ? descriptor
-        : runtimeUnavailable(descriptor, unavailable.reason);
-    });
+    .map((descriptor) =>
+      currentRouteCapability(descriptor, target, runtimeUnavailability),
+    );
   const capabilities = providerCapabilitySets(routeCapabilities);
   const analysisProviderBinding =
     bundleResourceRoot !== undefined
