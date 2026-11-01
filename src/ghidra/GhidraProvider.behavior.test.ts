@@ -1,4 +1,12 @@
-import { EXISTING_PROJECT_WINDOWS_UNAVAILABLE } from "./GhidraProviderCapabilities.js";
+import { z } from "zod";
+import {
+  EXISTING_PROJECT_WINDOWS_REMEDIATION,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+  existingProjectCapabilities,
+} from "./GhidraProviderCapabilities.js";
+import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
+import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
+import { analysisProviderCandidate } from "../contracts/toolOutputSchemaPrimitives.js";
 import { ProcessOutputTokenScanner } from "../process/ProcessOutputTokenScanner.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -5020,3 +5028,69 @@ it.each(["search_procedures", "search_strings"] as const)(
     }
   },
 );
+
+describe("Windows Ghidra readiness repair", () => {
+  it("carries the native readiness repair into candidate capabilities and explicit selection", async () => {
+    vi.spyOn(nativeLoader, "systemWindowsNativeAuthority").mockReturnValue({
+      available: false,
+      failureStage: "artifact",
+      reason: "Windows native controls are unavailable: missing manifest",
+    });
+    const ghidra = provider(installationHost("win32"));
+    const owner = await ghidra.inspectAvailability();
+    if (owner.status !== "unavailable")
+      throw new Error(
+        "Windows P0 must stay unavailable without native controls",
+      );
+    const registry = new AnalysisProviderRegistry([ghidra]);
+    const session = composeBinarySession(registry);
+    onTestFinished(async () => {
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
+    });
+
+    // Complete binary_session output: readiness-gated groups keep the repair,
+    // the static mutation refusal declares none.
+    const status = z
+      .object({
+        analysis_provider_candidates: z.array(analysisProviderCandidate),
+      })
+      .parse(await session.status({ detail: "complete" }));
+    const groups = status.analysis_provider_candidates
+      .flatMap(({ capabilities }) => capabilities)
+      .flatMap(({ groups }) => groups);
+    expect(
+      groups.find(({ operations }) => operations.includes("list_procedures")),
+    ).toMatchObject({ available: false, remediation: owner.remediation });
+    expect(
+      groups.find(({ operations }) =>
+        operations.includes("annotate_native_function"),
+      ),
+    ).not.toHaveProperty("remediation");
+
+    // An explicit selection returns the same owner repair as its recovery.
+    const selected = await registry.select(peTarget("x86_64"), "ghidra");
+    if (selected.ok) throw new Error("An unready provider must be refused");
+    const projected = projectAnalysisError(selected.error);
+    expect(projected.remediation.action).toBe(owner.remediation);
+    expect(projected.details).toMatchObject({
+      selection_reason: "provider_unavailable",
+      rejections: [
+        {
+          provider_id: "ghidra",
+          origin: "availability",
+          remediation: owner.remediation,
+        },
+      ],
+    });
+  });
+
+  it("gives every operation of a Windows existing-project session the same repair", () => {
+    for (const capability of existingProjectCapabilities("win32"))
+      expect(capability).toMatchObject({
+        available: false,
+        reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+        remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
+      });
+  });
+});

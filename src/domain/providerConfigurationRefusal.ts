@@ -6,15 +6,15 @@ export const providerConfigurationRefusal = (
   providerId: string,
   operation: string,
   failure: Error & {
+    /** A complete repair sentence owned by the failing configuration. */
     readonly remediation: string;
     readonly diagnostics?: Readonly<Record<string, JsonValue>>;
   },
 ): AnalysisCapabilityUnavailableError => {
-  const reason = `${failure.message}. ${failure.remediation}.`;
+  const reason = `${failure.message}. ${failure.remediation}`;
   return new AnalysisCapabilityUnavailableError(providerId, operation, reason, {
     cause: failure,
     userMessage: reason,
-    remediationAction: `${failure.remediation}.`,
     diagnostics: failure.diagnostics,
   });
 };

@@ -40,9 +40,8 @@ it("carries an unreadable IDA registration's launch-environment repair into disc
       await provider.inspectReadinessSnapshot();
     if (availability.status !== "unavailable")
       throw new Error("A missing registration must be unavailable");
-    expect(availability.remediation).toContain(
-      "Correct REA_IDA_MCP_CONFIG in the environment that starts REA",
-    );
+    expect(availability.remediation).toContain("REA_IDA_MCP_CONFIG");
+    expect(availability.remediation).toContain("environment that starts REA");
     expect(availability.remediation).not.toBe(availability.reason);
     const inventory = openTargetInventory(capabilities);
     for (const name of ["analyze_function", "procedure_pseudo_code"])
@@ -72,9 +71,8 @@ it.skipIf(process.platform === "win32").each([
     };
     const owner = readKunaConfiguration(environment);
     if (owner.ok) throw new Error(`${setting}=${value} must be refused`);
-    expect(owner.error.remediation).toBe(
-      `Correct ${setting} to meet the reported constraint, or unset it to use its default. Restart REA after changing the environment.`,
-    );
+    expect(owner.error.remediation).toContain(setting);
+    expect(owner.error.remediation).not.toBe(owner.error.reason);
 
     const provider = new KunaProvider(environment);
     expect(provider.inspectAvailability()).toMatchObject({

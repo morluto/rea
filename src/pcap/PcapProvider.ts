@@ -8,6 +8,7 @@ import {
 } from "../application/AnalysisProvider.js";
 import {
   pcapResultSchemas,
+  PCAP_CAPTURE_HOST_REMEDIATION,
   pcapCaptureHostSupported,
   type PcapRequest,
   type PcapOperation,
@@ -556,8 +557,7 @@ export class PcapProvider {
           code: "unsupported_host",
           reason:
             "No enforceable native memory boundary is available for capture summaries on this host.",
-          remediation:
-            "Run packet-capture summaries on Linux with util-linux prlimit, or on Windows with owned Job Objects.",
+          remediation: PCAP_CAPTURE_HOST_REMEDIATION,
           diagnostics: client,
         };
       await this.prepareCaptureBound("inspect_pcap_client", signal);
@@ -582,7 +582,12 @@ export class PcapProvider {
             ? "executable_missing"
             : "version_unresolved",
         reason: cause instanceof Error ? cause.message : String(cause),
-        remediation: PCAP_TOOL_REMEDIATION,
+        // Keep the failing owner's repair, such as the limiter's; only an
+        // unattributed tool failure falls back to the Wireshark guidance.
+        remediation:
+          (cause instanceof AnalysisCapabilityUnavailableError
+            ? cause.remediationAction
+            : undefined) ?? PCAP_TOOL_REMEDIATION,
         diagnostics: {},
       };
     }

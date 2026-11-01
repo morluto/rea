@@ -46,7 +46,11 @@ const apktoolVersionProbeTimeoutGuidance = (): {
   remediationAction: `This ${String(VERSION_TIMEOUT_MS)} ms apktool version probe has no runtime override. decode_timeout_ms does not raise it. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
 
-const APKTOOL_VERSION_REMEDIATION = `Set ${APKTOOL_COMMAND_ENV} to an Apktool 2.7.0 or newer launcher whose --version prints its version, or put one on PATH`;
+const APKTOOL_VERSION_REMEDIATION = `Set ${APKTOOL_COMMAND_ENV} to an Apktool 2.7.0 or newer launcher whose --version prints its version, or put one on PATH.`;
+/** Repair when the selected apktool launcher does not exist. */
+export const APKTOOL_MISSING_REMEDIATION = `Set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher (the upstream wrapper or a java -jar script).`;
+/** Repair when execution of the selected apktool launcher is denied. */
+export const APKTOOL_NOT_EXECUTABLE_REMEDIATION = `Check file type and execute permission for ${APKTOOL_COMMAND_ENV} or select an executable apktool launcher.`;
 
 /** How the apktool launcher was selected for this provider instance. */
 export interface ApktoolCommandSelection {
@@ -79,7 +83,7 @@ export const resolveApktoolCommand = async (
       throw new ApktoolConfigurationFailure(
         "not_absolute",
         `${APKTOOL_COMMAND_ENV} must be an absolute path to the apktool launcher`,
-        `Set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher path, or unset it to use apktool from PATH`,
+        `Set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher path, or unset it to use apktool from PATH.`,
         { configured_command: configured },
       );
     return { command: configured, commandSource: "environment" };
@@ -109,7 +113,7 @@ export const resolveApktoolCommand = async (
       throw new ApktoolConfigurationFailure(
         "command_unresolved",
         "Windows PATHEXT must contain filename extensions, not paths",
-        `Correct PATHEXT so it lists filename extensions only, or set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher`,
+        `Correct PATHEXT so it lists filename extensions only, or set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher.`,
         {
           selected_command: "apktool",
           command_source: "path",
@@ -120,7 +124,7 @@ export const resolveApktoolCommand = async (
       throw new ApktoolConfigurationFailure(
         "command_unresolved",
         `The PATH-selected apktool launcher could not be inspected: ${failure.path}`,
-        `Make the PATH-selected apktool launcher readable, or set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher`,
+        `Make the PATH-selected apktool launcher readable, or set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher.`,
         {
           selected_command: "apktool",
           command_source: "path",
@@ -136,7 +140,7 @@ export const resolveApktoolCommand = async (
   throw new ApktoolConfigurationFailure(
     "command_missing",
     "The apktool launcher was not found on the selected Windows PATH/PATHEXT",
-    `Set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher, or add its directory and extension to PATH and PATHEXT`,
+    `Set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher, or add its directory and extension to PATH and PATHEXT.`,
     {
       selected_command: "apktool",
       command_source: "path",
@@ -294,7 +298,7 @@ export const inspectApktoolClient = async (
     throw new ApktoolConfigurationFailure(
       "launcher_unsupported",
       `The selected apktool launcher cannot be run through cmd.exe: ${cause.message}`,
-      `Set ${APKTOOL_COMMAND_ENV} to a launcher path without cmd.exe metacharacters (" % ^ ! & | < >), or to a native apktool executable`,
+      `Set ${APKTOOL_COMMAND_ENV} to a launcher path without cmd.exe metacharacters (" % ^ ! & | < >), or to a native apktool executable.`,
       {
         selected_command: selection.command,
         command_source: selection.commandSource,
@@ -416,7 +420,7 @@ const interpretApktoolVersion = (
     throw new ApktoolConfigurationFailure(
       "unsupported_version",
       `The selected Apktool version ${identity.version} is older than the supported minimum 2.7.0`,
-      `Use Apktool 2.7.0 or newer; see docs/apktool-resource-analysis.md`,
+      `Use Apktool 2.7.0 or newer; see docs/apktool-resource-analysis.md.`,
       {
         selected_command: selection.command,
         command_source: selection.commandSource,
@@ -448,7 +452,7 @@ export const apktoolConfigurationAvailability = (
   status: "unavailable",
   code: rejectionCodeOf(cause.code),
   reason: cause.message,
-  remediation: `${cause.remediation}.`,
+  remediation: cause.remediation,
   diagnostics: { ...cause.diagnostics },
 });
 
@@ -512,8 +516,8 @@ const versionProbeFailure = (
         ? `Execution of the selected apktool launcher was denied: ${selection.command}`
         : `The selected apktool launcher was not found: ${selection.command}`,
       cause.code === "EACCES"
-        ? `Check file type and execute permission for ${APKTOOL_COMMAND_ENV} or select an executable apktool launcher`
-        : `Set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher (the upstream wrapper or a java -jar script)`,
+        ? APKTOOL_NOT_EXECUTABLE_REMEDIATION
+        : APKTOOL_MISSING_REMEDIATION,
       {
         filesystem_error: cause.code,
         selected_command: selection.command,

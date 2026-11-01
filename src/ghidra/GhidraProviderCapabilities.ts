@@ -239,6 +239,7 @@ export const existingProjectCapabilities = (
         available: false,
         reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
         availabilityCode: "unsupported_host",
+        remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
       };
     if (capability.effects.mutatesArtifact)
       return {
@@ -275,6 +276,7 @@ export const windowsP0Capabilities = (
             available: false,
             reason: readiness.reason,
             availabilityCode: readiness.code,
+            remediation: readiness.remediation,
             limitations,
           });
     }),

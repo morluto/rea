@@ -4,7 +4,7 @@ import { projectAnalysisError } from "./analysisErrorProjection.js";
 
 it("retains provider-owned configuration diagnostics and repair in public refusals", () => {
   const failure = Object.assign(new Error("version unreadable"), {
-    remediation: "Inspect the selected launcher",
+    remediation: "Inspect the selected launcher.",
     diagnostics: {
       selected_command: "/selected/apktool",
       command_source: "environment",
@@ -21,7 +21,9 @@ it("retains provider-owned configuration diagnostics and repair in public refusa
   ).toMatchObject({
     code: "capability_unavailable",
     message: "version unreadable. Inspect the selected launcher.",
-    remediation: { action: "Inspect the selected launcher." },
+    remediation: {
+      action: "version unreadable. Inspect the selected launcher.",
+    },
     details: { diagnostics: failure.diagnostics },
   });
 });

@@ -487,6 +487,9 @@ const providerErrorDetails = (
         origin: rejection.origin,
         code: rejection.code,
         reason: rejection.reason,
+        ...(rejection.remediation === undefined
+          ? {}
+          : { remediation: rejection.remediation }),
         diagnostics: rejection.diagnostics,
       })),
     };

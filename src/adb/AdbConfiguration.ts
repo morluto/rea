@@ -24,7 +24,11 @@ export const ADB_BINARY_ENV = "REA_ADB_PATH";
 
 const VERSION_TIMEOUT_MS = 10_000;
 
-const ADB_VERSION_REMEDIATION = `Set ${ADB_BINARY_ENV} to an Android SDK Platform-Tools adb binary whose \`adb version\` reports its version, or put one on PATH`;
+const ADB_VERSION_REMEDIATION = `Set ${ADB_BINARY_ENV} to an Android SDK Platform-Tools adb binary whose \`adb version\` reports its version, or put one on PATH.`;
+/** Repair when the selected adb binary does not exist. */
+export const ADB_MISSING_REMEDIATION = `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary.`;
+/** Repair when execution of the selected adb binary is denied. */
+export const ADB_NOT_EXECUTABLE_REMEDIATION = `Check file type and execute permission for ${ADB_BINARY_ENV} or select an executable adb binary.`;
 const VERSION_MAX_OUTPUT_BYTES = 64 * 1024;
 
 /** How the adb binary was selected for this provider instance. */
@@ -63,7 +67,7 @@ export const resolveAdbBinary = async (
     throw new AdbConfigurationFailure(
       "not_absolute",
       `${ADB_BINARY_ENV} must be an absolute path to the adb binary`,
-      `Set ${ADB_BINARY_ENV} to an absolute adb executable path, or unset it to use adb from PATH`,
+      `Set ${ADB_BINARY_ENV} to an absolute adb executable path, or unset it to use adb from PATH.`,
       { configured_path: configured },
     );
   return {
@@ -96,7 +100,7 @@ const resolveWindowsAdb = async (
     throw new AdbConfigurationFailure(
       failure.kind === "missing" ? "binary_missing" : "binary_unresolved",
       "The adb binary could not be selected from the Windows PATH/PATHEXT",
-      `Set ${ADB_BINARY_ENV} to an absolute adb executable, or add it to PATH/PATHEXT`,
+      `Set ${ADB_BINARY_ENV} to an absolute adb executable, or add it to PATH/PATHEXT.`,
       {
         selected_binary: "adb",
         path_source: "path",
@@ -243,7 +247,7 @@ export const inspectAdbClient = async (
       throw new AdbConfigurationFailure(
         "binary_missing",
         `The selected adb binary was not found: ${selection.binary}`,
-        `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary`,
+        ADB_MISSING_REMEDIATION,
         {
           selected_binary: selection.binary,
           path_source: selection.pathSource,
@@ -254,7 +258,7 @@ export const inspectAdbClient = async (
       throw new AdbConfigurationFailure(
         "binary_not_executable",
         `Execution of the selected adb binary was denied (${failure.code}): ${selection.binary}`,
-        `Check file type and execute permission for ${ADB_BINARY_ENV} or select an executable adb binary`,
+        ADB_NOT_EXECUTABLE_REMEDIATION,
         {
           selected_binary: selection.binary,
           path_source: selection.pathSource,
@@ -298,6 +302,6 @@ export const adbConfigurationAvailability = (
   status: "unavailable",
   code: rejectionCodeOf(cause.code),
   reason: cause.message,
-  remediation: `${cause.remediation}.`,
+  remediation: cause.remediation,
   diagnostics: { ...cause.diagnostics },
 });
