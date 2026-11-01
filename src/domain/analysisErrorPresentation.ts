@@ -141,8 +141,8 @@ export const analysisErrorRemediationAction = (
   if (error instanceof EvidenceReferenceError)
     return error.reason === "missing" &&
       error.referenceScope === "retained-closure"
-      ? "Import the originating Evidence bundle with the selected records and their complete linked sources into the current investigation, or re-run their producers there. Retry after the required records are retained. close_binary clears a server session's retained records."
-      : "Use an exact Evidence reference available from the selected source, supply the complete inline Evidence, re-run its producer, or select/import its Evidence bundle. close_binary clears a server session's retained records.";
+      ? "Import the originating Evidence bundle with the selected records and their complete linked sources into the current investigation, or re-run their producers there. Retry after the required records are retained. reset_investigation clears retained records; close_binary preserves them."
+      : "Use an exact Evidence reference available from the selected source, supply the complete inline Evidence, re-run its producer, or select/import its Evidence bundle. reset_investigation clears retained records; close_binary preserves them.";
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "directory_requires_file"
@@ -457,7 +457,7 @@ const hopperErrorUserMessage = (error: AnalysisError): string | undefined => {
 
 const RESTART_OWNED_PROVIDER =
   "Restart the owned provider by calling close_binary, then open the target again and retry.";
-const RESTART_UNREACHABLE_HOPPER = `${RESTART_OWNED_PROVIDER} If Hopper may have exited, call export_evidence_bundle before close_binary; closing clears retained records.`;
+const RESTART_UNREACHABLE_HOPPER = `${RESTART_OWNED_PROVIDER} close_binary preserves retained Evidence and Unknown history on this connection; export_evidence_bundle before ending the REA process if you need to resume later.`;
 
 const hopperProcessRemediation = (error: HopperProcessError): string => {
   if (error.failureCode !== undefined && error.userMessage !== undefined)

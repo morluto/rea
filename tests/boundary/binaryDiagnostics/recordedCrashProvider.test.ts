@@ -10,7 +10,7 @@ import {
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
 import { PwntoolsRecordedCrashProvider } from "../../../src/native/pwntools/PwntoolsRecordedCrashProvider.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsProviderIdentity.js";
 import {
   spawnOwnedProviderProcess,
   type OwnedProviderProcessSpawnOptions,

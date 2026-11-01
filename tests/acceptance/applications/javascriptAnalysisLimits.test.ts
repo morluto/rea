@@ -135,6 +135,9 @@ it("preserves MCP analysis limits in retained Evidence and an exported bundle ro
   );
   const closed = await call("close_binary", {});
   expect(closed.isError).not.toBe(true);
+  expect(await getBundle(call)).toEqual(retained);
+  const reset = await call("reset_investigation", {});
+  expect(reset.isError).not.toBe(true);
   expect((await getBundle(call)).records).toEqual([]);
   const imported = await call("import_evidence_bundle", { path });
   expect(imported.isError, JSON.stringify(imported.content)).not.toBe(true);

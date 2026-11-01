@@ -453,9 +453,15 @@ cliTest(
         { name: sessionDefinition.name, arguments: {} },
         { toolDefinition: sessionDefinition },
       );
-      expect(JSON.stringify(session.structuredContent)).toContain(
-        "inspect_pe_resources",
-      );
+      expect(session.isError, JSON.stringify(session)).not.toBe(true);
+      const status = toolContract("binary_session").outputSchema.parse(
+        session.structuredContent,
+      ).result;
+      expect(
+        status.tool_availability.groups.find((group) =>
+          group.names.includes("inspect_pe_resources"),
+        ),
+      ).toMatchObject({ available: true });
       await expectPeInventoriesAcrossAdapters(cli, call, root);
       await expectPeEmptyBranchesAcrossAdapters(cli, call, root);
       await expectPeWordAlignedRecordsAcrossAdapters({

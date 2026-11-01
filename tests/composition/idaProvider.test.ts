@@ -15,7 +15,7 @@ import { createEvidence } from "../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../src/application/EnhancedTools.js";
-import { IDA_PROVIDER_IDENTITY } from "../../src/ida/IdaProviderCapabilities.js";
+import { IDA_PROVIDER_IDENTITY } from "../../src/ida/IdaProviderMetadata.js";
 import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { fat } from "../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";

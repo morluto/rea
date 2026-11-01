@@ -1,3 +1,4 @@
+import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvailability.js";
 import { parseEspFlashAddress } from "../domain/firmware/espFlashSelection.js";
 import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
@@ -26,6 +27,7 @@ import { mcpProgressReporter } from "./mcpProgress.js";
 import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
 import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
 import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
+import { registerResetInvestigationTool } from "./registerResetInvestigationTool.js";
 import { registerFunctionComparisonTool } from "./registerFunctionComparisonTool.js";
 import { registerInvestigationTools } from "./registerInvestigationTools.js";
 import { registerProcessComparisonTool } from "./registerProcessComparisonTool.js";
@@ -33,10 +35,7 @@ import {
   registerEvidenceTools,
   registerUnknownTools,
 } from "./registerSessionRecordTools.js";
-import {
-  registerSessionStatusTool,
-  type SessionAvailabilityProbes,
-} from "./registerSessionStatusTool.js";
+import { registerSessionStatusTool } from "./registerSessionStatusTool.js";
 import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -149,7 +148,7 @@ const registerProcessTools = ({
   );
 };
 
-export interface LifecycleToolRegistration extends SessionAvailabilityProbes {
+export interface LifecycleToolRegistration extends CapabilityAvailabilityProbes {
   readonly server: EvidenceMcpServer;
   readonly session: BinarySessionPort;
   readonly logger: Logger;
@@ -158,6 +157,7 @@ export interface LifecycleToolRegistration extends SessionAvailabilityProbes {
   readonly statusContract: ReturnType<typeof toolContract<"binary_session">>;
   readonly startedAt: string;
   readonly availabilityPolicy: () => AvailabilityPolicy;
+  readonly artifactResources: ArtifactResourceScope;
   readonly closeProcessResources: () => Promise<Result<null, AnalysisError>>;
 }
 
@@ -166,6 +166,7 @@ const registerLifecycleTools = (
 ): void => {
   registerOpenLifecycleTool(registration);
   registerCloseLifecycleTool(registration);
+  registerResetInvestigationTool(registration);
   registerSessionStatusTool({
     ...registration,
     contract: registration.statusContract,
@@ -242,7 +243,7 @@ const registerOpenLifecycleTool = ({
 };
 
 /** Register MCP-only target lifecycle operations on a long-lived session. */
-export interface SessionToolOptions extends Partial<SessionAvailabilityProbes> {
+export interface SessionToolOptions extends Partial<CapabilityAvailabilityProbes> {
   readonly artifactResources: ArtifactResourceScope;
   /** Server environment snapshot that process capture resolves and inherits. */
   readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -256,11 +257,12 @@ const registerContextTools = (
 ): void => {
   const navigationContract = toolContract("get_navigation_context");
   const addressContract = toolContract("inspect_address_context");
+  const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
     navigationContract.name,
     toolRegistrationOptions(navigationContract),
     async (input, context) => {
-      const admitted = await session.withAdmittedAnalysis(
+      const admitted = await admission(
         navigationContract.name,
         context.mcpReq.signal,
         async (analysis) =>
@@ -278,7 +280,7 @@ const registerContextTools = (
     addressContract.name,
     toolRegistrationOptions(addressContract),
     async (input, context) => {
-      const admitted = await session.withAdmittedAnalysis(
+      const admitted = await admission(
         addressContract.name,
         context.mcpReq.signal,
         async (analysis) =>

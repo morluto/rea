@@ -55,7 +55,7 @@ import { prepareProcessOwnershipInspection } from "../../../src/process/ProcessO
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js";
 import { PwntoolsDecoder } from "../../../src/native/pwntools/PwntoolsDecoder.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsProviderIdentity.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
 const makeDecoder = () =>

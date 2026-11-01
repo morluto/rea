@@ -5,6 +5,9 @@ import {
   type DerivedOperationContext,
 } from "./runDerivedOperation.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import { FUNCTION_COMPARISON_EXAMPLE } from "../contracts/functionComparisonExample.js";
+import { EvidenceLedger } from "../application/investigation/EvidenceLedger.js";
+import { retainAnalysisResultSources } from "../application/investigation/recordEvidenceSources.js";
 
 const context = (
   controller: AbortController,
@@ -25,6 +28,44 @@ const context = (
 });
 
 describe("derived MCP operation boundary", () => {
+  it("retains a completed observation and its source after terminal cancellation", async () => {
+    const controller = new AbortController();
+    const reason = { requested: "completed-evidence-stop" };
+    const source = FUNCTION_COMPARISON_EXAMPLE.left;
+    const completed = {
+      evidence: FUNCTION_COMPARISON_EXAMPLE.right,
+      sources: [source],
+    };
+    const result = await runDerivedOperation(
+      context(controller, [], (message) => {
+        if (message.startsWith("complete:")) controller.abort(reason);
+      }),
+      "compare",
+      () => completed,
+      (value) => value,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+        partialObservation: completed.evidence,
+      },
+      sourceEvidence: [source],
+    });
+    const ledger = new EvidenceLedger();
+    const retained = retainAnalysisResultSources(
+      "compare",
+      ledger.record.bind(ledger),
+      result,
+    );
+    expect(retained.ok).toBe(false);
+    expect(ledger.has(source.evidence_id)).toBe(true);
+    expect(retained.ok ? undefined : retained.error.cause).toBe(reason);
+  });
+});
+
+describe("derived MCP operation progress and cancellation", () => {
   it("cancels before computation and never evaluates the operation", async () => {
     const controller = new AbortController();
     const reason = Object.freeze({ requested: "pre-compute-stop" });

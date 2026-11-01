@@ -1,8 +1,11 @@
 # Native, managed, and packaged artifacts
 
-For release comparisons, export `list_procedures` Evidence from each target before
-closing it. Close clears session records: import both bundles after collecting the
-two targets, or supply portable inline Evidence. `match_native_functions` pairs unique exact names and, when supplied,
+For release comparisons on one MCP connection, retain `list_procedures` Evidence
+from each target and reuse its exact IDs after target switches or `close_binary`.
+For a handoff or new process, export the complete bundle and import it there,
+including its source closure. `reset_investigation` explicitly clears retained
+records; optional `save_path` checkpoints them before clearing.
+`match_native_functions` pairs unique exact names and, when supplied,
 complete observed body bytes. Reuse optional same-context `list_names`,
 `procedure_info`, `read_bytes` and existing `analyze_function` dossiers as
 `left_observations`/`right_observations`; an MCP `analyze_function` summary
@@ -649,7 +652,7 @@ numbering gaps leave coverage unknown; a DfuSe suffix CRC mismatch follows
 ### Function annotations in Ghidra
 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
-Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier.
+Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
 
 For `compare_functions`, obtain `analyze_function` Evidence before and after the
 edit while the MCP session is open; annotation Evidence is not a comparison
@@ -687,7 +690,9 @@ For exact core-module import/export differences, use `compare_wasm_interfaces`
 with two complete inspection Evidence records (or current-session retained
 references) and explicit scope. Preserve unknown types/duplicate names; static
 interface equality is not runtime compatibility. CLI accepts complete inline
-Evidence in `rea compare-wasm-interfaces input.json --json`.
+Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
+with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
+ID when the inspection returned a summary.
 
 ## Godot PCK
 
