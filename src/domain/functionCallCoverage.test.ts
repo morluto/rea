@@ -110,6 +110,9 @@ describe("assessFunctionCallCoverage", () => {
       ],
       unresolvedCallCaveats: ["Unresolved call at 0x1004: Computed target."],
       diagnostics: ["Indirect calls are unresolved."],
+      discoveryLimitations: [
+        "Static direct-call discovery is not established for callers and callees.",
+      ],
     });
   });
 });

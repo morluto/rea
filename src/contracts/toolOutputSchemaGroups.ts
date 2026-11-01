@@ -283,6 +283,16 @@ const callPathTraceOutput = evidenceResultOf(
     goal: z.string().nullable(),
     direction: z.enum(["forward", "backward"]),
     goal_status: z.enum(["not_requested", "reached", "not_reached", "unknown"]),
+    search_scope: z.object({
+      graph: z.literal("provider_observed_graph"),
+      discovery: z.enum(["complete", "partial", "unknown"]),
+      observed_goal_status: z.enum([
+        "not_requested",
+        "reached",
+        "not_reached",
+        "unknown",
+      ]),
+    }),
     nodes: z.array(
       z.object({
         address: z.string(),

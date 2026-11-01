@@ -594,6 +594,8 @@ const compareCalls = (
   const coverageDiagnostics = [
     ...left.callCoverageDiagnostics.map((reason) => `Left: ${reason}`),
     ...right.callCoverageDiagnostics.map((reason) => `Right: ${reason}`),
+    ...left.callDiscoveryLimitations.map((reason) => `Left: ${reason}`),
+    ...right.callDiscoveryLimitations.map((reason) => `Right: ${reason}`),
   ];
   if (coverageLimitations.length > 0)
     return unresolvedDimension({

@@ -7,6 +7,63 @@ import { FUNCTIONS, run, session } from "./kunaSessionFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
 
+it("preserves observed edges while qualifying undiscovered calls in both directions", async () => {
+  const { open } = await session("rea-kuna-data-call-path-", {
+    graphIndirectCalls: false,
+    graphDataFunction: "parse",
+  });
+  const client = open();
+  try {
+    const tools = new EnhancedTools(client);
+    const forward = await tools.execute("trace_call_path", {
+      start: "main",
+      goal: "0x2000",
+      direction: "forward",
+    });
+    if (!forward.ok) throw forward.error;
+    expect(forward.value).toMatchObject({
+      goal_status: "unknown",
+      search_scope: {
+        discovery: "partial",
+        observed_goal_status: "not_reached",
+      },
+      relationship_coverage: {
+        "0x1040": {
+          status: "complete",
+          discovery: { callees: { status: "partial" } },
+        },
+      },
+      truncated: false,
+    });
+    const backward = await tools.execute("trace_call_path", {
+      start: "0x2000",
+      goal: "main",
+      direction: "backward",
+    });
+    if (!backward.ok) throw backward.error;
+    expect(backward.value).toMatchObject({
+      goal_status: "unknown",
+      search_scope: {
+        discovery: "unknown",
+        observed_goal_status: "not_reached",
+      },
+    });
+    const observed = await tools.execute("trace_call_path", {
+      start: "main",
+      goal: "parse",
+      direction: "forward",
+    });
+    if (!observed.ok) throw observed.error;
+    expect(observed.value).toMatchObject({
+      goal_status: "reached",
+      traversal_path: ["0x1000", "0x1040"],
+      search_scope: { discovery: "unknown", observed_goal_status: "reached" },
+    });
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
 it("resolves graph-only imports as graph roots and path endpoints without exporting C", async () => {
   const { open, kuna } = await session("rea-kuna-graph-only-import-", {
     inventoryImports: false,

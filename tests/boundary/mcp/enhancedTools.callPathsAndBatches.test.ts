@@ -328,7 +328,7 @@ describe("trace_call_path MCP outcome semantics", () => {
     });
   });
 
-  it("reports an unreachable goal as absent after complete traversal", async () => {
+  it("keeps a complete observed traversal distinct from unknown discovery", async () => {
     const client = await connect({
       execute: async (name, arguments_) => {
         if (name === "procedure_address")
@@ -346,7 +346,11 @@ describe("trace_call_path MCP outcome semantics", () => {
     expect(trace.isError).not.toBe(true);
     expect(trace.structuredContent).toMatchObject({
       normalized_result: {
-        goal_status: "not_reached",
+        goal_status: "unknown",
+        search_scope: {
+          discovery: "unknown",
+          observed_goal_status: "not_reached",
+        },
         truncated: false,
         residual_unknowns: [],
       },

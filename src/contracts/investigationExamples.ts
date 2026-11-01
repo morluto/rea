@@ -1,5 +1,8 @@
 import { createEvidence } from "../domain/evidence.js";
-import { FUNCTION_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
+import {
+  FUNCTION_COMPARISON_PROFILE,
+  FUNCTION_COMPARISON_PROVIDER,
+} from "../domain/comparisonEvidenceIdentity.js";
 import { compareProcessCaptureEvidence } from "../domain/process/processComparisonEvidence.js";
 import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
 import { parseProcessCapture } from "../domain/process/processCaptureParsing.js";
@@ -26,6 +29,7 @@ export const FUNCTION_COMPARISON_EVIDENCE = createEvidence(
   {
     predicateType: "rea.function-comparison",
     operation: "compare_functions",
+    analysisProfile: FUNCTION_COMPARISON_PROFILE,
     parameters: {
       left_evidence_id: left.value.evidence.evidence_id,
       right_evidence_id: right.value.evidence.evidence_id,

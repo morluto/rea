@@ -170,7 +170,13 @@ const evidence = (
       },
       confidence: "derived",
       authority: "shipped-artifact",
-      relationshipCoverage: { status: "complete" },
+      relationshipCoverage: {
+        status: "complete",
+        discovery: {
+          callers: { status: "complete" },
+          callees: { status: "complete" },
+        },
+      },
     },
   );
 
