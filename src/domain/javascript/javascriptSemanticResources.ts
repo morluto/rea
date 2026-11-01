@@ -26,7 +26,7 @@ import {
   traverseDataEffects,
   type DataEffectTraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
-import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { FS_OPEN_FLAGS, range } from "./javascriptStaticAnalysisHelpers.js";
 
 const RELEASE_METHODS = ["close", "destroy", "end"] as const;
 
@@ -75,6 +75,82 @@ export const collectJavaScriptSemanticResources = (
   ];
 };
 
+/**
+ * `fs.open`/`fs.openSync` validate the flag before touching the filesystem, so
+ * a flag Node rejects at the call site throws synchronously and no descriptor
+ * exists. Node accepts only a known flag string, a nullish value (which defaults
+ * to `"r"`), or a bitmask integer; everything else throws. A computed value may
+ * still be valid, so only an exactly readable literal is decided.
+ */
+const rejectsOpenFlagLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  context: DataEffectTraversalContext,
+): boolean => {
+  // A spread before the flag slot shifts the runtime position, so argument 1 is
+  // not provably the flag. `openSync(...args, "0600")` with
+  // `args = [path, "w"]` opens with mode `"0600"`, not with an invalid flag.
+  if (t.isSpreadElement(node.arguments[0])) return false;
+  const flag = node.arguments[1];
+  if (flag === undefined || t.isSpreadElement(flag)) return false;
+  const value = unwrapJavaScriptExpression(flag).node;
+  if (t.isStringLiteral(value)) return !FS_OPEN_FLAGS.has(value.value);
+  // A non-integer or out-of-int32 value is not a usable bitmask. The sign alone
+  // does not decide: Node accepts some signed bitmasks such as `-2147483648` and
+  // rejects others such as `-1`, so an in-range negative is left undecided.
+  const bits = staticFlagBits(value);
+  if (bits !== undefined)
+    return (
+      bits !== null &&
+      (!Number.isInteger(bits) || bits > 2_147_483_647 || bits < -2_147_483_648)
+    );
+  // `NaN` and `Infinity` are unshadowed globals, and neither is a bitmask.
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnmodifiedGlobalReference(value, context.state, value.name)
+  )
+    return true;
+  // BigInt, boolean, object and array literals all fail Node's flag check.
+  return (
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value)
+  );
+};
+
+/**
+ * The number a literal flag argument evaluates to, or `null` when it evaluates to
+ * `undefined`. Returns `undefined` when the value is not exactly readable.
+ *
+ * `void <expr>` is `undefined`, which Node accepts as the default read flag, so
+ * it must never be judged by its operand. `!`, `typeof` and `delete` yield a
+ * boolean or a string rather than a bitmask.
+ */
+const staticFlagBits = (value: t.Node): number | null | undefined => {
+  if (t.isNumericLiteral(value)) return value.value;
+  if (!t.isUnaryExpression(value)) return undefined;
+  if (value.operator === "void") return null;
+  if (
+    value.operator === "!" ||
+    value.operator === "typeof" ||
+    value.operator === "delete"
+  )
+    return Number.NaN;
+  const operand = unwrapJavaScriptExpression(value.argument).node;
+  if (!t.isNumericLiteral(operand)) return undefined;
+  if (value.operator === "-") return -operand.value;
+  if (value.operator === "+") return operand.value;
+  if (value.operator === "~") return ~operand.value;
+  return undefined;
+};
+
+/** `fs.open`, `fs.openSync` and `fs/promises.open` take the flag in slot 1. */
+const openFlagInFirstArgument = (reference: AcquisitionReference): boolean =>
+  reference.method === "open" || reference.method === "openSync"
+    ? reference.specifier === "fs" || reference.specifier === "fs/promises"
+    : false;
+
 const collectAcquisitions = (
   program: t.Program,
   context: DataEffectTraversalContext,
@@ -84,6 +160,11 @@ const collectAcquisitions = (
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const reference = acquisitionMethod(node.callee, context.state);
     if (reference === null) return;
+    if (
+      openFlagInFirstArgument(reference) &&
+      rejectsOpenFlagLiteral(node, context)
+    )
+      return;
     output.push({
       node,
       specifier: reference.specifier,
