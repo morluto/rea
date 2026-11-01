@@ -515,6 +515,13 @@ const collectOwnedCommand = async (
         cancellation: { reason: callerSignal.reason },
       },
     );
+  // The absolute deadline can elapse while successful cleanup is awaited.
+  if (deadline.interruption === "timeout")
+    throw new OwnedCommandFailure(
+      "timeout",
+      "Command deadline elapsed during final cleanup.",
+      snapshot,
+    );
   return snapshot;
 };
 
