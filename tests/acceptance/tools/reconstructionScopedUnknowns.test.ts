@@ -6,8 +6,35 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { reconstructionVerificationResultSchema } from "../../../src/domain/reconstructionVerificationSchemas.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 
-const unchangedRight = () => {
-  const left = FUNCTION_COMPARISON_EXAMPLE.left;
+const completeDiscovery = {
+  callers: { status: "complete" },
+  callees: { status: "complete" },
+} as const;
+
+const unchangedLeft = () => {
+  const fixture = FUNCTION_COMPARISON_EXAMPLE.left;
+  return createEvidence(
+    {
+      path: fixture.subject!.local_path,
+      sha256: fixture.subject!.digest.sha256,
+      format: fixture.subject!.format,
+    },
+    fixture.provider,
+    {
+      operation: fixture.operation,
+      parameters: fixture.parameters,
+      result: fixture.normalized_result,
+      confidence: fixture.confidence,
+      authority: fixture.authority,
+      relationshipCoverage: {
+        status: "complete",
+        discovery: completeDiscovery,
+      },
+    },
+  );
+};
+
+const unchangedRight = (left: ReturnType<typeof unchangedLeft>) => {
   return createEvidence(
     { path: "/fixture/rebuilt", sha256: "2".repeat(64), format: "mach-o" },
     left.provider,
@@ -17,7 +44,10 @@ const unchangedRight = () => {
       result: left.normalized_result,
       confidence: left.confidence,
       authority: left.authority,
-      relationshipCoverage: { status: "complete" },
+      relationshipCoverage: {
+        status: "complete",
+        discovery: completeDiscovery,
+      },
     },
   );
 };
@@ -49,8 +79,8 @@ it.each(["pseudocode", "overall"] as const)(
   "keeps an overall claim unknown for an active %s question through stdio MCP",
   async (dimension) => {
     const { call } = await connectLocalToolsMcp();
-    const left = FUNCTION_COMPARISON_EXAMPLE.left;
-    const right = unchangedRight();
+    const left = unchangedLeft();
+    const right = unchangedRight(left);
     const compared = await call("compare_functions", { left, right });
     expect(compared.isError, JSON.stringify(compared)).not.toBe(true);
     const comparison = parseEvidence(compared.structuredContent);
