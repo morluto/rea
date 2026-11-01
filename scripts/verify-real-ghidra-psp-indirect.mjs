@@ -369,9 +369,10 @@ try {
   completed = await completeVerifierRun(run);
   assertVerifierCleanupComplete(completed.process_lineage);
 } catch (error) {
-  throw new Error(
+  failures.push(error);
+  throw new AggregateError(
+    failures,
     `PSP verifier cleanup unverified; retained workspace: ${workspace}`,
-    { cause: error },
   );
 }
 if (failures.length > 0)
