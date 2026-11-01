@@ -32,6 +32,13 @@ const isMcpEntry =
   !isShellCompletion && (args[0] === "--mcp" || args[0] === "mcp");
 const isMcpMode = isMcpEntry && args.length === 1;
 const isMcpDoctorMode = doctorArguments !== undefined;
+// Incur's registration helper silently falls back to defaults when a valued
+// `mcp add` option has no value, so reject that here, before Incur runs.
+// Completion words are transport data, not invocations, and are left alone.
+const missingMcpAddValue =
+  isShellCompletion || builtinArguments === undefined
+    ? undefined
+    : builtinArguments.findMcpAddMissingValue(args);
 // Only flags may follow the entry: `mcp add --http` stays Incur's `mcp add`,
 // while `mcp -h --http` reaches the HTTP entry's own help.
 const isMcpHttpMode =
@@ -96,6 +103,9 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
         `${JSON.stringify({ rea_timings: { version: 1, command_ms: Math.round(performance.now() - started) } })}\n`,
       );
   }
+} else if (missingMcpAddValue !== undefined) {
+  process.stderr.write(`Missing value for flag: ${missingMcpAddValue}\n`);
+  process.exitCode = 1;
 } else {
   const {
     cliConfigurationError,

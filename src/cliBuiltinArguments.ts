@@ -189,6 +189,96 @@ export const declaredSensitiveValues = (
   values.delete("");
   return [...values];
 };
+/** Valued `mcp add` options from its public help. */
+const MCP_ADD_VALUED_OPTIONS = ["--agent", "--command", "-c"] as const;
+
+/**
+ * Flags that divert Incur before registration when they appear ahead of the
+ * `add` word, so they are never missing-value cases: `--mcp` serves stdio,
+ * `--llms` and `--llms-full` print docs, `--schema` and `--update` fail with
+ * their own errors, and `--incur-update-check` runs the update check. Each
+ * was verified against the built runtime; pure output flags such as
+ * `--json` and `--full-output` do reach registration and stay in scope.
+ */
+const MCP_ADD_MODE_FLAGS: ReadonlySet<string> = new Set([
+  "--mcp",
+  "--llms",
+  "--llms-full",
+  "--schema",
+  "--update",
+  "--incur-update-check",
+]);
+
+/**
+ * Find a valued `mcp add` option supplied without its value. Incur's
+ * registration helper consumes an agent or command only when the next token
+ * is truthy, so a trailing valued option (or one followed by another flag)
+ * silently falls back to the defaults and registers anyway, unlike REA-owned
+ * commands whose parser rejects a missing value. An equals form with an
+ * empty remainder (`--agent=`) is the same missing value: Incur sees no
+ * value to consume and registers with the defaults. An empty string value
+ * (`--agent ""`) is the same missing value: Incur sees no usable value and
+ * registers with the defaults. REA rejects that here, in its own entry
+ * point, before Incur runs, so no runner is invoked and no client settings
+ * are written. The command is located through REA's own normalization and
+ * builtin split, so global output flags before `mcp add` or between its
+ * words cannot hide a missing value either. Help requests are left alone:
+ * Incur strips help flags before command parsing and shows help without
+ * side effects. A lone `-` still counts as a value, matching the parser's
+ * treatment of a present token. Returns the offending option, or undefined
+ * when the invocation is not a `mcp add` with an incomplete valued option.
+ */
+export const findMcpAddMissingValue = (
+  arguments_: readonly string[],
+): string | undefined => {
+  const normalized = normalizeCliArguments(arguments_);
+  const split = splitIncurBuiltinArguments(normalized);
+  if (split.flags.has("--help") || split.flags.has("-h")) return undefined;
+  if (split.command[0] !== "mcp" || split.command[1] !== "add")
+    return undefined;
+  // Locate the `add` word in normalized form by walking it alongside the
+  // split command, so builtin flags and consumed output values do not shift
+  // it. A mode flag ahead of that word means Incur never reaches
+  // registration for this invocation, so it is not a missing-value case.
+  let addIndex = -1;
+  let commandCursor = 0;
+  for (
+    let index = 0;
+    index < normalized.length && commandCursor < split.command.length;
+    index += 1
+  ) {
+    if (normalized[index] === split.command[commandCursor]) {
+      if (commandCursor === 1) addIndex = index;
+      commandCursor += 1;
+    }
+  }
+  if (
+    addIndex > 0 &&
+    normalized.slice(0, addIndex).some((token) => MCP_ADD_MODE_FLAGS.has(token))
+  )
+    return undefined;
+  const rest = split.command.slice(2);
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index]!;
+    const emptyEquals = MCP_ADD_VALUED_OPTIONS.find(
+      (candidate) => token === `${candidate}=`,
+    );
+    if (emptyEquals !== undefined) return emptyEquals;
+    const option = MCP_ADD_VALUED_OPTIONS.find(
+      (candidate) => token === candidate,
+    );
+    if (option === undefined) continue;
+    const next = rest[index + 1];
+    if (
+      next === undefined ||
+      next === "" ||
+      (next.startsWith("-") && next !== "-")
+    )
+      return option;
+  }
+  return undefined;
+};
+
 /** Shell completion is a transport protocol; its words are not CLI invocations. */
 export const CLI_COMPLETION_SHELLS = [
   "bash",
