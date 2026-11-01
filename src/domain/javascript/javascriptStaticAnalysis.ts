@@ -159,6 +159,15 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     finishPartialNetworkEndpoints(findings, bindings, index);
     finishSqliteStorageCalls(findings, bindings, index);
   }
+  // Wrapper substitution may replace these direct observations' details.
+  const rendererCallObserved =
+    accumulator.contextBridgeApis.some(
+      ({ value }) => value.resolution_basis === undefined,
+    ) ||
+    accumulator.ipc.some(
+      ({ value }) =>
+        value.side === "renderer" && value.resolution_basis === undefined,
+    );
   accumulator.electronCallPaths = yield* collectElectronWrappedCallPathsSteps(
     file.program,
     bindings,
@@ -167,8 +176,29 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     electronIdentity,
   );
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
-  return finalizeStaticAnalysis(source, file, accumulator, bindings, routes);
+  const analysis = finalizeStaticAnalysis(
+    source,
+    file,
+    accumulator,
+    bindings,
+    routes,
+  );
+  if (rendererCallObserved) observedElectronRendererCalls.add(analysis);
+  return analysis;
 }
+
+const observedElectronRendererCalls = new WeakSet<JavaScriptStaticAnalysis>();
+
+/**
+ * Whether the source traversal of this analysis directly observed a
+ * `contextBridge` exposure or a renderer IPC operation, before wrapper
+ * substitution replaced any of their details. Like the traversal, it excludes
+ * bundler factory defaults that never run. Only analyses this module produced
+ * carry the fact.
+ */
+export const observedElectronRendererCall = (
+  analysis: JavaScriptStaticAnalysis,
+): boolean => observedElectronRendererCalls.has(analysis);
 
 function* traverseStaticSourceSteps(
   file: ParsedJavaScriptSource,

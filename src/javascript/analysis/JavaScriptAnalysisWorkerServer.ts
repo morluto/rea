@@ -16,6 +16,7 @@ import {
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
 import {
@@ -43,6 +44,7 @@ export interface JavaScriptSourceWorkerAnalyzer {
       ) => Promise<void>;
       readonly checkpoint: (facts: JavaScriptStaticAnalysis) => Promise<number>;
     },
+    packageType: JavaScriptPackageType,
   ): Promise<{
     readonly module: JavaScriptModuleSemanticIr;
     readonly projection: JavaScriptSemanticFileProjection;
@@ -186,6 +188,7 @@ const analyzeJob = async (
           return resultBudgetBytes;
         },
       },
+      request.package_type,
     );
     await send({ kind: "phase", id: request.id, phase: "transfer" });
     const descriptor =

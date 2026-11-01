@@ -81,6 +81,7 @@ const startServer = async () => {
           kind: "javascript",
           unpacked: false,
         },
+        package_type: "unknown",
       });
     },
     close: async () => {

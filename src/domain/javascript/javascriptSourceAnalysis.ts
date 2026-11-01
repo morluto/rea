@@ -8,6 +8,7 @@ import type { Result } from "../result.js";
 import type { JavaScriptArtifactFile } from "./javascriptArtifactFiles.js";
 import type { JavaScriptStaticAnalysis } from "./javascriptStaticAnalysisTypes.js";
 import type { JavaScriptModuleSemanticIr } from "./javascriptModuleSemanticIr.js";
+import type { JavaScriptPackageType } from "./javascriptSourceParser.js";
 
 /** An earlier static projection displaced to retain later static observations. */
 export interface JavaScriptRevokedStaticProjection {
@@ -48,6 +49,8 @@ export interface JavaScriptSourceAnalysisPort {
     capacity: JavaScriptSemanticProjectionCapacity,
     signal?: AbortSignal,
     onPhase?: (phase: string) => Promise<void>,
+    /** Type of the source's inventoried package scope; omitted is unknown. */
+    packageType?: JavaScriptPackageType,
   ): Promise<Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>>;
   close(): Promise<void>;
 }
