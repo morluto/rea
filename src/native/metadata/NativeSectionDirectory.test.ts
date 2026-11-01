@@ -24,8 +24,13 @@ it("classifies a confirmed overlapping PE directory as an unsupported layout", (
 it.each([0x014c, 0x8664])(
   "reads a nonoverlapping PE directory for machine %s",
   (machine) => {
-    expect(readDirectory(pe(machine))).toMatchObject({
+    const bytes = pe(machine);
+    const coff = bytes.readUInt32LE(0x3c) + 4;
+    bytes.writeUInt32LE(0xfedcba98, coff + 8);
+    bytes.writeUInt32LE(0x76543210, coff + 12);
+    expect(readDirectory(bytes)).toMatchObject({
       format: "pe",
+      pe_symbol_table: { offset: 0xfedcba98, count: 0x76543210 },
       machine,
       bits: machine === 0x014c ? 32 : 64,
       sections: [],

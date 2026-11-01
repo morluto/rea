@@ -22,6 +22,7 @@ import {
   readElfDirectoryFromBuffer,
   readPeSectionDirectory,
   type NativeSection,
+  type NativeSectionDirectory,
 } from "../metadata/NativeSectionDirectory.js";
 
 const SHF_COMPRESSED = 0x800n;
@@ -247,9 +248,8 @@ const admitDecoded = (
     throw new DwarfSectionAllowanceFailure(name, demanded, budget.allowance);
   }
   if (decoded.state === "malformed") {
-    // A failed stream may have produced its entire declared output before
-    // failing its checksum, and the decoder exposes no partial byte count, so
-    // charge the declared size. Rejected headers never inflate and charge 0.
+    // The owner charges the larger of declared output and compressed input
+    // read on failure. Rejected headers never inflate and charge 0.
     budget.used += decoded.inflatedBytes;
     return unread(name, role, "unreadable", decoded.message);
   }
@@ -537,7 +537,7 @@ const adoptStored = (
 
 const locatePe = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
   const directory = readPeDirectory(bytes);
-  const names = peSectionNames(bytes, directory.sections);
+  const names = peSectionNames(bytes, directory);
   const candidates: Candidate[] = [];
   const satisfied = new Set<DwarfSectionRole>();
   for (const section of directory.sections) {
@@ -590,11 +590,12 @@ const readPeDirectory = (bytes: Buffer) => {
   return next.value;
 };
 
-/** Resolve COFF `/decimal` names. An unresolved long name hides `.debug_info`. */
+/** Resolve COFF `/decimal` and GNU `//base64` names. Unresolved names hide `.debug_info`. */
 const peSectionNames = (
   bytes: Buffer,
-  sections: readonly NativeSection[],
+  directory: NativeSectionDirectory,
 ): ReadonlyMap<number, string> => {
+  const { sections } = directory;
   const names = new Map<number, string>();
   const decodedNames = new Map<number, string>();
   let decodedNameBytes = 0;
@@ -603,19 +604,13 @@ const peSectionNames = (
   );
   let strings: Buffer | null = null;
   if (long.length > 0) {
-    if (bytes.length < 0x40)
+    if (directory.pe_symbol_table === undefined)
       throw new BinaryFormatFailure(
         "malformed",
         "PE string table is unavailable",
       );
-    const pe = bytes.readUInt32LE(0x3c);
-    if (pe > bytes.length - 20)
-      throw new BinaryFormatFailure(
-        "malformed",
-        "PE string table is unavailable",
-      );
-    const symbolOffset = bytes.readUInt32LE(pe + 12);
-    const symbolCount = bytes.readUInt32LE(pe + 16);
+    const { offset: symbolOffset, count: symbolCount } =
+      directory.pe_symbol_table;
     const table =
       symbolOffset > bytes.length ? null : symbolOffset + symbolCount * 18;
     if (
@@ -641,13 +636,20 @@ const peSectionNames = (
       if (raw.length > 0) names.set(section.index, raw);
       continue;
     }
-    if (strings === null || !/^[0-9]+$/u.test(raw.slice(1)))
-      throw new BinaryFormatFailure(
-        "malformed",
-        `PE section name ${raw} could not be resolved`,
-      );
-    const at = Number(raw.slice(1));
-    if (!Number.isSafeInteger(at) || at < 4 || at >= strings.length)
+    let at = NaN;
+    if (/^\/[0-9]+$/u.test(raw)) at = Number(raw.slice(1));
+    else if (/^\/\/[A-Za-z0-9+/]{6}$/u.test(raw)) {
+      const alphabet =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      at = 0;
+      for (const digit of raw.slice(2)) at = at * 64 + alphabet.indexOf(digit);
+    }
+    if (
+      strings === null ||
+      !Number.isSafeInteger(at) ||
+      at < 4 ||
+      at >= strings.length
+    )
       throw new BinaryFormatFailure(
         "malformed",
         `PE section name ${raw} could not be resolved`,
@@ -693,7 +695,6 @@ const peSectionNames = (
 
 const locateMacho = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
   const image = readMachoImage(bytes);
-  const little = image.byte_order === "little";
   const candidates: Candidate[] = [];
   const satisfied = new Set<DwarfSectionRole>();
   for (const section of image.sections) {
@@ -731,12 +732,7 @@ const locateMacho = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
     format: "macho",
     bits: image.bits,
     byte_order: image.byte_order,
-    machine:
-      bytes.length >= 8
-        ? little
-          ? bytes.readUInt32LE(4)
-          : bytes.readUInt32BE(4)
-        : null,
+    machine: image.macho_cpu_type,
     architecture: binaryMetadataArchitecture(image.architecture) ?? null,
     candidates,
     gnuDebugLink: false,

@@ -23,7 +23,9 @@ import {
 } from "../../domain/apple/machoLoadCommands.js";
 
 /** Read thin Mach-O images, retaining the slice's exact file-backed mappings. */
-export const readMachoImage = (bytes: Buffer): BinaryContainer => {
+export const readMachoImage = (
+  bytes: Buffer,
+): Extract<BinaryContainer, { format: "macho" }> => {
   const parsed = readMachoLoadCommandDeclarations(bytes, bytes.length);
   if (!parsed.ok) throw new BinaryFormatFailure("malformed", parsed.error);
   if (parsed.value === null)
@@ -164,6 +166,7 @@ export const readMachoImage = (bytes: Buffer): BinaryContainer => {
   ]);
   return {
     format: "macho",
+    macho_cpu_type: table.identity.cpuType,
     macho_chained_fixups: chainedFixups,
     architecture: names.get(cpu) ?? `macho-cpu-${cpu}`,
     bits,

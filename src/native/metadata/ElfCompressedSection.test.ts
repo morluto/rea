@@ -111,8 +111,9 @@ describe("ELF compressed section payloads", () => {
   });
 
   it("rejects a decoded length that does not match the header", () => {
+    const payload = deflateSync(plain);
     const decoded = decodeElfCompressedSection(
-      Buffer.concat([chdr(64, true, 1, plain.length + 1), deflateSync(plain)]),
+      Buffer.concat([chdr(64, true, 1, plain.length + 1), payload]),
       0x800n,
       64,
       true,
@@ -122,9 +123,29 @@ describe("ELF compressed section payloads", () => {
     expect(decoded).toMatchObject({
       state: "malformed",
       message: "ELF sample section size is inconsistent",
-      inflatedBytes: plain.length + 1,
+      inflatedBytes: Math.max(plain.length + 1, payload.length),
     });
   });
+
+  it.each(["zlib", "zstd"] as const)(
+    "charges compressed input for a failed zero-output %s attempt",
+    (compression) => {
+      const payload = Buffer.from("invalid compressed payload");
+      expect(
+        decodeElfCompressedSection(
+          Buffer.concat([
+            chdr(64, true, compression === "zstd" ? 2 : 1, 0),
+            payload,
+          ]),
+          0x800n,
+          64,
+          true,
+          1024,
+          "ELF sample section",
+        ),
+      ).toMatchObject({ state: "malformed", inflatedBytes: payload.length });
+    },
+  );
 
   it("stops before inflation when the declared size exceeds the allowance", () => {
     const decoded = decodeElfCompressedSection(

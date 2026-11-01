@@ -221,6 +221,21 @@ it("reads PE long names and a Mach-O __debug_str_offs section", async () => {
   expect(macho.value.limitations.join("\n")).toContain(".dSYM");
 });
 
+it("reads a GNU base64 COFF long section name", async () => {
+  const sample = namedUnit({ name: "base64.c" });
+  const image = peImage([
+    { name: ".debug_info", body: sample.info },
+    { name: ".debug_abbrev", body: sample.abbrev },
+  ]);
+  const pe = image.readUInt32LE(0x3c);
+  const sections = pe + 24 + image.readUInt16LE(pe + 20);
+  image.write("//AAAAAE", sections, "latin1");
+  const read = await inspect(image);
+  expect(read.ok).toBe(true);
+  if (!read.ok) throw read.error;
+  expect(read.value.units[0]?.name.value).toBe("base64.c");
+});
+
 it("decodes a shared PE long name once, including at the per-name allowance", async () => {
   const image = peImage([
     { name: "x".repeat(65536), body: Buffer.alloc(0) },
@@ -393,6 +408,31 @@ it("charges failed decompression attempts against the shared allowance", () => {
       DwarfSectionAllowanceFailure,
     );
   }
+});
+
+it("charges zero-output streams with bad checksums against the shared allowance", () => {
+  const empty = elfCompressedBody(Buffer.alloc(0), "zlib");
+  // Insert non-final empty stored blocks after the ELF and zlib headers.
+  const blocks = Buffer.alloc(5 * 2048);
+  for (let at = 0; at < blocks.length; at += 5)
+    blocks.set([0, 0, 0, 0xff, 0xff], at);
+  const body = Buffer.concat([
+    empty.subarray(0, 26),
+    blocks,
+    empty.subarray(26),
+  ]);
+  body[body.length - 1] = body[body.length - 1]! ^ 1;
+  const payloadLength = body.length - 24;
+  const image = elfImage({
+    sections: Array.from({ length: 3 }, () => ({
+      name: ".debug_info",
+      body,
+      flags: 0x800n,
+    })),
+  });
+  expect(() => locateDwarfSections(image, payloadLength * 2)).toThrow(
+    DwarfSectionAllowanceFailure,
+  );
 });
 
 it("keeps the inflate allowance after a truncated optional section header", async () => {

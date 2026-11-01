@@ -15,7 +15,7 @@ export type ElfCompressedSectionResult =
   | {
       readonly state: "malformed";
       readonly message: string;
-      /** Declared output bytes of an inflation attempt; 0 when none started. */
+      /** Larger of declared output and compressed input read; 0 when no attempt started. */
       readonly inflatedBytes: number;
     }
   | {
@@ -127,7 +127,7 @@ const inflateDeclared = (
   } catch (cause: unknown) {
     return {
       state: "malformed",
-      inflatedBytes: expected,
+      inflatedBytes: Math.max(expected, payload.length),
       message: `${subject} could not be decompressed: ${cause instanceof Error ? cause.message : "invalid compressed data"}`,
     };
   }
@@ -135,7 +135,7 @@ const inflateDeclared = (
     return {
       state: "malformed",
       message: `${subject} size is inconsistent`,
-      inflatedBytes: expected,
+      inflatedBytes: Math.max(expected, payload.length),
     };
   return { state: "available", bytes: decoded, compressed: true, compression };
 };
