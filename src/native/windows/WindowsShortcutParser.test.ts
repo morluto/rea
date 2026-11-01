@@ -6,6 +6,7 @@ import {
 } from "../../domain/native/windowsShortcut.js";
 import {
   ansiShortcut,
+  LINK_FLAG,
   networkShareShortcut,
   powershellHiddenIconSpoofShortcut,
   TRACKER_MAC,
@@ -87,6 +88,29 @@ it("reads network-share LinkInfo names", async () => {
     device_name_unicode: "Z:",
   });
   expect(report.coverage.status).toBe("complete");
+});
+
+it("reports the network provider type only when ValidNetType is set", async () => {
+  const build = (networkFlags: number) =>
+    windowsShortcutBytes({
+      flags: LINK_FLAG.HasLinkInfo | LINK_FLAG.IsUnicode,
+      linkInfo: {
+        netName: "\\\\fileserver\\docs",
+        deviceName: "Z:",
+        networkProviderType: 0x00020000,
+        networkFlags,
+        commonPathSuffix: "report.docx",
+      },
+      extraData: [],
+    });
+  const valid = await parse(build(0x3));
+  expect(valid.link_info?.common_network_relative_link).toMatchObject({
+    network_provider_type: 0x00020000,
+  });
+  const ignored = await parse(build(0x1));
+  expect(ignored.link_info?.common_network_relative_link).toMatchObject({
+    network_provider_type: null,
+  });
 });
 
 it("derives Tracker version-1 MAC and timestamp facts", async () => {

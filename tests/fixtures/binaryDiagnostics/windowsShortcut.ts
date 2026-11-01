@@ -66,6 +66,7 @@ export type FixtureLinkInfo = {
   readonly netName?: string;
   readonly deviceName?: string;
   readonly networkProviderType?: number;
+  readonly networkFlags?: number;
 };
 
 export type FixtureExtraBlock =
@@ -247,7 +248,7 @@ const networkLinkBytes = (info: FixtureLinkInfo, unicode: boolean): Buffer => {
   const deviceWideOffset = netWideOffset + netWide.length;
   const bytes = Buffer.alloc(deviceWideOffset + deviceWide.length);
   writeU32(bytes, 0, bytes.length);
-  writeU32(bytes, 4, 0x3);
+  writeU32(bytes, 4, info.networkFlags ?? 0x3);
   writeU32(bytes, 8, header);
   writeU32(bytes, 12, deviceAnsiOffset);
   writeU32(bytes, 16, info.networkProviderType ?? 0x00020000);

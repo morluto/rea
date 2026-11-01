@@ -602,7 +602,8 @@ const parseNetwork = (
       deviceNameOffsetUnicode,
       walk,
     ),
-    network_provider_type: block.readUInt32LE(16),
+    network_provider_type:
+      (block.readUInt32LE(4) & 0x2) !== 0 ? block.readUInt32LE(16) : null,
   };
 };
 
