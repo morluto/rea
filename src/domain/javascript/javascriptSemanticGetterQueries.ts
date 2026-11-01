@@ -1,5 +1,5 @@
 import type * as t from "@babel/types";
-import type { JavaScriptSemanticObjectReference as Reference } from "./javascriptSemanticObjectReferences.js";
+import type { JavaScriptSemanticObjectReference as Reference } from "./javascriptSemanticObjectReference.js";
 import type { JavaScriptSemanticPropertyPath as PropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { SEMANTIC_GETTER_EXPANSION_LIMIT } from "./javascriptSemanticResourceLimits.js";

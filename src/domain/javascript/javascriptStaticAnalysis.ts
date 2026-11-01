@@ -1,9 +1,10 @@
+import { createXhrOpenRequestQuery } from "./javascriptNetworkRequests.js";
 import { uniqueSortedBy } from "../canonicalOrdering.js";
 import * as t from "@babel/types";
 import { JavaScriptRouteScan } from "./javascriptRouteScan.js";
 import type { JavaScriptRouteSourceFacts } from "./javascriptRouteFacts.js";
 import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascriptSemanticCoverage.js";
-import { collectElectronWrappedCallPaths } from "./electronWrappedCallPaths.js";
+import { collectElectronWrappedCallPathsSteps } from "./electronWrappedCallPaths.js";
 import {
   ELECTRON_IDENTITY_LIMITATION,
   ELECTRON_MODULE,
@@ -14,7 +15,10 @@ import {
   traverseJavaScriptAstSteps,
 } from "./javascriptSemanticTraversal.js";
 
-import { isElectronRendererLoad } from "./electronStaticRenderer.js";
+import {
+  isElectronRendererLoad,
+  resolveElectronBrowserWindowReceiver,
+} from "./electronStaticRenderer.js";
 import { finishElectronNativeBindingsSteps } from "./electronStaticAnalysisNative.js";
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import {
@@ -69,10 +73,13 @@ import {
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
-  isTypeOnlyExportDeclaration,
-  isTypeOnlyImportDeclaration,
+  semanticStaticModuleSource,
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
+import {
+  javaScriptStaticParseStatus,
+  type JavaScriptStaticCoverage,
+} from "./javascriptStaticCoverage.js";
 
 /** Parse one JavaScript artifact and recover static structure only. */
 export const analyzeJavaScriptStaticSource = (
@@ -108,7 +115,10 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     bindings,
   );
   const findings: JavaScriptFindingContext = {
+    xhrOpenRequest: createXhrOpenRequestQuery(index),
     pathIntrinsics: createStaticPathIntrinsicQuery(index),
+    browserWindowReceiver: (node, site, suffix) =>
+      resolveElectronBrowserWindowReceiver(node, site, suffix, findings, index),
     rendererLoad: (callee, site) =>
       isElectronRendererLoad(callee, site, findings, index),
     source,
@@ -149,7 +159,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     finishPartialNetworkEndpoints(findings, bindings, index);
     finishSqliteStorageCalls(findings, bindings, index);
   }
-  accumulator.electronCallPaths = collectElectronWrappedCallPaths(
+  accumulator.electronCallPaths = yield* collectElectronWrappedCallPathsSteps(
     file.program,
     bindings,
     source,
@@ -167,6 +177,8 @@ function* traverseStaticSourceSteps(
   routeScan: JavaScriptRouteScan,
 ): Generator<void, void> {
   yield* traverseJavaScriptAstSteps(file, {
+    // Code that never runs under the bundler convention yields no findings.
+    skip: (node) => findings.accumulator.unusedFactoryDefaults.has(node),
     enter: (node, parent) => {
       findings.accumulator.visitedNodes += 1;
       routeScan.inspect(node, parent);
@@ -186,6 +198,43 @@ const finalizeStaticAnalysis = (
   routes: JavaScriptRouteSourceFacts,
 ): JavaScriptStaticAnalysis => {
   const parserErrors = file.errors.length;
+  const typeOnlySideEffect = hasUncertainTypeOnlyModuleSideEffect(file.program);
+  const electronObserved = accumulator.references.some(
+    ({ value }) =>
+      value.specifier !== null && ELECTRON_MODULE.test(value.specifier),
+  );
+  const resourceLimits = [...bindings.valueResourceLimits].sort();
+  const coverage: JavaScriptStaticCoverage = {
+    syntax:
+      parserErrors === 0
+        ? { status: "complete", error_count: 0 }
+        : { status: "recovered", error_count: parserErrors },
+    semantics: {
+      unknown_findings: accumulator.unknownFindings,
+      uncertainty: [
+        ...(accumulator.unknownFindings > 0
+          ? ["dynamic-findings" as const]
+          : []),
+        ...(bindings.returnedReferenceWidenings.size > 0
+          ? ["returned-reference-widening" as const]
+          : []),
+        ...(typeOnlySideEffect
+          ? ["type-only-module-side-effect" as const]
+          : []),
+      ],
+    },
+    examination: {
+      status:
+        resourceLimits.length > 0 ||
+        accumulator.electronCallPathLimitReached === true
+          ? "limited"
+          : "complete",
+      semantic_resource_limits: resourceLimits,
+      electron_call_paths_limited:
+        accumulator.electronCallPathLimitReached === true,
+    },
+    applicability: { electron: electronObserved ? "observed" : "unknown" },
+  };
   const limitations = [
     ...(bindings.valueResourceLimits.has("alias-selections")
       ? [semanticResourceLimitReason("alias-selections")]
@@ -213,26 +262,17 @@ const finalizeStaticAnalysis = (
       : [
           "One or more static keys, expressions, or Electron boundary values were dynamic and remain unknown.",
         ]),
-    ...(hasUncertainTypeOnlyModuleSideEffect(file.program)
+    ...(typeOnlySideEffect
       ? [
           "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
         ]
       : []),
-    ...(accumulator.references.some(
-      ({ value }) =>
-        value.specifier !== null && ELECTRON_MODULE.test(value.specifier),
-    )
-      ? [ELECTRON_IDENTITY_LIMITATION]
-      : []),
+    ...(electronObserved ? [ELECTRON_IDENTITY_LIMITATION] : []),
     "JavaScript syntax was parsed as data and was never evaluated.",
   ];
   return {
-    parse_status:
-      parserErrors > 0 ||
-      accumulator.unknownFindings > 0 ||
-      bindings.valueResourceLimits.has("alias-selections")
-        ? "partial"
-        : "complete",
+    parse_status: javaScriptStaticParseStatus(coverage),
+    analysis_coverage: coverage,
     parse_error_count: parserErrors,
     visited_ast_nodes: accumulator.visitedNodes,
     references: finalizeLocatedFindings(
@@ -294,6 +334,10 @@ const finalizeStaticAnalysis = (
         accumulator.nativeAddonBindings,
         accumulator.moduleRangeIndex,
       ),
+      protocols: finalizeLocatedFindings(
+        accumulator.protocols,
+        accumulator.moduleRangeIndex,
+      ),
     },
     limitations,
   };
@@ -328,28 +372,16 @@ const inspectNode = (
     const specifier = semanticImportEqualsSpecifier(node);
     if (specifier !== null)
       addReference(findings, { node, kind: "require", specifier });
-  } else if (
-    (t.isImportDeclaration(node) || t.isExportAllDeclaration(node)) &&
-    node.source !== undefined &&
-    !(t.isImportDeclaration(node) && isTypeOnlyImportDeclaration(node)) &&
-    !(t.isExportAllDeclaration(node) && isTypeOnlyExportDeclaration(node))
-  )
-    addReference(findings, {
-      node,
-      kind: "static-import",
-      specifier: node.source.value,
-    });
-  else if (
-    t.isExportNamedDeclaration(node) &&
-    node.source != null &&
-    !isTypeOnlyExportDeclaration(node)
-  )
-    addReference(findings, {
-      node,
-      kind: "static-import",
-      specifier: node.source.value,
-    });
-  else if (t.isImportExpression(node))
+  } else {
+    const moduleSource = semanticStaticModuleSource(node);
+    if (moduleSource !== null)
+      addReference(findings, {
+        node,
+        kind: "static-import",
+        specifier: moduleSource.value,
+      });
+  }
+  if (t.isImportExpression(node))
     addReference(findings, {
       node,
       kind: "dynamic-import",

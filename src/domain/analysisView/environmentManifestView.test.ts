@@ -351,6 +351,9 @@ it("derives value-free body shapes, observed query names and record pointers", (
       "status",
     ]);
   const silent = manifest([], environmentManifestCaptureFixture(), false);
+  expect(silent.tools.map((tool) => tool.name)).toEqual(
+    projected.tools.map((tool) => tool.name),
+  );
   expect(
     silent.tools.every((tool) => tool.query_parameter_names.length === 0),
   ).toBe(true);
@@ -888,7 +891,7 @@ it("refuses a path whose templated representation exceeds projection capacity", 
   });
 });
 
-it("omits a __proto__ body key explicitly instead of publishing a prototype", () => {
+it("preserves every own body key while publishing only its observed type", () => {
   const projected = manifest(
     [],
     syntheticCapture([
@@ -903,12 +906,14 @@ it("omits a __proto__ body key explicitly instead of publishing a prototype", ()
   const shape = projected.tools[0]?.body_shape;
   expect(shape).toEqual({
     type: "object",
-    properties: { constructor: "string", name: "number" },
+    properties: {
+      ["__proto__"]: "object",
+      constructor: "string",
+      name: "number",
+    },
   });
   expect(Object.getPrototypeOf(shape?.properties)).toBe(Object.prototype);
-  expect(projected.limitations).toContain(
-    "A top-level __proto__ key in a recorded JSON body is omitted from body_shape; it cannot be an own property of the published object.",
-  );
+  expect(Object.hasOwn(shape!.properties, "__proto__")).toBe(true);
   expect(JSON.stringify(projected)).not.toContain("admin");
 });
 
@@ -1150,7 +1155,7 @@ it("keeps opaque or redacted empty response text unknown when selecting bodiless
   ]);
 });
 
-it("refuses a parent whose subject is absent or names another path or digest", () => {
+it("refuses a parent whose subject is absent or names another digest", () => {
   const parent = parentOf();
   const refusal = {
     ok: false,
@@ -1165,15 +1170,6 @@ it("refuses a parent whose subject is absent or names another path or digest", (
     projectAnalysisView({ ...withoutSubject, subject: null }, view()),
   ).toMatchObject(refusal);
   if (subject == null) throw new Error("Fixture evidence carries a subject");
-  expect(
-    projectAnalysisView(
-      {
-        ...parent,
-        subject: { ...subject, local_path: "/elsewhere/capture.har" },
-      },
-      view(),
-    ),
-  ).toMatchObject(refusal);
   expect(
     projectAnalysisView(
       {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -297,7 +297,8 @@ describe("parseCapinfosOutput", () => {
   });
 });
 
-const REAL_TSHARK_JSON = JSON.stringify([
+// Synthetic producer observations without raw DNS bytes: identity remains unknown.
+const PARTIAL_TSHARK_JSON = JSON.stringify([
   {
     _source: {
       layers: {
@@ -305,9 +306,10 @@ const REAL_TSHARK_JSON = JSON.stringify([
         "frame.protocols": ["sll:ethertype:ip:udp:dns"],
         "ip.src": ["192.168.1.1"],
         "ip.dst": ["8.8.8.8"],
-        "dns.qry.name": ["example.com"],
-        "dns.flags.response": ["1"],
-        "dns.a": ["93.184.216.34"],
+        dns: {
+          "dns.qry.name": "example.com",
+          "dns.a": "93.184.216.34",
+        },
       },
     },
   },
@@ -337,7 +339,7 @@ const REAL_TSHARK_JSON = JSON.stringify([
 
 describe("parseTsharkJsonOutput", () => {
   it("projects endpoints, DNS, TLS SNI, protocols, and HTTP URIs", async () => {
-    const result = await parseTsharkJsonOutput(REAL_TSHARK_JSON);
+    const result = await parseTsharkJsonOutput(PARTIAL_TSHARK_JSON);
     expect(result.endpoints).toEqual(
       expect.arrayContaining([
         { address: "192.168.1.1", port: null, packet_count: 3 },
@@ -348,10 +350,13 @@ describe("parseTsharkJsonOutput", () => {
     expect(result.dnsQueries).toEqual([
       {
         query: "example.com",
-        response_addresses: ["93.184.216.34"],
-        response_address_count: 1,
+        query_labels_hex: null,
+        response_addresses: [],
+        response_address_count: 0,
       },
     ]);
+    expect(result.unattributedDnsAddresses).toEqual(["93.184.216.34"]);
+    expect(result.partial).toBe(true);
     expect(result.tlsSniValues).toEqual(["example.com"]);
     expect(result.httpRequestUris).toEqual(["http://example.com/page"]);
     expect(result.protocolDistribution).toEqual(
@@ -392,3 +397,22 @@ describe("parseTsharkJsonOutput", () => {
     });
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "resolves Wireshark tools through native PATH traversal instead of a decoy directory",
+  async () => {
+    const root = await createTestTempDirectory("rea-wireshark-native-path-");
+    const intended = join(root, "intended");
+    await mkdir(join(intended, "nested"), { recursive: true });
+    await symlink(join(intended, "nested"), join(root, "alias"));
+    for (const directory of [root, intended])
+      for (const tool of ["tshark", "capinfos"])
+        await writeFile(join(directory, tool), "", { mode: 0o755 });
+    const selected = resolvePcapTools({ PATH: `${root}/alias/..` });
+    for (const tool of ["tshark", "capinfos"] as const)
+      expect(await realpath(selected[tool].command)).toBe(join(intended, tool));
+    expect(() => resolvePcapTools({ PATH: `${root}/missing/..` })).toThrow(
+      /tshark was not found/u,
+    );
+  },
+);

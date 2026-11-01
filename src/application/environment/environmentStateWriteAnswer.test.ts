@@ -76,6 +76,7 @@ const expectReloadsUnchanged = (books: Served): void => {
 describe("confirmed write response bodies", () => {
   it.each<{
     name: string;
+    status?: number;
     content: Record<string, JsonValue>;
     shape: "recorded" | "empty";
     bodyRecorded: boolean;
@@ -97,6 +98,23 @@ describe("confirmed write response bodies", () => {
       bodyRecorded: false,
     },
     {
+      name: "205 without retained text",
+      status: 205,
+      content: { mimeType: "text/html" },
+      shape: "recorded",
+      bodyRecorded: false,
+    },
+    ...[undefined, null].map((text) => ({
+      name: `zero-size HTML with ${text === null ? "null" : "omitted"} text`,
+      content: {
+        mimeType: "text/html",
+        size: 0,
+        ...(text === null ? { text } : {}),
+      },
+      shape: "recorded" as const,
+      bodyRecorded: false,
+    })),
+    {
       name: "known empty text",
       content: { mimeType: "application/json", size: 0, text: "" },
       shape: "empty",
@@ -104,7 +122,7 @@ describe("confirmed write response bodies", () => {
     },
   ])(
     "preserves $name when serving a confirmed document write",
-    ({ content, shape, bodyRecorded }) => {
+    ({ content, shape, bodyRecorded, status = 200 }) => {
       const entries: Record<string, JsonValue>[] = [
         {
           request: { method: "GET", url: "http://app.example/api/settings" },
@@ -125,7 +143,7 @@ describe("confirmed write response bodies", () => {
               text: '{"theme":"dark"}',
             },
           },
-          response: { status: 200, content },
+          response: { status, content },
         },
         {
           request: { method: "GET", url: "http://app.example/api/settings" },
@@ -169,7 +187,7 @@ describe("confirmed write response bodies", () => {
       const write = respond(patch, { body: { theme: "blue" } });
       if (!write.ok) throw write.error;
       expect(write.value).toMatchObject({
-        status: 200,
+        status,
         body: null,
         replay: {
           record_ordinal: 1,

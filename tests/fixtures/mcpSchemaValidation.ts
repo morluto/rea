@@ -13,7 +13,9 @@ export const createMcpSchemaValidation = () => {
   const meta = new Ajv2020({ strict: false, validateFormats: false });
   let errors: unknown = null;
   return {
-    getValidator<T>(schema: JsonSchemaType): JsonSchemaValidator<T> {
+    getValidator<T>(
+      schema: JsonSchemaType | Readonly<Record<string, unknown>>,
+    ): JsonSchemaValidator<T> {
       const key = JSON.stringify(schema);
       let validator = sdkValidators.get(key);
       if (validator === undefined) {

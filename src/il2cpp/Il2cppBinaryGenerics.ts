@@ -103,7 +103,8 @@ export function* linkGenericMethodsSteps(
   metadata: Il2cppMetadataDecoded,
   facts: Il2cppMetadataLinkFacts,
   modulesField: bigint | null,
-  metadataRegistration: bigint,
+  /** Null when the type table was inferred without a static MetadataRegistration. */
+  metadataRegistration: bigint | null,
   options: Il2cppBinaryReadOptions,
 ): Generator<void, Il2cppGenericMethodLink> {
   const version = metadata.metadata_version;
@@ -112,6 +113,11 @@ export function* linkGenericMethodsSteps(
     throw new Il2cppBinaryFormatFailure(
       "generic-methods-unsupported",
       "this binary keeps no static CodeRegistration, so genericMethodPointers cannot be located",
+    );
+  if (metadataRegistration === null)
+    throw new Il2cppBinaryFormatFailure(
+      "generic-methods-unsupported",
+      "this binary keeps no static MetadataRegistration, so genericMethodTable cannot be located",
     );
   const word = (address: bigint) => readPointer(image, address);
   const count = (address: bigint) => {

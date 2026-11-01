@@ -166,3 +166,32 @@ export const appleIpsReport = (
 
 export const appleIpsBytes = (options: AppleIpsFixtureOptions = {}): Buffer =>
   Buffer.from(appleIpsReport(options), "utf8");
+
+/**
+ * Register excerpt from a public ReportCrash .ips log:
+ * https://github.com/Mortennn/Dozer/issues/189
+ * The metadata and surrounding body are authored test scaffolding. The
+ * malformed variant changes only tmp1 to exercise source-path reporting.
+ */
+export const appleIpsRosettaBytes = (tmp1: number | string = 532): Buffer =>
+  Buffer.from(
+    `${appleIpsMetadataLine()}\n{
+      "translated": true,
+      "cpuType": "X86-64",
+      "threads": [{
+        "threadState": {
+          "flavor": "x86_THREAD_STATE",
+          "rbp": { "value": 13029550560 },
+          "r12": { "value": 0 },
+          "rosetta": {
+            "tmp2": { "value": 140706223703876 },
+            "tmp1": { "value": ${JSON.stringify(tmp1)} },
+            "tmp0": { "value": 140703707485410 }
+          },
+          "rbx": { "value": 140703456658352 }
+        }
+      }],
+      "usedImages": []
+    }`,
+    "utf8",
+  );

@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · **Español** · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
 
 # REA: Ingeniería inversa de cualquier cosa
 
@@ -20,7 +20,7 @@
 
 **[Sitio web](https://rea.tools/es/) · [Guías](https://rea.tools/es/guides/) · [Casos prácticos](https://rea.tools/es/showcase/)**
 
-[Inicio rápido](#inicio-rápido) · [Cómo funciona REA](#cómo-funciona-rea) · [Qué puedes analizar](#qué-puedes-analizar) · [Casos prácticos](#casos-prácticos) · [Preguntas frecuentes](#preguntas-frecuentes) · [Herramientas GNU objdump y Rizin](../reverse-engineering-tools.md) · [Documentación](#documentación)
+[Inicio rápido](#inicio-rápido) · [Cómo funciona REA](#cómo-funciona-rea) · [Qué puedes analizar](#qué-puedes-analizar) · [Casos prácticos](#casos-prácticos) · [Crear entornos de RL](#build-rl-environments) · [Preguntas frecuentes](#preguntas-frecuentes) · [Documentación](#documentación)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@
 
 REA conecta tu agente con herramientas para inspeccionar binarios nativos, aplicaciones JavaScript y Electron, ensamblados .NET y sitios web. También puedes usar las mismas herramientas desde la terminal. El análisis se ejecuta localmente y los resultados incluyen las pruebas y limitaciones que sustentan cada conclusión.
 
-La configuración registra REA con tu agente e instala las instrucciones de trabajo correspondientes. El análisis nativo puede usar Hopper, Ghidra o IDA ya instalados; la configuración puede instalar Hopper con tu aprobación. El análisis estático de JavaScript no requiere un motor de análisis nativo.
+La configuración registra REA con tu agente e instala las instrucciones de trabajo correspondientes. El análisis nativo puede usar Hopper, Ghidra, IDA o Kuna ya instalados; la configuración puede instalar Hopper con tu aprobación. El análisis estático de JavaScript no requiere un motor de análisis nativo.
 
 > **[Visita el sitio web de REA](https://rea.tools/es/)** para encontrar instrucciones de configuración, guías ilustradas y casos reales.
 
@@ -151,13 +151,14 @@ REA requiere Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), adem�
 
 | Objetivo                    | Qué devuelve REA                                                                                                               | Requisitos y guía                                                                                                                            |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Binarios nativos            | Pseudocódigo, ensamblador, cadenas, símbolos, llamadas y referencias                                                           | Hopper, Ghidra o IDA; [análisis nativo](../native-investigation.md)                                                                          |
+| Binarios nativos            | Pseudocódigo, ensamblador, cadenas, símbolos, llamadas y referencias                                                           | Hopper, Ghidra, IDA o Kuna; [análisis nativo](../native-investigation.md)                                                                    |
 | Estructura ELF sin ejecutar | Secciones, segmentos, símbolos/reubicaciones originales y posibles medidas de mitigación detectadas mediante análisis estático | pwntools proporcionado por quien llama, en Linux x64; [diagnóstico de binarios](../binary-diagnostics.md)                                    |
 | PE certificates             | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                                   | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                      |
 | PE imports                  | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                     | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                |
 | Bytecode EVM                | Selectores de despacho, desplazamientos en bytes, argumentos inferidos y mutabilidad                                           | Entrada local con bytes sin procesar o representación hexadecimal, en Linux x64; [guía de EVM sin ejecutar](../evm-bytecode.md)              |
 | Rust binaries               | Embedded cargo-auditable dependency list                                                                                       | [Rust binaries](../rust-binaries.md)                                                                                                         |
 | ELF notes                   | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                                | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                 |
+| Linux kernel modules        | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                                    | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                       |
 | Erlang BEAM                 | IFF chunks, atoms, exports, and tables                                                                                         | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                            |
 | Apple IPS crashes           | .ips metadata, threads, images, registers and crash classes                                                                    | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                |
 | Fallos de Linux registrados | Registros note sin procesar, registros/señales de cada hilo registrado y posibles correspondencias de memoria opcionales       | pwntools proporcionado por quien llama, en Linux x64; GDB/pwndbg opcionales; [fallos registrados](../recorded-crashes.md)                    |
@@ -188,6 +189,8 @@ REA requiere Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), adem�
 | Firmas APK                  | Firmantes v1/v2/v3/v3.1, huellas de certificados, rotación de claves y coherencia interna de resúmenes                         | Inspección estática integrada; `inspect_apk_signature`                                                                                       |
 
 La inspección estática de JavaScript y .NET lee los archivos suministrados sin ejecutar la aplicación. La captura en ejecución inicia el objetivo seleccionado o interactúa con él con los permisos de tu usuario; cada guía describe sus efectos.
+
+Para inspeccionar binarios nativos sin conexión, REA también admite GNU objdump y Rizin, que debes proporcionar por tu cuenta. La [guía de herramientas de ingeniería inversa](../reverse-engineering-tools.md) explica la configuración de los proveedores, los comandos de la CLI y las limitaciones de Evidence. REA no instala ni actualiza ninguno de estos proveedores.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -222,7 +225,50 @@ Inspecciona las instrucciones de 16 bits del juego original para PC-98, recupera
 
 [Lee el caso práctico](https://rea.tools/es/showcase/th04/) · [Repositorio de reconstrucción](https://github.com/N0zoM1z0/th04)
 
+### Crear entornos de RL con REA
+
+Graba una sesión de una aplicación web, convierte su API en herramientas y exporta un entorno que un agente de IA pueda usar. Ejecútalo con AgentEnv y añade tareas y comprobaciones de recompensa para entrenamiento RL o evaluación.
+
+[Guía para crear un entorno](https://rea.tools/guides/rl-environments/) ·
+[Ver la demo en X](https://x.com/reatools/status/2112574822584918075?s=20)
+
 Si has usado REA para investigar algo interesante, nos gustaría verlo. Comparte tu caso en una [issue](https://github.com/morluto/rea/issues) o una [pull request](https://github.com/morluto/rea/pulls), incluyendo el objetivo, tu pregunta, cómo te ayudó REA y qué encontraste.
+
+<a id="build-rl-environments"></a>
+
+## Crear entornos de RL
+
+Crea un entorno local donde un agente de IA pueda practicar tareas como buscar un issue o crear una carpeta, sin ejecutar la aplicación original. Úsalo para aprendizaje por refuerzo (RL) o para comprobar cómo completa las tareas un agente.
+
+REA convierte las solicitudes y respuestas de API grabadas en herramientas que el agente puede llamar. El entorno usa los datos grabados y solo admite cambios cuyos efectos confirma la grabación.
+
+Configura REA en tu agente y sustituye la URL y las tareas de carpetas del ejemplo por las tuyas:
+
+```text
+Usa REA para crear un entorno de RL a partir de mi aplicación web de prueba en
+http://127.0.0.1:3000.
+Incluye listar, crear, renombrar y borrar carpetas. Puedes crear y borrar
+carpetas de prueba, pero no modifiques los datos existentes.
+Guárdalo en una carpeta llamada my-env, comprueba qué operaciones funcionan y dime cómo ejecutarlo.
+```
+
+<details>
+<summary>Usar la línea de comandos</summary>
+
+Usa estos comandos si ya tienes un archivo con las solicitudes y respuestas de la aplicación grabadas en el navegador. Para ejecutar el resultado también necesitas AgentEnv y Docker.
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA exporta un entorno ejecutable con una prueba básica que comprueba que arranca y responde. Úsalo con tu framework de RL para definir objetivos, añadir comprobaciones de recompensa y ejecutar el entrenamiento.
+
+[Guía para crear un entorno](https://rea.tools/guides/rl-environments/) ·
+[Referencia de entornos](../agent-environments.md) ·
+[Ver la demo en X](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## Preguntas frecuentes
 
@@ -234,9 +280,9 @@ Cualquier agente que admita servidores MCP locales. La configuración prepara lo
 </details>
 
 <details>
-<summary><strong>¿Necesito Hopper, Ghidra o IDA?</strong></summary>
+<summary><strong>¿Necesito Hopper, Ghidra, IDA o Kuna?</strong></summary>
 
-El análisis nativo en profundidad utiliza uno de ellos. La inspección estática de JavaScript y .NET funciona sin un motor de análisis nativo. La configuración puede instalar Hopper después de tu aprobación; Ghidra e IDA usan las instalaciones que ya tienes. Consulta [configuración de proveedores](../installation.md#hopper).
+El análisis nativo en profundidad utiliza uno de ellos. La inspección estática de JavaScript y .NET funciona sin un motor de análisis nativo. La configuración puede instalar Hopper después de tu aprobación; Ghidra, IDA y Kuna usan las instalaciones que ya tienes. Consulta [configuración de proveedores](../installation.md#hopper).
 
 </details>
 
@@ -304,7 +350,7 @@ Informa de vulnerabilidades siguiendo [SECURITY.md](../../SECURITY.md).
 
 ## Historial de estrellas
 
-🎉 **300.000 estrellas en GitHub: ¡gracias!**
+🎉 **400.000 estrellas en GitHub: ¡gracias!**
 
 Gracias a quienes usan REA, informan de errores, solicitan funciones, prueban compilaciones y contribuyen con correcciones.
 

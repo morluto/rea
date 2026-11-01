@@ -1,3 +1,4 @@
+import { IL2CPP_METADATA_PROVIDER_IDENTITY } from "./Il2CppMetadataProviderIdentity.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
@@ -55,18 +56,17 @@ import {
   type Il2cppBinaryLink,
 } from "./Il2cppBinaryFile.js";
 
-/** Bundled format reader identity; the metadata version is a separate observed fact. */
-export const IL2CPP_METADATA_PROVIDER_IDENTITY = {
-  id: "il2cpp-metadata",
-  name: "REA IL2CPP global-metadata reader",
-  version: "1",
-} as const;
 const OPERATION = "inspect_il2cpp_metadata";
 const INPUT_BYTES = 256 * 1024 * 1024;
 // GameAssembly binaries of large games reach several hundred megabytes.
 const BINARY_BYTES = 1024 * 1024 * 1024;
 // A 12.9 MB Unity 6000.4 file with 112,232 methods serializes to 7.8 MB.
 const OUTPUT_BYTES = 64 * 1024 * 1024;
+/** Instruction form the module-array fallback matched, per architecture. */
+const inferredReferenceForm = (architecture: string) =>
+  architecture === "arm64"
+    ? "an adjacent ADRP+ADD pair"
+    : "RIP-relative LEA/MOV";
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,
   path: string,
@@ -229,7 +229,7 @@ const binaryReport = (
       address: hex(module.address),
       method_pointer_count: module.method_pointer_count,
     })),
-    types_field: hex(link.types_field),
+    types_field: link.types_field === null ? null : hex(link.types_field),
     types_count: link.types_count,
     generic_methods:
       link.generic_methods === null
@@ -587,7 +587,12 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             ...(linked.binary !== null &&
             linked.binary.code_gen_modules_field === null
               ? [
-                  "The static CodeRegistration pair was not resolved. The module array is inferred from executable bytes consistent with RIP-relative LEA/MOV referencing one array candidate; instruction boundaries and runtime use were not verified.",
+                  `The static CodeRegistration pair was not resolved. The module array is inferred from executable bytes consistent with ${inferredReferenceForm(linked.binary.architecture)} referencing one array candidate; instruction boundaries and runtime use were not verified.`,
+                ]
+              : []),
+            ...(linked.binary !== null && linked.binary.types_field === null
+              ? [
+                  `No static MetadataRegistration had the type-definition counts. The type table is inferred from executable bytes consistent with ${inferredReferenceForm(linked.binary.architecture)} referencing the one run of Il2CppType-shaped pointers long enough for every referenced type index; types_count is that run's length, at least every referenced type index but not an observed typesCount, and instruction boundaries and runtime use were not verified.`,
                 ]
               : []),
             ...(binaryPath === undefined

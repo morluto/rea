@@ -130,7 +130,7 @@ cliTest.for([
         /non-finite|completely observed/u.test(note),
       ),
     ).toBe(false);
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -178,7 +178,7 @@ cliTest(
           },
         },
       });
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     }
   },
 );

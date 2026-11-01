@@ -22,6 +22,9 @@ HOPPER_SYMBOL_NAME_UTF16_UNITS = 1024
 # that does not fit is null, not an older descriptor path.
 # 536870887 is Node's 536870888-character string ceiling minus the framing LF.
 # The ceiling is the encoded payload; JSON expansion is measured before it.
+# Encoded JSON allowance, in bytes, shared by one instruction list, one
+# native-caller list, and one caller-scan page. This release has no runtime override.
+CALLER_SCAN_ALLOWANCE_BYTES = 512 * 1024
 _BRIDGE_MAX_REQUEST_BYTES_SETTING = "REA_BRIDGE_MAX_REQUEST_BYTES"
 DEFAULT_BRIDGE_MAX_REQUEST_BYTES = 16 * 1024 * 1024
 MINIMUM_BRIDGE_MAX_REQUEST_BYTES = 7464
@@ -232,6 +235,9 @@ EXHAUSTIVE_ANALYSIS_METHODS = frozenset(
         "procedure_assembly",
         "procedure_callees",
         "procedure_callers",
+        "rea_caller_scan_page",
+        "rea_caller_scan_target",
+        "rea_caller_base",
         "procedure_info",
         "procedure_pseudo_code",
         "procedure_references",
@@ -485,19 +491,30 @@ def _instruction_addresses(procedure):
     return result
 
 
-def _native_calls(procedure, direction):
+def _iter_native_calls(procedure, direction):
     references = procedure.getAllCallees() if direction == "outgoing" else procedure.getAllCallers()
     kinds = {0: "none", 1: "unknown", 2: "direct", 3: "objective_c"}
-    calls = {}
-    unresolved = []
     for reference in references:
         source, target, kind = reference.fromAddress(), reference.toAddress(), reference.type()
         if source in BAD_ADDRESSES:
+            yield None, None, None
             continue
         if target in BAD_ADDRESSES:
-            unresolved.append({"address": _hex(source), "reason": "Native CallReference has no resolved target (type %s)" % kind})
+            yield source, None, {"address": _hex(source), "reason": "Native CallReference has no resolved target (type %s)" % kind}
             continue
-        calls[(source, target)] = {"classification": kinds.get(kind, "unknown"), "provider_type": kind, "provenance": "hopper-public-python-api:CallReference"}
+        yield source, target, {"classification": kinds.get(kind, "unknown"), "provider_type": kind, "provenance": "hopper-public-python-api:CallReference"}
+
+
+def _native_calls(procedure, direction):
+    calls = {}
+    unresolved = []
+    for source, target, detail in _iter_native_calls(procedure, direction):
+        if detail is None:
+            continue
+        if target is None:
+            unresolved.append(detail)
+        else:
+            calls[(source, target)] = detail
     return calls, sorted(unresolved, key=lambda item: int(item["address"], 16))
 
 
@@ -545,6 +562,136 @@ def _procedure_map(document):
             procedure = segment.getProcedureAtIndex(index)
             result[_hex(procedure.getEntryPoint())] = _procedure_name(procedure)
     return result
+
+
+def _caller_target_data(procedure):
+    addresses = []
+    seen = set()
+    size = 0
+    for block in procedure.basicBlockIterator():
+        for address in _block_instruction_addresses(procedure, block):
+            if address in seen:
+                continue
+            encoded = _hex(address)
+            size += len(encoded) + 4
+            if size > CALLER_SCAN_ALLOWANCE_BYTES:
+                return {"target": _procedure_identity(procedure), "instructions": addresses, "instructions_complete": False}
+            addresses.append(encoded)
+            seen.add(address)
+    return {"target": _procedure_identity(procedure), "instructions": addresses, "instructions_complete": True}
+
+
+def _caller_scan_target(document, params):
+    return _caller_target_data(_procedure(document, params.get("procedure")))
+
+
+def _caller_base(document, params):
+    procedure = _procedure(document, params.get("procedure"))
+    callers = []
+    size = 0
+    complete = True
+    for item in procedure.getAllCallerProcedures():
+        address = _hex(item.getEntryPoint())
+        size += len(address) + 4
+        if size > CALLER_SCAN_ALLOWANCE_BYTES:
+            complete = False
+            break
+        callers.append(address)
+    return {
+        **_caller_target_data(procedure),
+        "callers": sorted(callers, key=lambda value: int(value, 16)),
+        "callers_complete": complete,
+    }
+
+
+def _caller_scan_page(document, params):
+    """Observe forward relationships in one bounded, stateless bridge request."""
+    start = params.get("start")
+    if isinstance(start, bool) or not isinstance(start, int) or start < 0:
+        raise InvalidRequestError("Caller scan start must be a non-negative integer")
+    segments = document.getSegmentsList()
+    counts = [segment.getProcedureCount() for segment in segments]
+    total = sum(counts)
+    end = min(start + 64, total)
+    if start > total:
+        raise InvalidRequestError("Caller scan start exceeds the procedure inventory")
+    items = []
+    item_bytes = 0
+    page_limit = CALLER_SCAN_ALLOWANCE_BYTES
+    oversized = False
+    identities = {}
+    containing = {}
+
+    def identity(procedure):
+        entry = procedure.getEntryPoint()
+        if entry not in identities:
+            identities[entry] = _procedure_identity(procedure)
+        return identities[entry]
+
+    def owner(address):
+        if address not in containing:
+            procedure, _ = _containing_procedure(document, address)
+            containing[address] = identity(procedure) if procedure is not None else None
+        return containing[address]
+
+    segment_start = 0
+    for segment, count in zip(segments, counts):
+        begin, stop = max(start - segment_start, 0), min(end - segment_start, count)
+        segment_start += count
+        for index in range(begin, max(begin, stop)):
+            candidate = segment.getProcedureAtIndex(index)
+            item = {"caller": identity(candidate), "callees": [], "references": []}
+            size = len(json.dumps(item, ensure_ascii=True).encode("utf-8")) + 1
+            remaining = page_limit - item_bytes
+            too_large = size > remaining
+            if not too_large:
+                for callee in candidate.getAllCalleeProcedures():
+                    address = _hex(callee.getEntryPoint())
+                    size += len(address) + 4
+                    if size > remaining:
+                        too_large = True
+                        break
+                    item["callees"].append(address)
+            if not too_large:
+                callee_entries = set(item["callees"])
+                for source, destination, call in _iter_native_calls(candidate, "outgoing"):
+                    # Account for every native record, even when its target cannot
+                    # be associated with an observed procedure.
+                    size += 32
+                    if size > remaining:
+                        too_large = True
+                        break
+                    if destination is None:
+                        continue
+                    source_procedure = item["caller"] if _hex(source) == item["caller"]["address"] else owner(source)
+                    target_address = _hex(destination)
+                    if target_address in callee_entries:
+                        target_entry = target_address
+                    else:
+                        target_procedure = owner(destination)
+                        if target_procedure is None:
+                            continue
+                        target_entry = target_procedure["address"]
+                    edge = {
+                        "source_address": _hex(source), "target_address": _hex(destination),
+                        "source_procedure": "caller" if source_procedure is not None and source_procedure["address"] == item["caller"]["address"] else source_procedure,
+                        "target_procedure": target_entry,
+                        "call": call,
+                    }
+                    size += len(json.dumps(edge, ensure_ascii=True).encode("utf-8")) + 1
+                    if size > remaining:
+                        too_large = True
+                        break
+                    item["references"].append(edge)
+            if too_large:
+                oversized = not items
+                break
+            items.append(item)
+            item_bytes += size
+        else:
+            continue
+        break
+    return {"start": start, "next": start + len(items), "total": total, "items": items, "oversized": oversized}
 
 
 def _string_record(segment, address, display):
@@ -886,6 +1033,15 @@ def _dispatch(method, params):
     document = _document(params.get("document"))
     if method in EXHAUSTIVE_ANALYSIS_METHODS:
         _api().require_analysis_complete(document, method)
+
+    if method == "rea_caller_scan_target":
+        return _caller_scan_target(document, params)
+
+    if method == "rea_caller_base":
+        return _caller_base(document, params)
+
+    if method == "rea_caller_scan_page":
+        return _caller_scan_page(document, params)
 
     if method == "analyze_function":
         return _analyze_function(document, params)

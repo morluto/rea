@@ -1,10 +1,13 @@
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import {
+  ownMember,
+  setOwnMember,
   at,
   isObject,
   isStringArray,
   listItems,
+  replaceAt,
   scalarText,
   type JsonObject,
   type StateEntity,
@@ -34,7 +37,7 @@ const ordered = (value: JsonValue | undefined): value is string[] =>
 /** Whether no object a read shows lists the field as a string array out of order. */
 const listedSorted = (shown: readonly JsonObject[], field: string): boolean =>
   shown.every((object) => {
-    const value = object[field];
+    const value = ownMember(object, field);
     return !ordered(value) || inOrder(value);
   });
 
@@ -49,7 +52,7 @@ const shownBy = (
   )?.fields;
   return own !== undefined && Object.hasOwn(own, field)
     ? own[field]
-    : entity.fields[field];
+    : ownMember(entity.fields, field);
 };
 
 /** Fields every initial entity shows, as the view renders it, as a sorted string array or null, one with two distinct strings. */
@@ -103,6 +106,8 @@ interface Candidates {
 export class SortedArrays {
   readonly #candidates = new Map<string, Candidates>();
   readonly #adopted = new Map<string, string[]>();
+  /** Retired views retain their former sort fields only for checking later values. */
+  readonly #retired = new Map<string, string[]>();
   /** Values each type's initial entities held, per candidate field. */
   readonly #existing = new Map<string, Set<string>>();
 
@@ -129,13 +134,26 @@ export class SortedArrays {
     }
   }
 
-  /** The view with the array fields it was shown to sort. */
-  view<View extends StateView>(view: View): View {
-    const adopted = this.#adopted.get(view.tool);
-    return adopted === undefined ? view : { ...view, sorted_arrays: adopted };
+  /** The serving projection: recorded after ordering was disproved, otherwise with learned sorts. */
+  view(view: StateView): StateView {
+    if (view.shape !== "item" && view.shape !== "list") return view;
+    if (this.#retired.has(view.tool))
+      return {
+        tool: view.tool,
+        shape: "recorded",
+        reason: view.shape === "item" ? "fields-differ" : "list-differs",
+      };
+    return this.comparisonView(view);
   }
 
-  /** The views with the array fields each was shown to sort. */
+  /** A retired view still describes where values were observed, but cannot supply serving proof. */
+  comparisonView(view: StateView): StateView {
+    if (view.shape !== "item" && view.shape !== "list") return view;
+    const fields = this.#retired.get(view.tool) ?? this.#adopted.get(view.tool);
+    return fields === undefined ? view : { ...view, sorted_arrays: fields };
+  }
+
+  /** The serving projections exported after simulation. */
   views(views: readonly StateView[]): StateView[] {
     return views.map((view) => this.view(view));
   }
@@ -149,21 +167,35 @@ export class SortedArrays {
   retry(
     view: StateView,
     read: { readonly record: StateRecordFacts; readonly outcome: CheckOutcome },
-    check: (view: StateView) => CheckOutcome | undefined,
+    check: (
+      view: StateView,
+      comparisonBody?: (body: JsonValue) => JsonValue,
+    ) => CheckOutcome | undefined,
     blocked: (targets: readonly string[]) => boolean,
   ): CheckOutcome {
     if (view.shape !== "item" && view.shape !== "list") return read.outcome;
+    const retired = this.#retired.get(view.tool);
+    if (retired !== undefined)
+      return read.outcome.pass
+        ? read.outcome
+        : (check({ ...view, sorted_arrays: retired }, (body) =>
+            this.#comparisonBody(view, retired, body),
+          ) ?? read.outcome);
     // A view with no candidate or learned field left has nothing to note or retry, so its read is never parsed.
     if (!this.#candidates.has(view.tool) && !this.#adopted.has(view.tool))
       return read.outcome;
     const shown = this.#shown(view, read.record);
     this.#ruleOut(view.tool, shown);
-    // A read listing a learned field unsorted is checked again as the view now lists it.
-    const current = this.#unlearn(view.tool, shown)
-      ? { ...view, sorted_arrays: this.#adopted.get(view.tool) ?? [] }
-      : view;
-    const failed =
-      current === view ? read.outcome : (check(current) ?? read.outcome);
+    const adopted = this.#adopted.get(view.tool) ?? [];
+    // Retire ordering proof, but still check values independently of the withdrawn array order.
+    if (this.#unlearn(view.tool, shown))
+      return (
+        check({ ...view, sorted_arrays: adopted }, (body) =>
+          this.#comparisonBody(view, adopted, body),
+        ) ?? read.outcome
+      );
+    const current = view;
+    const failed = read.outcome;
     const candidates = this.#candidates.get(view.tool)?.fields;
     if (failed.pass || candidates === undefined) return failed;
     const passing = (fields: readonly string[]) => {
@@ -191,6 +223,33 @@ export class SortedArrays {
     return outcome;
   }
 
+  /** Compare a retired view's values as multisets only for its formerly sorted string-array fields. */
+  #comparisonBody(
+    view: StateItemView | StateListView,
+    fields: readonly string[],
+    body: JsonValue,
+  ): JsonValue {
+    const normalize = (value: JsonValue): JsonValue => {
+      if (!isObject(value)) return value;
+      const object = { ...value };
+      for (const field of fields) {
+        const array = ownMember(object, field);
+        if (array !== undefined && isStringArray(array))
+          setOwnMember(object, field, array.toSorted(compare));
+      }
+      return object;
+    };
+    const value = at(body, view.pointer);
+    if (value === undefined) return body;
+    return replaceAt(
+      body,
+      view.pointer,
+      view.shape === "list" && Array.isArray(value)
+        ? value.map(normalize)
+        : normalize(value),
+    );
+  }
+
   /** The entity objects a read recorded at the view's pointer. */
   #shown(view: StateItemView | StateListView, record: StateRecordFacts) {
     return this.facts.io.withBody(record.ordinal, (body): JsonObject[] => {
@@ -212,13 +271,14 @@ export class SortedArrays {
       this.#candidates.set(tool, { ...entry, fields: left });
   }
 
-  /** A read listing a learned field unsorted shows its view does not sort it after all; whether one was. */
+  /** Contradictory ordering makes the view recorded and invalidates its earlier confirmations. */
   #unlearn(tool: string, shown: readonly JsonObject[]): boolean {
     const adopted = this.#adopted.get(tool) ?? [];
     const kept = adopted.filter((field) => listedSorted(shown, field));
     if (kept.length === adopted.length) return false;
-    if (kept.length === 0) this.#adopted.delete(tool);
-    else this.#adopted.set(tool, kept);
+    this.#retired.set(tool, adopted);
+    this.#adopted.delete(tool);
+    this.#candidates.delete(tool);
     return true;
   }
 
@@ -232,11 +292,11 @@ export class SortedArrays {
     const idField = this.facts.idField(view.type) ?? "";
     const existing = this.#existing.get(`${view.type}\u0000${field}`)!;
     return shown.some((object) => {
-      const value = object[field];
-      const id = scalarText(object[idField]);
+      const value = ownMember(object, field);
+      const id = scalarText(ownMember(object, idField));
       if (!ordered(value) || id === undefined) return false;
       return this.facts.state.named(id).some((entity) => {
-        const written = entity.fields[field];
+        const written = ownMember(entity.fields, field);
         return (
           targets.has(
             entityTarget(entity.type, entity.collection, entity.id),
@@ -274,8 +334,8 @@ export class SortedArrays {
     if (values === undefined) this.#existing.set(key, (values = new Set()));
     const held = entities.flatMap((entity) =>
       [
-        entity.fields[field],
-        ...entity.view_fields.map((view) => view.fields[field]),
+        ownMember(entity.fields, field),
+        ...entity.view_fields.map((view) => ownMember(view.fields, field)),
       ].flatMap((value) =>
         value !== undefined && value !== null && isStringArray(value)
           ? value

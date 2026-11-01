@@ -7,7 +7,7 @@ interface ParsedDyldSymbolFields {
 
 interface ParsedDyldImport extends ParsedDyldSymbolFields {
   readonly name: string | null;
-  /** Full producer text when the symbol/addend split cannot be established. */
+  /** Producer text when name, flags, library, or addend boundaries are unknown. */
   readonly raw_name: string | null;
   readonly name_status: "exact" | "ambiguous";
   readonly addend: string | null;
@@ -19,34 +19,99 @@ interface ParsedDyldExport extends ParsedDyldSymbolFields {
   readonly sourceSymbol?: string;
 }
 
-/** Decode Apple dyld import rows, retaining chained suffix ambiguity. */
+/** Decode Apple's literal import framing; request nm facts for competing names. */
 export const parseDyldImports = (
   output: string,
   hasChainedFixups: boolean,
-): ParsedDyldImport[] =>
-  output.split("\n").flatMap<ParsedDyldImport>((rawLine) => {
-    const line = rawLine.trim();
-    const imported =
-      /^(?:0x[\da-f]+\s+)?(.+?)(?:\s+\[([^\]]+)\])?\s+\(from (.+)\)$/iu.exec(
-        line,
-      );
-    if (imported?.[1] === undefined) return [];
-    const ambiguousSuffix = hasChainedFixups
-      ? /^(.*)\+0x[\da-f]+$/iu.test(imported[1])
-      : false;
-    return [
-      {
-        name: ambiguousSuffix ? null : imported[1],
-        raw_name: ambiguousSuffix ? imported[1] : null,
-        name_status: ambiguousSuffix ? "ambiguous" : "exact",
-        addend: null,
-        address: null,
-        weak: /\bweak-import\b/u.test(imported[2] ?? "") ? true : null,
-        reexport: null,
-        source: imported[3] ?? null,
-      },
-    ];
-  });
+  knownImportNames?: ReadonlySet<string>,
+): {
+  readonly items: ParsedDyldImport[];
+  readonly needsNameInventory: boolean;
+} => {
+  let needsNameInventory = false;
+  const items = output
+    .split("\n")
+    .flatMap<ParsedDyldImport>((rawLine, index) => {
+      const framed = rawLine.startsWith("      ");
+      const line = framed ? rawLine.slice(6) : rawLine;
+      if (
+        line.length === 0 ||
+        line.trim() === "-imports:" ||
+        (index === 0 && line.endsWith(":"))
+      )
+        return [];
+      // Apple prints "%s %s (from %s)": even an empty weak flag has its
+      // own separating spaces. Whitespace inside the name remains payload.
+      // Chained rows have one space after the ordinal in current Apple source,
+      // but two in installed-tool captures. nm names establish that boundary.
+      const ordinal = hasChainedFixups ? /^0x[\da-f]+ /iu.exec(line) : null;
+      const row = ordinal === null ? line : line.slice(ordinal[0].length);
+      const starts =
+        ordinal !== null && row.startsWith(" ") ? [row, row.slice(1)] : [row];
+      const readings: { name: string; weak: boolean | null; source: string }[] =
+        [];
+      for (const start of starts)
+        for (const separator of start.matchAll(
+          / (?:\[weak-import\])? \(from /gu,
+        )) {
+          const source = start.slice(separator.index + separator[0].length, -1);
+          if (!start.endsWith(")") || source.length === 0) continue;
+          const name = start.slice(0, separator.index);
+          if (name.length === 0) continue;
+          readings.push({
+            name,
+            weak: separator[0].includes("[weak-import]") ? true : null,
+            source,
+          });
+        }
+      if (readings.length > 1 && knownImportNames === undefined)
+        needsNameInventory = true;
+      const matching =
+        readings.length > 1 && knownImportNames !== undefined
+          ? readings.filter(({ name }) => knownImportNames.has(name))
+          : readings;
+      const reading = matching.length === 1 ? matching[0] : undefined;
+      const ambiguousSuffix =
+        reading !== undefined &&
+        hasChainedFixups &&
+        /\+0x[\da-f]+$/iu.test(reading.name);
+      const unknownName =
+        !framed ||
+        (hasChainedFixups && ordinal === null) ||
+        reading === undefined;
+      // Prefix uncertainty need not erase a separately established flag/library.
+      const common = readings.every(
+        (candidate) =>
+          candidate.weak === readings[0]?.weak &&
+          candidate.source === readings[0]?.source,
+      )
+        ? readings[0]
+        : undefined;
+      return [
+        {
+          name: unknownName || ambiguousSuffix ? null : reading.name,
+          raw_name: unknownName ? line : ambiguousSuffix ? reading.name : null,
+          name_status: unknownName || ambiguousSuffix ? "ambiguous" : "exact",
+          addend: null,
+          address: null,
+          weak: (reading ?? common)?.weak ?? null,
+          reexport: null,
+          source: (reading ?? common)?.source ?? null,
+        },
+      ];
+    });
+  return { items, needsNameInventory };
+};
+
+/** Apple prints two spaces after the address; one-space captures remain readable. */
+export const parseDyldExportAddressRow = (
+  line: string,
+): { readonly address: string; readonly text: string } | null => {
+  const match = /^(0x[\da-f]+)(?: {2}|[ \t])(.+)$/isu.exec(line);
+  return match?.[1] === undefined || match[2] === undefined
+    ? null
+    : { address: match[1], text: match[2] };
+};
 
 /** Decode Apple dyld export rows, projecting export offsets to VM addresses. */
 export const parseDyldExports = (
@@ -78,29 +143,31 @@ export const parseDyldExports = (
             : { sourceSymbol: reexport.sourceSymbol }),
         },
       ];
-    const exported = /^(0x[\da-f]+)\s+(.+?)(?:\s+\[([^\]]+)\])?$/isu.exec(line);
-    if (exported?.[1] === undefined || exported[2] === undefined) return [];
-    const rawName = /^0x[\da-f]+\s+(.+)$/isu.exec(line)?.[1];
-    const literalName = rawName !== undefined && knownExportNames.has(rawName);
+    const row = parseDyldExportAddressRow(line);
+    if (row === null) return [];
+    const exported = /^(.+?)(?:\s+\[([^\]]+)\])?$/su.exec(row.text);
+    if (exported?.[1] === undefined) return [];
+    const rawName = row.text;
+    const literalName = knownExportNames.has(rawName);
     // If nm establishes both interpretations, the textual row cannot bind an address or flags.
     // Let the caller retain the exact nm names without guessing which one owns this row.
     if (
       literalName &&
-      exported[3] !== undefined &&
-      knownExportNames.has(exported[2])
+      exported[2] !== undefined &&
+      knownExportNames.has(exported[1])
     )
       return [];
-    const annotation = literalName ? undefined : exported[3];
+    const annotation = literalName ? undefined : exported[2];
     const absolute = /\babsolute\b/u.test(annotation ?? "");
     const address =
       offsets && !absolute
         ? imageBase === null
           ? null
-          : `0x${(BigInt(imageBase) + BigInt(exported[1])).toString(16)}`
-        : canonicalHex(exported[1]);
+          : `0x${(BigInt(imageBase) + BigInt(row.address)).toString(16)}`
+        : canonicalHex(row.address);
     return [
       {
-        name: literalName ? rawName : exported[2],
+        name: literalName ? rawName : exported[1],
         address,
         weak: /\bweak-def\b/u.test(annotation ?? "") ? true : null,
         reexport: false,
@@ -130,7 +197,7 @@ const parseReexportRow = (
   line: string,
   knownNames: ReadonlySet<string>,
 ): ReexportRow | null => {
-  const prefix = /^\[re-export\]\s+/u.exec(line);
+  const prefix = /^\[re-export\] /u.exec(line);
   if (prefix === null) return null;
   const rest = line.slice(prefix[0].length);
   if (rest.length === 0) return null;

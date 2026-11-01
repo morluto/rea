@@ -35,6 +35,26 @@ export const gpuObjectSchema = z.strictObject({
       location: gpuLocationSchema,
     })
     .nullable(),
+  amd_target_metadata: z
+    .strictObject({
+      flags: z.string().regex(/^0x[0-9a-f]{8}$/u),
+      processor: z.string().nullable(),
+      header_location: gpuLocationSchema,
+      note_coverage: z
+        .enum(["complete", "partial"])
+        .describe(
+          "Complete only after all declared ELF note sections were examined within supported AMD metadata coverage; partial retains only examined facts.",
+        ),
+      notes: z.array(
+        z.strictObject({
+          target: z.string().nullable(),
+          target_state: z.enum(["absent", "declared", "invalid"]),
+          location: gpuLocationSchema,
+        }),
+      ),
+    })
+    .nullable()
+    .default(null),
   target_consistency: z.enum([
     "unexamined",
     "single-source",
@@ -207,6 +227,48 @@ export const gpuCodeObjectsSchema = gpuCodeObjectsObjectSchema.superRefine(
       const row = report.objects[index]!;
       range(row.location, ["objects", index, "location"]);
       range(row.metadata_location, ["objects", index, "metadata_location"]);
+      const amd = row.amd_target_metadata;
+      if (amd !== null) {
+        range(amd.header_location, [
+          "objects",
+          index,
+          "amd_target_metadata",
+          "header_location",
+        ]);
+        if (
+          row.kind !== "amdgpu" ||
+          amd.header_location.container_id !== row.id ||
+          amd.header_location.offset !== 0 ||
+          ![52, 64].includes(amd.header_location.size)
+        )
+          issue(
+            ["objects", index, "amd_target_metadata"],
+            "AMDGPU header provenance must start at its payload",
+          );
+        for (let note = 0; note < amd.notes.length; note++) {
+          const location = amd.notes[note]!.location;
+          range(location, [
+            "objects",
+            index,
+            "amd_target_metadata",
+            "notes",
+            note,
+            "location",
+          ]);
+          if (location.container_id !== row.id)
+            issue(
+              [
+                "objects",
+                index,
+                "amd_target_metadata",
+                "notes",
+                note,
+                "location",
+              ],
+              "AMDGPU notes must use their payload coordinate space",
+            );
+        }
+      }
       const header = row.cuda_target_header;
       if (header !== null) {
         range(header.location, [
@@ -315,32 +377,38 @@ const selection = {
   offset: count.default(0),
   limit: z.number().int().positive().default(32),
 };
+export const gpuCodeObjectsSelectionSchemas = {
+  objects: z.strictObject({
+    ...selection,
+    collection: z.literal("objects"),
+    fields: z.array(gpuObjectSchema.keyof()).optional(),
+  }),
+  kernels: z.strictObject({
+    ...selection,
+    collection: z.literal("kernels"),
+    object_ids: z.array(z.string()).optional(),
+    names: z.array(z.string()).optional(),
+    fields: z.array(gpuKernelSchema.keyof()).optional(),
+  }),
+  ptx: z.strictObject({
+    collection: z.literal("ptx"),
+    object_id: z.string(),
+    offset: count.default(0),
+    limit: z.number().int().positive().default(4096),
+  }),
+  targets: z.strictObject({
+    ...selection,
+    collection: z.literal("targets"),
+    fields: z.array(gpuTargetSchema.keyof()).optional(),
+  }),
+};
 export const gpuCodeObjectsSelectionSchema = z.discriminatedUnion(
   "collection",
   [
-    z.strictObject({
-      ...selection,
-      collection: z.literal("objects"),
-      fields: z.array(gpuObjectSchema.keyof()).optional(),
-    }),
-    z.strictObject({
-      ...selection,
-      collection: z.literal("kernels"),
-      object_ids: z.array(z.string()).optional(),
-      names: z.array(z.string()).optional(),
-      fields: z.array(gpuKernelSchema.keyof()).optional(),
-    }),
-    z.strictObject({
-      collection: z.literal("ptx"),
-      object_id: z.string(),
-      offset: count.default(0),
-      limit: z.number().int().positive().default(4096),
-    }),
-    z.strictObject({
-      ...selection,
-      collection: z.literal("targets"),
-      fields: z.array(gpuTargetSchema.keyof()).optional(),
-    }),
+    gpuCodeObjectsSelectionSchemas.objects,
+    gpuCodeObjectsSelectionSchemas.kernels,
+    gpuCodeObjectsSelectionSchemas.ptx,
+    gpuCodeObjectsSelectionSchemas.targets,
   ],
 );
 export const inspectGpuCodeObjectsInputSchema = z

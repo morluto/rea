@@ -42,7 +42,12 @@ relation rows), and six need only a better recording. This change addresses the 
 - **View order.** A collection's initial order comes from the first list line that shows every entity its type's
   sightings do and applies no order. A view renders a string array sorted only after a counted read-back shows an
   order that neither the written order nor existing-values-first explains, among the entities that read covers in its
-  own collection, and never once a read showed it unsorted, which also drops a sort the view had learned.
+  own collection. A later read contradicting a learned sort makes that view recorded and removes its earlier
+  write confirmations and saved overrides; types and entities with no surviving state view leave the snapshot.
+  The read's formerly sorted fields are compared as string multisets, so inconsistent ordering supplies no new
+  proof and does not hide real value mismatches or contradict an independent view's valid write confirmation.
+  Retired views keep a comparison-only representation to check later reads for value contradictions; they never
+  regain serving authority or confirm writes through those checks.
   Sort and direction parameters share one vocabulary and are never learned as inert. A create placed by disagreeing
   sorts or a random id falls back to `last`.
 - **Bulk writes.** A write at a type's collection whose body names entities by id, as an id array or objects carrying

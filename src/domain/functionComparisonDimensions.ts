@@ -6,7 +6,10 @@ import {
 } from "./functionRelationshipComparison.js";
 import { diffLines } from "diff";
 
-import type { FunctionSnapshot } from "./functionDossierEvidence.js";
+import type {
+  FunctionSnapshot,
+  FunctionSnapshotCoordinateContext,
+} from "./functionDossierEvidence.js";
 import {
   commentProjection,
   identityProjection,
@@ -14,6 +17,7 @@ import {
   normalizeCfg,
   referencedStringProjection,
   sorted,
+  swiftLiteralCoverage,
   swiftLiteralSitesConflict,
 } from "./functionComparisonNormalization.js";
 import type {
@@ -29,14 +33,21 @@ import {
 type ComparisonContext = Pick<
   DimensionResultInput,
   "links" | "providersDiffer"
->;
+> & {
+  readonly sameEntry: boolean;
+  readonly coordinateContext: FunctionSnapshotCoordinateContext;
+};
 
 export const compareDimensions = (
   left: FunctionSnapshot,
   right: FunctionSnapshot,
   context: ComparisonContext,
 ): FunctionDimension[] => {
-  const relationships = compareFunctionRelationships(left, right);
+  const relationships = compareFunctionRelationships(
+    left,
+    right,
+    context.coordinateContext,
+  );
   return [
     compareIdentity(left, right, context),
     compareText(
@@ -101,7 +112,9 @@ export const functionFacetLimitations = (
     strings_names: [
       [
         "strings_names",
-        dossier.referenced_strings.length + dossier.referenced_names.length,
+        dossier.referenced_strings.length +
+          dossier.referenced_names.length +
+          (dossier.swift_string_literals?.length ?? 0),
       ],
     ],
     cfg: [["cfg", dossier.basic_blocks.length]],
@@ -515,15 +528,6 @@ const groupStringsByOffset = (
   return groups;
 };
 
-const swiftLiteralCoverage = (
-  snapshot: FunctionSnapshot,
-): "absent" | "complete" | "partial" =>
-  (snapshot.dossier.swift_string_literal_omissions ?? []).length > 0
-    ? "partial"
-    : snapshot.dossier.swift_string_literals === undefined
-      ? "absent"
-      : "complete";
-
 const compareReferences = (
   compared: FunctionRelationshipComparison,
   context: ComparisonContext,
@@ -550,14 +554,15 @@ const compareIdentity = (
   context: ComparisonContext,
 ): FunctionDimension => {
   if (
-    !hasStableNativeSymbol(
+    !context.sameEntry &&
+    (!hasStableNativeSymbol(
       left.dossier.procedure.name,
       left.dossier.procedure.symbol,
     ) ||
-    !hasStableNativeSymbol(
-      right.dossier.procedure.name,
-      right.dossier.procedure.symbol,
-    )
+      !hasStableNativeSymbol(
+        right.dossier.procedure.name,
+        right.dossier.procedure.symbol,
+      ))
   )
     return unresolvedDimension({
       dimension: "identity",

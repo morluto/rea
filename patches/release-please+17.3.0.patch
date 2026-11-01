@@ -105,7 +105,22 @@
  }
 --- a/build/src/manifest.js
 +++ b/build/src/manifest.js
-@@ -261,9 +261,20 @@
+@@ -248,6 +248,14 @@
+                 releasesFound++;
+             }
+         }
++        // A recorded version requires its release boundary, even while a
++        // concurrent publisher has not created the matching release/tag yet.
++        for (const path of Object.keys(strategiesByPath)) {
++            const expectedVersion = this.releasedVersions[path];
++            if (expectedVersion && expectedVersion.toString() !== '0.0.0' && !releasesByPath[path]) {
++                throw new Error(`Missing expected release for path ${path} at version ${expectedVersion.toString()}: no matching release or tag found. Refusing to bootstrap an already released package.`);
++            }
++        }
+         const needsBootstrap = releasesFound < expectedReleases;
+         if (releasesFound < expectedReleases) {
+             this.logger.warn(`Expected ${expectedReleases} releases, only found ${releasesFound}`);
+@@ -261,9 +269,20 @@
          this.logger.info('Collecting commits since all latest releases');
          const commits = [];
          this.logger.debug(`commit search depth: ${this.commitSearchDepth}`);
@@ -127,7 +142,7 @@
              batchSize: this.commitBatchSize,
          });
          const releaseShas = new Set(Object.values(releaseShasByPath));
-@@ -272,6 +283,7 @@
+@@ -272,6 +291,7 @@
          // sha => release pull request
          const releasePullRequestsBySha = {};
          let releaseCommitsFound = 0;
@@ -135,7 +150,7 @@
          for await (const commit of commitGenerator) {
              if (releaseShas.has(commit.sha)) {
                  if (commit.pullRequest) {
-@@ -284,14 +296,17 @@
+@@ -284,14 +304,17 @@
              }
              if (this.lastReleaseSha && this.lastReleaseSha === commit.sha) {
                  this.logger.info(`Using configured lastReleaseSha ${this.lastReleaseSha} as last commit.`);
@@ -153,7 +168,7 @@
                  break;
              }
              commits.push({
-@@ -301,16 +316,18 @@
+@@ -301,16 +324,18 @@
                  pullRequest: commit.pullRequest,
              });
          }

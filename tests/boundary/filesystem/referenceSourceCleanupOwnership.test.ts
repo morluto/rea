@@ -6,6 +6,7 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { join } from "node:path";
+import type { Dirent } from "node:fs";
 
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 
@@ -27,6 +28,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const openMock = vi.mocked(fsOpen);
 const opendirMock = vi.mocked(fsOpendir);
 let actual: typeof import("node:fs/promises");
+
+interface DirectoryOperations {
+  read(): Promise<Dirent | null>;
+  close(): Promise<void>;
+}
 
 beforeEach(async () => {
   actual =
@@ -63,13 +69,14 @@ it.each([
     let readCalls = 0;
     opendirMock.mockImplementation(async (...args) => {
       const directory = await actual.opendir(...args);
-      const read = directory.read.bind(directory);
-      vi.spyOn(directory, "read").mockImplementation(async () => {
+      const operations: DirectoryOperations = directory;
+      const read = operations.read.bind(directory);
+      vi.spyOn(operations, "read").mockImplementation(async () => {
         readCalls += 1;
         return read();
       });
-      const close = directory.close.bind(directory);
-      vi.spyOn(directory, "close").mockImplementation(async () => {
+      const close = operations.close.bind(directory);
+      vi.spyOn(operations, "close").mockImplementation(async () => {
         closeCalls += 1;
         if (outcome === "refusal-late-cancel") controller.abort(reason);
         await close();
@@ -296,13 +303,14 @@ it("preserves a directory read failure when closing that directory also fails", 
 
   opendirMock.mockImplementation(async (...args) => {
     const directory = await actual.opendir(...args);
-    const read = directory.read.bind(directory);
-    vi.spyOn(directory, "read").mockImplementation(async () => {
+    const operations: DirectoryOperations = directory;
+    const read = operations.read.bind(directory);
+    vi.spyOn(operations, "read").mockImplementation(async () => {
       if (readCalls++ > 0) throw readFailure;
       return read();
     });
-    const close = directory.close.bind(directory);
-    vi.spyOn(directory, "close").mockImplementation(async () => {
+    const close = operations.close.bind(directory);
+    vi.spyOn(operations, "close").mockImplementation(async () => {
       closeCalls += 1;
       await close();
       throw closeFailure;
@@ -361,15 +369,16 @@ it("keeps cancelled traversal typed when native directory close rejects after in
 
   opendirMock.mockImplementation(async (...args) => {
     const directory = await actual.opendir(...args);
+    const operations: DirectoryOperations = directory;
     openedPath = String(args[0]);
-    const read = directory.read.bind(directory);
-    vi.spyOn(directory, "read").mockImplementation(async () => {
+    const read = operations.read.bind(directory);
+    vi.spyOn(operations, "read").mockImplementation(async () => {
       const child = await read();
       if (child !== null) controller.abort();
       return child;
     });
-    const close = directory.close.bind(directory);
-    vi.spyOn(directory, "close").mockImplementation(async () => {
+    const close = operations.close.bind(directory);
+    vi.spyOn(operations, "close").mockImplementation(async () => {
       closeCalls += 1;
       await close();
       throw closeFailure;

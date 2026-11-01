@@ -15,7 +15,7 @@ import { createEvidence } from "../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../src/application/EnhancedTools.js";
-import { IDA_PROVIDER_IDENTITY } from "../../src/ida/IdaProviderCapabilities.js";
+import { IDA_PROVIDER_IDENTITY } from "../../src/ida/IdaProviderMetadata.js";
 import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { fat } from "../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -279,7 +279,6 @@ describe("IDA provider selection cancellation", () => {
 describe("IDA universal Mach-O target identity", () => {
   const openUniversal = async (registration: Record<string, unknown>) => {
     const root = await createTestTempDirectory("rea-ida-universal-");
-    roots.push(root);
     const input = join(root, "universal");
     // x86_64 and arm64 slices share one whole-file digest.
     await writeFile(input, fat([0x01000007, 0x0100000c]));

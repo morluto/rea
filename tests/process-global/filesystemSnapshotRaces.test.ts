@@ -89,8 +89,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (args[0] === race.target && race.mode === "directory_missing")
         race.opened = true;
       if (args[0] === race.target && race.mode === "cancel_directory_close") {
-        const close = directory.close.bind(directory);
-        vi.spyOn(directory, "close").mockImplementation(async () => {
+        const closing: { close(): Promise<void> } = directory;
+        const close = closing.close.bind(directory);
+        vi.spyOn(closing, "close").mockImplementation(async () => {
           await close();
           race.closeCompleted = true;
           race.controller?.abort(race.reason);

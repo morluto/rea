@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { inspectAppleIpsInputSchema } from "../../domain/native/appleIps.js";
+import {
+  appleIpsSchema,
+  inspectAppleIpsInputSchema,
+} from "../../domain/native/appleIps.js";
 import {
   appleIpsBytes,
   appleIpsMetadataLine,
@@ -240,11 +243,11 @@ it("matches documented watchdog, guard, PAC and dyld rules", () => {
   });
 });
 
-it("treats an empty image path as omitted and accepts CRLF line endings", () => {
+it("retains an empty image path and accepts CRLF line endings", () => {
   const bytes = appleIpsBytes();
   const crlf = Buffer.from(appleIpsReport().replaceAll("\n", "\r\n"), "utf8");
   const report = parseAppleIps(bytes, artifact(bytes), input);
-  expect(report.images[1]?.path).toBeNull();
+  expect(report.images[1]?.path).toBe("");
   const crlfReport = parseAppleIps(crlf, artifact(crlf), input);
   expect(crlfReport.metadata.bug_type).toBe("309");
   expect(crlfReport.threads[0]?.frames[0]?.role).toBe("faulting_instruction");
@@ -276,6 +279,75 @@ const parse = (bytes: Buffer, options: Record<string, number> = {}) =>
 
 const withBody = (body: string): Buffer =>
   Buffer.from(`${appleIpsMetadataLine()}\n${body}`, "utf8");
+
+it("keeps empty observed text and JSON keys distinct from omitted fields", () => {
+  const bytes = Buffer.from(
+    '{"bug_type":"309","":0}\n{"procName":"","osVersion":"","threads":[{"threadState":{"":0},"frames":[{"symbol":""},{}]}],"usedImages":[{"source":"","arch":"","uuid":"","path":""},{}],"":0}',
+  );
+  const parsed = appleIpsSchema.parse(parse(bytes));
+  expect(parsed.metadata.unlisted_keys).toEqual([""]);
+  expect(parsed.unlisted_body_keys).toEqual([""]);
+  expect(parsed.process.name).toBe("");
+  expect(parsed.process.path).toBeNull();
+  expect(parsed.process.os_version).toEqual({ form: "text", text: "" });
+  expect(parsed.threads[0]?.registers[0]).toMatchObject({
+    name: "",
+    value: { decimal: "0", hex: "0x0" },
+  });
+  expect(
+    parsed.threads[0]?.frames.map((frame) => frame.recorded_symbol),
+  ).toEqual(["", null]);
+  expect(parsed.images[0]).toMatchObject({
+    source: "",
+    source_meaning: null,
+    arch: "",
+    uuid: null,
+    uuid_unknown: true,
+    path: "",
+  });
+  expect(parsed.images[1]?.path).toBeNull();
+  expect(parsed.classification.status).toBe("unclassified");
+  expect(parsed.coverage.type_mismatches).toEqual([
+    {
+      path: "body.usedImages[0].uuid",
+      expected: "32 hexadecimal UUID digits with optional canonical hyphens",
+      observed: "malformed UUID string",
+      recorded_value: "",
+    },
+  ]);
+});
+
+it("keeps an empty recorded architecture without claiming a UUID join", () => {
+  const parsed = parse(
+    withBody(
+      '{"threads":[],"usedImages":[{"arch":"","uuid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}',
+    ),
+  );
+  expect(parsed.images[0]).toMatchObject({
+    arch: "",
+    uuid: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+    uuid_unknown: true,
+  });
+  expect(parsed.coverage.status).toBe("complete");
+});
+
+it("does not copy empty source text into classification match fields", () => {
+  const parsed = parse(
+    withBody(
+      '{"threads":[],"usedImages":[],"exception":{"type":"","subtype":"KERN_INVALID_ADDRESS (possible pointer authentication failure)"},"termination":{"namespace":"DYLD","indicator":"","reasons":["Library not loaded: @rpath/missing.dylib"]}}',
+    ),
+  );
+  expect(parsed.exception?.type).toBe("");
+  expect(parsed.termination?.indicator).toBe("");
+  expect(parsed.classification.matches.map((match) => match.rule)).toEqual([
+    "possible_pointer_authentication_failure",
+    "dyld_missing_library",
+  ]);
+  expect(
+    parsed.classification.matches.flatMap((match) => match.fields),
+  ).not.toContainEqual(expect.objectContaining({ value: "" }));
+  expect(appleIpsSchema.safeParse(parsed).success).toBe(true);
+});
 
 const report = (options: Parameters<typeof appleIpsReport>[0]) =>
   parse(appleIpsBytes(options));
@@ -311,11 +383,7 @@ it("keeps ReportCrash-shaped producer facts and reports complete coverage", () =
     description: "(Data Abort) byte read Translation fault",
   });
   expect(parsed.exception?.unlisted_keys).toEqual(["rawCodes"]);
-  expect(parsed.termination?.unlisted_keys).toEqual([
-    "flags",
-    "byProc",
-    "byPid",
-  ]);
+  expect(parsed.termination?.unlisted_keys).toEqual([]);
   expect(parsed.unlisted_body_keys).toContain("sharedCache");
   expect(parsed.unlisted_body_keys).not.toContain("osVersion");
   expect(parsed.metadata.unlisted_keys).toContain("slice_uuid");
@@ -328,6 +396,70 @@ it("keeps ReportCrash-shaped producer facts and reports complete coverage", () =
     registers: 6,
     type_mismatches: [],
   });
+});
+
+it("keeps the documented terminating process, parent pid and metadata members", () => {
+  const parsed = report({});
+  expect(parsed.termination).toMatchObject({
+    flags: { decimal: "0", hex: "0x0" },
+    by_pid: { decimal: "4242", hex: "0x1092" },
+    by_proc: "exc handler",
+  });
+  expect(parsed.process.parent_pid).toEqual({ decimal: "100", hex: "0x64" });
+  expect(parsed.metadata).toMatchObject({
+    build_version: "",
+    platform: { decimal: "1", hex: "0x1" },
+  });
+  expect(parsed.metadata.unlisted_keys).not.toContain("build_version");
+  expect(parsed.metadata.unlisted_keys).not.toContain("platform");
+  expect(parsed.unlisted_body_keys).not.toContain("parentPid");
+  expect(parsed.coverage.status).toBe("complete");
+  const wrong = parse(
+    Buffer.from(
+      appleIpsReport().replace('"byPid": 4242', '"byPid": "4242"'),
+      "utf8",
+    ),
+  );
+  expect(wrong.termination?.by_pid).toBeNull();
+  expect(wrong.coverage.type_mismatches).toContainEqual(
+    expect.objectContaining({
+      path: "body.termination.byPid",
+      expected: "integer",
+    }),
+  );
+});
+
+it("keeps the recorded image name and symbol offset", () => {
+  const parsed = report({});
+  expect(parsed.images.map((image) => image.name)).toEqual([
+    "rea-crash-fixture",
+    null,
+  ]);
+  expect(parsed.threads[0]?.frames[0]).toMatchObject({
+    recorded_symbol: "rea_fixture_fault",
+    symbol_location: { decimal: "12", hex: "0xc" },
+  });
+  expect(parsed.threads[1]?.frames[0]?.symbol_location).toEqual({
+    decimal: "0",
+    hex: "0x0",
+  });
+  expect(parsed.coverage.status).toBe("complete");
+  const wrong = parse(
+    Buffer.from(
+      appleIpsReport().replace(
+        '"symbolLocation": 12',
+        '"symbolLocation": "12"',
+      ),
+      "utf8",
+    ),
+  );
+  expect(wrong.threads[0]?.frames[0]?.symbol_location).toBeNull();
+  expect(wrong.coverage.type_mismatches).toContainEqual(
+    expect.objectContaining({
+      path: "body.threads[0].frames[0].symbolLocation",
+      expected: "integer",
+    }),
+  );
 });
 
 it("assigns frame roles by recorded row without inventing inline stack addresses", () => {
@@ -406,8 +538,10 @@ it.each(["-1", "4294967296", `1${"0".repeat(1000)}`])(
 );
 
 it("bounds rejected index text before retaining it", () => {
-  const bytes = withBody(
-    '{"faultingThread":4294967296,"threads":[],"usedImages":[]}',
+  // A bare metadata line: its recorded platform integer would also count toward this allowance.
+  const bytes = Buffer.from(
+    '{"bug_type":"309"}\n{"faultingThread":4294967296,"threads":[],"usedImages":[]}',
+    "utf8",
   );
   expect(() =>
     parseAppleIps(bytes, artifact(bytes), {
@@ -500,6 +634,78 @@ it("reports wrong-type collections as partial instead of empty and complete", ()
   expect(empty.coverage.status).toBe("complete");
 });
 
+it("keeps the nested Rosetta registers of a translated process", () => {
+  const parsed = parse(
+    withBody(`{
+      "translated": true,
+      "threads": [
+        {
+          "threadState": {
+            "flavor": "x86_THREAD_STATE",
+            "rip": { "value": 4294983680 },
+            "rosetta": { "tmp0": { "value": 7 }, "tmp1": 8 }
+          }
+        }
+      ],
+      "usedImages": []
+    }`),
+  );
+  expect(parsed.threads[0]?.registers).toEqual([
+    {
+      name: "rip",
+      value: { decimal: "4294983680", hex: "0x100004000" },
+      description: null,
+    },
+    {
+      name: "rosetta.tmp0",
+      value: { decimal: "7", hex: "0x7" },
+      description: null,
+    },
+    {
+      name: "rosetta.tmp1",
+      value: { decimal: "8", hex: "0x8" },
+      description: null,
+    },
+  ]);
+  expect(parsed.coverage).toMatchObject({
+    status: "complete",
+    registers: 3,
+    type_mismatches: [],
+  });
+});
+
+it.each([
+  { rosetta: "7", observed: "integer" },
+  { rosetta: '"invalid"', observed: "string" },
+  { rosetta: "[]", observed: "array" },
+])(
+  "reports a $observed Rosetta container without losing ordinary registers",
+  ({ rosetta, observed }) => {
+    const parsed = parse(
+      withBody(`{
+      "threads": [{ "threadState": { "rip": 1, "rosetta": ${rosetta}, "rsp": 2 } }],
+      "usedImages": []
+    }`),
+      { max_registers: 2 },
+    );
+    expect(parsed.threads[0]?.registers.map(({ name }) => name)).toEqual([
+      "rip",
+      "rsp",
+    ]);
+    expect(parsed.coverage).toMatchObject({
+      status: "partial",
+      registers: 2,
+      type_mismatches: [
+        {
+          path: "body.threads[0].threadState.rosetta",
+          expected: "object",
+          observed,
+        },
+      ],
+    });
+  },
+);
+
 it("records wrong-type rows, scalars and registers with their source path", () => {
   const parsed = parse(
     withBody(`{
@@ -511,7 +717,7 @@ it("records wrong-type rows, scalars and registers with their source path", () =
         7,
         {
           "frames": [{ "imageIndex": 99999999999, "imageOffset": "8" }, []],
-          "threadState": { "flavor": 1, "x": [1, "two", { "value": null }, {}], "rosetta": { "tmp0": 1 } }
+          "threadState": { "flavor": 1, "x": [1, "two", { "value": null }, {}], "rosetta": { "tmp0": "one" } }
         }
       ],
       "usedImages": [null, { "base": 1.0 }]
@@ -567,9 +773,9 @@ it("records wrong-type rows, scalars and registers with their source path", () =
       observed: "absent",
     },
     {
-      path: "body.threads[1].threadState.rosetta.value",
-      expected: "integer",
-      observed: "absent",
+      path: "body.threads[1].threadState.rosetta.tmp0",
+      expected: "integer or object with integer value",
+      observed: "string",
     },
     {
       path: "body.threads[1].threadState.flavor",
@@ -625,6 +831,69 @@ it("budgets register slots before expanding threadState rows", () => {
   );
   expect(() => parse(registerFlood(5), { max_registers: 4 })).toThrow(
     AppleIpsResourceFailure,
+  );
+});
+
+it("budgets Rosetta registers with the ordinary registers they follow", () => {
+  const rosetta = (third: string): Buffer =>
+    withBody(
+      `{"threads":[{"threadState":{"x":[0],"rosetta":{"tmp0":0,"tmp1":0,"tmp2":${third}}}}],"usedImages":[]}`,
+    );
+  expect(parse(rosetta("0"), { max_registers: 4 }).coverage).toMatchObject({
+    status: "complete",
+    registers: 4,
+  });
+  // The register past the allowance is invalid JSON; the budget must refuse first.
+  expect(() => parse(rosetta("?"), { max_registers: 3 })).toThrow(
+    expect.objectContaining({ boundary: "registers", maximum: 3 }),
+  );
+});
+
+it("keeps valid registers around a malformed Rosetta member at the exact slot limit", () => {
+  const parsed = parse(
+    withBody(`{
+      "translated": true,
+      "threads": [{
+        "threadState": {
+          "flavor": "x86_THREAD_STATE",
+          "rip": { "value": 1 },
+          "rosetta": { "tmp0": { "value": 2 }, "tmp1": "invalid" },
+          "rsp": { "value": 3 }
+        }
+      }],
+      "usedImages": []
+    }`),
+    { max_registers: 4 },
+  );
+  expect(parsed.threads[0]?.registers.map(({ name }) => name)).toEqual([
+    "rip",
+    "rosetta.tmp0",
+    "rsp",
+  ]);
+  expect(parsed.coverage).toMatchObject({
+    status: "partial",
+    registers: 3,
+    type_mismatches: [
+      {
+        path: "body.threads[0].threadState.rosetta.tmp1",
+        expected: "integer or object with integer value",
+        observed: "string",
+      },
+    ],
+  });
+});
+
+it("shares the register allowance across Rosetta groups and later ordinary registers", () => {
+  const mixed = (last: string): Buffer =>
+    withBody(
+      `{"threads":[{"threadState":{"rosetta":{"tmp0":0}}},{"threadState":{"rosetta":{"tmp1":0},"rip":${last}}}],"usedImages":[]}`,
+    );
+  expect(parse(mixed("0"), { max_registers: 3 }).coverage).toMatchObject({
+    status: "complete",
+    registers: 3,
+  });
+  expect(() => parse(mixed("?"), { max_registers: 2 })).toThrow(
+    expect.objectContaining({ boundary: "registers", maximum: 2 }),
   );
 });
 

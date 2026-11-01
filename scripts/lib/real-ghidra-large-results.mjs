@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
+import { parseEvidenceBundle } from "../../dist/domain/evidenceBundle.js";
 
 /** Exercise complete oversized results and recovery through real CLI/MCP adapters. */
 export async function verifyGhidraLargeResults({
@@ -132,7 +133,9 @@ export async function verifyGhidraLargeResults({
     );
     const bundlePath = join(workspace, "bundle.json");
     await call("export_evidence_bundle", { path: bundlePath });
-    const bundle = JSON.parse(await readFile(bundlePath, "utf8"));
+    const bundle = parseEvidenceBundle(
+      JSON.parse(await readFile(bundlePath, "utf8")),
+    );
     const retained = (id) => {
       const record = bundle.records.find(
         ({ evidence_id }) => evidence_id === id,

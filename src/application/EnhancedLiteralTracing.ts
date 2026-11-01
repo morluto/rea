@@ -1,21 +1,22 @@
+import type { LiteralFeatureMatch } from "../domain/native/literalFeatureMatch.js";
 import { nativeInventoryRowsSchemas } from "../domain/native/nativeInventory.js";
 import type {
   AnalysisExecution,
   AnalysisOperation,
 } from "./AnalysisProvider.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   parseContainingProcedureResolution,
-  type ContainingProcedureResolution,
-} from "../domain/hopperValues.js";
+  type TraceContainingProcedure,
+} from "../domain/native/nativeObservation.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type {
-  EnhancedResult,
-  TraceMatch,
-  TraceReference,
-} from "./EnhancedToolTypes.js";
+import type { EnhancedResult, TraceReference } from "./EnhancedToolTypes.js";
 
 type AnalysisCall = (
   name: AnalysisOperation,
@@ -35,7 +36,7 @@ type LiteralSearchSource = readonly [
 ];
 
 interface ReferenceTraceRequest {
-  readonly matches: readonly TraceMatch[];
+  readonly matches: readonly LiteralFeatureMatch[];
   readonly signal?: AbortSignal;
 }
 
@@ -73,7 +74,7 @@ export const traceLiteralFeature = async (
     search_mode: "literal",
     matches: searched.value.matches,
     references: traced.value.references,
-    truncated: traced.value.residual.length > 0,
+    truncated: traced.value.truncated,
     residual_unknowns: traced.value.residual,
   });
 };
@@ -83,8 +84,8 @@ const literalMatches = async (
   input: LiteralTraceInput,
   sources: readonly LiteralSearchSource[],
   signal?: AbortSignal,
-): Promise<Result<{ matches: TraceMatch[] }, AnalysisError>> => {
-  const matches: TraceMatch[] = [];
+): Promise<Result<{ matches: LiteralFeatureMatch[] }, AnalysisError>> => {
+  const matches: LiteralFeatureMatch[] = [];
   for (const [tool, type] of sources) {
     const result = await call(
       tool,
@@ -124,14 +125,18 @@ const traceReferences = async (
   observe: ObserveCall,
   request: ReferenceTraceRequest,
 ): Promise<
-  Result<{ references: TraceReference[]; residual: string[] }, AnalysisError>
+  Result<
+    { references: TraceReference[]; residual: string[]; truncated: boolean },
+    AnalysisError
+  >
 > => {
   const references: TraceReference[] = [];
   const residual: string[] = [];
+  let truncated = false;
   // References identify targets by address, independently of search alternatives.
   const tracedTargets = new Set<string>();
   // A source address is resolved once however many matches reference it.
-  const containing = new Map<string, ContainingProcedureResolution>();
+  const containing = new Map<string, TraceContainingProcedure>();
   for (const match of request.matches) {
     if (tracedTargets.has(match.address)) continue;
     tracedTargets.add(match.address);
@@ -143,10 +148,12 @@ const traceReferences = async (
     if (!observed.ok) return observed;
     // Only an explicit producer report of truncation is a coverage gap; a
     // provider that reports nothing keeps its previous, unqualified result.
-    if (observed.value.referencesTruncated === true)
+    if (observed.value.referencesTruncated === true) {
+      truncated = true;
       residual.push(
         `References to ${match.address} were truncated by the provider; additional references may exist.`,
       );
+    }
     const sources = observed.value.result;
     if (!Array.isArray(sources))
       return err(
@@ -170,10 +177,34 @@ const traceReferences = async (
           { address: source },
           request.signal,
         );
-        if (!resolved.ok) return resolved;
-        const parsed = parseContainingProcedureResolution(resolved.value);
-        if (!parsed.ok) return parsed;
-        containingProcedure = parsed.value;
+        if (!resolved.ok) {
+          if (
+            !(resolved.error instanceof AnalysisCapabilityUnavailableError) ||
+            resolved.error.operation !== "resolve_containing_procedure" ||
+            resolved.error.cleanupIncomplete ||
+            resolved.error.retryable
+          )
+            return resolved;
+          if (request.signal?.aborted === true)
+            return err(
+              new AnalysisCancelledError("trace_feature", {
+                cause: request.signal.reason,
+              }),
+            );
+          containingProcedure = {
+            query_address: source,
+            status: "unavailable",
+            provider_id: resolved.error.providerId,
+            reason: resolved.error.reason,
+          };
+          residual.push(
+            `Containing procedure for ${source} is unavailable: ${resolved.error.reason}`,
+          );
+        } else {
+          const parsed = parseContainingProcedureResolution(resolved.value);
+          if (!parsed.ok) return parsed;
+          containingProcedure = parsed.value;
+        }
         containing.set(source, containingProcedure);
       }
       references.push({
@@ -183,5 +214,5 @@ const traceReferences = async (
       });
     }
   }
-  return ok({ references, residual });
+  return ok({ references, residual, truncated });
 };

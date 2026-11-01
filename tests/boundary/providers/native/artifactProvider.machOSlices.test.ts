@@ -117,7 +117,7 @@ describe("artifact Mach-O slices", () => {
     const chunks: Buffer[] = [];
     const stream = await reader.open({ ...secondEntry });
     for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-    expect(Buffer.concat(chunks)).toEqual(Buffer.from(arm));
+    expect(Buffer.compare(Buffer.concat(chunks), Buffer.from(arm))).toBe(0);
     expect(reader.provenance()).toEqual([
       expect.objectContaining({ tool: "lipo", effects: ["read"] }),
     ]);

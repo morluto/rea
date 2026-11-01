@@ -1,6 +1,7 @@
 import {
   access,
   mkdir,
+  readFile,
   realpath,
   rm,
   symlink,
@@ -9,8 +10,13 @@ import {
 import { dirname, join } from "node:path";
 import { expect, it } from "vitest";
 
-import { setupRegistrationCommand } from "../../../src/application/SetupHost.js";
-import { classifyClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+import {
+  classifyClientRegistrationCommand,
+  registrationRuntimePath,
+} from "../../../src/application/ClientRegistrationIdentity.js";
+import { readClientRegistrationInspections } from "../../../src/application/ClientRegistrationStatus.js";
+import { javaScriptRuntime } from "../../../src/domain/runtimeVersion.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform === "win32")(
@@ -36,23 +42,191 @@ it.skipIf(process.platform === "win32")(
     await symlink(old, latest, "dir");
     const unstable = join(latest, scriptWithin("old"));
     const alias = join(latest, "bin", "rea");
-    const command = setupRegistrationCommand("linux", undefined, unstable, {
-      PATH: join(latest, "bin"),
+    const command = currentClientRegistrationCommand({
+      platform: "linux",
+      entrypointPath: unstable,
+      environment: { PATH: join(latest, "bin") },
     });
-    expect(command).toEqual([alias, "mcp"]);
+    expect(command).toEqual([process.execPath, alias, "mcp"]);
     expect(classifyClientRegistrationCommand(command, unstable)).toBe("owned");
     await rm(latest);
     await symlink(next, latest, "dir");
     await rm(old, { recursive: true });
     await expect(access(unstable)).rejects.toMatchObject({ code: "ENOENT" });
-    await access(command[0]!);
-    expect(await realpath(command[0]!)).toBe(join(next, scriptWithin("next")));
+    await access(command[1]!);
+    expect(await realpath(command[1]!)).toBe(join(next, scriptWithin("next")));
     expect(
       classifyClientRegistrationCommand(
         command,
         join(next, scriptWithin("next")),
       ),
     ).toBe("owned");
+  },
+);
+
+it.skipIf(process.platform === "win32").each(["node", "bun"] as const)(
+  "preserves a same-file %s runtime alias across a manager version switch",
+  async (runtime) => {
+    const root = await createTestTempDirectory("rea-stable-runtime-alias-");
+    const old = join(root, "old");
+    const next = join(root, "next");
+    for (const [directory, contents] of [
+      [old, "old runtime"],
+      [next, "next runtime"],
+    ] as const) {
+      await mkdir(directory);
+      await writeFile(join(directory, runtime), contents, { mode: 0o700 });
+    }
+    const latest = join(root, "latest");
+    await symlink(old, latest, "dir");
+    const executable = join(old, runtime);
+    const alias = join(latest, runtime);
+    const selected = registrationRuntimePath(
+      executable,
+      runtime,
+      { PATH: latest },
+      "linux",
+    );
+    expect(selected).toBe(alias);
+    expect(await realpath(selected)).toBe(executable);
+
+    await rm(latest);
+    await symlink(next, latest, "dir");
+    await rm(old, { recursive: true });
+    await expect(access(executable)).rejects.toMatchObject({ code: "ENOENT" });
+    await access(selected);
+    expect(await realpath(selected)).toBe(join(next, runtime));
+    expect(
+      registrationRuntimePath(
+        join(next, runtime),
+        runtime,
+        { PATH: latest },
+        "linux",
+      ),
+    ).toBe(selected);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "does not replace the selected runtime with a foreign executable or manager shim",
+  async () => {
+    const root = await createTestTempDirectory("rea-runtime-alias-identity-");
+    const foreign = join(root, "foreign");
+    const missing = join(root, "missing");
+    const valid = join(root, "valid");
+    const runtime = javaScriptRuntime(process.versions).id;
+    const script = join(root, "rea.mjs");
+    await writeFile(script, "// selected REA script\n");
+    for (const directory of [foreign, missing, valid]) await mkdir(directory);
+    await writeFile(join(foreign, runtime), '#!/bin/sh\nexec node "$@"\n', {
+      mode: 0o700,
+    });
+    await symlink(join(root, "absent"), join(missing, runtime));
+    await symlink(process.execPath, join(valid, runtime));
+    expect(
+      registrationRuntimePath(
+        process.execPath,
+        runtime,
+        { PATH: `${foreign}:${missing}:relative` },
+        "linux",
+      ),
+    ).toBe(process.execPath);
+    expect(
+      registrationRuntimePath(
+        process.execPath,
+        runtime,
+        { PATH: `${foreign}:${valid}` },
+        "linux",
+      ),
+    ).toBe(join(valid, runtime));
+    expect(
+      currentClientRegistrationCommand({
+        platform: "linux",
+        entrypointPath: script,
+        environment: { PATH: valid },
+      }),
+    ).toEqual([join(valid, runtime), script, "mcp"]);
+    expect(
+      registrationRuntimePath(
+        process.execPath,
+        runtime,
+        { PATH: valid },
+        "win32",
+      ),
+    ).toBe(process.execPath);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "checks the native PATH alias instead of collapsing a symlink parent segment",
+  async () => {
+    const root = await createTestTempDirectory("rea-runtime-path-parent-");
+    const runtime = javaScriptRuntime(process.versions).id;
+    await mkdir(join(root, "selected"));
+    await mkdir(join(root, "other", "child"), { recursive: true });
+    await mkdir(join(root, "other", "selected"));
+    await symlink(join(root, "other", "child"), join(root, "link"));
+    await symlink(process.execPath, join(root, "selected", runtime));
+    await writeFile(
+      join(root, "other", "selected", runtime),
+      "foreign runtime\n",
+      { mode: 0o700 },
+    );
+    expect(
+      registrationRuntimePath(
+        process.execPath,
+        runtime,
+        {
+          PATH: `${root}/link/../selected`,
+        },
+        process.platform,
+      ),
+    ).toBe(process.execPath);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "retains unknown runtime identity after its executable disappears despite a known REA script",
+  async () => {
+    const home = await createTestTempDirectory("rea-removed-runtime-");
+    const executable = join(home, "node");
+    const script = join(home, "rea.mjs");
+    const config = join(home, ".cursor", "mcp.json");
+    await symlink(process.execPath, executable);
+    await writeFile(script, "// selected REA script\n");
+    await mkdir(join(home, ".cursor"));
+    const command = [executable, script, "mcp"];
+    const original = JSON.stringify({
+      mcpServers: {
+        rea: { command: executable, args: [script, "mcp"] },
+      },
+    });
+    await writeFile(config, original);
+    const inspect = () =>
+      readClientRegistrationInspections(home, script, {
+        environment: {},
+        selectedClientIds: ["cursor"],
+      });
+    expect(await inspect()).toContainEqual(
+      expect.objectContaining({
+        commandIdentity: "owned",
+        status: expect.objectContaining({ client: "cursor", state: "aligned" }),
+      }),
+    );
+    await rm(executable);
+    expect(classifyClientRegistrationCommand(command, script)).toBe("unknown");
+    expect(await inspect()).toContainEqual(
+      expect.objectContaining({
+        commandIdentity: "unknown",
+        status: expect.objectContaining({
+          client: "cursor",
+          state: "unknown",
+          command,
+          remediation: expect.any(String),
+        }),
+      }),
+    );
+    expect(await readFile(config, "utf8")).toBe(original);
   },
 );
 
@@ -74,18 +248,24 @@ it.skipIf(process.platform === "win32")(
     await writeFile(selected, "selected", { mode: 0o600 });
     await symlink(selected, join(unexecutable, "rea"));
     expect(
-      setupRegistrationCommand("linux", undefined, entrypoint, {
-        PATH: `${foreign}:${missing}:relative`,
+      currentClientRegistrationCommand({
+        platform: "linux",
+        entrypointPath: entrypoint,
+        environment: { PATH: `${foreign}:${missing}:relative` },
       }),
-    ).toEqual([entrypoint, "mcp"]);
+    ).toEqual([process.execPath, entrypoint, "mcp"]);
     expect(
-      setupRegistrationCommand("linux", undefined, selected, {
-        PATH: unexecutable,
+      currentClientRegistrationCommand({
+        platform: "linux",
+        entrypointPath: selected,
+        environment: { PATH: unexecutable },
       }),
-    ).toEqual([selected, "mcp"]);
+    ).toEqual([process.execPath, selected, "mcp"]);
     expect(
-      setupRegistrationCommand("win32", undefined, entrypoint, {
-        PATH: foreign,
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: entrypoint,
+        environment: { PATH: foreign },
       }),
     ).toEqual([process.execPath, entrypoint, "mcp"]);
   },

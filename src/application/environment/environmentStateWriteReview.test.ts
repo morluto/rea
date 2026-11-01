@@ -9,6 +9,7 @@ import {
   environmentStateServeFixture,
   environmentStateServeInputs,
 } from "../../../tests/fixtures/environmentServe.js";
+import { servedCatalog } from "./environmentState.js";
 import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
 import {
   BOOK_NOT_FOUND,
@@ -17,6 +18,7 @@ import {
   book,
   bookClock,
   renamedBook,
+  offsetListed,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 
 import { webNetworkCaptureSchema } from "../../domain/webNetworkCapture.js";
@@ -24,7 +26,13 @@ import { webNetworkCaptureSchema } from "../../domain/webNetworkCapture.js";
 const archived = (value: boolean) => ({ ...FIRST_BOOK, archived: value });
 
 describe("bodyless action evidence", () => {
-  it.each([
+  it.each<{
+    name: string;
+    postData: unknown;
+    bodySize?: unknown;
+    served?: boolean;
+    shape?: boolean;
+  }>([
     {
       name: "form",
       postData: {
@@ -44,9 +52,45 @@ describe("bodyless action evidence", () => {
       },
     },
     { name: "unretained body", postData: undefined },
+    {
+      name: "omitted body with zero size",
+      postData: undefined,
+      bodySize: 0,
+      served: true,
+    },
+    { name: "explicit null with zero size", postData: null, bodySize: 0 },
+    {
+      name: "params-only with zero size",
+      postData: {
+        mimeType: "application/json",
+        params: [{ name: "archived", value: "true" }],
+      },
+      bodySize: 0,
+    },
+    {
+      name: "empty text with nonempty params",
+      postData: {
+        mimeType: "application/json",
+        text: "",
+        params: [{ name: "archived", value: "true" }],
+      },
+      bodySize: 0,
+    },
+    {
+      name: "explicit empty body with zero size",
+      postData: { mimeType: "application/json", text: "", params: [] },
+      bodySize: 0,
+      served: true,
+    },
+    {
+      name: "invalid size with retained JSON",
+      postData: { mimeType: "application/json", text: '{"archived":true}' },
+      bodySize: "unknown",
+      shape: true,
+    },
   ])(
-    "does not use unreadable or unretained request bodies as a repeated bodyless action: $name",
-    ({ postData }) => {
+    "preserves literal request-body availability for repeated actions: $name",
+    ({ postData, bodySize = 12, served = false, shape = false }) => {
       const capture = timedCaptureEvidence([
         ["GET", "/api/books", [archived(false), SECOND_BOOK]],
         ["GET", "/api/books/1", archived(false)],
@@ -58,14 +102,18 @@ describe("bodyless action evidence", () => {
       ]);
       const result = capture.normalized_result as {
         records: {
-          reported: { request: { postData?: unknown; bodySize?: number } };
+          reported: { request: { postData?: unknown; bodySize?: unknown } };
         }[];
       };
       const request = result.records[5]!.reported.request;
-      request.bodySize = 12;
+      request.bodySize = bodySize;
       if (postData === undefined) delete request.postData;
       else request.postData = postData;
-      const { state } = environmentStateServeInputs(
+      if (shape) {
+        result.records[3]!.reported.request.bodySize = bodySize;
+        result.records[3]!.reported.request.postData = postData;
+      }
+      const { source, state } = environmentStateServeInputs(
         environmentStateServeFixture(
           analysisViewCaptureEvidence(
             webNetworkCaptureSchema.parse(capture.normalized_result),
@@ -73,8 +121,17 @@ describe("bodyless action evidence", () => {
         ),
       );
       expect(state.writes.get("post_books_archive_by_id")).toMatchObject({
-        served: false,
+        served,
       });
+      const tool = source.manifest.tools.find(
+        ({ name }) => name === "post_books_archive_by_id",
+      );
+      expect(tool).toBeDefined();
+      if (shape)
+        expect(tool?.body_shape).toMatchObject({
+          properties: { archived: "boolean" },
+        });
+      else if (bodySize === 0) expect(tool?.body_shape).toBeNull();
     },
   );
 });
@@ -348,3 +405,271 @@ it.each([
     }
   },
 );
+
+it("keeps a create's nested reference pinned when an unobserved call varies its id", () => {
+  const card = (id: number, name: string, collection_id: number) => ({
+    id,
+    name,
+    collection_id,
+    collection: {
+      id: collection_id,
+      name: collection_id === 8 ? "Ledger" : "Other",
+    },
+  });
+  const first = card(1, "First", 8);
+  const second = card(2, "Second", 9);
+  const third = card(3, "Third", 8);
+  const fourth = card(4, "Fourth", 9);
+  const cards = servedFrom([
+    ["GET", "/api/cards", [first, second]],
+    ["GET", "/api/cards/1", first],
+    ["GET", "/api/cards/2", second],
+    ["POST", "/api/cards", third, 201, { name: "Third", collection_id: 8 }],
+    ["GET", "/api/cards/3", third],
+    ["POST", "/api/cards", fourth, 201, { name: "Fourth", collection_id: 9 }],
+  ]);
+  const plan = cards.state.writes.get("post_cards");
+  expect(plan?.body?.fixed).toContainEqual({
+    member: "collection_id",
+    sent: 8,
+  });
+  expect(plan).toMatchObject({ served: false });
+  const catalog = servedCatalog(cards.source, cards.state, "cards");
+  if (!catalog.ok) throw catalog.error;
+  expect(catalog.value.tools.map(({ name }) => name)).not.toContain(
+    "post_cards",
+  );
+});
+
+it("refuses a create's unsupported dependent state even when an unobserved call varied it", () => {
+  const post = (id: number, status: string, published_at: string | null) => ({
+    id,
+    title: `Post ${String(id)}`,
+    status,
+    published_at,
+  });
+  const first = post(1, "published", "2026-10-01T09:00:00Z");
+  const second = post(2, "published", "2026-10-01T10:00:00Z");
+  const draft = post(3, "draft", null);
+  const posts = servedFrom([
+    ["GET", "/api/posts", [first, second]],
+    ["GET", "/api/posts/1", first],
+    ["GET", "/api/posts/2", second],
+    ["POST", "/api/posts", draft, 201, { title: "Post 3", status: "draft" }],
+    ["GET", "/api/posts/3", draft],
+    ["POST", "/api/posts", "", 204, { title: "Post 4", status: "published" }],
+  ]);
+  expect(posts.state.writes.get("post_posts")).toMatchObject({ served: true });
+  const before = posts.snapshot();
+  expect(
+    posts.refusal("post_posts", {
+      body: { title: "Caller", status: "published" },
+    }),
+  ).toMatchObject({ code: "invalid_request" });
+  expect(posts.snapshot()).toBe(before);
+  expect(
+    posts.answer("post_posts", {
+      body: { title: "Caller", status: "draft" },
+    }).body,
+  ).toMatchObject({ title: "Caller", status: "draft", published_at: null });
+});
+
+it("drops a write's confirmation when its read view later disproves learned array sorting", () => {
+  const tagged = (book: typeof FIRST_BOOK, tags: string[]) => ({
+    ...book,
+    tags,
+  });
+  const first = tagged(FIRST_BOOK, ["alpha", "beta"]);
+  const second = tagged(SECOND_BOOK, ["gamma", "omega"]);
+  const written = tagged(SECOND_BOOK, ["zeta", "delta"]);
+  const books = servedFrom([
+    ["GET", "/api/books", [first, second]],
+    ["GET", "/api/books/1", first],
+    ["GET", "/api/books/2", second],
+    ["PATCH", "/api/books/2", written, 200, { tags: ["zeta", "delta"] }],
+    ["GET", "/api/books/2", tagged(SECOND_BOOK, ["delta", "zeta"])],
+    ["GET", "/api/books/2", written],
+  ]);
+  expect(books.state.views.get("get_books_by_id")).toMatchObject({
+    shape: "recorded",
+  });
+  expect(books.state.writes.get("patch_books_by_id")).toMatchObject({
+    served: false,
+    checked_record_ordinals: [],
+  });
+});
+
+it("reloads an unchanged snapshot after a view with its own clock spellings disproves sorting", () => {
+  const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
+  const second = { ...SECOND_BOOK, tags: ["gamma", "omega"] };
+  const written = { ...second, tags: ["zeta", "delta"] };
+  const rows: TimedCaptureRow[] = [
+    ["GET", "/api/books", [first, second].map(offsetListed)],
+    ["GET", "/api/books/1", first],
+    ["GET", "/api/books/2", second],
+    ["PATCH", "/api/books/2", written, 200, { tags: written.tags }],
+    [
+      "GET",
+      "/api/books",
+      [first, { ...written, tags: ["delta", "zeta"] }].map(offsetListed),
+    ],
+  ];
+  const consistent = servedFrom(rows);
+  expect(consistent.state.entities[0]?.view_fields).toContainEqual({
+    tool: "get_books",
+    fields: {
+      created_at: offsetListed(first).created_at,
+      updated_at: offsetListed(first).updated_at,
+    },
+  });
+  expect(consistent.store.replace(consistent.store.snapshot()).ok).toBe(true);
+
+  const books = servedFrom([
+    ...rows,
+    ["GET", "/api/books", [first, written].map(offsetListed)],
+  ]);
+  expect(books.state.views.get("get_books")).toMatchObject({
+    shape: "recorded",
+  });
+  const snapshot = books.store.snapshot();
+  expect(books.store.replace(snapshot)).toMatchObject({ ok: true });
+  expect(books.store.snapshot()).toEqual(snapshot);
+  expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(first);
+});
+
+it.each([
+  { wrong: false, mixed: false },
+  { wrong: true, mixed: false },
+  { wrong: false, mixed: true },
+  { wrong: true, mixed: true },
+])(
+  "keeps contradictions after retiring a sorted list while an item proof survives (wrong=$wrong, mixed=$mixed)",
+  ({ wrong, mixed }) => {
+    const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
+    const second = { ...SECOND_BOOK, tags: ["gamma", "omega"] };
+    const written = { ...second, tags: ["zeta", "delta"] };
+    const later = { ...first, tags: ["theta", "epsilon"] };
+    const books = servedFrom([
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["PATCH", "/api/books/2", written, 200, { tags: written.tags }],
+      ["GET", "/api/books/2", { ...written, tags: ["delta", "zeta"] }],
+      ["PATCH", "/api/books/1", later, 200, { tags: later.tags }],
+      [
+        "GET",
+        "/api/books",
+        [
+          { ...later, tags: wrong ? ["wrong", "values"] : later.tags },
+          mixed ? { ...written, tags: ["delta", "zeta"] } : written,
+        ],
+      ],
+    ]);
+    expect(books.state.views.get("get_books")).toMatchObject({
+      shape: "recorded",
+    });
+    expect(books.state.writes.get("patch_books_by_id")).toMatchObject({
+      served: !wrong,
+      checked_record_ordinals: [4],
+      contradicted_by: wrong ? 6 : null,
+    });
+  },
+);
+
+it("drops state with no surviving view while preserving another type and snapshot reload", () => {
+  const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
+  const second = { ...SECOND_BOOK, tags: ["gamma", "omega"] };
+  const written = { ...second, tags: ["zeta", "delta"] };
+  const authors = [
+    { id: 1, name: "Alice" },
+    { id: 2, name: "Bob" },
+  ];
+  const books = servedFrom([
+    ["GET", "/api/books", [first, second]],
+    ["GET", "/api/authors", authors],
+    ["PATCH", "/api/books/2", written, 200, { tags: written.tags }],
+    ["GET", "/api/books", [first, { ...written, tags: ["delta", "zeta"] }]],
+    ["GET", "/api/books", [first, written]],
+  ]);
+  expect(books.state.views.get("get_books")).toMatchObject({
+    shape: "recorded",
+  });
+  expect(books.state.types.map((type) => type.collection_template)).toEqual([
+    "/api/authors",
+  ]);
+  expect(books.state.entities.map((entity) => entity.type)).toEqual([
+    "/api/authors",
+    "/api/authors",
+  ]);
+  expect(books.store.replace(books.store.snapshot()).ok).toBe(true);
+  expect(books.answer("get_authors").body).toEqual(authors);
+});
+
+it.each([false, true])(
+  "checks later writes through a retired sorted view without adding proof (wrong values: %s)",
+  (wrong) => {
+    const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
+    const second = { ...SECOND_BOOK, tags: ["gamma", "omega"] };
+    const written = { ...second, tags: ["zeta", "delta"] };
+    const later = { ...first, tags: ["theta", "epsilon"] };
+    const books = servedFrom([
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["PATCH", "/api/books/2", written, 200, { tags: written.tags }],
+      ["GET", "/api/books/2", { ...written, tags: ["delta", "zeta"] }],
+      ["GET", "/api/books", [first, written]],
+      ["PATCH", "/api/books/1", later, 200, { tags: later.tags }],
+      [
+        "GET",
+        "/api/books",
+        [
+          { ...later, tags: wrong ? ["wrong", "values"] : later.tags },
+          { ...written, tags: ["delta", "zeta"] },
+        ],
+      ],
+    ]);
+    expect(books.state.views.get("get_books")).toMatchObject({
+      shape: "recorded",
+    });
+    expect(books.state.writes.get("patch_books_by_id")).toMatchObject({
+      served: !wrong,
+      checked_record_ordinals: [4],
+      contradicted_by: wrong ? 7 : null,
+    });
+  },
+);
+
+it("withholds varied create states whose dependent fields still copy the first create", () => {
+  const first = { ...FIRST_BOOK, status: "draft", closed_at: null };
+  const second = {
+    ...SECOND_BOOK,
+    status: "closed",
+    closed_at: SECOND_BOOK.created_at!,
+  };
+  const third = {
+    ...book(3, "Third", "2026-10-01T10:00:00Z"),
+    status: "closed",
+    closed_at: SECOND_BOOK.created_at!,
+  };
+  const fourth = {
+    ...book(4, "Fourth", bookClock(4)),
+    status: "draft",
+    closed_at: null,
+  };
+  const fifth = {
+    ...book(5, "Fifth", bookClock(6)),
+    status: "closed",
+    closed_at: bookClock(6),
+  };
+  const books = servedFrom([
+    ["GET", "/api/books", [first, second, third]],
+    ["GET", "/api/books/1", first],
+    ["GET", "/api/books/2", second],
+    ["GET", "/api/books/3", third],
+    ["POST", "/api/books", fourth, 201, { name: "Fourth", status: "draft" }],
+    ["GET", "/api/books/4", fourth],
+    ["POST", "/api/books", fifth, 201, { name: "Fifth", status: "closed" }],
+  ]);
+  expect(books.state.writes.get("post_books")).toMatchObject({ served: false });
+});

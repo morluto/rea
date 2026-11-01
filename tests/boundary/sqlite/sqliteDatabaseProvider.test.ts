@@ -4,7 +4,8 @@ import { access, lstat, readFile, symlink, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { expect, it as nativeTest, onTestFinished } from "vitest";
+import { expect, it as nativeTest, onTestFinished, vi } from "vitest";
+import { ZodError } from "zod";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { SQLITE_DATABASE_LIMITS } from "../../../src/sqlite/SqliteDatabaseLimits.js";
@@ -54,6 +55,32 @@ const createFixture = async (wal = false) => {
 const expectPrivateRootRemoved = (path: string) =>
   expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
 
+nativeTest.each([
+  { input: { path: "relative.db" }, field: "path" },
+  {
+    input: { path: "/selected.db", table: "records", row_limit: 0 },
+    field: "row_limit",
+  },
+  { input: { path: "/selected.db", columns: ["id"] }, field: "columns" },
+])(
+  "attributes invalid provider input to its argument before allocating resources: %j",
+  async ({ input, field }) => {
+    const createRuntime = vi.fn(async () => {
+      throw new Error("Invalid input must not allocate a SQLite runtime");
+    });
+    const provider = new SqliteDatabaseProvider({}, undefined, createRuntime);
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({ ...input });
+    if (result.ok) throw new Error("Expected an input rejection");
+    expect(result.error.cause).toBeInstanceOf(ZodError);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: [field] }] },
+    });
+    expect(createRuntime).not.toHaveBeenCalled();
+  },
+);
+
 it("enforces a selected worker budget and completes the corrected same-database retry", async () => {
   const { database } = await createFixture();
   const original = await readFile(database.path);
@@ -102,7 +129,7 @@ it("enforces a selected worker budget and completes the corrected same-database 
     schema: { completeness: "complete" },
   });
   await expectPrivateRootRemoved(root);
-  expect(await readFile(database.path)).toEqual(original);
+  expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
 });
 
 nativeTest(
@@ -179,7 +206,7 @@ nativeTest(
     ).toHaveLength(2);
     expect(result.error.cleanupResources).toEqual([]);
     await expectPrivateRootRemoved(root);
-    expect(await readFile(database.path)).toEqual(original);
+    expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
   },
 );
 
@@ -504,7 +531,7 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
       await provider.close();
       await expectPrivateRootRemoved(root.path);
     }
-    expect(await readFile(database.path)).toEqual(original);
+    expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
   },
 );
 
@@ -586,7 +613,9 @@ it("inspects committed WAL schema and rows while preserving every source artifac
     },
   });
   for (const artifact of original) {
-    expect(await readFile(artifact.path)).toEqual(artifact.bytes);
+    expect(Buffer.compare(await readFile(artifact.path), artifact.bytes)).toBe(
+      0,
+    );
     const after = await lstat(artifact.path);
     expect({
       ino: after.ino,
@@ -901,7 +930,7 @@ it("attributes inventory selections beyond metadata bind capacity to result-colu
     },
   });
   expect(JSON.stringify(projected)).not.toContain("invalid_format");
-  expect(await readFile(database.path)).toEqual(original);
+  expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
 });
 
 it("reports application-collation row failures as unavailable while retaining schema-only recovery", async () => {
@@ -945,7 +974,7 @@ it("reports application-collation row failures as unavailable while retaining sc
       "Select columns whose values were read",
     );
   }
-  expect(await readFile(path)).toEqual(original);
+  expect(Buffer.compare(await readFile(path), original)).toBe(0);
 });
 
 it("rejects malformed databases without altering the selected file", async () => {
@@ -961,7 +990,7 @@ it("rejects malformed databases without altering the selected file", async () =>
     ok: false,
     error: { _tag: "AnalysisInputError" },
   });
-  expect(await readFile(path)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
 nativeTest.runIf(process.platform !== "win32")(
@@ -997,8 +1026,8 @@ nativeTest(
         ok: false,
         error: { _tag: "AnalysisInputError" },
       });
-      expect(await readFile(database.path)).toEqual(main);
-      expect(await readFile(journalPath)).toEqual(journal);
+      expect(Buffer.compare(await readFile(database.path), main)).toBe(0);
+      expect(Buffer.compare(await readFile(journalPath), journal)).toBe(0);
     } finally {
       writer.exec("ROLLBACK");
       writer.close();
@@ -1217,7 +1246,7 @@ it("retains an unavailable virtual module definition without executing it", asyn
   expect(
     await provider.inspect({ path, table: "optional_search" }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
-  expect(await readFile(path)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
 nativeTest(
@@ -1342,6 +1371,75 @@ nativeTest.each([
     expect(projectAnalysisError(result.error).code).toBe(code);
     if (scenario === "cancelled")
       expect(result.error.cleanupPrimary?.cause).toBe(reason);
+    await expectPrivateRootRemoved(ownedRoot);
+  },
+);
+
+nativeTest.each([
+  { encoding: "malformed UTF-8", code: "unreadable_output" },
+  { encoding: "literal replacement character", code: "capability_unavailable" },
+  { encoding: "UTF-8 BOM", code: "unreadable_output" },
+  { encoding: "malformed JSON", code: "unreadable_output" },
+] as const)(
+  "admits complete SQLite reply-file JSON without replacement decoding: $encoding",
+  async ({ encoding, code }) => {
+    const { database } = await createFixture();
+    let ownedRoot = "";
+    const provider = new SqliteDatabaseProvider(process.env, async (spawn) => {
+      ownedRoot = spawn.cwd ?? "";
+      const requestPath = spawn.arguments[2];
+      if (requestPath === undefined)
+        throw new Error("SQLite request path missing");
+      const request = JSON.parse(await readFile(requestPath, "utf8")) as {
+        reply_path: string;
+      };
+      const valid = Buffer.from(
+        JSON.stringify({
+          ok: false,
+          reason: "unavailable",
+          message: "recorded \ufffd diagnostic",
+        }),
+      );
+      let bytes = valid;
+      if (encoding === "malformed UTF-8") {
+        const replacementOffset = valid.indexOf(Buffer.from("\ufffd"));
+        expect(replacementOffset).toBeGreaterThanOrEqual(0);
+        bytes = Buffer.concat([
+          valid.subarray(0, replacementOffset),
+          Buffer.from([0xff]),
+          valid.subarray(replacementOffset + 3),
+        ]);
+      } else if (encoding === "UTF-8 BOM") {
+        bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), valid]);
+      } else if (encoding === "malformed JSON") {
+        bytes = Buffer.from("{ malformed reply");
+      }
+      await writeFile(request.reply_path, bytes, { flag: "wx", mode: 0o600 });
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        arguments: [
+          "-e",
+          "process.stderr.write('sqlite-reply-marker'); process.exit(0)",
+        ],
+      });
+    });
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({ path: database.path });
+    if (result.ok) throw new Error("Expected worker refusal");
+    expect(projectAnalysisError(result.error).code).toBe(code);
+    expect(result.error.capturedOutput).toMatchObject({
+      stderr: "sqlite-reply-marker",
+      truncated: false,
+    });
+    if (encoding === "literal replacement character")
+      expect(projectAnalysisError(result.error).message).toBe(
+        "recorded \ufffd diagnostic",
+      );
+    else
+      expect(result.error.cause).toBeInstanceOf(
+        encoding === "malformed UTF-8" ? TypeError : SyntaxError,
+      );
+    await provider.close();
     await expectPrivateRootRemoved(ownedRoot);
   },
 );

@@ -6,11 +6,11 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import { analysisStringSchema } from "../domain/hopperValues.js";
+import { nativeInventoryRowsSchemas } from "../domain/native/nativeInventory.js";
 import { HopperRemoteError } from "../domain/hopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { analysisSearchInput } from "../contracts/analysisSearchContract.js";
+import { nativeSearchInput } from "../domain/native/nativeSearch.js";
 import type { HopperClient } from "./HopperClient.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
@@ -24,7 +24,7 @@ import { matchRegexValues } from "../process/RegexMatcher.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 
 const inputSchema = z.strictObject({
-  ...analysisSearchInput,
+  ...nativeSearchInput,
   mode: z.literal("regex"),
 });
 /** Match collected native facts off Hopper's API thread, with cancellable lifetime. */
@@ -111,8 +111,13 @@ export class HopperRegexSearch {
       return err(
         analysisClientFailureForOperation(inventory.error, "hopper", operation),
       );
-    const parsed = z.array(analysisStringSchema).safeParse(inventory.value);
-    if (!parsed.success)
+    const rows = inventory.value;
+    const schema =
+      operation === "search_strings"
+        ? nativeInventoryRowsSchemas.strings
+        : nativeInventoryRowsSchemas.names;
+    const parsed = schema.safeParse(rows);
+    if (!parsed.success || !Array.isArray(rows))
       return err(
         new AnalysisOutputError(
           operation,
@@ -150,6 +155,6 @@ export class HopperRegexSearch {
         new AnalysisCancelledError(operation, { cause: options.signal.reason }),
       );
     const selected = new Set(matched.value);
-    return ok(parsed.data.filter((_, index) => selected.has(index)));
+    return ok(rows.filter((_, index) => selected.has(index)));
   }
 }

@@ -1,5 +1,8 @@
 import type { FileHandle } from "node:fs/promises";
-import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
+import {
+  RegularFileOperationCancelled,
+  type StableRegularFileDescriptor,
+} from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   withOwnedFileHandle,
@@ -252,7 +255,7 @@ export const withArtifactRegularFile = async <Value>(
     ): void;
   },
   signal: AbortSignal | undefined,
-  operation: (file: FileHandle) => Promise<Value>,
+  operation: (source: StableRegularFileDescriptor) => Promise<Value>,
   symlinks: "follow" | "reject" = "reject",
 ): Promise<Value> => {
   let cleanupLease: AnalysisCleanupLease | undefined;
@@ -272,9 +275,9 @@ export const withArtifactRegularFile = async <Value>(
           });
         },
       },
-      async (file) => {
+      async (source) => {
         assertArtifactReadActive(signal);
-        return await operation(file);
+        return await operation(source);
       },
     );
     return value;

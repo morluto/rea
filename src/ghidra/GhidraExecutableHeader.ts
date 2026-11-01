@@ -30,7 +30,7 @@ export const readGhidraExecutableHeader = async (
               ),
           },
           options.signal,
-          async (file) => {
+          async ({ handle: file }) => {
             const observed = await readStableFilePrefix(
               file,
               path,

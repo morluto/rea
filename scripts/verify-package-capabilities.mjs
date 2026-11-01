@@ -1,4 +1,3 @@
-import { json } from "./lib/verify-package-core.mjs";
 import {
   expandCapabilitiesOutput,
   expandProviderOutput,
@@ -11,12 +10,14 @@ export async function verifyPackageCapabilitiesAndSearch({
   environment,
 }) {
   const capabilities = expandCapabilitiesOutput(
-    json(await commands.run(cli, ["capabilities", "--json"], environment)),
+    JSON.parse(
+      await commands.run(cli, ["capabilities", "--json"], environment),
+    ),
   );
   if (!Array.isArray(capabilities.capabilities))
     throw new Error("packaged capabilities CLI failed");
   const providers = expandProviderOutput(
-    json(await commands.run(cli, ["providers", "--json"], environment)),
+    JSON.parse(await commands.run(cli, ["providers", "--json"], environment)),
   );
   const candidates = providers.analysis_provider_candidates;
   if (
@@ -32,7 +33,7 @@ export async function verifyPackageCapabilitiesAndSearch({
   )
     throw new Error("packaged providers CLI failed");
   if (process.platform !== "linux") {
-    const searchResult = json(
+    const searchResult = JSON.parse(
       await commands.run(
         cli,
         [

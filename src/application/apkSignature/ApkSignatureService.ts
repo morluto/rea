@@ -10,7 +10,6 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { ApkSignaturePort } from "./ApkSignaturePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -19,9 +18,9 @@ import {
   apkSignatureResultSchema,
 } from "../../domain/apkSignature/apkSignatureReport.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_apk_signature";
 
@@ -42,18 +41,14 @@ export class ApkSignatureService {
       recordEvidence: undefined,
     },
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectApkSignatureInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectApkSignatureInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    if (!isAbsolute(input.value.path))
       return err(
         new AnalysisInputError(OPERATION, undefined, [
           {
@@ -63,7 +58,7 @@ export class ApkSignatureService {
           },
         ]),
       );
-    const { detail, view, ...parameters } = input.data;
+    const { detail, view, ...parameters } = input.value;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(OPERATION, retention);
       if (!ready.ok) return ready;
@@ -74,7 +69,8 @@ export class ApkSignatureService {
     const report = apkSignatureResultSchema.safeParse(execution.result);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
+      report.data.artifact.path !== input.value.path ||
+      execution.subject.path !== input.value.path ||
       !apkSignatureMatchesSubject(report.data.artifact, execution.subject)
     )
       return err(
@@ -86,7 +82,7 @@ export class ApkSignatureService {
     const completed = completeProviderEvidence(
       createEvidence(execution.subject, execution.provider, {
         operation: OPERATION,
-        parameters: { path: input.data.path },
+        parameters: { path: input.value.path },
         result: report.data,
         ...(execution.rawResult === null
           ? {}

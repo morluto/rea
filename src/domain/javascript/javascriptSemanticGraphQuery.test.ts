@@ -17,6 +17,7 @@ import {
   JAVASCRIPT_SEMANTIC_NODE_KINDS,
   JAVASCRIPT_SEMANTIC_RELATIONS,
   type JavaScriptSemanticGraphInput,
+  type JavaScriptSemanticGraphNode,
 } from "./javascriptSemanticGraphSchemas.js";
 import {
   createJavaScriptSemanticGraph,
@@ -30,7 +31,6 @@ import {
   resolveJavaScriptSemanticEvidence,
   type JavaScriptSemanticGraph,
 } from "./javascriptSemanticGraph.js";
-import type { JavaScriptSemanticGraphNode } from "./javascriptSemanticGraphSchemas.js";
 import { queryJavaScriptSemanticGraph } from "./javascriptSemanticQuery.js";
 
 const SHA = "a".repeat(64);

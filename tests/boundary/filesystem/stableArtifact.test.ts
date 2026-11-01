@@ -24,9 +24,12 @@ it("reads exact binary and empty bytes and rejects symlink/size/cancellation bou
   const root = await createTestTempDirectory("rea-stable-artifact-");
   const path = join(root, "source.bin");
   await writeFile(path, Buffer.from([0, 255, 254]));
-  expect((await readStableArtifact(path, 3)).bytes).toEqual(
-    Buffer.from([0, 255, 254]),
-  );
+  expect(
+    Buffer.compare(
+      (await readStableArtifact(path, 3)).bytes,
+      Buffer.from([0, 255, 254]),
+    ),
+  ).toBe(0);
   await expect(readStableArtifact(path, 2)).rejects.toMatchObject({
     reason: "limit",
   });

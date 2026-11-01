@@ -645,3 +645,118 @@ it("keeps a real SDK physical failure when abort arrives during its outer unwind
     await connection.close();
   }
 });
+
+it.each(["1e400", '{"observed":1e400}'])(
+  "rejects IDA JSON text outside the JSON value contract: %s",
+  (text) => {
+    expect(() =>
+      decodeIdaToolResult({ content: [{ type: "text", text }] }),
+    ).toThrow("JSON numbers must be finite");
+  },
+);
+
+it("preserves observed own structured members before deciding whether to unwrap a result", () => {
+  const structured: unknown = JSON.parse(
+    '{"__proto__":{"observed":true},"result":"field","nested":[{"__proto__":"nested fact"}]}',
+  );
+  const decoded = decodeIdaToolResult({
+    content: [],
+    structuredContent: structured,
+  });
+  expect(Object.hasOwn(decoded as object, "__proto__")).toBe(true);
+  expect(JSON.stringify(decoded)).toBe(JSON.stringify(structured));
+  const wrapped: unknown = JSON.parse(
+    '{"result":{"__proto__":{"observed":true},"nested":{"__proto__":"nested fact"}}}',
+  );
+  const value = decodeIdaToolResult({
+    content: [],
+    structuredContent: wrapped,
+  });
+  expect(Object.hasOwn(value as object, "__proto__")).toBe(true);
+  expect(JSON.stringify(value)).toBe(
+    '{"__proto__":{"observed":true},"nested":{"__proto__":"nested fact"}}',
+  );
+});
+
+it("keeps error, truncation and native-text precedence ahead of structured JSON admission", () => {
+  const structuredContent = { result: Infinity };
+  expect(() =>
+    decodeIdaToolResult({
+      isError: true,
+      structuredContent,
+      content: [{ type: "text", text: "engine refused" }],
+    }),
+  ).toThrow(/IDA MCP tool failed: \s*engine refused/u);
+  expect(() =>
+    decodeIdaToolResult({
+      structuredContent,
+      content: [],
+      _meta: { ida_mcp: { output_truncated: true } },
+    }),
+  ).toThrow("IDA MCP truncated its output");
+  expect(
+    decodeIdaToolResult(
+      {
+        structuredContent,
+        content: [{ type: "text", text: '{"complete":true}' }],
+      },
+      "native",
+    ),
+  ).toEqual({ complete: true });
+});
+
+it("requires a valid content array even when IDA supplies structured evidence", () => {
+  for (const content of [
+    undefined,
+    null,
+    {},
+    [null],
+    [{ type: "text", text: 42 }],
+  ])
+    expect(() =>
+      decodeIdaToolResult({ content, structuredContent: { observed: true } }),
+    ).toThrow();
+});
+
+it("selects structured IDA evidence ahead of text while admitting mixed content", () => {
+  const image = { type: "image", data: "AA==", mimeType: "image/png" };
+  expect(
+    decodeIdaToolResult({
+      content: [image, { type: "text", text: "fallback" }],
+      structuredContent: { observed: true },
+    }),
+  ).toEqual({ observed: true });
+  expect(
+    decodeIdaToolResult({
+      content: [image, { type: "text", text: "fallback" }],
+    }),
+  ).toBe("fallback");
+  for (const structuredContent of [null, [], "invalid", { observed: Infinity }])
+    expect(() =>
+      decodeIdaToolResult({
+        content: [{ type: "text", text: "fallback" }],
+        structuredContent,
+      }),
+    ).toThrow();
+  expect(() => decodeIdaToolResult({ content: [image] })).toThrow(
+    "empty observation",
+  );
+  expect(() =>
+    decodeIdaToolResult({
+      content: [
+        { type: "text", text: "first" },
+        { type: "text", text: "second" },
+      ],
+    }),
+  ).toThrow("empty observation");
+});
+
+it("requires complete native IDA JSON text despite usable structured content", () => {
+  for (const content of [[], [{ type: "text", text: "plain text" }]])
+    expect(() =>
+      decodeIdaToolResult(
+        { content, structuredContent: { observed: true } },
+        "native",
+      ),
+    ).toThrow();
+});

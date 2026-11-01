@@ -1,3 +1,5 @@
+import { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
+import { PeLoadConfigProvider } from "../native/pe/PeLoadConfigProvider.js";
 import { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
 import { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import { PwntoolsRecordedCrashProvider } from "../native/pwntools/PwntoolsRecordedCrashProvider.js";
@@ -14,9 +16,16 @@ import { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesServic
 import { ElfNotesProvider } from "../native/elf/ElfNotesProvider.js";
 import { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
 import { AppleIpsProvider } from "../native/apple/AppleIpsProvider.js";
+import { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
+import { KernelModuleProvider } from "../native/elf/KernelModuleProvider.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { NativeExportsProvider } from "../native/exports/NativeExportsProvider.js";
+
+import { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
+import { DevicetreeProvider } from "../firmware/devicetree/DevicetreeProvider.js";
+export const createDevicetreeService = (): DevicetreeService =>
+  new DevicetreeService(new DevicetreeProvider());
 
 export { pwntoolsHostSupported };
 
@@ -42,6 +51,9 @@ export const createElfNotesService = (): ElfNotesService =>
 /** Portable Apple .ips inspection with no engine, Xcode or target acquisition. */
 export const createAppleIpsService = (): AppleIpsService =>
   new AppleIpsService(new AppleIpsProvider());
+/** Portable Linux kernel-module metadata inspection with no engine or host `modinfo`. */
+export const createKernelModuleService = (): KernelModuleService =>
+  new KernelModuleService(new KernelModuleProvider());
 
 /** Compose the offline adapter without import-time I/O or dependency acquisition. */
 export const createBinaryLayoutService = (
@@ -59,3 +71,6 @@ export const createRecordedCrashService = (
 export const createByteEntropyService = (
   resources?: ArtifactResourceScope,
 ): ByteEntropyService => new ByteEntropyService(undefined, resources);
+
+export const createPeLoadConfigService = (): PeLoadConfigService =>
+  new PeLoadConfigService(new PeLoadConfigProvider());

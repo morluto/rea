@@ -10,6 +10,7 @@ import { semanticFactoryLoaderMemberAt } from "./javascriptSemanticRequireOrigin
 
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
+import { javascriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
 import {
   collectJavaScriptExports,
   fingerprintJavaScriptAst,
@@ -20,7 +21,6 @@ import {
   argumentValue,
   calleeName,
   chunkRuntime,
-  factoryRequireName,
   moduleFactory,
   modulePropertyName,
   range,
@@ -257,44 +257,29 @@ const recoverBundlerModule = (
   if (key.startsWith("[computed@") || key.startsWith("[unknown@"))
     accumulator.unknownFindings += 1;
   const fingerprint = fingerprintJavaScriptAst(factory);
-  const parameters = runtimeFunctionParameters(factory);
-  const esbuild = runtime.startsWith("esbuild-");
-  const identifierAt = (index: number): t.Identifier | undefined => {
-    const parameter = parameters[index];
-    return t.isIdentifier(parameter) ? parameter : undefined;
-  };
-  const roles = {
-    exports:
-      runtime === "esbuild-commonjs"
-        ? identifierAt(0)
-        : esbuild
-          ? undefined
-          : identifierAt(1),
-    module:
-      runtime === "esbuild-commonjs"
-        ? identifierAt(1)
-        : esbuild
-          ? undefined
-          : identifierAt(0),
-    loader: esbuild ? undefined : identifierAt(2),
-  };
+  const roles = javascriptBundlerFactoryRoles(factory, runtime);
+  // An inexact role pattern leaves this module's export list incomplete.
+  if (!roles.exact) accumulator.unknownFindings += 1;
+  // Registration is inspected before its factories, so the source traversal
+  // skips these never-run defaults when it reaches them.
+  for (const unused of roles.unusedDefaults)
+    accumulator.unusedFactoryDefaults.add(unused);
   const exports: string[] = [];
   accumulator.pendingBundlerExports.push({ factory, roles, exports });
-  const requireName = esbuild ? null : factoryRequireName(factory);
-  const requireParameter = esbuild ? undefined : parameters[2];
-  const requireBindingId = t.isIdentifier(requireParameter)
-    ? (resolveSemanticBindingState(
-        bindings,
-        requireParameter,
-        requireParameter.name,
-      )?.bindingId ?? null)
-    : null;
+  const loader = roles.loader;
+  const requireName = loader?.name ?? null;
+  const requireBindingId =
+    loader === undefined
+      ? null
+      : (resolveSemanticBindingState(bindings, loader, loader.name)
+          ?.bindingId ?? null);
   if (requireBindingId !== null)
     accumulator.factoryRequireBindingIds.add(requireBindingId);
   const asyncChunks = collectBundlerAsyncChunkKeys(
     factory,
     requireBindingId,
     bindings,
+    roles.unusedDefaults,
   );
   if (typeof factory.start === "number" && typeof factory.end === "number") {
     const moduleRange = {
@@ -393,6 +378,7 @@ const collectBundlerAsyncChunkKeys = (
   factory: BundlerFunction,
   requireBindingId: string | null,
   bindings: JavaScriptSemanticAnalysisState,
+  unusedDefaults: ReadonlySet<t.Node>,
 ): StaticValues =>
   requireBindingId === null
     ? { values: [], unknown: 0 }
@@ -401,6 +387,7 @@ const collectBundlerAsyncChunkKeys = (
         requireBindingId,
         bindings,
         "e",
+        unusedDefaults,
       );
 
 const collectBundlerCallArgumentValues = (
@@ -408,12 +395,14 @@ const collectBundlerCallArgumentValues = (
   bindingId: string | null,
   bindings: JavaScriptSemanticAnalysisState,
   member: string | null,
+  unusedDefaults: ReadonlySet<t.Node> = new Set(),
 ): StaticValues => {
   if (bindingId === null) return { values: [], unknown: 0 };
   const values: string[] = [];
   let unknown = 0;
   const bindingIds = new Set([bindingId]);
   traverseJavaScriptAst(factory, {
+    skip: (node) => unusedDefaults.has(node),
     enter: (node) => {
       if (!t.isCallExpression(node) && !t.isNewExpression(node))
         return undefined;
@@ -463,5 +452,7 @@ export const finishBundlerExports = (
       index,
     });
     for (const value of collected.values) pending.exports.push(value);
+    // An unordered receiver read leaves the export list incomplete.
+    accumulator.unknownFindings += collected.unknown;
   }
 };

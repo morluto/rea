@@ -154,17 +154,23 @@ const createFileOutcomeFixture = async ({
       const scope = args[4];
       if (scope === undefined)
         throw new Error("Expected retained artifact scope");
-      return withArtifactRegularFile(args[0], scope, args[2], async (file) => {
-        handle = file;
-        const close = file.close.bind(file);
-        file.close = async () => {
-          // A later abort must not replace the already observed physical failure.
-          caller.abort(cancellationReason);
-          if (!allowed) throw new Error("controlled descriptor close failure");
-          await close();
-        };
-        throw physical;
-      });
+      return withArtifactRegularFile(
+        args[0],
+        scope,
+        args[2],
+        async ({ handle: file }) => {
+          handle = file;
+          const close = file.close.bind(file);
+          file.close = async () => {
+            // A later abort must not replace the already observed physical failure.
+            caller.abort(cancellationReason);
+            if (!allowed)
+              throw new Error("controlled descriptor close failure");
+            await close();
+          };
+          throw physical;
+        },
+      );
     },
     async (limits) => ({ ...limits, file_bytes: 1048576 }),
   );

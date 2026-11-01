@@ -1,4 +1,8 @@
-import { decodedSegment } from "../../domain/analysisView/environmentStateRules.js";
+import {
+  ownMember,
+  decodedSegment,
+  same,
+} from "../../domain/analysisView/environmentStateRules.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -57,7 +61,6 @@ import {
   type EnvironmentToolAnswer,
 } from "./environmentToolAnswer.js";
 import type { EnvironmentToolDefinition } from "./environmentTools.js";
-import { same } from "../../domain/analysisView/environmentStateRules.js";
 
 /** One probe capture file: its label for the report and its parsed JSON. */
 export interface CompareProbeInput {
@@ -238,7 +241,7 @@ const answersCall = (
   const body = probeArguments(call.tool, run.bodies).body;
   // A tool with no body parameter matches; one that takes a body matches only the body this call sent, including none.
   if (body === undefined) return true;
-  return same(run.recordedBodies.get(exchange.ordinal), args[body]);
+  return same(run.recordedBodies.get(exchange.ordinal), ownMember(args, body));
 };
 
 /** A served tool's input check: the first problem with a call's arguments, or undefined. */
@@ -346,7 +349,7 @@ const compareStep = (
     });
   const held = heldIds(run.store);
   const unknownPath = call.pathArguments.some((name) => {
-    const value = call.args[name];
+    const value = ownMember(call.args, name);
     if (typeof value !== "string") return false;
     const id = decodedSegment(value);
     return !run.map.hasEnv(id) && !held.has(id);

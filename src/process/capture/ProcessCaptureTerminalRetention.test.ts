@@ -3,13 +3,15 @@ import type { IPty } from "@lydell/node-pty";
 
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
-import { createProcessIdentifierLookup } from "./ProcessNormalization.js";
+import {
+  createProcessIdentifierLookup,
+  createBoundedProcessTextNormalizer,
+} from "./ProcessNormalization.js";
 import type {
   TerminalFrame,
   ProcessSample,
 } from "../../domain/process/processCapture.js";
 import { captureTerminalFrames } from "./ProcessCaptureLifecycle.js";
-import { createBoundedProcessTextNormalizer } from "./ProcessNormalization.js";
 
 it("omits an expanding chunk whole and retains a later smaller normalized chunk", () => {
   let onData: ((data: string) => void) | undefined;

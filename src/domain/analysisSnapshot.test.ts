@@ -5,6 +5,7 @@ import {
   analysisSnapshotSchema,
   analysisQueryId,
   parseAnalysisSnapshot,
+  immutableAnalysisSnapshot,
   snapshotBinding,
   snapshotEvidenceForQuery,
   snapshotTarget,
@@ -72,6 +73,49 @@ const snapshotWithHistoricalEvidence = () => {
     }),
   };
 };
+
+describe("analysis snapshot entry admission", () => {
+  it("preserves provider entries without profiles and requires profiles on workflow entries", () => {
+    const { snapshot } = snapshotWithHistoricalEvidence();
+    const entry = snapshot.entries[0];
+    if (entry === undefined) throw new Error("Missing fixture query");
+    const providerSchema = analysisSnapshotSchema.shape.entries.element;
+    const workflowSchema =
+      analysisSnapshotSchema.shape.workflow_entries.element;
+    expect(providerSchema.parse(entry)).toEqual(entry);
+    expect(workflowSchema.safeParse(entry).success).toBe(false);
+    const workflow = {
+      ...entry,
+      execution: {
+        ...entry.execution,
+        analysis_profile: snapshot.binding.analysis_profile,
+      },
+    };
+    expect(workflowSchema.parse(workflow)).toEqual(workflow);
+    for (const schema of [providerSchema, workflowSchema]) {
+      expect(
+        schema.safeParse({
+          ...workflow,
+          execution: { ...workflow.execution, provider: undefined },
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      providerSchema.parse({
+        ...workflow,
+        unknown_entry: true,
+        execution: { ...workflow.execution, unknown_execution: true },
+      }),
+    ).toEqual(entry);
+    expect(
+      workflowSchema.parse({
+        ...workflow,
+        unknown_entry: true,
+        execution: { ...workflow.execution, unknown_execution: true },
+      }),
+    ).toEqual(workflow);
+  });
+});
 
 describe("analysis snapshot target identity", () => {
   it.each(RAW_ONLY_ARCHITECTURES)(
@@ -422,6 +466,51 @@ describe("analysis snapshot canonical ordering and scope", () => {
   });
 });
 
+it("does not select arbitrary provenance when multiple authenticated records match one replay entry", () => {
+  const { current, snapshot } = snapshotWithHistoricalEvidence();
+  const source = snapshot.evidence_bundle.records.find(
+    (record) => record.operation === "unprofiled_query",
+  )!;
+  const alternative = createEvidence(
+    ANALYSIS_SNAPSHOT_TARGET,
+    ANALYSIS_SNAPSHOT_PROVIDER,
+    {
+      operation: current.operation,
+      parameters: current.parameters,
+      result: current.normalized_result,
+      analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      evidenceLinks: [source.evidence_id],
+    },
+  );
+  expect(alternative.evidence_id).not.toBe(current.evidence_id);
+  const ambiguous = parseAnalysisSnapshot({
+    ...snapshot,
+    evidence_bundle: createEvidenceBundle([
+      ...snapshot.evidence_bundle.records,
+      alternative,
+    ]),
+  });
+  expect(ambiguous.entries).toEqual(snapshot.entries);
+  const reversedInsertion = parseAnalysisSnapshot({
+    ...ambiguous,
+    evidence_bundle: createEvidenceBundle(
+      [...ambiguous.evidence_bundle.records].reverse(),
+    ),
+  });
+  expect(reversedInsertion).toEqual(ambiguous);
+  for (const candidate of [ambiguous, reversedInsertion])
+    expect(
+      snapshotEvidenceForQuery(candidate, {
+        target: ANALYSIS_SNAPSHOT_TARGET,
+        bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
+        operation: current.operation,
+        parameters: current.parameters,
+        provider: ANALYSIS_SNAPSHOT_PROVIDER,
+        evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      }),
+    ).toBeUndefined();
+});
+
 describe("analysis snapshot Evidence binding", () => {
   it("finds only Evidence committed to the exact binding and profile", () => {
     const { current, snapshot } = snapshotWithHistoricalEvidence();
@@ -550,4 +639,94 @@ describe("analysis snapshot Evidence binding", () => {
       );
     }
   });
+});
+
+describe("analysis snapshot payload ownership", () => {
+  it.each(["provider", "workflow"] as const)(
+    "shares authenticated %s payloads only in immutable snapshots",
+    (kind) => {
+      const { snapshot } = snapshotWithHistoricalEvidence();
+      const entry = snapshot.entries[0];
+      if (entry === undefined) throw new Error("Missing fixture query");
+      entry.execution.raw_result = { source: "raw" };
+      const evidence = createEvidence(
+        ANALYSIS_SNAPSHOT_TARGET,
+        ANALYSIS_SNAPSHOT_PROVIDER,
+        {
+          operation: entry.operation,
+          parameters: entry.parameters,
+          result: entry.execution.result,
+          rawResult: entry.execution.raw_result,
+          analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+          confidence: kind === "provider" ? "observed" : "derived",
+        },
+      );
+      const input = {
+        ...snapshot,
+        entries: kind === "provider" ? [entry] : [],
+        workflow_entries:
+          kind === "workflow"
+            ? [
+                {
+                  ...entry,
+                  execution: {
+                    ...entry.execution,
+                    analysis_profile: ANALYSIS_SNAPSHOT_PROFILE,
+                  },
+                },
+              ]
+            : [],
+        evidence_bundle: createEvidenceBundle([evidence]),
+      };
+      const original = structuredClone(input);
+      const immutable = immutableAnalysisSnapshot(input);
+      const immutableEntry = (
+        kind === "provider" ? immutable.entries : immutable.workflow_entries
+      )[0];
+      const immutableEvidence = immutable.evidence_bundle.records[0];
+      if (immutableEntry === undefined || immutableEvidence === undefined)
+        throw new Error("Missing immutable payload");
+      expect(immutableEntry.execution.result).toBe(
+        immutableEvidence.normalized_result,
+      );
+      expect(immutableEntry.execution.raw_result).toBe(
+        immutableEvidence.raw_result,
+      );
+      expect(Object.isFrozen(immutableEntry.execution.result)).toBe(true);
+      expect(Object.isFrozen(immutableEntry.execution.raw_result)).toBe(true);
+      expect(Object.isFrozen(immutable)).toBe(true);
+      expect(immutableAnalysisSnapshot(immutable)).toBe(immutable);
+      expect(parseAnalysisSnapshot(immutable)).toBe(immutable);
+      expect(input).toEqual(original);
+      expect(Object.isFrozen(entry.execution.result)).toBe(false);
+      expect(Object.isFrozen(entry.execution.raw_result)).toBe(false);
+      const mutable = parseAnalysisSnapshot(input);
+      const mutableEntry = (
+        kind === "provider" ? mutable.entries : mutable.workflow_entries
+      )[0];
+      const mutableEvidence = mutable.evidence_bundle.records[0];
+      if (mutableEntry === undefined || mutableEvidence === undefined)
+        throw new Error("Missing mutable payload");
+      expect(mutableEntry.execution.result).not.toBe(
+        mutableEvidence.normalized_result,
+      );
+      expect(mutableEntry.execution.raw_result).not.toBe(
+        mutableEvidence.raw_result,
+      );
+      mutableEntry.execution.result = { changed: true };
+      mutableEntry.execution.raw_result = { changed: true };
+      expect(mutableEvidence).toEqual(evidence);
+      expect(input).toEqual(original);
+      const tampered = structuredClone(input);
+      const tamperedEntry = (
+        kind === "provider" ? tampered.entries : tampered.workflow_entries
+      )[0];
+      if (tamperedEntry === undefined) throw new Error("Missing tamper query");
+      tamperedEntry.execution.result = { changed: true };
+      expect(() => immutableAnalysisSnapshot(tampered)).toThrow(
+        /differs from its Evidence/u,
+      );
+      expect(Object.isFrozen(tamperedEntry.execution.result)).toBe(false);
+    },
+  );
 });

@@ -1,9 +1,8 @@
-import type { BigIntStats } from "node:fs";
-import { lstat, stat, type FileHandle } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import {
   assertRegularFileActive,
   RegularFileChangedError,
-  sameRegularFileState,
+  assertStableRegularFileIdentity,
 } from "./RegularFile.js";
 
 /** Resource refusal carries the observed extent before allocating file bytes. */
@@ -49,7 +48,7 @@ export const readStableFileBytes = async (
   const extra = Buffer.alloc(1);
   if ((await file.read(extra, 0, 1, bytes.length)).bytesRead !== 0)
     throw new RegularFileChangedError(path);
-  await assertStableIdentity(file, path, before, options);
+  await assertStableRegularFileIdentity(file, path, before, options);
   return bytes;
 };
 
@@ -70,7 +69,7 @@ export const readStableFilePrefix = async (
     before.size < BigInt(maximumBytes) ? before.size : BigInt(maximumBytes),
   );
   const bytes = await readExtent(file, path, length, options.signal);
-  await assertStableIdentity(file, path, before, options);
+  await assertStableRegularFileIdentity(file, path, before, options);
   return { bytes, size: before.size };
 };
 
@@ -96,36 +95,4 @@ const readExtent = async (
   }
   assertRegularFileActive(signal);
   return bytes;
-};
-
-const assertStableIdentity = async (
-  file: FileHandle,
-  path: string,
-  before: BigIntStats,
-  options: StableReadOptions,
-): Promise<void> => {
-  assertRegularFileActive(options.signal);
-  const named = async () => {
-    try {
-      return await (options.symlinks === "follow" ? stat : lstat)(path, {
-        bigint: true,
-      });
-    } catch (cause: unknown) {
-      if (
-        cause instanceof Error &&
-        "code" in cause &&
-        (cause.code === "ENOENT" ||
-          cause.code === "ENOTDIR" ||
-          cause.code === "ELOOP")
-      )
-        throw new RegularFileChangedError(path, { cause });
-      throw cause;
-    }
-  };
-  if (
-    !sameRegularFileState(before, await file.stat({ bigint: true })) ||
-    !sameRegularFileState(before, await named())
-  )
-    throw new RegularFileChangedError(path);
-  assertRegularFileActive(options.signal);
 };

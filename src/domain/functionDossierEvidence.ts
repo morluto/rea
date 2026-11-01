@@ -5,8 +5,12 @@ import { readEvidence, readEvidencePayload } from "./evidenceValidation.js";
 import type { JsonValue } from "./jsonValue.js";
 import { err, ok, type Result } from "./result.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
-import { functionDossierSchema, type FunctionDossier } from "./hopperValues.js";
+import {
+  functionDossierSchema,
+  type FunctionDossier,
+} from "./native/functionDossier.js";
 import { assessFunctionCallCoverage } from "./functionCallCoverage.js";
+import { functionCoordinateContextsEqual } from "./native/functionCoordinateContext.js";
 
 /** Complete function observation parsed from one analyze_function Evidence record. */
 export interface FunctionSnapshot {
@@ -18,6 +22,29 @@ export interface FunctionSnapshot {
   readonly unresolvedCallCaveats: readonly string[];
   readonly callCoverageDiagnostics: readonly string[];
 }
+
+/** Artifact identity and provider-owned mapping jointly establish coordinate applicability. */
+export type FunctionSnapshotCoordinateContext =
+  | "common"
+  | "cross-artifact"
+  | "unknown";
+
+export const functionSnapshotCoordinateContext = (
+  left: FunctionSnapshot,
+  right: FunctionSnapshot,
+): FunctionSnapshotCoordinateContext => {
+  if (left.subject.digest.sha256 !== right.subject.digest.sha256)
+    return "cross-artifact";
+  return left.subject.format === right.subject.format &&
+    left.subject.architecture !== null &&
+    left.subject.architecture === right.subject.architecture &&
+    functionCoordinateContextsEqual(
+      left.evidence.analysis_profile,
+      right.evidence.analysis_profile,
+    )
+    ? "common"
+    : "unknown";
+};
 
 /** Parse one complete analyze_function Evidence record for comparison workflows. */
 export const parseFunctionEvidence = (

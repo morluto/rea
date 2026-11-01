@@ -1,3 +1,4 @@
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 
@@ -13,6 +14,7 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
+  REGEX_MATCHING_DEADLINE_SETTING,
   regexMatchingDeadlineRecovery,
   type RegexMatchingDeadline,
 } from "../config/regexMatchingDeadline.js";
@@ -412,18 +414,25 @@ const heapBound = (
     : `${override}. This process has no positive override, so the effective heap is ${String(heap.mib)} MiB. ${recovery}`;
 };
 
-/** Capability text for the supervised ECMAScript matching boundary. */
+/**
+ * Capability text for the supervised ECMAScript matching boundary: the
+ * effective budgets, their sources, and where to change them. Providers repeat
+ * it per search operation, so setting bounds and step-by-step recovery stay
+ * with the deadline and heap errors instead.
+ */
 export const regexMatchingLimitation = (
   heap: RegexWorkerHeapLimit,
   deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
   request: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 ): string => {
-  const deadlineText = `${String(deadline.deadlineMs)} ms matching deadline (source ${deadline.source})`;
-  const preface =
-    heap.kind === "effective"
-      ? `Regex mode uses ECMAScript Unicode semantics in a cancellable worker with a ${deadlineText} and an effective ${String(heap.mib)} MiB old-generation heap.`
-      : `Regex mode uses ECMAScript Unicode semantics in a cancellable worker with a ${deadlineText}.`;
-  return `${preface} ${regexMatchingDeadlineRecovery(deadline)} ${heapBound(heap, request)} Matching failure leaves the service available.`;
+  const requested = `${String(request.heapMiB)} MiB worker heap request (source ${request.source})`;
+  const heapText =
+    heap.kind === "unknown"
+      ? `a ${requested}; launch heap flags can change the effective old-generation heap, which was not established`
+      : heap.overridden
+        ? `an effective ${String(heap.mib)} MiB old-generation heap set by a positive Node --max-old-space-size over its ${requested}`
+        : `an effective ${String(heap.mib)} MiB old-generation heap from its ${requested}`;
+  return `Regex mode uses ECMAScript Unicode semantics in a cancellable worker with a ${String(deadline.deadlineMs)} ms matching deadline (source ${deadline.source}) and ${heapText}. inspect_analysis_settings and update_analysis_settings read and change regex.matching_deadline_ms and regex.worker_heap_request_mib; ${REGEX_MATCHING_DEADLINE_SETTING} and ${REGEX_WORKER_HEAP_REQUEST_SETTING} seed them at launch. Deadline and heap errors report the bounds and recovery. Matching failure leaves the service available.`;
 };
 
 /** Capability text for this process's launch heap, deadline, and heap request. */
@@ -458,6 +467,11 @@ export const regexMatchingDeadlineError = (
       matching_deadline_source: deadline.source,
     },
     {
+      limit: analysisSettingLimit(
+        "regex.matching_deadline_ms",
+        deadline.deadlineMs,
+        deadline.source,
+      ),
       remediationAction: `${regexMatchingDeadlineRecovery(deadline)} Simplify the ECMAScript Unicode regex or use literal mode, then retry in the same session.`,
     },
   );
@@ -487,7 +501,16 @@ export const regexWorkerHeapError = (
         },
     {
       cause,
-      remediationAction: `${heapBound(heap, request)} Restart REA after changing --max-old-space-size or ${REGEX_WORKER_HEAP_REQUEST_SETTING}. A launch --max-old-space-size-percentage takes precedence over that flag in either order. Simplify the pattern or use literal mode.`,
+      ...(heap.kind === "effective" && !heap.overridden
+        ? {
+            limit: analysisSettingLimit(
+              "regex.worker_heap_request_mib",
+              request.heapMiB,
+              request.source,
+            ),
+          }
+        : {}),
+      remediationAction: `${heapBound(heap, request)} Use update_analysis_settings with setting regex.worker_heap_request_mib to change the request for the next worker; launch heap flags can override it. Restart REA after changing --max-old-space-size or ${REGEX_WORKER_HEAP_REQUEST_SETTING} in the launch environment. A launch --max-old-space-size-percentage takes precedence over that flag in either order. Simplify the pattern or use literal mode.`,
     },
   );
 const replySchema = z.discriminatedUnion("status", [

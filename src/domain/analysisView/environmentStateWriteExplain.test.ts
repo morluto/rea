@@ -1109,3 +1109,89 @@ it("accepts a copied member only with its recorded value when a template keeps i
     sent: "group-alpha-2",
   });
 });
+
+it.each<[string, JsonValue, readonly JsonValue[], boolean]>([
+  [
+    "a time-based id no held entity takes",
+    1656166527623168,
+    [1655476044521472, 1655476044521999],
+    true,
+  ],
+  [
+    "one a held entity already holds",
+    1655476044521472,
+    [1655476044521472],
+    false,
+  ],
+  [
+    "one among held ids of another length",
+    1656166527623168,
+    [16554760445214],
+    false,
+  ],
+  [
+    "one among held ids spelled as text",
+    1656166527623168,
+    ["1655476044521472"],
+    false,
+  ],
+  [
+    "one among held entities sharing an id",
+    1656166527623168,
+    [1655476044521472, 1655476044521472],
+    false,
+  ],
+  ["one with no held entity to compare", 1656166527623168, [], false],
+  ["a short number", 123456789, [987654321], false],
+])("learns %s as generated", (_name, value, held, unique) => {
+  const result = explainCreate(
+    created(
+      { id: 7, ref: value },
+      {},
+      { type: held.map((ref, index) => ({ id: index + 1, ref })) },
+    ),
+  );
+  expect(ruleFor(result.rules, "ref")).toEqual(
+    unique ? { field: "ref", rule: "unique" } : undefined,
+  );
+});
+
+it("trims a created clock's fraction, and its sibling clock's, when held entities spell the field trimmed", () => {
+  const at = new Date(START).toISOString().replace(".000Z", "");
+  const result = explainCreate(
+    created(
+      {
+        id: 7,
+        createdAt: `${at}.123456789Z`,
+        updatedAt: `${at}.123456791Z`,
+      },
+      {},
+      {
+        type: [
+          {
+            id: 1,
+            createdAt: "2026-01-01T00:00:00.12345678Z",
+            updatedAt: "2026-01-01T00:00:00.123456789Z",
+          },
+        ],
+      },
+    ),
+  );
+  const trimmed = {
+    kind: "iso",
+    separator: "T",
+    fraction: 9,
+    zone: "Z",
+    trimmed: true,
+  };
+  expect(ruleFor(result.rules, "createdAt")).toEqual({
+    field: "createdAt",
+    rule: "clock",
+    format: trimmed,
+  });
+  expect(ruleFor(result.rules, "updatedAt")).toEqual({
+    field: "updatedAt",
+    rule: "clock",
+    format: trimmed,
+  });
+});

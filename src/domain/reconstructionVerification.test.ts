@@ -4,10 +4,12 @@ import { createEvidence, type Evidence } from "./evidence.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
-import { reconstructionVerificationResultSchema } from "./reconstructionVerificationSchemas.js";
+import {
+  reconstructionVerificationResultSchema,
+  reconstructionSpecificationSchema,
+} from "./reconstructionVerificationSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./process/processCaptureExample.js";
-import { reconstructionSpecificationSchema } from "./reconstructionVerificationSchemas.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { createResidualUnknown } from "./residualUnknown.js";
 

@@ -2,8 +2,6 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { json } from "./lib/verify-package-core.mjs";
-
 /** Install the packed CLI globally with and without optional dependencies and verify PTY degradation. */
 export async function verifyPackageInstall({
   tarball,
@@ -39,7 +37,7 @@ export async function verifyPackageInstall({
       "lib/node_modules/rea-agents/dist/process/capture/ProcessCaptureCapability.js",
     ),
   ).href;
-  const processCaptureCapability = json(
+  const processCaptureCapability = JSON.parse(
     (
       await commands.exec(
         process.execPath,
@@ -84,7 +82,7 @@ export async function verifyPackageInstall({
       "lib/node_modules/rea-agents/dist/process/capture/ProcessCaptureCapability.js",
     ),
   ).href;
-  const noOptionalCapability = json(
+  const noOptionalCapability = JSON.parse(
     (
       await commands.exec(
         process.execPath,

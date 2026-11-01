@@ -84,7 +84,10 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
     name: "observe_web_execution",
     arguments: { ...input, observation_ms: 2_147_483_648 },
   });
-  expect(invalid.isError).toBe(true);
+  expect(parseMcpToolError(invalid).error).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+  });
 });
 
 cliTest(

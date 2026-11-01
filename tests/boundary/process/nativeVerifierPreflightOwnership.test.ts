@@ -242,7 +242,9 @@ it.skipIf(process.platform === "win32").each(clients)(
       expect(receipt.artifacts).toBe(ready.lab);
       if (receipt.requests !== undefined) expect(receipt.requests).toEqual([]);
       // Read only after the verifier's own cleanup, before removing test scratch.
-      expect(await readFile(ready.artifact)).toEqual(retainedBytes);
+      expect(
+        Buffer.compare(await readFile(ready.artifact), retainedBytes),
+      ).toBe(0);
     } finally {
       // Self-release the authored orphan even on RED. PID observations never
       // authorize signals; outer cleanup retains its canonical acquisition proof.

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { createEvidence } from "../dist/domain/evidence.js";
 import { buildManagedPeFixture } from "./fixtures/managed/pe.mjs";
 import { functionDossier } from "./fixtures/managed/function-dossier.mjs";
-import { json } from "./lib/verify-package-core.mjs";
 
 const buildManagedFixtures = async (workspace) => {
   const managedPath = join(workspace, "managed-fixture.exe");
@@ -44,7 +43,7 @@ const verifyManagedArtifact = async ({
   managedPath,
   environment,
 }) => {
-  const managedArtifact = json(
+  const managedArtifact = JSON.parse(
     await commands.run(
       cli,
       ["inspect-managed-artifact", managedPath, "--json"],
@@ -66,7 +65,7 @@ const verifyManagedMembers = async ({
   managedPath,
   environment,
 }) => {
-  const managedMembers = json(
+  const managedMembers = JSON.parse(
     await commands.run(
       cli,
       ["inspect-managed-members", managedPath, "--json"],
@@ -111,7 +110,7 @@ const verifyManagedReconstruction = async ({
     ],
     notes: ["packaged synthetic reconstruction import"],
   };
-  const managedReconstruction = json(
+  const managedReconstruction = JSON.parse(
     await commands.run(
       cli,
       [
@@ -138,7 +137,7 @@ const verifyManagedBoundaries = async ({
   managedPath,
   environment,
 }) => {
-  const managedBoundaries = json(
+  const managedBoundaries = JSON.parse(
     await commands.run(
       cli,
       ["inspect-managed-native-boundaries", managedPath, "--json"],
@@ -174,7 +173,7 @@ const verifyManagedApplicationGraph = async ({
       "inspect_managed_native_boundaries",
     ),
   };
-  const managedApplicationGraph = json(
+  const managedApplicationGraph = JSON.parse(
     await commands.run(
       cli,
       [
@@ -260,7 +259,7 @@ const verifyManagedNativeVerification = async ({
       ),
     ],
   };
-  const managedNativeVerification = json(
+  const managedNativeVerification = JSON.parse(
     await commands.run(
       cli,
       [
@@ -289,7 +288,7 @@ const verifyManagedComparison = async ({
   managedRightPath,
   environment,
 }) => {
-  const managedComparison = json(
+  const managedComparison = JSON.parse(
     await commands.run(
       cli,
       ["compare-managed-members", managedPath, managedRightPath, "--json"],

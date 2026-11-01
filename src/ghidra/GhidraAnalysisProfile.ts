@@ -33,6 +33,7 @@ import {
 } from "./GhidraPowerPcProfile.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import {
+  GHIDRA_GAMECUBE_DOL_LANGUAGE,
   ghidraDolLanguage,
   ghidraDolLanguageUnsupportedReason,
   ghidraDolProfileParameters,
@@ -64,6 +65,7 @@ const sharedAnalysisSemantics = {
   procedure_file_offset_resolution:
     "address-first-unique-target-source-mapping-v2",
   instruction_flow_evidence: "decoded-return-pcode-v1",
+  instruction_status: "unlisted-address-without-decode-v1",
   instruction_references: "exact-address-incoming-without-synthetic-entry-v2",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
 } as const;
@@ -180,14 +182,16 @@ export const resolveGhidraAnalysisProfile = async (
   if (target.format === "gamecube-dol") {
     // The DOL admission owns the processor family; only a BE32 PowerPC variant may replace the stock language.
     const reason = ghidraDolLanguageUnsupportedReason(languageOverride);
-    if (reason !== null)
+    // The DOL is admitted; only the selected language conflicts with it.
+    if (reason !== null && languageOverride !== undefined)
       return Promise.resolve(
         err(
-          new AnalysisUnsupportedTargetError(
-            "resolve_analysis_profile",
-            target.path,
-            reason,
-          ),
+          languageOverrideConflict(languageOverride, reason, {
+            languageId: GHIDRA_GAMECUBE_DOL_LANGUAGE.languageId,
+            ...(languageOverride.compilerSpecId === undefined
+              ? {}
+              : { compilerSpecId: languageOverride.compilerSpecId }),
+          }),
         ),
       );
     const language = ghidraDolLanguage(languageOverride);
@@ -402,6 +406,14 @@ export const ghidraProfileLanguageOverride = (
     : { languageId, compilerSpecId };
 };
 
+/** Read back the language a provider-pinned profile imports with, for any pinned lane. */
+export const ghidraProfilePinnedLanguage = (
+  parameters: Readonly<Record<string, unknown>>,
+): GhidraLanguageOverride | undefined =>
+  parameters.language_selection === "provider-pinned-v1"
+    ? ghidraProfileLanguageOverride(parameters)
+    : undefined;
+
 /** Whether a committed profile and the active configuration select the same language. */
 export const sameGhidraLanguageOverride = (
   left: GhidraLanguageOverride | undefined,
@@ -454,4 +466,23 @@ const createGhidraProfile = (
           }),
         }
       : {}),
+  });
+
+/** A caller database supplies analysis state; no import or completion claims are inferred. */
+export const existingGhidraAnalysisProfile = (
+  target: BinaryTarget,
+  provider: Parameters<typeof createAnalysisProfile>[0],
+  project: JsonValue,
+) =>
+  createAnalysisProfile(provider, {
+    target_kind: target.kind,
+    target_format: target.format,
+    architecture: target.architecture ?? null,
+    import_mode: "existing-project-private-copy-v1",
+    ...sharedAnalysisSemantics,
+    annotation_policy: "read-only-existing-project-v1",
+    existing_project: project,
+    original_analysis: { completeness: "unknown", settings: "unknown" },
+    no_return_repair: "disabled-existing-project",
+    process_launch: "inspected-jvm-launch-support-v1",
   });

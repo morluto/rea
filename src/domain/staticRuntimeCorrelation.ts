@@ -20,8 +20,10 @@ import {
   NORMALIZED_VIEW_DIMENSIONS,
 } from "./functionComparisonSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
-import { comparisonStatusSchema } from "./process/processComparison.js";
-import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
+import {
+  comparisonStatusSchema,
+  PROCESS_COMPARISON_DIMENSIONS,
+} from "./process/processComparison.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");

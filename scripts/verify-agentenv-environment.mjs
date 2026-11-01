@@ -22,11 +22,6 @@ const QUOTA_RETRY_PAUSE_MS = 90_000;
 const RUN_BUDGET_MS = 22 * 60_000;
 const FIRST_ATTEMPT_MS = 15 * 60_000;
 const MIN_RETRY_MS = 5 * 60_000;
-const TEMPLATE_RULES = [
-  "after-uid-literal",
-  "opaque-token",
-  "sibling-variance",
-];
 
 // Both tools are caller-supplied absolute paths, as every real-* lane names its upstream.
 for (const key of ["REA_AGENT_ENV_COMMAND", "REA_DOCKER_COMMAND"])
@@ -80,43 +75,6 @@ try {
   );
   const harPath = join(runtime.path, "capture.har");
   await writeFile(harPath, JSON.stringify(environmentManifestHar()));
-  const capture = await cli(
-    "inspect-web-network-capture",
-    harPath,
-    "har",
-    "--format",
-    "json",
-  );
-  assert.equal(capture.operation, "inspect_web_network_capture");
-  assert.equal(capture.normalized_result.total_records, 28);
-  cases++;
-  const viewPath = join(runtime.path, "view.json");
-  await writeFile(
-    viewPath,
-    JSON.stringify({
-      source: { kind: "inline", evidence: capture },
-      view: { kind: "environment-manifest", template_rules: TEMPLATE_RULES },
-    }),
-  );
-  const manifest = await cli(
-    "inspect-analysis-view",
-    viewPath,
-    "--format",
-    "json",
-  );
-  assert.equal(manifest.normalized_result.kind, "environment-manifest");
-  assert.equal(
-    manifest.normalized_result.parent_evidence_id,
-    capture.evidence_id,
-  );
-  assert.equal(manifest.normalized_result.name, "grafana-example");
-  const toolCount = manifest.normalized_result.tools.length;
-  assert.ok(toolCount > 0);
-  cases++;
-  const capturePath = join(runtime.path, "capture.json");
-  const manifestPath = join(runtime.path, "manifest.json");
-  await writeFile(capturePath, JSON.stringify(capture));
-  await writeFile(manifestPath, JSON.stringify(manifest));
   // The lane proves this checkout, not the registry package: pack it and install the tarball in the image.
   const { stdout: packed } = await commands.execNpm(
     ["pack", "--ignore-scripts", "--json", "--pack-destination", runtime.path],
@@ -124,25 +82,43 @@ try {
   );
   const tarball = join(runtime.path, packedFilename(JSON.parse(packed)));
   await access(tarball);
+  // The one-step build users run: it inspects the HAR, projects the manifest and writes the bundle.
   const bundle = join(runtime.path, "grafana-example");
-  const exported = await cli(
-    "environment-export",
-    manifestPath,
-    "--evidence",
-    capturePath,
+  const built = await cli(
+    "environment-build",
+    harPath,
     bundle,
     "--package-tarball",
     tarball,
   );
-  assert.equal(exported.status, "exported");
-  assert.equal(exported.name, "grafana-example");
+  assert.equal(built.status, "built");
+  assert.equal(built.capture.operation, "inspect_web_network_capture");
+  assert.equal(built.capture.records, 28);
+  cases++;
+  assert.equal(built.name, "grafana-example");
+  const toolCount = built.manifest.tools;
+  assert.ok(toolCount > 0);
+  assert.deepEqual(built.manifest.template_rules, [
+    "after-uid-literal",
+    "opaque-token",
+    "sibling-variance",
+    "prefix-variance",
+  ]);
+  cases++;
   // The bundle serves the state its server derives from the capture, which leaves the
-  // manifest's write tools unserved; the export reports the count the bundle serves.
-  assert.equal(exported.state.served, true);
-  const servedCount = exported.tool_count;
+  // manifest's write tools unserved; the build reports the count the bundle serves.
+  assert.equal(built.state.served, true);
+  const servedCount = built.tool_count;
   assert.ok(servedCount > 0 && servedCount < toolCount);
-  assert.equal(exported.package_source.kind, "tarball");
-  assert.deepEqual(exported.files.map((file) => file.path).sort(), [
+  // Every read tool and every served write tool is in the served catalog.
+  assert.equal(
+    built.coverage.reads.state +
+      built.coverage.reads.recorded +
+      built.coverage.writes.served.length,
+    servedCount,
+  );
+  assert.equal(built.package_source.kind, "tarball");
+  assert.deepEqual(built.files.map((file) => file.path).sort(), [
     "README.md",
     "artifacts/check_grafana-example/verify.py",
     "envs/grafana-example/Dockerfile",
@@ -152,9 +128,13 @@ try {
     "envs/grafana-example/rea-agents.tgz",
     "tasks/smoke.json",
   ]);
-  assert.equal(
+  const shipped = JSON.parse(
     await readFile(join(bundle, "envs/grafana-example/manifest.json"), "utf8"),
-    await readFile(manifestPath, "utf8"),
+  );
+  assert.equal(shipped.evidence_id, built.manifest.evidence_id);
+  assert.equal(
+    shipped.normalized_result.parent_evidence_id,
+    built.capture.evidence_id,
   );
   const dockerfile = await readFile(
     join(bundle, "envs/grafana-example/Dockerfile"),

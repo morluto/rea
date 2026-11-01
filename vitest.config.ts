@@ -42,14 +42,12 @@ const PROJECT_POLICIES = {
     maxWorkers: MAX_TEST_WORKERS,
     // Domain and contract modules are pure and own no process-global state, so
     // per-file module isolation adds startup cost without protecting a seam.
-    isolate: false,
   },
   services: {
     pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Service tests use recording ports and own no process-global state. Share
     // their module graph so file startup does not dominate the lane.
-    isolate: false,
   },
   adapters: { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   composition: {
@@ -57,7 +55,6 @@ const PROJECT_POLICIES = {
     maxWorkers: MAX_TEST_WORKERS,
     // Composition tests use provider-neutral sessions and test-scoped cleanup;
     // sharing their immutable module graph avoids per-file startup work.
-    isolate: false,
   },
   boundary: { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   "cli-boundary": {
@@ -65,7 +62,6 @@ const PROJECT_POLICIES = {
     maxWorkers: MAX_TEST_WORKERS,
     // CLI tests create fresh command instances or subprocesses and own their
     // cleanup. Reuse the immutable graph; module mocks belong in process-global.
-    isolate: false,
     // The shared source/contract graph also needs transient schema/help space.
     // Ordinary CI exhausted 384 MiB after earlier files warmed that graph.
     // Use the measured 512 MiB budget with the same bounded concurrency.
@@ -84,7 +80,6 @@ const PROJECT_POLICIES = {
     maxWorkers: MAX_TEST_WORKERS,
     // Each file creates and closes an explicit in-memory MCP session. Reuse the
     // immutable server graph so module startup does not outweigh transport work.
-    isolate: false,
   },
   acceptance: { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   "process-global": { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
@@ -92,13 +87,11 @@ const PROJECT_POLICIES = {
     pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Contract cases use recording providers and own no process-global state.
-    isolate: false,
   },
   evaluation: {
     pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Evaluator tests inspect deterministic inputs without mutating shared state.
-    isolate: false,
   },
 };
 
@@ -132,6 +125,7 @@ const projects = TEST_PROJECTS.map((project) => {
       name: project.name,
       include: [...project.include],
       ...(project.exclude ? { exclude: [...project.exclude] } : {}),
+      isolate: project.isolate !== false,
       ...policy,
     },
   };

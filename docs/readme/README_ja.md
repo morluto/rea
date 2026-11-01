@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · **日本語** · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
 
 # REA：あらゆるものをリバースエンジニアリング
 
@@ -20,7 +20,7 @@
 
 **[ウェブサイト](https://rea.tools/ja/) · [ガイド](https://rea.tools/ja/guides/) · [事例](https://rea.tools/ja/showcase/)**
 
-[クイックスタート](#クイックスタート) · [REA の仕組み](#rea-の仕組み) · [分析できる対象](#分析できる対象) · [事例](#事例) · [よくある質問](#よくある質問) · [GNU objdump・Rizin ツール](../reverse-engineering-tools.md) · [ドキュメント](#ドキュメント)
+[クイックスタート](#クイックスタート) · [REA の仕組み](#rea-の仕組み) · [分析できる対象](#分析できる対象) · [事例](#事例) · [RL 環境を構築する](#build-rl-environments) · [よくある質問](#よくある質問) · [ドキュメント](#ドキュメント)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@
 
 REA はエージェントを分析ツールにつなぎ、ネイティブバイナリ、JavaScript や Electron のアプリ、.NET アセンブリ、ウェブサイトを調べられるようにします。同じツールをターミナルからも使えます。分析はローカルで実行され、結果には各結論を裏付ける根拠と制限事項が含まれます。
 
-セットアップはエージェントに REA を登録し、対応するワークフロー指示をインストールします。ネイティブ解析には既存の Hopper、Ghidra、IDA を使用でき、承認すれば Hopper をインストールできます。静的 JavaScript 解析にネイティブ解析エンジンは不要です。
+セットアップはエージェントに REA を登録し、対応するワークフロー指示をインストールします。ネイティブ解析には既存の Hopper、Ghidra、IDA、Kuna を使用でき、承認すれば Hopper をインストールできます。静的 JavaScript 解析にネイティブ解析エンジンは不要です。
 
 > **[REA のウェブサイト](https://rea.tools/ja/)**で、セットアップ手順、図解ガイド、実際の事例を確認できます。
 
@@ -151,7 +151,7 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 
 | 対象                             | REA が返すもの                                                                              | 要件とガイド                                                                                                                                   |
 | -------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| ネイティブバイナリ               | 疑似コード、アセンブリ、文字列、シンボル、呼び出し、参照                                    | Hopper、Ghidra、または IDA；[ネイティブ分析](../native-investigation.md)                                                                       |
+| ネイティブバイナリ               | 疑似コード、アセンブリ、文字列、シンボル、呼び出し、参照                                    | Hopper、Ghidra、IDA、または Kuna；[ネイティブ分析](../native-investigation.md)                                                                 |
 | オフライン ELF レイアウト        | セクション、セグメント、元のシンボル／再配置情報、静的解析によるセキュリティ対策の候補      | Linux x64 で利用者が用意する pwntools；[バイナリ診断](../binary-diagnostics.md)                                                                |
 | PE certificates                  | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                        |
 | PE imports                       | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                  |
@@ -159,6 +159,7 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 | Rust binaries                    | Embedded cargo-auditable dependency list                                                    | [Rust binaries](../rust-binaries.md)                                                                                                           |
 | ELF notes                        | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                   |
 | Apple IPS crashes                | .ips metadata, threads, images, registers and crash classes                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                  |
+| Linux kernel modules             | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                         |
 | Erlang BEAM                      | IFF chunks, atoms, exports, and tables                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                              |
 | 記録済みの Linux クラッシュ      | 生の note レコード、記録された全スレッドのレジスター／シグナル、任意のマッピング候補        | Linux x64 で利用者が用意する pwntools；GDB/pwndbg は任意；[記録済みクラッシュ](../recorded-crashes.md)                                         |
 | デスクトップのインストール先     | ランタイム候補、根拠ファイル、コンポーネントの目印、次の調査手順                            | 上限付きのディレクトリ・ヘッダー検査；[デスクトップアプリ](../desktop-applications.md)                                                         |
@@ -188,6 +189,8 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 | APK 署名                         | v1/v2/v3/v3.1 署名者、証明書指紋、鍵ローテーション、ダイジェストの自己整合性                | 組み込みの静的解析; `inspect_apk_signature`                                                                                                    |
 
 静的な JavaScript と .NET の検査は、指定されたファイルを読み取り、アプリケーションを実行しません。実行時キャプチャは、あなたのユーザー権限で対象を実行したり、対象とやり取りしたりします。それぞれの実行時ガイドに、どのような操作が行われるかを記載しています。
+
+ネイティブバイナリのオフライン検査では、利用者が用意した GNU objdump と Rizin も使用できます。[リバースエンジニアリングツールのガイド](../reverse-engineering-tools.md)では、プロバイダーのセットアップ、CLI コマンド、Evidence の制約を説明しています。REA はどちらのプロバイダーもインストールや更新を行いません。
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -224,7 +227,50 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 [事例を読む](https://rea.tools/ja/showcase/th04/) ·
 [再構築リポジトリ](https://github.com/N0zoM1z0/th04)
 
+### REA で RL 環境を構築する
+
+Web アプリのセッションを記録し、API をツールに変換して、AI エージェントが使える環境をエクスポートします。AgentEnv で実行し、タスクと報酬のチェックを追加して、RL の学習や評価に使えます。
+
+[環境構築ガイド](https://rea.tools/guides/rl-environments/) ·
+[X でデモを見る](https://x.com/reatools/status/2112574822584918075?s=20)
+
 REA で興味深い対象を調べたら、ぜひ共有してください。[issue](https://github.com/morluto/rea/issues) または [pull request](https://github.com/morluto/rea/pulls) に、対象、調べたかったこと、REA がどう役立ったか、何が分かったかを記載してください。
+
+<a id="build-rl-environments"></a>
+
+## RL 環境を構築する
+
+元のアプリを動かさずに、AI エージェントが issue の検索やフォルダーの作成などを練習できるローカル環境を構築します。強化学習（RL）や、エージェントのタスク遂行能力のテストに使えます。
+
+REA は記録した API のリクエストと応答を、エージェントが呼び出せるツールに変換します。環境は記録したデータを使い、記録で効果が確認された変更だけをサポートします。
+
+エージェントに REA を設定したら、次の URL とフォルダー操作を自分の環境に合わせて変更してください。
+
+```text
+REA を使い、次のテスト用 Web アプリから RL 環境を構築してください。
+http://127.0.0.1:3000
+フォルダーの一覧表示、作成、名前変更、削除を対象にしてください。
+テスト用フォルダーの作成と削除は許可します。既存のデータは変更しないでください。
+my-env というフォルダーに保存し、使える操作を確認して実行方法を教えてください。
+```
+
+<details>
+<summary>コマンドラインを使う場合</summary>
+
+アプリのブラウザーリクエストと応答を記録したファイルがあれば、このコマンドを使えます。作成した環境の実行には AgentEnv と Docker も必要です。
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA は実行可能な環境と、起動して応答することを確認する基本テストをエクスポートします。RL フレームワークに接続して、タスクの目標や報酬のチェックを定義し、学習を実行できます。
+
+[環境構築ガイド](https://rea.tools/guides/rl-environments/) ·
+[環境リファレンス](../agent-environments.md) ·
+[X でデモを見る](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## よくある質問
 
@@ -236,9 +282,9 @@ REA で興味深い対象を調べたら、ぜひ共有してください。[iss
 </details>
 
 <details>
-<summary><strong>Hopper、Ghidra、IDA は必要ですか？</strong></summary>
+<summary><strong>Hopper、Ghidra、IDA、Kuna は必要ですか？</strong></summary>
 
-深いネイティブ分析には、そのいずれかを使います。静的な JavaScript と .NET の検査には、ネイティブ分析エンジンは必要ありません。セットアップは承認後に Hopper をインストールできます。Ghidra と IDA は既存のインストールを使います。[プロバイダーのセットアップ](../installation.md#hopper)を参照してください。
+深いネイティブ分析には、そのいずれかを使います。静的な JavaScript と .NET の検査には、ネイティブ分析エンジンは必要ありません。セットアップは承認後に Hopper をインストールできます。Ghidra、IDA、Kuna は既存のインストールを使います。[プロバイダーのセットアップ](../installation.md#hopper)を参照してください。
 
 </details>
 
@@ -306,7 +352,7 @@ npx rea-agents@latest setup
 
 ## スター履歴
 
-🎉 **GitHub スター 300,000 件、ありがとうございます！**
+🎉 **GitHub スター 400,000 件、ありがとうございます！**
 
 REA の利用、バグ報告、機能の要望、ビルドのテスト、修正への貢献に感謝します。
 
@@ -324,9 +370,7 @@ REA の利用、バグ報告、機能の要望、ビルドのテスト、修正�
 
 REA は、法令に従った研究、教育、相互運用性の確保、ソフトウェアの保存、および所有するソフトウェアや調査を許可されたソフトウェアの解析を目的としています。
 
-The project's position on illegal or unauthorized use covers all REA
-versions, distribution channels, and platforms; each copy retains its
-applicable licenses.
+違法または無許可の利用に関するプロジェクトの立場は、REA のすべてのバージョン、配布チャネル、およびプラットフォームに適用されます。各コピーには、それぞれに適用されるライセンスが引き続き適用されます。
 
 ## 貢献する
 
@@ -338,14 +382,6 @@ REA への貢献を歓迎します！[issue を作成](https://github.com/morlut
 
 [MIT](../../LICENSE)
 
-REA-authored code is licensed under MIT. Third-party material retains its own
-licenses and copyright notices; see [Third-party notices](../../THIRD_PARTY_NOTICES.md)
-for the dependency inventory, preserved license texts, and external-tool terms.
+REA が作成したコードは MIT ライセンスの下で提供されます。サードパーティの素材には、それぞれのライセンスと著作権表示が引き続き適用されます。依存関係の一覧、保存されたライセンス本文、および外部ツールの利用条件については、[サードパーティ通知](../../THIRD_PARTY_NOTICES.md)を参照してください。
 
-**You must legally obtain and be authorized to use commercial tools**, including
-IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
-REA grants no tool license, key, or activation entitlement. Trials and demos
-remain subject to vendor terms, including user, feature, automation, and output
-sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
-and bypassing license restrictions are not authorized. This guidance does not
-amend MIT or third-party licenses.
+**IDA Pro / Hex-Rays デコンパイラ、Hopper、JEB を含む商用ツールは、適用されるライセンスに従って合法的に入手し、使用する権限を得ている必要があります。** REA はツールのライセンス、キー、またはアクティベーションの権利を一切付与しません。試用版やデモ版も、ユーザー、機能、自動化、および出力の共有に関する制限を含め、ベンダーの利用条件に従います。クラックされたコピー、盗まれたキー、無許可のキー共有、およびライセンス制限の回避は認められていません。このガイダンスは、MIT ライセンスやサードパーティのライセンスを変更するものではありません。

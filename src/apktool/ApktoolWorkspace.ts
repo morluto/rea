@@ -68,9 +68,8 @@ export class ApktoolWorkspace {
         path,
         this.#files,
         signal,
-        async (source) => {
+        async ({ handle: source, initial }) => {
           admitted = true;
-          const initial = await source.stat();
           const output = join(this.path, "input.apk");
           const file = await open(output, "wx", 0o600);
           await withArtifactFileHandle(
@@ -180,9 +179,8 @@ export class ApktoolWorkspace {
         path,
         this.#files,
         signal,
-        async (file) => {
+        async ({ handle: file, initial }) => {
           admitted = true;
-          const initial = await file.stat();
           const bytes = Buffer.alloc(budget + 1);
           let length = 0;
           while (length < bytes.length) {

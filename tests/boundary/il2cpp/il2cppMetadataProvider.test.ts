@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -24,6 +25,7 @@ import {
   createLinkedIl2cppMetadataFixture,
 } from "../../fixtures/il2cpp/metadata.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -325,12 +327,13 @@ it("bounds concurrent snapshots and retains active decoding until close complete
     return release;
   });
   const active = provider.inspect({ path });
-  await entered;
   let closed = false;
-  const closing = provider.close().then(() => {
-    closed = true;
-  });
-  try {
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered, active, "metadata decoding");
+    closing = provider.close().then(() => {
+      closed = true;
+    });
     const refused = await provider.inspect({ path });
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
@@ -346,18 +349,30 @@ it("bounds concurrent snapshots and retains active decoding until close complete
     }
     await setImmediate();
     expect(closed).toBe(false);
-  } finally {
     resume();
     await closing;
-  }
-  expect((await active).ok).toBe(true);
-  expect(closed).toBe(true);
-  const afterClose = await provider.inspect({ path });
-  expect(afterClose.ok).toBe(false);
-  if (!afterClose.ok) {
-    expect(afterClose.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
-    expect(projectAnalysisError(afterClose.error).retryable).toBe(false);
-  }
+    expect((await active).ok).toBe(true);
+    expect(closed).toBe(true);
+    const afterClose = await provider.inspect({ path });
+    expect(afterClose.ok).toBe(false);
+    if (!afterClose.ok) {
+      expect(afterClose.error).toBeInstanceOf(
+        AnalysisCapabilityUnavailableError,
+      );
+      expect(projectAnalysisError(afterClose.error).retryable).toBe(false);
+    }
+  }, [
+    resume,
+    async () => {
+      await closing;
+    },
+    async () => {
+      await active;
+    },
+    async () => {
+      await provider.close();
+    },
+  ]);
 });
 
 it("keeps occupied capacity retryable while the reader remains open", async () => {
@@ -377,8 +392,8 @@ it("keeps occupied capacity retryable while the reader remains open", async () =
     return release;
   });
   const active = provider.inspect({ path });
-  await entered;
-  try {
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered, active, "metadata decoding");
     const refused = await provider.inspect({ path });
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
@@ -394,11 +409,15 @@ it("keeps occupied capacity retryable while the reader remains open", async () =
         },
       });
     }
-  } finally {
-    resume();
-    await active;
-    await provider.close();
-  }
+  }, [
+    resume,
+    async () => {
+      await active;
+    },
+    async () => {
+      await provider.close();
+    },
+  ]);
 });
 
 it.each([false, true])(
@@ -638,6 +657,99 @@ it("retains both observed file identities and the selected architecture when nat
         },
       },
     });
+  } finally {
+    await provider.close();
+  }
+});
+
+it.each([
+  {
+    architecture: "x86-64",
+    name: "libil2cpp.so",
+    binary: () =>
+      createElfFixture(
+        createIl2cppBinaryFixture({
+          codeRegistration: false,
+          codeReference: true,
+        }),
+        { machine: 62 },
+      ),
+    named: "RIP-relative LEA/MOV",
+    absent: "ADRP+ADD",
+  },
+  {
+    architecture: "arm64",
+    name: "GameAssembly.dylib",
+    binary: () =>
+      createIl2cppBinaryFixture({
+        codeRegistration: false,
+        adrpAdd: [[0xc00, 0x500]],
+      }),
+    named: "ADRP+ADD",
+    absent: "RIP-relative LEA/MOV",
+  },
+])(
+  "names the $architecture instruction form behind an inferred module array",
+  async ({ name, binary, named, absent }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-inferred-form-");
+    const path = join(root, "global-metadata.dat"),
+      binary_path = join(root, name);
+    await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+    await writeFile(binary_path, binary());
+    const provider = new Il2cppMetadataProvider();
+    try {
+      const result = await provider.inspect({ path, binary_path });
+      if (!result.ok) throw result.error;
+      const inferred = result.value.limitations.filter((line) =>
+        line.includes("static CodeRegistration pair was not resolved"),
+      );
+      expect(inferred).toHaveLength(1);
+      expect(inferred[0]).toContain(named);
+      expect(inferred[0]).not.toContain(absent);
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it("states that an inferred type table's count is a run length", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-inferred-types-");
+  const path = join(root, "global-metadata.dat"),
+    binary_path = join(root, "GameAssembly.dylib");
+  // A field typed as type 3 makes the metadata reference the whole
+  // four-entry table, as real builds reference most of theirs.
+  const fixture = createLinkedIl2cppMetadataFixture();
+  const metadata = Buffer.from(fixture.bytes);
+  metadata.writeUInt8(3, fixture.section("fields").offset + 4);
+  await writeFile(path, metadata);
+  await writeFile(
+    binary_path,
+    createIl2cppBinaryFixture({
+      metadataRegistration: false,
+      adrpAdd: [[0xc20, 0x900]],
+    }),
+  );
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const result = await provider.inspect({ path, binary_path });
+    if (!result.ok) throw result.error;
+    expect(result.value.binary).toMatchObject({
+      types_field: null,
+      types_count: 4,
+      code_gen_modules_field: expect.any(String),
+    });
+    const inferred = result.value.limitations.filter((line) =>
+      line.includes(
+        "No static MetadataRegistration had the type-definition counts",
+      ),
+    );
+    expect(inferred).toHaveLength(1);
+    expect(inferred[0]).toContain("ADRP+ADD");
+    expect(
+      result.value.limitations.some((line) =>
+        line.includes("static CodeRegistration pair was not resolved"),
+      ),
+    ).toBe(false);
   } finally {
     await provider.close();
   }

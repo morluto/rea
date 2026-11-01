@@ -72,6 +72,18 @@ code-point order. Dependency manifests remain package observations but do not
 declare Electron main or renderer entries. If only dependency manifests are
 present, the inventory artifact remains the graph root.
 
+Package observations use `renderer_declarations` to record the actual present
+fields: strings, including empty strings, remain exact; non-string values use `{ "status": "non-string" }`
+without copying nested browser mappings. An empty record means no such fields
+were present; `null` means package metadata was invalid or unavailable. Renderer
+role mechanisms and package load edges name the field that supplied the candidate,
+selected as the first nonempty string from `renderer`, `browser`, then `module`.
+The package load edge retains `declared_path`, `source_field`, and resolution
+facts for that selection. New analyses no longer emit the derived package
+`renderer` alias; consumers must read declarations for source metadata and load
+edges for the selected candidate. Previously retained Evidence keeps its original
+properties and remains readable without migration.
+
 ## Select sources before analysis
 
 For a question about known entry sources, supply exact artifact-relative file
@@ -140,17 +152,24 @@ returns an unavailable error with the retained inventory, rather than claiming
 the selected source does not exist. Observed exact file candidates keep their
 identity; unknown traversal cannot establish a unique application root.
 
-ASAR header/index admission defaults to 16 MiB / 16777216 bytes. Set
-`REA_ASAR_MAX_HEADER_BYTES` in the environment that starts REA to a decimal
-byte count of at most 268435456 (256 MiB) to raise or lower it; restart REA
-after changing it. Invalid values are configuration errors, never a silent
-fallback. The archive index is read before any member can be selected, so
+ASAR header/index admission defaults to 16 MiB / 16777216 bytes. In MCP, use
+`update_analysis_settings` to set `asar.max_header_bytes` to an integer byte
+count from 1 to 268435456 (256 MiB), then retry the same full-archive request.
+The update applies to new operations without restarting REA; cached headers
+must also satisfy the new admission. For CLI or future MCP processes, set
+`REA_ASAR_MAX_HEADER_BYTES` in the launch environment. Changing that environment
+requires a new REA process. Invalid launch values are configuration errors,
+never a silent fallback. See the
+[settings design](design/limits-and-recovery.md#failure-and-retry) for recovery
+metadata, precedence, and reset behavior.
+
+The archive index is read before any member can be selected, so
 `source_paths`, `--source-path`, `detail: "summary"`, `max_heap_mb`, and
 available host memory do not bypass or raise it. When the header exceeds the
-effective allowance, the failure names it, whether it came from the default or
-the setting, and the setting's limits. Alternatively, analyze an extracted
+effective allowance, the failure reports the value, its known source, and the
+setting's limits. Alternatively, analyze an extracted
 application directory, which does not admit an ASAR header. Repeating the unchanged
-request fails the same way.
+request without changing admission fails the same way.
 
 ## Read the analysis
 
@@ -195,6 +214,27 @@ For supplied passive browser or Electron observations, use
 [runtime reconciliation](javascript-runtime-reconciliation.md). It compares
 existing Evidence without rerunning static analysis or contacting CDP.
 
+Each newly analyzed JavaScript file retains `analysis_coverage` in its graph
+observation. `syntax` distinguishes complete parsing, recovered syntax errors,
+failed parsing and unexamined source. `semantics` records the number of observed
+unknown findings and typed uncertainty, including returned-reference widening
+and unavailable type-only compiler options. `examination` reports static semantic
+resource limits and Electron wrapper expansion limits independently. A completed
+pass does not establish complete runtime semantics. Route examination and result
+capacity remain in the separate route inventory.
+
+Electron applicability is `observed` when a static Electron module reference is
+retained, and otherwise `unknown`: a source without such a reference does not
+prove that the application is inapplicable. Sources excluded by `source_paths`
+retain `not-examined` with a reason and null semantic counts. Historical Evidence
+without this facet remains unmeasured. The existing `parse_status` remains its
+conservative overall summary; finer facts do not relabel earlier partial results.
+
+Summary delivery counts these facts under `summary.coverage.static_sources`.
+Read exact per-file measurements with `inspect_analysis_view`, selecting
+`kind: "javascript-facts"` and `property_keys: ["analysis_coverage"]`, or inspect
+the module item. Both views use retained Evidence and preserve source provenance.
+
 ## ASAR integrity
 
 ASAR inventory checks Electron integrity metadata for embedded archive entries
@@ -211,10 +251,12 @@ An unpacked entry whose companion bytes were not supplied remains
 `unavailable`. REA continues analyzing embedded JavaScript and records the
 missing native/resource bytes as unknown. The occurrence keeps
 `hash_status: unavailable`; no content-addressed child artifact is created for
-those missing bytes. New inventories preserve an ASAR companion declaration as
-`unpacked: true`; an omitted flag in an older inventory does not establish that
-unavailable bytes belonged to a companion. See [MCP integrity handling](mcp-contracts.md#integrity-record-and-continue)
-for the tool-result contract.
+those missing bytes. New ASAR file occurrences record `unpacked: true` for
+companion files and `unpacked: false` for packed entries, including when the
+file bytes are unavailable. An omitted flag in an older inventory remains
+unknown; it does not establish either storage mode. See
+[MCP integrity handling](mcp-contracts.md#integrity-record-and-continue) for the
+tool-result contract.
 
 JavaScript whose syntax cannot be parsed retains unavailable semantic coverage
 with `incomplete-module` unknowns for each semantic family and unknown omitted
@@ -322,6 +364,13 @@ Selected bounded text is then parsed as inert data to recover:
   relative to the calling module; string worker and service-worker paths use
   the document base URL or Node's working directory, which static analysis
   does not establish, so they keep their expression and stay unresolved);
+- Vite preload dependency tables (`__vite__mapDeps`): `./` entries resolve
+  relative to the importing chunk; base-relative entries such as
+  `assets/chunk.js` carry a `vite-output:` specifier and resolve under the one
+  ancestor directory of the importer that holds them, the build output
+  directory. A file found there but not analyzed, such as a stylesheet, stays
+  `unavailable` with its path. Selecting only the assets directory leaves them
+  `not-found`;
 - route, network endpoint, storage, and vendor-marker observations;
 - local source-map declarations and original
   source names and content digests;
@@ -398,8 +447,17 @@ and links whose callee was renamed by a minifier are not recognized.
 Bundler adapters own callback roles: Webpack supplies module, exports, then
 loader; esbuild CommonJS supplies exports, then module. Export extraction uses
 those binding identities for assignments and declarations, so renaming either
-parameter does not change the recovered names. Global property-definition
-intrinsics require lexical and visible-write proof. Factory export declarations
+parameter does not change the recovered names. The convention always supplies
+every role argument, so a role parameter's default never runs: a defaulted
+module or exports parameter keeps its role, and the default expression yields
+no exports, references or chunk keys. `{exports: alias}` in the module position
+binds `alias` to `module.exports`.
+Other role patterns, such as rest, array, nested or computed-key patterns or a
+non-identifier loader, receive no role and count as unknown findings, so the
+file's analysis is partial rather than an exact empty export list. An
+export-shaped write through a role binding whose value at that read cannot be
+ordered against a replacement is also an unknown finding. Global
+property-definition intrinsics require lexical and visible-write proof. Factory export declarations
 also require the loader's `d` member to have no prior or unordered visible
 replacement, including writes through lexical aliases. Unrelated loader members
 do not invalidate declarations. Ordering describes declarations within one factory
@@ -502,6 +560,8 @@ alternative object. A traced invocation whose key, API object or world stays
 unresolved or guarded keeps the call's own unresolved observation.
 Unknown spreads, reassigned bindings, accessors,
 dynamic channels and unsupported syntax do not become exact implementations.
+Literal switch cases retain their selection conditions. Possible fallthrough
+remains partial; dynamic case expressions remain unknown.
 This pass neither executes the bundle nor proves that runtime guards pass.
 An ambiguous or unresolved handler retains its channel registration but does
 not acquire a path to one arbitrarily selected callback. Unknown factory
@@ -584,7 +644,13 @@ identity. This static check does
 not evaluate arbitrary call side effects or runtime registration. Missing findings
 do not establish that an application has no Electron boundary usage.
 
-IPC pairing is an inference, not an observation. A renderer `invoke` pairs only
+IPC pairing is an inference, not an observation. A main handler registered on an
+unresolved channel may receive any literal channel, so a compatible renderer send
+or `invoke` beside it is ambiguous, not unpaired. A wrapper's registration is
+exempt only when every invocation is a traced direct call supplying a literal
+channel, each recorded as its own finding. A guarded invocation keeps its
+predicate on a call path instead, so its channel still competes without pairing.
+A renderer `invoke` pairs only
 with one unique `ipcMain.handle`/`handleOnce` candidate on the same exact literal
 channel; a renderer send pairs only with one unique `ipcMain.on`/`once`/`addListener`
 candidate. Dynamic channels are never paired, and multiple compatible handlers
@@ -716,6 +782,10 @@ deadline per source, including startup and fact transfer. Select
 `max_heap_mb` and `analysis_timeout_ms` through MCP, or `--max-heap-mb` and
 `--analysis-timeout-ms` on the dedicated CLI command. These choices control the
 analyzer; the caller's `NODE_OPTIONS` still controls the CLI/MCP process heap.
+For defaults across new MCP operations, use `update_analysis_settings` with
+`javascript.max_heap_mb` or `javascript.analysis_timeout_ms`. Explicit per-call
+arguments take precedence, and accepted work keeps its original settings. See
+the [settings design](design/limits-and-recovery.md#precedence-and-lifetime).
 V8 old-space limits do not impose a process RSS limit. When REA runs on Bun,
 the analyzer ignores the V8 heap flags; resource failures then report
 `worker_heap_limit_bytes` as null instead of a requested or V8-reported limit.

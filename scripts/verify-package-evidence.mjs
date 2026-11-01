@@ -2,7 +2,6 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createEvidence } from "../dist/domain/evidence.js";
-import { json } from "./lib/verify-package-core.mjs";
 
 /** Round-trip historical reference import and evidence bundles. */
 export async function verifyPackageEvidence({
@@ -12,7 +11,7 @@ export async function verifyPackageEvidence({
   referenceRoot,
   environment,
 }) {
-  const referenceImport = json(
+  const referenceImport = JSON.parse(
     await commands.run(
       cli,
       ["import-reference-source", referenceRoot, "--json"],
@@ -39,21 +38,21 @@ export async function verifyPackageEvidence({
   const sourceBundlePath = join(evidenceRoot, "source.json");
   const canonicalBundlePath = join(evidenceRoot, "canonical.json");
   await writeFile(sourceBundlePath, serializeEvidenceBundle(sourceBundle));
-  const importedBundle = json(
+  const importedBundle = JSON.parse(
     await commands.run(
       cli,
       ["evidence-import", sourceBundlePath, "--json"],
       environment,
     ),
   );
-  const exportedBundle = json(
+  const exportedBundle = JSON.parse(
     await commands.run(
       cli,
       ["evidence-export", sourceBundlePath, canonicalBundlePath, "--json"],
       environment,
     ),
   );
-  const comparedBundle = json(
+  const comparedBundle = JSON.parse(
     await commands.run(
       cli,
       ["compare", sourceBundlePath, canonicalBundlePath, "--json"],

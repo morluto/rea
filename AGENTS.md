@@ -53,9 +53,12 @@ Optimize in this order:
 3. CPU and memory. Avoid unnecessary work and copies; bound concurrency,
    retained state and serialization growth.
 
-For changes affecting these costs, measure representative completed tasks and
-compare equivalent workflows before and after where available. Report token
-usage, elapsed time, CPU time and peak process-family memory. Separate cold
+Reserve performance measurements for changes that target performance or have a
+concrete regression concern. Routine cleanup uses correctness checks; changes
+to helper calls, imports, or representations alone do not require synthetic
+benchmarks. When measurement is warranted, measure representative completed
+tasks and compare equivalent workflows before and after where available. Report
+token usage, elapsed time, CPU time and peak process-family memory. Separate cold
 and warm runs, label estimates, and state unmeasured costs. Fewer bytes alone
 do not establish fewer tokens or faster analysis.
 
@@ -80,7 +83,7 @@ Coordinate expensive checks across agents. If a test unexpectedly consumes heavy
 
 For tool design, follow [docs/tool-design.md](docs/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Limits must follow real format, protocol, authority, or resource constraints. Account for representation expansion before allocation; derive completeness from examined coverage.
 
-For test changes or provider claims, use [docs/testing.md](docs/testing.md). Prefer real public CLI/MCP workflows, then production-boundary integration, then producer goldens. Keep module tests for distinct semantics stronger workflows cannot reliably reproduce. Preserve malformed-input, cancellation, cleanup, permission, capacity, and target-identity coverage when pruning. Report unverified coverage explicitly; simulated providers do not establish real-provider behavior.
+For test changes or provider claims, use [docs/testing.md](docs/testing.md). Select applicable [boundary regressions](docs/testing.md#boundary-regressions) for parser, inventory, snapshot, and projection fixes. Prefer real public CLI/MCP workflows, then production-boundary integration, then producer goldens. Keep module tests for distinct semantics stronger workflows cannot reliably reproduce. Preserve malformed-input, cancellation, cleanup, permission, capacity, and target-identity coverage when pruning. Report unverified coverage explicitly; simulated providers do not establish real-provider behavior.
 
 Use Conventional Commit subjects and PR titles. Mark breaking changes with `!` or a `BREAKING CHANGE:` footer. Describe behavior changes, relevant validation, and real-provider verification scope.
 
@@ -108,10 +111,11 @@ distinguish source-derived conclusions, proposed checks, and unavailable coverag
 Address actionable automated review findings and explain disagreements.
 
 Leave the template's **Author readiness** declarations unchecked for the human
-owner to complete. Never attest to human review on their behalf. Keep the PR in
-draft until the human declares the PR initially ready. Later pushes do not
-invalidate that declaration or require another human sign-off. Keep the PR body
-and affected validation current as work changes. The readiness check validates
+owner to complete. Never attest to human review on their behalf. Draft status
+is optional; preserve the PR's current draft status unless the user asks to change
+it. Later pushes do not invalidate the readiness declaration or require another
+human sign-off. Keep the PR body and affected validation current as work changes.
+The readiness check validates
 the filled declaration; CI and automated review results do not establish that
 human review occurred, maintainer scope approval, or merge permission.
 

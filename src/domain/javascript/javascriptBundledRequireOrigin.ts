@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
+import { javascriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
 import { proveJavaScriptBootstrapIntegrity } from "./javascriptBootstrapIntegrity.js";
 import {
   semanticMemberChain,
@@ -29,6 +30,9 @@ import {
   completeSemanticSteps,
   traverseJavaScriptValueAst,
 } from "./javascriptSemanticTraversal.js";
+
+/** A standalone Webpack bootstrap uses the module, exports, loader convention. */
+const BOOTSTRAP_RUNTIME = "webpack-bootstrap";
 
 /** Loader bindings and literal externals proven for one standalone bootstrap. */
 interface BootstrapExternals {
@@ -367,14 +371,18 @@ const proveBootstrapExternals = (
   });
   for (const { factory } of factories) {
     // The bootstrap proves `table[key](module, module.exports, loader)`.
-    const loaderParameter = factory.params[2];
-    const bindingId = t.isIdentifier(loaderParameter)
-      ? resolveSemanticBindingState(
-          state,
-          loaderParameter,
-          loaderParameter.name,
-        )?.bindingId
-      : undefined;
+    const loaderParameter = javascriptBundlerFactoryRoles(
+      factory,
+      BOOTSTRAP_RUNTIME,
+    ).loader;
+    const bindingId =
+      loaderParameter === undefined
+        ? undefined
+        : resolveSemanticBindingState(
+            state,
+            loaderParameter,
+            loaderParameter.name,
+          )?.bindingId;
     if (
       bindingId !== undefined &&
       singleDefinition(state, bindingId, "parameter")
@@ -416,14 +424,12 @@ const externalSpecifier = (
   factory: t.FunctionExpression | t.ArrowFunctionExpression | t.ObjectMethod,
   state: JavaScriptSemanticAnalysisState,
 ): string | undefined => {
-  const moduleParameter = factory.params[0];
-  const names = factory.params.map((parameter) =>
-    t.isIdentifier(parameter) ? parameter.name : null,
-  );
+  const moduleParameter = javascriptBundlerFactoryRoles(
+    factory,
+    BOOTSTRAP_RUNTIME,
+  ).module;
   if (
-    !t.isIdentifier(moduleParameter) ||
-    // A duplicated name binds the later argument, not the module object.
-    new Set(names).size !== names.length ||
+    moduleParameter === undefined ||
     factory.generator ||
     factory.async ||
     (t.isObjectMethod(factory) && factory.kind !== "method")

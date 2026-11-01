@@ -7,7 +7,7 @@ import { createElectronObservationProvider } from "../../../src/composition/elec
 import { silentLogger } from "../../../src/logger.js";
 import { startMcpTransport } from "../../../src/main/transport.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 it("keeps the shared browser scenario provider open when the SDK discards its discovery probe", async () => {
@@ -67,7 +67,7 @@ it("keeps the shared browser scenario provider open when the SDK discards its di
     logger: silentLogger,
     serverLogger: silentLogger,
     environment: runtime.env,
-    delivery: new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    delivery: createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     loadOptionalProviders: async () => ({
       browserObservation,
       browserScenarioCapture,
@@ -148,7 +148,7 @@ it("closes optional providers when MCP server startup throws", async () => {
       logger: silentLogger,
       serverLogger: silentLogger,
       environment: runtime.env,
-      delivery: new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+      delivery: createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
       loadOptionalProviders: async () => ({
         browserObservation,
         browserScenarioCapture,

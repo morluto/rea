@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { expect, it } from "vitest";
 
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
+import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 import {
   analyzeWebBundleInputSchema,
   webSourceMapsSchema,
@@ -55,7 +56,7 @@ it.each([
         fetch_source_maps: true,
       });
       const url = `${origin}/${String(status)}`;
-      const result = await fetchWebSourceMaps(
+      const result = await fetchWebSourceMapsOk(
         [
           {
             scriptKey: `scr_${"1".repeat(64)}`,
@@ -102,7 +103,7 @@ it("keeps the declared URL and reports malformed redirect Location evidence", as
     allowed_origins: ["https://app.example.test"],
     fetch_source_maps: true,
   });
-  const result = await fetchWebSourceMaps(
+  const result = await fetchWebSourceMapsOk(
     [
       {
         scriptKey: `scr_${"1".repeat(64)}`,
@@ -139,7 +140,7 @@ it.each(["invalid JSON", "invalid UTF-8", "HTTP failure", "response limit"])(
     const origin = "https://app.example.test";
     const declaredUrl = `${origin}/declared.map`;
     const fetchedUrl = `${origin}/maps/current.map?token=source-value#fragment`;
-    const result = await fetchWebSourceMaps(
+    const result = await fetchWebSourceMapsOk(
       [{ scriptKey: "script", declaredUrl, fetchUrl: declaredUrl }],
       analyzeWebBundleInputSchema.parse({
         cdp_endpoint: "http://127.0.0.1:9222",
@@ -188,16 +189,26 @@ it.each(["invalid JSON", "invalid UTF-8", "HTTP failure", "response limit"])(
 );
 
 it.each([
-  { cancellationFails: false, reason: null },
-  { cancellationFails: true, reason: new Error("fixture cancel failure") },
-  { cancellationFails: true, reason: undefined },
+  { cancellationFails: false, reason: null, abortDuringCleanup: false },
+  {
+    cancellationFails: true,
+    reason: new Error("fixture cancel failure"),
+    abortDuringCleanup: false,
+  },
+  { cancellationFails: true, reason: undefined, abortDuringCleanup: false },
+  {
+    cancellationFails: true,
+    reason: new Error("cleanup failed before caller abort"),
+    abortDuringCleanup: true,
+  },
 ])(
-  "reserves a fetched URL before reading an over-cap response; cancellation failure=$cancellationFails, reason=$reason",
-  async ({ cancellationFails, reason }) => {
+  "reserves a fetched URL before reading an over-cap response; cancellation failure=$cancellationFails, caller abort=$abortDuringCleanup",
+  async ({ cancellationFails, reason, abortDuringCleanup }) => {
     const origin = "https://app.example.test";
     const fetchedUrl = `${origin}/${"u".repeat(WEB_SOURCE_MAP_LIMITS.outputBytes)}`;
     let cancelled = false;
     let read = false;
+    const controller = new AbortController();
     const body = new ReadableStream<Uint8Array>(
       {
         pull(controller) {
@@ -211,6 +222,8 @@ it.each([
         },
         cancel() {
           cancelled = true;
+          if (abortDuringCleanup)
+            controller.abort({ requested: "stop during response cleanup" });
           if (cancellationFails) throw reason;
         },
       },
@@ -230,26 +243,33 @@ it.each([
         allowed_origins: [origin],
         fetch_source_maps: true,
       }),
-      undefined,
+      controller.signal,
       { fetch: () => Promise.resolve(new Response(body)) },
     );
     if (cancellationFails) {
-      await expect(pending).rejects.toMatchObject({
-        _tag: "AnalysisResourceConstraintError",
-        message: expect.stringContaining("Expanded source-map evidence"),
-        cleanupIncomplete: true,
-        cleanupResources: ["source-map-response"],
-        cause: expect.objectContaining({
-          errors: expect.arrayContaining([reason]),
-        }),
+      const result = await pending;
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisResourceConstraintError",
+          message: expect.stringContaining("Expanded source-map evidence"),
+          cleanupIncomplete: true,
+          cleanupResources: ["source-map-response"],
+          cause: expect.objectContaining({
+            errors: expect.arrayContaining([reason]),
+          }),
+        },
       });
     } else {
       await expect(pending).resolves.toMatchObject({
-        status: "unavailable",
-        requested: 1,
-        processed: 0,
-        items: [],
-        limitation: expect.stringContaining("1 requested map"),
+        ok: true,
+        value: {
+          status: "unavailable",
+          requested: 1,
+          processed: 0,
+          items: [],
+          limitation: expect.stringContaining("1 requested map"),
+        },
       });
     }
     expect(cancelled).toBe(true);
@@ -288,10 +308,10 @@ it("charges complete escaped redirect errors and cancels every discarded respons
       );
     },
   };
-  const control = await fetchWebSourceMaps([request], input, undefined, host);
+  const control = await fetchWebSourceMapsOk([request], input, undefined, host);
   expect(control.items[0]?.limitation).toContain(JSON.stringify(location));
   expect(control.items[0]?.limitation?.length).toBeGreaterThan(512);
-  const result = await fetchWebSourceMaps(
+  const result = await fetchWebSourceMapsOk(
     Array.from({ length: 1_500 }, () => request),
     input,
     undefined,

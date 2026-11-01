@@ -1,3 +1,9 @@
+import {
+  iterateUrlQueryParameters,
+  parseUrlQueryParameterNames,
+} from "../recordedTransportUrl.js";
+import type { OffsetDateTimeInstant } from "../offsetDateTime.js";
+import type { StateRecordChronology } from "./StateRecordChronology.js";
 import type { ListQuery } from "./environmentStateListQuery.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
@@ -21,8 +27,12 @@ export interface StateRecordFacts {
   /** WHATWG query spelling including `?`, or undefined when the request had none. */
   readonly query: string | undefined;
   readonly status: number | null;
-  readonly start: number;
-  readonly end: number;
+  readonly timing: {
+    readonly start:
+      | { readonly instant: OffsetDateTimeInstant; readonly ms: number }
+      | undefined;
+    readonly endMs: number | undefined;
+  };
 }
 
 /** The manifest tool facts extraction uses. */
@@ -33,7 +43,7 @@ export interface StateToolFacts {
   readonly record_ordinals: readonly number[];
 }
 
-/** A record's response body as JSON, or unusable when absent, cut, not JSON, not exactly representable or carrying a `__proto__` member. */
+/** A record's response body as JSON, or unusable when absent, cut, not JSON, not exactly representable. */
 export type ParsedBody =
   | { readonly kind: "json"; readonly value: JsonValue }
   | { readonly kind: "unusable" };
@@ -47,8 +57,11 @@ export const requestJson = (body: ParsedRequestBody): JsonValue | undefined =>
 /** Budgeted access the accumulator lends extraction; null and false mean the budget is exhausted. */
 export interface StateBudget {
   readonly body: (ordinal: number) => ParsedBody | null;
-  /** A record's request body, admitted as response bodies are. */
-  readonly requestBody: (ordinal: number) => ParsedRequestBody | null;
+  /** Keep the request's parsing reservation until its consumer finishes. */
+  readonly withRequestBody: <T>(
+    ordinal: number,
+    use: (body: ParsedRequestBody) => T,
+  ) => T | null;
   /** Whether a record's response had no body. */
   readonly emptyResponse: (ordinal: number) => boolean;
   readonly retain: (bytes: number) => boolean;
@@ -60,6 +73,7 @@ export interface StateBudget {
 
 export type RecordedViewReason =
   | "query-body"
+  | "method-replay"
   | "no-init-recording"
   | "body-unusable"
   | "no-identity"
@@ -117,6 +131,8 @@ interface EntityViewPlan {
   readonly clock_formats?: Readonly<Record<string, ClockFormat>> | undefined;
   /** Fields whose string arrays the view lists in code-point order, whatever order they were written in. */
   readonly sorted_arrays?: string[] | undefined;
+  /** The keys the view shows of object fields it shows with fewer keys than stored. */
+  readonly nested_fields?: Readonly<Record<string, string[]>> | undefined;
   /** Envelope members each response there mints, which checks leave out and serving keeps as recorded. */
   readonly per_response_members?: string[] | undefined;
 }
@@ -140,6 +156,8 @@ export type StateItemView = EntityViewPlan &
   ReplayedReads & {
     readonly shape: "item";
     readonly envelope_ordinal: number;
+    /** The member its reads set `true` on an entity the application soft-deleted and still answers by id. */
+    readonly deleted_flag?: (typeof DELETED_FLAGS)[number] | undefined;
   };
 
 /** A query parameter that asks for some fields only (`fields`, `fields[...]`, `select`, `$select`). */
@@ -154,16 +172,18 @@ export const isProjectionParameter = (name: string): boolean => {
 };
 
 /** Whether a recorded query string names a projection parameter. */
-export const projectsFields = (query: string | undefined): boolean =>
-  query !== undefined &&
-  [...new URLSearchParams(query).keys()].some(isProjectionParameter);
+export const projectsFields = (query: string | undefined): boolean => {
+  for (const name of parseUrlQueryParameterNames(query ?? ""))
+    if (isProjectionParameter(name)) return true;
+  return false;
+};
 
 /** Whether a recorded query asks for some fields only: a projection parameter with a value other than `*`, which asks for all. */
-export const selectsSomeFields = (query: string | undefined): boolean =>
-  query !== undefined &&
-  [...new URLSearchParams(query)].some(
-    ([name, value]) => isProjectionParameter(name) && value !== "*",
-  );
+export const selectsSomeFields = (query: string | undefined): boolean => {
+  for (const [name, value] of iterateUrlQueryParameters(query ?? ""))
+    if (isProjectionParameter(name) && value !== "*") return true;
+  return false;
+};
 
 export type StateListView = EntityViewPlan &
   ReplayedReads & {
@@ -172,9 +192,45 @@ export type StateListView = EntityViewPlan &
     /** With recorded membership, the checked lines that each list their whole collection. */
     readonly all_record_ordinals?: number[] | undefined;
     readonly counters: string[];
+    /** Top-level envelope members that hold the listed entities' values of an identity field, in list order. */
+    readonly listed_ids?: ListedIds[] | undefined;
     /** The query the view's other lines follow, when one explains any of them. */
     readonly query?: ListQuery | undefined;
   };
+
+/** Members an application sets `true` on an entity it has soft-deleted but still answers for by id. */
+export const DELETED_FLAGS = ["deleted", "isDeleted", "is_deleted"] as const;
+
+/** The member an item read's object sets `true` to mark the entity soft-deleted, if it does. */
+export const deletedFlag = (
+  object: JsonValue | undefined,
+): (typeof DELETED_FLAGS)[number] | undefined =>
+  isObject(object)
+    ? DELETED_FLAGS.find((name) => ownMember(object, name) === true)
+    : undefined;
+
+/** Whether an item read's object is one the application has soft-deleted, which says the entity is gone. */
+export const markedDeleted = (object: JsonValue | undefined): boolean =>
+  deletedFlag(object) !== undefined;
+
+/** An envelope member listing an identity field of each listed entity, as Paperless's `all` lists ids. */
+export interface ListedIds {
+  readonly member: string;
+  readonly field: string;
+}
+
+/** Whether a value lists the items' values of a field, in their order. */
+export const listsIds = (
+  value: JsonValue | undefined,
+  items: readonly JsonObject[],
+  field: string,
+): boolean =>
+  Array.isArray(value) &&
+  value.length === items.length &&
+  items.every((item, index) => {
+    const id = ownMember(item, field);
+    return id !== undefined && same(value[index], id);
+  });
 
 /** Whether a list view answers on a checked line with every entity of the collection. */
 export const listsAll = (view: StateListView, ordinal: number): boolean =>
@@ -213,6 +269,13 @@ export interface ExtractedState {
 }
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/** HTTP safe methods share read-only classification across state and MCP views. */
+export const isSafeHttpMethod = (method: string): boolean =>
+  method === "GET" ||
+  method === "HEAD" ||
+  method === "OPTIONS" ||
+  method === "TRACE";
 /** A POST whose path names one of these segments queries state rather than changing it. */
 export const QUERY_SEGMENTS = new Set([
   "search",
@@ -260,6 +323,29 @@ export const scalarText = (value: JsonValue | undefined): string | undefined =>
     : typeof value === "number"
       ? String(value)
       : undefined;
+/** A JSON dictionary lookup observes only its own members, preserving absent fields. */
+export const ownMember = <Value>(
+  object: Readonly<Record<string, Value>> | undefined,
+  member: string,
+): Value | undefined =>
+  object !== undefined && Object.hasOwn(object, member)
+    ? object[member]
+    : undefined;
+
+/** Write one JSON member without interpreting its name as an inherited setter. */
+export const setOwnMember = (
+  object: JsonObject,
+  member: string,
+  value: JsonValue,
+): void => {
+  Object.defineProperty(object, member, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+};
+
 /** Equal JSON values; object member order carries no meaning. */
 export const same = (
   left: JsonValue | undefined,
@@ -364,24 +450,52 @@ export const isStateWrite = (record: StateRecordFacts): boolean =>
   changesState(record.method, record.path) &&
   (record.status === null || (record.status >= 200 && record.status < 400));
 
-/** Whether any write overlaps the span from one record's start to a later record's end; writes come in timeline order. */
-export const writeSpanCheck = (
+/** Index possible write interference without inventing completion for unknown intervals. */
+export const writeSpanIndex = (
   writes: readonly StateRecordFacts[],
-): ((earlier: StateRecordFacts, later: StateRecordFacts) => boolean) => {
-  // The latest end among each prefix of writes, so one search answers a span.
-  const reach: number[] = [];
-  for (const write of writes)
-    reach.push(Math.max(reach.at(-1) ?? Number.NEGATIVE_INFINITY, write.end));
+  chronology: StateRecordChronology,
+): ((
+  earlier: StateRecordFacts,
+  later: StateRecordFacts,
+) => number | undefined) => {
+  const reach: (number | undefined)[] = [];
+  const starts: (number | undefined)[] = [];
+  let maximum: number | undefined;
+  let unknown = false;
+  for (const write of writes) {
+    const end = chronology.endMs(write);
+    if (end === undefined) unknown = true;
+    else maximum = maximum === undefined ? end : Math.max(maximum, end);
+    reach.push(unknown ? undefined : maximum);
+    starts.push(chronology.startMs(write));
+  }
   return (earlier, later) => {
+    const beginning = chronology.startMs(earlier);
+    const ending = chronology.endMs(later);
     let low = 0;
     let high = writes.length;
     while (low < high) {
       const middle = (low + high) >>> 1;
-      if (writes[middle]!.start < later.end) low = middle + 1;
-      else high = middle;
+      const end = reach[middle];
+      if (beginning === undefined || end === undefined || end > beginning)
+        high = middle;
+      else low = middle + 1;
     }
-    return low > 0 && reach[low - 1]! > earlier.start;
+    const start = starts[low];
+    return low < writes.length &&
+      (ending === undefined || start === undefined || start < ending)
+      ? low
+      : undefined;
   };
+};
+
+/** Whether a write may overlap the span; unknown completion cannot prove absence. */
+export const writeSpanCheck = (
+  writes: readonly StateRecordFacts[],
+  chronology: StateRecordChronology,
+): ((earlier: StateRecordFacts, later: StateRecordFacts) => boolean) => {
+  const index = writeSpanIndex(writes, chronology);
+  return (earlier, later) => index(earlier, later) !== undefined;
 };
 
 /** Literal leading segments shared by every template with the same first segment: each path's API base. */
@@ -458,15 +572,6 @@ export const deeperThan = (value: JsonValue, limit: number): boolean => {
   return false;
 };
 
-/** JSON parsers keep a `__proto__` member that plain object construction would turn into a prototype. */
-export const hasPrototypeKey = (value: JsonValue): boolean =>
-  Array.isArray(value)
-    ? value.some(hasPrototypeKey)
-    : isObject(value) &&
-      Object.entries(value).some(
-        ([name, item]) => name === "__proto__" || hasPrototypeKey(item),
-      );
-
 export const pointerTo = (name: string): string =>
   `/${name.replaceAll("~", "~0").replaceAll("/", "~1")}`;
 /** The unescaped reference tokens of a pointer. */
@@ -482,7 +587,7 @@ const memberOf = (
   body: JsonValue | undefined,
   name: string,
 ): JsonValue | undefined =>
-  isObject(body) && Object.hasOwn(body, name) ? body[name] : undefined;
+  isObject(body) ? ownMember(body, name) : undefined;
 
 /** The element of a one-element array. */
 const soleElement = (value: JsonValue | undefined): JsonValue | undefined =>
@@ -565,7 +670,7 @@ export const identifies = (
   // Stop at the first missing or repeated value, so a sparse list costs one read per field.
   const seen = new Set<string>();
   for (const item of items) {
-    const value = scalarText(item[name]);
+    const value = scalarText(ownMember(item, name));
     if (value === undefined || seen.has(value)) return false;
     seen.add(value);
   }
@@ -598,7 +703,9 @@ export const locateList = (
   if (Array.isArray(body)) return body.every(isObject) ? "" : undefined;
   if (
     !isObject(body) ||
-    IDENTITY_NAMES.some((name) => scalarText(body[name]) !== undefined)
+    IDENTITY_NAMES.some(
+      (name) => scalarText(ownMember(body, name)) !== undefined,
+    )
   )
     return undefined;
   const arrays = Object.entries(body).filter(
@@ -657,7 +764,7 @@ export const renderStateEntity = (
   entity: StateEntity,
   view: Pick<
     EntityViewPlan,
-    "tool" | "fields" | "clock_formats" | "sorted_arrays"
+    "tool" | "fields" | "clock_formats" | "sorted_arrays" | "nested_fields"
   >,
   volatileFields: ReadonlySet<string>,
   observed?: JsonObject,
@@ -666,6 +773,7 @@ export const renderStateEntity = (
     entity.view_fields.find((candidate) => candidate.tool === view.tool)
       ?.fields ?? {};
   const formats = view.clock_formats ?? {};
+  const nested = view.nested_fields ?? {};
   const sorted = new Set(view.sorted_arrays);
   return Object.fromEntries(
     view.fields.flatMap((name): [string, JsonValue][] => {
@@ -676,15 +784,29 @@ export const renderStateEntity = (
             ? own
             : entity.fields;
       if (!Object.hasOwn(source, name)) return [];
-      // A stored value the view never recorded, such as a written one, takes the view's spelling.
+      // A stored value the view never recorded, such as a written one, takes the view's spelling and keys.
       const value =
-        source === entity.fields && Object.hasOwn(formats, name)
-          ? respellClock(source[name]!, formats[name]!)
-          : source[name]!;
+        source !== entity.fields
+          ? source[name]!
+          : Object.hasOwn(formats, name)
+            ? respellClock(source[name]!, formats[name]!)
+            : Object.hasOwn(nested, name)
+              ? shownKeys(source[name]!, nested[name]!)
+              : source[name]!;
       return [[name, sorted.has(name) ? inSetOrder(value) : value]];
     }),
   );
 };
+
+/** An object with only the keys a view shows of it, in the view's order; any other value as it is. */
+const shownKeys = (value: JsonValue, keys: readonly string[]): JsonValue =>
+  isObject(value)
+    ? Object.fromEntries(
+        keys.flatMap((key) =>
+          Object.hasOwn(value, key) ? [[key, value[key]!]] : [],
+        ),
+      )
+    : value;
 
 /** Whether a value is an array of strings. */
 export const isStringArray = (value: JsonValue): value is string[] =>
@@ -706,15 +828,18 @@ export const missingRequiredFields = (
 
 /**
  * A list response rendered from `base`: its array replaced by `items`, and set to their number each counter that
- * counted the items `base` listed; one that did not, such as a partial page's total, keeps its recorded value.
+ * counted the items `base` listed; one that did not, such as a partial page's total, keeps its recorded value. Each
+ * member that listed the ids of the items `base` listed lists theirs, unless `items` are a page of more matches.
  */
 export const renderStateList = (
-  view: Pick<StateListView, "pointer" | "counters">,
+  view: Pick<StateListView, "pointer" | "counters" | "listed_ids">,
   base: JsonValue,
   items: readonly JsonObject[],
+  whole = true,
 ): JsonValue => {
-  const listed = listItems(base, view.pointer)?.length;
-  return view.counters.reduce(
+  const shown = listItems(base, view.pointer);
+  const listed = shown?.length;
+  const counted = view.counters.reduce(
     (body, name) => {
       const observed = counterAt(base, name);
       if (listed === undefined || recordedItemCount(observed) !== listed)
@@ -723,4 +848,20 @@ export const renderStateList = (
     },
     replaceAt(base, view.pointer, [...items]),
   );
+  if (!whole || shown === undefined || !isObject(counted)) return counted;
+  const lists = (view.listed_ids ?? []).filter(
+    ({ member, field }) =>
+      isObject(base) &&
+      listsIds(ownMember(base, member), shown, field) &&
+      items.every((item) => ownMember(item, field) !== undefined),
+  );
+  if (lists.length === 0) return counted;
+  const body: JsonObject = { ...counted };
+  for (const { member, field } of lists)
+    setOwnMember(
+      body,
+      member,
+      items.map((item) => ownMember(item, field)!),
+    );
+  return body;
 };

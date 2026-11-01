@@ -41,6 +41,12 @@ export const PE_IMPORTS_PROVIDER = Object.freeze({
 } as const);
 
 /** Provider identity for portable, execution-free ELF note-table decoding. */
+export const DEVICETREE_PROVIDER = Object.freeze({
+  id: "rea-devicetree",
+  name: "REA flattened devicetree parser",
+  version: "1",
+} as const);
+
 export const ELF_NOTES_PROVIDER = Object.freeze({
   id: "rea-elf-notes",
   name: "REA ELF note parser",
@@ -51,6 +57,12 @@ export const ELF_NOTES_PROVIDER = Object.freeze({
 export const APPLE_IPS_PROVIDER = Object.freeze({
   id: "rea-apple-ips",
   name: "REA Apple IPS parser",
+  version: "1",
+} as const);
+/** Provider identity for portable, execution-free Linux kernel-module metadata. */
+export const KERNEL_MODULE_PROVIDER = Object.freeze({
+  id: "rea-kernel-module",
+  name: "REA kernel module parser",
   version: "1",
 } as const);
 
@@ -165,3 +177,9 @@ export const RECONSTRUCTION_PROVIDER = {
   name: "REA reconstruction verifier",
   version: "1",
 } as const;
+
+export const PE_LOAD_CONFIG_PROVIDER = Object.freeze({
+  id: "rea-pe-load-config",
+  name: "REA PE TLS/load-config parser",
+  version: "1",
+} as const);

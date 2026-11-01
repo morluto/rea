@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { bundleResourceBoundResultSchema } from "./bundleResourceRoot.js";
 
-import { jsonValueSchema } from "../jsonValue.js";
+import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { AnalysisOutputError } from "../analysisErrorCore.js";
 import {
   artifactInventoryCoverageSchema,
@@ -51,7 +51,7 @@ const recordSchema = z.strictObject({
   kind: z.enum(["catalog", "rendition"]),
   asset_name: z.string().nullable(),
   rendition_name: z.string().nullable(),
-  metadata: z.record(z.string(), jsonValueSchema),
+  metadata: jsonObjectSchema,
 });
 
 const resourceKeyMatchSchema = z.strictObject({
@@ -116,7 +116,7 @@ export const parseAppleAssetCatalogRecords = (
       "assetutil output must be a JSON array",
     );
   return value.map((record, index) => {
-    const parsed = z.record(z.string(), jsonValueSchema).safeParse(record);
+    const parsed = jsonObjectSchema.safeParse(record);
     if (!parsed.success)
       throw new AnalysisOutputError(
         "inspect_asset_catalog",

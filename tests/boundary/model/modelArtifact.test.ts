@@ -15,6 +15,7 @@ import {
 import { readSafetensorsHeader } from "../../../src/model/SafetensorsHeader.js";
 import { GgufHeader } from "../../../src/model/GgufHeader.js";
 import { createModelArtifactService } from "../../../src/composition/model.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { modelArtifactSchema } from "../../../src/domain/model/modelArtifact.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -311,7 +312,7 @@ it("accepts standardized GGUF metadata keys containing numeric hierarchy compone
   });
 });
 
-it.each([99_999_993, 100_000_000])(
+it.each([67_324_752, 67_324_760, 99_999_993, 100_000_000])(
   "admits safetensors declared header length %s before its independent representation limit",
   async (length) => {
     const bytes = Buffer.alloc(9);
@@ -1063,6 +1064,48 @@ it.each(malformed)(
   },
 );
 
+it("retains GGUF declarations and metadata when storage overlap is refused", async () => {
+  const seed = ggufFixture();
+  const fixture = ggufFixture({
+    metadata: [{ key: "general.name", type: 8, value: seed.text("Overlap") }],
+    tensors: [
+      { name: "a", type: 0, shape: [1n], offset: 0n, bytes: 4 },
+      { name: "b", type: 0, shape: [1n], offset: 0n, bytes: 4 },
+    ],
+  });
+  const { provider, path } = await providerAt(fixture.bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (result.ok) throw new Error("Overlapping tensors admitted");
+  expect(result.error).toMatchObject({
+    _tag: "BinaryTargetError",
+    constraint: "file_format_rejected",
+  });
+  const evidence = parseEvidence(result.error.partialObservation);
+  expect(evidence.subject).toBeNull();
+  expect(evidence.normalized_result).toMatchObject({
+    artifact: {
+      header_sha256: null,
+      sha256: null,
+      file_identity: "unverified",
+    },
+    coverage: { header: "partial", metadata: "complete", tensors: "partial" },
+    metadata: [{ key: "general.name", value: "Overlap" }],
+    tensors: [],
+    tensor_declarations: [
+      {
+        name: "a",
+        file_offset: fixture.dataOffset,
+        storage_validation: "not-established",
+      },
+      {
+        name: "b",
+        file_offset: fixture.dataOffset,
+        storage_validation: "not-established",
+      },
+    ],
+  });
+});
+
 it("accepts null safetensors metadata and ignores tensor extension fields", async () => {
   const fixture = safetensorsFixture(
     '{"__metadata__":null,"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":{"source":"local","flags":[null,false,-1,1.25]}}}',
@@ -1130,6 +1173,12 @@ it.each([640, 896, 1152, 1408, 66_176])(
 
 it.each([
   // Protocol 2 pickle of {"a": 1}: PROTO 2, EMPTY_DICT, BINPUT 0, ...
+  ["a ZIP local header", Buffer.from("504b0304140000000000", "hex")],
+  ["a short ZIP signature", Buffer.from("504b0304", "hex")],
+  [
+    "a ZIP signature followed by a brace and an inadmissible length",
+    Buffer.from("504b0304140000007b", "hex"),
+  ],
   ["a real pickle", Buffer.from("80027d710058010000006171014b01732e", "hex")],
   // Protocol 2 pickle of {}: six bytes, shorter than a safetensors prefix.
   ["an empty dict", Buffer.from("80027d71002e", "hex")],

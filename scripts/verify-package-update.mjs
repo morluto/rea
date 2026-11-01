@@ -4,7 +4,6 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { json } from "./lib/verify-package-core.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 /** Exercise the packaged updater with real npm and a local release registry fixture. */
@@ -17,7 +16,7 @@ export async function verifyPackageUpdate({
   commands,
 }) {
   const metadataPath = join(packageRoot, "package.json");
-  const metadata = json(await readFile(metadataPath, "utf8"));
+  const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
   const archive = await readFile(tarball);
   const entry = join(packageRoot, "scripts", "rea.mjs");
   const home = join(workspace, "update-home");
@@ -144,7 +143,7 @@ process.stdout.write(JSON.stringify(result));
 if (result.status === "failed") process.exitCode = 1;
 `,
       );
-      const result = json(
+      const result = JSON.parse(
         (
           await commands.exec(process.execPath, [harness], {
             env: runtimeEnvironment,

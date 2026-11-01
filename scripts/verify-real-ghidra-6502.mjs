@@ -18,7 +18,10 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOperationResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 if (process.argv.length !== 2)
@@ -464,10 +467,9 @@ async function call(name, args = {}) {
     { name, arguments: args },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
   if (["open_binary", "binary_session", "close_binary"].includes(name))
     return requireMcpOperationResult(result, name);
-  return result.structuredContent;
+  return requireMcpOutput(result, name);
 }
 
 function evidence(value, sha256) {

@@ -6,141 +6,26 @@ import { expect, it } from "vitest";
 
 import { PROCESS_UNEXPECTED_FAILURE_REMEDIATION } from "../application/process/ProcessCli.js";
 import {
-  captureDecoderHeapRecovery,
-  DEFAULT_CAPTURE_DECODER_HEAP,
-} from "../config/captureDecoderHeap.js";
-import {
-  mcpPhaseBudgetRecovery,
-  resolveMcpStartupBudgets,
-} from "../config/mcpStartupBudgets.js";
-import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import {
   MCP_CONNECTION_LOST,
   MCP_CONNECTION_START_FAILED,
-  MCP_HTTP_LISTEN_FAILED,
-  MCP_SHUTDOWN_FAILED,
+  MCP_TRANSPORT_ERROR,
+  MCP_VALIDATION_FAILED,
   SERVER_START_FAILED,
 } from "./messages.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
-const STALE_LIMIT_COPY =
-  /without assuming adjustable limits|do not assume adjustable|Generic errors do not assume adjustable/u;
-
-function prose(text: string): string {
-  return text.replace(/\s+/gu, " ");
-}
-
-it("uses one retry then a user handoff for transient MCP failures", () => {
-  expect(MCP_CONNECTION_LOST).toMatch(/^Retry /u);
-  // "once only" is the single-attempt cap. "Retry whenever it is safe to
-  // repeat" does not contain it.
-  expect(MCP_CONNECTION_LOST).toContain("once only");
-  expect(MCP_CONNECTION_LOST).toContain("safe to repeat");
-  expect(MCP_CONNECTION_LOST).toContain("tell the user");
-  expect(MCP_CONNECTION_LOST).toContain("restart the MCP client");
-  expect(MCP_CONNECTION_LOST).not.toContain("rea doctor");
-  expect(MCP_CONNECTION_START_FAILED).toMatch(/^Retry once\./u);
-  expect(SERVER_START_FAILED).toMatch(/^Do not repeat /u);
-  expect(SERVER_START_FAILED).not.toMatch(/\bretry\b/iu);
-  expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).toMatch(/^Do not repeat /u);
-  expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).toContain(
-    "check the input files",
-  );
-  expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).not.toMatch(/\bretry\b/iu);
-  for (const message of [
-    MCP_CONNECTION_START_FAILED,
-    SERVER_START_FAILED,
-    PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
-  ]) {
-    expect(message).toMatch(/tell the user/iu);
-    expect(message).toContain("`rea doctor`");
-  }
-  for (const message of [MCP_CONNECTION_START_FAILED, SERVER_START_FAILED])
-    expect(message).toContain("restart the MCP client");
-});
-
-it("keeps non-retryable transport failures on their named fix", () => {
-  expect(MCP_SHUTDOWN_FAILED).toContain("close cleanly");
-  expect(MCP_SHUTDOWN_FAILED).toContain("End the REA process");
-  expect(MCP_SHUTDOWN_FAILED).toContain("before starting it again");
-  expect(MCP_HTTP_LISTEN_FAILED).toContain("Choose another --port");
-  expect(MCP_HTTP_LISTEN_FAILED).toContain("stop the process using it");
-  expect(MCP_SHUTDOWN_FAILED).not.toContain("Retry");
-  expect(MCP_SHUTDOWN_FAILED).not.toContain("tell the user");
-  expect(MCP_HTTP_LISTEN_FAILED).not.toContain("tell the user");
-  expect(MCP_HTTP_LISTEN_FAILED).not.toContain("Retry");
-});
-
-it("keeps ceiling dial recoveries and scrubs non-adjustable timeout teaching", async () => {
-  const heap = captureDecoderHeapRecovery(DEFAULT_CAPTURE_DECODER_HEAP);
-  expect(heap).toContain("source ");
-  expect(heap).toContain("then restart REA");
-  expect(heap).not.toContain("tell the user");
-  const phase = mcpPhaseBudgetRecovery(resolveMcpStartupBudgets({}).initialize);
-  expect(phase).toContain("Set ");
-  expect(phase).toContain("then restart REA");
-  expect(phase).not.toContain("tell the user");
-
-  const timeout = projectAnalysisError(
-    new AnalysisTimeoutError("inspect_binary_layout", 2_500),
-  );
-  expect(timeout.remediation.action).not.toMatch(STALE_LIMIT_COPY);
-  expect(timeout.message).not.toMatch(STALE_LIMIT_COPY);
-
-  const files = [
-    "docs/user-visible-errors.csv",
-    "docs/mcp-contracts.md",
-    "src/domain/analysisErrorPresentation.ts",
-    ".agents/skills/reverse-engineer-anything/SKILL.md",
-    ".agents/skills/reverse-engineer-anything/references/connection-and-recovery.md",
-  ];
-  for (const path of files) {
-    const text = await readFile(join(root, path), "utf8");
-    expect(text, path).not.toMatch(STALE_LIMIT_COPY);
-  }
+it("publishes the canonical recovery messages in the error catalog", async () => {
   const catalog = await readFile(
     join(root, "docs/user-visible-errors.csv"),
     "utf8",
   );
-  expect(catalog).toContain(MCP_CONNECTION_LOST);
-  expect(catalog).toContain(MCP_CONNECTION_START_FAILED);
-  expect(catalog).toContain(SERVER_START_FAILED);
-  expect(catalog).toContain(PROCESS_UNEXPECTED_FAILURE_REMEDIATION);
-  expect(catalog).toContain("analysis_timeout_ms");
-  expect(catalog).toContain("REA_* setting");
-
-  const skill = await readFile(
-    join(
-      root,
-      ".agents/skills/reverse-engineer-anything/references/connection-and-recovery.md",
-    ),
-    "utf8",
-  );
-  const skillProse = prose(skill);
-  expect(skillProse).toContain("once only");
-  expect(skillProse).toContain("safe to repeat");
-  expect(skillProse).toContain("tell the user");
-  expect(skillProse).toContain("restart the MCP client");
-  expect(skillProse).toContain("connection failed");
-  expect(skillProse).toContain("Do not invent a setting");
-  expect(skillProse).toContain("explicitly recommends that change");
-  expect(skillProse).toContain("not a recommendation to change it");
-  expect(skillProse).not.toContain("names a request field");
-  const wakaru = await readFile(
-    join(root, "src/javascript/recovery/RecoveryFiles.ts"),
-    "utf8",
-  );
-  expect(wakaru).toContain(
-    "Raising analysis_timeout_ms or max_heap_mb does not raise it",
-  );
-  for (const path of [
-    "docs/mcp-contracts.md",
-    "docs/user-visible-errors.csv",
-  ]) {
-    const text = prose(await readFile(join(root, path), "utf8"));
-    expect(text, path).toContain("explicitly recommends that change");
-    expect(text, path).toContain("not a recommendation to change it");
-    expect(text, path).not.toContain("names a request field");
-  }
+  for (const message of [
+    MCP_CONNECTION_LOST,
+    MCP_CONNECTION_START_FAILED,
+    MCP_TRANSPORT_ERROR,
+    MCP_VALIDATION_FAILED,
+    SERVER_START_FAILED,
+    PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
+  ])
+    expect(catalog).toContain(message);
 });

@@ -16,9 +16,9 @@ import {
   managedPeFixtureTarget,
 } from "../../../src/dotnet/ManagedPe.fixture.js";
 import type { FixtureClaimExpectation } from "./KnownAnswerEvaluation.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const provider = { id: "fixture", name: "Fixture analysis", version: "1" };
 const subject = {

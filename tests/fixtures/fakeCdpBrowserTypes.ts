@@ -1,5 +1,6 @@
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import type { CdpEvent } from "../../src/browser/CdpConnection.js";
+import type { ServerResponse } from "node:http";
 export interface FakeCdpCommand {
   readonly id: number;
   readonly method: string;
@@ -90,6 +91,8 @@ export interface FakeOptions {
   readonly webSocketWithoutFrames?: boolean;
   readonly invalidBinaryWebSocketEvent?: boolean;
   readonly sourceMapBody?: string;
+  /** Test-owned HTTP response for selected map URLs; true means handled. */
+  readonly sourceMapReply?: (url: string, response: ServerResponse) => boolean;
   /** Accept a source-map request and leave the response open. */
   readonly hangSourceMap?: boolean;
   readonly sourceMapRedirect?: string;

@@ -373,7 +373,6 @@ const emitDeepLink = (
   );
 
 /** Read the current Electron windows, metrics, and hook snapshot. */
-// oxlint-disable-next-line max-lines-per-function -- one state read must share one capture boundary.
 export const readApplicationState = async (
   application: ElectronApplication,
 ): Promise<{

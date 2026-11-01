@@ -36,6 +36,11 @@ export interface SetupInitialState {
 export type ClientConfigurationResult =
   | {
       readonly status: "failed";
+      readonly reason: "registration_ownership";
+      readonly detail: string;
+    }
+  | {
+      readonly status: "failed";
       readonly reason: "conflict";
       readonly backupPath?: string;
     }
@@ -230,6 +235,8 @@ export interface SetupOptions {
   /** Skill roots to update independently of MCP registrations (maintenance). */
   readonly skillClientIds?: readonly string[];
   readonly installSkill?: boolean;
+  /** Comma-separated tool families the MCP registration advertises. */
+  readonly toolFamilies?: string;
   readonly readinessScope?: DoctorScope;
   readonly dryRun?: boolean;
   readonly allDetectedClients?: boolean;

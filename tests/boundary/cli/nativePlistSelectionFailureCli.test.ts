@@ -296,9 +296,9 @@ describe.skipIf(process.platform !== "darwin")(
       },
     );
     cliTest(
-      "omits a valid prototype key after native validation",
+      "retains a valid prototype key after native validation",
       async ({ cli }) => {
-        const root = await createTestTempDirectory("rea-plist-valid-omission-");
+        const root = await createTestTempDirectory("rea-plist-valid-key-");
         const path = join(root, "chosen.plist");
         const source =
           "<plist><dict><key>__proto__</key><integer>42</integer><key>kept</key><string>value</string></dict></plist>";
@@ -310,7 +310,7 @@ describe.skipIf(process.platform !== "darwin")(
         expect(result.exitCode, result.stderr).toBe(0);
         expect(result.json).toMatchObject({
           normalized_result: {
-            value: { kept: "value" },
+            value: { ["__proto__"]: 42, kept: "value" },
             provenance: [
               expect.objectContaining({ tool: "file" }),
               expect.objectContaining({
@@ -318,13 +318,12 @@ describe.skipIf(process.platform !== "darwin")(
                 command: ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
               }),
             ],
-            limitations: expect.arrayContaining([
-              expect.stringContaining(
-                "1 dictionary entry keyed __proto__ was omitted",
-              ),
-            ]),
           },
         });
+        expect(JSON.stringify(result.json)).toContain('"__proto__":42');
+        expect(JSON.stringify(result.json)).not.toContain(
+          "keyed __proto__ was omitted",
+        );
         expect(await readFile(path, "utf8")).toBe(source);
       },
     );

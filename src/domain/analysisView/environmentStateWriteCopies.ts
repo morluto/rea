@@ -1,5 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  ownMember,
   pointerTokens,
   scalarText,
   type JsonObject,
@@ -18,10 +19,10 @@ export const templateRule = (
   field: string,
   sources: readonly FieldRule[],
 ): FieldRule | undefined => {
-  const value = entity[field];
+  const value = ownMember(entity, field);
   if (typeof value !== "string") return undefined;
   for (const rule of sources) {
-    const token = scalarText(entity[rule.field]);
+    const token = scalarText(ownMember(entity, rule.field));
     const generated = GENERATED.has(rule.rule);
     if (
       rule.field !== field &&
@@ -34,7 +35,7 @@ export const templateRule = (
   return undefined;
 };
 
-/** Body members the entity stores as sent, under their own name (echo) or only another (a copy of the whole member). */
+/** Body members the entity stores as sent, under their own name (echo) or only another (a copy of the whole member), or names an entity by (a reference). */
 export const storedMembers = (
   rules: readonly FieldRule[],
   entity: JsonObject,
@@ -42,6 +43,7 @@ export const storedMembers = (
   new Set(
     rules.flatMap((rule) => {
       if (rule.rule === "echo") return [rule.field];
+      if (rule.rule === "reference") return [rule.member];
       const tokens = rule.rule === "copy" ? pointerTokens(rule.from) : [];
       // A member also stored otherwise under its own name is not stored as sent.
       return tokens.length === 1 && !Object.hasOwn(entity, tokens[0]!)
@@ -94,7 +96,7 @@ export const strandedCopies = (
     ),
   );
   const sources = rules.flatMap((rule) => {
-    const token = scalarText(entity[rule.field]);
+    const token = scalarText(ownMember(entity, rule.field));
     return (rule.rule === "copy" || rule.rule === "echo") &&
       token !== undefined &&
       token.length >= COPY_MIN_LENGTH
@@ -104,7 +106,7 @@ export const strandedCopies = (
   const holders = holdersOf(
     new Map(
       texts.flatMap((field) => {
-        const value = entity[field];
+        const value = ownMember(entity, field);
         return typeof value === "string" ? [[field, value] as const] : [];
       }),
     ),
@@ -186,7 +188,7 @@ export const referencedMembers = (
     if (referenced.length === 0) continue;
     // A reference repeated under another reference's name is the same entity named twice, not its text.
     const repeats = (field: string): boolean => {
-      const value = entity[field];
+      const value = ownMember(entity, field);
       return (
         typeof value === "string" &&
         value.length >= COPY_MIN_LENGTH &&
@@ -225,7 +227,7 @@ export const instantMembers = (
   constants: readonly string[],
 ): Set<string> => {
   const instants = constants.flatMap((field) => {
-    const at = instantOf(entity[field]);
+    const at = instantOf(ownMember(entity, field));
     return at === undefined ? [] : [{ field, at }];
   });
   return new Set(

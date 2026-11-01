@@ -6,8 +6,9 @@ import {
   type AnalysisClient,
   type ProviderIdentity,
 } from "../AnalysisProvider.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { err } from "../../domain/result.js";
+import { err, ok } from "../../domain/result.js";
 
 const identity: ProviderIdentity = {
   id: "bundle-resource-close-fixture",
@@ -103,4 +104,68 @@ it("reports the first mixed child failure before awaiting the other owner and re
   expect(await combined.close()).toMatchObject({ ok: true });
   expect(artifactCloseAttempts).toBe(2);
   expect(nativeCloseAttempts).toBe(2);
+});
+
+it("updates retained cleanup facts as the two child owners release independently", async () => {
+  const artifactFailure = new ProviderCleanupError(
+    identity.id,
+    ["artifact-reader"],
+    {},
+  );
+  const nativeFailure = new ProviderCleanupError(
+    identity.id,
+    ["native-reader"],
+    {},
+  );
+  let releaseArtifact = false;
+  let releaseNative = false;
+  const client = (
+    failure: ProviderCleanupError,
+    released: () => boolean,
+  ): AnalysisClient => ({
+    execute: async () => ok(createAnalysisExecution(null, identity)),
+    close: async () => {
+      if (!released()) return err(failure);
+      failure.resolveCleanup();
+      return ok(null);
+    },
+  });
+  const artifact = client(artifactFailure, () => releaseArtifact);
+  const native = client(nativeFailure, () => releaseNative);
+  const combined = combineBundleResourceClients(artifact, native);
+  const first = await combined.close();
+  if (first.ok) throw new Error("Expected both child owners to remain open");
+  expect(new Set(first.error.cleanupResources)).toEqual(
+    new Set(["artifact-reader", "native-reader"]),
+  );
+
+  releaseArtifact = true;
+  expect(await artifact.close()).toMatchObject({ ok: true });
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(first.error.cleanupResources).toEqual(["native-reader"]);
+
+  releaseNative = true;
+  expect(await combined.close()).toMatchObject({ ok: true });
+  expect(first.error.cleanupIncomplete).toBe(false);
+  expect(first.error.cleanupResources).toEqual([]);
+  expect(new Set(first.error.cleanup?.resources)).toEqual(
+    new Set(["artifact-reader", "native-reader"]),
+  );
+});
+
+it("keeps cleanup unknown when a child close failure has no cleanup lifecycle", async () => {
+  const owned = new ProviderCleanupError(identity.id, ["artifact-reader"], {});
+  const client = (
+    failure: AnalysisInputError | ProviderCleanupError,
+  ): AnalysisClient => ({
+    execute: async () => ok(createAnalysisExecution(null, identity)),
+    close: async () => err(failure),
+  });
+  const closed = await combineBundleResourceClients(
+    client(owned),
+    client(new AnalysisInputError("close_binary")),
+  ).close();
+  if (closed.ok) throw new Error("Expected child close failures");
+  owned.resolveCleanup();
+  expect(closed.error.cleanupIncomplete).toBe(true);
 });

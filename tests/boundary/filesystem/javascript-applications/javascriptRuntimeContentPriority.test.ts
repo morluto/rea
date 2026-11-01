@@ -220,6 +220,7 @@ it("keeps unavailable mapped digests unknown instead of borrowing unrelated matc
   const candidate = script?.candidate_static_nodes[0];
   const states = classifyStaticLoadStates(
     parsed.layers,
+    parsed.captures,
     runtime.entities,
     result.items,
     {

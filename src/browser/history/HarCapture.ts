@@ -15,7 +15,7 @@ import {
   capturePointer,
 } from "./CaptureRedaction.js";
 import { createHarValidator } from "./HarSchema.js";
-import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureRelease.js";
+import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 
 type DecodedCapture = Omit<
   WebNetworkCapture,
@@ -109,7 +109,10 @@ const projectHar = (
   scope: "validation" | "container" | "entry",
 ): Projection => {
   const redact = scope !== "validation";
-  const redactor = new CaptureRedaction(sensitiveValues);
+  const redactor = new CaptureRedaction(
+    sensitiveValues,
+    scope === "entry" ? value : undefined,
+  );
   const numeric_literals: Projection["numeric_literals"] = [];
   const binary_fields: Projection["binary_fields"] = [];
   const projectNumber = (item: LosslessNumber, pointer: string): JsonValue => {
@@ -192,7 +195,9 @@ const projectHar = (
         ? redactor.text(
             item,
             pointer,
-            scope === "entry" && redactor.harTransportUrl(pointer, parent),
+            scope === "entry"
+              ? redactor.harTransportUrl(pointer, parent)
+              : undefined,
           )
         : item;
     }

@@ -84,74 +84,80 @@ export const nativeLoadImageCheckSchema = z.strictObject({
   address: nativeAddressObservationSchema.nullable(),
 });
 
-/** Read-only native image verification; verified applies only to declared coverage. */
-export const nativeLoadImageSchema = z.union([
-  z.strictObject({
-    status: z.literal("unsupported"),
-    reason: z.string().min(1),
-    observations: nativeLoadImageObservationSchema,
-    limitations: z.array(z.string().min(1)),
+/** Measured observations when independent format verification is unsupported. */
+export const nativeUnsupportedLoadImageSchema = z.strictObject({
+  status: z.literal("unsupported"),
+  reason: z.string().min(1),
+  observations: nativeLoadImageObservationSchema,
+  limitations: z.array(z.string().min(1)),
+});
+export const nativeDosLoadImageSchema = z.strictObject({
+  status: z.enum(["verified", "mismatch"]),
+  format: z.enum(["dos-mz", "dos-com"]),
+  target_sha256: digest,
+  load_segment: integer.max(0xffff),
+  header_bytes: integer,
+  module_bytes: integer,
+  overlay_bytes: integer,
+  entry: z.strictObject({
+    relative_segment: integer.max(0xffff),
+    offset: integer.max(0xffff),
+    linear_address: nativeAddressObservationSchema,
   }),
-  z.strictObject({
-    status: z.enum(["verified", "mismatch"]),
-    format: z.enum(["dos-mz", "dos-com"]),
-    target_sha256: digest,
-    load_segment: integer.max(0xffff),
-    header_bytes: integer,
-    module_bytes: integer,
-    overlay_bytes: integer,
-    entry: z.strictObject({
-      relative_segment: integer.max(0xffff),
-      offset: integer.max(0xffff),
-      linear_address: nativeAddressObservationSchema,
-    }),
-    observations: nativeLoadImageObservationSchema,
-    checks: z.array(nativeLoadImageCheckSchema),
-    limitations: z.array(z.string().min(1)),
+  observations: nativeLoadImageObservationSchema,
+  checks: z.array(nativeLoadImageCheckSchema),
+  limitations: z.array(z.string().min(1)),
+});
+export const nativeRawLoadImageSchema = z.strictObject({
+  status: z.enum(["verified", "mismatch"]),
+  format: z.literal("raw-binary"),
+  target_sha256: digest,
+  architecture: binaryArchitectureSchema,
+  language_id: z.string().min(1),
+  compiler_spec_id: z.string().min(1),
+  base_address: nativeAddressObservationSchema,
+  file_bytes: integer.min(1),
+  entry: z.strictObject({
+    address: nativeAddressObservationSchema,
+    file_offset: z.literal(0),
   }),
-  z.strictObject({
-    status: z.enum(["verified", "mismatch"]),
-    format: z.literal("raw-binary"),
-    target_sha256: digest,
-    architecture: binaryArchitectureSchema,
-    language_id: z.string().min(1),
-    compiler_spec_id: z.string().min(1),
-    base_address: nativeAddressObservationSchema,
-    file_bytes: integer.min(1),
-    entry: z.strictObject({
-      address: nativeAddressObservationSchema,
-      file_offset: z.literal(0),
-    }),
-    observations: nativeLoadImageObservationSchema,
-    checks: z.array(nativeLoadImageCheckSchema),
-    limitations: z.array(z.string().min(1)),
-  }),
-  z.strictObject({
-    status: z.enum(["verified", "mismatch"]),
-    format: z.literal("gamecube-dol"),
-    target_sha256: digest,
-    architecture: z.literal("powerpc"),
-    language_id: z.string().min(1),
-    compiler_spec_id: z.string().min(1),
-    file_bytes: integer.min(1),
-    entry: z.strictObject({ address: nativeAddressObservationSchema }),
-    sections: z.array(
-      z.strictObject({
-        kind: z.enum(["text", "data"]),
-        index: integer,
-        file_offset: nativeAddressObservationSchema,
-        address: nativeAddressObservationSchema,
-        size: nativeAddressObservationSchema,
-      }),
-    ),
-    bss: z.strictObject({
+  observations: nativeLoadImageObservationSchema,
+  checks: z.array(nativeLoadImageCheckSchema),
+  limitations: z.array(z.string().min(1)),
+});
+export const nativeDolLoadImageSchema = z.strictObject({
+  status: z.enum(["verified", "mismatch"]),
+  format: z.literal("gamecube-dol"),
+  target_sha256: digest,
+  architecture: z.literal("powerpc"),
+  language_id: z.string().min(1),
+  compiler_spec_id: z.string().min(1),
+  file_bytes: integer.min(1),
+  entry: z.strictObject({ address: nativeAddressObservationSchema }),
+  sections: z.array(
+    z.strictObject({
+      kind: z.enum(["text", "data"]),
+      index: integer,
+      file_offset: nativeAddressObservationSchema,
       address: nativeAddressObservationSchema,
       size: nativeAddressObservationSchema,
     }),
-    observations: nativeLoadImageObservationSchema,
-    checks: z.array(nativeLoadImageCheckSchema),
-    limitations: z.array(z.string().min(1)),
+  ),
+  bss: z.strictObject({
+    address: nativeAddressObservationSchema,
+    size: nativeAddressObservationSchema,
   }),
+  observations: nativeLoadImageObservationSchema,
+  checks: z.array(nativeLoadImageCheckSchema),
+  limitations: z.array(z.string().min(1)),
+});
+
+/** Read-only native image verification; verified applies only to declared coverage. */
+export const nativeLoadImageSchema = z.union([
+  nativeUnsupportedLoadImageSchema,
+  nativeDosLoadImageSchema,
+  nativeRawLoadImageSchema,
+  nativeDolLoadImageSchema,
 ]);
 
 /** Provider-neutral native load-image result. */
@@ -160,6 +166,17 @@ export type NativeLoadImage = z.infer<typeof nativeLoadImageSchema>;
 export type NativeLoadImageObservation = z.infer<
   typeof nativeLoadImageObservationSchema
 >;
+
+/** Remove entry-context rows that carry no register observations. */
+export const normalizeNativeLoadImageObservation = (
+  observation: NativeLoadImageObservation,
+): NativeLoadImageObservation => ({
+  ...observation,
+  entry_context: observation.entry_context.filter(
+    ({ registers }) => registers.length > 0,
+  ),
+});
+
 /** One independently compared native import fact. */
 export type NativeLoadImageCheck = z.infer<typeof nativeLoadImageCheckSchema>;
 

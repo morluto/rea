@@ -1,3 +1,6 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { inspectDevicetreeInputSchema } from "../domain/firmware/devicetree.js";
+import { inspectPeLoadConfigInputSchema } from "../domain/native/peLoadConfig.js";
 import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
 import { z } from "incur";
 import {
@@ -6,6 +9,9 @@ import {
   createBinaryLayoutService,
   createElfNotesService,
   createAppleIpsService,
+  createDevicetreeService,
+  createKernelModuleService,
+  createPeLoadConfigService,
   createPeResourcesService,
   createPeCertificatesService,
   createPeImportsService,
@@ -24,8 +30,10 @@ import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
 import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
 import { inspectAppleIpsInputSchema } from "../domain/native/appleIps.js";
+import { inspectKernelModuleInputSchema } from "../domain/native/kernelModule.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
@@ -56,7 +64,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectElfNotes,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 elf.inspect(
                   {
@@ -70,7 +79,7 @@ export const registerBinaryDiagnosticsCommands = (
               "rea-elf-notes",
               "inspect_elf_notes",
               signal,
-            ),
+            ).then(projectCliAnalysisResult),
         );
       }),
   });
@@ -78,7 +87,7 @@ export const registerBinaryDiagnosticsCommands = (
     description:
       "Inspect an Apple .ips crash report without executing a target",
     args: z.object({
-      path: z.string().describe("Local Apple .ips crash report"),
+      path: localPathStringSchema.describe("Local Apple .ips crash report"),
     }),
     options: z.object({
       maxFileBytes: inspectAppleIpsInputSchema.shape.max_file_bytes,
@@ -96,7 +105,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectAppleIps,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 ips.inspect(
                   {
@@ -114,7 +124,81 @@ export const registerBinaryDiagnosticsCommands = (
               "rea-apple-ips",
               "inspect_apple_ips",
               signal,
-            ),
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectKernelModule, {
+    description:
+      "Inspect Linux kernel module metadata without executing the module",
+    args: z.object({
+      path: localPathStringSchema.describe(
+        "Local ELF32/ELF64 kernel module or compressed .ko container",
+      ),
+    }),
+    options: z.object({
+      maxFileBytes: inspectKernelModuleInputSchema.shape.max_file_bytes,
+      maxEntries: inspectKernelModuleInputSchema.shape.max_entries,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const kernelModule = createKernelModuleService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectKernelModule,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                kernelModule.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_entries: options.maxEntries,
+                  },
+                  { signal },
+                ),
+              kernelModule,
+              "rea-kernel-module",
+              "inspect_kernel_module",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectPeLoadConfig, {
+    description:
+      "Inspect PE TLS callbacks and load configuration without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe("Local PE32/PE32+ image"),
+    }),
+    options: z.object({
+      maxFileBytes: inspectPeLoadConfigInputSchema.shape.max_file_bytes,
+      maxCallbacks: inspectPeLoadConfigInputSchema.shape.max_callbacks,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const elf = createPeLoadConfigService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectPeLoadConfig,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                elf.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_callbacks: options.maxCallbacks,
+                  },
+                  { signal },
+                ),
+              elf,
+              "rea-pe-load-config",
+              "inspect_pe_load_config",
+              signal,
+            ).then(projectCliAnalysisResult),
         );
       }),
   });
@@ -137,7 +221,8 @@ export const registerBinaryDiagnosticsCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectByteEntropy, async () => {
-          return await finishAnalysisCommand(
+          return await finishCliEvidenceCommand(
+            args.path,
             () =>
               entropy.inspect(
                 {
@@ -152,7 +237,7 @@ export const registerBinaryDiagnosticsCommands = (
             "rea-byte-entropy",
             "inspect_byte_entropy",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -173,7 +258,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectPeCertificates,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 pe.inspect(
                   {
@@ -187,14 +273,16 @@ export const registerBinaryDiagnosticsCommands = (
               "rea-pe-certificates",
               "inspect_pe_certificates",
               signal,
-            ),
+            ).then(projectCliAnalysisResult),
         );
       }),
   });
   cli.command(CLI_COMMANDS.inspectPeImports, {
     description:
       "Inspect PE import and delay-load table identities without executing the image",
-    args: z.object({ path: z.string().describe("Local PE32/PE32+ image") }),
+    args: z.object({
+      path: localPathStringSchema.describe("Local PE32/PE32+ image"),
+    }),
     options: z.object({
       maxFileBytes: inspectPeImportsInputSchema.shape.max_file_bytes,
       maxDlls: inspectPeImportsInputSchema.shape.max_dlls,
@@ -207,7 +295,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectPeImports,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 pe.inspect(
                   {
@@ -222,7 +311,7 @@ export const registerBinaryDiagnosticsCommands = (
               "rea-pe-imports",
               "inspect_pe_imports",
               signal,
-            ),
+            ).then(projectCliAnalysisResult),
         );
       }),
   });
@@ -243,7 +332,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectPeResources,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 pe.inspect(
                   {
@@ -257,7 +347,57 @@ export const registerBinaryDiagnosticsCommands = (
               "rea-pe-resources",
               "inspect_pe_resources",
               signal,
-            ),
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectDevicetree, {
+    description: "Inspect a flattened devicetree blob without executing it",
+    args: z.object({
+      path: localPathStringSchema.describe("Local flattened devicetree image"),
+    }),
+    options: z.object({
+      maxFileBytes: inspectDevicetreeInputSchema.shape.max_file_bytes.describe(
+        "Maximum FDT file size in bytes (default 4194304)",
+      ),
+      maxNodes: inspectDevicetreeInputSchema.shape.max_nodes.describe(
+        "Maximum number of device-tree nodes (default 8192)",
+      ),
+      maxProperties: inspectDevicetreeInputSchema.shape.max_properties.describe(
+        "Maximum number of device-tree properties (default 32768)",
+      ),
+      maxDepth: inspectDevicetreeInputSchema.shape.max_depth.describe(
+        "Maximum device-tree nesting depth (default 64)",
+      ),
+      ...analysisEvidenceDeliveryOptions,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const devicetree = createDevicetreeService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectDevicetree,
+          async () =>
+            deliverCliAnalysisEvidence({
+              callerInputPath: args.path,
+              run: () =>
+                devicetree.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_nodes: options.maxNodes,
+                    max_properties: options.maxProperties,
+                    max_depth: options.maxDepth,
+                  },
+                  { signal },
+                ),
+              service: devicetree,
+              providerId: "rea-devicetree",
+              operation: "inspect_devicetree",
+              signal,
+              detail: options.detail,
+              evidenceOutput: options.evidence_output,
+            }),
         );
       }),
   });
@@ -279,6 +419,7 @@ export const registerBinaryDiagnosticsCommands = (
           CLI_COMMANDS.inspectNativeExports,
           async () =>
             deliverCliAnalysisEvidence({
+              callerInputPath: args.path,
               run: () =>
                 exports.inspect(
                   {
@@ -322,7 +463,9 @@ export const registerBinaryDiagnosticsCommands = (
             },
             { signal },
           );
-          return result.ok ? result.value : projectAnalysisError(result.error);
+          return result.ok
+            ? withEvidenceCallerInputPath(result.value, args.path)
+            : projectAnalysisError(result.error);
         }),
       ),
   });
@@ -356,7 +499,9 @@ export const registerBinaryDiagnosticsCommands = (
             },
             { signal },
           );
-          return result.ok ? result.value : projectAnalysisError(result.error);
+          return result.ok
+            ? withEvidenceCallerInputPath(result.value, args.path)
+            : projectAnalysisError(result.error);
         }),
       ),
   });

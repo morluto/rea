@@ -16,7 +16,7 @@ import { expect } from "vitest";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 import {
   analysisViewLayoutEvidence,
@@ -29,6 +29,8 @@ import {
   environmentManifestCaptureFixture,
   environmentStateCaptureFixture,
 } from "../../fixtures/analysisView.js";
+import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js";
+import { evmInterfaceFixture } from "../../fixtures/evm/interface.js";
 import {
   createEvidence,
   parseEvidence,
@@ -95,7 +97,7 @@ cliTest(
         "evidence_integrity_mismatch",
       ],
     ] as const) {
-      const rejected = await cli.run({
+      const invocation = {
         arguments: [
           "inspect-analysis-view",
           JSON.stringify({ source, view }),
@@ -103,14 +105,18 @@ cliTest(
           path,
           "--json",
         ],
-      });
+      };
+      const rejected =
+        source.kind === "inline"
+          ? await cli.run(invocation)
+          : await runFileCli(cli, invocation);
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
     }
-    for (const [contents, expectedCode] of [
-      [JSON.stringify(parent), "invalid_request"],
-      ["{invalid JSON", "evidence_integrity_mismatch"],
+    for (const [contents, expectedCode, freshProcess] of [
+      [JSON.stringify(parent), "invalid_request", false],
+      ["{invalid JSON", "evidence_integrity_mismatch", false],
       [
         JSON.stringify({
           ...bundle,
@@ -120,10 +126,11 @@ cliTest(
           })),
         }),
         "evidence_integrity_mismatch",
+        true,
       ],
     ] as const) {
       await writeFile(path, contents);
-      const rejected = await cli.run({
+      const invocation = {
         arguments: [
           "inspect-analysis-view",
           JSON.stringify(request),
@@ -131,7 +138,12 @@ cliTest(
           path,
           "--json",
         ],
-      });
+      };
+      // Keep a fresh-process integrity check for the altered bundle while the
+      // worker must reread the same path for the other invalid inputs.
+      const rejected = freshProcess
+        ? await cli.run(invocation)
+        : await runFileCli(cli, invocation);
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
@@ -414,9 +426,15 @@ cliTest(
         };
         const application = await inspectAnalysisView(request);
         await writeFile(path, JSON.stringify(request));
-        const reply = await cli.run({
+        const invocation = {
           arguments: ["inspect-analysis-view", path, "--json"],
-        });
+        };
+        // Exercise a valid and a malformed parent in fresh processes as well
+        // as the shared worker's repeated reads of the rewritten input path.
+        const reply =
+          group === "manifest" && variant !== "missing"
+            ? await cli.run(invocation)
+            : await runFileCli(cli, invocation);
         expect(reply.stderr).toBe("");
         if (variant === "valid") {
           expect(application.ok).toBe(true);
@@ -739,6 +757,79 @@ cliTest(
 );
 
 cliTest(
+  "reports empty retained layout collections without invented index bounds",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-empty-layout-view-cli-");
+    const empty = analysisViewLayoutEvidence(binaryLayoutFixture());
+    for (const collection of ["sections", "symbols"] as const) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-analysis-view",
+          JSON.stringify({
+            source: { kind: "inline", evidence: empty },
+            view: { kind: "item", collection, selector: { index: 0 } },
+          }),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["view", "selector", "index"],
+              reason: "invalid_value",
+              message: expect.stringContaining(`No retained ${collection}`),
+            },
+          ],
+        },
+      });
+      expect(result.json).not.toHaveProperty("details.issues.0.minimum");
+      expect(result.json).not.toHaveProperty("details.issues.0.maximum");
+    }
+    const populated = await cli.run({
+      arguments: [
+        "inspect-analysis-view",
+        JSON.stringify({
+          source: { kind: "inline", evidence: analysisViewLayoutEvidence() },
+          view: {
+            kind: "item",
+            collection: "sections",
+            selector: { index: 3 },
+          },
+        }),
+        "--json",
+      ],
+      environment: {
+        HOME: root,
+        XDG_CONFIG_HOME: root,
+        XDG_CACHE_HOME: root,
+      },
+    });
+    expect(populated.exitCode).toBe(1);
+    expect(populated.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["view", "selector", "index"],
+            reason: "out_of_range",
+            minimum: 0,
+            maximum: 2,
+          },
+        ],
+      },
+    });
+  },
+);
+
+cliTest(
   "projects native function pseudocode without requiring Ghidra",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-native-view-cli-");
@@ -777,6 +868,48 @@ cliTest(
         { kind: "address", address: "0x401000" },
       ],
     });
+  },
+);
+
+cliTest(
+  "keeps an inferred parent's confidence on every view through the compiled CLI",
+  async ({ cli }) => {
+    const value = evmInterfaceFixture();
+    const parent = createEvidence(
+      {
+        path: value.artifact.path,
+        sha256: value.artifact.sha256,
+        format: "file",
+      },
+      { id: "fixture-evm", name: "EVMole", version: "1" },
+      {
+        operation: "inspect_evm_interface",
+        parameters: { path: value.artifact.path, encoding: "hex" },
+        result: value,
+        confidence: "inferred",
+      },
+    );
+    for (const view of [
+      { kind: "summary" },
+      { kind: "evm", facet: "bytecode_hex", offset: 0, limit: 4 },
+    ]) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-analysis-view",
+          JSON.stringify({
+            source: { kind: "inline", evidence: parent },
+            view,
+          }),
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(parseEvidence(result.json)).toMatchObject({
+        confidence: "inferred",
+        authority: parent.authority,
+        evidence_links: [parent.evidence_id],
+      });
+    }
   },
 );
 

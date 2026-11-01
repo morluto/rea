@@ -57,7 +57,7 @@ describe("NativeAOT candidate work accounting", () => {
       },
     });
     expect(summary.coverage.work_units_examined).toBeLessThan(64 * 1024);
-    expect(bytes).toEqual(before);
+    expect(Buffer.compare(bytes, before)).toBe(0);
   });
 
   it.each(["slots", "interfaces"] as const)(
@@ -85,7 +85,7 @@ describe("NativeAOT candidate work accounting", () => {
           scan_bytes_omitted: 0,
         },
       });
-      expect(bytes).toEqual(before);
+      expect(Buffer.compare(bytes, before)).toBe(0);
     },
   );
 
@@ -112,6 +112,6 @@ describe("NativeAOT candidate work accounting", () => {
       "0x1400022c0",
       "0x140002400",
     ]);
-    expect(bytes).toEqual(before);
+    expect(Buffer.compare(bytes, before)).toBe(0);
   });
 });

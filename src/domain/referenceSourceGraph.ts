@@ -9,8 +9,7 @@ import {
   isPortableAbsoluteReferenceTarget,
 } from "./referenceSourcePathIdentity.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 const boundedTextSchema = z.string().min(1);
 const relativePathSchema = z
   .string()

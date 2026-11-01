@@ -156,6 +156,21 @@ Select one literal seed kind: node ID, route, string, API, IPC channel, module,
 or native export. Matching is exact or literal substring matching; regular
 expressions and executable predicates are not accepted. The trace includes all
 matching seeds and the complete graph reachable in the selected direction.
+`both` follows relationships in either direction, except that a container
+reached through `contains` from one of its children only leads further up its
+containment chain, so a shared asset or artifact root does not pull in its
+other children.
+
+When a string seed has no application match and the supplied Evidence has a
+semantic graph, `semantic_discovery` lists matching retained semantic node
+labels and direct string call arguments using the same matching mode and case
+rules. These are candidate starting
+points, not application trace matches. Its graph coverage and total describe the
+retained graph; missing or partial source coverage cannot establish absence.
+Results follow retained node order and default to offset 0 and limit 64. Supply
+`semantic_page` and follow `next_offset` for further matches. Use a returned
+`trace_seed` with the same application Evidence and `trace_javascript_semantics`
+to examine relationships from that node. Other typed seeds do not search labels.
 
 The result contains the matching basis, complete reachable subgraph, terminal
 paths, authority summaries, and native handoffs. A handoff binds
@@ -183,6 +198,10 @@ rereading mutable files. A seed may identify a semantic or application node,
 literal, function fingerprint, property, endpoint, event, or boundary field.
 For a recovered parse, coercion, or validation boundary, its field value is the
 static operation's method name (for example, `Number`).
+When a recovered boundary call directly supplies a scalar binding, the graph
+connects the boundary to that binding; unresolved boundary calls remain
+candidates. A boundary nested inside another expression or compound assignment
+does not establish a direct result binding.
 The query declares backward provenance, forward influence, callers, or
 ownership and can restrict admitted relation kinds. REA returns every matching
 seed and the complete reachable subgraph; callers do not choose node, relation,
@@ -205,6 +224,25 @@ resulting value. Deferred callback bodies do not become inputs to the enclosing
 assignment. Computed method keys belong to the enclosing callable; parameter
 defaults and method bodies belong to the method. Uncertain later property reads
 remain opt-in through `include_ambiguous_dynamic_edges`.
+
+Binary, logical, unary, template, conditional, and sequence expressions retain
+`influences` edges from supported immediate inputs to the result, then to a
+direct declaration, assignment, call argument, or return. These are static
+dependencies, not aliases or proof that the expression executed; conditional
+operands and logical-assignment writes carry `conditional: true`. Unsupported
+operand dependencies, unmodeled receiving containers, dynamic call results,
+and sequence side effects remain unknown. An applicable
+unknown makes the trace status `partial` even when a seed was found. Literal
+operator operands, direct call arguments and directly returned scalar literals
+can also be seeds. Older graphs that only recorded a call-site literal remain
+searchable. The offered per-file node capacity also bounds the producer's
+expression and operand collections before graph projection.
+Expression nodes and unknowns share the existing per-file graph admission
+budgets; omitted facts make graph coverage truncated and the trace partial.
+Consumers that previously treated `found` as compatible with a relevant
+unknown should handle `partial` and inspect the returned unknowns. Retained
+graphs without `influences` edges remain readable but do not gain edges until
+the application is analyzed again.
 Global timer, `fetch`, `WebSocket`, `JSON.parse`, and coercion calls receive
 these built-in effects only when the file has no visible possible write to that
 global, including a computed write through a global object. The check does not
@@ -269,7 +307,14 @@ mapped candidate, but structural reachability, semantic influence, runtime
 observation, and causal proof remain separate claims.
 
 Semantic literal nodes keep their complete value in `properties.value`; literal
-queries match that field. String labels use `string literal` when that is
+queries match that field. Call-site nodes also retain direct scalar arguments in
+`properties.arguments`, with source argument indexes; literal queries can start
+at those call sites. These are syntactic facts, not runtime values, and an index
+after a spread is not necessarily the runtime argument position. Nonliteral
+arguments and values not representable in JSON are omitted. The primitive byte
+bound and the worker transfer record ceiling can also omit direct values; the
+call-site unknown reports the applicable limit. String labels use
+`string literal` when that is
 shorter than the complete JSON value. A literal's `identity.role_key` commits
 its canonical JSON value as `value-sha256:<digest>` when the digest key is
 shorter; smaller values keep their existing JSON key. This keeps large values
@@ -577,8 +622,10 @@ or process workflows.
 ## CLI and verification
 
 All six CLI commands accept inline JSON or a path to a JSON file. The CLI
-returns an Evidence record directly. Put the full records in a later CLI input;
-a separate CLI process has no retained MCP connection state.
+returns an Evidence record directly. Later workflow inputs can contain full
+records, or exact retained references when `--evidence-bundle PATH` selects an
+authenticated exported bundle. A separate CLI process has no retained MCP
+connection state. See [CLI Evidence reuse](cli.md#import-export-and-compare-evidence).
 
 File inputs must be regular files; symlinks to regular files are accepted.
 Directories, named pipes and device files produce an input error before JSON
@@ -601,8 +648,12 @@ rea trace-application-feature ./trace-input.json --json
 MCP analysis returns the complete Evidence record, with the operation result
 in `normalized_result` and its identity in `evidence_id`. If the connected server advertises retained references, reuse its
 exact returned ID as `{"kind":"retained-evidence","evidence_id":"RETURNED_ID"}`
-in `application`, or `left`/`right` for comparisons. `RETURNED_ID` is a template,
-not a literal valid ID. Native Evidence arrays still use complete records.
+in `application`, or `left`/`right` for comparisons. For summary or inspection
+replies, use `normalized_result.parent_evidence_id` to select the complete source.
+`RETURNED_ID` is a template, not a literal valid ID. Native-observation arrays
+and `reconcile_javascript_runtime`'s nested static layers and runtime-observation
+array also accept references where advertised, independently mixed with inline
+records. Exact identity, coverage and partial or unknown facts are preserved.
 References are scoped to one connection; `close_binary` clears them. Export a
 bundle before closing and import it on another connection, or supply the full
 inline Evidence there. Versions before 4.1.0 accept full inline Evidence only; installing

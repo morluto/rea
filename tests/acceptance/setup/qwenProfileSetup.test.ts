@@ -54,14 +54,8 @@ cliTest(
       mcpServers: {
         other: { command: "other-server" },
         rea: {
-          command:
-            process.platform === "win32"
-              ? process.execPath
-              : resolve("scripts/rea.mjs"),
-          args:
-            process.platform === "win32"
-              ? [resolve("scripts/rea.mjs"), "mcp"]
-              : ["mcp"],
+          command: process.execPath,
+          args: [resolve("scripts/rea.mjs"), "mcp"],
         },
       },
     });

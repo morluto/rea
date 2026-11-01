@@ -37,8 +37,10 @@ it("writes exact Unicode and empty output bytes and returns the original output"
   expect(await saveVerifierCommandOutput(async () => output, paths)).toBe(
     output,
   );
-  expect(await readFile(paths.stdout)).toEqual(Buffer.from(output.stdout));
-  expect(await readFile(paths.stderr)).toEqual(Buffer.alloc(0));
+  expect(
+    Buffer.compare(await readFile(paths.stdout), Buffer.from(output.stdout)),
+  ).toBe(0);
+  expect(Buffer.compare(await readFile(paths.stderr), Buffer.alloc(0))).toBe(0);
 });
 
 it("retains both failed-command streams while preserving its exact cause", async () => {
@@ -59,10 +61,13 @@ it("retains both failed-command streams while preserving its exact cause", async
       throw cause;
     }, paths),
   ).rejects.toBe(cause);
-  expect(await readFile(paths.stdout)).toEqual(Buffer.alloc(0));
-  expect(await readFile(paths.stderr)).toEqual(
-    Buffer.from(cause.snapshot.stderr.text),
-  );
+  expect(Buffer.compare(await readFile(paths.stdout), Buffer.alloc(0))).toBe(0);
+  expect(
+    Buffer.compare(
+      await readFile(paths.stderr),
+      Buffer.from(cause.snapshot.stderr.text),
+    ),
+  ).toBe(0);
 });
 
 it("writes available partial failure output without replacing unavailable evidence", async () => {
@@ -84,7 +89,7 @@ it("writes available partial failure output without replacing unavailable eviden
       throw cause;
     }, paths),
   ).rejects.toBe(cause);
-  expect(await readFile(paths.stdout)).toEqual(original);
+  expect(Buffer.compare(await readFile(paths.stdout), original)).toBe(0);
   expect(await readFile(paths.stderr, "utf8")).toBe(cause.snapshot.stderr.text);
 });
 

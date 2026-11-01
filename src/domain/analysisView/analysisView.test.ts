@@ -1,7 +1,11 @@
-import { boundedViewMessages } from "./analysisViewCoverage.js";
+import {
+  boundedViewMessages,
+  completeWithinViewCoverage,
+  pageViewCoverage,
+} from "./analysisViewCoverage.js";
 import { expect, it } from "vitest";
 
-import { functionDossierSchema } from "../hopperValues.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
 import { ghidraFunctionDossier } from "../ghidraValues.fixture.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../contracts/artifactComparisonExample.js";
@@ -21,10 +25,6 @@ import {
   createJavaScriptSemanticGraph,
   createImmutableJavaScriptSemanticGraphSteps,
 } from "../javascript/javascriptSemanticGraph.js";
-import {
-  completeWithinViewCoverage,
-  pageViewCoverage,
-} from "./analysisViewCoverage.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
 import { javascriptModulePaths } from "./javascriptApplicationView.js";
@@ -625,6 +625,69 @@ it("projects layout summary, facet, item, and stable pages", () => {
   });
 });
 
+it.each(["sections", "symbols"] as const)(
+  "selects %s by exact source bytes and preserves opaque names by index",
+  (collection) => {
+    const layout = analysisViewLayoutFixture();
+    const rows = layout[collection];
+    const original = rows[0];
+    if (original === undefined) throw new Error("missing layout row");
+    const opaque = {
+      ...original,
+      name: {
+        ...original.name,
+        display: "�name",
+        bytes_base64: Buffer.from([0xff, ...Buffer.from("name")]).toString(
+          "base64",
+        ),
+      },
+    };
+    const valid = {
+      ...rows[1],
+      name: {
+        ...original.name,
+        display: "provider-formatted-name",
+        bytes_base64: Buffer.from("�name").toString("base64"),
+      },
+    };
+    const parent = {
+      ...layoutParent(),
+      normalizedResult: {
+        ...layout,
+        [collection]: [opaque, valid],
+      },
+    };
+    const selected = projectAnalysisView(parent, {
+      kind: "item",
+      collection,
+      selector: { name: "�name" },
+    });
+    expect(selected).toMatchObject({ ok: true, value: { item: valid } });
+    expect(
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { name: "\ud800name" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { name: "provider-formatted-name" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { index: 0 },
+      }),
+    ).toMatchObject({ ok: true, value: { item: opaque } });
+    expect(parent.normalizedResult[collection]).toEqual([opaque, valid]);
+  },
+);
+
 it("rejects ambiguous layout names with candidate indexes", () => {
   const parent = layoutParent();
   const result = projectAnalysisView(parent, {
@@ -719,9 +782,15 @@ it("projects JavaScript summary and preserves selected module observations", () 
   expect(item.value.item).toMatchObject({
     path: "renderer.js",
     kind: "javascript-asset",
+    observations: expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          source: "export const secret = 1;\n",
+          text: "should not leak",
+        }),
+      }),
+    ]),
   });
-  expect(JSON.stringify(item.value.item)).toContain("export const secret = 1;");
-  expect(JSON.stringify(item.value.item)).toContain("should not leak");
   const page = projectAnalysisView(parent, {
     kind: "page",
     collection: "modules",

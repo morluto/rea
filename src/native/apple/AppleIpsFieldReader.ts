@@ -87,8 +87,7 @@ export class FieldReader {
 
   text(value: LosslessJson | undefined, path: string): string | null {
     if (value === undefined || value.kind === "null") return null;
-    if (value.kind === "string")
-      return value.value.length === 0 ? null : value.value;
+    if (value.kind === "string") return value.value;
     this.mismatch(path, "string", value);
     return null;
   }

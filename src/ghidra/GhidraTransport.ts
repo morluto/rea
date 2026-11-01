@@ -102,7 +102,7 @@ export const observeGhidraEndpoint = async (
         endpoint.path,
         resources,
         options.signal,
-        async (file) => {
+        async ({ handle: file }) => {
           const initial = await file.stat({ bigint: true });
           assertArtifactReadActive(options.signal);
           if (initial.size > BigInt(MAX_TCP_ENDPOINT_BYTES))

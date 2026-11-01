@@ -1,3 +1,4 @@
+import { bridgeMaxRequestBytesRecovery } from "../../../../src/config/bridgeMaxRequestBytes.js";
 import { expect, it, vi } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../../../../src/domain/analysisErrorCore.js";
@@ -24,14 +25,13 @@ it("reports a Hopper ceiling mismatch and releases the fixture", async () => {
   if (started.ok) return;
   expect(started.error).toBeInstanceOf(AnalysisResourceConstraintError);
   if (!(started.error instanceof AnalysisResourceConstraintError)) return;
-  expect(started.error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
-  expect(started.error.reason).toContain("1048576");
-  expect(started.error.reason).toContain("16777216");
-  expect(started.error.reason).toContain("source setting");
-  expect(started.error.remediationAction).toContain(
-    "Set REA_BRIDGE_MAX_REQUEST_BYTES",
+  expect(started.error.reportedLimits).toMatchObject({
+    bridge_max_request_bytes: 16777216,
+    client_max_request_bytes: 1048576,
+  });
+  expect(started.error.remediationAction).toBe(
+    bridgeMaxRequestBytesRecovery(limit(1048576), "Hopper"),
   );
-  expect(started.error.reason).not.toContain("no runtime override");
   const process = launcher.processes[0];
   expect(process?.exitCode !== null || process?.signalCode !== null).toBe(true);
 });
@@ -61,9 +61,12 @@ it("refuses an oversized Hopper request before the fixture receives it", async (
   if (refused.ok) return;
   expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
   if (!(refused.error instanceof AnalysisResourceConstraintError)) return;
-  expect(refused.error.reason).toContain("8192");
-  expect(refused.error.reason).toContain("no request was sent");
-  expect(refused.error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
+  expect(refused.error.reportedLimits).toMatchObject({
+    max_request_bytes: 8192,
+  });
+  expect(refused.error.remediationAction).toBe(
+    bridgeMaxRequestBytesRecovery(limit(8192), "Hopper"),
+  );
   expect(launcher.requests.map(({ method }) => method)).not.toContain(
     "set_address_name",
   );
@@ -97,9 +100,12 @@ it("refuses a Hopper payload whose JSON expansion exceeds the ceiling before ser
     if (refused.ok) return;
     expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
     if (!(refused.error instanceof AnalysisResourceConstraintError)) return;
-    expect(refused.error.reason).toContain("8192");
-    expect(refused.error.reason).toContain("no request was sent");
-    expect(refused.error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
+    expect(refused.error.reportedLimits).toMatchObject({
+      max_request_bytes: 8192,
+    });
+    expect(refused.error.remediationAction).toBe(
+      bridgeMaxRequestBytesRecovery(limit(8192), "Hopper"),
+    );
     expect(launcher.requests.map(({ method }) => method)).not.toContain(
       "set_address_name",
     );

@@ -18,7 +18,7 @@ import {
 } from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import type { McpToolTimeoutInputs } from "../mcpStartupPolicy.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
 export type ProviderRequestBudgetResolver = (
   analysisProvider: AnalysisProviderSelector,
@@ -97,10 +97,7 @@ export const clientRegistrationEnvironmentDetails = (
       ),
     );
   }
-  const key =
-    parsed?.dialect === "opencode" || parsed?.dialect === "opencode_v2"
-      ? "environment"
-      : "env";
+  const key = parsed?.environmentKey ?? "env";
   const registration =
     parsed === undefined
       ? undefined

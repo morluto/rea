@@ -183,12 +183,14 @@ it("still rejects changed source bytes after resolving the selected manifest's p
   );
 });
 
+const literalSourcePath = "..\\sibling.js";
+
 const literalManifest = async () => {
   const fixture = await materialize();
   const selected = fixture.artifact.manifest.scripts[0];
   if (selected?.content.state !== "exported")
     throw new Error("Expected exported source");
-  selected.content.relative_path = "..\\sibling.js";
+  selected.content.relative_path = literalSourcePath;
   await writeFile(join(fixture.root, "sibling.js"), fixture.artifact.source);
   if (process.platform !== "win32")
     await writeFile(
@@ -225,20 +227,21 @@ it.each(["trace_web_module_imports", "trace_web_source_location"] as const)(
       await artifacts.close();
     }
     if (response.ok) throw new Error("Expected Windows source path refusal");
-    expect(projectAnalysisError(response.error)).toMatchObject({
-      code: "invalid_request",
+    const error = projectAnalysisError(response.error);
+    expect(error).toMatchObject({
+      code: "artifact_operation_failed",
       details: {
-        issues: [
-          {
-            path: ["script_index"],
-            reason: "invalid_value",
-            message: expect.stringContaining(
-              "Windows source path cannot contain backslashes",
-            ),
-          },
-        ],
+        operation,
+        reason: "path",
+        detail: expect.stringContaining(
+          "Windows source path cannot contain backslashes",
+        ),
       },
     });
+    expect(error).toHaveProperty(
+      "details.detail",
+      expect.stringContaining(JSON.stringify(literalSourcePath)),
+    );
   },
 );
 
@@ -256,7 +259,7 @@ it.skipIf(process.platform === "win32")(
       if (!result.ok) throw result.error;
       expect(result.value.source).toBe(fixture.artifact.source);
       expect(result.value.sourceFile.path).toBe(
-        join(fixture.root, "files", "..\\sibling.js"),
+        join(fixture.root, "files", literalSourcePath),
       );
     } finally {
       await artifacts.close();

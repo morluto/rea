@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 956; runtime: 180.
+Locked package entries: 963; runtime: 180.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -1100,6 +1100,36 @@ commander@13.1.0 | runtime | MIT
   Package: https://www.npmjs.com/package/@oxfmt/binding-win32-x64-msvc/v/0.72.0
   Archive: https://registry.npmjs.org/@oxfmt/binding-win32-x64-msvc/-/binding-win32-x64-msvc-0.72.0.tgz
   Integrity: sha512-uhooIN+DCzWX5uH7mQkSVCsODqsGluGJ4n3ch4+mITtWKpESMDjUJUSDBAVFuYQDwqY2McPDKdKJbM0oZVW/Qw==
+@oxlint-tsgolint/darwin-arm64@7.0.2005 | development, optional | MIT
+  Lockfile path: node_modules/@oxlint-tsgolint/darwin-arm64
+  Package: https://www.npmjs.com/package/@oxlint-tsgolint/darwin-arm64/v/7.0.2005
+  Archive: https://registry.npmjs.org/@oxlint-tsgolint/darwin-arm64/-/darwin-arm64-7.0.2005.tgz
+  Integrity: sha512-VqDZxcZVjlonNLuuvraVNgDQt+1ndwa4yJo8OqsK4HYh/61ba9IlMStCVfi/aaIqRoDhNbAKC8gdcTrXqnb+Ug==
+@oxlint-tsgolint/darwin-x64@7.0.2005 | development, optional | MIT
+  Lockfile path: node_modules/@oxlint-tsgolint/darwin-x64
+  Package: https://www.npmjs.com/package/@oxlint-tsgolint/darwin-x64/v/7.0.2005
+  Archive: https://registry.npmjs.org/@oxlint-tsgolint/darwin-x64/-/darwin-x64-7.0.2005.tgz
+  Integrity: sha512-4kUfLRNYoVpv0Tm3jPYrvxyfOc/LmdvFC3pKZ4tL6K7lA7K/VS81SAtmxRzbYXYSyb3SBWhwsuX+df4neqzxxA==
+@oxlint-tsgolint/linux-arm64@7.0.2005 | development, optional | MIT
+  Lockfile path: node_modules/@oxlint-tsgolint/linux-arm64
+  Package: https://www.npmjs.com/package/@oxlint-tsgolint/linux-arm64/v/7.0.2005
+  Archive: https://registry.npmjs.org/@oxlint-tsgolint/linux-arm64/-/linux-arm64-7.0.2005.tgz
+  Integrity: sha512-rhUNcPsBlKvhXtrbhbBUidtRBRdJ8fbEHN9H5Q5N59gby18ruGuDA7KUxl7oRnUzp797uykYQhkBDm+0KpfK/Q==
+@oxlint-tsgolint/linux-x64@7.0.2005 | development, optional | MIT
+  Lockfile path: node_modules/@oxlint-tsgolint/linux-x64
+  Package: https://www.npmjs.com/package/@oxlint-tsgolint/linux-x64/v/7.0.2005
+  Archive: https://registry.npmjs.org/@oxlint-tsgolint/linux-x64/-/linux-x64-7.0.2005.tgz
+  Integrity: sha512-tKs9yinDQZOHygM0e8EJnjTU3mzJtdfkOZP6Udu82iLMePUSHOhTJ9zzU/mSd1hQxURI4LTRRiFhfzC+PzwdNA==
+@oxlint-tsgolint/win32-arm64@7.0.2005 | development, optional | MIT
+  Lockfile path: node_modules/@oxlint-tsgolint/win32-arm64
+  Package: https://www.npmjs.com/package/@oxlint-tsgolint/win32-arm64/v/7.0.2005
+  Archive: https://registry.npmjs.org/@oxlint-tsgolint/win32-arm64/-/win32-arm64-7.0.2005.tgz
+  Integrity: sha512-VYPnu1gjfbSv+ROhuyNfMs382D4zQU2ZRc8Uc3nuEZo1k2kf+1KfTrg4hrlWh73h9GI+dUWyo+DYCQzUBlPwcQ==
+@oxlint-tsgolint/win32-x64@7.0.2005 | development, optional | MIT
+  Lockfile path: node_modules/@oxlint-tsgolint/win32-x64
+  Package: https://www.npmjs.com/package/@oxlint-tsgolint/win32-x64/v/7.0.2005
+  Archive: https://registry.npmjs.org/@oxlint-tsgolint/win32-x64/-/win32-x64-7.0.2005.tgz
+  Integrity: sha512-ekU89cTGy9fpQzuvxIsFHrnoP8XoFjGIRgPEW6eqgY2NYjGy9pwpjF79o04WXRMJFKRrcaVqkZXUUBdLsqpQDw==
 @oxlint/binding-android-arm-eabi@1.87.0 | development, optional | MIT
   Lockfile path: node_modules/@oxlint/binding-android-arm-eabi
   Package: https://www.npmjs.com/package/@oxlint/binding-android-arm-eabi/v/1.87.0
@@ -2665,11 +2695,11 @@ fast-string-width@3.0.2 | runtime | MIT
   Package: https://www.npmjs.com/package/fast-string-width/v/3.0.2
   Archive: https://registry.npmjs.org/fast-string-width/-/fast-string-width-3.0.2.tgz
   Integrity: sha512-gX8LrtNEI5hq8DVUfRQMbr5lpaS4nMIWV+7XEbXk2b8kiQIizgnlr12B4dA3ZEx3308ze0O4Q1R+cHts8kyUJg==
-fast-uri@3.1.8 | runtime | BSD-3-Clause
+fast-uri@3.1.9 | runtime | BSD-3-Clause
   Lockfile path: node_modules/fast-uri
-  Package: https://www.npmjs.com/package/fast-uri/v/3.1.8
-  Archive: https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz
-  Integrity: sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==
+  Package: https://www.npmjs.com/package/fast-uri/v/3.1.9
+  Archive: https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz
+  Integrity: sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==
 fast-wrap-ansi@0.2.2 | runtime | MIT
   Lockfile path: node_modules/fast-wrap-ansi
   Package: https://www.npmjs.com/package/fast-wrap-ansi/v/0.2.2
@@ -3540,6 +3570,11 @@ oxlint@1.87.0 | development | MIT
   Package: https://www.npmjs.com/package/oxlint/v/1.87.0
   Archive: https://registry.npmjs.org/oxlint/-/oxlint-1.87.0.tgz
   Integrity: sha512-drxVlaW7Oqq7wSy1CN25znRu00aRq8n57Q2wniJRxCmtYVz07ufCm7EVDPQFZURrTgQIjzKrVEHAD/HcvJXObg==
+oxlint-tsgolint@7.0.2005 | development | MIT
+  Lockfile path: node_modules/oxlint-tsgolint
+  Package: https://www.npmjs.com/package/oxlint-tsgolint/v/7.0.2005
+  Archive: https://registry.npmjs.org/oxlint-tsgolint/-/oxlint-tsgolint-7.0.2005.tgz
+  Integrity: sha512-6ccPGu4u4J9bwYPHXBFPee3RZrX3BboRdU7k14zRDDB1lvN3O7J/vPRFdaEfa1+CWx4xnQQOp4ctoaF66oO0uw==
 p-limit@2.3.0 | development | MIT
   Lockfile path: node_modules/p-limit
   Package: https://www.npmjs.com/package/p-limit/v/2.3.0
@@ -3675,11 +3710,11 @@ pkce-challenge@5.0.1 | runtime | MIT
   Package: https://www.npmjs.com/package/pkce-challenge/v/5.0.1
   Archive: https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz
   Integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==
-playwright-core@1.58.2 | runtime | Apache-2.0
+playwright-core@1.64.1 | runtime | Apache-2.0
   Lockfile path: node_modules/playwright-core
-  Package: https://www.npmjs.com/package/playwright-core/v/1.58.2
-  Archive: https://registry.npmjs.org/playwright-core/-/playwright-core-1.58.2.tgz
-  Integrity: sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg==
+  Package: https://www.npmjs.com/package/playwright-core/v/1.64.1
+  Archive: https://registry.npmjs.org/playwright-core/-/playwright-core-1.64.1.tgz
+  Integrity: sha512-BC4s8y6SEVA6Q1rSxZTto8hI1KUI3xXlHGZgvGqP4IqPdI/a6FX9H29IDNz7vKo9l21b6LfYosScPL6M3xxyDQ==
 plist@5.0.0 | runtime | MIT
   Lockfile path: node_modules/plist
   Package: https://www.npmjs.com/package/plist/v/5.0.0
@@ -3740,11 +3775,11 @@ pure-rand@8.4.2 | development | MIT
   Package: https://www.npmjs.com/package/pure-rand/v/8.4.2
   Archive: https://registry.npmjs.org/pure-rand/-/pure-rand-8.4.2.tgz
   Integrity: sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==
-qs@6.16.0 | development | BSD-3-Clause
+qs@6.16.1 | development | BSD-3-Clause
   Lockfile path: node_modules/qs
-  Package: https://www.npmjs.com/package/qs/v/6.16.0
-  Archive: https://registry.npmjs.org/qs/-/qs-6.16.0.tgz
-  Integrity: sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==
+  Package: https://www.npmjs.com/package/qs/v/6.16.1
+  Archive: https://registry.npmjs.org/qs/-/qs-6.16.1.tgz
+  Integrity: sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==
 quick-format-unescaped@4.0.4 | runtime | MIT
   Lockfile path: node_modules/quick-format-unescaped
   Package: https://www.npmjs.com/package/quick-format-unescaped/v/4.0.4
@@ -4775,11 +4810,11 @@ yoctocolors@2.2.0 | development | MIT
   Package: https://www.npmjs.com/package/yoctocolors/v/2.2.0
   Archive: https://registry.npmjs.org/yoctocolors/-/yoctocolors-2.2.0.tgz
   Integrity: sha512-xYqdZFUK/VYazNl/oCDYN+3WloWQwMfZxBoiNt6qNyk+xfOdi598muWE42rNZFp1kNOiqW936q5RhUdnpqElSg==
-zod@4.4.3 | runtime | MIT
+zod@4.6.6 | runtime | MIT
   Lockfile path: node_modules/zod
-  Package: https://www.npmjs.com/package/zod/v/4.4.3
-  Archive: https://registry.npmjs.org/zod/-/zod-4.4.3.tgz
-  Integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==
+  Package: https://www.npmjs.com/package/zod/v/4.6.6
+  Archive: https://registry.npmjs.org/zod/-/zod-4.6.6.tgz
+  Integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==
 zwitch@2.0.4 | development | MIT
   Lockfile path: node_modules/zwitch
   Package: https://www.npmjs.com/package/zwitch/v/2.0.4

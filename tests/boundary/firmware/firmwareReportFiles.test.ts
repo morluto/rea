@@ -11,7 +11,14 @@ import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { firmwareRequestSchema } from "../../../src/domain/firmware/firmwareAnalysis.js";
+import {
+  normalizeBinwalkReport,
+  normalizeUnblobReport,
+} from "../../../src/firmware/FirmwareReports.js";
+import {
+  firmwareResultSchemas,
+  firmwareRequestSchema,
+} from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { createHash } from "node:crypto";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -277,7 +284,7 @@ it("does not activate an abort-bound source during awaited destination setup", a
   await expect(access(join(root, "published"))).rejects.toMatchObject({
     code: "ENOENT",
   });
-  expect(await readFile(source)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(source), bytes)).toBe(0);
 });
 
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
@@ -308,3 +315,95 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+it("retains unfamiliar Unblob report members from JSON files through public diagnostics", async () => {
+  const root = await createTestTempDirectory("rea-firmware-report-metadata-");
+  const inputPath = join(root, "input.bin");
+  const reportPath = join(root, "report.json");
+  const sha256 = "a".repeat(64);
+  const unfamiliar: unknown = JSON.parse(
+    '{"__typename__":"FutureReport","__proto__":{"source":"local","empty":null},"constructor":false,"prototype":0,"nested":{"__proto__":"retained"}}',
+  );
+  const record = {
+    task: { path: inputPath, depth: 0, blob_id: "", is_multi_file: false },
+    reports: [
+      { __typename__: "HashReport", sha256 },
+      {
+        __typename__: "StatReport",
+        path: inputPath,
+        size: 4,
+        is_dir: false,
+        is_file: true,
+        is_link: false,
+        link_target: null,
+      },
+      unfamiliar,
+    ],
+    subtasks: [],
+  };
+  await writeFile(reportPath, JSON.stringify([record]));
+  const files = new FirmwareFileAccess();
+  try {
+    const raw = await files.report(reportPath, "extract_firmware");
+    const normalized = normalizeUnblobReport(raw, {
+      inputPath,
+      outputRoot: join(root, "output"),
+      sha256,
+      length: 4,
+      offset: 0,
+      maxDepth: 3,
+    });
+    const diagnostics =
+      firmwareResultSchemas.extract_firmware.shape.diagnostics.parse(
+        normalized.diagnostics,
+      );
+    expect(JSON.stringify(diagnostics)).toBe(
+      JSON.stringify([{ input_path: "$input", report: unfamiliar }]),
+    );
+    expect(normalized.coverage).toBe("partial");
+    for (const malformed of [{}, { __typename__: null }, { __typename__: 1 }]) {
+      expect(() =>
+        normalizeUnblobReport(
+          [{ ...record, reports: [...record.reports.slice(0, 2), malformed] }],
+          {
+            inputPath,
+            outputRoot: join(root, "output"),
+            sha256,
+            length: 4,
+            offset: 0,
+            maxDepth: 3,
+          },
+        ),
+      ).toThrow();
+    }
+  } finally {
+    await files.close();
+  }
+});
+
+it("rejects Binwalk extraction activity under every own JSON member", async () => {
+  const root = await createTestTempDirectory(
+    "rea-firmware-report-extractions-",
+  );
+  const reportPath = join(root, "report.json");
+  const inputPath = join(root, "input.bin");
+  const files = new FirmwareFileAccess();
+  try {
+    for (const extractions of [
+      "{}",
+      '{"__proto__":null}',
+      '{"ordinary":false}',
+    ]) {
+      await writeFile(
+        reportPath,
+        `[{"Analysis":{"file_path":${JSON.stringify(inputPath)},"file_map":[],"extractions":${extractions}}}]`,
+      );
+      const raw = await files.report(reportPath, "inspect_firmware_regions");
+      const normalize = () => normalizeBinwalkReport(raw, inputPath, 4);
+      if (extractions === "{}") expect(normalize()).toEqual([]);
+      else expect(normalize).toThrow("Expected one inspection-only report");
+    }
+  } finally {
+    await files.close();
+  }
+});

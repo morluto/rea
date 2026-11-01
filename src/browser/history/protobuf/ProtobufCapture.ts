@@ -6,6 +6,7 @@ import {
 } from "../CaptureRedaction.js";
 import { createHash } from "node:crypto";
 import { readStableArtifact } from "../../../artifacts/readStableArtifact.js";
+import { completedStableArtifactObservation } from "../../../artifacts/StableArtifactObservation.js";
 import {
   historicalCaptureFailure,
   withCaptureReaderCleanup,
@@ -546,7 +547,7 @@ export const decodeCaptureProtobuf = async (
       undefined,
       resources,
     ).catch((cause: unknown) => {
-      throw withCaptureReaderCleanup(
+      const failure = withCaptureReaderCleanup(
         historicalCaptureFailure(
           input,
           cause,
@@ -555,6 +556,11 @@ export const decodeCaptureProtobuf = async (
         ),
         cause,
       );
+      const snapshot = completedStableArtifactObservation(cause, path);
+      // The caller retains the sanitized capture as its partial observation.
+      if (snapshot !== undefined)
+        failure.retainDiagnostics({ descriptor_set_snapshot: snapshot });
+      throw failure;
     });
     const { ProtobufSchema } = await import("./ProtobufSchema.js");
     const admitted = await ProtobufSchema.read(

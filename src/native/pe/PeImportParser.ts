@@ -139,7 +139,7 @@ const coverage = (
       }
     : {
         status: "partial",
-        reason: `${String(issues.length)} import table issue(s) left entries unreported; see issues`,
+        reason: `${String(issues.length)} import table issue(s) affect reported rows or metadata; see issues`,
         examined_dlls: examinedDlls,
         imports,
         delay_imports: delayImports,
@@ -389,12 +389,12 @@ export const parsePeImports = async (
   const delayDirectory = image.pe_data_directories?.[PE_DELAY_IMPORT_DIRECTORY];
   const imports: PeImportDll[] = [];
   let importDirectoryResult: PeImports["import_directory"] = null;
-  if (importDirectory !== undefined && importDirectory.virtual_address !== 0) {
+  if (importDirectory !== undefined && importDirectory.address !== 0) {
     const spans: { offset: number; bytes: number }[] = [];
     for (let index = 0; ; index++) {
       await checkpoint();
       const descriptorRva =
-        importDirectory.virtual_address + index * IMPORT_DESCRIPTOR_BYTES;
+        importDirectory.address + index * IMPORT_DESCRIPTOR_BYTES;
       const descriptor = mapDescriptor(
         descriptorRva,
         IMPORT_DESCRIPTOR_BYTES,
@@ -453,7 +453,7 @@ export const parsePeImports = async (
       });
     }
     importDirectoryResult = {
-      rva: importDirectory.virtual_address,
+      rva: importDirectory.address,
       size: importDirectory.size,
       locations: spans,
     };
@@ -463,12 +463,12 @@ export const parsePeImports = async (
 
   const delayImports: PeDelayImportDll[] = [];
   let delayDirectoryResult: PeImports["delay_import_directory"] = null;
-  if (delayDirectory !== undefined && delayDirectory.virtual_address !== 0) {
+  if (delayDirectory !== undefined && delayDirectory.address !== 0) {
     const spans: { offset: number; bytes: number }[] = [];
     for (let index = 0; ; index++) {
       await checkpoint();
       const descriptorRva =
-        delayDirectory.virtual_address + index * DELAY_DESCRIPTOR_BYTES;
+        delayDirectory.address + index * DELAY_DESCRIPTOR_BYTES;
       const descriptor = mapDescriptor(
         descriptorRva,
         DELAY_DESCRIPTOR_BYTES,
@@ -534,7 +534,7 @@ export const parsePeImports = async (
       });
     }
     delayDirectoryResult = {
-      rva: delayDirectory.virtual_address,
+      rva: delayDirectory.address,
       size: delayDirectory.size,
       locations: spans,
     };
@@ -559,7 +559,7 @@ export const parsePeImports = async (
       mappingCompatibility: standardMappingCompatibility,
       truncatedDescriptor: pefileTruncatedDescriptor,
       bits,
-      directoryRva: importDirectory?.virtual_address ?? 0,
+      directoryRva: importDirectory?.address ?? 0,
       fileBytes: bytes.length,
     }),
     coverage: coverage(

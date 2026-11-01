@@ -1,7 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 
-import { parse } from "@babel/parser";
-import * as t from "@babel/types";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -22,102 +20,40 @@ const routingSuccess = {
 };
 
 describe("agent evaluation release gate", () => {
-  it("rejects incorrect fixture claims even when every text heuristic passes", async () => {
-    const predicate = await runnerFailurePredicate();
-    expect(predicate({ ...routingSuccess, factualCorrectness: "passed" })).toBe(
-      false,
+  it("exits unsuccessfully for a rejected report after accepting a passing report", () => {
+    const passing = {
+      id: "passing-fixture",
+      ...routingSuccess,
+      factualCorrectness: "passed",
+    };
+    const accepted = runReportGate([passing]);
+    expect(accepted.status).toBe(0);
+    const rejected = runReportGate([
+      passing,
+      { ...passing, id: "incorrect-fixture", factualCorrectness: "failed" },
+    ]);
+    // Negative control: a runner that lets the failed report pass exits zero.
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr).toContain(
+      "Agent routing/workflow/answer checks failed: incorrect-fixture",
     );
-    expect(
-      predicate({
-        exitCode: 0,
-        naturalUse: true,
-        correctFirstTool: true,
-        repeatedCallCount: 0,
-        inputValidationFailureCount: 0,
-        requiredToolSubsequenceMet: true,
-        inputTokens: 100,
-        answerHeuristicsMet: true,
-        epistemicCuePresent: true,
-        factualCorrectness: "failed",
-      }),
-    ).toBe(true);
-  });
-
-  it("selects the results gate inside cleanup without using an unrelated filter", async () => {
-    const predicate = await runnerFailurePredicate(`
-      const failed = unrelated.filter(() => true);
-      await withVerifierCleanup(async () => {
-        const failed = results.filter(item => !agentEvaluationPassed(item));
-      });
-    `);
-    expect(predicate({ ...routingSuccess, factualCorrectness: "passed" })).toBe(
-      false,
-    );
-    expect(predicate({ ...routingSuccess, factualCorrectness: "failed" })).toBe(
-      true,
-    );
-  });
-
-  it("rejects a missing results failure gate", async () => {
-    await expect(
-      runnerFailurePredicate("const failed = unrelated.filter(() => false);"),
-    ).rejects.toThrow("Expected one runner failure gate, found 0");
-  });
-
-  it("rejects ambiguous results failure gates", async () => {
-    await expect(
-      runnerFailurePredicate(`
-        function first() { const failed = results.filter(item => !agentEvaluationPassed(item)); }
-        function second() { const failed = results.filter(() => true); }
-      `),
-    ).rejects.toThrow("Expected one runner failure gate, found 2");
   });
 });
 
-async function runnerFailurePredicate(
-  providedSource?: string,
-): Promise<(item: unknown) => unknown> {
-  const source =
-    providedSource ??
-    (await readFile("scripts/verify-agent-experience.mjs", "utf8"));
-  const program = parse(source, { sourceType: "module" }).program;
-  const predicates: { readonly start: number; readonly end: number }[] = [];
-  t.traverseFast(program, (node) => {
-    if (
-      !t.isVariableDeclarator(node) ||
-      !t.isIdentifier(node.id, { name: "failed" })
-    )
-      return;
-    const initializer = node.init;
-    if (
-      !t.isCallExpression(initializer) ||
-      !t.isMemberExpression(initializer.callee) ||
-      initializer.callee.computed ||
-      !t.isIdentifier(initializer.callee.object, { name: "results" }) ||
-      !t.isIdentifier(initializer.callee.property, { name: "filter" })
-    )
-      return;
-    const argument = initializer.arguments[0];
-    if (
-      t.isArrowFunctionExpression(argument) &&
-      typeof argument.start === "number" &&
-      typeof argument.end === "number"
-    )
-      predicates.push({ start: argument.start, end: argument.end });
-  });
-  const [predicate] = predicates;
-  if (predicates.length !== 1 || predicate === undefined)
-    throw new Error(
-      `Expected one runner failure gate, found ${predicates.length}`,
-    );
-  const factory = new Function(
-    "agentEvaluationPassed",
-    `return (${source.slice(predicate.start, predicate.end)});`,
+function runReportGate(results: readonly object[]) {
+  const gateUrl = new URL(
+    "../../../scripts/lib/agent-evaluation-report-gate.mjs",
+    import.meta.url,
   );
-  const result: unknown = factory(agentEvaluationPassed);
-  if (typeof result !== "function")
-    throw new Error("Runner gate is not callable");
-  return (item) => result(item);
+  const script = `
+    const { assertAgentEvaluationReportPassed } = await import(${JSON.stringify(gateUrl.href)});
+    assertAgentEvaluationReportPassed(JSON.parse(process.argv[1]));
+  `;
+  return spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", script, JSON.stringify(results)],
+    { encoding: "utf8", timeout: 15_000 },
+  );
 }
 
 describe("scoped factual report", () => {

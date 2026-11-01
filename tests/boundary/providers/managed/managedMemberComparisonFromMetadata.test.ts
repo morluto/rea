@@ -3,7 +3,11 @@ import {
   metadataRowOffset,
   readManagedMetadataLayout,
 } from "../../../../src/dotnet/ManagedMetadataLayout.js";
-import { buildManagedNestedTypeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
+import {
+  buildManagedNestedTypeFixture,
+  buildManagedPeFixture,
+  managedPeFixtureTarget,
+} from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
@@ -14,10 +18,6 @@ import {
 } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { managedMemberInspectionSchema } from "../../../../src/domain/managed/managedArtifact.js";
 import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
-import {
-  buildManagedPeFixture,
-  managedPeFixtureTarget,
-} from "../../../../src/dotnet/ManagedPe.fixture.js";
 
 import { buildManagedPeFixture as buildMultiMethodFixture } from "../../../../scripts/fixtures/managed/pe.mjs";
 import {
@@ -1021,6 +1021,132 @@ describe("managed member structural matching", () => {
         }),
       }),
     );
+  });
+});
+
+describe("managed LocalVarSig comparison", () => {
+  const observe = (signature: Buffer, path: string, maxStack = 8) => {
+    const body = Buffer.alloc(13);
+    body.writeUInt16LE(0x3003, 0);
+    body.writeUInt16LE(maxStack, 2);
+    body.writeUInt32LE(1, 4);
+    body.writeUInt32LE(0x11000001, 8);
+    body[12] = 0x2a;
+    return inspect(
+      buildManagedPeFixture({
+        ilBody: body,
+        standaloneSignatures: [signature],
+        mvid: createHash("md5").update(path).digest(),
+      }),
+      path,
+    );
+  };
+
+  it("retains changed validated primitive local signature bytes with identical CIL", () => {
+    const left = observe(
+      Buffer.from([0x07, 0x01, 0x08]),
+      "/fixture/locals-int32.dll",
+    );
+    const right = observe(
+      Buffer.from([0x07, 0x01, 0x0a]),
+      "/fixture/locals-int64.dll",
+    );
+    expect(left.result.coverage).toMatchObject({
+      state: "complete",
+      issues: [],
+    });
+    expect(right.result.coverage).toMatchObject({
+      state: "complete",
+      issues: [],
+    });
+    expect(left.result.methods[0]?.body).toMatchObject({
+      status: "present",
+      local_var_sig_token: "0x11000001",
+      local_var_signature: { has_context_dependent_types: false },
+      il_sha256: right.result.methods[0]?.body.il_sha256,
+      normalized_il_sha256: right.result.methods[0]?.body.normalized_il_sha256,
+    });
+    const result = managedMemberComparisonResultSchema.parse(
+      compareManagedMembers(left, right),
+    );
+    expect(result.methods[0]).toMatchObject({
+      status: "changed",
+      dimensions: ["metadata"],
+      match: { basis: "exact-il-signature" },
+      limitations: [expect.stringContaining("encoding difference")],
+    });
+  });
+
+  it.each([
+    ["named type", [0x12, 0x04]],
+    ["type variable", [0x13, 0x00]],
+    ["method variable", [0x1e, 0x00]],
+    ["custom modifier", [0x1f, 0x04, 0x08]],
+  ] as const)(
+    "keeps cross-artifact %s locals unknown while retaining observed header changes",
+    (_name, type) => {
+      const signature = Buffer.from([0x07, 0x01, ...type]);
+      const left = observe(signature, "/fixture/locals-context-left.dll");
+      const right = observe(signature, "/fixture/locals-context-right.dll", 16);
+      expect(left.result.methods[0]?.body).toMatchObject({
+        status: "present",
+        local_var_signature: { has_context_dependent_types: true },
+      });
+      expect(compareManagedMembers(left, right).methods[0]).toMatchObject({
+        status: "changed",
+        dimensions: ["metadata", "availability"],
+        limitations: [
+          expect.stringContaining(
+            "Local variable signature identity is unknown",
+          ),
+        ],
+      });
+      const sameHeader = observe(
+        signature,
+        "/fixture/locals-context-same-header.dll",
+      );
+      expect(compareManagedMembers(left, sameHeader).methods[0]).toMatchObject({
+        status: "unknown",
+        dimensions: ["availability"],
+      });
+      expect(compareManagedMembers(left, left).methods[0]).toMatchObject({
+        status: "unchanged",
+        dimensions: [],
+      });
+    },
+  );
+
+  it("preserves historical locals uncertainty across artifacts and byte identity within one artifact", () => {
+    const left = observe(
+      Buffer.from([0x07, 0x01, 0x08]),
+      "/fixture/locals-current.dll",
+    );
+    const currentRight = observe(
+      Buffer.from([0x07, 0x01, 0x0a]),
+      "/fixture/locals-old.dll",
+    );
+    const historical = (side: typeof left) => ({
+      ...side,
+      result: managedMemberInspectionSchema.parse({
+        ...side.result,
+        methods: side.result.methods.map((method) => ({
+          ...method,
+          body: { ...method.body, local_var_signature: undefined },
+        })),
+      }),
+    });
+    expect(
+      compareManagedMembers(left, historical(currentRight)).methods[0],
+    ).toMatchObject({
+      status: "unknown",
+      dimensions: ["availability"],
+    });
+    expect(
+      compareManagedMembers(left, historical(left)).methods[0],
+    ).toMatchObject({
+      status: "unchanged",
+      dimensions: [],
+    });
   });
 });
 

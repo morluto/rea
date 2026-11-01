@@ -29,7 +29,18 @@ it("keeps npm pack output in the owned workspace when package validation fails",
         version: "6.0.0",
         mcpName: "invalid-owner",
         bin: { rea: "scripts/rea.mjs", "rea-agents": "scripts/rea.mjs" },
-        dependencies: { "@lydell/node-pty": "1.1.0" },
+        dependencies: {},
+      }),
+    ),
+    writeFile(
+      join(packageRoot, "package-lock.json"),
+      JSON.stringify({
+        name: "rea-agents",
+        version: "6.0.0",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "rea-agents", version: "6.0.0", dependencies: {} },
+        },
       }),
     ),
     writeFile(archivePath, sentinel),
@@ -83,6 +94,6 @@ process.stdout.write(JSON.stringify({ failure }));
 
   expect(JSON.parse(stdout)).toEqual({ failure: expectedFailure });
   expect((await readdir(packageRoot)).sort()).toEqual(packageContentsBefore);
-  expect(await readFile(archivePath)).toEqual(sentinel);
+  expect(Buffer.compare(await readFile(archivePath), sentinel)).toBe(0);
   await expect(access(workspace)).rejects.toMatchObject({ code: "ENOENT" });
 });

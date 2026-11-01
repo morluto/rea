@@ -76,15 +76,15 @@ describe("environment manifests from capture_browser_scenario parents", () => {
         kind: "inline",
         evidence: scenarioCaptureEvidence(scenarioCaptureFixture()),
       },
-      view: { kind: "summary" },
+      view: { kind: "dart-aot", collection: "package_uris" },
     });
     if (refused.ok) throw new Error("Expected the unsupported view refusal");
     expect(projectAnalysisError(refused.error)).toMatchObject({
-      code: "unsupported_target",
-      message: expect.stringContaining(
-        "supports only the environment-manifest and environment-state views",
-      ),
+      code: "invalid_request",
     });
+    expect(JSON.stringify(projectAnalysisError(refused.error))).toContain(
+      "supports summary and browser-scenario views",
+    );
   });
 
   it("serves and exports a scenario-built manifest from the same capture", () => {

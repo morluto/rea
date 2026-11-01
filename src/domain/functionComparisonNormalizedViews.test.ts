@@ -20,8 +20,7 @@ import { createEvidenceBundle } from "./evidenceBundle.js";
 import { findChangedBehavior } from "./changedBehavior.js";
 import { verifyReconstruction } from "./reconstructionVerification.js";
 import { correlateStaticAndRuntime } from "./staticRuntimeCorrelation.js";
-import { functionDossierSchema } from "./hopperValues.js";
-import { jsonValueSchema } from "./jsonValue.js";
+import { functionDossierSchema } from "./native/functionDossier.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import { readComparisonResult } from "./comparisonEvidenceResult.js";
@@ -66,9 +65,7 @@ const observe = (
       parameters: enhancedInputSchemas.analyze_function.parse({
         procedure: "fixture",
       }),
-      result: jsonValueSchema.parse(
-        functionDossierSchema.parse(wallaceDossier(dossier)),
-      ),
+      result: functionDossierSchema.parse(wallaceDossier(dossier)),
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -1272,9 +1269,7 @@ const comparisonEvidence = (
         right_evidence_id: right.evidence_id,
         ...(includeNormalizedViews ? { include_normalized_views: true } : {}),
       },
-      result: jsonValueSchema.parse(
-        compareFunctions(left, right, { includeNormalizedViews }),
-      ),
+      result: compareFunctions(left, right, { includeNormalizedViews }),
       confidence: "derived",
       authority: "analyst-inference",
       evidenceLinks: [left.evidence_id, right.evidence_id],
@@ -1514,10 +1509,10 @@ describe("normalized view static/runtime consumer", () => {
         predicateType: "rea.function-comparison",
         operation: "compare_functions",
         parameters: staticEvidence.parameters,
-        result: jsonValueSchema.parse({
+        result: {
           ...result,
           normalized_views: { ...result.normalized_views!, views },
-        }),
+        },
         confidence: "derived",
         authority: "analyst-inference",
         evidenceLinks: staticEvidence.evidence_links,
@@ -1610,11 +1605,9 @@ describe("normalized view opt-in integrity", () => {
             right_evidence_id: after.evidence_id,
             ...(recorded ? { include_normalized_views: true } : {}),
           },
-          result: jsonValueSchema.parse(
-            compareFunctions(before, after, {
-              includeNormalizedViews: produced,
-            }),
-          ),
+          result: compareFunctions(before, after, {
+            includeNormalizedViews: produced,
+          }),
           confidence: "derived",
           authority: "analyst-inference",
           evidenceLinks: [before.evidence_id, after.evidence_id],
@@ -1726,9 +1719,7 @@ describe("normalized view targets outside the exact calls comparison", () => {
           parameters: enhancedInputSchemas.analyze_function.parse({
             procedure: "fixture",
           }),
-          result: jsonValueSchema.parse(
-            functionDossierSchema.parse(wallaceDossier(dossier)),
-          ),
+          result: functionDossierSchema.parse(wallaceDossier(dossier)),
           confidence: "observed",
           authority: "shipped-artifact",
           relationshipCoverage: { status: "complete" },
@@ -1796,9 +1787,7 @@ describe("normalized view callee thunk targets", () => {
           parameters: enhancedInputSchemas.analyze_function.parse({
             procedure: "fixture",
           }),
-          result: jsonValueSchema.parse(
-            functionDossierSchema.parse(wallaceDossier(dossier)),
-          ),
+          result: functionDossierSchema.parse(wallaceDossier(dossier)),
           confidence: "observed",
           authority: "shipped-artifact",
           relationshipCoverage: { status: "complete" },
@@ -1851,7 +1840,7 @@ describe("normalized view source citations", () => {
           right_evidence_id: after.evidence_id,
           include_normalized_views: true,
         },
-        result: jsonValueSchema.parse({
+        result: {
           ...result,
           normalized_views: {
             ...result.normalized_views!,
@@ -1863,7 +1852,7 @@ describe("normalized view source citations", () => {
               second!,
             ],
           },
-        }),
+        },
         confidence: "derived",
         authority: "analyst-inference",
         evidenceLinks: [before.evidence_id, after.evidence_id],

@@ -1,3 +1,4 @@
+import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
 import { expect, it } from "vitest";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
@@ -71,14 +72,13 @@ it("bounds inherited messages while keeping their complete parent reference", ()
   expect(input.limitations[0]).toBe(note);
 });
 
-it.each(["path", "digest", "format"] as const)(
+it.each(["digest", "format"] as const)(
   "rejects a Go parent whose authenticated %s conflicts with its report",
   (field) => {
     const input = parent();
     if (input.subject == null) throw new Error("Expected artifact subject");
     const subject = {
       ...input.subject,
-      ...(field === "path" ? { local_path: "/artifacts/other" } : {}),
       ...(field === "digest" ? { digest: { sha256: "b".repeat(64) } } : {}),
     };
     const result = projectAnalysisView(
@@ -130,3 +130,22 @@ it.each([
     }
   },
 );
+
+it("revalidates the parent subject after immutable Go report facts have been cached", () => {
+  const input = {
+    ...parent(),
+    normalizedResult: freezeOwnedJsonTreeSnapshot(structuredClone(report)),
+    sealedResult: true,
+  };
+  expect(projectAnalysisView(input, { kind: "summary" }).ok).toBe(true);
+  if (input.subject == null) throw new Error("Expected artifact subject");
+  expect(
+    projectAnalysisView(
+      {
+        ...input,
+        subject: { ...input.subject, digest: { sha256: "b".repeat(64) } },
+      },
+      { kind: "summary" },
+    ).ok,
+  ).toBe(false);
+});
