@@ -1421,3 +1421,85 @@ cliTest.for(
     expect(proof.listeners).toBeGreaterThan(0);
   },
 );
+
+cliTest(
+  "pages a saved native feature trace through the shared view owner",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-native-trace-cli-");
+    const unavailable = {
+      query_address: "0x21",
+      status: "unavailable" as const,
+      provider_id: "ghidra",
+      reason: "not supported",
+    };
+    const parent = createEvidence(
+      { path: "/fixtures/native.exe", format: "pe", sha256: "a".repeat(64) },
+      { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+      {
+        operation: "trace_feature",
+        parameters: { query: "license", case_sensitive: false },
+        result: {
+          query: "license",
+          search_mode: "literal",
+          matches: [{ type: "string", address: "0x10", value: "license" }],
+          references: [
+            {
+              target_address: "0x10",
+              source_address: "0x20",
+              containing_procedure: {
+                query_address: "0x20",
+                found: false,
+                procedure: null,
+                reason: "not_in_procedure",
+              },
+            },
+            {
+              target_address: "0x10",
+              source_address: "0x21",
+              containing_procedure: unavailable,
+            },
+          ],
+          truncated: false,
+          residual_unknowns: ["Which procedure contains 0x21?"],
+        },
+      },
+    );
+    const path = join(root, "trace.json");
+    await writeFile(path, JSON.stringify(parent));
+    const inspect = async (view: Record<string, unknown>) => {
+      const response = await cli.run({
+        arguments: [
+          "inspect-analysis-view",
+          JSON.stringify({ source: { kind: "evidence-file", path }, view }),
+          "--json",
+        ],
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      return parseEvidence(response.json).normalized_result;
+    };
+    expect(await inspect({ kind: "summary" })).toMatchObject({
+      parent_evidence_id: parent.evidence_id,
+      parent_operation: "trace_feature",
+      summary: {
+        references: { total: 2, "not-found": 1, unavailable: 1, found: 0 },
+        residual_unknowns: 1,
+      },
+    });
+    expect(
+      await inspect({
+        kind: "native-trace",
+        collection: "references",
+        where: { owners: ["unavailable"] },
+      }),
+    ).toMatchObject({
+      items: [
+        {
+          source_index: 1,
+          owner: "unavailable",
+          reference: { containing_procedure: unavailable },
+        },
+      ],
+      coverage: { total: 1, exhausted: true },
+    });
+  },
+);

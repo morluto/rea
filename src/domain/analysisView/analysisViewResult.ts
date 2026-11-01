@@ -64,6 +64,12 @@ import {
   sourceToBundleViewContextSchema,
 } from "./sourceToBundleView.js";
 import {
+  nativeTraceSummarySchema,
+  nativeTraceViewContextSchema,
+  nativeTraceViewItemsSchema,
+  nativeTraceViewRequestSchema,
+} from "./nativeTraceView.js";
+import {
   gpuCodeObjectsViewRequestSchema,
   gpuCodeObjectsSummarySchema,
   gpuCodeObjectsItemsSchema,
@@ -946,6 +952,25 @@ export const sourceToBundlePageViewResultSchema = z.strictObject({
   items: sourceToBundleViewItemsSchema,
 });
 
+/** Compact retained native feature-trace summary; pages carry the same trace identity. */
+export const nativeTraceSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  ...nativeViewSourceContext,
+  artifact: artifactSchema.nullable(),
+  parent_operation: z.literal("trace_feature"),
+  summary: nativeTraceSummarySchema,
+});
+export const nativeTraceViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...nativeViewSourceContext,
+  ...nativeTraceViewContextSchema.shape,
+  kind: z.literal("native-trace"),
+  artifact: artifactSchema.nullable(),
+  parent_operation: z.literal("trace_feature"),
+  view: nativeTraceViewRequestSchema,
+  items: nativeTraceViewItemsSchema,
+});
+
 /** Bind the existing nested facet selection to its producer-owned rows. */
 const machoPage = <Facet extends keyof typeof machoViewRows>(facet: Facet) =>
   z.strictObject({
@@ -984,6 +1009,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   javaScriptRoutesViewResultSchema,
   webBundlePageViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  nativeTraceViewResultSchema,
   z.strictObject({
     ...viewResultBase,
     ...nativeFunctionMatchingContextSchema.shape,
@@ -1073,6 +1099,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeFunctionMatchingSummaryViewResultSchema,
     nativeFunctionSummaryViewResultSchema,
     sourceToBundleSummaryViewResultSchema,
+    nativeTraceSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
   ]),
   z.strictObject({
