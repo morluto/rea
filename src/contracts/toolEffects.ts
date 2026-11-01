@@ -685,6 +685,11 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     launchesProcess: true,
   }),
   inspect_electron_fuses: evidence,
+  audit_release_exposure: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
   export_web_scripts: effects({
     mutatesSession: true,
     writesFilesystem: true,

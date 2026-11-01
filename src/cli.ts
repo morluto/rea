@@ -13,6 +13,7 @@ import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 import { createDirectAnalysis } from "./composition/directAnalysis.js";
 import { registerEvmCommands } from "./cli/evmCommands.js";
 import { registerDesktopApplicationCommands } from "./cli/desktopApplicationCommands.js";
+import { registerReleaseExposureCommands } from "./cli/releaseExposureCommands.js";
 import { registerGoCommands } from "./cli/goCommands.js";
 import { registerModelCommands } from "./cli/modelCommands.js";
 import { registerIl2cppCommands } from "./cli/il2cppCommands.js";
@@ -194,6 +195,7 @@ export const createCli = (
       registerSignalCommands(cli, logger, environment);
       registerEvmCommands(cli, logger, environment);
       registerDesktopApplicationCommands(cli, logger);
+      registerReleaseExposureCommands(cli, logger);
       registerGoCommands(cli, logger);
       registerIl2cppCommands(cli, logger);
       registerModelCommands(cli, logger);

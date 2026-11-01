@@ -155,6 +155,7 @@ const scanCanonical = async (
       options.signal,
       options.integrity,
       options.asarHeaderAdmission,
+      options.acquisitionLimits,
     );
     outcome = {
       kind: "completed",

@@ -1195,6 +1195,7 @@ the CLI result should use JSON; either argument order is accepted.
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`       | The operation completed. Its result may include partial evidence, warnings or unresolved questions.                                                                                                                                                                                                                                                                                    |
 | `1`       | The operation could not complete. Structured output identifies invalid input, permissions, cancellation, timeouts or another failure when available.                                                                                                                                                                                                                                   |
+| `3`       | `audit-release-exposure` completed with `--fail_on` and an exposed check meets that severity. Unknown and unassessed checks do not change this status.                                                                                                                                                                                                                                 |
 | `128 + N` | Signal-derived status. An unhandled signal may have ended the process, with the shell or runtime preserving the conventional status; a command may instead have handled the signal, waited for its operation and cleanup to settle, and assigned the same status (`130` for SIGINT, `143` for SIGTERM). In the handled case, it may also have printed a structured `cancelled` result. |
 
 `rea mcp --http` is long-running and prints no structured result. It exits
@@ -1322,3 +1323,16 @@ Bun standalone executables use the existing `inspect-artifact` and
 `extract-artifact` commands to inventory and materialize embedded source,
 sourcemaps and bytecode without running the executable. See
 [Bun standalone executables](bun-standalone.md) for layout coverage and limits.
+
+### Release exposure
+
+```sh
+rea audit-release-exposure /absolute/path/to/MyApp.app --json
+rea audit-release-exposure ./dist/MyApp.app --fail_on high --json
+```
+
+Reports what static analysis of a shipped `.app`, install directory, ASAR, or
+executable recovers. `--fail_on high|medium|low` exits `3` when a completed
+audit has an exposed check at that severity. Unknown and unassessed checks stay
+in the report and do not change the exit status. See
+[Release exposure](release-exposure.md).

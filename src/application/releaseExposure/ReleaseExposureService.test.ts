@@ -1,0 +1,750 @@
+import { describe, expect, it, vi } from "vitest";
+
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+  AnalysisUnsupportedTargetError,
+} from "../../domain/analysisErrorCore.js";
+import {
+  describeElectronFuseFindings,
+  electronFuseName,
+  electronFuseState,
+  ELECTRON_FUSE_STATE_BYTES,
+  type ElectronFuseSlice,
+} from "../../domain/electron/electronFuses.js";
+import type { GoBinary } from "../../domain/go/goBinary.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
+import {
+  RELEASE_EXPOSURE_CHECK_IDS,
+  releaseExposureReportSchema,
+  type ReleaseExposureScan,
+} from "../../domain/releaseExposure.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ReleaseExposurePort } from "./ReleaseExposurePort.js";
+import { ReleaseExposureService } from "./ReleaseExposureService.js";
+
+const SHA = "ab".repeat(32);
+
+const scan = (
+  overrides: Partial<ReleaseExposureScan> = {},
+): ReleaseExposureScan => ({
+  target: {
+    selected_path: "/work/app",
+    kind: "file",
+    format: "file",
+    sha256: SHA,
+  },
+  subject: { path: "/work/app", sha256: SHA, format: "file" },
+  native_images: [],
+  fuse_candidates: [],
+  source_maps: {
+    embedded: 0,
+    without_sources: 0,
+    unparsed: 0,
+    skipped: 0,
+    samples: [],
+  },
+  extractable: {
+    formats: [],
+    readable_members: 0,
+    unreadable_members: 0,
+    samples: [],
+  },
+  debug_companions: { paths: [], skipped: 0 },
+  pdb: { examined: 0, paths: [], failed: 0 },
+  text_members: { scanned: 0, skipped: 0 },
+  coverage: "complete",
+  omitted: [],
+  limitations: [],
+  ...overrides,
+});
+
+const evidence = (result: unknown) =>
+  createEvidence(
+    { path: "/work/app", sha256: SHA, format: "file" },
+    RELEASE_EXPOSURE_PROVIDER,
+    {
+      operation: "audit_release_exposure",
+      parameters: {},
+      result,
+      confidence: "observed",
+    },
+  );
+
+type OwnerInspect = (
+  input: unknown,
+  options?: ExecutionOptions,
+) => Promise<Result<Evidence, AnalysisError>>;
+
+const owners = (
+  scanned: ReleaseExposureScan,
+  textMembers: readonly (readonly [string, string])[] = [],
+) => {
+  const desktop = {
+    inspect: vi.fn<OwnerInspect>(async () =>
+      ok(evidence(nativeDesktopReport())),
+    ),
+    close: vi.fn(async () => undefined),
+  };
+  const electronFuses = {
+    inspect: vi.fn<OwnerInspect>(async () =>
+      err(
+        new AnalysisUnsupportedTargetError(
+          "inspect_electron_fuses",
+          "/work/app",
+          "unsupported",
+        ),
+      ),
+    ),
+    close: vi.fn(async () => undefined),
+  };
+  const goBinaries = {
+    inspect: vi.fn<OwnerInspect>(async () =>
+      err(
+        new AnalysisUnsupportedTargetError(
+          "inspect_go_binary",
+          "/work/app",
+          "unsupported",
+        ),
+      ),
+    ),
+    close: vi.fn(async () => undefined),
+  };
+  const rustBinaries = {
+    inspect: vi.fn<OwnerInspect>(async () =>
+      err(
+        new AnalysisUnsupportedTargetError(
+          "inspect_rust_binary",
+          "/work/app",
+          "unsupported",
+        ),
+      ),
+    ),
+    close: vi.fn(async () => undefined),
+  };
+  const service = new ReleaseExposureService({
+    reader: {
+      identity: RELEASE_EXPOSURE_PROVIDER,
+      inspect: vi.fn<ReleaseExposurePort["inspect"]>(
+        async (_input, _options, visitText) => {
+          for (const [text, location] of textMembers) visitText(text, location);
+          return ok(scanned);
+        },
+      ),
+      close: vi.fn(async () => undefined),
+    },
+    desktop,
+    electronFuses,
+    goBinaries,
+    rustBinaries,
+  });
+  return { service, desktop, electronFuses, goBinaries, rustBinaries };
+};
+
+describe("ReleaseExposureService", () => {
+  it("keeps one owner failure on that check", async () => {
+    const { service, desktop, goBinaries, rustBinaries } = owners(
+      scan({
+        target: {
+          selected_path: "/work/tree",
+          kind: "directory",
+          format: "directory",
+          sha256: null,
+        },
+        subject: { path: "/work/tree", sha256: SHA, format: "directory" },
+        native_images: [{ path: "/work/tree/app", format: "elf" }],
+      }),
+    );
+    desktop.inspect.mockResolvedValue(
+      err(new AnalysisInputError("inspect_desktop_application")),
+    );
+    goBinaries.inspect.mockResolvedValue(
+      err(
+        new AnalysisUnsupportedTargetError(
+          "inspect_go_binary",
+          "/work/tree/app",
+          "not a Go binary",
+        ),
+      ),
+    );
+    rustBinaries.inspect.mockResolvedValue(
+      err(new AnalysisInputError("inspect_rust_binary")),
+    );
+    const result = await service.inspect({ path: "/work/tree" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const report = result.value.normalized_result as {
+      checks: {
+        id: string;
+        status: string;
+        observation: { samples: string[] };
+      }[];
+    };
+    expect(report.checks.map((check) => check.id)).toEqual([
+      ...RELEASE_EXPOSURE_CHECK_IDS,
+    ]);
+    expect(
+      report.checks.find((check) => check.id === "go.build_paths")?.status,
+    ).toBe("not_applicable");
+    expect(
+      report.checks.find((check) => check.id === "rust.dependency_metadata")
+        ?.status,
+    ).toBe("unknown");
+    expect(
+      report.checks.find((check) => check.id === "electron.run_as_node")
+        ?.status,
+    ).toBe("unknown");
+    expect(
+      report.checks.find((check) => check.id === "electron.run_as_node")
+        ?.observation.samples,
+    ).toContain("Invalid analysis input for inspect_desktop_application");
+    await service.close();
+  });
+
+  it("propagates cancellation and skips later owners", async () => {
+    const { service, electronFuses, goBinaries } = owners(
+      scan({
+        fuse_candidates: [{ path: "/work/app", role: "native-image" }],
+        native_images: [{ path: "/work/app", format: "elf" }],
+      }),
+    );
+    electronFuses.inspect.mockResolvedValue(
+      err(new AnalysisCancelledError("inspect_electron_fuses")),
+    );
+    const result = await service.inspect({ path: "/work/app" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(goBinaries.inspect).not.toHaveBeenCalled();
+  });
+
+  it("treats a universal Mach-O as unknown metadata without calling the readers", async () => {
+    const { service, goBinaries, rustBinaries } = owners(
+      scan({
+        native_images: [{ path: "/work/app", format: "mach-o-universal" }],
+      }),
+    );
+    const result = await service.inspect({ path: "/work/app" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const report = result.value.normalized_result as {
+      checks: {
+        id: string;
+        status: string;
+        observation: { samples: string[] };
+      }[];
+    };
+    expect(
+      report.checks.find((check) => check.id === "go.build_paths")?.status,
+    ).toBe("unknown");
+    expect(
+      report.checks.find((check) => check.id === "go.build_paths")?.observation
+        .samples,
+    ).toContain("universal Mach-O needs an architecture");
+    expect(goBinaries.inspect).not.toHaveBeenCalled();
+    expect(rustBinaries.inspect).not.toHaveBeenCalled();
+  });
+});
+
+describe("ReleaseExposureService fuse implications", () => {
+  it("reads fuse implications from the owner report", async () => {
+    const { service, electronFuses } = owners(
+      scan({
+        target: {
+          selected_path: "/work/App.app",
+          kind: "app",
+          format: "directory",
+          sha256: null,
+        },
+        fuse_candidates: [{ path: "/work/App.app", role: "app-bundle" }],
+      }),
+    );
+    const fuses = Array.from(
+      { length: 6 },
+      () => ELECTRON_FUSE_STATE_BYTES.enabled,
+    );
+    fuses[0] = ELECTRON_FUSE_STATE_BYTES.enabled;
+    const slices: ElectronFuseSlice[] = [
+      {
+        index: 0,
+        file_offset: 0,
+        size: 128,
+        architecture: "arm64",
+        sentinel_count: 1,
+        sentinels: [
+          {
+            sentinel_offset: 0,
+            wire_version: 1,
+            declared_length: fuses.length,
+            complete: true,
+            fuses: fuses.map((raw, index) => ({
+              index,
+              name: electronFuseName(1, index),
+              state: electronFuseState(raw),
+              raw_byte: raw,
+            })),
+          },
+        ],
+      },
+    ];
+    electronFuses.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          artifact: {
+            selected_path: "/work/App.app",
+            resolved_path: "/work/App.app",
+            sha256: SHA,
+            bytes: 128,
+            format: "mach-o",
+          },
+          slices,
+          ...describeElectronFuseFindings(slices, "mach-o"),
+        }),
+      ),
+    );
+    const result = await service.inspect({ path: "/work/App.app" });
+    if (!result.ok) throw new Error(result.error.message);
+    const checks = (
+      result.value.normalized_result as {
+        checks: { id: string; status: string }[];
+      }
+    ).checks;
+    expect(
+      checks.find((check) => check.id === "electron.run_as_node")?.status,
+    ).toBe("exposed");
+  });
+
+  it("treats a native app bundle as not applicable when the desktop owner says it is not Electron", async () => {
+    const { service, desktop, electronFuses } = owners(
+      scan({
+        target: {
+          selected_path: "/work/Native.app",
+          kind: "app",
+          format: "directory",
+          sha256: null,
+        },
+        fuse_candidates: [{ path: "/work/Native.app", role: "app-bundle" }],
+      }),
+    );
+    desktop.inspect.mockResolvedValue(ok(evidence(nativeDesktopReport())));
+    const slices: ElectronFuseSlice[] = [
+      {
+        index: 0,
+        file_offset: 0,
+        size: 128,
+        architecture: "arm64",
+        sentinel_count: 0,
+        sentinels: [],
+      },
+    ];
+    electronFuses.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          artifact: {
+            selected_path: "/work/Native.app",
+            resolved_path: "/work/Native.app",
+            sha256: SHA,
+            bytes: 128,
+            format: "mach-o",
+          },
+          slices,
+          ...describeElectronFuseFindings(slices, "mach-o"),
+        }),
+      ),
+    );
+    const result = await service.inspect({ path: "/work/Native.app" });
+    if (!result.ok) throw new Error(result.error.message);
+    const checks = (
+      result.value.normalized_result as {
+        checks: { id: string; status: string }[];
+      }
+    ).checks;
+    expect(
+      checks.find((check) => check.id === "electron.run_as_node")?.status,
+    ).toBe("not_applicable");
+  });
+});
+
+describe("ReleaseExposureService fuse sampling", () => {
+  it("samples the Electron executable ahead of neighboring libraries", async () => {
+    const images = [
+      "/work/app/ffmpeg.dll",
+      "/work/app/libEGL.dll",
+      "/work/app/vk_swiftshader.dll",
+      "/work/app/d3dcompiler.dll",
+      "/work/app/MyApp.exe",
+    ].map((path) => ({ path, format: "pe" as const }));
+    const { service, desktop, electronFuses, goBinaries, rustBinaries } =
+      owners(
+        scan({
+          target: {
+            selected_path: "/work/app",
+            kind: "directory",
+            format: "directory",
+            sha256: null,
+          },
+          subject: { path: "/work/app", sha256: SHA, format: "directory" },
+          native_images: images,
+          fuse_candidates: images.map((image) => ({
+            path: image.path,
+            role: "native-image" as const,
+          })),
+        }),
+      );
+    desktop.inspect.mockResolvedValue(ok(evidence(electronDesktopReport())));
+    const unsupported = (operation: string) =>
+      err(
+        new AnalysisUnsupportedTargetError(
+          operation,
+          "/work/app/MyApp.exe",
+          "unsupported",
+        ),
+      );
+    goBinaries.inspect.mockResolvedValue(unsupported("inspect_go_binary"));
+    rustBinaries.inspect.mockResolvedValue(unsupported("inspect_rust_binary"));
+    electronFuses.inspect.mockResolvedValue(ok(evidence(safeFuseReport())));
+    const result = await service.inspect({ path: "/work/app" });
+    if (!result.ok) throw new Error(result.error.message);
+    const calls = electronFuses.inspect.mock.calls.map(
+      (call) => (call[0] as { path: string }).path,
+    );
+    expect(calls).toHaveLength(4);
+    expect(calls[0]).toBe("/work/app/MyApp.exe");
+    const checks = (
+      result.value.normalized_result as {
+        checks: { id: string; status: string }[];
+      }
+    ).checks;
+    expect(
+      checks.find((check) => check.id === "electron.run_as_node")?.status,
+    ).toBe("not_observed");
+    await service.close();
+  });
+
+  it("keeps fuse checks unknown when a truncated desktop scan finds no Electron candidate", async () => {
+    const { service, desktop } = owners(
+      scan({
+        target: {
+          selected_path: "/work/app",
+          kind: "directory",
+          format: "directory",
+          sha256: null,
+        },
+        subject: { path: "/work/app", sha256: SHA, format: "directory" },
+      }),
+    );
+    const report = nativeDesktopReport();
+    desktop.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          ...report,
+          coverage: { ...report.coverage, status: "partial" },
+        }),
+      ),
+    );
+    const result = await service.inspect({ path: "/work/app" });
+    if (!result.ok) throw new Error(result.error.message);
+    const check = (
+      result.value.normalized_result as {
+        checks: {
+          id: string;
+          status: string;
+          observation: { samples: string[] };
+        }[];
+      }
+    ).checks.find((item) => item.id === "electron.run_as_node");
+    expect(check?.status).toBe("unknown");
+    expect(check?.observation.samples).toContain(
+      "Desktop application coverage is partial.",
+    );
+    await service.close();
+  });
+});
+
+describe("ReleaseExposureService scanners and selected archives", () => {
+  it("leaves fuse checks unknown on a selected ASAR because they were not read", async () => {
+    const { service, desktop, electronFuses } = owners(
+      scan({
+        target: {
+          selected_path: "/work/app.asar",
+          kind: "asar",
+          format: "asar",
+          sha256: SHA,
+        },
+      }),
+    );
+    const result = await service.inspect({ path: "/work/app.asar" });
+    if (!result.ok) throw result.error;
+    const report = releaseExposureReportSchema.parse(
+      result.value.normalized_result,
+    );
+    const fuses = report.checks.filter((check) =>
+      check.id.startsWith("electron."),
+    );
+    expect(fuses.map((check) => check.status)).toEqual([
+      "unknown",
+      "unknown",
+      "unknown",
+      "unknown",
+    ]);
+    expect(fuses[0]?.observation.samples[0]).toContain(
+      "does not include the Electron executable",
+    );
+    expect(desktop.inspect).not.toHaveBeenCalled();
+    expect(electronFuses.inspect).not.toHaveBeenCalled();
+  });
+
+  it("owns credential scanning and keeps matched bytes out of the report", async () => {
+    const planted = "AKIAPLANT9EXPOSUREXX";
+    const { service } = owners(
+      scan({ text_members: { scanned: 1, skipped: 0 } }),
+      [[`key = ${planted}\n`, "/work/app.dll/notes.txt"]],
+    );
+    const result = await service.inspect({ path: "/work/app" });
+    if (!result.ok) throw result.error;
+    const check = releaseExposureReportSchema
+      .parse(result.value.normalized_result)
+      .checks.find((item) => item.id === "text.credential_markers");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.counts["aws.access_key_id"]).toBe(1);
+    expect(check?.locations).toEqual([
+      { kind: "artifact-path", path: "/work/app.dll/notes.txt" },
+    ]);
+    expect(JSON.stringify(result.value)).not.toContain(planted);
+  });
+});
+
+describe("ReleaseExposureService cleanup and Go paths", () => {
+  it("keeps every owner close failure", async () => {
+    const { service, desktop, goBinaries } = owners(scan());
+    const desktopFailure = new Error("desktop close failed");
+    const goFailure = new Error("go close failed");
+    desktop.close.mockRejectedValue(desktopFailure);
+    goBinaries.close.mockRejectedValue(goFailure);
+    await expect(service.close()).rejects.toEqual(
+      expect.objectContaining({
+        errors: expect.arrayContaining([desktopFailure, goFailure]),
+      }),
+    );
+  });
+
+  it("counts filesystem paths and leaves module import paths unexposed", async () => {
+    const trimmed = await goStatus({
+      path: "github.com/acme/app",
+      main: {
+        path: "github.com/acme/app",
+        version: "v1.0.0",
+        sum: null,
+        replacement: null,
+      },
+      dependencies: [
+        {
+          path: "github.com/acme/dep",
+          version: "v1.2.3",
+          sum: null,
+          replacement: null,
+        },
+      ],
+      settings: [],
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    });
+    expect(trimmed).toBe("not_observed");
+    const rooted = await goStatus({
+      path: "github.com/acme/app",
+      main: {
+        path: "github.com/acme/app",
+        version: "v1.0.0",
+        sum: null,
+        replacement: {
+          path: "/Users/dev/main.go",
+          version: "v0.0.0",
+          sum: null,
+        },
+      },
+      dependencies: [],
+      settings: [],
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    });
+    expect(rooted).toBe("exposed");
+  });
+
+  it.each([null, "/Users/dev/main.go"])(
+    "preserves incomplete Go metadata with decoded path %s",
+    async (path) => {
+      const limitation = "A replacement-path record could not be decoded.";
+      const report = await goReport(
+        {
+          path,
+          main: null,
+          dependencies: [],
+          settings: [],
+          unparsed_lines: ["=> undecoded replacement"],
+          unparsed_line_bytes_base64: [],
+          complete: false,
+        },
+        [limitation],
+      );
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check).toMatchObject({
+        status: path === null ? "unknown" : "exposed",
+        confidence: path === null ? "inferred" : "observed",
+        observation: { counts: { paths: path === null ? 0 : 1 } },
+      });
+      if (path !== null) expect(check?.observation.samples).toContain(path);
+      expect(report.limitations).toContain(limitation);
+    },
+  );
+});
+
+const FILE = `dsf_${"cd".repeat(32)}`;
+const CANDIDATE = `dsc_${"ef".repeat(32)}`;
+
+const electronDesktopReport = () => ({
+  ...nativeDesktopReport(),
+  root: {
+    ...nativeDesktopReport().root,
+    path: "/work/app",
+    canonical_path: "/work/app",
+  },
+  files: [
+    {
+      file_id: FILE,
+      path: "resources/app.asar",
+      local_path: "/work/app/resources/app.asar",
+      kind: "file" as const,
+      bytes: 10,
+      identity: null,
+      read_status: "not-selected" as const,
+      ranges: [],
+      facts: [],
+      issues: [],
+    },
+  ],
+  candidates: [
+    {
+      candidate_id: CANDIDATE,
+      family: "electron" as const,
+      confidence: "derived" as const,
+      basis_file_ids: [FILE],
+      rationale: "resources/app.asar",
+    },
+  ],
+});
+
+const safeFuseReport = () => {
+  const fuses = Array.from({ length: 6 }, (_, index) =>
+    index === 4 || index === 5
+      ? ELECTRON_FUSE_STATE_BYTES.enabled
+      : ELECTRON_FUSE_STATE_BYTES.disabled,
+  );
+  const slices: ElectronFuseSlice[] = [
+    {
+      index: 0,
+      file_offset: 0,
+      size: 128,
+      architecture: "x64",
+      sentinel_count: 1,
+      sentinels: [
+        {
+          sentinel_offset: 0,
+          wire_version: 1,
+          declared_length: fuses.length,
+          complete: true,
+          fuses: fuses.map((raw, index) => ({
+            index,
+            name: electronFuseName(1, index),
+            state: electronFuseState(raw),
+            raw_byte: raw,
+          })),
+        },
+      ],
+    },
+  ];
+  return {
+    artifact: {
+      selected_path: "/work/app/MyApp.exe",
+      resolved_path: "/work/app/MyApp.exe",
+      sha256: SHA,
+      bytes: 128,
+      format: "pe",
+    },
+    slices,
+    ...describeElectronFuseFindings(slices, "pe"),
+  };
+};
+
+const nativeDesktopReport = () => ({
+  root: {
+    path: "/work/Native.app",
+    canonical_path: "/work/Native.app",
+    namespace_id: `dsr_${"ab".repeat(32)}`,
+    identity: { device: "1", inode: "2" },
+    snapshot_sha256: SHA,
+    identity_scope: "examined-metadata-and-read-ranges",
+  },
+  files: [],
+  omissions: [],
+  candidates: [],
+  components: [],
+  next_probes: [],
+  coverage: {
+    status: "complete-within-scan",
+    entries_examined: 1,
+    files_probed: 0,
+    bytes_read: 0,
+    symlinks_not_followed: 0,
+    special_entries_omitted: 0,
+    limits: { max_entries: 20_000, max_probe_bytes: 8 * 1024 * 1024 },
+  },
+  limitations: [],
+});
+
+const goStatus = async (
+  module: NonNullable<GoBinary["build_info"]>["module"],
+): Promise<string | undefined> =>
+  (await goReport(module)).checks.find((check) => check.id === "go.build_paths")
+    ?.status;
+
+const goReport = async (
+  module: NonNullable<GoBinary["build_info"]>["module"],
+  limitations: string[] = [],
+) => {
+  const moduleBytes = Buffer.from("module");
+  const report: GoBinary = {
+    artifact: {
+      path: "/work/app",
+      sha256: SHA,
+      bytes: 4096,
+    },
+    format: "elf",
+    architecture: "arm64",
+    bits: 64,
+    byte_order: "little",
+    build_info: {
+      header_offset: 0,
+      encoding: "inline",
+      go_version: "go1.22.0",
+      go_version_bytes_base64: "/w==",
+      module_text: "module",
+      module_bytes_base64: moduleBytes.toString("base64"),
+      version_location: { offset: 0, bytes: 1 },
+      module_location: { offset: 1, bytes: moduleBytes.length },
+      module,
+    },
+    limitations,
+  };
+  const { service, goBinaries } = owners(
+    scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
+  );
+  goBinaries.inspect.mockResolvedValue(ok(evidence(report)));
+  const result = await service.inspect({ path: "/work/app" });
+  if (!result.ok) throw new Error(result.error.message);
+  return releaseExposureReportSchema.parse(result.value.normalized_result);
+};

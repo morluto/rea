@@ -199,6 +199,7 @@
     "verify:apktool": "npm run build:cached && node scripts/verify-apktool.mjs",
     "verify:pcap": "npm run build:cached && node scripts/verify-pcap.mjs",
     "verify:pe:load-config": "npm run build:cached && node scripts/verify-pe-load-config.mjs",
+    "verify:release-exposure": "npm run build:cached && node scripts/verify-release-exposure.mjs",
     "verify:flutter": "npm run build:cached && node scripts/verify-flutter.mjs",
     "verify:adb": "npm run build:cached && node scripts/verify-adb.mjs",
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",

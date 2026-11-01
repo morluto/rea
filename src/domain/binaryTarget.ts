@@ -665,27 +665,61 @@ export const parsePeCodeViewFromBuffer = (
   fileBytes: Buffer,
   peOffset: number,
 ): PeCodeViewRecord | undefined => {
-  if (fileBytes.length < peOffset + 24) return undefined;
+  const result = inspectPeCodeViewFromBuffer(fileBytes, peOffset);
+  return result.ok ? result.value : undefined;
+};
+
+/** Distinguish absent CodeView records from incomplete bounded parsing. */
+export const inspectPeCodeViewFromBuffer = (
+  fileBytes: Buffer,
+  peOffset: number,
+): Result<
+  PeCodeViewRecord | undefined,
+  { readonly kind: "incomplete"; readonly message: string }
+> => {
+  const incomplete = (message: string) =>
+    err({ kind: "incomplete" as const, message });
+  if (fileBytes.length < peOffset + 24)
+    return incomplete("Truncated PE header.");
   const coff = readPeCoffHeader(
     fileBytes.subarray(peOffset + 4, peOffset + 24),
   );
-  if (!coff.ok) return undefined;
+  if (!coff.ok) return incomplete(coff.error.message);
   const { sectionCount: numberOfSections, optionalHeaderSize } = coff.value;
   if (
     optionalHeaderSize > 4096 ||
     fileBytes.length < peOffset + 24 + optionalHeaderSize
   )
-    return undefined;
+    return incomplete(
+      "PE optional header is truncated or exceeds the parsing allowance.",
+    );
   const optionalHeader = fileBytes.subarray(
     peOffset + 24,
     peOffset + 24 + optionalHeaderSize,
   );
-  const debugDir = peDebugDirectoryEntry(optionalHeader);
-  if (debugDir === undefined) return undefined;
+  const fixed = readPeOptionalHeaderFixedFields(optionalHeader);
+  if (!fixed.ok) return incomplete(fixed.error.message);
+  const observed = readPeOptionalHeaderDirectory(
+    optionalHeader,
+    fixed.value,
+    6,
+  );
+  if (observed.state === "absent") return ok(undefined);
+  if (observed.state !== "present")
+    return incomplete("Truncated PE debug directory declaration.");
+  const { address: debugRva, size: debugSize } = observed.directory;
+  if (debugRva === 0 && debugSize === 0) return ok(undefined);
+  if (debugRva === 0 || debugSize < 28 || debugSize % 28 !== 0)
+    return incomplete("Invalid PE debug directory declaration.");
+  const debugDir = {
+    debugRva,
+    debugSize,
+    sizeOfHeaders: fixed.value.sizeOfHeaders,
+  };
   const sectionTableOffset = peOffset + 24 + optionalHeaderSize;
   const sectionTableSize = numberOfSections * 40;
   if (fileBytes.length < sectionTableOffset + sectionTableSize)
-    return undefined;
+    return incomplete("Truncated PE section table.");
   const sectionTable = fileBytes.subarray(
     sectionTableOffset,
     sectionTableOffset + sectionTableSize,
@@ -697,17 +731,27 @@ export const parsePeCodeViewFromBuffer = (
     debugDir.sizeOfHeaders,
     Math.min(debugDir.debugSize, 4096),
   );
-  if (debugFileOffset === undefined || fileBytes.length < debugFileOffset + 28)
-    return undefined;
+  if (
+    debugFileOffset === undefined ||
+    fileBytes.length < debugFileOffset + debugDir.debugSize
+  )
+    return incomplete("PE debug directory is unmapped or truncated.");
   const maxDebugBytes = Math.min(
     debugDir.debugSize,
     fileBytes.length - debugFileOffset,
   );
+  const directory = fileBytes.subarray(
+    debugFileOffset,
+    debugFileOffset + maxDebugBytes,
+  );
+  let codeViewEntries = 0;
+  for (let offset = 0; offset < directory.length; offset += 28)
+    if (directory.readUInt32LE(offset + 12) === 2) codeViewEntries += 1;
   for (const {
     fileOffset: pointerToRawData,
     declaredSize: sizeOfData,
   } of peCodeViewDataRanges(
-    fileBytes.subarray(debugFileOffset, debugFileOffset + maxDebugBytes),
+    directory,
     sectionTable,
     numberOfSections,
     debugDir.sizeOfHeaders,
@@ -719,9 +763,11 @@ export const parsePeCodeViewFromBuffer = (
       Math.min(fileBytes.length, pointerToRawData + sizeOfData),
     );
     const parsed = parseCodeViewData(codeViewData, sizeOfData);
-    if (parsed !== undefined) return parsed;
+    if (parsed !== undefined) return ok(parsed);
   }
-  return undefined;
+  return codeViewEntries > 0
+    ? incomplete("PE CodeView records could not be decoded completely.")
+    : ok(undefined);
 };
 
 const machArchitecture = (cpu: number): HeaderArchitecture | undefined => {
