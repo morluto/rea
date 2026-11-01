@@ -87,6 +87,18 @@ process observations under a shared comparison contract. It reports observed
 differences with their locations, while residual unknowns or truncated
 observations prevent a complete-equivalence claim. Matching scenario
 commitments do not reveal whether redacted sensitive inputs were equal.
+The MCP tool accepts each complete capture inline or as an exact
+`{"kind":"retained-evidence","evidence_id":"ev_..."}` reference to capture
+Evidence already retained by the current session.
+
+Capture-local observer timing remains in Evidence for provenance, but scheduler
+and observation latency alone do not make behavior changed: terminal,
+interaction-dispatch, settlement/finalization, process-sample, and filesystem
+checkpoint times are excluded from the default semantic equality projection.
+To make a timing value part of the question, supply a `trace_spec` whose exact
+event includes that field. Semantic fields such as output, interaction outcome,
+exit status, finalization delivery, process identity/command, and filesystem
+contents still participate in the default comparison.
 
 For scenarios where independent scheduling can change event order, the CLI
 also accepts an optional trace-specification JSON file as the third argument.
@@ -494,8 +506,9 @@ a representability limit, not a timer limit. The nominal lifecycle budget is tha
 sum; polling, snapshotting and cleanup lie outside it. Scenario `events` keep
 being dispatched during finalization and are recorded as usual. `finalization_ms`
 of `0`, the default, keeps today's behaviour and the committed identity of every
-existing scenario. `elapsed_ms` and `sent_at_ms` are timing data and take part in
-exit comparison like `settlement.elapsed_ms`.
+existing scenario. `elapsed_ms` and `sent_at_ms` are retained timing provenance
+like `settlement.elapsed_ms`. The default semantic comparison excludes these
+capture-local times; an exact trace event can assert them explicitly.
 
 Every capture requires `truncation_details`, with separate accounting for:
 
