@@ -424,6 +424,20 @@ The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](elf-notes.md).
 
+Inspect DWARF compile units without executing the image:
+
+```bash
+rea inspect-dwarf-units /absolute/path/to/program --json
+```
+
+The workflow reads DWARF 2 through 5 unit headers and the unit DIE from an
+ELF, Mach-O, or PE file, including compressed ELF debug sections. Rows report
+the source file, compilation directory, producer, language, and `dwo_name`.
+`offset` and `limit` page the units. Absent `.debug_info` describes this file
+only, and a declared section that could not be decoded is partial coverage. Pass `--architecture` for a universal Mach-O. A `.dSYM` bundle is not
+opened; pass the DWARF file inside it. See
+[DWARF compile units](dwarf-units.md).
+
 Inspect an Apple `.ips` crash report without executing a target:
 
 ```bash

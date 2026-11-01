@@ -37,6 +37,7 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_native_exports: "reads the export table without executing it",
   inspect_devicetree: "states that it does not execute the image",
   inspect_elf_notes: "states that it does not execute the image",
+  inspect_dwarf_units: "states that it does not execute the image",
   inspect_apple_ips: "states that it does not execute a target",
   inspect_kernel_module: "states that it does not execute the module",
   inspect_pe_load_config: "states that it does not execute the image",
