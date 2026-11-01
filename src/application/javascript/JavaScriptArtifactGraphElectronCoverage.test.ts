@@ -276,3 +276,22 @@ it("does not count a resolve-only Electron reference as coverage", async () => {
   expect(electronSemantics).toBeUndefined();
   expect(limitations).not.toContain(EMPTY_COVERAGE);
 });
+
+it("does not count a bundle-local module key as an Electron load", async () => {
+  // A Webpack/Rspack factory can name a local module `"electron"`; the static
+  // producer records a loaded `require` reference whose specifier is that key.
+  const bundled = (consumer: string) =>
+    `(()=>{var m={"electron":(e,t,n)=>{"use strict";e.exports={local:1}},100:(e,t,n)=>{"use strict";${consumer}}},c={};` +
+    `function n(t){var r=c[t];if(void 0!==r)return r.exports;var o=c[t]={exports:{}};` +
+    `return m[t](o,o.exports,n),o.exports}n(100);})();`;
+  const local = await graphFor(bundled(`const s=n("electron");s.local`));
+  expect(local.electronSemantics).toBeUndefined();
+  expect(local.limitations).not.toContain(EMPTY_COVERAGE);
+  // The same factory really loading the package is still observed.
+  const external = await graphFor(
+    `(()=>{var m={45840:e=>{"use strict";e.exports=require("electron")},100:(e,t,n)=>{"use strict";const s=n(45840);s.ipcMain.handle("ping",()=>1)}},c={};` +
+      `function n(t){var r=c[t];if(void 0!==r)return r.exports;var o=c[t]={exports:{}};` +
+      `return m[t](o,o.exports,n),o.exports}n(100);})();`,
+  );
+  expect(external.electronSemantics).toBe("recovered");
+});

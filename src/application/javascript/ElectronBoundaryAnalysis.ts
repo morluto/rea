@@ -122,24 +122,23 @@ export const createElectronIpcContext = (
 };
 
 /**
- * Whether any analyzed source names an Electron module. The same
- * `ELECTRON_MODULE` entry points the static analysis admits are used here, so
- * `electron`, `electron/main` and the other supported subpaths count while an
- * unrelated `electron-helper` package does not.
+ * Whether any analyzed source loads an Electron module.
  *
- * The two fact owners answer different parts of the question. Module links are
- * the richer fact and answer a runtime `import` or `require` while excluding a
- * `type-import`, so they are read first. They are absent when semantic analysis
- * was skipped for a budget, and a rejected application projection drops them.
- * The retained static reference answers those cases: it records a whole
- * `import type` declaration as no reference at all, so it is read for the module
- * loading kinds above. A dynamic specifier is never counted by either owner, so
- * this establishes an observed reference rather than absence.
+ * `analysis_coverage.applicability.electron` is the domain owner of this
+ * question: it already excludes a `type-import`, a `require.resolve` that only
+ * locates the module, a `worker` URL path, and a specifier that is a recovered
+ * bundle module key. Reading the owned fact here keeps the boundary summary and
+ * the published coverage view from disagreeing.
+ *
+ * Historical evidence may predate that field, so the retained references answer
+ * the same question for those files.
  */
 export const electronModuleReferenced = (
   analysis: JavaScriptArtifactAnalysis,
 ): boolean =>
   analysis.files.some(({ javascript, semantic }) => {
+    const applicability = javascript?.analysis_coverage?.applicability.electron;
+    if (applicability !== undefined) return applicability === "observed";
     const links = semantic?.ir.moduleLinks;
     if (
       links !== undefined &&
@@ -151,8 +150,6 @@ export const electronModuleReferenced = (
       )
     )
       return true;
-    // Only a loaded module establishes Electron applicability: `require.resolve`
-    // locates the module without loading it, so no boundary fact is expected.
     return (javascript?.references ?? []).some(
       ({ specifier, kind, operation }) =>
         operation === "load" &&
