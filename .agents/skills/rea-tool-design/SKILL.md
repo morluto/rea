@@ -20,7 +20,9 @@ parity.
 For an audit, follow [audit existing tools](../../../docs/tool-design.md#audit-existing-tools):
 scope representative tasks, exercise the live workflow, and distinguish
 reproduced bugs, supported limitations, design opportunities and unverified
-claims. Report working alternatives and evidence limits as well as findings.
+claims. Check relevant rendered MCP prompts, guided workflows and packaged skill
+advice against the live contracts and exercise their suggested handoffs. Report
+working alternatives and evidence limits as well as findings.
 
 For a design request, return the proposed boundary, input/result shape, Evidence
 semantics, nearest alternative, and verification approach. Implement when
