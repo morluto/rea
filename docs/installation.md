@@ -1425,6 +1425,9 @@ to resolve a new profile after intentionally changing the source project.
 The profile records the caller path, resolved project/name, program and content
 fingerprint. Original analysis settings and completeness remain **unknown**;
 prior annotations or edits are caller-project state, not fresh REA discoveries.
+For supported header-selected MIPS ELF targets, the profile also binds the
+selected target's ELF metadata; it does not claim a fresh-import MIPS lane was
+used for the saved project.
 A matching recorded import digest does not claim that the database is unedited.
 Saved REA seed/analyzer reports remain historical facts in retained source Evidence;
 they are not interpreted as overrides applied by this session.

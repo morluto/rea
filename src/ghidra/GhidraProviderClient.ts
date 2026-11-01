@@ -326,6 +326,9 @@ export const createGhidraProviderClient = (input: {
   const mipsProfileMismatch = ghidraMipsProfileMismatchReason(
     target,
     committedProfile.parameters,
+    project !== undefined &&
+      committedProfile.parameters.import_mode ===
+        "existing-project-private-copy-v1",
   );
   if (mipsProfileMismatch !== null)
     return err(
