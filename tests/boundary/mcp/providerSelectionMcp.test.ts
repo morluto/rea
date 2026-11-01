@@ -724,6 +724,7 @@ const candidate = (
             status: "unavailable",
             code: "not_configured",
             reason: `${id} is not configured`,
+            remediation: "Repair the fixture provider.",
             diagnostics: {},
           },
     inspectTargetSupport: () => ({

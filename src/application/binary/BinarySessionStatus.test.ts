@@ -668,7 +668,8 @@ describe("binary session summary projection", () => {
       availability: {
         status: "unavailable",
         code: "not_configured",
-        reason: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+        reason: "PROVIDER_B_HOME is not set.",
+        remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
         diagnostics: { checks: [{ name: "configuration", ok: false }] },
       },
       targetSupport: {
@@ -726,7 +727,7 @@ describe("binary session summary projection", () => {
         availability: {
           status: "unavailable",
           code: "not_configured",
-          reason: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+          reason: "PROVIDER_B_HOME is not set.",
         },
         target_support: {
           status: "unsupported",
@@ -737,6 +738,13 @@ describe("binary session summary projection", () => {
       },
     ]);
     expect(JSON.stringify(raw)).not.toContain("diagnostics");
+    // Complete detail keeps the owner's repair; summary omits it.
+    expect(
+      complete.analysis_provider_candidates[1]?.availability,
+    ).toMatchObject({
+      remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+    });
+    expect(JSON.stringify(raw)).not.toContain("PROVIDER_B_HOME;");
     expect(
       analysisProviderCandidate
         .array()
@@ -774,4 +782,69 @@ it("narrows summary capabilities without inventing omitted candidate facts", asy
     code: null,
     reason: "No target is open.",
   });
+});
+
+it("groups readiness repairs exactly and drops one replaced by a runtime observation", async () => {
+  const unavailable = (
+    operation: CapabilityDescriptor["operation"],
+    remediation: string,
+  ): CapabilityDescriptor => {
+    const declared = descriptor(providerA, operation, [], {
+      available: false,
+      reason: "Configured registration is invalid.",
+    });
+    if (declared.available) throw new Error("Expected an unavailable fixture");
+    return { ...declared, remediation };
+  };
+  const status = await project(
+    [
+      unavailable("procedure_info", "Correct REA_FIXTURE_CONFIG."),
+      unavailable("read_bytes", "Correct REA_FIXTURE_CONFIG."),
+      unavailable("list_names", "Unset REA_FIXTURE_CACHE."),
+      unavailable("xrefs", "Correct REA_FIXTURE_CONFIG."),
+    ],
+    [],
+    new Map([["xrefs", { reason: "Runtime operation failure" }]]),
+  );
+  const groups = status.capabilities.flatMap(({ groups }) => groups);
+  expect(groups).toEqual([
+    expect.objectContaining({
+      operations: ["list_names"],
+      remediation: "Unset REA_FIXTURE_CACHE.",
+    }),
+    expect.objectContaining({
+      operations: ["procedure_info", "read_bytes"],
+      reason: "Configured registration is invalid.",
+      remediation: "Correct REA_FIXTURE_CONFIG.",
+    }),
+    expect.not.objectContaining({ remediation: expect.anything() }),
+  ]);
+  expect(groups[2]).toMatchObject({
+    operations: ["xrefs"],
+    reason: "Runtime operation failure",
+  });
+  const inventory = new Map(
+    buildCapabilityInventory(
+      { open: true, kind: "executable", capabilities: status.capabilities },
+      { processCaptureEnabled: true },
+    ).map((entry) => [entry.name, entry]),
+  );
+  expect(inventory.get("procedure_info")?.remediation).toBe(
+    "Correct REA_FIXTURE_CONFIG.",
+  );
+  // A static or runtime-only refusal has no separate repair to prefer.
+  expect(inventory.get("xrefs")?.remediation).toBe("Runtime operation failure");
+  // A scoped registration narrows operations without dropping their repair.
+  const scoped = projectedStatusSchema.parse(
+    restrictAdvertisedCapabilities(
+      status,
+      (operation) => operation === "procedure_info",
+    ),
+  );
+  expect(scoped.capabilities.flatMap(({ groups }) => groups)).toEqual([
+    expect.objectContaining({
+      operations: ["procedure_info"],
+      remediation: "Correct REA_FIXTURE_CONFIG.",
+    }),
+  ]);
 });

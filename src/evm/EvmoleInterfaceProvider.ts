@@ -195,6 +195,8 @@ export const evmLimiterAvailability = async (
         status: "unavailable",
         code: "executable_missing",
         reason: selected.error.reason,
+        // The limiter owner does not yet author a separate repair (#8508).
+        remediation: selected.error.reason,
         diagnostics: selected.error.diagnostics,
       };
 };

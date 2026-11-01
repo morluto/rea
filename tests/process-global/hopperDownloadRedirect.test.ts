@@ -19,7 +19,14 @@ it("refuses an HTTPS downgrade before sending the redirected request and release
   vi.stubGlobal("fetch", fetch);
   expect(
     await downloadHopperPackage("https://www.hopperapp.com/package"),
-  ).toEqual({ ok: false, bytes: new Uint8Array() });
+  ).toEqual({
+    ok: false,
+    error: {
+      url: "https://www.hopperapp.com/package",
+      kind: "url_refused",
+      refusal: "non_https",
+    },
+  });
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(fetch).toHaveBeenCalledWith(
     "https://www.hopperapp.com/package",
@@ -46,8 +53,8 @@ it("preserves HTTPS relative and cross-origin redirects under one request deadli
   vi.stubGlobal("fetch", fetch);
   const selected = "https://www.hopperapp.com:443/start#selected";
   const result = await downloadHopperPackage(selected);
-  expect(result.ok).toBe(true);
-  expect(new TextDecoder().decode(result.bytes)).toBe("package");
+  if (!result.ok) throw new Error("Expected the redirected package");
+  expect(new TextDecoder().decode(result.value)).toBe("package");
   expect(fetch.mock.calls.map(([input]) => input)).toEqual([
     selected,
     "https://www.hopperapp.com/next#selected",
@@ -69,9 +76,16 @@ it("retains Fetch's twenty-redirect bound and releases every redirect response",
     }),
   );
   vi.stubGlobal("fetch", fetch);
-  expect(
-    (await downloadHopperPackage("https://www.hopperapp.com/loop")).ok,
-  ).toBe(false);
+  expect(await downloadHopperPackage("https://www.hopperapp.com/loop")).toEqual(
+    {
+      ok: false,
+      error: {
+        url: "https://www.hopperapp.com/loop",
+        kind: "url_refused",
+        refusal: "redirect_limit",
+      },
+    },
+  );
   expect(fetch).toHaveBeenCalledTimes(21);
   expect(cancelled).toBe(21);
 });
@@ -80,7 +94,14 @@ it("refuses an initial non-HTTPS URL before any request", async () => {
   const fetch = vi.fn<typeof globalThis.fetch>();
   vi.stubGlobal("fetch", fetch);
   expect(
-    (await downloadHopperPackage("http://www.hopperapp.com/package")).ok,
-  ).toBe(false);
+    await downloadHopperPackage("http://www.hopperapp.com/package"),
+  ).toEqual({
+    ok: false,
+    error: {
+      url: "http://www.hopperapp.com/package",
+      kind: "url_refused",
+      refusal: "non_https",
+    },
+  });
   expect(fetch).not.toHaveBeenCalled();
 });
