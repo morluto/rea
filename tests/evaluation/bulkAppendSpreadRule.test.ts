@@ -28,6 +28,15 @@ tester.run("no-bulk-append-spread", rule, {
       ['target["push"](...items);', "push"],
       ["target.unshift(...items);", "unshift"],
       ["target.splice(0, target.length, ...items);", "splice"],
+      // Type-only and grouping wrappers leave the evaluated callee unchanged.
+      ["target.push!(...items);", "push"],
+      ["(target.push)(...items);", "push"],
+      ["(target.push as typeof target.push)(...items);", "push"],
+      ["(target.push satisfies Function)(...items);", "push"],
+      ["(<typeof target.push>target.push)(...items);", "push"],
+      ["target!.push(...items);", "push"],
+      ["(target as string[]).unshift(...items);", "unshift"],
+      ["(<string[]>target).splice(0, 0, ...items);", "splice"],
     ] as const
   ).map(([code, method]) => ({
     code,

@@ -1,7 +1,20 @@
 const bulkMethods = new Set(["push", "unshift", "splice"]);
 
-const unwrap = (node) =>
-  node?.type === "ChainExpression" ? node.expression : node;
+/** Syntax that leaves the evaluated callee or receiver unchanged. */
+const transparent = new Set([
+  "ChainExpression",
+  "ParenthesizedExpression",
+  "TSAsExpression",
+  "TSNonNullExpression",
+  "TSSatisfiesExpression",
+  "TSTypeAssertion",
+  "TSInstantiationExpression",
+]);
+
+const unwrap = (node) => {
+  while (node && transparent.has(node.type)) node = node.expression;
+  return node;
+};
 
 const propertyName = (member) => {
   if (!member.computed && member.property.type === "Identifier")
