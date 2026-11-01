@@ -390,6 +390,33 @@ describe("executable dispatcher JavaScript shutdown", () => {
     },
   );
 
+  workspaceCliTest.for(["cleanup-failure", "write-failure"] as const)(
+    "preserves exit failure status when options.exit() omits the code: %s",
+    async (scenario, { processes, workspace }) => {
+      const cleanupFails = scenario === "cleanup-failure";
+      const finish =
+        scenario === "write-failure"
+          ? 'throw new Error("final write failed");'
+          : 'process.stdout.write("complete document\\n");';
+      await installCliRuntime(
+        workspace,
+        `export const closeCliResources = () => { globalThis.cleaned = true; ${cleanupFails ? 'return Promise.reject(new Error("worker still owned"));' : ""} }; export const createCli = () => ({ serve: (_args, options) => { options.stdout("pending document"); options.exit(); } });\n`,
+        `export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => true, finishSdkOutput: async (status) => { if (status !== ${cleanupFails ? 1 : 0}) throw new Error("unexpected finish status: " + status); if (!globalThis.cleaned) throw new Error("output preceded cleanup"); await new Promise(resolve => setTimeout(resolve, 10)); ${finish} } });\n`,
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).not.toContain("unexpected finish status");
+      expect(result.stderr).not.toContain("output preceded cleanup");
+      if (cleanupFails) expect(result.stderr).toContain("worker still owned");
+      if (scenario === "write-failure")
+        expect(result.stderr).toContain("final write failed");
+    },
+  );
+
   workspaceCliTest(
     "reports a failed JavaScript worker shutdown instead of exiting successfully",
     async ({ processes, workspace }) => {
