@@ -373,6 +373,20 @@ it("fails cyclic GNU version requirement chains without a complete inventory", (
   );
 });
 
+it("keeps a NUL-terminated dynamic string longer than 64 KiB", () => {
+  const soname = `lib${"s".repeat(70000)}.so`;
+  const report = parse(elfDependencyFixture({ soname }));
+  expect(report.dynamic.soname?.name).toBe(soname);
+  expect(report.issues).toEqual([]);
+});
+
+it("fails a dynamic string past the shared text budget as a limit", () => {
+  const runpath = `/opt/${"r".repeat(70000)}`;
+  expect(() => parse(elfDependencyFixture({ runpath }))).toThrow(
+    /ELF dependency text exceeds/u,
+  );
+});
+
 it("reports GNU version tables with an unsupported revision as unreadable", () => {
   const verneed = parse(
     elfDependencyFixture({ unsupportedVersionRevision: "verneed" }),

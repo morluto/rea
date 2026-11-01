@@ -292,7 +292,13 @@ class DynamicStrings {
       this.retain(cached.name);
       return cached;
     }
-    const observed = observeElfStringTableEntry(this.table, offset, 65536);
+    // Scan up to the remaining shared budget, plus one byte so a string that
+    // outgrows it fails as a limit instead of reading as unterminated.
+    const observed = observeElfStringTableEntry(
+      this.table,
+      offset,
+      this.limit - this.#scanned + 1,
+    );
     this.#charge("scanned", observed.examinedBytes);
     let entry: CString;
     if (observed.state === "outside")

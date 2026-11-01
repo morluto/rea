@@ -7,6 +7,7 @@ import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.
 import { inspectElfDependenciesInputSchema } from "../../domain/native/elfDependencies.js";
 import { elfDependencyFixture } from "./ElfDependencies.fixture.js";
 import { ElfDependenciesProvider } from "./ElfDependenciesProvider.js";
+import { ElfDependencyCountFailure } from "./ElfDependencyParser.js";
 
 it("keeps the read file's identity when parsing fails", async () => {
   const root = await createTestTempDirectory("rea-elf-dependencies-parse-");
@@ -30,49 +31,64 @@ it("keeps the read file's identity when parsing fails", async () => {
   }
 });
 
-const remediationFor = async (
+const inspectWith = async (
   bytes: Buffer,
   budgets: Record<string, number> = {},
-): Promise<string | undefined> => {
+) => {
   const root = await createTestTempDirectory("rea-elf-dependencies-limit-");
   const path = join(root, "program");
   await writeFile(path, bytes);
   const provider = new ElfDependenciesProvider();
   try {
-    const result = await provider.inspect(
+    return await provider.inspect(
       inspectElfDependenciesInputSchema.parse({ path, ...budgets }),
     );
-    if (result.ok) throw new Error("Expected a limit failure");
-    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    return (result.error as AnalysisResourceConstraintError).remediationAction;
   } finally {
     await provider.close();
   }
 };
 
+const countLimitOf = async (
+  bytes: Buffer,
+  budgets: Record<string, number> = {},
+) => {
+  const result = await inspectWith(bytes, budgets);
+  if (result.ok) throw new Error("Expected a limit failure");
+  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  const error = result.error as AnalysisResourceConstraintError;
+  expect(error.retryable).toBe(false);
+  expect(error.cause).toBeInstanceOf(ElfDependencyCountFailure);
+  return (error.cause as ElfDependencyCountFailure).limit;
+};
+
 it.each([
-  [{ max_needed: 2 }, "Raise max_needed above 2, up to 65536", "max_imports"],
-  [
-    { max_versions: 2 },
-    "Raise max_versions above 2, up to 65536",
-    "max_needed",
-  ],
-  [{ max_imports: 2 }, "Raise max_imports above 2, up to 262144", "max_needed"],
-])(
-  "names only the budget that failed for %j",
-  async (budgets, advice, otherBudget) => {
-    const remediation = await remediationFor(elfDependencyFixture(), budgets);
-    expect(remediation).toContain(advice);
-    expect(remediation).not.toContain(otherBudget);
+  ["max_needed", 65536],
+  ["max_versions", 65536],
+  ["max_imports", 262144],
+] as const)(
+  "reports which budget failed and recovers when %s is raised",
+  async (parameter, ceiling) => {
+    const image = elfDependencyFixture();
+    expect(await countLimitOf(image, { [parameter]: 2 })).toMatchObject({
+      kind: "budget",
+      parameter,
+      value: 2,
+      ceiling,
+    });
+    const raised = await inspectWith(image, { [parameter]: ceiling });
+    if (!raised.ok) throw raised.error;
+    expect(raised.value.coverage.status).toBe("complete");
   },
 );
 
-it("says a fixed dynamic-symbol ceiling has no runtime override", async () => {
+it("reports a fixed dynamic-symbol ceiling that a raised budget cannot clear", async () => {
   const imports = Array.from({ length: 262145 }, (_, index) => ({
     name: `s${String(index)}`,
   }));
-  const remediation = await remediationFor(elfDependencyFixture({ imports }));
-  expect(remediation).toContain("fixed ceiling of 262144 entries");
-  expect(remediation).toContain("This release has no runtime override");
-  expect(remediation).not.toMatch(/^Raise/u);
+  const image = elfDependencyFixture({ imports });
+  const ceiling = { kind: "ceiling", value: 262144 };
+  expect(await countLimitOf(image)).toMatchObject(ceiling);
+  expect(await countLimitOf(image, { max_imports: 262144 })).toMatchObject(
+    ceiling,
+  );
 });
