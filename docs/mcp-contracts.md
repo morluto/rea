@@ -325,9 +325,10 @@ To discover existing records without their large payloads, call
 `get_evidence_bundle` with `detail: "summary"`. Its `result.records` contain
 Evidence IDs, artifact/provider identities, analysis-profile digests and native
 procedure metadata. Optional `filters` match exact `evidence_id`, `operation`,
-`target_sha256`, `analysis_profile_digest` or `procedure_address`. Use a discovered
-ID with `inspect_analysis_view`; neither discovery nor retained selection starts
-a provider. `retention: "complete-record"` describes stored Evidence, while
+`target_sha256`, `analysis_profile_digest` or `procedure_address`. For a supported parent operation, use a discovered ID with
+`inspect_analysis_view`; its tool description lists supported operations. For
+other records, export the complete bundle to a caller-selected path. Neither
+discovery nor retained selection starts a provider. `retention: "complete-record"` describes stored Evidence, while
 `native_dossier.value_flow` independently reports truncation, unavailable or
 unknown metadata. Missing omission counts remain null. Summary output carries
 every matching record; actual transport admission still applies. Omitted
