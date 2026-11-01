@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { access, chmod, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { delimiter, dirname, join, relative } from "node:path";
 
 import { expect, expectTypeOf, it, vi } from "vitest";
@@ -58,6 +66,11 @@ const gate = () => {
 // The selected executable is a POSIX mode-0755 file; Windows resolves
 // REA_RIZIN_COMMAND separately and is not covered here.
 const posix = it.skipIf(process.platform === "win32");
+
+const sha256Of = async (file: string): Promise<string> =>
+  createHash("sha256")
+    .update(await readFile(file))
+    .digest("hex");
 
 posix(
   "records the version from the banner and probes the path it hashed before every command",
@@ -540,6 +553,8 @@ posix.each(["cancellation", "deadline"] as const)(
         phase: "executable_lookup",
         executable_lookup_candidate: executable,
         provider_executable: "rizin",
+        artifact_path: path,
+        artifact_sha256: await sha256Of(path),
       });
       expect(run).not.toHaveBeenCalled();
       // Closing does not wait for the abandoned file-system call.
@@ -587,6 +602,7 @@ posix(
       phase: "version_probe",
       provider_executable_path: executable,
       provider_executable: executable,
+      artifact_path: path,
       provider_executable_sha256: await digest(),
     });
     expect(run).toHaveBeenCalledOnce();
@@ -792,6 +808,8 @@ posix.each(["deadline", "cancellation"] as const)(
         phase: "executable_digest",
         provider_executable_path: executable,
         provider_executable: "rizin",
+        artifact_path: path,
+        artifact_sha256: await sha256Of(path),
       });
       expect(run).not.toHaveBeenCalled();
     } finally {

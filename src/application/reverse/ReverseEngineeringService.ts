@@ -483,11 +483,16 @@ export class ReverseEngineeringService {
       signal,
       timeoutMs,
     );
-    // An error before Evidence exists keeps the executable the caller selected.
+    // An error before Evidence exists keeps the executable the caller
+    // selected and the target it already resolved and hashed.
+    const selection = {
+      provider_executable: command,
+      ...(absolutePath === undefined || digest === undefined
+        ? {}
+        : { artifact_path: absolutePath, artifact_sha256: digest }),
+    };
     if (!identified.ok)
-      return err(
-        identified.error.retainDiagnostics({ provider_executable: command }),
-      );
+      return err(identified.error.retainDiagnostics(selection));
     const identification = identified.value;
     let stdout = "";
     let stderr = "";
@@ -697,17 +702,17 @@ export class ReverseEngineeringService {
       }
     }
     if (earlyFailure !== undefined) {
-      // Without command output there is no Evidence to carry the selected
-      // executable and what the lookup, hash and probe observed, so the
-      // failure keeps them.
+      // Without command output there is no Evidence to carry the selection
+      // and what the lookup, hash and probe observed, so the failure keeps
+      // them.
       earlyFailure.retainDiagnostics(
         identification.observed
           ? {
               provider: identification.identity,
-              provider_executable: command,
+              ...selection,
               ...identification.parameters,
             }
-          : { provider_executable: command },
+          : selection,
       );
       return err(this.#registerCleanupFailure(earlyFailure, cleanupOwner));
     }

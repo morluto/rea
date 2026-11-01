@@ -135,7 +135,8 @@ whose cleanup is incomplete, keeps the executable path and SHA-256 there; a hash
 that is cancelled or reaches the deadline keeps the executable path; and a lookup
 that is cancelled or reaches the deadline keeps the path it was checking, as
 `executable_lookup_candidate`. Every error from the lookup through the launch
-also keeps the selected `provider_executable`.
+also keeps the selected `provider_executable` and, for a call with a target, its
+`artifact_path` and `artifact_sha256`.
 
 Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override. A typed failure's `captured_output` marks a stream that held invalid UTF-8 with `stdout_invalid_utf8` or `stderr_invalid_utf8`.
 

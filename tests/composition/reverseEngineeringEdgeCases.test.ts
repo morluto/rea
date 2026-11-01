@@ -1,4 +1,5 @@
-import { rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, rm } from "node:fs/promises";
 import type { Stats } from "node:fs";
 
 import { expect, it, vi } from "vitest";
@@ -850,6 +851,10 @@ it("retains a capability failure when its injected owned runner also reports inc
     expect(first.error.diagnostics).toEqual({
       source: "owned-runner",
       provider_executable: selected,
+      artifact_path: path,
+      artifact_sha256: createHash("sha256")
+        .update(await readFile(path))
+        .digest("hex"),
     });
     expect(first.error.cleanupIncomplete).toBe(true);
     expect(first.error.cleanup).toMatchObject({
