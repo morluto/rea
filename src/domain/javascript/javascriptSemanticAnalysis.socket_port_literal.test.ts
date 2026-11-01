@@ -281,3 +281,51 @@ it.each([
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
   expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
 });
+
+/**
+ * Two further review findings.
+ *
+ * Node trims a `port` string before coercing it, so a whitespace-only port is
+ * rejected while a padded one is accepted:
+ *
+ *   net.connect({ port: " " })   -> THREW ERR_SOCKET_BAD_PORT
+ *   net.connect({ port: "0x20" }) -> Socket created   (hex 32)
+ *   net.connect({ port: " 80 " }) -> Socket created
+ *
+ * `tls.connect` wraps an existing socket and never connects, so it also never
+ * validates `port`, while `net.connect` still does:
+ *
+ *   tls.connect({ socket, port: -1 })  -> TLSSocket
+ *   net.connect({ socket, port: -1 })  -> THREW ERR_SOCKET_BAD_PORT
+ */
+it.each([
+  ["a space port", `net.connect({ port: " " })`],
+  ["a two-space port", `net.connect({ port: "  " })`],
+  ["a tab port", `net.connect({ port: "\\t" })`],
+  ["a newline port", `net.connect({ port: "\\n" })`],
+  [
+    "a negative port in a net socket options object",
+    `net.connect({ socket, port: -1 })`,
+  ],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  ["a hex port string", `net.connect({ port: "0x20" })`, "connect"],
+  ["a padded port string", `net.connect({ port: " 80 " })`, "connect"],
+  ["a whitespace Unix socket path", `net.connect(" ")`, "connect"],
+  [
+    "a tls socket wrap with a rejected port",
+    `tls.connect({ socket, port: -1 })`,
+    "connect",
+  ],
+  [
+    "a tls socket wrap above the range",
+    `tls.connect({ socket, port: 65536 })`,
+    "connect",
+  ],
+  ["a tls socket wrap alone", `tls.connect({ socket })`, "connect"],
+] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
+  expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
+});
