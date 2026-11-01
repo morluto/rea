@@ -17,12 +17,17 @@ import {
   AnalysisTimeoutError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
+import {
+  inferredUnavailabilityReason,
+  runtimeFailureReason,
+} from "../../../src/application/binary/SessionRuntimeAvailability.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   createBinarySessionTargets,
@@ -363,21 +368,61 @@ const liveCapability = (
 
 const adapterFailure = (provider: ProviderIdentity, operation: string) =>
   Promise.resolve(err(new ProviderAdapterError(provider.id, operation)));
-const observedFailure = (operation: string) =>
-  `ProviderAdapterError: Provider fixture adapter failed during ${operation}`;
+const recordedReason = (failure: AnalysisError): string => {
+  const reason = runtimeFailureReason(failure);
+  if (reason === undefined) throw new Error(`${failure._tag} is not recorded`);
+  return reason;
+};
+// Compare remediation with its owning formatters; the facts are their inputs.
+const observedFailure = (operation: string, provider: string = FIXTURE.id) =>
+  recordedReason(new ProviderAdapterError(provider, operation));
 const inferredFailure = (operation: string, provider: string = FIXTURE.id) =>
-  `Inferred from the ${operation} failure (ProviderAdapterError: Provider ${provider} adapter failed during ${operation}). Retry after repairing the provider; a later successful ${provider} request clears this.`;
+  inferredUnavailabilityReason(provider, {
+    operation,
+    reason: observedFailure(operation, provider),
+  });
+const refusal = (operation: string, reason: string) =>
+  recordedReason(
+    new AnalysisCapabilityUnavailableError(FIXTURE.id, operation, reason),
+  );
 
-/** Hold one provider reply until the test releases it. */
-const heldReply = () => {
-  const received = createDeferred<void>();
-  const reply = createDeferred<Reply>();
+/** Hold provider replies; release and join every launched call. */
+const heldCalls = (
+  client: Awaited<ReturnType<typeof createApplicationMcpHarness>>["client"],
+) => {
+  const held = new Map<
+    string,
+    { readonly reply: Promise<Reply>; readonly received: () => void }
+  >();
+  const launched: {
+    readonly release: (reply: Reply) => void;
+    readonly response: Promise<unknown>;
+  }[] = [];
   return {
-    received: received.promise,
-    release: reply.resolve,
-    respond: (): Promise<Reply> => {
-      received.resolve();
-      return reply.promise;
+    /** Serve a held reply when one is registered for this operation. */
+    respond: (operation: string): Promise<Reply> | undefined => {
+      const entry = held.get(operation);
+      if (entry === undefined) return undefined;
+      held.delete(operation);
+      entry.received();
+      return entry.reply;
+    },
+    dispatch: async (name: string, arguments_: Record<string, unknown>) => {
+      const reply = createDeferred<Reply>();
+      const received = createDeferred<void>();
+      held.set(name, { reply: reply.promise, received: received.resolve });
+      const response = client.callTool({ name, arguments: arguments_ });
+      launched.push({ release: reply.resolve, response });
+      await awaitAcknowledgement(received.promise, response, name);
+      return {
+        release: reply.resolve,
+        isError: async () => (await response).isError === true,
+      };
+    },
+    /** Release every held reply and wait for its MCP response. */
+    join: async () => {
+      for (const { release } of launched) release(observed("released"));
+      await Promise.allSettled(launched.map(({ response }) => response));
     },
   };
 };
@@ -512,8 +557,7 @@ it("returns provider-inferred siblings to declared availability after one succes
     declaredRefusals: { set_comment: declared },
     respond,
   });
-  const refusal =
-    "Provider fixture cannot execute procedure_info: fixture project is read-only";
+  const refused = refusal("procedure_info", "fixture project is read-only");
   expect(await call("procedure_info", PROCEDURE)).toBe("error");
   broken = true;
   expect(await call("address_name", ADDRESS)).toBe("error");
@@ -525,7 +569,7 @@ it("returns provider-inferred siblings to declared availability after one succes
     list_procedures: inferredFailure("procedure_assembly"),
     procedure_assembly: observedFailure("procedure_assembly"),
     // Separately observed and declared refusals keep their own reasons.
-    procedure_info: refusal,
+    procedure_info: refused,
     set_comment: declared,
     list_documents: "available",
   });
@@ -539,14 +583,14 @@ it("returns provider-inferred siblings to declared availability after one succes
     current_address: "available",
     list_procedures: "available",
     procedure_assembly: observedFailure("procedure_assembly"),
-    procedure_info: refusal,
+    procedure_info: refused,
     set_comment: declared,
     list_documents: "available",
   });
   expect(await call("procedure_assembly", PROCEDURE)).toBe("ok");
   expect(await availability(["procedure_assembly", "procedure_info"])).toEqual({
     procedure_assembly: "available",
-    procedure_info: refusal,
+    procedure_info: refused,
   });
 });
 
@@ -585,7 +629,7 @@ it("keeps each provider's failures and ignores cancelled requests", async () => 
   expect(await call("address_name", ADDRESS)).toBe("ok");
   const auxiliaryFailure = {
     current_document: inferredFailure("list_documents", AUXILIARY.id),
-    list_documents: `ProviderAdapterError: Provider ${AUXILIARY.id} adapter failed during list_documents`,
+    list_documents: observedFailure("list_documents", AUXILIARY.id),
   };
   // Another provider's success does not clear the auxiliary provider's state.
   expect(await availability(names)).toEqual({
@@ -618,43 +662,17 @@ it("keeps each provider's failures and ignores cancelled requests", async () => 
   });
 });
 
-it("orders recovery by provider dispatch rather than reply completion", async () => {
-  const replies = new Map<string, ReturnType<typeof heldReply>>();
+it("keeps newer failures when older successes complete after them", async () => {
   let reply: Responder = () => Promise.resolve(observed("text"));
-  const respond = {
-    current: (operation: string): Promise<Reply> =>
-      replies.get(operation)?.respond() ?? reply(operation),
-  };
+  const respond = { current: (operation: string) => reply(operation) };
   const { client, call, availability } = await connectScripted({
     operations: [...DIRECT_OPERATIONS, "current_procedure"],
     respond,
   });
-  const dispatch = async (
-    name: string,
-    arguments_: Record<string, unknown>,
-  ) => {
-    const held = heldReply();
-    replies.set(name, held);
-    const response = client.callTool({ name, arguments: arguments_ });
-    await held.received;
-    replies.delete(name);
-    return { release: held.release, response };
-  };
+  const calls = heldCalls(client);
+  respond.current = (operation) => calls.respond(operation) ?? reply(operation);
   const document = { document: "doc" };
-  const refused = (operation: string) =>
-    `Provider fixture cannot execute ${operation}: fixture refusal`;
-  const names = [
-    "address_name",
-    "current_address",
-    "current_procedure",
-    "list_procedures",
-  ];
-
-  // Successes complete after newer failures: an own refusal, a provider
-  // failure, or both when the success was dispatched between them.
-  const olderAddress = await dispatch("address_name", ADDRESS);
-  const olderCurrent = await dispatch("current_address", document);
-  reply = (operation) =>
+  const refuse: Responder = (operation) =>
     Promise.resolve(
       err(
         new AnalysisCapabilityUnavailableError(
@@ -664,40 +682,111 @@ it("orders recovery by provider dispatch rather than reply completion", async ()
         ),
       ),
     );
-  expect(await call("address_name", ADDRESS)).toBe("error");
-  expect(await call("current_procedure", document)).toBe("error");
-  const betweenProcedure = await dispatch("current_procedure", document);
-  reply = (operation) => adapterFailure(FIXTURE, operation);
-  expect(await call("procedure_assembly", PROCEDURE)).toBe("error");
-  olderAddress.release(observed("old-name"));
-  olderCurrent.release(observed("0x1000"));
-  betweenProcedure.release(observed("main"));
-  for (const { response } of [olderAddress, olderCurrent, betweenProcedure])
-    expect((await response).isError).not.toBe(true);
-  const newer = {
-    address_name: refused("address_name"),
-    current_address: inferredFailure("procedure_assembly"),
-    current_procedure: refused("current_procedure"),
-    list_procedures: inferredFailure("procedure_assembly"),
-  };
-  expect(await availability(names)).toEqual(newer);
+  try {
+    // Successes dispatched before an own refusal, before a provider failure,
+    // or between the two complete after both.
+    const olderAddress = await calls.dispatch("address_name", ADDRESS);
+    const olderCurrent = await calls.dispatch("current_address", document);
+    reply = refuse;
+    expect(await call("address_name", ADDRESS)).toBe("error");
+    expect(await call("current_procedure", document)).toBe("error");
+    const between = await calls.dispatch("current_procedure", document);
+    reply = (operation) => adapterFailure(FIXTURE, operation);
+    expect(await call("procedure_assembly", PROCEDURE)).toBe("error");
+    olderAddress.release(observed("old-name"));
+    olderCurrent.release(observed("0x1000"));
+    between.release(observed("main"));
+    for (const settled of [olderAddress, olderCurrent, between])
+      expect(await settled.isError()).toBe(false);
+    expect(
+      await availability([
+        "address_name",
+        "current_address",
+        "current_procedure",
+        "list_procedures",
+      ]),
+    ).toEqual({
+      address_name: refusal("address_name", "fixture refusal"),
+      current_address: inferredFailure("procedure_assembly"),
+      // Its own later success superseded the refusal, not the provider failure.
+      current_procedure: inferredFailure("procedure_assembly"),
+      list_procedures: inferredFailure("procedure_assembly"),
+    });
 
-  // A success dispatched behind a failure executed after it, even though the
-  // failure was not yet observed when the success was dispatched.
-  const failure = await dispatch("procedure_assembly", PROCEDURE);
-  const queued = await dispatch("current_address", document);
-  failure.release(
-    err(new ProviderAdapterError(FIXTURE.id, "procedure_assembly")),
-  );
-  expect((await failure.response).isError).toBe(true);
-  queued.release(observed("0x1000"));
-  expect((await queued.response).isError).not.toBe(true);
-  expect(await availability([...names, "procedure_assembly"])).toEqual({
-    ...newer,
-    current_address: "available",
-    list_procedures: "available",
-    procedure_assembly: observedFailure("procedure_assembly"),
+    // A success dispatched behind a failure executed after it, even though
+    // the failure was not yet observed when the success was dispatched.
+    reply = () => Promise.resolve(observed("text"));
+    const failure = await calls.dispatch("procedure_assembly", PROCEDURE);
+    const queued = await calls.dispatch("current_address", document);
+    failure.release(
+      err(new ProviderAdapterError(FIXTURE.id, "procedure_assembly")),
+    );
+    expect(await failure.isError()).toBe(true);
+    queued.release(observed("0x1000"));
+    expect(await queued.isError()).toBe(false);
+    expect(
+      await availability([
+        "address_name",
+        "current_address",
+        "current_procedure",
+        "list_procedures",
+        "procedure_assembly",
+      ]),
+    ).toEqual({
+      address_name: refusal("address_name", "fixture refusal"),
+      current_address: "available",
+      current_procedure: "available",
+      list_procedures: "available",
+      procedure_assembly: observedFailure("procedure_assembly"),
+    });
+  } finally {
+    await calls.join();
+  }
+});
+
+it("keeps newer successes when an older failure completes last", async () => {
+  const respond = {
+    current: (_operation: string): Promise<Reply> =>
+      Promise.resolve(observed("text")),
+  };
+  const { client, call, availability } = await connectScripted({
+    operations: DIRECT_OPERATIONS,
+    respond,
   });
+  const calls = heldCalls(client);
+  respond.current = (operation) =>
+    calls.respond(operation) ?? Promise.resolve(observed("text"));
+  const names = ["address_name", "current_address", "list_procedures"];
+  try {
+    // A sibling dispatched later already proved the provider answers.
+    const older = await calls.dispatch("address_name", ADDRESS);
+    const newer = await calls.dispatch("current_address", { document: "doc" });
+    newer.release(observed("0x1000"));
+    expect(await newer.isError()).toBe(false);
+    older.release(err(new ProviderAdapterError(FIXTURE.id, "address_name")));
+    expect(await older.isError()).toBe(true);
+    expect(await availability(names)).toEqual({
+      address_name: observedFailure("address_name"),
+      current_address: "available",
+      list_procedures: "available",
+    });
+
+    // A later success of the same operation supersedes its older failure.
+    const stale = await calls.dispatch("procedure_assembly", PROCEDURE);
+    expect(await call("procedure_assembly", PROCEDURE)).toBe("ok");
+    stale.release(
+      err(new ProviderAdapterError(FIXTURE.id, "procedure_assembly")),
+    );
+    expect(await stale.isError()).toBe(true);
+    expect(await availability([...names, "procedure_assembly"])).toEqual({
+      address_name: observedFailure("address_name"),
+      current_address: "available",
+      list_procedures: "available",
+      procedure_assembly: "available",
+    });
+  } finally {
+    await calls.join();
+  }
 });
 
 it("restores composed tools in a scoped catalog after one composed success", async () => {

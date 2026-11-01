@@ -744,15 +744,16 @@ missing from the complete inventory; it is not an implicit unavailable entry.
 
 Availability also reflects the active provider client's dispatched requests. A
 refusal or provider failure observed for an operation keeps that operation
-unavailable until a request for it succeeds. A provider adapter or process
-failure also marks that provider's other declared-available operations
-unavailable, with remediation stating that the status was inferred rather than
-observed for them. The next request to that provider that succeeds returns
-those inferred operations to their declared availability. This is not proof
-that each one works, and failures observed on other operations or providers
-remain. A success clears only failures from requests dispatched to the provider
-client before it. Request deadlines and cancellations neither mark nor clear
-availability. A new provider client starts without these outcomes.
+unavailable until a request for it dispatched later succeeds. A provider adapter
+or process failure also marks that provider's other declared-available
+operations unavailable until any request to that provider dispatched later
+succeeds; their remediation states that the status was inferred rather than
+observed for them. Recovery is not proof that each operation works, and failures
+observed on other operations or providers remain. Outcomes are ordered by
+dispatch to the provider client rather than reply completion, so a late reply
+from an older request does not override a newer outcome. Request deadlines and
+cancellations neither mark nor clear availability. A new provider client starts
+without these outcomes.
 
 `detail` selects the projection and the result echoes it. The default
 `summary` keeps open state, target identity, the binding, current-route
