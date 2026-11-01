@@ -454,11 +454,18 @@ export const parseAndroidManifestComponents = (
             : null;
       const exportedNonliteral =
         declaredExported !== null && exportedLiteral === null;
+      // Android discards an activity, alias or receiver filter that declares
+      // no action, while a service keeps it. Only kept filters select the
+      // export default and the API 31 explicit-export requirement.
+      const keptFilters =
+        component.nodeName === "service"
+          ? details.filterCount > 0
+          : details.actionFilter;
       const explicitExportRequired =
         declaredExported === null &&
         targetSdkLevel !== null &&
         targetSdkLevel >= 31 &&
-        details.filterCount > 0 &&
+        keptFilters &&
         (component.nodeName === "activity" ||
           component.nodeName === "activity-alias" ||
           component.nodeName === "service" ||
@@ -466,7 +473,7 @@ export const parseAndroidManifestComponents = (
       const filteredExportUnknown =
         declaredExported === null &&
         targetSdkLevel === null &&
-        details.filterCount > 0 &&
+        keptFilters &&
         (component.nodeName === "activity" ||
           component.nodeName === "activity-alias" ||
           component.nodeName === "service" ||
@@ -491,7 +498,7 @@ export const parseAndroidManifestComponents = (
             ? null
             : component.nodeName === "provider"
               ? providerDefault
-              : details.filterCount > 0,
+              : keptFilters,
         permission,
         permission_source: effectivePermissionSource,
         intent_filter_count: details.filterCount,
