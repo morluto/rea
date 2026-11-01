@@ -1,4 +1,7 @@
-"""Test-only observation of real flows; never synthesizes flow or stream IDs."""
+"""Observe real flows and select streaming for the explicit partial-reset case.
+
+Never synthesizes flow or stream IDs.
+"""
 
 import base64
 import hashlib
@@ -44,7 +47,8 @@ class Observer:
                 return None
             return {"http_version": message.http_version,
                     "content": bytes_view(message.raw_content),
-                    "timestamp_end": message.timestamp_end}
+                    "timestamp_end": message.timestamp_end,
+                    "streamed": bool(message.stream)}
         self.emit(event, id=flow.id, case=flow.request.headers.get("x-lab-case", "curl"),
                   request=message(flow.request), response=message(flow.response),
                   error=None if flow.error is None else flow.error.msg,
@@ -53,6 +57,12 @@ class Observer:
 
     def request(self, flow):
         self.flow("request", flow)
+
+    def responseheaders(self, flow):
+        if flow.request.headers.get("x-lab-case") == "partial-before-reset":
+            flow.response.stream = True
+            self.emit("partial-streaming", id=flow.id,
+                      store_streamed_bodies=ctx.options.store_streamed_bodies)
 
     def response(self, flow):
         self.flow("response", flow)

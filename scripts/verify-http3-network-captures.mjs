@@ -17,6 +17,7 @@ import {
   requireHttp3,
   verifyConcurrency,
 } from "./lib/http3-capture-assertions.mjs";
+import { verifyOriginReset } from "./lib/http3-reset-assertions.mjs";
 import {
   attemptAll,
   describeError,
@@ -30,7 +31,20 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 
 const root = process.argv[2];
-const inspectExisting = process.argv[3] === "--inspect-existing";
+const options = process.argv.slice(3);
+assert.ok(
+  options.every((option) =>
+    [
+      "--inspect-existing",
+      "--with-origin-reset",
+      "--with-partial-reset",
+    ].includes(option),
+  ),
+  "Unknown HTTP/3 verification option",
+);
+const inspectExisting = options.includes("--inspect-existing");
+const withOriginReset = options.includes("--with-origin-reset");
+const withPartialReset = options.includes("--with-partial-reset");
 const mitmdump = process.env.REA_MITMDUMP_COMMAND;
 const python = process.env.REA_HTTP3_PYTHON_COMMAND;
 assert.equal(
@@ -189,6 +203,8 @@ try {
           mitmdump,
           "--output",
           captureRoot,
+          ...(withOriginReset ? ["--with-origin-reset"] : []),
+          ...(withPartialReset ? ["--with-partial-reset"] : []),
         ],
         cwd,
         hostEnvironment: environment,
@@ -208,6 +224,27 @@ try {
   const manifest = await readJson(join(captureRoot, "manifest.json"));
   assert.equal(manifest.aioquic, "1.2.0");
   assert.equal(manifest.profile, "http3-minimal-v1");
+  const resetScenarios = [
+    {
+      name: "origin-reset",
+      requested: withOriginReset,
+      variant: "before-headers",
+    },
+    {
+      name: "partial-reset",
+      requested: withPartialReset,
+      variant: "partial-response",
+    },
+  ].filter((scenario) => {
+    const present = manifest.scenarios.some(
+      (entry) =>
+        entry.name === scenario.name &&
+        entry.capture === `${scenario.name}.mitm`,
+    );
+    if (scenario.requested)
+      assert.ok(present, `Requested ${scenario.name} scenario is missing`);
+    return present;
+  });
   await client.connect(transport);
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === contract.name,
@@ -237,7 +274,11 @@ try {
     JSON.stringify(advertised, null, 2),
   );
 
-  for (const name of ["normal", "fallback"])
+  for (const name of [
+    "normal",
+    "fallback",
+    ...resetScenarios.map((scenario) => scenario.name),
+  ])
     originals.set(name, await readFile(join(captureRoot, `${name}.mitm`)));
   const normal = await inspect("normal");
   assert.equal(normal.total_records, 4);
@@ -283,6 +324,15 @@ try {
     client_http: "2",
     origin_http: "1.1",
   });
+
+  for (const { name, variant } of resetScenarios) {
+    const capture = await inspect(name);
+    const producerEvents = await readLines(
+      join(captureRoot, `${name}.producer.jsonl`),
+    );
+    verifyOriginReset(capture, manifest, producerEvents, variant);
+    checks.push({ case: `${name}-and-recovery`, outcome: "passed" });
+  }
 
   const bundleReply = await client.callTool({
     name: "get_evidence_bundle",
@@ -386,10 +436,16 @@ const report = {
   verifier,
   producer_audit: producerAudit,
   scope:
-    "Real Linux reverse HTTP/3, mitmproxy 12.2.3, aioquic 1.2.0 and guest cURL",
+    "Real Linux reverse HTTP/3, mitmproxy 12.2.3, aioquic 1.2.0 and caller-supplied cURL",
   limitations: [
     "No local/WireGuard, browser, QUIC v2, migration, 0-RTT, mTLS or replay claim.",
-    "No HAR, interruption, certificate-failure or body-completeness coverage in this profile.",
+    "No HAR or certificate-failure coverage in this profile.",
+    checks.some((check) => check.case === "origin-reset-and-recovery")
+      ? "Reset coverage is limited to origin H3_REQUEST_CANCELLED before response headers and same-connection recovery; other reset codes and client cancellation remain unverified."
+      : "No before-headers reset coverage in this attempt.",
+    checks.some((check) => check.case === "partial-reset-and-recovery")
+      ? "Partial-response coverage is limited to an acknowledged streamed binary prefix before origin H3_REQUEST_CANCELLED, absent stored body and same-connection recovery; other body-completeness cases remain unverified."
+      : "No partial-response coverage in this attempt.",
   ],
 };
 if (directory) {

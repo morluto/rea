@@ -19,7 +19,7 @@ from pathlib import Path
 
 import aioquic
 from aioquic.asyncio import QuicConnectionProtocol, connect, serve
-from aioquic.h3.connection import H3Connection
+from aioquic.h3.connection import H3Connection, ErrorCode
 from aioquic.h3.events import DataReceived, HeadersReceived
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.events import ConnectionTerminated, HandshakeCompleted, StreamReset
@@ -35,6 +35,10 @@ def pairs(headers):
     return [[binary(name), binary(value)] for name, value in headers]
 
 
+PARTIAL_BODY = b"\x00\xffpartial-response:\x80\xfe"
+PARTIAL_UNSENT = b"unsent-tail"
+
+
 class Journal:
     def __init__(self, root):
         self.root = root
@@ -44,6 +48,7 @@ class Journal:
         self.tasks = set()
         self.children = []
         self.writers = []
+        self.partial_received = asyncio.Event()
 
     def emit(self, event, **data):
         value = {"event": event, "monotonic": time.monotonic(), **data}
@@ -58,6 +63,13 @@ class Journal:
 
 
 
+class RequestReset(ConnectionError):
+    def __init__(self, stream_id, error_code):
+        super().__init__(f"Stream {stream_id} reset with code {error_code}")
+        self.stream_id = stream_id
+        self.error_code = error_code
+
+
 class Endpoint(QuicConnectionProtocol):
     def __init__(self, *args, journal, endpoint, **kwargs):
         super().__init__(*args, **kwargs)
@@ -65,6 +77,7 @@ class Endpoint(QuicConnectionProtocol):
         self.http = H3Connection(self._quic)
         self.messages = {}
         self.waiters = {}
+        self.request_cases = {}
         self.concurrent = []
         self.identity = f"{endpoint}-{len(journal.events)}"
 
@@ -82,7 +95,9 @@ class Endpoint(QuicConnectionProtocol):
             targets = self.waiters.values() if isinstance(event, ConnectionTerminated) else [self.waiters.get(event.stream_id)]
             for waiter in targets:
                 if waiter is not None and not waiter.done():
-                    waiter.set_exception(ConnectionError(type(event).__name__))
+                    waiter.set_exception(RequestReset(event.stream_id, event.error_code)
+                                         if isinstance(event, StreamReset)
+                                         else ConnectionError(type(event).__name__))
         for item in self.http.handle_event(event):
             if isinstance(item, (HeadersReceived, DataReceived)):
                 message = self.messages.setdefault(item.stream_id, {"headers": [], "body": bytearray()})
@@ -90,6 +105,19 @@ class Endpoint(QuicConnectionProtocol):
                     message["headers"].extend(item.headers)
                 else:
                     message["body"].extend(item.data)
+                case = self.request_cases.get(item.stream_id)
+                if self.endpoint == "client" and case in {"reset-before-headers", "partial-before-reset"}:
+                    if isinstance(item, HeadersReceived):
+                        self.journal.emit("response-headers", endpoint="client", connection=self.identity,
+                                          stream_id=item.stream_id, headers=pairs(item.headers),
+                                          finished=item.stream_ended)
+                    else:
+                        received_body = bytes(message["body"])
+                        self.journal.emit("response-progress", endpoint="client", connection=self.identity,
+                                          stream_id=item.stream_id, headers=pairs(message["headers"]),
+                                          body=binary(received_body), finished=item.stream_ended)
+                        if case == "partial-before-reset" and received_body == PARTIAL_BODY and not item.stream_ended:
+                            self.journal.partial_received.set()
                 if item.stream_ended:
                     self.completed(item.stream_id, message)
 
@@ -105,7 +133,11 @@ class Endpoint(QuicConnectionProtocol):
         self.journal.requests[case] = {"headers": pairs(message["headers"]), "body": binary(body)}
         self.journal.emit("request-received", endpoint="origin", connection=self.identity,
                           stream_id=stream_id, case=case, **self.journal.requests[case])
-        if case.startswith("parallel-"):
+        if case == "reset-before-headers":
+            self.reset_response(case, stream_id)
+        elif case == "partial-before-reset":
+            self.journal.task(self.answer_partial(case, stream_id))
+        elif case.startswith("parallel-"):
             self.concurrent.append((case, stream_id, body))
             if len(self.concurrent) == 3:
                 self.journal.task(self.answer_parallel())
@@ -117,10 +149,34 @@ class Endpoint(QuicConnectionProtocol):
             self.answer(case, stream_id, b"\x00\xfeanswer:" + case.encode() + b":" + body[::-1])
             await asyncio.sleep(0.15)
 
+    def reset_response(self, case, stream_id):
+        code = int(ErrorCode.H3_REQUEST_CANCELLED)
+        self.journal.emit("response-reset", endpoint="origin", connection=self.identity,
+                          stream_id=stream_id, case=case, error_code=code)
+        self._quic.reset_stream(stream_id, code)
+        self.transmit()
+
+    def response_headers(self, case, body_length):
+        return [(b":status", b"200"), (b"content-type", b"application/octet-stream"),
+                (b"content-length", str(body_length).encode()),
+                (b"x-lab-case", case.encode()), (b"x-duplicate", b"one"), (b"x-duplicate", b"two")]
+
+    async def answer_partial(self, case, stream_id):
+        declared_length = len(PARTIAL_BODY) + len(PARTIAL_UNSENT)
+        headers = self.response_headers(case, declared_length)
+        self.journal.responses[case] = {"headers": pairs(headers), "body": binary(PARTIAL_BODY),
+                                        "declared_body_bytes": declared_length, "finished": False}
+        self.journal.emit("response-partial-sent", endpoint="origin", connection=self.identity,
+                          stream_id=stream_id, case=case, **self.journal.responses[case])
+        self.http.send_headers(stream_id, headers)
+        self.http.send_data(stream_id, PARTIAL_BODY, end_stream=False)
+        self.transmit()
+        # Acknowledged application receipt, not a sleep or an assumption about buffering.
+        await asyncio.wait_for(self.journal.partial_received.wait(), 5)
+        self.reset_response(case, stream_id)
+
     def answer(self, case, stream_id, body):
-        headers = [(b":status", b"200"), (b"content-type", b"application/octet-stream"),
-                   (b"content-length", str(len(body)).encode()),
-                   (b"x-lab-case", case.encode()), (b"x-duplicate", b"one"), (b"x-duplicate", b"two")]
+        headers = self.response_headers(case, len(body))
         self.journal.responses[case] = {"headers": pairs(headers), "body": binary(body), "finished": True}
         self.journal.emit("response-sent", endpoint="origin", connection=self.identity,
                           stream_id=stream_id, case=case, **self.journal.responses[case])
@@ -135,6 +191,7 @@ class Endpoint(QuicConnectionProtocol):
                    (b"x-lab-case", case.encode()), (b"content-type", b"application/octet-stream"),
                    (b"content-length", str(len(body)).encode()),
                    (b"x-duplicate", b"first"), (b"x-duplicate", b"second")]
+        self.request_cases[stream_id] = case
         self.waiters[stream_id] = asyncio.get_running_loop().create_future()
         self.journal.emit("request-sent", endpoint="client", connection=self.identity,
                           stream_id=stream_id, case=case, headers=pairs(headers), body=binary(body), finished=True)
@@ -348,6 +405,29 @@ async def run(args):
         await proxy.stop()
         scenarios.append({"name": "normal", "capture": "normal.mitm"})
 
+        for enabled, name, failed_case, recovery_case in [
+            (args.with_origin_reset, "origin-reset", "reset-before-headers", "reset-recovery"),
+            (args.with_partial_reset, "partial-reset", "partial-before-reset", "partial-reset-recovery"),
+        ]:
+            if not enabled:
+                continue
+            proxy = Proxy(args, root, name)
+            proxies.append(proxy)
+            await proxy.start()
+            async with connection(root, journal) as client:
+                stream_id, future = client.request(failed_case, b"\x00\xffreset-request")
+                try:
+                    await asyncio.wait_for(future, 10)
+                except RequestReset as error:
+                    if error.stream_id != stream_id or error.error_code != int(ErrorCode.H3_REQUEST_CANCELLED):
+                        raise
+                else:
+                    raise AssertionError("Origin reset completed as a successful response")
+                _, future = client.request(recovery_case, b"\x00\xferecovery-request")
+                await asyncio.wait_for(future, 10)
+            await proxy.stop()
+            scenarios.append({"name": name, "capture": name + ".mitm"})
+
         proxy = Proxy(args, root, "fallback", http3=False)
         proxies.append(proxy)
         await proxy.start()
@@ -413,4 +493,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mitmdump", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--with-origin-reset", action="store_true")
+    parser.add_argument("--with-partial-reset", action="store_true")
     asyncio.run(run(parser.parse_args()))

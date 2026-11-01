@@ -7,7 +7,7 @@ const textOf = (expected) => {
   const value = Buffer.from(expected.base64, "base64");
   return isUtf8(value) ? value.toString("utf8") : null;
 };
-const field = (record, pointer) =>
+export const field = (record, pointer) =>
   record.binary_fields.find((item) => item.pointer === pointer);
 const bytes = (record, pointer) => {
   const value = field(record, pointer);
@@ -40,7 +40,7 @@ const byCase = (value, name) => {
   );
   return selected[0];
 };
-const connectionH3 = (record, side) => {
+export const connectionH3 = (record, side) => {
   const conn = record.reported[side];
   assert.equal(conn.transport_protocol, "udp");
   assert.equal(bytes(record, `/${side}/alpn`).toString(), "h3");
@@ -48,7 +48,7 @@ const connectionH3 = (record, side) => {
   assert.equal(typeof conn.timestamp_tls_setup, "number");
 };
 
-function assertHeaders(record, side, headers) {
+export function assertHeaders(record, side, headers) {
   const regular = headers.filter(
     ([name]) => !Buffer.from(name.base64, "base64").toString().startsWith(":"),
   );
@@ -89,56 +89,78 @@ export function requireHttp3(record) {
   connectionH3(record, "server_conn");
 }
 
+export function verifyProducerConnections(record, producer) {
+  // Native UUIDs must be retained as UUIDs; the producer exports no stream mapping.
+  for (const side of ["client_conn", "server_conn"])
+    for (const key of ["id", "tls_version", "timestamp_tls_setup", "error"])
+      assert.equal(
+        record.reported[side][key],
+        producer[side][key],
+        `${side}.${key} differs from producer observation ${producer.id}`,
+      );
+}
+
+export function terminalObservation(record, producerEvents) {
+  const observations = producerEvents.filter(
+    (event) =>
+      ["response", "error"].includes(event.event) &&
+      event.id === record.reported.id,
+  );
+  assert.equal(
+    observations.length,
+    1,
+    `Expected one final producer observation for ${caseOf(record)}`,
+  );
+  assert.equal(
+    observations[0].case,
+    caseOf(record),
+    "Producer UUID and request case must agree",
+  );
+  return observations[0];
+}
+
+export function verifyRequest(record, expected, producer) {
+  assert.equal(record.reported.request.http_version, producer.http_version);
+  binaryEqual(record, "/request/content", producer.content);
+  binaryEqual(record, "/request/content", expected.body);
+  assertHeaders(record, "request", expected.headers);
+  const pseudo = {
+    ":method": "method",
+    ":scheme": "scheme",
+    ":authority": "authority",
+    ":path": "path",
+  };
+  for (const [headerName, headerValue] of expected.headers) {
+    const decodedName = Buffer.from(headerName.base64, "base64").toString();
+    if (pseudo[decodedName]) {
+      binaryEqual(record, `/request/${pseudo[decodedName]}`, headerValue);
+      assert.equal(
+        record.reported.request[pseudo[decodedName]],
+        textOf(headerValue),
+        `request.${pseudo[decodedName]} readable value`,
+      );
+    }
+  }
+}
+
 export function verifyNormalRecords(normal, manifest, finalProducer) {
   for (const record of normal.records) {
     const name = caseOf(record);
-    const producer = finalProducer.find(
-      (event) => event.id === record.reported.id,
-    );
-    assert.ok(producer, `No actual producer observation for ${name}`);
+    const producer = terminalObservation(record, finalProducer);
+    assert.equal(producer.event, "response");
     assert.equal(record.reported.error, null);
     assert.equal(producer.error, null);
     assert.equal(record.reported.response.status_code, 200);
     requireHttp3(record);
-    for (const side of ["request", "response"]) {
-      assert.equal(
-        record.reported[side].http_version,
-        producer[side].http_version,
-      );
-      binaryEqual(record, `/${side}/content`, producer[side].content);
-      assertHeaders(
-        record,
-        side,
-        manifest[side === "request" ? "requests" : "responses"][name].headers,
-      );
-    }
-    // Native UUIDs must be retained as UUIDs; the producer exports no stream mapping.
-    for (const side of ["client_conn", "server_conn"])
-      for (const key of ["id", "tls_version", "timestamp_tls_setup", "error"])
-        assert.equal(
-          record.reported[side][key],
-          producer[side][key],
-          `${side}.${key} differs from producer observation ${producer.id}`,
-        );
-    binaryEqual(record, "/request/content", manifest.requests[name].body);
+    verifyRequest(record, manifest.requests[name], producer.request);
+    assert.equal(
+      record.reported.response.http_version,
+      producer.response.http_version,
+    );
+    binaryEqual(record, "/response/content", producer.response.content);
     binaryEqual(record, "/response/content", manifest.responses[name].body);
-    const pseudo = {
-      ":method": "method",
-      ":scheme": "scheme",
-      ":authority": "authority",
-      ":path": "path",
-    };
-    for (const [headerName, headerValue] of manifest.requests[name].headers) {
-      const decodedName = Buffer.from(headerName.base64, "base64").toString();
-      if (pseudo[decodedName]) {
-        binaryEqual(record, `/request/${pseudo[decodedName]}`, headerValue);
-        assert.equal(
-          record.reported.request[pseudo[decodedName]],
-          textOf(headerValue),
-          `request.${pseudo[decodedName]} readable value`,
-        );
-      }
-    }
+    assertHeaders(record, "response", manifest.responses[name].headers);
+    verifyProducerConnections(record, producer);
   }
 }
 
