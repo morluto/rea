@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { writeFileSync } from "node:fs";
+import { utimesSync, writeFileSync } from "node:fs";
 import { buffer } from "node:stream/consumers";
 import { createReader } from "./inventory/reader.js";
 import { open, readFile, writeFile } from "node:fs/promises";
@@ -831,6 +831,9 @@ it.each(["valid replacement", "malformed blob"] as const)(
       scanCanonicalArtifactInventory(path, {}, (...args) => {
         expect(args[1]).toBe("node-sea");
         writeFileSync(args[0], replacement);
+        // A same-size replacement can keep the previous timestamp quantum, which
+        // would hide the change from the post-classification freshness check.
+        utimesSync(args[0], new Date(), new Date(Date.now() + 1000));
         const reader = createReader(...args);
         if (reader instanceof NodeSeaArtifactReader) created = reader;
         return reader;
