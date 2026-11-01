@@ -357,6 +357,33 @@ parent environment does not establish that Qwen removed Homebrew from it.
 Antigravity 2.0 discovers personal skills in `~/.gemini/config/skills`.
 Setup installs its selected skill copy there.
 
+## Cursor
+
+For Cursor, setup writes `mcpServers.rea` into the user-level `~/.cursor/mcp.json`
+(`%USERPROFILE%\.cursor\mcp.json` on Windows). Entries carry `command`, `args`,
+and `env`; stdio is the default transport. Setup manages only this user-scope
+file. Cursor has no client-specific skill directory, so setup installs the
+bundled skill under the shared `~/.agents/skills`.
+
+## Windsurf
+
+For Windsurf, setup writes `mcpServers.rea` into the user-level
+`~/.codeium/windsurf/mcp_config.json` (`%USERPROFILE%\.codeium\windsurf\mcp_config.json`
+on Windows). Entries carry `command`, `args`, and `env`; stdio is the default
+transport. Setup manages only this user-scope file. Windsurf has no
+client-specific skill directory, so setup installs the bundled skill under the
+shared `~/.agents/skills`.
+
+## Command Code
+
+For Command Code, setup writes `mcpServers.rea` into the user-level
+`~/.commandcode/mcp.json` (`%USERPROFILE%\.commandcode\mcp.json` on Windows).
+Entries carry `transport: "stdio"`, `enabled: true`, `command`, `args`, and
+`env`. Doctor accepts only `transport: "stdio"` for that entry; a registration
+that omits `transport` or names another transport is reported as invalid.
+Setup manages only this user-scope file, and installs the bundled skill under
+the shared `~/.agents/skills`.
+
 ## Gemini CLI
 
 Gemini CLI uses `$GEMINI_CLI_HOME/.gemini/settings.json` when that home override
