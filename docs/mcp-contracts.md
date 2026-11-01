@@ -326,11 +326,18 @@ To discover existing records without their large payloads, call
 Evidence IDs, artifact/provider identities, analysis-profile digests and native
 procedure metadata. Optional `filters` match exact `evidence_id`, `operation`,
 `target_sha256`, `analysis_profile_digest` or `procedure_address`. Use a discovered
-ID with `inspect_analysis_view`; neither discovery nor retained selection starts
-a provider. `retention: "complete-record"` describes stored Evidence, while
-`native_dossier.value_flow` independently reports truncation, unavailable or
-unknown metadata. Missing omission counts remain null. Summary output carries
-every matching record; actual transport admission still applies. Omitted
+ID with `inspect_analysis_view` when its parent operation supports a compatible
+view. For other operations, including `procedure_pseudo_code`, the summary
+does not provide the complete record: retrieve the complete bundle or export
+it locally. For pageable pseudocode, `analyze_function` can collect a separate
+dossier whose native pseudocode view supports paging; that is a new observation,
+not a view of the original `procedure_pseudo_code` record. Complete delivery can
+exceed the response budget. Neither discovery
+nor retained selection starts a provider. `retention: "complete-record"`
+describes stored Evidence, while `native_dossier.value_flow` independently
+reports truncation, unavailable or unknown metadata. Missing omission counts
+remain null. Summary output carries every matching record; actual transport
+admission still applies. Omitted
 `detail` preserves complete canonical bundle delivery; filters require summary.
 
 Residual-unknown mutations reject missing Evidence or unknown references and
