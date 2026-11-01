@@ -13,6 +13,7 @@ import {
   type AnalysisProviderSelector,
 } from "../../domain/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
+import type { ProviderReleaseVerification } from "../../domain/providerReleaseVerification.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
@@ -80,6 +81,7 @@ export interface AnalysisProviderBinding {
   readonly identity: ProviderIdentity & { readonly version: string };
   readonly selectionSource: "request" | "environment" | "auto-single-candidate";
   readonly profile: AnalysisProfileCommitment;
+  readonly releaseVerification?: ProviderReleaseVerification;
   readonly createClient?: AnalysisProviderBoundClientFactory;
   /** The provider's capabilities, attributed to its resolved identity. */
   readonly capabilities: readonly CapabilityDescriptor[];
@@ -831,6 +833,11 @@ const selectedResult = (
       identity: structuredClone(identity),
       selectionSource: source,
       profile: structuredClone(evaluated.profile),
+      ...(evaluated.releaseVerification === undefined
+        ? {}
+        : {
+            releaseVerification: structuredClone(evaluated.releaseVerification),
+          }),
       ...(evaluated.createClient === undefined
         ? {}
         : { createClient: evaluated.createClient }),

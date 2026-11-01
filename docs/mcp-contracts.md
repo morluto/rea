@@ -807,6 +807,14 @@ concrete version, selection source, and complete analysis profile through
 choices return typed selection details. A selected provider is never replaced
 automatically after a runtime failure.
 
+When the selected provider reports `release_verification` in its binding,
+the status compares its reported release version at binding with the provider's
+verified baseline. It does not recheck the executable, authenticate its bytes,
+or guarantee results.
+An unverified release may still be usable; the optional remediation preserves
+the caller's choice. Omission means verification was not reported. Target-free
+discovery does not probe a version solely to populate this fact.
+
 `open_binary` resolves an Apple bundle directory (`.app`, `.appex`,
 `.framework`, `.xpc`, `.systemextension`, `.bundle` or `.plugin`, compared
 case-insensitively) to the program file its `Info.plist` names in

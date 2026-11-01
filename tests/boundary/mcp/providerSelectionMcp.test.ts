@@ -781,6 +781,98 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
     ? parseMcpToolError(result)
     : z.record(z.string(), z.unknown()).parse(result.structuredContent);
 
+it.each(["full", "compact"] as const)(
+  "keeps provider-owned release verification bound to the selected session (%s)",
+  async (profile) => {
+    directory = await createTestTempDirectory("rea-provider-verification-");
+    const target = join(directory, "fixture.hop");
+    await writeFile(target, "fixture");
+    const starts: string[] = [];
+    const alpha = candidate("alpha", starts);
+    const verification = {
+      status: "unverified" as const,
+      basis: "reported_version" as const,
+      reported_version: "1",
+      verified_version: "2",
+      explanation: "The reported version does not authenticate the executable.",
+      remediation:
+        "Continue with the selected version or choose another explicitly.",
+    };
+    const session = composeBinarySession(
+      new AnalysisProviderRegistry([
+        {
+          ...alpha,
+          resolveAnalysisProfile: async (...args) => {
+            const resolved = await alpha.resolveAnalysisProfile(...args);
+            return resolved.ok
+              ? ok({ ...resolved.value, releaseVerification: verification })
+              : resolved;
+          },
+        },
+        candidate("beta", starts),
+      ]),
+    );
+    const server = createServer(
+      { kind: "session", session },
+      {
+        logger: silentLogger,
+        environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile },
+      },
+    );
+    const mcp = new Client(
+      { name: "provider-verification", version: "1" },
+      {
+        jsonSchemaValidator: new AjvJsonSchemaValidator(),
+      },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(mcp, server, { close: () => session.close() });
+    await server.connect(serverTransport);
+    await mcp.connect(clientTransport);
+    const definitions = new Map(
+      (await mcp.listTools()).tools.map((tool) => [tool.name, tool]),
+    );
+    const call = (name: string, args: Record<string, unknown> = {}) => {
+      const definition = definitions.get(name);
+      if (definition === undefined) throw new Error(`Missing tool ${name}`);
+      return mcp.callTool(
+        { name, arguments: args },
+        { toolDefinition: definition },
+      );
+    };
+    expect(structured(await call("binary_session")).result).toMatchObject({
+      analysis_provider_binding: null,
+    });
+    expect(
+      (await call("open_binary", { path: target, provider_id: "alpha" }))
+        .isError,
+    ).toBeFalsy();
+    for (const detail of ["summary", "complete"]) {
+      expect(
+        structured(await call("binary_session", { detail })).result,
+      ).toMatchObject({
+        analysis_provider_binding: {
+          provider: { id: "alpha" },
+          release_verification: verification,
+        },
+      });
+    }
+    expect(
+      (await call("open_binary", { path: target, provider_id: "beta" }))
+        .isError,
+    ).toBeFalsy();
+    const status = toolContract("binary_session").outputSchema.parse(
+      (await call("binary_session")).structuredContent,
+    );
+    expect(status.result.analysis_provider_binding?.provider.id).toBe("beta");
+    expect(status.result.analysis_provider_binding).not.toHaveProperty(
+      "release_verification",
+    );
+    expect((await call("close_binary")).isError).toBeFalsy();
+  },
+);
+
 it("retains attributed mixed profile cleanup through registered MCP calls and partial retry", async () => {
   directory = await createTestTempDirectory("rea-profile-completion-mcp-");
   const path = join(directory, "fixture.hop");

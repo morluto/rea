@@ -88,7 +88,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "binary_session",
-    'Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis. The default summary lists omitted_fields; detail: "complete" adds provider diagnostics, candidate capabilities and static tool flags.',
+    'Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis. A selected provider may report release_verification under its binding; omission means not reported, and reported-version verification does not authenticate executable bytes. The default summary lists omitted_fields; detail: "complete" adds provider diagnostics, candidate capabilities and static tool flags.',
     binarySessionInputSchema,
   ),
   session(

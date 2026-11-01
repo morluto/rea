@@ -20,6 +20,7 @@ import {
   KUNA_COMMAND_REMEDIATION,
   KUNA_PROVIDER_ID,
   KUNA_UNSUPPORTED_HOST_REMEDIATION,
+  KUNA_UNVERIFIED_VERSION_REMEDIATION,
   KUNA_VERIFIED_VERSION,
   KUNA_VERSION_PROBE_REMEDIATION,
 } from "./KunaRelease.js";
@@ -140,7 +141,7 @@ export const inspectKunaProvider = async (
   const cache = await cacheCheck(environment, platform);
   const versionGuidance = value.verified
     ? null
-    : `To use the verified release, select Kuna ${KUNA_VERIFIED_VERSION} by setting REA_KUNA_COMMAND to its absolute executable path in the environment that starts REA, then restart REA. You may continue with the selected unverified release.`;
+    : KUNA_UNVERIFIED_VERSION_REMEDIATION;
   return {
     id: KUNA_PROVIDER_ID,
     configured,

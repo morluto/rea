@@ -42,7 +42,13 @@ import {
 import { KunaProjectCache } from "./KunaProjectCache.js";
 import { kunaCapabilities } from "./KunaProviderCapabilities.js";
 import { KUNA_PROVIDER_IDENTITY } from "./KunaProviderMetadata.js";
-import { KUNA_COMMAND_REMEDIATION, KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import {
+  KUNA_COMMAND_REMEDIATION,
+  KUNA_PROVIDER_ID,
+  KUNA_RELEASE_VERIFICATION_EXPLANATION,
+  KUNA_UNVERIFIED_VERSION_REMEDIATION,
+  KUNA_VERIFIED_VERSION,
+} from "./KunaRelease.js";
 import { KunaRunSlots } from "./KunaRunSlots.js";
 import { KunaSessionClient } from "./KunaSessionClient.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
@@ -263,6 +269,18 @@ export class KunaProvider implements AnalysisProviderCandidate {
     }
     const { value } = installation;
     return ok({
+      releaseVerification: {
+        status: value.verified
+          ? ("verified" as const)
+          : ("unverified" as const),
+        basis: "reported_version" as const,
+        reported_version: value.version,
+        verified_version: KUNA_VERIFIED_VERSION,
+        explanation: KUNA_RELEASE_VERIFICATION_EXPLANATION,
+        remediation: value.verified
+          ? null
+          : KUNA_UNVERIFIED_VERSION_REMEDIATION,
+      },
       profile: createAnalysisProfile(
         { ...KUNA_PROVIDER_IDENTITY, version: value.version },
         {
