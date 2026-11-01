@@ -60,10 +60,13 @@ const checkElfVisibility = async (
     view,
   });
   expect(oldView.isError).not.toBe(true);
-  expect(
-    viewContract.outputSchema.parse(oldView.structuredContent)
-      .normalized_result,
-  ).toHaveProperty("items", [{ source_index: 1 }]);
+  const oldResult = viewContract.outputSchema.parse(
+    oldView.structuredContent,
+  ).normalized_result;
+  expect(oldResult).toHaveProperty("items", [{ source_index: 1 }]);
+  expect(oldResult).toMatchObject({
+    unknowns: [expect.stringContaining("visibility was not recorded")],
+  });
 };
 
 cliTest.for(["pe", "elf"] as const)(
