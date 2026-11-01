@@ -31,6 +31,9 @@ binaries and Ghidra projects are never committed.
   x86-64 PE, and x86-64 Mach-O targets from the same semantics. It preserves an
   exported entry, direct and indirect calls, a volatile string reference, and a
   multi-block branch across loaders.
+- `relocation-symbol.c` builds an x86-64 ELF with named and unnamed dynamic
+  relocations. The cross-format verifier checks their Ghidra observations through
+  the public CLI without executing the artifact.
 - `no-return.c` and `ReaNoReturnProbe.java` inject incorrect import flags into a
   real ELF or Mach-O analysis database, verify caller recovery, propagated flag
   repair and signature preservation, and retain genuine/unknown no-return calls

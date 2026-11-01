@@ -693,6 +693,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             row.addProperty("status", relocation.getStatus().toString());
             row.addProperty("type", relocation.getType());
+            row.add("symbol", GSON.toJsonTree(relocation.getSymbolName()));
             row.add("values", GSON.toJsonTree(relocation.getValues() == null ? new long[0] : relocation.getValues()));
             byte[] original = relocation.getBytes();
             row.add("original_bytes_hex", original == null ? JsonNull.INSTANCE : GSON.toJsonTree(bytesHex(original)));
