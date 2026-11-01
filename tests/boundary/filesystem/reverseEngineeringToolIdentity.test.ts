@@ -6,7 +6,7 @@ import { expect, expectTypeOf, it, vi } from "vitest";
 
 import {
   digestFile,
-  EXECUTABLE_DIGEST_TIMING,
+  EXECUTABLE_OBSERVATION_TIMING,
   type ReverseEngineeringProcesses,
   VERSION_PROBE_FAILURE_REASONS,
 } from "../../../src/application/reverse/ReverseEngineeringService.js";
@@ -91,8 +91,13 @@ posix(
         provider_version_banner_truncated: false,
         provider_identity: "banner",
       });
-      // The digest precedes both launches, which Evidence states.
-      expect(result.value.limitations).toContain(EXECUTABLE_DIGEST_TIMING);
+      // The digest and banner precede the command, which Evidence states.
+      expect(result.value.limitations).toContain(EXECUTABLE_OBSERVATION_TIMING);
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /SHA-256, and any -v banner, were read before the command launched/u,
+        ),
+      );
     }
     // Each call probes, then runs its command, both from the resolved path
     // and within the call's budget.
@@ -287,7 +292,7 @@ posix(
       expect(result.value.parameters).not.toHaveProperty(
         "provider_version_banner",
       );
-      expect(result.value.limitations).toContain(EXECUTABLE_DIGEST_TIMING);
+      expect(result.value.limitations).toContain(EXECUTABLE_OBSERVATION_TIMING);
       expect(result.value.raw_result).toMatchObject({
         stdout: "command output",
       });
@@ -737,8 +742,10 @@ posix(
     expect(result.value.limitations).toContain(
       "The executable version and supported formats are reported as unknown because the executable could not be read (EACCES).",
     );
-    // Without a digest there is no digest timing to qualify.
-    expect(result.value.limitations).not.toContain(EXECUTABLE_DIGEST_TIMING);
+    // Without a digest or banner there is no timing to qualify.
+    expect(result.value.limitations).not.toContain(
+      EXECUTABLE_OBSERVATION_TIMING,
+    );
   },
 );
 
