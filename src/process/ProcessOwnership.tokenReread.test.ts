@@ -229,6 +229,61 @@ it.each([
   },
 );
 
+it("keeps a PID reuse found by the first read unresolved across token re-reads", async () => {
+  // Linux reports the vanished token with ESRCH, and the first read's exit
+  // check already sees a zombie replacement. That known change must not be
+  // re-read into the replacement's exited facts.
+  let tokenReads = 0;
+  let identityReadsAfterToken = 0;
+  const signalGroup = vi.fn();
+  const host: ProcessOwnershipHost = {
+    platform: "linux",
+    listProcesses: async () => [member(101)],
+    environment: async () => ({}),
+    runTokens: async (entries) => {
+      tokenReads += 1;
+      return new Map(
+        entries.map(({ pid }) => [
+          pid,
+          { state: "unavailable", reason: "vanished", code: "ESRCH" } as const,
+        ]),
+      );
+    },
+    processIdentities: async (entries) =>
+      new Map<number, ProcessIdentityObservation>(
+        entries.map(({ pid }) => {
+          const replaced = tokenReads > 0 && ++identityReadsAfterToken > 1;
+          return [
+            pid,
+            {
+              state: "readable",
+              identity: replaced ? "start-101-reused" : "start-101",
+              lifecycle: {
+                state: "observed",
+                lifecycle: replaced ? "zombie" : "non-zombie",
+              },
+              relation: {
+                state: "observed",
+                parentPid: LEADER,
+                processGroupId: LEADER,
+              },
+            },
+          ];
+        }),
+      ),
+    signalGroup,
+  };
+
+  await expect(
+    cleanupOwnedProcessGroup(ownership(false), host),
+  ).resolves.toMatchObject({
+    cleaned: false,
+    failures: [{ pid: 101, reason: "process-identity-unavailable" }],
+  });
+  expect(tokenReads).toBe(1);
+  expect(signalGroup).not.toHaveBeenCalled();
+});
+
 it("keeps a readable member that changes groups while another member's token is re-read", async () => {
   // 101 is readable and owned on the first read; 102 needs one re-read.
   // While cleanup waits for 102, 101 moves to group 200 and must not escape.
@@ -311,6 +366,23 @@ it("reports only the persistent member when group members have mixed token outco
   });
   expect(result.cleaned === false && result.reason).not.toContain("101=");
   expect(signalGroup).not.toHaveBeenCalled();
+});
+
+it("re-reads a member whose refresh turns unreadable within the same bound", async () => {
+  // 102 needs a re-read; 101's own second read, its refresh, is transient.
+  let reads101 = 0;
+  const { host, signalGroup } = darwinHost({
+    members: [101, 102],
+    token: (pid, batch) =>
+      (pid === 102 && batch === 1) || (pid === 101 && ++reads101 === 2)
+        ? unreadable
+        : owned,
+  });
+
+  await expect(
+    cleanupOwnedProcessGroup(ownership(false), host),
+  ).resolves.toEqual({ cleaned: true, signaled: true });
+  expect(signalGroup).toHaveBeenCalledWith(LEADER, "SIGKILL");
 });
 
 it("signals on a cleanup retry once the retained member's token becomes readable", async () => {

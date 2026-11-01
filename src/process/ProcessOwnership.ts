@@ -1377,7 +1377,7 @@ const processOwnershipFailures = async (
         }),
         host,
         exitSettlement,
-        "first-observed",
+        { generation: "first-observed", runId },
       ),
       host,
       exitSettlement,
@@ -1748,12 +1748,9 @@ const scanWithOwnershipEvidence = async (
   );
   // Recheck final token-open races at the shared native identity boundary.
   const facts = await settleVanishedTokenFacts(
-    await reobserveUnavailableTokenFacts(
-      initialFacts,
-      host,
-      exitSettlement,
-      "current",
-    ),
+    await reobserveUnavailableTokenFacts(initialFacts, host, exitSettlement, {
+      generation: "current",
+    }),
     host,
     exitSettlement,
   );
