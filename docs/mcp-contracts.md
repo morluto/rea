@@ -292,6 +292,12 @@ limitation and reason IDs index that page's `items.messages` dictionary. Expand
 those references to recover exact text, repeated messages, and absent versus
 empty optional fields. Failed nodes retain their original error.
 
+Retained `xrefs` Evidence also supports `native-observation` address pages and
+`native-context` source caveats. `xrefs` still returns complete Evidence by
+default and does not accept `detail`; when its MCP response exceeds the budget,
+follow the returned continuation to page the retained result. These addresses
+remain untyped; paging does not add reference kinds or establish completeness.
+
 These views reference complete source context through `source_context.digest`
 and caveat counts. Read it using the same parent with
 `view: {"kind":"native-context","facet":"overview"}`. The other facets are
