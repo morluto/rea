@@ -201,7 +201,7 @@ describe("NativeAOT detail and summary byte accounting", () => {
         budget,
       );
     const complete = detail(REPORT_BUDGET);
-    expect(complete?.derived_memory).not.toBeNull();
+    expect(complete?.derived_memory).toEqual(expect.any(Object));
     let low = 0;
     let high = Buffer.byteLength(JSON.stringify(complete));
     while (low < high) {
@@ -211,7 +211,7 @@ describe("NativeAOT detail and summary byte accounting", () => {
     }
     const atBoundary = detail(low);
     const belowBoundary = detail(low - 1);
-    expect(atBoundary?.derived_memory).not.toBeNull();
+    expect(atBoundary?.derived_memory).toEqual(expect.any(Object));
     expect(Buffer.byteLength(JSON.stringify(atBoundary))).toBeLessThanOrEqual(
       low,
     );

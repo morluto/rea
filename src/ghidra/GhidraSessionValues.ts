@@ -5,13 +5,12 @@ import { z } from "zod";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  GHIDRA_INVENTORY_OPERATIONS,
-  GHIDRA_NAMING_OPERATIONS,
-} from "./GhidraInventoryValues.js";
-import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
+import { GHIDRA_NAMING_OPERATIONS } from "./GhidraInventoryValues.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
+import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
+import { GHIDRA_RISCV_CALLING_CONVENTION_IDS } from "./GhidraRiscvProfile.js";
 
 /** Exact methods proved by the selected Program bridge handshake. */
 export const GHIDRA_SESSION_CAPABILITIES = [
@@ -90,6 +89,14 @@ const sessionInfoSchema = z
     mips_soft_float_storage: z
       .object({
         policy: z.literal(GHIDRA_MIPS_SOFT_FLOAT_STORAGE),
+        functions: z.int().nonnegative(),
+        definitions: z.int().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    riscv_calling_convention: z
+      .object({
+        policy: z.enum(GHIDRA_RISCV_CALLING_CONVENTION_IDS),
         functions: z.int().nonnegative(),
         definitions: z.int().nonnegative(),
       })

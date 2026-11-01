@@ -47,15 +47,27 @@ it.each([
 });
 
 it("retains U+FFFD in well-formed metadata as an ordinary XML character", () => {
-  const decoded = JSON.stringify(
-    decodeSazMetadata(
-      Buffer.from(
-        '<Session><SessionFlag N="ui-comments" V="caf�"/>�</Session>',
-      ),
-    ),
+  const decoded = decodeSazMetadata(
+    Buffer.from('<Session><SessionFlag N="ui-comments" V="caf�"/>�</Session>'),
   );
-  expect(decoded).toContain('{"name":"V","value":"caf�"}');
-  expect(decoded).toContain('"value":"�"');
+  expect(decoded).toMatchObject({
+    name: "#document",
+    children: [
+      {
+        name: "Session",
+        children: [
+          {
+            name: "SessionFlag",
+            attributes: [
+              { name: "N", value: "ui-comments" },
+              { name: "V", value: "caf�" },
+            ],
+          },
+          { name: "#text", value: "�" },
+        ],
+      },
+    ],
+  });
 });
 
 it.each([
@@ -74,10 +86,20 @@ it.each([
 it("preserves valid comments, CDATA, declarations, and predefined entities", () => {
   const xml =
     '<?xml version="1.0"?><Session><!-- note & literal --><Value>A &amp; B</Value><C><![CDATA[C & D]]></C></Session>';
-  const decoded = JSON.stringify(decodeSazMetadata(Buffer.from(xml)));
-  expect(decoded).toContain("note & literal");
-  expect(decoded).toContain("A & B");
-  expect(decoded).toContain("C & D");
+  const decoded = decodeSazMetadata(Buffer.from(xml));
+  expect(decoded).toMatchObject({
+    children: [
+      { name: "xml" },
+      {
+        name: "Session",
+        children: [
+          { name: "#comment", value: " note & literal " },
+          { name: "Value", children: [{ name: "#text", value: "A & B" }] },
+          { name: "C", children: [{ name: "#cdata-section", value: "C & D" }] },
+        ],
+      },
+    ],
+  });
 });
 
 it("rejects DTDs without resolving entities", () => {

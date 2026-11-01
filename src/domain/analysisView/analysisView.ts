@@ -1,4 +1,7 @@
-import { NATIVE_OBSERVATION_OPERATIONS } from "../native/nativeObservation.js";
+import {
+  isNativeObservationOperation,
+  NATIVE_OBSERVATION_OPERATIONS,
+} from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
 import { projectApkSignatureView } from "./apkSignatureView.js";
@@ -22,7 +25,12 @@ import { projectGoBinaryView } from "./goBinaryView.js";
 import { projectRustBinaryView } from "./rustBinaryView.js";
 import { projectNativeFunctionMatchingView } from "./nativeFunctionMatchingView.js";
 import { projectNativeInventoryView } from "./nativeInventoryView.js";
-import { NATIVE_INVENTORY_OPERATIONS } from "../native/nativeInventory.js";
+import {
+  isNativeInventoryOperation,
+  NATIVE_INVENTORY_OPERATIONS,
+} from "../native/nativeInventory.js";
+import { ANALYSIS_EVIDENCE_PREDICATE } from "../evidence.js";
+import { NATIVE_FUNCTION_MATCHING_PREDICATE } from "../native/functionMatching.js";
 import { z } from "zod";
 import { projectBrowserScenarioView } from "./browserScenarioView.js";
 import { projectNativeLoadImageView } from "./nativeLoadImageView.js";
@@ -82,7 +90,6 @@ import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { GroupingViewKind } from "./analysisViewShape.js";
 import {
   analysisViewRequestSchema,
-  analysisViewSourceSchema,
   inspectAnalysisViewInputSchema,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
@@ -104,7 +111,6 @@ import {
   rustBinaryPageViewResultSchema,
   binaryLayoutSummaryViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
-  javascriptModuleReferencesViewResultSchema,
   artifactInventorySummaryViewResultSchema,
   desktopApplicationSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
@@ -138,7 +144,6 @@ import {
   nativeInventorySummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
-  nativeFunctionSummarySchema,
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
@@ -148,13 +153,11 @@ import {
 } from "./analysisViewResult.js";
 export {
   analysisViewRequestSchema,
-  analysisViewSourceSchema,
   inspectAnalysisViewInputSchema,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
   type AnalysisViewParent,
 };
-export { type GroupingViewKind };
 export {
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
@@ -172,7 +175,6 @@ export {
   rustBinaryPageViewResultSchema,
   binaryLayoutSummaryViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
-  javascriptModuleReferencesViewResultSchema,
   artifactInventorySummaryViewResultSchema,
   desktopApplicationSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
@@ -206,7 +208,6 @@ export {
   nativeInventorySummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
-  nativeFunctionSummarySchema,
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
@@ -418,6 +419,28 @@ export const projectAnalysisView = (
           path: ["source"],
           reason: "invalid_format",
           message: "Parent Evidence ID is not a digest-backed identifier.",
+        },
+      ]),
+    );
+  const expectedPredicate =
+    parent.operation === "match_native_functions"
+      ? NATIVE_FUNCTION_MATCHING_PREDICATE
+      : parent.operation === "analyze_function" ||
+          isNativeObservationOperation(parent.operation) ||
+          isNativeInventoryOperation(parent.operation)
+        ? ANALYSIS_EVIDENCE_PREDICATE
+        : undefined;
+  if (
+    expectedPredicate !== undefined &&
+    parent.predicateType !== expectedPredicate
+  )
+    return err(
+      analysisViewInputError([
+        {
+          path: ["source", "predicate_type"],
+          reason: "invalid_value",
+          expected: expectedPredicate,
+          message: `${parent.operation} requires ${expectedPredicate} Evidence; received ${parent.predicateType}.`,
         },
       ]),
     );

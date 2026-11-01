@@ -110,9 +110,7 @@ describe("native load-image result projection", () => {
     );
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) throw parsed.error;
-    expect(JSON.stringify(parsed.value.value)).toBe(
-      JSON.stringify(observations),
-    );
+    expect(parsed.value.value).toEqual(observations);
     expect(parsed.value.rawResult).toBeUndefined();
   });
 
@@ -129,7 +127,7 @@ describe("native load-image result projection", () => {
     );
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) throw parsed.error;
-    expect(JSON.stringify(parsed.value.value)).toContain('"entry_context":[]');
+    expect(parsed.value.value).toMatchObject({ entry_context: [] });
   });
 });
 

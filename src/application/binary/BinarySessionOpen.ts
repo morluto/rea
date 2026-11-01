@@ -1,3 +1,4 @@
+import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import type { ExecutableFormatHint } from "../../domain/dosCom.js";
 import type {
   BinaryArchitecture,
@@ -7,11 +8,12 @@ import { artifactTargetSelectedPath } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProviderSelector } from "../../domain/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import {
-  snapshotMatchesBinding,
+  snapshotBindingMismatch,
   snapshotMatchesTarget,
   snapshotTarget,
+  type SnapshotBindingMismatch,
+  type AnalysisSnapshot,
 } from "../../domain/analysisSnapshot.js";
-import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
@@ -22,7 +24,7 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, type Result } from "../../domain/result.js";
 import type { SessionProviderRoute } from "./SessionProviderRouter.js";
 import {
-  isProfilelessNativeDispatchSnapshot,
+  profilelessSnapshotMismatch,
   profilelessNativeDispatchProfile,
 } from "./ProfilelessNativeWorkflowSnapshot.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
@@ -38,6 +40,8 @@ export interface BinarySessionOpenOptions {
   readonly formatHint?: ExecutableFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
+  /** Inputs for format=esp-flash-image. */
+  readonly espFlash?: EspFlashSelection;
   readonly snapshot?: AnalysisSnapshot;
   /**
    * Load the snapshot inside the open's turn instead of before it, so calls
@@ -65,10 +69,10 @@ interface ResolveSessionOpenInput {
   readonly current: CurrentOpenBinding | undefined;
   readonly path: string;
   readonly options: BinarySessionOpenOptions;
-  readonly stagedSnapshotMatches: (
+  readonly stagedSnapshotMismatch: (
     target: BinaryTarget,
     profile: AnalysisProfileCommitment | null,
-  ) => boolean;
+  ) => SnapshotBindingMismatch | undefined;
 }
 
 interface ResolveSessionTargetInput {
@@ -76,10 +80,10 @@ interface ResolveSessionTargetInput {
   readonly current: CurrentOpenBinding | undefined;
   readonly target: BinaryTarget;
   readonly options: BinarySessionOpenOptions;
-  readonly stagedSnapshotMatches: (
+  readonly stagedSnapshotMismatch: (
     target: BinaryTarget,
     profile: AnalysisProfileCommitment | null,
-  ) => boolean;
+  ) => SnapshotBindingMismatch | undefined;
 }
 
 /** Parse a target, resolve its provider route, and validate snapshot binding. */
@@ -101,6 +105,7 @@ export const resolveSessionOpen = async (
     ...(options.entryPoint === undefined
       ? {}
       : { entryPoint: options.entryPoint }),
+    ...(options.espFlash === undefined ? {} : { espFlash: options.espFlash }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (!parsed.ok) return parsed;
@@ -130,7 +135,7 @@ export const validateResolvedSessionTarget = (
     readonly route: SessionProviderRoute;
   },
 ): Result<ResolvedSessionOpen, AnalysisError> => {
-  const { current, target, route, options, stagedSnapshotMatches } = input;
+  const { current, target, route, options, stagedSnapshotMismatch } = input;
   const sameTarget = sameSessionTarget(current?.target, target);
   const snapshotError = validateSnapshot({
     snapshot: options.snapshot,
@@ -138,7 +143,7 @@ export const validateResolvedSessionTarget = (
     profile: route.profile,
     profilelessWorkflowProfile: profilelessNativeDispatchProfile(route),
     current,
-    stagedSnapshotMatches,
+    stagedSnapshotMismatch,
   });
   if (snapshotError !== undefined) return err(snapshotError);
   return { ok: true, value: { target, route, sameTarget } };
@@ -162,10 +167,10 @@ interface ValidateSnapshotInput {
   readonly profile: AnalysisProfileCommitment | null;
   readonly profilelessWorkflowProfile: AnalysisProfileCommitment | undefined;
   readonly current: CurrentOpenBinding | undefined;
-  readonly stagedSnapshotMatches: (
+  readonly stagedSnapshotMismatch: (
     target: BinaryTarget,
     profile: AnalysisProfileCommitment | null,
-  ) => boolean;
+  ) => SnapshotBindingMismatch | undefined;
 }
 
 const validateSnapshot = ({
@@ -174,31 +179,34 @@ const validateSnapshot = ({
   profile,
   profilelessWorkflowProfile,
   current,
-  stagedSnapshotMatches,
+  stagedSnapshotMismatch,
 }: ValidateSnapshotInput): EvidenceIntegrityError | undefined => {
-  if (
-    snapshot !== undefined &&
-    (profile === null
-      ? profilelessWorkflowProfile === undefined ||
-        !isProfilelessNativeDispatchSnapshot(
-          snapshot,
+  if (snapshot !== undefined) {
+    const mismatch =
+      profile === null
+        ? profilelessSnapshotMismatch(
+            snapshot,
+            target,
+            profilelessWorkflowProfile,
+          )
+        : snapshotBindingMismatch(snapshot, target, profile);
+    if (mismatch !== undefined)
+      return new AnalysisSnapshotMismatchError(
+        "Analysis snapshot target, provider, or analysis profile does not match the requested binary",
+        mismatch,
+      );
+  }
+  const stagedMismatch =
+    current === undefined
+      ? stagedSnapshotMismatch(
           target,
-          profilelessWorkflowProfile,
+          profile ?? profilelessWorkflowProfile ?? null,
         )
-      : !snapshotMatchesBinding(snapshot, target, profile))
-  )
+      : undefined;
+  if (stagedMismatch !== undefined)
     return new AnalysisSnapshotMismatchError(
-      "Analysis snapshot profile_mismatch: target, provider, or analysis profile does not match the requested binary",
-    );
-  if (
-    current === undefined &&
-    !stagedSnapshotMatches(
-      target,
-      profile ?? profilelessWorkflowProfile ?? null,
-    )
-  )
-    return new AnalysisSnapshotMismatchError(
-      "Analysis snapshot profile_mismatch: staged target, provider, or analysis profile does not match",
+      "Analysis snapshot does not match the staged target, provider, or analysis profile",
+      stagedMismatch,
     );
   return undefined;
 };

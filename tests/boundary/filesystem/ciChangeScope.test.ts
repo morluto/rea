@@ -103,6 +103,62 @@ async function classify(
   return z.record(z.string(), z.unknown()).parse(JSON.parse(result.stdout));
 }
 
+it.each([
+  ["bridge/native/rea_lldb_tracer.py", "python"],
+  ["bridge/pwndbg/test_core_context.py", "python"],
+  ["tests/support/analysis-efficiency/test_signal_oracle.py", "python"],
+  ["scripts/run-python-tests.py", "python"],
+  ["scripts/verify-browser-request.mjs", "browser"],
+  ["scripts/lib/browser-request-e2e.mjs", "browser"],
+  ["scripts/fixtures/browser-request-site.mjs", "browser"],
+  ["scripts/lib/browser-nested-source-map-e2e.mjs", "web_source_map"],
+  ["scripts/lib/browser-runtime-fixture-lifecycle.mjs", "web_source_map"],
+  ["src/cliBrowserScenarioCommands.ts", "browser"],
+  ["src/application/BrowserScenarioCaptureService.ts", "browser"],
+  ["src/composition/browserScenario.ts", "browser"],
+  ["src/cli/environmentCommands.ts", "browser"],
+  ["src/application/environment/environmentBuild.ts", "browser"],
+  ["src/domain/analysisView/environmentCoverageView.ts", "browser"],
+  ["src/domain/analysisView/scenarioCaptureRecords.ts", "browser"],
+  ["src/domain/analysisView/recordedResponseBody.ts", "browser"],
+  ["src/domain/analysisView/recordedExchangeBody.ts", "browser"],
+  ["src/domain/analysisView/recordedMediaType.ts", "browser"],
+  ["src/domain/analysisView/webNetworkRouteTemplates.ts", "browser"],
+  ["src/domain/analysisView/EnvironmentManifestAccumulator.ts", "browser"],
+  ["src/domain/analysisView/EnvironmentStateAccumulator.ts", "browser"],
+  ["src/domain/analysisView/WebNetworkProjectionAccumulator.ts", "browser"],
+  ["src/captures/CaptureProvider.ts", "packet_capture"],
+  ["tests/boundary/mcp/packetCaptureMcp.test.ts", "packet_capture"],
+  ["tests/acceptance/pcapVerifier.test.ts", "packet_capture"],
+  ["tests/fixtures/pcap/offlineHttpCapture.ts", "packet_capture"],
+  ["scripts/verify-pcap.mjs", "packet_capture"],
+  ["src/signals/RecordingProvider.ts", "signal_recording"],
+  ["tests/boundary/mcp/signalRecordingMcp.test.ts", "signal_recording"],
+  ["src/process/LinuxResourceLimits.ts", "packet_capture"],
+  ["src/process/LinuxResourceLimits.ts", "signal_recording"],
+  ["scripts/ci/require-provider-tests.mjs", "packet_capture"],
+  ["scripts/ci/require-provider-tests.mjs", "signal_recording"],
+])("selects %s for %s", async (path, scope) => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, [path]);
+  expect(await classify(directory, base, head)).toMatchObject({
+    [scope]: true,
+  });
+});
+
+it.each(["src/domain/webCaptureDiffSchemas.ts", "src/domain/webScreenshot.ts"])(
+  "selects real browser verification for %s without capture lanes",
+  async (path) => {
+    const { directory, base } = await fixture();
+    const head = await change(directory, [path]);
+    expect(await classify(directory, base, head)).toMatchObject({
+      browser: true,
+      packet_capture: false,
+      signal_recording: false,
+    });
+  },
+);
+
 it("reuses only scheduled qualification and preserves every explicit full request", async () => {
   const { directory, base } = await fixture();
   const reused = await classify(directory, base, base, "schedule", false, true);
@@ -717,6 +773,14 @@ it.each([
     { code: false, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "tests/conformance/ghidra/ReaArmContextProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaDecodeProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "bridge/ghidra/Example.java",
     {
       code: true,
@@ -830,6 +894,30 @@ it.each([
   ],
   [
     "tests/boundary/cli/nativePlistCli.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "src/artifacts/InesArtifactReader.ts",
+    { code: true, apple: true, package: false, runtime: true },
+  ],
+  [
+    "src/domain/inesContainer.ts",
+    { code: true, apple: true, docs: true, package: false, runtime: true },
+  ],
+  [
+    "tests/fixtures/ines.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/acceptance/inesContainer.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/filesystem/inesArtifact.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/filesystem/inesCancellation.test.ts",
     { code: true, apple: true, package: false, runtime: false },
   ],
   [
@@ -994,7 +1082,7 @@ it.each([
       code: true,
       runtime: true,
       agentenv: true,
-      browser: false,
+      browser: true,
       package: false,
     },
   ],
@@ -1197,37 +1285,40 @@ it.each([
   },
 );
 
-it("rejects skipped selected work while allowing unselected lanes to skip", async () => {
-  const command = fileURLToPath(
-    new URL("../../../scripts/ci/required.mjs", import.meta.url),
-  );
-  const { CI_FLAGS } = await loadScopes();
-  const jobs = {
-    changes: {
-      result: "success",
-      outputs: {
-        ...Object.fromEntries(CI_FLAGS.map((flag) => [flag, "false"])),
-        tier: "fast",
-        evm: "true",
+it.each(["evm", "browser"])(
+  "rejects skipped selected %s work while allowing unselected lanes to skip",
+  async (scope) => {
+    const command = fileURLToPath(
+      new URL("../../../scripts/ci/required.mjs", import.meta.url),
+    );
+    const { CI_FLAGS } = await loadScopes();
+    const jobs = {
+      changes: {
+        result: "success",
+        outputs: {
+          ...Object.fromEntries(CI_FLAGS.map((flag) => [flag, "false"])),
+          tier: "fast",
+          [scope]: "true",
+        },
       },
-    },
-    static: { result: "success" },
-    test: { result: "success" },
-    evm: { result: "success" },
-    browser: { result: "skipped" },
-  };
-  const run = (result: string) =>
-    execFileAsync(process.execPath, [command], {
-      env: {
-        ...process.env,
-        CI_JOBS: JSON.stringify({ ...jobs, evm: { result } }),
-      },
-    });
-  await expect(run("success")).resolves.toMatchObject({ stderr: "" });
-  for (const result of ["failure", "cancelled", "skipped"]) {
-    await expect(run(result)).rejects.toMatchObject({ code: 1 });
-  }
-});
+      static: { result: "success" },
+      test: { result: "success" },
+      evm: { result: "skipped" },
+      browser: { result: "skipped" },
+    };
+    const run = (result: string) =>
+      execFileAsync(process.execPath, [command], {
+        env: {
+          ...process.env,
+          CI_JOBS: JSON.stringify({ ...jobs, [scope]: { result } }),
+        },
+      });
+    await expect(run("success")).resolves.toMatchObject({ stderr: "" });
+    for (const result of ["failure", "cancelled", "skipped"]) {
+      await expect(run(result)).rejects.toMatchObject({ code: 1 });
+    }
+  },
+);
 
 it.each([
   [
@@ -1304,6 +1395,14 @@ it.each([
   [
     ".github/workflows/pr-readiness.yml",
     { workflows: true, code: true, package: false, website: false },
+  ],
+  [
+    ".github/workflows/codeql.yml",
+    { workflows: true, code: true, runtime: false, package: false },
+  ],
+  [
+    ".github/codeql/production.yml",
+    { workflows: true, code: true, runtime: false, package: false },
   ],
   [
     ".github/workflows/real-ghidra-windows.yml",
@@ -1591,7 +1690,7 @@ const workflowFile = async (name: string): Promise<unknown> =>
 
 const scopesSchema = z.object({
   CI_FLAGS: z.array(z.string()),
-  SCOPES: z.record(z.string(), z.array(z.string())),
+  CI_LANES: z.record(z.string(), z.object({ paths: z.array(z.string()) })),
   MANUAL_VERIFIERS: z.array(z.string()),
 });
 
@@ -1612,8 +1711,19 @@ const stepRuns = z.object({
   ),
 });
 
+it("runs the browser request journey in the real browser lane", async () => {
+  const workflow = stepRuns.parse(await workflowFile("real-browser.yml"));
+  const commands = workflow.jobs["real-browser"]?.steps?.map(
+    (step) => step.run,
+  );
+  expect(commands).toContain("dbus-run-session -- npm run verify:browser");
+  expect(commands).toContain(
+    "dbus-run-session -- node scripts/verify-browser-request.mjs",
+  );
+});
+
 it("owns every explicit native-host test path with the lane that runs it", async () => {
-  const { SCOPES } = await loadScopes();
+  const { CI_LANES } = await loadScopes();
   const ci = stepRuns.parse(await workflowFile("ci.yml"));
   const listed = (job: string) =>
     (ci.jobs[job]?.steps ?? [])
@@ -1622,7 +1732,9 @@ it("owns every explicit native-host test path with the lane that runs it", async
   const unowned = (job: string, scope: string) =>
     listed(job).filter(
       (path) =>
-        !(SCOPES[scope] ?? []).some((pattern) => matchesGlob(path, pattern)),
+        !(CI_LANES[scope]?.paths ?? []).some((pattern) =>
+          matchesGlob(path, pattern),
+        ),
     );
   expect(listed("apple-artifacts").length).toBeGreaterThan(0);
   expect(listed("windows-curated").length).toBeGreaterThan(0);

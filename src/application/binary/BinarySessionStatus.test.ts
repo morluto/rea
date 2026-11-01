@@ -25,9 +25,9 @@ import {
 } from "./BinarySessionStatus.js";
 import {
   APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
-  NATIVE_MACOS_PROVIDER_IDENTITY,
   nativeMacOSCapabilities,
 } from "../../native/NativeMacOSProviderMetadata.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../native/NativeMacosProviderIdentity.js";
 
 const projectedStatusSchema = z.object({
   capabilities: sessionProviderFacts.shape.capabilities,
@@ -172,6 +172,14 @@ const projectStatus = async (
     candidateStatuses: async () => candidates,
   };
   return binarySessionStatus({
+    investigation: {
+      evidence_records: 0,
+      unknown_revisions: 0,
+      unknown_heads: 0,
+      retained_representation_bytes: 0,
+      maximum_representation_bytes: 0,
+      persistence: "memory",
+    },
     target: options.target,
     route,
     router,

@@ -1,5 +1,5 @@
 import { lstat, opendir, readFile, realpath, stat } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { extname, join, sep } from "node:path";
 
 import { z } from "zod";
 
@@ -10,6 +10,8 @@ import { isPathWithinRoot } from "../domain/localPath.js";
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
+import type { BundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
+import { openableAppleBundleExtension } from "../domain/apple/appleBundleTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
@@ -18,6 +20,7 @@ const BINARY_PLIST_DECODE_BYTES = 16 * 1024 * 1024;
 
 /** Where one app bundle layout keeps its Info.plist and program file. */
 interface BundleLayout {
+  readonly name: BundleResourceRoot["layout"];
   readonly plist: readonly string[];
   readonly programs: readonly string[];
   readonly programsLabel: string;
@@ -26,12 +29,44 @@ interface BundleLayout {
 const BUNDLE_LAYOUTS: readonly BundleLayout[] = [
   // macOS bundles keep both under Contents.
   {
+    name: "contents",
     plist: ["Contents", "Info.plist"],
     programs: ["Contents", "MacOS"],
     programsLabel: "Contents/MacOS",
   },
   // iOS-style bundles, as extracted from an IPA, keep both at the root.
-  { plist: ["Info.plist"], programs: [], programsLabel: "the bundle root" },
+  {
+    name: "root",
+    plist: ["Info.plist"],
+    programs: [],
+    programsLabel: "the bundle root",
+  },
+];
+
+// A macOS framework keeps the selected version's resources and program file
+// under Versions/Current; its root holds only symbolic links into it.
+const VERSIONED_FRAMEWORK_LAYOUTS: readonly BundleLayout[] = [
+  ...BUNDLE_LAYOUTS,
+  {
+    name: "versioned-framework",
+    plist: ["Versions", "Current", "Resources", "Info.plist"],
+    programs: ["Versions", "Current"],
+    programsLabel: "Versions/Current",
+  },
+];
+
+// A flattened framework, as Electron and Gecko apps ship it, is one version
+// directory without the Versions wrapper: Resources/Info.plist beside the
+// program file. Its Resources is a real directory, not the versioned layout's
+// root link into Versions/Current, so the two layouts are never both read.
+const FLATTENED_FRAMEWORK_LAYOUTS: readonly BundleLayout[] = [
+  ...BUNDLE_LAYOUTS,
+  {
+    name: "flattened-framework",
+    plist: ["Resources", "Info.plist"],
+    programs: [],
+    programsLabel: "the bundle root",
+  },
 ];
 
 /** A resolved bundle program file and the Info.plist that declared it. */
@@ -47,7 +82,7 @@ export interface ResolvedAppBundleResourceRoot {
   /** Canonical directory whose resources are inspected. */
   readonly canonicalPath: string;
   readonly infoPlistPath: string;
-  readonly layout: "contents" | "root";
+  readonly layout: BundleResourceRoot["layout"];
   /** No executable was opened or hashed by resource-root discovery. */
   readonly executableSha256: string | null;
 }
@@ -105,6 +140,114 @@ export const resolveAppBundleExecutable = async (
 };
 
 /**
+ * Resolve an extension, framework, XPC service, system extension or loadable
+ * bundle directory to its declared program file. An app keeps its own
+ * resolution, including the iOS-on-Mac Wrapper. Other types read the macOS
+ * Contents layout or the flat root layout, and frameworks also read the
+ * versioned layout. Exactly one layout may declare the bundle, and its
+ * Info.plist must stay inside the bundle; the program file is never guessed.
+ */
+export const resolveAppleBundleExecutable = async (
+  path: string,
+  fileSystem: AppBundleFileSystem = defaultFileSystem,
+): Promise<Result<ResolvedAppBundle, BinaryTargetError>> => {
+  if (extname(path).toLowerCase() === ".app")
+    return resolveAppBundleExecutable(path, fileSystem);
+  try {
+    const layout = await declaredBundleLayout(path, fileSystem);
+    if (!layout.ok) return layout;
+    if (layout.value === undefined)
+      return err(
+        new BinaryTargetError(
+          path,
+          `bundle Info.plist was not found in any supported layout: ${path}`,
+          {
+            constraint: "bundle_info_plist_missing",
+            probedPaths: (await bundleLayouts(path)).map((candidate) =>
+              join(path, ...candidate.plist),
+            ),
+          },
+        ),
+      );
+    return await resolveLayoutExecutable(path, layout.value, fileSystem);
+  } catch (cause: unknown) {
+    if (cause instanceof BinaryTargetError) return err(cause);
+    return err(
+      new BinaryTargetError(path, errorReason(cause, path), { cause }),
+    );
+  }
+};
+
+const bundleLayouts = async (
+  bundle: string,
+): Promise<readonly BundleLayout[]> => {
+  if (extname(bundle).toLowerCase() !== ".framework") return BUNDLE_LAYOUTS;
+  return (await entryPresent(join(bundle, "Versions")))
+    ? VERSIONED_FRAMEWORK_LAYOUTS
+    : FLATTENED_FRAMEWORK_LAYOUTS;
+};
+
+/**
+ * The one layout whose Info.plist declares a bundle other than an app, or
+ * undefined when none does. A framework with Versions but no Versions/Current,
+ * Info.plist files in more than one layout, or an Info.plist that leaves the
+ * bundle fail closed instead of selecting a layout.
+ */
+const declaredBundleLayout = async (
+  path: string,
+  fileSystem: AppBundleFileSystem,
+): Promise<Result<BundleLayout | undefined, BinaryTargetError>> => {
+  const layouts = await bundleLayouts(path);
+  if (layouts === VERSIONED_FRAMEWORK_LAYOUTS) {
+    const current = join(path, "Versions", "Current");
+    if (!(await entryPresent(current)))
+      return err(
+        new BinaryTargetError(
+          path,
+          `framework has Versions but no Versions/Current: ${current}`,
+          {
+            constraint: "bundle_current_version_missing",
+            probedPaths: [current],
+          },
+        ),
+      );
+  }
+  const present: BundleLayout[] = [];
+  for (const layout of layouts)
+    if (await layoutPlistPresent(join(path, ...layout.plist)))
+      present.push(layout);
+  const [layout, ...others] = present;
+  if (layout === undefined) return ok(undefined);
+  if (others.length > 0)
+    return err(
+      new BinaryTargetError(
+        path,
+        `bundle declares Info.plist in more than one layout: ${path}`,
+        {
+          constraint: "bundle_layout_ambiguous",
+          probedPaths: present.map((candidate) =>
+            join(path, ...candidate.plist),
+          ),
+        },
+      ),
+    );
+  const plistPath = join(path, ...layout.plist);
+  if (
+    !isPathWithinRoot(
+      await fileSystem.realpath(path),
+      await fileSystem.realpath(plistPath),
+    )
+  )
+    return err(
+      new BinaryTargetError(path, "bundle Info.plist leaves the bundle", {
+        constraint: "bundle_path_escapes",
+        probedPaths: [plistPath],
+      }),
+    );
+  return ok(layout);
+};
+
+/**
  * Resolve only the root and Info.plist layout needed for read-only resource
  * inspection. This intentionally does not require or guess CFBundleExecutable.
  */
@@ -123,6 +266,39 @@ export const findAppBundleResourceRoot = async (
     // into a different, otherwise valid bundle resource root.
     await stat(callerPath);
     const canonicalInput = await realpath(callerPath);
+    const extension = extname(canonicalInput).toLowerCase();
+    if (
+      extension !== ".app" &&
+      openableAppleBundleExtension(extension) !== undefined
+    ) {
+      const declared = await declaredBundleLayout(
+        canonicalInput,
+        defaultFileSystem,
+      );
+      if (!declared.ok) return declared;
+      // An admitted bundle type without Info.plist is a native admission
+      // failure, not an application directory for other routes.
+      if (declared.value === undefined)
+        return err(
+          new BinaryTargetError(
+            callerPath,
+            `bundle Info.plist was not found in any supported layout: ${callerPath}`,
+            {
+              constraint: "bundle_info_plist_missing",
+              probedPaths: (await bundleLayouts(canonicalInput)).map((layout) =>
+                join(canonicalInput, ...layout.plist),
+              ),
+            },
+          ),
+        );
+      return ok({
+        callerPath,
+        canonicalPath: canonicalInput,
+        infoPlistPath: join(canonicalInput, ...declared.value.plist),
+        layout: declared.value.name,
+        executableSha256: null,
+      });
+    }
     const directLayout = await presentLayout(canonicalInput);
     const wrapped =
       directLayout === undefined
@@ -136,7 +312,7 @@ export const findAppBundleResourceRoot = async (
       callerPath,
       canonicalPath,
       infoPlistPath: join(canonicalPath, ...layout.plist),
-      layout: layout.plist[0] === "Contents" ? "contents" : "root",
+      layout: layout.name,
       executableSha256: null,
     });
   } catch (cause: unknown) {
@@ -190,6 +366,17 @@ const layoutPlistPresent = async (path: string): Promise<boolean> => {
         `permission denied inspecting app Info.plist ${path}`,
         { cause },
       );
+    throw cause;
+  }
+};
+
+/** Whether a directory entry, including a dangling link, exists. */
+const entryPresent = async (path: string): Promise<boolean> => {
+  try {
+    await lstat(path);
+    return true;
+  } catch (cause: unknown) {
+    if (isAbsence(cause)) return false;
     throw cause;
   }
 };
@@ -253,6 +440,8 @@ const resolveLayoutExecutable = async (
   fileSystem: AppBundleFileSystem,
 ): Promise<Result<ResolvedAppBundle, BinaryTargetError>> => {
   const plistPath = join(bundle, ...layout.plist);
+  // Reasons for an app keep their established wording.
+  const noun = extname(bundle).toLowerCase() === ".app" ? "app" : "bundle";
   let plist: Buffer;
   try {
     plist = await fileSystem.readFile(plistPath);
@@ -261,10 +450,10 @@ const resolveLayoutExecutable = async (
       new BinaryTargetError(
         plistPath,
         isPermissionDenied(cause)
-          ? `permission denied reading app Info.plist ${plistPath}`
+          ? `permission denied reading ${noun} Info.plist ${plistPath}`
           : isAbsence(cause)
-            ? `app Info.plist is missing: ${plistPath}`
-            : `could not read app Info.plist ${plistPath}${codeDescription(cause)}`,
+            ? `${noun} Info.plist is missing: ${plistPath}`
+            : `could not read ${noun} Info.plist ${plistPath}${codeDescription(cause)}`,
         { cause },
       ),
     );
@@ -281,17 +470,27 @@ const resolveLayoutExecutable = async (
       new BinaryTargetError(
         plistPath,
         isPermissionDenied(cause)
-          ? `permission denied decoding app Info.plist ${plistPath}${codeDescription(cause)}`
+          ? `permission denied decoding ${noun} Info.plist ${plistPath}${codeDescription(cause)}`
           : isSystemErrorCode(cause)
-            ? `could not decode app Info.plist ${plistPath}${codeDescription(cause)}`
-            : `app Info.plist is malformed, unsupported, or lacks CFBundleExecutable: ${plistPath}${cause instanceof Error ? ` (${cause.message})` : ""}`,
-        { cause },
+            ? `could not decode ${noun} Info.plist ${plistPath}${codeDescription(cause)}`
+            : `${noun} Info.plist is malformed, unsupported, or lacks CFBundleExecutable: ${plistPath}${cause instanceof Error ? ` (${cause.message})` : ""}`,
+        {
+          cause,
+          // A bundle without code, such as a resource bundle, declares no
+          // program file; the open does not guess one from its contents.
+          ...(cause instanceof UndeclaredBundleExecutable
+            ? {
+                constraint: "bundle_executable_undeclared" as const,
+                infoPlist: plistPath,
+              }
+            : {}),
+        },
       ),
     );
   }
   if (!isSafeExecutableName(name))
     return err(
-      new BinaryTargetError(bundle, "app has an unsafe CFBundleExecutable"),
+      new BinaryTargetError(bundle, `${noun} has an unsafe CFBundleExecutable`),
     );
   const programs = join(bundle, ...layout.programs);
   const executable = join(programs, name);
@@ -309,7 +508,8 @@ const resolveLayoutExecutable = async (
       return err(
         new BinaryTargetError(
           bundle,
-          `app program directory leaves ${layout.programsLabel}`,
+          `${noun} program directory leaves ${layout.programsLabel}`,
+          { constraint: "bundle_path_escapes", probedPaths: [programs] },
         ),
       );
     const canonicalExecutable = await fileSystem.realpath(executable);
@@ -317,7 +517,8 @@ const resolveLayoutExecutable = async (
       return err(
         new BinaryTargetError(
           bundle,
-          `app program file leaves ${layout.programsLabel}`,
+          `${noun} program file leaves ${layout.programsLabel}`,
+          { constraint: "bundle_path_escapes", probedPaths: [executable] },
         ),
       );
     return ok({ executable: canonicalExecutable, infoPlist: plistPath });
@@ -326,11 +527,20 @@ const resolveLayoutExecutable = async (
       new BinaryTargetError(
         executable,
         isPermissionDenied(cause)
-          ? `permission denied resolving app program file ${executable}`
+          ? `permission denied resolving ${noun} program file ${executable}`
           : isAbsence(cause)
-            ? `app program file is missing: ${executable}`
-            : `could not resolve app program file ${executable}`,
-        { cause },
+            ? `${noun} program file is missing: ${executable}`
+            : `could not resolve ${noun} program file ${executable}`,
+        {
+          cause,
+          ...(isAbsence(cause)
+            ? {
+                constraint: "bundle_program_missing" as const,
+                infoPlist: plistPath,
+                probedPaths: [executable],
+              }
+            : {}),
+        },
       ),
     );
   }
@@ -343,9 +553,13 @@ const parseXmlPlistExecutable = (plist: string): string => {
   return executableName(value);
 };
 
+/** The Info.plist decoded but declares no string CFBundleExecutable. */
+class UndeclaredBundleExecutable extends Error {}
+
 const executableName = (value: unknown): string => {
   const executable = executableEntrySchema.safeParse(value);
-  if (!executable.success) throw new Error("CFBundleExecutable is missing");
+  if (!executable.success)
+    throw new UndeclaredBundleExecutable("CFBundleExecutable is missing");
   return executable.data.CFBundleExecutable;
 };
 
