@@ -119,12 +119,17 @@ export const createElectronIpcContext = (
 };
 
 /**
- * Whether any analyzed source links an Electron module specifier. The same
- * `ELECTRON_MODULE` entry points the static analysis admits are used here, so
- * `electron`, `electron/main` and the other supported subpaths count while an
- * unrelated `electron-helper` package does not. Type-only links are ignored: a
- * source that imports Electron types does not promise any boundary fact.
+ * The reference kinds that load a module by package specifier. A `worker` or
+ * `service-worker` reference records a URL relative to the importing source, so
+ * `new Worker(new URL("electron", import.meta.url))` names a local file and is
+ * not an Electron module.
  */
+const ELECTRON_REFERENCE_KINDS: ReadonlySet<string> = new Set([
+  "static-import",
+  "dynamic-import",
+  "require",
+]);
+
 /**
  * Whether any analyzed source names an Electron module. The same
  * `ELECTRON_MODULE` entry points the static analysis admits are used here, so
@@ -132,14 +137,13 @@ export const createElectronIpcContext = (
  * unrelated `electron-helper` package does not.
  *
  * The two fact owners answer different parts of the question. Module links are
- * the richer fact and answer a runtime `import` or `require`, while excluding a
- * type-only import that promises no boundary fact. They are absent when semantic
- * analysis was skipped for a budget, and a rejected application projection drops
- * them; they also never hold a dynamic import. The retained static reference
- * therefore answers both, and is read for every kind except `static-import` so
- * that a type-only import is not counted as a runtime one. A dynamic specifier is
- * never counted by either owner, so this establishes an observed reference
- * rather than absence.
+ * the richer fact and answer a runtime `import` or `require` while excluding a
+ * `type-import`, so they are read first. They are absent when semantic analysis
+ * was skipped for a budget, and a rejected application projection drops them.
+ * The retained static reference answers those cases: it records a whole
+ * `import type` declaration as no reference at all, so it is read for the module
+ * loading kinds above. A dynamic specifier is never counted by either owner, so
+ * this establishes an observed reference rather than absence.
  */
 export const electronModuleReferenced = (
   analysis: JavaScriptArtifactAnalysis,
@@ -158,7 +162,7 @@ export const electronModuleReferenced = (
       return true;
     return (javascript?.references ?? []).some(
       ({ specifier, kind }) =>
-        kind !== "static-import" &&
+        ELECTRON_REFERENCE_KINDS.has(kind) &&
         specifier !== null &&
         ELECTRON_MODULE.test(specifier),
     );

@@ -22,8 +22,11 @@ const PATH = "main.js";
 const EMPTY_COVERAGE =
   "Electron modules are referenced but no Electron boundary fact was recovered from inert syntax. Zero IPC operations and zero BrowserWindows here mean empty coverage, not evidence that the application has none.";
 
-const fileFor = (source: string): JavaScriptArtifactFile => ({
-  path: PATH,
+const fileFor = (
+  source: string,
+  path: string = PATH,
+): JavaScriptArtifactFile => ({
+  path,
   container_sha256: SHA256,
   sha256: SHA256,
   bytes: source.length,
@@ -35,9 +38,10 @@ const fileFor = (source: string): JavaScriptArtifactFile => ({
 
 const analyzedEntry = async (
   source: string,
+  path: string = PATH,
 ): Promise<AnalyzedJavaScriptArtifactFile> => {
-  const file = fileFor(source);
-  const parsed = parseJavaScriptSource(source, PATH);
+  const file = fileFor(source, path);
+  const parsed = parseJavaScriptSource(source, path);
   if (parsed === null) throw new Error("expected a parsed source");
   const facts = await completeJavaScriptAnalysisSteps(
     analyzeParsedJavaScriptStaticSourceSteps(source, parsed),
@@ -45,7 +49,7 @@ const analyzedEntry = async (
   const ir = await completeJavaScriptAnalysisSteps(
     analyzeParsedJavaScriptSemanticsSteps(
       parsed,
-      moduleResolutionModeForJavaScriptReference(PATH, "static-import"),
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
       100_000,
     ),
   );
@@ -76,11 +80,12 @@ const graphFor = async (
   mutate?: (
     entry: AnalyzedJavaScriptArtifactFile,
   ) => AnalyzedJavaScriptArtifactFile,
+  path: string = PATH,
 ): Promise<{
   limitations: readonly string[];
   electronSemantics: string | undefined;
 }> => {
-  const base = await analyzedEntry(source);
+  const base = await analyzedEntry(source, path);
   const entry = mutate === undefined ? base : mutate(base);
   const analysis: JavaScriptArtifactAnalysis = {
     jsonDocuments: new JavaScriptJsonDocuments(),
@@ -213,4 +218,35 @@ it("counts a dynamic Electron import that module links do not retain", async () 
   );
   expect(electronSemantics).toBe("empty");
   expect(limitations).toContain(EMPTY_COVERAGE);
+});
+
+it("counts a retained runtime static import when semantics are skipped", async () => {
+  // The static analyzer records a whole `import type` declaration as no
+  // reference, so a retained `static-import` is a runtime load.
+  const { electronSemantics } = await graphFor(
+    `import { app } from "electron";\napp.whenReady();\n`,
+    (entry) => ({ ...entry, semantic: null }),
+  );
+  expect(electronSemantics).toBe("empty");
+});
+
+it("does not count a whole type-only import when semantics are skipped", async () => {
+  // `import type` needs a TypeScript source, and the static analyzer records no
+  // reference for a whole type-only declaration.
+  const { electronSemantics } = await graphFor(
+    `import type { IpcMain } from "electron";\nexport const value = 1;\n`,
+    (entry) => ({ ...entry, semantic: null }),
+    "main.mts",
+  );
+  expect(electronSemantics).toBeUndefined();
+});
+
+it("does not treat a worker URL path as an Electron module", async () => {
+  // `new Worker(new URL("electron", import.meta.url))` records a `worker`
+  // reference whose specifier is a path relative to the importing source.
+  const { electronSemantics } = await graphFor(
+    `const worker = new Worker(new URL("electron", import.meta.url));\n`,
+    (entry) => ({ ...entry, semantic: null }),
+  );
+  expect(electronSemantics).toBeUndefined();
 });
