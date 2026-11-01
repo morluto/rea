@@ -1,4 +1,5 @@
 import { setImmediate } from "node:timers/promises";
+import { z } from "zod";
 
 import {
   prepareSnapshotEntry,
@@ -12,6 +13,7 @@ import {
   EvidenceIntegrityError,
 } from "../../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { describeValidationFailure } from "../../domain/validationFailure.js";
 import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
@@ -140,7 +142,10 @@ export const writeAnalysisSnapshot = async (
   return writeTextFile(encoded, path, overwrite, resources);
 };
 
-const snapshotValidationMessage = (cause: unknown): string =>
-  cause instanceof TypeError
+const snapshotValidationMessage = (cause: unknown): string => {
+  if (cause instanceof z.ZodError)
+    return `Analysis snapshot validation failed ${describeValidationFailure(cause)}`;
+  return cause instanceof TypeError
     ? cause.message
     : "Analysis snapshot validation failed";
+};

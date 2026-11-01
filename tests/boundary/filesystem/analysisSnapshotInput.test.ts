@@ -1,9 +1,12 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
+import {
+  readAnalysisSnapshot,
+  writeAnalysisSnapshot,
+} from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   snapshotBinding,
@@ -15,11 +18,57 @@ import {
 } from "../../../src/domain/analysisSnapshot.fixture.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 
 describe.each([
   { mode: "native", paddingBytes: 0 },
   { mode: "streamed", paddingBytes: 9 * 1024 * 1024 },
 ])("analysis snapshot input ($mode)", ({ paddingBytes }) => {
+  it.each([
+    {
+      label: "header",
+      document: { entries: [], workflow_entries: [] },
+      field: "target",
+    },
+    {
+      label: "provider entry",
+      document: { entries: [{}], workflow_entries: [] },
+      field: "query_id",
+    },
+    {
+      label: "workflow entry",
+      document: { entries: [], workflow_entries: [{}] },
+      field: "query_id",
+    },
+  ])(
+    "retains the first $label schema diagnostic through the file wrapper",
+    async ({ document, field }) => {
+      const root = await createTestTempDirectory(
+        "rea-snapshot-schema-diagnostic-",
+      );
+      const path = join(root, "snapshot.json");
+      const encoded = `${" ".repeat(paddingBytes)}${JSON.stringify(document)}`;
+      await writeFile(path, encoded);
+      const loaded = await readAnalysisSnapshot(path);
+      if (loaded.ok) throw new Error("Expected invalid snapshot refusal");
+      expect(loaded.error.cause).toMatchObject({ name: "ZodError" });
+      const projected = projectAnalysisError(loaded.error);
+      expect(projected).toMatchObject({
+        code: "evidence_integrity_mismatch",
+        category: "integrity_mismatch",
+        retryable: false,
+        details: { reason: expect.stringContaining(`at ${field}:`) },
+      });
+      if (field === "target")
+        expect(projected.details?.reason).toBe(
+          "Analysis snapshot validation failed at target: Invalid input: expected object, received undefined (2 more issues)",
+        );
+      expect(projected).not.toHaveProperty("cause");
+      expect(projected).not.toHaveProperty("stack");
+      expect(await readFile(path, "utf8")).toBe(encoded);
+    },
+  );
+
   it.each(["[]", "null", "5", '"x"', "true"])(
     "classifies a readable %s root as invalid content, not an I/O failure",
     async (document) => {
@@ -70,6 +119,29 @@ describe.each([
       value: snapshot,
     });
   });
+});
+
+it("retains serialization schema diagnostics without creating a snapshot file", async () => {
+  const root = await createTestTempDirectory("rea-snapshot-write-diagnostic-");
+  const path = join(root, "snapshot.json");
+  const snapshot = {
+    target: snapshotTarget(ANALYSIS_SNAPSHOT_TARGET),
+    binding: snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE),
+    entries: [],
+    workflow_entries: [],
+    evidence_bundle: createEvidenceBundle([]),
+  };
+  Reflect.deleteProperty(snapshot, "binding");
+  const written = await withArtifactResourceScope((resources) =>
+    writeAnalysisSnapshot(snapshot, path, false, resources),
+  );
+  if (written.ok) throw new Error("Expected invalid snapshot refusal");
+  expect(written.error.cause).toMatchObject({ name: "ZodError" });
+  expect(projectAnalysisError(written.error)).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    details: { reason: expect.stringContaining("at binding:") },
+  });
+  await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("keeps file-selection failures distinct from invalid snapshot contents", async () => {
