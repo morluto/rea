@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   createAnalysisExecution,
@@ -13,8 +14,10 @@ import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { createAnalysisExecutionEvidence } from "../../../src/domain/analysisObservation.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { cleanupStoppedTraversal } from "../../../src/application/CallRelationshipTraversal.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -22,6 +25,7 @@ import {
   closeEnhancedToolResources,
   connect,
   jsonResult,
+  resources,
 } from "./enhancedToolsHarness.js";
 
 afterEach(closeEnhancedToolResources);
@@ -128,8 +132,8 @@ describe.each(directions)("%s relationship reads", (direction, operation) => {
         confidence: "derived",
         parameters: call(tool, direction).arguments,
       });
-      const stopped =
-        "Traversal stopped at 0x2 because the provider did not confirm cleanup of resources it owns; 1 discovered procedure was not expanded.";
+      // The stop names 0x2 and its one queued sibling; the formatter owns prose.
+      const stopped = cleanupStoppedTraversal("0x2", 1);
       if (tool === "get_call_graph")
         expect(partial.normalized_result).toEqual({
           graph: {
@@ -239,8 +243,7 @@ it.each(tools)(
       details: { resources: ["owned worker"] },
     });
     const partial = parseEvidence(error.details?.partial_observation);
-    const stopped =
-      "Traversal stopped at 0x3 because the provider did not confirm cleanup of resources it owns; 1 discovered procedure was not expanded.";
+    const stopped = cleanupStoppedTraversal("0x3", 1);
     const ordinary = {
       address: "0x2",
       error: { code: "capability_unavailable" },
@@ -266,81 +269,133 @@ it.each(tools)(
   },
 );
 
+/** Serve one fixed provider through a production session with a committed profile. */
+const openSession = async (port: AnalysisOperationPort) => {
+  const directory = await createTestTempDirectory("rea-call-graph-cleanup-");
+  const target = join(directory, "fixture.com");
+  await writeFile(target, Buffer.from([0xb8, 0x00, 0x4c, 0xcd, 0x21]));
+  const session = createTestBinarySession(
+    () => ({
+      execute: (operation, parameters, options) =>
+        port.execute(operation, parameters, options),
+      close: async () => ok(null),
+    }),
+    {
+      // A committed profile lets the session retain each admitted read.
+      resolveAnalysisProfile: async () =>
+        ok({ profile: createAnalysisProfile(provider, { fixture: true }) }),
+    },
+  );
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "call-graph-cleanup", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server);
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const opened = await client.callTool({
+    name: "open_binary",
+    arguments: { path: target, format: "dos-com" },
+  });
+  expect(opened.isError).not.toBe(true);
+  return { client, session };
+};
+
+/** Resolve a failure's retained partial and prove a complete export keeps it. */
+const retainedPartial = async (
+  client: Client,
+  session: ReturnType<typeof createTestBinarySession>,
+  error: ReturnType<typeof parseMcpToolError>["error"],
+) => {
+  const reference = z
+    .strictObject({
+      kind: z.literal("retained-evidence"),
+      evidence_id: z.string(),
+    })
+    .parse(error.details?.partial_observation);
+  const exported = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  expect(exported.isError).not.toBe(true);
+  const bundle = evidenceBundleSchema.parse(
+    z.object({ result: z.unknown() }).parse(exported.structuredContent).result,
+  );
+  expect(bundle.records.map(({ evidence_id }) => evidence_id)).toContain(
+    reference.evidence_id,
+  );
+  return session.evidenceForAnalysis(reference.evidence_id);
+};
+
 it.each(tools)(
   "%s retains the admitted result as session Evidence and references it",
   async (tool) => {
-    const directory = await createTestTempDirectory("rea-call-graph-cleanup-");
-    const target = join(directory, "fixture.com");
-    await writeFile(target, Buffer.from([0xb8, 0x00, 0x4c, 0xcd, 0x21]));
     const reads: string[] = [];
-    const port = relationshipPort(
-      {
-        "0x1": ["0x2", "0x3"],
-        "0x2": childFailure("procedure_callees", true),
-        "0x3": ["0x4"],
-      },
-      reads,
-    );
-    const session = createTestBinarySession(
-      () => ({
-        execute: (operation, parameters, options) =>
-          port.execute(operation, parameters, options),
-        close: async () => ok(null),
-      }),
-      {
-        // A committed profile lets the session retain each admitted read.
-        resolveAnalysisProfile: async () =>
-          ok({ profile: createAnalysisProfile(provider, { fixture: true }) }),
-      },
-    );
-    const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "call-graph-cleanup", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const opened = await client.callTool({
-        name: "open_binary",
-        arguments: { path: target, format: "dos-com" },
-      });
-      expect(opened.isError).not.toBe(true);
-
-      const response = await client.callTool(call(tool, "forward"));
-
-      expect(reads).toEqual(["procedure_callees:0x1", "procedure_callees:0x2"]);
-      const { error } = parseMcpToolError(response);
-      expect(error).toMatchObject({
-        code: "cleanup_incomplete",
-        details: {
-          resources: ["owned worker"],
-          partial_observation: { kind: "retained-evidence" },
+    const { client, session } = await openSession(
+      relationshipPort(
+        {
+          "0x1": ["0x2", "0x3"],
+          "0x2": childFailure("procedure_callees", true),
+          "0x3": ["0x4"],
         },
-      });
-      const reference = error.details?.partial_observation as {
-        readonly evidence_id: string;
-      };
-      const retained = session.evidenceForAnalysis(reference.evidence_id);
-      expect(retained).toMatchObject({
-        operation: tool,
-        subject: { format: "dos-com" },
-        normalized_result:
-          tool === "get_call_graph"
-            ? { graph: { "0": [{ address: "0x1", status: "ok" }] } }
-            : { goal_status: "unknown", truncated: true },
-      });
-      // The admitted read stays linked as the partial result's source.
-      expect(retained?.evidence_links).toHaveLength(1);
-      expect(
-        session.evidenceForAnalysis(retained?.evidence_links?.[0] ?? ""),
-      ).toMatchObject({
-        operation: "procedure_callees",
-        parameters: { procedure: "0x1" },
-      });
-    } finally {
-      await client.close();
-      await server.close();
-    }
+        reads,
+      ),
+    );
+
+    const response = await client.callTool(call(tool, "forward"));
+
+    expect(reads).toEqual(["procedure_callees:0x1", "procedure_callees:0x2"]);
+    const { error } = parseMcpToolError(response);
+    expect(error).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { resources: ["owned worker"] },
+    });
+    const retained = await retainedPartial(client, session, error);
+    expect(retained).toMatchObject({
+      operation: tool,
+      subject: { format: "dos-com" },
+      normalized_result:
+        tool === "get_call_graph"
+          ? { graph: { "0": [{ address: "0x1", status: "ok" }] } }
+          : { goal_status: "unknown", truncated: true },
+    });
+    // The admitted read stays linked as the partial result's source.
+    expect(retained?.evidence_links).toHaveLength(1);
+    expect(
+      session.evidenceForAnalysis(retained?.evidence_links?.[0] ?? ""),
+    ).toMatchObject({
+      operation: "procedure_callees",
+      parameters: { procedure: "0x1" },
+    });
+  },
+);
+
+it.each(tools)(
+  "%s retains a failed read's own partial Evidence instead of the workflow's",
+  async (tool) => {
+    const failure = childFailure("procedure_callees", true);
+    const own = createAnalysisExecutionEvidence(
+      "procedure_callees",
+      { procedure: "0x2" },
+      createAnalysisExecution(["0x9"], provider),
+      "observed",
+    );
+    failure.retainPartialObservation(own);
+    const reads: string[] = [];
+    const { client, session } = await openSession(
+      relationshipPort({ "0x1": ["0x2", "0x3"], "0x2": failure }, reads),
+    );
+
+    const { error } = parseMcpToolError(
+      await client.callTool(call(tool, "forward")),
+    );
+
+    expect(reads).toEqual(["procedure_callees:0x1", "procedure_callees:0x2"]);
+    expect(error).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { resources: ["owned worker"] },
+    });
+    expect(await retainedPartial(client, session, error)).toEqual(own);
   },
 );
 
@@ -361,8 +416,7 @@ it.each(tools)(
 
     expect(reads).toEqual(["procedure_callees:0x1"]);
     expect(error.code).toBe("cleanup_incomplete");
-    const stopped =
-      "Traversal stopped at 0x1 because the provider did not confirm cleanup of resources it owns; 0 discovered procedures were not expanded.";
+    const stopped = cleanupStoppedTraversal("0x1", 0);
     expect(
       parseEvidence(error.details?.partial_observation).normalized_result,
     ).toMatchObject(
@@ -372,28 +426,3 @@ it.each(tools)(
     );
   },
 );
-
-it("keeps a failed read's own partial observation instead of the workflow's", async () => {
-  const failure = childFailure("procedure_callees", true);
-  const own = createAnalysisExecutionEvidence(
-    "procedure_callees",
-    { procedure: "0x2" },
-    createAnalysisExecution(["0x9"], provider),
-    "observed",
-  );
-  failure.retainPartialObservation(own);
-  const reads: string[] = [];
-  const client = await connect(
-    relationshipPort({ "0x1": ["0x2", "0x3"], "0x2": failure }, reads),
-  );
-
-  const { error } = parseMcpToolError(
-    await client.callTool(call("get_call_graph", "forward")),
-  );
-
-  expect(reads).toEqual(["procedure_callees:0x1", "procedure_callees:0x2"]);
-  expect(error.code).toBe("cleanup_incomplete");
-  expect(parseEvidence(error.details?.partial_observation).evidence_id).toBe(
-    own.evidence_id,
-  );
-});

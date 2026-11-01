@@ -219,18 +219,15 @@ export const createWorkflowEvidence = (input: {
       : {}),
   });
 
-/**
- * Retain a stopped workflow's admitted observation as partial workflow
- * Evidence on its failure. Returns that Evidence only when the failure holds it.
- */
+/** Retain a stopped workflow's admitted observation as partial workflow Evidence on its failure. */
 export const retainPartialWorkflowEvidence = (
   outcome: ComposedWorkflowResult,
   context: Pick<
     Parameters<typeof createWorkflowEvidence>[0],
     "target" | "operation" | "parameters" | "upstreamProfile"
   >,
-): Evidence | undefined => {
-  if (outcome.ok || outcome.partial === undefined) return undefined;
+): void => {
+  if (outcome.ok || outcome.partial === undefined) return;
   const evidence = createWorkflowEvidence({
     ...context,
     result: outcome.partial.result,
@@ -241,7 +238,6 @@ export const retainPartialWorkflowEvidence = (
   });
   // A partial observation the failing read already reported stays its own.
   outcome.error.retainPartialObservation(evidence);
-  return outcome.error.partialObservation === evidence ? evidence : undefined;
 };
 
 const batchProcedureLocations = (result: JsonValue): EvidenceLocation[] => {

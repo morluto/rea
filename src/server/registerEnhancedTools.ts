@@ -24,6 +24,7 @@ import {
 } from "../application/WorkflowEvidence.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { ok } from "../domain/result.js";
@@ -279,7 +280,7 @@ const executeEnhancedTool = async (
           composedLimitationBudget(name),
         ),
       );
-      const partialEvidence = retainPartialWorkflowEvidence(result, {
+      retainPartialWorkflowEvidence(result, {
         target: registration.activeTarget?.(),
         operation: name,
         parameters,
@@ -348,14 +349,7 @@ const executeEnhancedTool = async (
             : recorded,
         );
       }
-      // A stopped workflow's admitted result is retained beside its failure.
-      return partialEvidence === undefined
-        ? registration.delivery.toCallToolResult(result, contract)
-        : registration.delivery.toPartialErrorToolResult(
-            result.error,
-            contract.returnsTargetContent,
-            registration.recordEvidence,
-          );
+      return deliverEnhancedFailure(registration, contract, result.error);
     },
   );
   return admitted.ok
@@ -440,7 +434,7 @@ const deliverFunctionAnalysis = async (
   );
   await reportOperationEnd(progress, "analyze_function", result.ok);
   if (!result.ok)
-    return registration.delivery.toCallToolResult(result, contract);
+    return deliverEnhancedFailure(registration, contract, result.error);
   if (detail === "summary") {
     const summary = summarizeRetainedAnalysis(result.value, {
       recordEvidence: registration.recordEvidence,
@@ -460,6 +454,23 @@ const deliverFunctionAnalysis = async (
     registration.recordEvidence?.(result.value),
   );
 };
+
+/**
+ * Deliver an analysis failure with any partial Evidence it carries, whether a
+ * stopped workflow or its failing read produced that partial.
+ */
+const deliverEnhancedFailure = (
+  registration: EnhancedToolRegistration & {
+    readonly delivery: ToolResultDelivery;
+  },
+  contract: ToolContract,
+  error: AnalysisError,
+): CallToolResult =>
+  registration.delivery.toPartialErrorToolResult(
+    error,
+    contract.returnsTargetContent,
+    registration.recordEvidence,
+  );
 
 const jsonParameters = (
   input: Readonly<Record<string, JsonValue | undefined>>,
