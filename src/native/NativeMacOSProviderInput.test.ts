@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
 
 import { nativeMacOSCapabilities } from "./NativeMacOSProviderMetadata.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
@@ -101,21 +102,58 @@ it.each(["inspect_macho", "list_architectures"] as const)(
     const root = await createTestTempDirectory("rea-macho-lipo-output-");
     const path = join(root, "fixture.macho");
     await writeFile(path, inspectionImage());
-    const client = new NativeMacOSProvider(
-      {},
-      new NativeFixtureRunner({ lipo: "unrecognized slice record\n" }),
-      "darwin",
-    ).createClient(await nativeMachoTargetForFile(path));
-    const result = await client.execute(operation, {});
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisOutputError",
-        capturedOutput: { stdout: "unrecognized slice record\n", exit_code: 0 },
-      },
+    const runner = new NativeFixtureRunner({
+      lipo: "unrecognized slice record\n",
     });
+    const run = vi.spyOn(runner, "run");
+    const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+      await nativeMachoTargetForFile(path),
+    );
+    try {
+      const result = await client.execute(operation, {});
+      expect(run).toHaveBeenCalledWith(
+        "lipo",
+        ["-detailed_info", path],
+        expect.any(Object),
+      );
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          operation,
+          capturedOutput: {
+            stdout: "unrecognized slice record\n",
+            exit_code: 0,
+          },
+        },
+      });
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
   },
 );
+
+it("refuses a missing Mach-O source before running lipo", async () => {
+  const root = await createTestTempDirectory("rea-native-lipo-missing-");
+  const runner = new NativeFixtureRunner({
+    lipo: "unrecognized slice record\n",
+  });
+  const run = vi.spyOn(runner, "run");
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+    nativeMachoTarget(join(root, "missing")),
+  );
+  try {
+    const result = await client.execute("inspect_macho", {});
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "ProviderAdapterError" },
+    });
+    expect(run).not.toHaveBeenCalled();
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
+});
 
 it("declares the signature snapshot write in provider capabilities", () => {
   expect(
