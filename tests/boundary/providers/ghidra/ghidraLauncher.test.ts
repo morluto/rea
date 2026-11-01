@@ -29,6 +29,25 @@ import {
   ghidraHeadlessCommand,
   GhidraHeadlessLauncher,
 } from "../../../../src/ghidra/GhidraLauncher.js";
+import type { GhidraRiscvLoadPreparation } from "../../../../src/ghidra/GhidraRiscvProfile.js";
+
+// ESP-IDF v6.1 ESP32-C6 hello_world's committed preparation.
+const ESP_PREPARATION: GhidraRiscvLoadPreparation = {
+  policy: "nobits-reservation-overlay-v1",
+  code: {
+    index: 15,
+    name: ".flash.text",
+    address: "0x42000020",
+    size: "0xfff2",
+    offset: "0xc020",
+  },
+  reservation: {
+    index: 16,
+    name: ".flash_rodata_dummy",
+    address: "0x42000020",
+    size: "0x18000",
+  },
+};
 
 const fixturePath = fileURLToPath(
   new URL(
@@ -425,6 +444,86 @@ describe("Ghidra headless launcher", () => {
   });
 });
 
+describe("Ghidra RISC-V load preparation arguments", () => {
+  it("prepares a committed RISC-V section overlap after the loader and before seeds", () => {
+    const base = {
+      platform: "linux" as const,
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/target",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+      languageOverride: {
+        languageId: "RISCV:LE:32:default",
+        compilerSpecId: "gcc",
+      },
+      seedPath: "/tmp/runtime/seeds/seeds.tsv",
+      disabledAnalyzers: ["Decompiler Parameter ID"],
+    };
+    const script = "/package/bridge/ReaGhidraPrepareElfLoad.java";
+    expect(ghidraHeadlessArguments(base)).not.toContain(script);
+    const arguments_ = ghidraHeadlessArguments({
+      ...base,
+      riscvLoadPreparation: ESP_PREPARATION,
+    });
+    const at = arguments_.indexOf(script);
+    expect(arguments_.slice(at - 1, at + 7)).toEqual([
+      "-preScript",
+      script,
+      "nobits-reservation-overlay-v1",
+      "0x42000020",
+      "0xfff2",
+      "0xc020",
+      "0x42000020",
+      "0x18000",
+    ]);
+    expect(at).toBeGreaterThan(arguments_.indexOf("-import"));
+    for (const later of [
+      "/package/bridge/ReaGhidraApplySeeds.java",
+      "/package/bridge/ReaGhidraAnalysisOptions.java",
+      "/package/bridge/ReaGhidraNoReturnFix.java",
+    ])
+      expect(at).toBeLessThan(arguments_.indexOf(later));
+    const { languageOverride: _pin, ...unpinned } = base;
+    for (const conflict of [
+      { psp: true as const },
+      { mipsSoftFloat: true as const },
+      { dosMz: true as const },
+      { dosCom: true as const },
+      {
+        rawBinary: {
+          languageId: "x86:LE:32:default",
+          compilerSpecId: "default",
+          baseAddr: "0x1000",
+        },
+      },
+    ])
+      expect(() =>
+        ghidraHeadlessArguments({
+          ...unpinned,
+          riscvLoadPreparation: ESP_PREPARATION,
+          ...conflict,
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          _tag: "GhidraAdmissionError",
+          code: "riscv_load_preparation_scope",
+        }),
+      );
+    expect(() =>
+      ghidraHeadlessArguments({
+        ...unpinned,
+        riscvLoadPreparation: ESP_PREPARATION,
+        gamecubeDol: {
+          languageId: "PowerPC:BE:32:default",
+          sectionFilePath: "/tmp/gamecube-dol-sections.txt",
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: "gamecube_dol_combined" }));
+  });
+});
+
 describe("Ghidra configured import language and seeds", () => {
   const base = {
     platform: "darwin" as const,
@@ -685,6 +784,10 @@ describe("Ghidra existing project", () => {
     [
       { riscvCallingConvention: "ilp32-prototype-v1" as const },
       "existing_project_riscv_calling_convention",
+    ],
+    [
+      { riscvLoadPreparation: ESP_PREPARATION },
+      "existing_project_riscv_load_preparation",
     ],
     [{ seedPath: "/tmp/runtime/seeds/seeds.tsv" }, "existing_project_analysis"],
     [

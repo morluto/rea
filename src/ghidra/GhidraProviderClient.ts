@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { filterGhidraLiteralCandidates } from "./GhidraLiteralSearch.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
@@ -93,6 +94,10 @@ import {
   ghidraRiscvCallingConventionFailure,
   ghidraRiscvCallingConventionLimitations,
   ghidraRiscvLimitations,
+  ghidraRiscvLoadPreparation,
+  ghidraRiscvLoadPreparationFailure,
+  ghidraRiscvLoadPreparationLimitations,
+  ghidraRiscvLoadPreparationParameters,
 } from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
 import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
@@ -214,6 +219,23 @@ export const createGhidraProviderClient = (input: {
         diagnostics: {
           reason:
             "Resolve the RISC-V calling-convention policy into the analysis profile before opening the session.",
+        },
+      }),
+    );
+  const riscvLoadPreparation = ghidraRiscvLoadPreparation(target);
+  if (
+    !isDeepStrictEqual(
+      committedProfile.parameters.elf_load_preparation,
+      riscvLoadPreparation === undefined
+        ? undefined
+        : ghidraRiscvLoadPreparationParameters(riscvLoadPreparation),
+    )
+  )
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve the RISC-V load preparation into the analysis profile before opening the session.",
         },
       }),
     );
@@ -371,8 +393,10 @@ export const createGhidraProviderClient = (input: {
   const softFloatLimitations: string[] = [
     ...ghidraMipsSoftFloatLimitations(softFloat),
   ];
-  // Replaced by the reported prototype outcome once the handshake is checked.
-  const riscvCallingConventionLimitations: string[] = [
+  // Replaced by the reported preparation and prototype outcomes once the
+  // handshake is checked.
+  const riscvPolicyLimitations: string[] = [
+    ...ghidraRiscvLoadPreparationLimitations(riscvLoadPreparation),
     ...ghidraRiscvCallingConventionLimitations(riscvCallingConvention),
   ];
   // Replaced by the reported per-program outcome once the handshake is checked.
@@ -472,6 +496,7 @@ export const createGhidraProviderClient = (input: {
       ...(riscvCallingConvention === undefined
         ? {}
         : { riscvCallingConvention }),
+      ...(riscvLoadPreparation === undefined ? {} : { riscvLoadPreparation }),
       ...(target.format === "dos-mz" ? { dosMz: true } : {}),
       ...(target.format === "dos-com" ? { dosCom: true } : {}),
       ...(rawLanguage === undefined || target.format !== "raw-binary"
@@ -571,7 +596,11 @@ export const createGhidraProviderClient = (input: {
           info,
         );
     } else {
-      const callingConventionReason =
+      const policyReason =
+        ghidraRiscvLoadPreparationFailure(
+          riscvLoadPreparation,
+          info.elf_load_preparation,
+        ) ??
         ghidraMipsSoftFloatFailure(softFloat, info.mips_soft_float_storage) ??
         ghidraRiscvCallingConventionFailure(
           riscvCallingConvention,
@@ -589,10 +618,10 @@ export const createGhidraProviderClient = (input: {
           info.disabled_analyzers,
           operation,
         ) ??
-        (callingConventionReason === undefined
+        (policyReason === undefined
           ? undefined
           : new ProviderAdapterError("ghidra", operation, {
-              diagnostics: { reason: callingConventionReason },
+              diagnostics: { reason: policyReason },
             }));
       if (extensionFailure === undefined && info.analysis_seeds !== undefined)
         seedLimitations.splice(
@@ -610,9 +639,13 @@ export const createGhidraProviderClient = (input: {
           ),
         );
       if (extensionFailure === undefined)
-        riscvCallingConventionLimitations.splice(
+        riscvPolicyLimitations.splice(
           0,
-          riscvCallingConventionLimitations.length,
+          riscvPolicyLimitations.length,
+          ...ghidraRiscvLoadPreparationLimitations(
+            riscvLoadPreparation,
+            info.elf_load_preparation,
+          ),
           ...ghidraRiscvCallingConventionLimitations(
             riscvCallingConvention,
             info.riscv_calling_convention,
@@ -661,7 +694,7 @@ export const createGhidraProviderClient = (input: {
     ...targetLimitations,
     ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
     ...softFloatLimitations,
-    ...riscvCallingConventionLimitations,
+    ...riscvPolicyLimitations,
     ...ghidraExtensionLimitations(extensions),
     ...seedLimitations,
     ...disabledAnalyzerLimitations,

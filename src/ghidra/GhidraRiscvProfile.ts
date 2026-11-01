@@ -1,5 +1,7 @@
 import type {
   BinaryTarget,
+  ElfSectionExtent,
+  ElfSectionOverlap,
   RiscvElfMetadata,
   RiscvIsaDeclaration,
 } from "../domain/binaryTargetTypes.js";
@@ -73,6 +75,38 @@ export const GHIDRA_RISCV32_DECODED_EXTENSIONS: ReadonlySet<string> = new Set([
   "zcd",
 ]);
 
+/** The memory-map preparation policy an analysis profile can commit. */
+export const GHIDRA_RISCV_LOAD_PREPARATION = "nobits-reservation-overlay-v1";
+
+/**
+ * Before analysis, `ReaGhidraPrepareElfLoad.java` gives an executable section
+ * that a NOBITS reservation shares addresses with the default address space,
+ * and the reservation an overlay instead.
+ */
+export interface GhidraRiscvLoadPreparation {
+  readonly policy: typeof GHIDRA_RISCV_LOAD_PREPARATION;
+  readonly code: ElfSectionExtent & { readonly offset: string };
+  readonly reservation: ElfSectionExtent;
+}
+
+/** Outcome the pre-analysis script records for the bridge handshake. */
+export type GhidraRiscvLoadPreparationReport =
+  | {
+      readonly policy: typeof GHIDRA_RISCV_LOAD_PREPARATION;
+      readonly outcome: "moved";
+      readonly functions: number;
+      readonly entry_points: number;
+      readonly reservation_labels: number;
+    }
+  | {
+      readonly policy: typeof GHIDRA_RISCV_LOAD_PREPARATION;
+      readonly outcome: "canonical";
+    }
+  | {
+      readonly policy: typeof GHIDRA_RISCV_LOAD_PREPARATION;
+      readonly refused: string;
+    };
+
 /** Outcome the post-analysis script records for the bridge handshake. */
 export interface GhidraRiscvCallingConventionReport {
   readonly policy: GhidraRiscvCallingConvention;
@@ -144,6 +178,22 @@ const ghidraRiscvIsaRefusal = (
 };
 
 /**
+ * Every lane needs the section table: a section that shares an executable
+ * section's addresses decides where Ghidra 12.1.4 loads that code.
+ */
+const ghidraRiscvSectionOverlapRefusal = (
+  overlap: ElfSectionOverlap | undefined,
+): string | null => {
+  if (overlap === undefined)
+    return "This RISC-V lane requires the image's section table, which was not inspected; overlapping sections decide where Ghidra loads code.";
+  if (overlap.status === "unavailable")
+    return `This RISC-V lane requires a readable section table: ${overlap.reason}.`;
+  return overlap.status === "unsupported"
+    ? `${overlap.reason} See docs/ghidra-riscv.md.`
+    : null;
+};
+
+/**
  * Keep family recognition separate from the deliberately bounded Ghidra lane.
  *
  * Ghidra 12.1.4 selects `RISCV:LE:32:AndeStar_v5` for an ordinary RV32 ELF: its
@@ -181,10 +231,53 @@ export const ghidraRiscvUnsupportedReason = (
   const unsupportedFlags = (metadata.flags & ~EF_RISCV_DECLARED_BITS) >>> 0;
   if (unsupportedFlags !== 0)
     return `RISC-V e_flags declares bits outside the verified lane (0x${unsupportedFlags.toString(16)}); reserved or newer declarations are not treated as compatible with this profile.`;
-  return lane.callingConvention === undefined
-    ? null
-    : ghidraRiscvIsaRefusal(metadata.isa);
+  const isa =
+    lane.callingConvention === undefined
+      ? null
+      : ghidraRiscvIsaRefusal(metadata.isa);
+  return isa ?? ghidraRiscvSectionOverlapRefusal(metadata.sectionOverlap);
 };
+
+/** The memory-map preparation an admitted target's sections need, if any. */
+export const ghidraRiscvLoadPreparation = (
+  target: BinaryTarget,
+): GhidraRiscvLoadPreparation | undefined => {
+  if (
+    target.kind !== "executable" ||
+    target.architecture !== "riscv" ||
+    ghidraRiscvUnsupportedReason(target) !== null
+  )
+    return undefined;
+  const overlap = target.riscv.sectionOverlap;
+  return overlap?.status === "code-reservation"
+    ? {
+        policy: GHIDRA_RISCV_LOAD_PREPARATION,
+        code: overlap.code,
+        reservation: overlap.reservation,
+      }
+    : undefined;
+};
+
+const sectionParameters = (
+  extent: ElfSectionExtent,
+): { [key: string]: JsonValue } => ({
+  index: extent.index,
+  name: extent.name,
+  address: extent.address,
+  size: extent.size,
+});
+
+/** The committed form of a preparation; the profile digest covers every field. */
+export const ghidraRiscvLoadPreparationParameters = (
+  preparation: GhidraRiscvLoadPreparation,
+): JsonValue => ({
+  policy: preparation.policy,
+  code: {
+    ...sectionParameters(preparation.code),
+    offset: preparation.code.offset,
+  },
+  reservation: sectionParameters(preparation.reservation),
+});
 
 /** The calling-convention policy an admitted target's lane applies, if any. */
 export const ghidraRiscvCallingConvention = (
@@ -225,6 +318,7 @@ export const ghidraRiscvProfileParameters = (
     return {};
   const floatAbi = riscvFloatAbi(target.riscv.flags);
   const convention = ghidraRiscvCallingConvention(target);
+  const preparation = ghidraRiscvLoadPreparation(target);
   const isa = target.riscv.isa;
   return {
     riscv_elf: {
@@ -243,6 +337,13 @@ export const ghidraRiscvProfileParameters = (
     ...(convention === undefined
       ? {}
       : { riscv_calling_convention: convention }),
+    // Present only when needed, so other images keep their profile digests.
+    ...(preparation === undefined
+      ? {}
+      : {
+          elf_load_preparation:
+            ghidraRiscvLoadPreparationParameters(preparation),
+        }),
     riscv_support_lane: ghidraRiscvSupportLane({
       elfClass: target.riscv.elfClass,
       floatAbi,
@@ -273,7 +374,7 @@ export const ghidraRiscvLimitations = (
           `\`.riscv.attributes\` declares \`${isa.arch}\`. Every declared extension is in the set this lane decodes; the declaration does not prove that every instruction belongs to it.`,
         ]
       : []),
-    "Admission reads `e_type` only: a fixed-address ET_EXEC declaration does not establish static linkage, and program headers (`PT_INTERP`, dynamic dependencies) are not inspected by this lane.",
+    "Admission reads `e_type` and section overlaps, not program headers: a fixed-address ET_EXEC declaration does not establish static linkage, and `PT_INTERP` and dynamic dependencies are not inspected by this lane.",
   ];
 };
 
@@ -303,5 +404,47 @@ export const ghidraRiscvCallingConventionLimitations = (
           `RISC-V calling-convention outcome: ${report.functions} functions and ${report.definitions} function definitions use ${prototype}.`,
         ]),
     "Ghidra recovers a variadic call's arguments from the registers the caller writes, not from their types: a padding register can appear as an argument, and arguments after an unwritten register are omitted.",
+  ];
+};
+
+const sectionLabel = (extent: ElfSectionExtent): string =>
+  extent.name === null ? `section [${extent.index}]` : `\`${extent.name}\``;
+
+/** Fail closed unless the pre-analysis script applied exactly the committed preparation. */
+export const ghidraRiscvLoadPreparationFailure = (
+  expected: GhidraRiscvLoadPreparation | undefined,
+  report: GhidraRiscvLoadPreparationReport | undefined,
+): string | undefined => {
+  if (expected === undefined)
+    return report === undefined
+      ? undefined
+      : "The Ghidra session reported a RISC-V load preparation that the profile did not commit.";
+  if (report === undefined)
+    return `The Ghidra session did not report the committed RISC-V load preparation ${expected.policy}.`;
+  if ("refused" in report)
+    return `REA could not prepare Ghidra's memory map for ${sectionLabel(expected.code)}: ${report.refused}`;
+  return report.policy === expected.policy
+    ? undefined
+    : `The Ghidra session did not report the committed RISC-V load preparation ${expected.policy}.`;
+};
+
+/** State the preparation REA applies, and its outcome once the bridge reports it. */
+export const ghidraRiscvLoadPreparationLimitations = (
+  expected: GhidraRiscvLoadPreparation | undefined,
+  report?: GhidraRiscvLoadPreparationReport,
+): readonly string[] => {
+  if (expected === undefined) return [];
+  const code = sectionLabel(expected.code);
+  return [
+    `RISC-V ELF load layout: NOBITS section ${sectionLabel(expected.reservation)} reserves the addresses of executable section ${code} (${expected.code.address}, ${expected.code.size} bytes). Ghidra 12.1.4's ELF loader puts such code in an overlay address space, which its DWARF import, call-frame entries and default-space references do not reach. Before analysis REA moves ${code} into the default address space with the same file bytes, and keeps the reservation as an uninitialized overlay; see docs/ghidra-riscv.md.`,
+    ...(report === undefined || "refused" in report
+      ? []
+      : report.outcome === "moved"
+        ? [
+            `RISC-V load preparation outcome: ${code} moved into the default address space (functions: ${report.functions}, entry points: ${report.entry_points}); reservation labels moved into its overlay: ${report.reservation_labels}.`,
+          ]
+        : [
+            `RISC-V load preparation outcome: Ghidra already loaded ${code} in the default address space, so REA changed nothing.`,
+          ]),
   ];
 };

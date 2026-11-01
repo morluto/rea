@@ -1,9 +1,6 @@
 import type { RiscvIsaDeclaration } from "./binaryTargetTypes.js";
-import {
-  readElfTableDeclarations,
-  type ElfDeclarationRead,
-} from "./elfDeclaredRanges.js";
-import { readElfSectionHeader } from "./elfSectionHeader.js";
+import type { ElfDeclarationRead } from "./elfDeclaredRanges.js";
+import { visitElfSectionHeaders } from "./elfSectionTable.js";
 import { err, ok, type Result } from "./result.js";
 
 /** `EF_RISCV_FLOAT_ABI` declarations in `e_flags`, named as the psABI names them. */
@@ -205,39 +202,19 @@ export function* readRiscvIsaDeclaration(
     status: "unavailable",
     reason,
   });
-  const declarations = yield* readElfTableDeclarations(prefix, fileSize);
-  if (!declarations.ok) return unavailable(declarations.error);
-  const { header, sections } = declarations.value;
-  const little = header.byteOrder === "little";
-  let attributes:
+  // Assigned by the visitor; the cast keeps control flow from narrowing it to undefined.
+  let attributes = undefined as
     | { readonly offset: bigint; readonly size: bigint }
     | undefined;
-  const perRead = Math.max(1, Math.floor((64 * 1024) / sections.width));
-  for (let index = 0; index < sections.count; index += perRead) {
-    const count = Math.min(perRead, sections.count - index);
-    const size = count * sections.width;
-    const bytes = yield {
-      offset: Number(sections.offset) + index * sections.width,
-      size,
-    };
-    if (bytes.length !== size)
-      return unavailable("truncated ELF section header table");
-    for (let item = 0; item < count; item += 1) {
-      const at = item * sections.width;
-      const parsed = readElfSectionHeader(
-        bytes.subarray(at, at + sections.width),
-        header.elfClass,
-        little,
-      );
-      if (!parsed.ok) return unavailable(parsed.error.message);
-      if (parsed.value.type !== SHT_RISCV_ATTRIBUTES) continue;
-      if (attributes !== undefined)
-        return unavailable(
-          "the image has more than one RISC-V attribute section",
-        );
-      attributes = { offset: parsed.value.offset, size: parsed.value.size };
-    }
-  }
+  const visited = yield* visitElfSectionHeaders(prefix, fileSize, (section) => {
+    if (section.type !== SHT_RISCV_ATTRIBUTES) return undefined;
+    if (attributes !== undefined)
+      return "the image has more than one RISC-V attribute section";
+    attributes = { offset: section.offset, size: section.size };
+    return undefined;
+  });
+  if (!visited.ok) return unavailable(visited.error);
+  const little = visited.value.header.byteOrder === "little";
   if (attributes === undefined) return { status: "absent" };
   if (
     attributes.size === 0n ||

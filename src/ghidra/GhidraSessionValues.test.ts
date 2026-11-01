@@ -174,6 +174,53 @@ describe("Ghidra RISC-V calling-convention report", () => {
   });
 });
 
+describe("Ghidra RISC-V load preparation report", () => {
+  const moved = {
+    policy: "nobits-reservation-overlay-v1",
+    outcome: "moved",
+    functions: 549,
+    entry_points: 331,
+    reservation_labels: 1,
+  };
+  it.each([
+    ["a moved outcome", moved],
+    [
+      "a canonical outcome",
+      { policy: "nobits-reservation-overlay-v1", outcome: "canonical" },
+    ],
+    [
+      "a refusal",
+      { policy: "nobits-reservation-overlay-v1", refused: "no reservation" },
+    ],
+  ])("accepts %s", (_label, report) => {
+    const parsed = parseGhidraSessionInfo(
+      { ...session(), elf_load_preparation: report },
+      expected,
+    );
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.elf_load_preparation).toEqual(report);
+  });
+  it.each([
+    [
+      "an unknown policy",
+      { ...moved, policy: "nobits-reservation-overlay-v2" },
+    ],
+    ["an unknown outcome", { ...moved, outcome: "partial" }],
+    ["a negative count", { ...moved, entry_points: -1 }],
+    ["counts on a canonical outcome", { ...moved, outcome: "canonical" }],
+    ["an empty refusal", { policy: moved.policy, refused: "" }],
+    ["an outcome beside a refusal", { ...moved, refused: "no reservation" }],
+    ["a non-object report", "moved"],
+  ])("rejects %s", (_label, report) => {
+    expect(
+      parseGhidraSessionInfo(
+        { ...session(), elf_load_preparation: report },
+        expected,
+      ).ok,
+    ).toBe(false);
+  });
+});
+
 describe("Ghidra disabled analyzer report", () => {
   const valid = {
     format: "rea-ghidra-disabled-analyzers-v1",

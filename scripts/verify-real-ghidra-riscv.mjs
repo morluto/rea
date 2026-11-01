@@ -536,6 +536,217 @@ try {
       original_unchanged: true,
     });
   }
+  // ESP-IDF's flash layout: the NOBITS .flash_rodata_dummy reserves
+  // .flash.text's addresses. Ghidra 12.1.4's loader puts such code in an overlay
+  // that DWARF import and default-space references never reach, unless REA
+  // prepares the memory map before analysis.
+  const esp = await buildRiscvFixture(workspace, 32, "esp");
+  assert.equal(esp.riscv.sectionOverlap.status, "code-reservation");
+  const resolvedEsp = await parseBinaryTarget(esp.path);
+  if (!resolvedEsp.ok) throw resolvedEsp.error;
+  assert.deepEqual(resolvedEsp.value.riscv, esp.riscv);
+  const { code, reservation } = esp.riscv.sectionOverlap;
+  const plan = { policy: "nobits-reservation-overlay-v1", code, reservation };
+  const espLimitations = new Set();
+  const espCall = async (name, args = {}) => {
+    const reply = await client.callTool(
+      { name, arguments: args },
+      { timeout: 240000 },
+    );
+    const lifecycle = ["open_binary", "close_binary"].includes(name);
+    const admitted = lifecycle
+      ? requireMcpLifecycleResult(reply, name)
+      : parseEvidence(requireMcpOutput(reply, name));
+    const validate = validators.get(name);
+    assert.ok(
+      validate(JSON.parse(mcpTextValue(reply))),
+      `${name}: ${JSON.stringify(validate.errors)}`,
+    );
+    if (lifecycle) return admitted;
+    assert.equal(admitted.subject.digest.sha256, esp.sha256);
+    if (admitted.provider.id === "ghidra") {
+      assert.deepEqual(
+        admitted.analysis_profile.parameters.elf_load_preparation,
+        plan,
+      );
+      for (const limitation of admitted.limitations)
+        espLimitations.add(limitation);
+    }
+    return admitted.normalized_result;
+  };
+  await espCall("open_binary", { path: esp.path, provider_id: "ghidra" });
+  const espImage = await espCall("inspect_native_load_image");
+  const blocks = (name) =>
+    espImage.observations.mappings.filter((value) => value.block === name);
+  const [text] = blocks(code.name);
+  assert.ok(text, `${code.name} missing from the load image`);
+  assert.equal(text.address_space, espImage.observations.default_address_space);
+  assert.equal(text.overlay, false);
+  assert.equal(text.executable, true);
+  assert.equal(text.start, code.address);
+  assert.equal(text.file_offset, Number(BigInt(code.offset)));
+  const [held] = blocks(reservation.name);
+  assert.ok(held, `${reservation.name} missing from the load image`);
+  assert.equal(held.overlay, true);
+  assert.equal(held.initialized, false);
+  assert.ok(
+    !espImage.observations.mappings.some(
+      (value) => value.overlay && value.executable && value.initialized,
+    ),
+    "Initialized executable code remains in an overlay",
+  );
+  const espProcedures = await espCall("list_procedures");
+  // Every procedure, flash code included, keeps its ELF address in the default space.
+  assert.ok(
+    espProcedures.every((value) => /^0x[\da-f]+$/u.test(value.address)),
+    JSON.stringify(espProcedures.map((value) => value.address)),
+  );
+  for (const name of [
+    "rea_riscv_esp_entry",
+    "rea_riscv_esp_main",
+    "rea_riscv_esp_restart",
+    "rea_riscv_esp_sum",
+    "rea_riscv_esp_next",
+  ])
+    assert.equal(
+      espProcedures.find((value) => value.value === name)?.address,
+      esp.symbols[name],
+      `${name} missing from the Ghidra inventory at its ELF address`,
+    );
+  // The ELF address of flash code selects the procedure itself.
+  const espMain = await espCall("procedure_pseudo_code", {
+    procedure: esp.symbols.rea_riscv_esp_main,
+  });
+  assert.match(espMain, /\brea_riscv_esp_main\s*\(void\)/u);
+  assert.match(espMain, /\brea_riscv_esp_restart\(\)/u);
+  // The no-return call ends the pseudocode before rea_riscv_esp_next's store.
+  assert.doesNotMatch(espMain, /0x5a5a|23130/u);
+  // DWARF reaches flash code: the parameter names come from the image.
+  assert.match(
+    await espCall("procedure_pseudo_code", {
+      procedure: esp.symbols.rea_riscv_esp_sum,
+    }),
+    /\brea_riscv_esp_sum\s*\(int left,\s*int right\)/u,
+  );
+  const entryCallees = await espCall("procedure_callees", {
+    procedure: esp.symbols.rea_riscv_esp_entry,
+  });
+  assert.ok(
+    entryCallees.includes(esp.symbols.rea_riscv_esp_main),
+    `IRAM entry does not call the flash procedure: ${JSON.stringify(entryCallees)}`,
+  );
+  const espMapping = await espCall("address_to_file_offset", {
+    address: esp.symbols.rea_riscv_esp_main,
+  });
+  assert.equal(
+    BigInt(espMapping.file_offset),
+    BigInt(code.offset) +
+      BigInt(esp.symbols.rea_riscv_esp_main) -
+      BigInt(code.address),
+  );
+  await espCall("close_binary");
+  const outcome = [...espLimitations].find((value) =>
+    value.startsWith("RISC-V load preparation outcome:"),
+  );
+  assert.match(
+    outcome ?? "",
+    // The fixture's four flash functions move; its IRAM entry stays.
+    /`\.flash\.text` moved into the default address space \(functions: 4, entry points: \d+\); reservation labels moved into its overlay: \d+\./u,
+  );
+  assert.ok(
+    [...espLimitations].some((value) =>
+      value.startsWith(
+        "RISC-V ELF load layout: NOBITS section `.flash_rodata_dummy` reserves the addresses of executable section `.flash.text`",
+      ),
+    ),
+  );
+  const espCli = parseEvidence(
+    JSON.parse(
+      (
+        await execute(
+          process.execPath,
+          [
+            entrypoint,
+            "function",
+            esp.path,
+            "rea_riscv_esp_main",
+            "--provider",
+            "ghidra",
+            "--json",
+          ],
+          { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+        )
+      ).stdout,
+    ),
+  );
+  assert.equal(
+    espCli.normalized_result.procedure.address,
+    esp.symbols.rea_riscv_esp_main,
+  );
+  assert.doesNotMatch(espCli.normalized_result.pseudocode, /0x5a5a|23130/u);
+  assert.deepEqual(
+    espCli.analysis_profile.parameters.elf_load_preparation,
+    plan,
+  );
+  // A reservation smaller than the code is not the verified shape.
+  const shrunkPath = join(workspace, "rv32-esp-short-reservation.elf");
+  const shrunk = Buffer.from(await readFile(esp.path));
+  shrunk.writeUInt32LE(
+    Number(BigInt(code.size)) - 2,
+    shrunk.readUInt32LE(32) + reservation.index * 40 + 20,
+  );
+  await writeFile(shrunkPath, shrunk);
+  const refusal = "REA prepares only a NOBITS section";
+  const refused = requireMcpToolError(
+    await client.callTool(
+      {
+        name: "open_binary",
+        arguments: { path: shrunkPath, provider_id: "ghidra" },
+      },
+      { timeout: 240000 },
+    ),
+  );
+  assert.ok(JSON.stringify(refused).includes(refusal), JSON.stringify(refused));
+  await assert.rejects(
+    execute(
+      process.execPath,
+      [
+        entrypoint,
+        "function",
+        shrunkPath,
+        "rea_riscv_esp_main",
+        "--provider",
+        "ghidra",
+        "--json",
+      ],
+      { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+    ),
+    (cause) =>
+      Number.isInteger(cause.code) &&
+      cause.code !== 0 &&
+      `${cause.stdout}\n${cause.stderr}`.includes(refusal),
+  );
+  assert.equal(
+    createHash("sha256")
+      .update(await readFile(esp.path))
+      .digest("hex"),
+    esp.sha256,
+  );
+  reports.push({
+    esp_layout: {
+      path: esp.path,
+      sha256: esp.sha256,
+      riscv: esp.riscv,
+      toolchain: esp.toolchain,
+      sources: esp.sources,
+      preparation: outcome,
+      procedures: espProcedures.length,
+      refused_short_reservation: true,
+      cli: true,
+      stdio_mcp: true,
+      original_unchanged: true,
+    },
+  });
   reports.push({
     call_sites: {
       fixture: typedSoft.path,

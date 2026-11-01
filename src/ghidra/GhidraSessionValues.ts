@@ -12,7 +12,10 @@ import {
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
-import { GHIDRA_RISCV_CALLING_CONVENTION_IDS } from "./GhidraRiscvProfile.js";
+import {
+  GHIDRA_RISCV_CALLING_CONVENTION_IDS,
+  GHIDRA_RISCV_LOAD_PREPARATION,
+} from "./GhidraRiscvProfile.js";
 
 /** Exact methods proved by the selected Program bridge handshake. */
 export const GHIDRA_SESSION_CAPABILITIES = [
@@ -103,6 +106,32 @@ const sessionInfoSchema = z
         definitions: z.int().nonnegative(),
       })
       .strict()
+      .optional(),
+    // Written by ReaGhidraPrepareElfLoad before auto-analysis.
+    elf_load_preparation: z
+      .union([
+        z
+          .object({
+            policy: z.literal(GHIDRA_RISCV_LOAD_PREPARATION),
+            outcome: z.literal("moved"),
+            functions: z.int().nonnegative(),
+            entry_points: z.int().nonnegative(),
+            reservation_labels: z.int().nonnegative(),
+          })
+          .strict(),
+        z
+          .object({
+            policy: z.literal(GHIDRA_RISCV_LOAD_PREPARATION),
+            outcome: z.literal("canonical"),
+          })
+          .strict(),
+        z
+          .object({
+            policy: z.literal(GHIDRA_RISCV_LOAD_PREPARATION),
+            refused: z.string().min(1).max(1024),
+          })
+          .strict(),
+      ])
       .optional(),
     capabilities: z.array(capabilitySchema),
     target: z

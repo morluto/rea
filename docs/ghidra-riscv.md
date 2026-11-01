@@ -33,21 +33,24 @@ that ISA.
 Provider selection returns the specific unsupported constraint rather than
 guessing a compatible profile:
 
-| Declaration                                                                | Outcome                                                                                                              |
-| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Little-endian ELF64 `ET_EXEC`, double-float ABI                            | admitted, `RISCV:LE:64:default` + `gcc`, lane `elf64-exec-le-double-float-generic-v1`                                |
-| Little-endian ELF32 `ET_EXEC`, double-float ABI                            | admitted, `RISCV:LE:32:default` + `gcc`, lane `elf32-exec-le-double-float-generic-v1`                                |
-| Little-endian ELF32 `ET_EXEC`, soft-float ABI, decoded extensions only     | admitted, `RISCV:LE:32:default` + `gcc` with the `__rea_ilp32` prototype, lane `elf32-exec-le-soft-float-generic-v1` |
-| ELF32 soft-float ABI without `Tag_RISCV_arch`, or with any other extension | refused; the reason names the extensions outside the decoded set                                                     |
-| ELF32 single-float ABI (ilp32f)                                            | refused until its [written policy](#ilp32f) is implemented and verified                                              |
-| ELF64 soft- or single-float ABI (lp64, lp64f), or the quad-float ABI       | refused; no verified calling-convention policy                                                                       |
-| Big-endian                                                                 | refused; Ghidra 12.1.4 ships no big-endian RISC-V language                                                           |
-| `ET_REL`, `ET_DYN`, other `e_type`                                         | refused with the declared value                                                                                      |
-| `EF_RISCV_RVE`                                                             | refused; the embedded 16-register profile (x0–x15) needs its own processor specification                             |
-| `EF_RISCV_TSO`                                                             | refused; the total-store-order memory model is unverified here                                                       |
-| Reserved or newer `e_flags` bits                                           | refused with the offending bits named                                                                                |
+| Declaration                                                                       | Outcome                                                                                                              |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Little-endian ELF64 `ET_EXEC`, double-float ABI                                   | admitted, `RISCV:LE:64:default` + `gcc`, lane `elf64-exec-le-double-float-generic-v1`                                |
+| Little-endian ELF32 `ET_EXEC`, double-float ABI                                   | admitted, `RISCV:LE:32:default` + `gcc`, lane `elf32-exec-le-double-float-generic-v1`                                |
+| Little-endian ELF32 `ET_EXEC`, soft-float ABI, decoded extensions only            | admitted, `RISCV:LE:32:default` + `gcc` with the `__rea_ilp32` prototype, lane `elf32-exec-le-soft-float-generic-v1` |
+| ELF32 soft-float ABI without `Tag_RISCV_arch`, or with any other extension        | refused; the reason names the extensions outside the decoded set                                                     |
+| ELF32 single-float ABI (ilp32f)                                                   | refused until its [written policy](#ilp32f) is implemented and verified                                              |
+| ELF64 soft- or single-float ABI (lp64, lp64f), or the quad-float ABI              | refused; no verified calling-convention policy                                                                       |
+| Big-endian                                                                        | refused; Ghidra 12.1.4 ships no big-endian RISC-V language                                                           |
+| `ET_REL`, `ET_DYN`, other `e_type`                                                | refused with the declared value                                                                                      |
+| `EF_RISCV_RVE`                                                                    | refused; the embedded 16-register profile (x0–x15) needs its own processor specification                             |
+| `EF_RISCV_TSO`                                                                    | refused; the total-store-order memory model is unverified here                                                       |
+| Reserved or newer `e_flags` bits                                                  | refused with the offending bits named                                                                                |
+| A NOBITS section that starts with one executable section and covers it            | admitted in its lane; REA prepares the [memory map](#load-layout) before analysis                                    |
+| Any other section overlap involving executable code, or no readable section table | refused; the reason names both sections                                                                              |
 
-`e_type` is the only load-shape declaration this lane reads. A fixed-address
+`e_type` and the [section overlaps](#load-layout) are the load-shape
+declarations this lane reads; program headers are not. A fixed-address
 `ET_EXEC` declaration does **not** establish static linkage: `PT_INTERP` and
 dynamic dependencies are not inspected, and the session records that boundary as
 a limitation rather than inferring a load model.
@@ -246,7 +249,43 @@ other extension is refused. In particular:
 ESP-IDF builds ESP32-C2 and C3 images as `rv32imc_zicsr_zifencei` and ESP32-C5,
 C6, C61, H2 and H21 images as `rv32imac_zicsr_zifencei_zaamo_zalrsc`, all ilp32.
 Those base strings are admitted. Builds that add `_zba_zbb_zbs`,
-`_zcb_zcmp_zcmt` or an `xesp` extension are refused.
+`_zcb_zcmp_zcmt` or an `xesp` extension are refused. The C5, C6, C61, H2 and
+H21 images also reserve their flash text's addresses; see
+[load layout](#load-layout).
+
+## Load layout
+
+Section addresses are load addresses in a fixed-address image, so the target
+reader also records any allocated range that an executable section shares with
+another section. ESP-IDF builds one such overlap. For ESP32-C5, C6, C61, H2, H21
+and H4, flash text and rodata share one virtual window from `0x42000020`, and
+the linker script reserves the text's addresses in the rodata segment with the
+NOBITS section `.flash_rodata_dummy`. Ghidra 12.1.4's ELF loader resolves
+overlapping sections in favour of the later one: the reservation takes the
+default address space and `.flash.text` goes into an overlay space. Ghidra's
+DWARF importer, its call-frame (FDE) processing and references from other code
+and data resolve ELF virtual addresses in the default space only. Without
+preparation, code in that overlay gets no DWARF signature, local variables or
+`DW_AT_noreturn` flag, each of its functions gets a one-byte shadow function in
+the reservation, and pseudocode continues past calls to no-return functions
+such as `esp_restart`.
+
+When a NOBITS section starts with one executable section and covers it, the
+lane commits both sections to the analysis profile as `elf_load_preparation`
+(policy `nobits-reservation-overlay-v1`). Before auto-analysis,
+`ReaGhidraPrepareElfLoad.java` gives the code the default address space and the
+reservation an uninitialized overlay instead. Bytes and file offsets stay as
+imported, and the loader's symbols, functions and entry points move with the
+code. Ghidra pins absolute ELF symbols such as `_text_start`; they keep their
+addresses. Flash code therefore has its ELF address, for example `0x42002ab6`
+rather than `.flash.text:0x42002ab6`. The script reports `moved`, or `canonical`
+when Ghidra already loaded the code in the default space. Any other memory map
+is refused with the mismatch it found, and session Evidence states the
+preparation and its outcome.
+
+Any other overlap that involves executable code, such as two code sections at
+one address or a reservation that does not cover the code, is refused with both
+sections named. Overlaps between data sections only are outside this check.
 
 ## Evidence
 
@@ -258,7 +297,9 @@ booleans `float_abi_double`, `rvc_declared`, `rve_declared`, and
 report declarations the header and attributes make, and the policy REA applied;
 none of them is evidence of the original compiler or of instruction
 conformance. Session Evidence states the prototype and how many functions and
-definitions use it.
+definitions use it. An image prepared as [load layout](#load-layout) describes
+also commits `elf_load_preparation`: the policy, each section's index, name,
+address and size, and the code's file offset.
 
 ## Verification and limits
 
@@ -282,7 +323,7 @@ REA_RISCV_OBJDUMP=/path/to/llvm/bin/llvm-objdump \
 npm run verify:ghidra:riscv
 ```
 
-The lane builds four `ET_EXEC` fixtures from committed freestanding C and
+The lane builds five `ET_EXEC` fixtures from committed freestanding C and
 assembly sources:
 
 - RV32 and RV64 double-float builds (`rv{32,64}imafdc`) of `riscv.c`.
@@ -290,6 +331,10 @@ assembly sources:
   `-march=rv32imc_zicsr_zifencei -mabi=ilp32`, typed with DWARF.
 - The same objects linked with `--strip-all`. Every allocated section keeps
   its address and bytes, so the typed build's symbols locate its functions.
+- An RV32 soft-float build of `riscv-esp-layout.c` with ESP32-C6's
+  `-march=rv32imac_zicsr_zifencei -mabi=ilp32`, linked with
+  `tests/conformance/esp/esp32c6-shared-window.ld`. As ESP-IDF does, it places
+  `.flash.text` and the NOBITS `.flash_rodata_dummy` at `0x42000020`.
 
 Independent LLVM readelf observations establish ELF declarations,
 `Tag_RISCV_arch` and symbol addresses. Public CLI and stdio MCP workflows verify
@@ -315,6 +360,15 @@ For the soft-float builds the lane also checks:
 - Retained Evidence states the prototype outcome; the stripped build has no
   function definitions.
 
+For the ESP layout build the lane checks that the profile commits the two
+sections LLVM readelf reports, and that the load image maps `.flash.text`
+initialized and executable in the default space, with the reservation as an
+uninitialized overlay. Every procedure keeps its ELF address, which selects it.
+The pseudocode of a flash function that ends by calling a `noreturn` function
+stops at that call. A flash function's pseudocode names its DWARF parameters,
+and an IRAM function's call reaches flash code. A copy whose reservation is
+smaller than the code is refused over CLI and MCP.
+
 Header-mutated copies check admission. The RV32 double-float image relabelled as
 soft-float (`e_flags` `0x1`), refused before this lane, is admitted through the
 soft-float lane over CLI and MCP. The soft-float image relabelled as
@@ -322,8 +376,9 @@ single-float, RV64 soft-float, and unsupported high bits are refused with their
 reasons. Failures retain the diagnostic workspace; successful runs remove it and
 report the observed process lineage.
 
-Module tests cover admission, malformed headers and attribute sections, the
-handshake, and the conformance checks against recorded LLVM and Ghidra output.
+Module tests cover admission, malformed headers, attribute sections and section
+overlaps, the handshake, and the conformance checks against recorded LLVM and
+Ghidra output.
 Call-graph completeness, string inventories, dynamic linkage, Andes or RVE/TSO
 images, big-endian targets, ilp32f images, and decoding beyond the probes are
 **not** established by this lane.
