@@ -265,3 +265,61 @@ it("keeps a physical failure even when the later abort reason is that same error
     error: { _tag: "AnalysisProtocolError", cause: failure },
   });
 });
+
+it("reports an adb that never started without claiming an exit code", async () => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("spawn ENOTDIR"), {
+      code: "ENOTDIR",
+      spawnFailed: true,
+      stdout: "",
+      stderr: "",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "list_adb_devices",
+    { device: "device" },
+    { binary: "/host/adb", pathSource: "environment", environment: {} },
+    ["devices"],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisProtocolError",
+      commandFailure: { code: "ENOTDIR", spawnFailed: true, signal: null },
+    },
+  });
+});
+
+it("reports exhausted host capacity rather than an adb protocol failure", async () => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("spawn EAGAIN"), {
+      code: "EAGAIN",
+      spawnFailed: true,
+      stdout: "",
+      stderr: "",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "list_adb_devices",
+    { device: "device" },
+    { binary: "/host/adb", pathSource: "environment", environment: {} },
+    ["devices"],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisResourceConstraintError",
+      resource: "capacity",
+      retryable: true,
+      reportedLimits: { spawn_error: "EAGAIN" },
+    },
+  });
+});

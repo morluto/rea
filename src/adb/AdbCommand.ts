@@ -7,6 +7,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   execFileBytes,
@@ -14,10 +15,14 @@ import {
   ExecFileOutputCancelledError,
   execFileOutputFailure,
   type ExecFileOutputFailure,
+  spawnCapacityExhausted,
 } from "../process/ExecFileOutput.js";
 import { packageChangeFailureReason } from "./AdbShellOutput.js";
 import { isSuccessfulDaemonStartNotice } from "./AdbDeviceOutput.js";
-import type { AdbBinarySelection } from "./AdbConfiguration.js";
+import {
+  adbHostCapacityRemediation,
+  type AdbBinarySelection,
+} from "./AdbConfiguration.js";
 
 const STDERR_EXCERPT_CHARACTERS = 512;
 
@@ -93,6 +98,26 @@ export interface AdbCommandTarget {
   /** Exact host operand adb consumes, including an owned input snapshot. */
   readonly localPath?: string;
 }
+
+/** The host, not adb, lacked process, memory or descriptor capacity to start it. */
+export const adbSpawnCapacityError = (
+  operation: string,
+  spawnError: string,
+  cause: unknown,
+  diagnostics?: Readonly<Record<string, JsonValue>>,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    "capacity",
+    `The host could not start adb (${spawnError}) for ${operation}`,
+    { spawn_error: spawnError },
+    {
+      cause,
+      diagnostics,
+      retryable: true,
+      remediationAction: adbHostCapacityRemediation(spawnError),
+    },
+  );
 
 /** Run one bounded adb invocation and keep its exact failure shape. */
 export const runAdbCapture = async (
@@ -219,11 +244,16 @@ export const runAdbCapture = async (
           remediationAction: `This ${String(limits.timeoutMs)} ms adb deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
         }),
       );
+    // The host, not adb, lacked capacity to start it.
+    if (spawnCapacityExhausted(failure))
+      return err(adbSpawnCapacityError(operation, String(failure.code), cause));
     return err(
       new AdbProtocolError(
-        excerpt === ""
-          ? `adb exited with code ${String(failure.code)} for ${operation}`
-          : excerpt,
+        failure.spawnFailed === true
+          ? `adb could not be started (${String(failure.code)}) for ${operation}`
+          : excerpt === ""
+            ? `adb exited with code ${String(failure.code)} for ${operation}`
+            : excerpt,
         failure,
         cause,
       ),

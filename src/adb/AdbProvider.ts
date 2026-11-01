@@ -95,6 +95,7 @@ import {
 import {
   adbCommandOutputFailure,
   adbArguments,
+  adbSpawnCapacityError,
   runAdb,
   runAdbCapture,
   packageChangeRefusal,
@@ -1315,6 +1316,18 @@ export class AdbProvider {
             ADB_PROVIDER_IDENTITY.id,
             request.operation,
             { prerequisite_operation: "inspect_adb_client" },
+          ),
+        );
+      if (
+        cause instanceof AdbConfigurationFailure &&
+        cause.code === "host_capacity"
+      )
+        return err(
+          adbSpawnCapacityError(
+            request.operation,
+            String(cause.diagnostics.filesystem_error),
+            cause,
+            cause.diagnostics,
           ),
         );
       if (cause instanceof AdbConfigurationFailure)
