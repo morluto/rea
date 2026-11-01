@@ -14,6 +14,11 @@ import { err, ok, type Result } from "../../domain/result.js";
 /** A scenario whose executable and observation paths are resolved for execution. */
 export type ResolvedProcessScenario = Omit<ProcessScenario, "dry_run">;
 
+/** Test seam for holding the final admission step while cancellation arrives. */
+export interface ProcessScenarioPreparationHost {
+  readonly admitRoots?: typeof admitFilesystemObservationRoots;
+}
+
 /**
  * Resolve a scenario for a dry run. This applies the same executable, working
  * directory, path and platform admission checks as a capture, then stops
@@ -24,6 +29,7 @@ export const prepareProcessScenarioPlan = async (
   environment: Readonly<Record<string, string | undefined>> = process.env,
   platform: NodeJS.Platform = process.platform,
   signal?: AbortSignal,
+  host: ProcessScenarioPreparationHost = {},
 ): Promise<Result<ResolvedProcessScenario, AnalysisError>> => {
   if (signal?.aborted === true)
     return err(
@@ -54,7 +60,10 @@ export const prepareProcessScenarioPlan = async (
     if (aborted()) return cancelled();
     const privacy = createProcessSensitiveOutput(scenario);
     if (!privacy.ok) return err(privacy.error);
-    const admitted = await admitFilesystemObservationRoots(resolved, signal);
+    const admitted = await (host.admitRoots ?? admitFilesystemObservationRoots)(
+      resolved,
+      signal,
+    );
     if (!admitted.ok) return admitted;
     if (aborted()) return cancelled();
     return ok(resolved);
