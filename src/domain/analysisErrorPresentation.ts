@@ -25,6 +25,7 @@ import {
   ResourceSnapshotMismatchError,
 } from "./evidenceErrors.js";
 import {
+  HOPPER_STARTUP_TIMEOUT_REMEDIATION,
   HopperRemoteError,
   HopperProcessError,
   HopperStartError,
@@ -38,6 +39,8 @@ import { fixedAllowanceRemediation } from "./fixedAllowanceRemediation.js";
 import {
   primaryAnalysisError,
   resolvedAnalysisError,
+  type AnalysisCallerLifetime,
+  type AnalysisContinuingCallerGuidance,
   type AnalysisError,
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
@@ -53,10 +56,17 @@ export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with 
 /** Next step when one MCP frame cannot carry a selected page of complete records. */
 export const MCP_TRANSPORT_EVIDENCE_RECORDS = `Request fewer records with get_evidence_bundle detail: records, a smaller limit or an exact evidence_id filter; inspect compatible records in pages through inspect_analysis_view. A single record larger than one response needs export. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
 
+/** Name the next step that is true for how long the caller keeps REA's runtime and session. */
 export const analysisErrorRemediationAction = (
   error: AnalysisError,
+  callerLifetime: AnalysisCallerLifetime = "continuing",
 ): string => {
   error = resolvedAnalysisError(error);
+  const continuing =
+    callerLifetime === "continuing"
+      ? error.continuingCallerGuidance?.remediationAction
+      : undefined;
+  if (continuing !== undefined) return continuing;
   if (
     (error instanceof ProviderAdapterError ||
       error instanceof AnalysisCapabilityUnavailableError) &&
@@ -127,7 +137,7 @@ export const analysisErrorRemediationAction = (
     return "Use an artifact within the capacity reported in details.detail. Changing output detail or retrying the unchanged input does not remove this boundary.";
   if (error instanceof HopperTimeoutError)
     return error.operation === undefined
-      ? "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, use update_analysis_settings with setting hopper.startup_timeout_ms and action set for the next startup attempt without restarting REA, or increase REA_HOPPER_STARTUP_TIMEOUT_MS for future REA processes. Allow at least that long in the MCP client. Resolve retained cleanup before reopening."
+      ? HOPPER_STARTUP_TIMEOUT_REMEDIATION
       : error.providerState === "busy"
         ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
         : "Check binary_session for Hopper health, then retry the operation.";
@@ -364,8 +374,68 @@ const STATIC_ERROR_CATEGORIES: Readonly<
   BinaryTargetError: "unavailable",
 };
 
-export const analysisErrorUserMessage = (error: AnalysisError): string => {
+/** Describe the request's outcome, adding continuing-caller facts only for that caller. */
+export const analysisErrorUserMessage = (
+  error: AnalysisError,
+  callerLifetime: AnalysisCallerLifetime = "continuing",
+): string => {
+  const { outcome, continuing } = analysisErrorUserMessageParts(error);
+  return callerLifetime === "invocation" || continuing === undefined
+    ? outcome
+    : `${outcome} ${continuing}`;
+};
+
+/** The outcome every caller receives and the addition only a continuing caller does. */
+const analysisErrorUserMessageParts = (
+  error: AnalysisError,
+): { readonly outcome: string; readonly continuing?: string } => {
   error = resolvedAnalysisError(error);
+  const outcome = outcomeUserMessage(error);
+  const continuing = error.continuingCallerGuidance?.userMessage;
+  return continuing === undefined ? { outcome } : { outcome, continuing };
+};
+
+/**
+ * Re-attribute one failure's message and another's remediation to a composed
+ * error, keeping the form each caller lifetime receives.
+ */
+export const composedCallerGuidance = (sources: {
+  readonly message?: AnalysisError;
+  readonly remediation: AnalysisError;
+}): {
+  readonly userMessage?: string;
+  readonly remediationAction: string;
+  readonly continuingCallerGuidance?: AnalysisContinuingCallerGuidance;
+} => {
+  const message =
+    sources.message === undefined
+      ? undefined
+      : analysisErrorUserMessageParts(sources.message);
+  const remediationAction = analysisErrorRemediationAction(
+    sources.remediation,
+    "invocation",
+  );
+  const continuingRemediation = analysisErrorRemediationAction(
+    sources.remediation,
+  );
+  const continuingCallerGuidance = {
+    ...(message?.continuing === undefined
+      ? {}
+      : { userMessage: message.continuing }),
+    ...(continuingRemediation === remediationAction
+      ? {}
+      : { remediationAction: continuingRemediation }),
+  };
+  return {
+    ...(message === undefined ? {} : { userMessage: message.outcome }),
+    remediationAction,
+    ...(Object.keys(continuingCallerGuidance).length === 0
+      ? {}
+      : { continuingCallerGuidance }),
+  };
+};
+
+const outcomeUserMessage = (error: AnalysisError): string => {
   if (error instanceof AnalysisSnapshotMismatchError) return error.message;
   if (error instanceof AnalysisUnsupportedTargetError) return error.message;
   if (error instanceof AnalysisResourceConstraintError) return error.reason;

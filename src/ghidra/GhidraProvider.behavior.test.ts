@@ -10,7 +10,10 @@ import { analysisProviderCandidate } from "../contracts/toolOutputSchemaPrimitiv
 import { ProcessOutputTokenScanner } from "../process/ProcessOutputTokenScanner.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  resolvedAnalysisError,
+  type AnalysisCallerLifetime,
+} from "../domain/analysisErrorBase.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import { ok as javaProbeOk, err, ok } from "../domain/result.js";
@@ -49,7 +52,11 @@ import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import type { GhidraTargetSnapshot } from "./GhidraClient.js";
 import {
+  GHIDRA_ANNOTATIONS_RETAINED,
+  GHIDRA_SESSION_RETAINED,
+  ghidraDecompileTimeoutRecovery,
   ghidraMissingProgramGuidance,
+  ghidraStartupTimeoutGuidance,
   type GhidraProviderClientFactory,
 } from "./GhidraProviderClient.js";
 import type { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
@@ -1491,7 +1498,7 @@ describe("Ghidra decompiler failure projection", () => {
       expect(projected).toMatchObject({
         code: "execution_failure",
         retryable: false,
-        message: `${message}. Only the decompiler failed for this procedure; the Ghidra session remains usable.`,
+        message: `${message}. Only the decompiler failed for this procedure. ${GHIDRA_SESSION_RETAINED}`,
         details: { diagnostics: { remote_code: code } },
       });
       expect(projected.message).not.toContain("rea doctor");
@@ -1500,6 +1507,16 @@ describe("Ghidra decompiler failure projection", () => {
         "facet_availability.pseudocode",
       );
       expect(projected.remediation.action).not.toContain("rea doctor");
+      // A one-shot invocation has released the session it would reuse.
+      const invocation = projectAnalysisError(result.error, "invocation");
+      expect(invocation).toMatchObject({
+        code: "execution_failure",
+        remediation: projected.remediation,
+      });
+      expect(projected.message).toBe(
+        `${invocation.message} ${GHIDRA_SESSION_RETAINED}`,
+      );
+      expect(invocation.message).not.toContain(GHIDRA_SESSION_RETAINED);
     }
   });
 
@@ -1541,12 +1558,23 @@ describe("Ghidra decompiler failure projection", () => {
       expect(projected).toMatchObject({
         code: "provider_timeout",
         retryable: true,
-        message: `${message}. Only this procedure's decompilation was stopped; the Ghidra session remains usable.`,
+        message: `${message}. Only this procedure's decompilation was stopped. ${GHIDRA_SESSION_RETAINED}`,
         recovery: { kind: "inspect_timeout_state", timeout_ms: 5000 },
-        details: { diagnostics: { remote_code: code } },
+        details: {
+          diagnostics: { remote_code: code },
+          limit: {
+            setting: "ghidra.decompile_timeout_seconds",
+            effective_value: 5,
+            applies_at: "next_operation",
+            agent_editable: true,
+            scope: "rea-runtime",
+            rea_restart_required: false,
+          },
+        },
       });
       const action = projected.remediation.action;
       expect(action).toContain("analyze_function");
+      expect(action).toContain("update_analysis_settings");
       expect(action).toContain("REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS");
       expect(action).toContain("tool-call deadline");
       expect(action).toContain("new Codex/Kimi registrations");
@@ -1555,6 +1583,135 @@ describe("Ghidra decompiler failure projection", () => {
       expect(action).not.toContain("rea doctor");
     }
   });
+});
+
+describe("Ghidra decompile deadline for a finished invocation", () => {
+  const decompileDeadline = async (
+    seconds: number,
+    existingProject: boolean,
+    cancelled = false,
+  ) => {
+    const environment: Record<string, string> = {
+      REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: String(seconds),
+    };
+    if (existingProject) {
+      const root = await mkdtemp(join(tmpdir(), "rea-deadline-project-"));
+      onTestFinished(async () => {
+        await rm(root, { recursive: true, force: true });
+      });
+      await mkdir(join(root, "saved.rep"));
+      await writeFile(join(root, "saved.gpr"), "marker");
+      environment.REA_GHIDRA_PROJECT_PATH = join(root, "saved.gpr");
+    }
+    const code = "decompile_timed_out";
+    const message = `Ghidra decompilation of 0x401000 exceeded the ${String(seconds)}-second configured decompilation limit`;
+    const observed = new GhidraSessionError(
+      "remote",
+      message,
+      { remote_code: code },
+      { remoteCode: code },
+    );
+    const ghidra = provider(
+      installationHost(),
+      () => ({
+        start: () => Promise.resolve(ok(sessionInfo())),
+        callTool: () =>
+          Promise.resolve(
+            err(
+              cancelled
+                ? observed.withConcurrentCancellation({ reason: "deadline" })
+                : observed,
+            ),
+          ),
+        close: () => Promise.resolve(ok(null)),
+      }),
+      environment,
+    );
+    const client = await createElfClient(ghidra);
+    const result = await client.execute("procedure_pseudo_code", {
+      procedure: "main",
+    });
+    if (result.ok) throw new Error("Expected the decompile deadline");
+    return {
+      message,
+      continuing: projectAnalysisError(result.error),
+      invocation: projectAnalysisError(result.error, "invocation"),
+    };
+  };
+
+  it.each([
+    { seconds: 5, existingProject: false },
+    { seconds: 2_147_483, existingProject: false },
+    { seconds: 5, existingProject: true },
+  ])(
+    "delivers each lifetime's recovery for a $seconds-second deadline (existing project: $existingProject)",
+    async ({ seconds, existingProject }) => {
+      const { message, continuing, invocation } = await decompileDeadline(
+        seconds,
+        existingProject,
+      );
+      const recovery = ghidraDecompileTimeoutRecovery(seconds, existingProject);
+      for (const projected of [continuing, invocation])
+        expect(projected).toMatchObject({
+          code: "provider_timeout",
+          retryable: true,
+          recovery: {
+            kind: "inspect_timeout_state",
+            timeout_ms: seconds * 1000,
+          },
+          details: { diagnostics: { remote_code: "decompile_timed_out" } },
+        });
+      expect(invocation.remediation.action).toBe(recovery.remediationAction);
+      expect(continuing.remediation.action).toBe(
+        recovery.continuingRemediationAction,
+      );
+      // Only a saved project's rerun reopens it instead of importing again.
+      expect(
+        invocation.remediation.action.includes("REA_GHIDRA_PROJECT_PATH"),
+      ).toBe(existingProject);
+      expect(invocation.message.startsWith(message)).toBe(true);
+      expect(continuing.message).toBe(
+        `${invocation.message} ${GHIDRA_SESSION_RETAINED}`,
+      );
+      const enforced = {
+        setting: "ghidra.decompile_timeout_seconds",
+        effective_value: seconds,
+        unit: "seconds",
+        minimum: 1,
+        maximum: 2_147_483,
+        agent_editable: true,
+        rea_restart_required: false,
+      };
+      expect(invocation.details?.limit).toEqual({
+        ...enforced,
+        applies_at: "next_invocation",
+        scope: "rea-invocation",
+        environment: "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
+      });
+      expect(continuing.details?.limit).toEqual({
+        ...enforced,
+        applies_at: "next_operation",
+        scope: "rea-runtime",
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "names what a session closed by cancellation repeats (existing project: %s)",
+    async (existingProject) => {
+      const { continuing, invocation } = await decompileDeadline(
+        5,
+        existingProject,
+        true,
+      );
+      // Cancellation closed the session, so no caller is told it remains.
+      expect(invocation.message).toBe(continuing.message);
+      expect(continuing.message).not.toContain(GHIDRA_SESSION_RETAINED);
+      expect(continuing.message.includes("REA_GHIDRA_PROJECT_PATH")).toBe(
+        existingProject,
+      );
+    },
+  );
 });
 
 describe("Ghidra failures during cancellation cleanup", () => {
@@ -1628,6 +1785,17 @@ describe("Ghidra failures during cancellation cleanup", () => {
         cleanupFailed ? "cleanup_incomplete" : projectedCode,
       );
       expect(projected.message).toContain(message);
+      // A one-shot invocation never inherits a session it has released,
+      // including inside a composed cleanup failure's child diagnostics.
+      const invocation = JSON.stringify(
+        projectAnalysisError(result.error, "invocation"),
+      );
+      expect(invocation).toContain(message);
+      for (const retained of [
+        GHIDRA_SESSION_RETAINED,
+        GHIDRA_ANNOTATIONS_RETAINED,
+      ])
+        expect(invocation).not.toContain(retained);
       if (!cancelled) {
         expect(projected.message).toContain(
           remoteCode === "regex_stack_exhausted"
@@ -3302,44 +3470,45 @@ it("projects Ghidra startup failure and its incomplete cleanup together", async 
     });
 });
 
-describe("Ghidra deadline guidance", () => {
-  const timedOut = async (
-    phase: "start" | "request",
-    message: string,
-    environment: Readonly<Record<string, string>> = {},
-  ) => {
-    const failure = new GhidraSessionError(
-      "timeout",
-      message,
-      { failure_kind: "timeout" },
-      { timeoutMs: 250 },
-    );
-    const ghidra = provider(
-      installationHost(),
-      () => ({
-        start: async () =>
-          phase === "start" ? err(failure) : ok(sessionInfo()),
-        callTool: async () => err(failure),
-        close: async () => ok(null),
-      }),
-      environment,
-    );
-    onTestFinished(async () => {
-      await ghidra.closeOwnedResources();
-    });
-    const target = executableTarget("elf", "x86_64");
-    const profile = await ghidra.resolveAnalysisProfile(target);
-    if (!profile.ok || profile.value.profile === null)
-      throw new Error("Expected Ghidra analysis profile");
-    const result = await ghidra
-      .createClient(target, profile.value.profile)
-      .execute("list_documents", {});
-    if (result.ok) throw new Error("Expected a Ghidra timeout");
-    return projectAnalysisError(result.error);
-  };
+/** Project one Ghidra deadline failure for the selected caller lifetime. */
+const ghidraTimedOut = async (
+  phase: "start" | "request",
+  message: string,
+  environment: Readonly<Record<string, string>> = {},
+  callerLifetime: AnalysisCallerLifetime = "continuing",
+) => {
+  const failure = new GhidraSessionError(
+    "timeout",
+    message,
+    { failure_kind: "timeout" },
+    { timeoutMs: 250 },
+  );
+  const ghidra = provider(
+    installationHost(),
+    () => ({
+      start: async () => (phase === "start" ? err(failure) : ok(sessionInfo())),
+      callTool: async () => err(failure),
+      close: async () => ok(null),
+    }),
+    environment,
+  );
+  onTestFinished(async () => {
+    await ghidra.closeOwnedResources();
+  });
+  const target = executableTarget("elf", "x86_64");
+  const profile = await ghidra.resolveAnalysisProfile(target);
+  if (!profile.ok || profile.value.profile === null)
+    throw new Error("Expected Ghidra analysis profile");
+  const result = await ghidra
+    .createClient(target, profile.value.profile)
+    .execute("list_documents", {});
+  if (result.ok) throw new Error("Expected a Ghidra timeout");
+  return projectAnalysisError(result.error, callerLifetime);
+};
 
+describe("Ghidra deadline guidance", () => {
   it("names the startup deadline setting and its value when startup times out", async () => {
-    const projected = await timedOut(
+    const projected = await ghidraTimedOut(
       "start",
       "Ghidra startup deadline elapsed",
     );
@@ -3376,7 +3545,7 @@ describe("Ghidra deadline guidance", () => {
     });
     await mkdir(join(root, "large.rep"));
     await writeFile(join(root, "large.gpr"), "marker");
-    const projected = await timedOut(
+    const projected = await ghidraTimedOut(
       "start",
       "Ghidra startup deadline elapsed",
       { REA_GHIDRA_PROJECT_PATH: join(root, "large.gpr") },
@@ -3405,7 +3574,7 @@ describe("Ghidra deadline guidance", () => {
   });
 
   it("keeps generic guidance for a bridge request deadline", async () => {
-    const projected = await timedOut(
+    const projected = await ghidraTimedOut(
       "request",
       "Ghidra bridge request timed out",
     );
@@ -3414,6 +3583,115 @@ describe("Ghidra deadline guidance", () => {
     expect(projected.remediation.action).not.toContain(
       "REA_GHIDRA_STARTUP_TIMEOUT_MS",
     );
+  });
+});
+
+describe("Ghidra startup deadline for a finished invocation", () => {
+  const startupLimit = {
+    setting: "ghidra.startup_timeout_ms",
+    effective_value: 250,
+    agent_editable: true,
+    rea_restart_required: false,
+  };
+  const invocationLimit = {
+    ...startupLimit,
+    applies_at: "next_invocation",
+    scope: "rea-invocation",
+    environment: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+  };
+
+  it.each([false, true])(
+    "delivers each lifetime's startup recovery (existing project: %s)",
+    async (existingProject) => {
+      const environment: Record<string, string> = {};
+      if (existingProject) {
+        const root = await mkdtemp(join(tmpdir(), "rea-timeout-project-"));
+        onTestFinished(async () => {
+          await rm(root, { recursive: true, force: true });
+        });
+        await mkdir(join(root, "large.rep"));
+        await writeFile(join(root, "large.gpr"), "marker");
+        environment.REA_GHIDRA_PROJECT_PATH = join(root, "large.gpr");
+      }
+      const elapsed = "Ghidra startup deadline elapsed";
+      const invocation = await ghidraTimedOut(
+        "start",
+        elapsed,
+        environment,
+        "invocation",
+      );
+      const continuing = await ghidraTimedOut("start", elapsed, environment);
+      const guidance = ghidraStartupTimeoutGuidance(250, existingProject);
+      expect(invocation).toMatchObject({
+        code: "provider_timeout",
+        remediation: { action: guidance.remediationAction },
+        details: { timeout_ms: 250, limit: invocationLimit },
+      });
+      expect(continuing).toMatchObject({
+        code: "provider_timeout",
+        remediation: {
+          action: guidance.continuingCallerGuidance.remediationAction,
+        },
+        details: {
+          timeout_ms: 250,
+          limit: {
+            ...startupLimit,
+            applies_at: "next_startup",
+            scope: "rea-runtime",
+          },
+        },
+      });
+      // Existing-project mode runs no auto-analysis to disable.
+      expect(
+        invocation.remediation.action.includes("REA_GHIDRA_DISABLED_ANALYZERS"),
+      ).toBe(!existingProject);
+    },
+  );
+
+  it("projects a composed cleanup failure's child startup timeout for the caller", async () => {
+    const cleanup = new ProviderCleanupError(
+      "ghidra",
+      ["owned-ghidra-process"],
+      { reason: "process cleanup unconfirmed" },
+    );
+    const ghidra = provider(installationHost(), () => ({
+      start: async () =>
+        err(
+          new GhidraSessionError(
+            "timeout",
+            "Ghidra startup deadline elapsed",
+            { failure_kind: "timeout" },
+            { timeoutMs: 250, cleanupFailure: cleanup },
+          ),
+        ),
+      callTool: async () => ok(null),
+      close: async () => err(cleanup),
+    }));
+    const result = await (await createElfClient(ghidra)).execute("health", {});
+    if (result.ok) throw new Error("Expected the composed startup failure");
+    const guidance = ghidraStartupTimeoutGuidance(250, false);
+    const child = (lifetime: AnalysisCallerLifetime) =>
+      projectAnalysisError(result.error, lifetime).details?.diagnostics;
+    expect(projectAnalysisError(result.error, "invocation")).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { limit: invocationLimit },
+    });
+    expect(child("invocation")).toMatchObject({
+      primary_error: {
+        code: "provider_timeout",
+        remediation: { action: guidance.remediationAction },
+        details: { limit: invocationLimit },
+      },
+      cleanup_error: { code: "cleanup_incomplete" },
+    });
+    expect(child("continuing")).toMatchObject({
+      primary_error: {
+        remediation: {
+          action: guidance.continuingCallerGuidance.remediationAction,
+        },
+        details: { limit: { scope: "rea-runtime" } },
+      },
+    });
   });
 });
 
