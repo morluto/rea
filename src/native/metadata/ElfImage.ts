@@ -30,6 +30,8 @@ export const readElfImage = (
       dynamicSegments.push(program);
       continue;
     }
+    // PT_INTERP and GNU program headers are not load segments.
+    if (program.type !== 1) continue;
     const {
       flags,
       file_offset: fileOffset,

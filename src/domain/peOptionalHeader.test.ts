@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 import { readPeOptionalHeader } from "./peMachine.js";
-import { readPeOptionalHeaderStructure } from "./peOptionalHeader.js";
+import {
+  readPeOptionalHeaderFixedFields,
+  readPeOptionalHeaderStructure,
+} from "./peOptionalHeader.js";
 
 const formats = [
   { format: "pe32", magic: 0x10b, bits: 32, directoryOffset: 96 },
@@ -66,6 +69,7 @@ it.each(formats)(
         fileAlignment: 0x200,
         sizeOfImage: 0,
         sizeOfHeaders: 0xffffffff,
+        dllCharacteristics: 0,
         directoryCountOffset: format.directoryOffset - 4,
         directoryCount: 0,
         dataDirectories: [],
@@ -153,6 +157,40 @@ it.each(formats)(
   },
 );
 
+it.each(formats)(
+  "reads $format mapping fields from 64 bytes and leaves DllCharacteristics unread",
+  (format) => {
+    const bytes = Buffer.alloc(64);
+    bytes.writeUInt16LE(format.magic);
+    if (format.bits === 64) bytes.writeBigUInt64LE(0xfedcba9876540000n, 24);
+    else bytes.writeUInt32LE(0x87650000, 28);
+    bytes.writeUInt32LE(0x1000, 32);
+    bytes.writeUInt32LE(0x200, 36);
+    bytes.writeUInt32LE(0x1000, 56);
+    bytes.writeUInt32LE(0x400, 60);
+    const fixed = readPeOptionalHeaderFixedFields(bytes);
+    if (!fixed.ok) throw new Error(fixed.error.message);
+    expect(fixed.value.dllCharacteristics).toBeNull();
+    expect(fixed.value.sizeOfHeaders).toBe(0x400);
+    expect(fixed.value.sizeOfImage).toBe(0x1000);
+    expect(readPeOptionalHeaderStructure(bytes)).toMatchObject({
+      ok: false,
+      error: { reason: "truncated-fixed-fields" },
+    });
+  },
+);
+
+it.each(formats)(
+  "copies $format DllCharacteristics from the fixed optional-header fields",
+  (format) => {
+    const bytes = header(format, 0);
+    bytes.writeUInt16LE(0x4160, 70);
+    const result = readPeOptionalHeaderStructure(bytes);
+    if (!result.ok) throw new Error(result.error.message);
+    expect(result.value.dllCharacteristics).toBe(0x4160);
+  },
+);
+
 it("honors a Uint8Array window and detaches facts from later source changes", () => {
   const bytes = header(formats[1], 1);
   bytes.writeUInt32LE(0x12345678, 112);
@@ -174,6 +212,7 @@ it("honors a Uint8Array window and detaches facts from later source changes", ()
     fileAlignment: 0x200,
     sizeOfImage: 0,
     sizeOfHeaders: 0x400,
+    dllCharacteristics: 0,
     directoryCountOffset: formats[1].directoryOffset - 4,
     directoryCount: 1,
     dataDirectories: [{ address: 0x12345678, size: 0x90, offset: 112 }],

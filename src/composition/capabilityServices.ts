@@ -64,6 +64,7 @@ import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHo
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import {
   createPeLoadConfigService,
+  createBinaryHardeningService,
   createPeCertificatesService,
   createPeImportsService,
   createNativeExportsService,
@@ -338,6 +339,7 @@ const modules = {
   appleIps: service(() => createAppleIpsService()),
   kernelModule: service(() => createKernelModuleService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
+  binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
   electronFuses: service(

@@ -13,8 +13,12 @@ export interface MachoLoadCommandTableHeader {
   readonly commandBytes: number;
 }
 
+/** Byte offset of `mach_header.flags`, shared by the 32- and 64-bit headers. */
+export const MACHO_HEADER_FLAGS_OFFSET = 24;
+
 export interface MachoHeaderDeclarations extends MachoLoadCommandTableHeader {
   readonly fileType: number;
+  readonly flags: number;
   readonly identity: { readonly cpuType: number; readonly cpuSubtype: number };
 }
 
@@ -39,6 +43,7 @@ export const readMachoHeaderDeclarations = (
     commandCount: view.getUint32(16, littleEndian),
     commandBytes,
     fileType: view.getUint32(12, littleEndian),
+    flags: view.getUint32(MACHO_HEADER_FLAGS_OFFSET, littleEndian),
     identity: prefix.identity,
   });
 };

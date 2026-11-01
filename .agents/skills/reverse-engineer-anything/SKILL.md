@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "59"
+  version: "60"
 ---
 
 # REA
@@ -264,6 +264,15 @@ explicit path or endpoint and do not need it.
   linker declarations, not proof of enforcement. A missing directory is observed
   absence of that declaration. See the
   [PE load configuration guide](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
+- ELF, PE, and Mach-O hardening: `inspect_binary_hardening` with the explicit
+  local file. This built-in target-free inspection requires no pwntools or other
+  host tool. One image per Mach-O slice. Each property is `enabled`, `disabled`,
+  `partial`, `unknown`, or `not_applicable`, with the header field or import
+  behind it. A missing stack-protector or fortify import is `unknown`, not
+  proof the protection was omitted. Authenticode and Mach-O code signatures
+  report presence, not validity. Hardened runtime stays unknown and names
+  `inspect_signature`. The image is not executed. See the
+  [binary hardening guide](https://github.com/morluto/rea/blob/main/docs/binary-hardening.md).
 - ELF note tables: `inspect_elf_notes` with the explicit local ELF32/ELF64
   file. This built-in target-free inspection requires no disassembler. Preserve
   PT_NOTE and SHT_NOTE ranges, owners, types, descriptor SHA-256, and GNU

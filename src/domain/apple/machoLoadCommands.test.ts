@@ -27,6 +27,7 @@ it.each([
     view.setUint32(12, 0xffffffff, littleEndian);
     view.setUint32(16, 0x80000001, littleEndian);
     view.setUint32(20, 0xffffffff, littleEndian);
+    view.setUint32(24, 0x01200085, littleEndian);
     const expected = {
       headerSize: wide ? 32 : 28,
       wide,
@@ -34,6 +35,7 @@ it.each([
       commandCount: 0x80000001,
       commandBytes: 0xffffffff,
       fileType: 0xffffffff,
+      flags: 0x01200085,
       identity: { cpuType: 0xfedcba98, cpuSubtype: 0x89abcdef },
     };
     const format = { wide, littleEndian, headerSize: wide ? 32 : 28 };
