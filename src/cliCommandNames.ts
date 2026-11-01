@@ -35,6 +35,7 @@ export const CLI_COMMANDS = Object.freeze({
   annotateNativeFunction: "annotate-native-function",
   inspectNativeApi: "inspect-native-api",
   instructions: "instructions",
+  procedureReferences: "procedure-references",
   search: "search",
   importReferenceSource: "import-reference-source",
   inspectArtifact: "inspect-artifact",

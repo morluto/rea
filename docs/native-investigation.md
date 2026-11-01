@@ -86,6 +86,35 @@ body are excluded. `procedure_references` returns internal and external edges;
 The reference collector's semantics participate in the analysis profile, so
 older snapshots cannot replay the former incomplete results under this profile.
 
+For a bounded handoff, request `procedure_references` with `detail: "summary"`.
+The summary retains the complete observation and reports the selected procedure,
+direction and counts. Page it with `inspect_analysis_view`, using the summary's
+`normalized_result.parent_evidence_id` and a view such as
+`{"kind":"native-procedure-references","collection":"references","source_address":"0x1234","offset":0,"limit":64}`.
+The optional exact source and target filters apply before paging. A row's
+`source_index` identifies it in the original retained collection, including
+duplicates. Endpoint `kind: "selected-procedure"` refers to the full procedure
+in the page summary; `inline` retains a different procedure and `null` preserves
+the original null without asserting why it was unavailable. Use collection
+`unresolved_calls` for paged unresolved call sites and their original reasons.
+Page coverage describes retained rows, not complete provider discovery or runtime
+execution. A 1 MiB projection allowance, also used by other bounded analysis views, can
+shorten a requested page; `byte_limited: true` and `coverage.next_offset` identify the
+continuation. A single row or summary that cannot fit returns a resource error;
+retrieve or export the complete parent Evidence. This allowance has no runtime
+override. Omit detail to receive the complete observation inline.
+
+For a one-shot CLI handoff, save the complete Evidence and its linked sources:
+
+```bash
+rea procedure-references /absolute/path/to/program my_function --provider ghidra \
+  --direction incoming --detail summary --evidence_output /absolute/path/to/references.json
+```
+
+Use `rea inspect-analysis-view` with that bundle as an `evidence-file` source to
+page it without reopening the target. This command requires a provider supporting
+`procedure_references`; Kuna currently reports that capability unavailable.
+
 Ghidra regex searches use Java Pattern semantics. If compiling or matching a
 pattern exhausts the engine's stack, REA returns a resource constraint and
 preserves the active database and annotations. Retry in literal mode or simplify

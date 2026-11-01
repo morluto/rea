@@ -198,12 +198,14 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "procedure_references",
-    "Return every raw incoming or outgoing reference edge for one procedure. Endpoint procedures are resolved only from provider containment. Ghidra preserves detailed reference flags. Hopper preserves native CallReference classifications and exact endpoints while leaving unavailable detailed flags explicit.",
+    "Return incoming or outgoing reference edges for one procedure. Ghidra preserves detailed reference flags; Hopper preserves native CallReference classifications and exact endpoints. Select detail summary to retain complete Evidence and page references or unresolved calls using inspect_analysis_view kind native-procedure-references. Page coverage describes retained observations, not complete discovery or runtime execution.",
     z.object({
       procedure,
       direction: z.enum(["incoming", "outgoing"]).default("outgoing"),
       document,
+      detail: analysisDetailSchema,
     }),
+    { evidenceParameters: "omit-detail" },
   ),
   official(
     "procedure_pseudo_code",
