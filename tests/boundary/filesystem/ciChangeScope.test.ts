@@ -777,6 +777,10 @@ it.each([
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "tests/conformance/ghidra/ReaComputedCallCoverageProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "tests/conformance/ghidra/ReaDecodeProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],

@@ -206,7 +206,10 @@ coverage is not proof that the function has no calls.
 sets `truncated: true`; any path already supported by observed edges remains
 visible. When a requested goal is not reached but an expansion is unresolved,
 `goal_status` is `unknown`; `not_reached` means traversal exhausted without
-unresolved relationship reads. Cancellation remains a tool error.
+unresolved relationship reads. A computed call whose recorded targets are not
+established as exhaustive limits its expansion: the observed edge stays, and
+the residual unknown names the provider's limit. Cancellation remains a tool
+error.
 
 `trace_feature` validates each reference's containing-procedure resolution using
 the same contract as navigation context. Explicit absence remains a successful

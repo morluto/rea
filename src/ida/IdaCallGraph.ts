@@ -16,6 +16,12 @@ import {
 /** The graph only emits edges whose destinations IDA recognizes as functions. */
 export const UNRECOGNIZED_CALLEE_LIMITATION =
   "This relationship read does not establish calls to targets IDA does not recognize as functions; imports and other non-function call targets remain unknown.";
+/**
+ * IDA callee reads return function edges without the call sites behind them,
+ * so a computed call's target set is never established as exhaustive.
+ */
+export const UNCLASSIFIED_CALL_SITE_LIMITATION =
+  "IDA's callee read does not identify computed or indirect call sites, so it cannot establish every target of such a call; additional callees may remain unknown.";
 const TRUNCATED_LIMITATION =
   "Upstream callgraph was truncated; additional callees remain unknown.";
 const POSSIBLY_TRUNCATED_LIMITATION =
@@ -103,7 +109,7 @@ export const readCallGraphCallees = async (
   );
   const limitations = [UNRECOGNIZED_CALLEE_LIMITATION];
   const diagnostics = [UNRECOGNIZED_CALLEE_LIMITATION];
-  const coverageLimitations: string[] = [];
+  const coverageLimitations = [UNCLASSIFIED_CALL_SITE_LIMITATION];
   const truncated =
     row.truncated === true ||
     row.per_func_capped === true ||
@@ -166,12 +172,9 @@ export const readCallGraphCallees = async (
     }),
     limitations,
     coverage: {
-      ...(coverageLimitations.length === 0
-        ? { status: "complete" as const }
-        : {
-            status: "partial" as const,
-            limitations: coverageLimitations,
-          }),
+      status: "partial",
+      limitations: coverageLimitations,
+      limited_directions: ["callees"],
       diagnostics,
     },
   };

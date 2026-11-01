@@ -8,6 +8,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import {
   isX86OnlyTarget,
   readCallGraphCallees,
+  UNCLASSIFIED_CALL_SITE_LIMITATION,
   UNRECOGNIZED_CALLEE_LIMITATION,
 } from "./IdaCallGraph.js";
 
@@ -228,6 +229,13 @@ describe("call graph coverage and failure handling", () => {
     ).toContain(
       "Upstream callgraph was truncated; additional callees remain unknown.",
     );
+    expect(result.coverage).toMatchObject({
+      status: "partial",
+      limitations: [
+        UNCLASSIFIED_CALL_SITE_LIMITATION,
+        "Upstream callgraph was truncated; additional callees remain unknown.",
+      ],
+    });
   });
 
   it("keeps an explicitly uncapped root below its edge cap untruncated", async () => {
@@ -240,6 +248,15 @@ describe("call graph coverage and failure handling", () => {
       result.limitations,
       "an uncapped, unsaturated root has no truncation evidence",
     ).toEqual([UNRECOGNIZED_CALLEE_LIMITATION]);
+    expect(
+      result.coverage,
+      "function edges without call sites cannot establish a computed call's targets",
+    ).toEqual({
+      status: "partial",
+      limitations: [UNCLASSIFIED_CALL_SITE_LIMITATION],
+      limited_directions: ["callees"],
+      diagnostics: [UNRECOGNIZED_CALLEE_LIMITATION],
+    });
   });
 
   it("reports a graph that saturates its per-function cap with root edges", async () => {

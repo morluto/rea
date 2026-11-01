@@ -7,11 +7,12 @@ import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixt
 import { GhidraProvider } from "./GhidraProvider.js";
 
 // Digests commit to the current shared policy, including the instruction status
-// revision that prevents reuse of snapshots with the previous ambiguous result.
+// revision that prevents reuse of snapshots with the previous ambiguous result
+// and the call coverage revision that limits computed-call callee sets.
 const RAW_DIGESTS = {
-  "6502": "8e33776d1cc5c5d77d32923d5978c05ec2d989d00920dd458cc2dafb4c9c0cad",
+  "6502": "032d5d6765a10d80683b2d30366af75858e9f08fca8464e7186201e47cbb7494",
   "x86-disabled-analyzer":
-    "d17bddc8ac110c891d30fb989fc7906df421bd9bea5df4aac05a950f50c7bdaf",
+    "5da58aca4c862e0930f294870494f4e34081c00bd148dec56c42299d77682de0",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
