@@ -5,7 +5,10 @@ import {
   readMachoLinkeditDataCommand,
 } from "../../domain/apple/machoLoadCommands.js";
 import type { MachoSliceEncryption } from "../../domain/apple/machoEncryption.js";
-import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
+import {
+  admitMachoSegmentCommand,
+  readMachoSegmentHeader,
+} from "../../domain/apple/machoSegmentHeader.js";
 import { machoBinaryArchitecture } from "../../domain/binaryTarget.js";
 import { decodeMachoFixedName } from "../AppleMachoNames.js";
 import {
@@ -309,7 +312,7 @@ const readCommandFacts = (
 ): CommandFacts => {
   const facts: CommandFacts = { restrict: null, signature: null, symtab: null };
   const framed = frameLoadCommands(table, (command) => {
-    if (segmentName(command, wide) === "__RESTRICT")
+    if (segmentName(command, wide, sliceSize) === "__RESTRICT")
       facts.restrict ??= command.offset;
     if (command.command === LC_CODE_SIGNATURE) {
       admitCodeSignature(command, sliceSize);
@@ -435,6 +438,7 @@ const buildRows = (
 const segmentName = (
   command: MachoLoadCommand,
   wide: boolean,
+  sliceSize: number,
 ): string | null => {
   const expected = wide ? LC_SEGMENT_64 : LC_SEGMENT;
   if (command.command !== expected) {
@@ -444,6 +448,14 @@ const segmentName = (
   }
   const header = readMachoSegmentHeader(command.body, wide, true);
   if (!header.ok) malformed(header.error.message);
+  // Segment file offsets are relative to the slice, not its container.
+  const admitted = admitMachoSegmentCommand(
+    header.value,
+    command.body.byteLength,
+    wide ? 64 : 32,
+    sliceSize,
+  );
+  if (!admitted.ok) malformed(admitted.error.message);
   // The fixed 16-byte name ends at the first NUL. Trailing-only stripping
   // would keep junk after an embedded NUL and miss __RESTRICT.
   return decodeMachoFixedName(header.value.nameBytes);

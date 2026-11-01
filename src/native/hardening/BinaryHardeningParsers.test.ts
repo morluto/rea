@@ -7,6 +7,8 @@ import {
   type BinaryHardeningRow,
 } from "../../domain/native/binaryHardening.js";
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { readElfImage } from "../metadata/ElfImage.js";
+import { readMachoImage } from "../metadata/MachoImage.js";
 import {
   elfHardeningFixture,
   fatMachoHardeningFixture,
@@ -1303,4 +1305,148 @@ it("reads facts past a large table of unrelated Mach-O commands", async () => {
     "enabled",
   );
   expect(findRow(image?.rows ?? [], "stack_protector").state).toBe("enabled");
+});
+
+it("rejects p_filesz one above p_memsz like the ELF image reader", () => {
+  const bytes = elfHardeningFixture({ interp: true, bindNow: true });
+  const load = elfProgramAt(bytes, PT_LOAD);
+  bytes.writeBigUInt64LE(bytes.readBigUInt64LE(load + 32) - 1n, load + 40);
+  const message = "ELF load segment sizes or addresses are invalid";
+  expect(() => readElfImage(bytes)).toThrow(message);
+  expect(() => readElfHardening(bytes)).toThrow(
+    expect.objectContaining({ kind: "malformed", message }),
+  );
+});
+
+const machoSegment = (
+  bits: 32 | 64,
+  {
+    commandSize = bits === 64 ? 72 : 56,
+    name = "__RESTRICT",
+    vmSize = 0,
+    fileOffset = 0,
+    fileSize = 0,
+    sections = 0,
+  }: {
+    readonly commandSize?: number;
+    readonly name?: string;
+    readonly vmSize?: number;
+    readonly fileOffset?: number;
+    readonly fileSize?: number;
+    readonly sections?: number;
+  },
+): Buffer => {
+  const body = machoCommand(bits === 64 ? LC_SEGMENT_64 : 1, commandSize);
+  body.write(name, 8, "latin1");
+  if (bits === 64) {
+    body.writeBigUInt64LE(BigInt(vmSize), 32);
+    body.writeBigUInt64LE(BigInt(fileOffset), 40);
+    body.writeBigUInt64LE(BigInt(fileSize), 48);
+    body.writeUInt32LE(sections, 64);
+  } else {
+    body.writeUInt32LE(vmSize, 28);
+    body.writeUInt32LE(fileOffset, 32);
+    body.writeUInt32LE(fileSize, 36);
+    body.writeUInt32LE(sections, 48);
+  }
+  return body;
+};
+
+it.each([
+  [
+    "a section count above cmdsize",
+    64,
+    { sections: 1 },
+    "Mach-O section table exceeds its segment command",
+  ],
+  [
+    "a 32-bit section count above cmdsize",
+    32,
+    { sections: 1 },
+    "Mach-O section table exceeds its segment command",
+  ],
+  [
+    "a file size above the VM size",
+    64,
+    { vmSize: 8, fileSize: 16 },
+    "Mach-O segment addresses or sizes are invalid",
+  ],
+  [
+    "a payload past EOF",
+    64,
+    { vmSize: 0x100000, fileOffset: 0x100000, fileSize: 16 },
+    "Mach-O segment range is outside the file",
+  ],
+] as const)(
+  "rejects %s like the Mach-O image reader",
+  async (_label, bits, segment, message) => {
+    const bytes = machoHardeningFixture({
+      bits,
+      extraCommands: [machoSegment(bits, segment)],
+    });
+    expect(() => readMachoImage(bytes)).toThrow(message);
+    await expect(readMachoHardening(bytes)).rejects.toMatchObject({
+      kind: "malformed",
+      message,
+    });
+    const images = await readMachoHardening(
+      fatMachoHardeningFixture([
+        {
+          bytes: machoHardeningFixture({ bits }),
+          cpuType: bits === 64 ? CPU_ARM64 : 7,
+          cpuSubtype: 0,
+        },
+        { bytes, cpuType: bits === 64 ? CPU_ARM64 : 7, cpuSubtype: 0 },
+      ]),
+    );
+    expect(images.map((image) => image.status)).toEqual([
+      "parsed",
+      "malformed",
+    ]);
+    expect(images[1]?.reason).toBe(message);
+    expect(images[1]?.rows).toEqual([]);
+  },
+);
+
+it("measures a segment file range against its slice, not the container", async () => {
+  // In a fat file this range lands inside the container but past its own slice.
+  const slice = machoHardeningFixture();
+  const bad = machoHardeningFixture({
+    extraCommands: [
+      machoSegment(64, {
+        vmSize: 0x10000,
+        fileOffset: slice.length * 2,
+        fileSize: 16,
+      }),
+    ],
+  });
+  const images = await readMachoHardening(
+    fatMachoHardeningFixture([
+      { bytes: bad, cpuType: CPU_ARM64, cpuSubtype: 0 },
+      { bytes: slice, cpuType: CPU_ARM64, cpuSubtype: 0 },
+    ]),
+  );
+  expect(images.map((image) => image.status)).toEqual(["malformed", "parsed"]);
+});
+
+it("accepts well-formed segments with sections and file payloads", async () => {
+  const size = 72 + 80;
+  const probe = machoHardeningFixture({
+    extraCommands: [machoSegment(64, { commandSize: size })],
+  });
+  const image = (
+    await readMachoHardening(
+      machoHardeningFixture({
+        extraCommands: [
+          machoSegment(64, {
+            commandSize: size,
+            sections: 1,
+            vmSize: probe.length,
+            fileSize: probe.length,
+          }),
+        ],
+      }),
+    )
+  )[0];
+  expect(findRow(image?.rows ?? [], "restrict_segment").state).toBe("enabled");
 });

@@ -4,7 +4,7 @@ import {
   type MachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
 import {
-  admitMachoSegmentMapping,
+  admitMachoSegmentCommand,
   readMachoSegmentHeader,
 } from "../../domain/apple/machoSegmentHeader.js";
 import {
@@ -80,18 +80,18 @@ export const readMachoImage = (bytes: Buffer): BinaryContainer => {
         sectionCount,
         nameBytes,
       } = parsedSegment.value;
-      const admitted = admitMachoSegmentMapping(parsedSegment.value, bits);
+      const admitted = admitMachoSegmentCommand(
+        parsedSegment.value,
+        size,
+        bits,
+        bytes.length,
+      );
       if (!admitted.ok)
         throw new BinaryFormatFailure(
           admitted.error.kind,
           admitted.error.message,
         );
       const { unmapped } = admitted.value;
-      if (sectionCount > Math.floor((size - segmentHeader) / sectionWidth))
-        throw new BinaryFormatFailure(
-          "malformed",
-          "Mach-O section table exceeds its segment command",
-        );
       const fileRange =
         fileSize === 0n
           ? undefined

@@ -53,8 +53,8 @@ The report states presence of build-time features. It does not state
 exploitability. `inspect_binary_layout` is unchanged.
 
 The default read budget is 64 MiB (`max_file_bytes`, ceiling 512 MiB). A changed
-file is refused. A malformed header, or a program or section payload declared
-outside the file, returns no partial report, except that one bad slice in a universal Mach-O leaves the other slices. A symbol table or
+file is refused. A malformed header, a Mach-O segment that fails admission, or a program, section,
+or segment payload declared outside the file returns no partial report, except that one bad slice in a universal Mach-O leaves the other slices. A symbol table or
 symbol name over its budget leaves the import rows `unknown` and keeps the
 header rows. A GNU property note over its budget, or a compressed note section
 that may hold one, leaves the CET and BTI/PAC rows `unknown` and keeps the header
