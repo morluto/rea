@@ -321,7 +321,7 @@ REA は対象をローカルで分析します。エージェントはツール�
 
 まず更新してください。最近のリリースですでに修正されている可能性があります。
 
-npm でインストールした CLI の場合：
+`npm install --global` / `bun add --global` でインストールした CLI の場合：
 
 ```bash
 rea update
