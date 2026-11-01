@@ -97,7 +97,7 @@ export class SessionProviderRouter {
       : selected;
   }
 
-  /** Candidate status authoritative for the active or target-free route. */
+  /** Preserve selection observations unless a caller requests a fresh inspection. */
   async candidateStatuses(
     route: SessionProviderRoute,
     options: {
