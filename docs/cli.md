@@ -622,8 +622,8 @@ identities, or profile digests that differ. `snapshot` is the saved value and
 `profile_comparison: "not_compared"` means the profile was not available at
 that boundary; it does not establish a match. A profileless snapshot can report
 `workflow_scope: "incompatible"` even when its target and profile match.
-Choose a matching target and provider, or analyze without the snapshot and save
-a new one for the intended binding.
+Choose a matching target, provider, and profile, or analyze without the snapshot
+and save a new one for the intended binding.
 
 For a profile mismatch, the saved snapshot contains
 `binding.analysis_profile.parameters`. If `binary_session` reports an active

@@ -86,7 +86,7 @@ export const analysisErrorRemediationAction = (
       ? "Call close_binary without snapshot_path to close this resource-only session."
       : "Open an executable analysis target before importing a binary analysis snapshot.";
   if (error instanceof AnalysisSnapshotMismatchError)
-    return "Select an artifact and provider matching the snapshot, or run analysis without it and save a fresh snapshot for the intended artifact and analysis profile.";
+    return "Select an artifact, provider, and analysis profile matching the snapshot, or run analysis without it and save a fresh snapshot for the intended binding.";
   if (error instanceof AnalysisUnsupportedTargetError)
     return (
       error.remediationAction ??
