@@ -407,6 +407,10 @@ const availabilityFor = (context: AvailabilityContext): Availability => {
     );
     return { ...modes, ...targetAvailability(context) };
   }
+  if (context.name === "inspect_address_context")
+    return (
+      targetAvailability(context) ?? { reason: "available", remediation: null }
+    );
   const javascriptApplication = javascriptApplicationAvailability(context);
   if (javascriptApplication !== null) return javascriptApplication;
   const failure = optionalProviderFailureFor(context);
