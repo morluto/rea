@@ -469,7 +469,9 @@ const registerAnnotationCommand = (
       path: localPathStringSchema.describe("Local executable path"),
       procedure: z
         .string()
-        .describe("Exact function entry address or unique name"),
+        .describe(
+          "Function name or address; Ghidra resolves interior addresses to the containing function and edits its entry",
+        ),
     }),
     options: z.object({
       name: z.string().min(1).optional().describe("Analyst function name"),
