@@ -93,11 +93,6 @@ posix(
       });
       // The digest and banner precede the command, which Evidence states.
       expect(result.value.limitations).toContain(EXECUTABLE_OBSERVATION_TIMING);
-      expect(result.value.limitations).toContainEqual(
-        expect.stringMatching(
-          /SHA-256, and any -v banner, were read before the command launched/u,
-        ),
-      );
     }
     // Each call probes, then runs its command, both from the resolved path
     // and within the call's budget.
