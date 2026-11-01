@@ -48,6 +48,7 @@ const RESOURCE_NAME = "D3N0L4ND";
 const SECTION_NAME = "d3n0l4nd";
 const SECTION_NAME_BYTES = Buffer.from(SECTION_NAME, "latin1");
 const SEGMENT_NAME = "__SUI";
+const LINKEDIT_SEGMENT_NAME = "__LINKEDIT";
 const ELF_NOTE_OWNER = Buffer.from("SUI\0", "latin1");
 const ELF_NOTE_TYPE = 0x53554901;
 const PE_HEADER_PROBE_BYTES = 64 * 1024;
@@ -86,6 +87,12 @@ interface SectionRange {
 
 interface IntelTrailer extends SectionRange {
   readonly sentinelOffset: number;
+}
+
+/** Absolute file range `[start, end)` owned by a native Mach-O segment. */
+interface OwnedRange {
+  readonly start: bigint;
+  readonly end: bigint;
 }
 
 interface Carrier {
@@ -189,6 +196,7 @@ const locateMachOSlice = async (
   const table = await readSliceCommandTable(readAt, base, sliceSize);
   if (table.status !== "read") return [];
   const found: SectionRange[] = [];
+  const owned: OwnedRange[] = [];
   let confirmed = false;
   const framed = frameLoadCommands(table, (command) => {
     if (command.command !== LC_SEGMENT && command.command !== LC_SEGMENT_64)
@@ -197,7 +205,19 @@ const locateMachOSlice = async (
     const parsedSegment = readMachoSegmentHeader(command.body, segment64, true);
     if (!parsedSegment.ok) return;
     const segment = parsedSegment.value;
-    if (fixedCString(segment.nameBytes) !== SEGMENT_NAME) return;
+    const segmentName = fixedCString(segment.nameBytes);
+    if (
+      segmentName !== SEGMENT_NAME &&
+      segmentName !== LINKEDIT_SEGMENT_NAME &&
+      segment.fileSize > 0n
+    ) {
+      // libsui appends the Intel trailer after the image's content, inside
+      // or past __LINKEDIT. Bytes any other segment maps belong to the native
+      // image, so a sentinel there is stored data such as a __DATA asset.
+      const start = BigInt(base) + segment.fileOffset;
+      owned.push({ start, end: start + segment.fileSize });
+    }
+    if (segmentName !== SEGMENT_NAME) return;
     confirmed = true;
     const sectionSize = segment64 ? 80 : 68;
     if (
@@ -241,7 +261,10 @@ const locateMachOSlice = async (
     throw denoCarrierFailure("Mach-O load commands are truncated");
   const cpu = fatCpu ?? table.header.cpuType;
   if (found.length > 0 || cpu === CPU_TYPE_ARM64) return found;
-  return locateIntelTrailers(carrier, base, sliceSize);
+  // Without every segment framed, a trailer's ownership cannot be shown, so
+  // the image stays with native inventory.
+  if (framed.status !== "framed") return [];
+  return locateIntelTrailers(carrier, base, sliceSize, owned);
 };
 
 /**
@@ -261,11 +284,17 @@ const locateMachOSlice = async (
  * read at most once. When the slice cannot be searched to its start, a
  * confirmed trailer is refused because an enclosing one may remain unread,
  * and with none confirmed the image stays with native inventory.
+ *
+ * A sentinel inside a range the native image's own segments map (other than
+ * __LINKEDIT, which libsui extends over the trailer) is that image's data,
+ * for example an Intel Deno executable stored as a `__DATA` asset of a
+ * non-Deno host. Such a sentinel is not a trailer candidate.
  */
 const locateIntelTrailers = async (
   carrier: Carrier,
   base: number,
   sliceSize: number,
+  owned: readonly OwnedRange[],
 ): Promise<SectionRange[]> => {
   const overlap = INTEL_SENTINEL.length + 8;
   let position = base + sliceSize;
@@ -296,6 +325,8 @@ const locateIntelTrailers = async (
       const lengthAt = index + INTEL_SENTINEL.length;
       const sentinelStart = chunkStart + index;
       searchFrom = index - 1;
+      const at = BigInt(sentinelStart);
+      if (owned.some((range) => at >= range.start && at < range.end)) continue;
       if (lengthAt + 8 > window.length) continue;
       const claimed = window.readBigUInt64LE(lengthAt);
       const sliceEnd = base + sliceSize;

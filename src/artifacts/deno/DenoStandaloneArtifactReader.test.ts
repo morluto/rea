@@ -30,6 +30,7 @@ import {
   denoMachO,
   denoPe,
   denoUniversal,
+  machOWithSegment,
 } from "./DenoStandalone.fixture.js";
 import { MAX_DENO_PATH_COMPONENT_BYTES } from "./DenoVirtualFs.js";
 
@@ -1074,6 +1075,37 @@ it("reads the enclosing app of an Intel Deno executable embedded as an asset", a
     snapshot.nodes.find((node) => node.artifact_id === member?.artifact_id)
       ?.sha256,
   ).toBe(createHash("sha256").update(asset).digest("hex"));
+});
+
+it("keeps a native Intel host whose __DATA segment stores an Intel Deno executable", async () => {
+  const asset = denoIntelTrailer(
+    intelApp("inner.ts", Buffer.from("console.log('inner')\n")),
+  );
+  const bytes = machOWithSegment("__DATA", asset);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toEqual({ status: "absent" });
+  const snapshot = await inventoryOf("host", bytes);
+  expect(snapshot.manifest.root_format).not.toBe("deno-standalone");
+});
+
+it("reads an Intel trailer that __LINKEDIT extends over", async () => {
+  const section = buildDenoSection();
+  const trailer = denoIntelTrailer(section);
+  const bytes = machOWithSegment(
+    "__LINKEDIT",
+    trailer.subarray(trailer.length - section.length - 24),
+  );
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: {
+      embedding: "mach-o-intel-trailer",
+      offset: bytes.length - section.length,
+      length: section.length,
+    },
+  });
 });
 
 it("treats a nested Intel sentinel as asset data when its length overruns the app", async () => {

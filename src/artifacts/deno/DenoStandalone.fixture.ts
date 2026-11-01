@@ -228,6 +228,31 @@ export const denoIntelTrailer = (
   ]);
 };
 
+/**
+ * x86_64 Mach-O with one segment, named `segment`, whose file range is
+ * exactly `contents`.
+ */
+export const machOWithSegment = (segment: string, contents: Buffer): Buffer => {
+  const little = true;
+  const headerSize = 32;
+  const segmentHeader = 72;
+  const contentsAt = headerSize + segmentHeader;
+  const image = Buffer.alloc(contentsAt + contents.length);
+  write32(image, 0, 0xfeedfacf, little);
+  write32(image, 4, 0x01000007, little);
+  write32(image, 12, 2, little);
+  write32(image, 16, 1, little);
+  write32(image, 20, segmentHeader, little);
+  write32(image, headerSize, 0x19, little);
+  write32(image, headerSize + 4, segmentHeader, little);
+  writeName(image, headerSize + 8, segment);
+  write64(image, headerSize + 32, contents.length, little);
+  write64(image, headerSize + 40, contentsAt, little);
+  write64(image, headerSize + 48, contents.length, little);
+  contents.copy(image, contentsAt);
+  return image;
+};
+
 /** One FAT slice around a thin arm64 Deno image. */
 export const denoUniversal = (
   slices: readonly Buffer[] = [denoMachO()],
