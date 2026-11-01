@@ -59,9 +59,10 @@ let clientVersion = null;
 let fixture;
 let passed = false;
 let evidenceSeen = false;
-let skillSeen = false;
 let finalSeen = false;
 let skillRequested = false;
+let skillCallId;
+let expectedSkillBody;
 let searchCallId;
 let analysisCallId;
 let artifactReadByAgent = false;
@@ -166,6 +167,20 @@ await withVerifierCleanup(async () => {
       command: "unrelated-server",
       disabled: true,
     });
+    const skillFile = join(
+      sharedSkills,
+      "reverse-engineer-anything",
+      "SKILL.md",
+    );
+    const normalizedSkill = (await readFile(skillFile, "utf8"))
+      .replace(/^\uFEFF/u, "")
+      .replace(/\r\n|\r/gu, "\n");
+    const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)([\s\S]*)$/u.exec(
+      normalizedSkill,
+    );
+    assert(frontmatter, "Installed skill must have authored frontmatter");
+    expectedSkillBody = frontmatter[2].trim();
+    assert(expectedSkillBody.length > 0);
     clientPath = baseEnvironment.PATH;
     if (reducedPath) {
       assert.equal(
@@ -204,9 +219,6 @@ await withVerifierCleanup(async () => {
       directory: lab,
       prefix: `${client}-${mode}`,
       onRequest: async ({ body, tools, requestIndex }) => {
-        skillSeen ||= JSON.stringify(body.messages ?? []).includes(
-          "reverse-engineer-anything",
-        );
         const messages = (body.messages ?? []).map((message) => ({
           role: message.role,
           callId: message.tool_call_id,
@@ -217,14 +229,14 @@ await withVerifierCleanup(async () => {
                   .map((part) => part.text ?? "")
                   .join("\n"),
         }));
-        const messageText = messages.map((message) => message.text).join("\n");
         const toolResponseText = (callId) =>
           messages.find(
             (message) => message.role === "tool" && message.callId === callId,
           )?.text ?? "";
-        selectedSkillLoaded ||= messageText.includes(
-          join(sharedSkills, "reverse-engineer-anything"),
-        );
+        const expectedSkill = `Base directory for this skill: ${join(sharedSkills, "reverse-engineer-anything")}\nImportant: ALWAYS resolve absolute paths from this base directory when working with skills.\n\n${expectedSkillBody}\n`;
+        selectedSkillLoaded ||=
+          skillCallId !== undefined &&
+          toolResponseText(skillCallId).includes(expectedSkill);
         const toolText = JSON.stringify(
           (body.messages ?? []).filter((m) => m.role === "tool"),
         );
@@ -302,6 +314,7 @@ await withVerifierCleanup(async () => {
         } else if (skill && !skillRequested) {
           skillRequested = true;
           message = call(skill.name, { skill: "reverse-engineer-anything" });
+          skillCallId = message.tool_calls[0].id;
         } else if (persisted && shell) {
           artifactPath = persisted[1];
           assert(
