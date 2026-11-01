@@ -786,8 +786,11 @@ section, an Intel Mach-O `<~sui-data~>` trailer, an ELF `SUI` note of type
 `open_binary` then `inspect_artifact` reports root format `deno-standalone`
 with the carrier, entry point, recorded options, and one occurrence per virtual
 file, including size and SHA-256. Transpiled output, CJS export analysis, and
-source maps are separate `.deno-*` occurrences with the file's `index` and their
-own `role`. Symlink targets stay recorded path parts.
+source maps are separate occurrences with the file's `index` and their own
+`role`. They normally use a `.deno-*` suffix on the file path and move to an
+indexed path on a collision, so use the reported `logical_path`. Symlink targets
+stay recorded path parts. A virtual filesystem that cannot be listed leaves
+coverage unknown.
 Environment-file values and CA certificate bytes are retained in local Evidence
 with their counts and byte lengths. The npm snapshot length is reported and not
 decoded. `extract-artifact` writes

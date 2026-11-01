@@ -46,6 +46,10 @@ import {
 } from "./deno/DenoVirtualFs.js";
 
 const MAX_DENO_LOGICAL_PATH_NODES = 250_000;
+const UNLISTED_VFS_LIMITATION =
+  "The Deno compile virtual filesystem could not be listed, so its files are not inventoried.";
+/** Characters a Windows destination refuses in a generated path. */
+const NON_PORTABLE_PATH_CHARACTERS = /[:\\\u0001-\u001f]/gu;
 export const MAX_DENO_RETAINED_BYTES = 256 * 1024 * 1024;
 
 interface RemoteDestination {
@@ -97,7 +101,7 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
 
   async *entries(
     signal?: AbortSignal,
-    _options?: ArtifactTraversalOptions,
+    options?: ArtifactTraversalOptions,
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
@@ -105,6 +109,11 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
       await this.#prepared;
       await this.#source.readSelectedPath(signal);
     });
+    if (this.#header?.vfs_listing === "unsupported")
+      options?.onCoverage?.({
+        status: "unknown",
+        limitations: [UNLISTED_VFS_LIMITATION],
+      });
     let index = 0;
     for (const entry of this.#entries.values()) {
       if (index++ % 256 === 0) await setImmediate();
@@ -532,8 +541,14 @@ const remoteDestination = (
       ],
     };
   }
+  // A specifier is generated into a path, so its spelling can follow every
+  // destination. The original stays in `sourcePath`.
+  const portable = normalized.replace(
+    NON_PORTABLE_PATH_CHARACTERS,
+    encodeURIComponent,
+  );
   if (
-    !remoteConcretePaths(normalized, module).every((path) =>
+    !remoteConcretePaths(portable, module).every((path) =>
       denoLogicalPathFits(path),
     )
   )
@@ -543,7 +558,7 @@ const remoteDestination = (
       limitations: [DENO_PATH_LENGTH_LIMITATION],
     };
   return {
-    path: normalized,
+    path: portable,
     sourcePath: text,
     limitations: [],
   };

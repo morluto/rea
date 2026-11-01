@@ -357,7 +357,7 @@ export const parseDenoSection = async (
     vfsHeaderByteLength: vfsHeader.length,
     vfsFileData,
     vfs: walkDenoVirtualFs(vfsJson, vfsFileData.length, signal),
-    specifierText: unresolvedRemote ? null : namedSpecifiers,
+    specifierText: namedSpecifiers,
   };
 };
 

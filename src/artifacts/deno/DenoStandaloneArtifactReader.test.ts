@@ -282,6 +282,128 @@ it("reports cancellation and keeps indexed paths for an unsupported remote listi
   });
 });
 
+it("keeps a resolved remote module beside one with a missing specifier", async () => {
+  const url = "https://example.com/mod.ts";
+  const snapshot = await inventoryOf(
+    "partial-remote",
+    denoElf(
+      buildDenoSection({
+        metadata: { ...defaultDenoMetadata(), entrypoint_key: url },
+        specifiers: [{ text: url, id: 1 }],
+        remoteModules: [
+          { specifierId: 1, data: "known" },
+          { specifierId: 2, data: "missing" },
+        ],
+      }),
+    ),
+  );
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === "."),
+  ).toMatchObject({
+    format_metadata: { remote_module_listing: "unsupported" },
+  });
+  expect(
+    snapshot.occurrences.find(
+      (row) => row.logical_path === "deno-remote/example.com/mod.ts",
+    ),
+  ).toMatchObject({
+    format_metadata: { source_path: url, entry_point: true },
+  });
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === "deno-remote/1"),
+  ).toMatchObject({
+    format_metadata: { source_path: null, entry_point: false },
+    limitations: expect.arrayContaining([
+      expect.stringContaining("not available as a logical path"),
+    ]),
+  });
+});
+
+it.each([
+  ["a port", "http://localhost:8000/mod.ts", "localhost%3A8000/mod.ts"],
+  ["an IPv6 host", "http://[::1]:8000/mod.ts", "[%3A%3A1]%3A8000/mod.ts"],
+  ["a path colon", "https://example.com/a:b.ts", "example.com/a%3Ab.ts"],
+])("encodes %s in a remote logical path", async (_label, url, path) => {
+  const snapshot = await inventoryOf(
+    "remote-colon",
+    denoElf(
+      buildDenoSection({
+        specifiers: [{ text: url, id: 1 }],
+        remoteModules: [{ specifierId: 1, data: "body", transpiled: "js" }],
+      }),
+    ),
+  );
+  expect(
+    snapshot.occurrences.find(
+      (row) => row.logical_path === `deno-remote/${path}`,
+    ),
+  ).toMatchObject({ format_metadata: { source_path: url } });
+  expect(snapshot.occurrences.map((row) => row.logical_path)).toContain(
+    `deno-remote/${path}.deno-transpiled`,
+  );
+});
+
+it("encodes a colon in a specifier that is not a host path", async () => {
+  const snapshot = await inventoryOf(
+    "remote-jsr",
+    denoElf(
+      buildDenoSection({
+        specifiers: [{ text: "jsr:@std/path", id: 1 }],
+        remoteModules: [{ specifierId: 1, data: "body" }],
+      }),
+    ),
+  );
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === "jsr%3A@std/path"),
+  ).toMatchObject({ format_metadata: { source_path: "jsr:@std/path" } });
+});
+
+it("indexes a remote path that collides once its colon is encoded", async () => {
+  const snapshot = await inventoryOf(
+    "remote-encoded-collision",
+    denoElf(
+      buildDenoSection({
+        specifiers: [
+          { text: "https://example.com/a:b.ts", id: 1 },
+          { text: "https://example.com/a%3Ab.ts", id: 2 },
+        ],
+        remoteModules: [
+          { specifierId: 1, data: "first" },
+          { specifierId: 2, data: "second" },
+        ],
+      }),
+    ),
+  );
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === "deno-remote/1"),
+  ).toMatchObject({
+    format_metadata: { source_path: "https://example.com/a%3Ab.ts" },
+  });
+});
+
+it("reports unknown coverage when the virtual filesystem cannot be listed", async () => {
+  const snapshot = await inventoryOf(
+    "unlisted-vfs",
+    denoElf(
+      buildDenoSection({
+        vfs: { unexpected: true },
+        specifiers: [{ text: "https://example.com/mod.ts", id: 1 }],
+        remoteModules: [{ specifierId: 1, data: "remote" }],
+      }),
+    ),
+  );
+  expect(snapshot.manifest.root_format).toBe("deno-standalone");
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === "."),
+  ).toMatchObject({ format_metadata: { vfs_listing: "unsupported" } });
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("virtual filesystem could not be listed"),
+    ]),
+  );
+});
+
 it("indexes a remote specifier whose component exceeds the filesystem name limit", async () => {
   const query = `q=${"a".repeat(MAX_DENO_PATH_COMPONENT_BYTES)}`;
   const specifier = `https://example.com/mod.ts?${query}`;

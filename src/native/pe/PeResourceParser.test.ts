@@ -625,6 +625,28 @@ it("reports a named resource that cannot resolve to a payload as malformed", asy
   });
 });
 
+it("rejects a language directory beside a readable language payload", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+    { type: 10, name: "NODE_SEA_BLOB", language: 2, payload: Buffer.from("b") },
+  ]);
+  const leaf = fixture.entryOffsets.findLast(
+    (at) => (fixture.bytes.readUInt32LE(at + 4) & 0x80000000) === 0,
+  );
+  if (leaf === undefined) throw new Error("Expected a language leaf");
+  fixture.bytes.writeUInt32LE(
+    (fixture.bytes.readUInt32LE(leaf + 4) | 0x80000000) >>> 0,
+    leaf + 4,
+  );
+  await expect(payloadsOf(fixture.bytes)).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringContaining("language entry"),
+  });
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    reason: "format",
+  });
+});
+
 it("matches resource names by their exact UTF-16 bytes without losing source identity", async () => {
   const fixture = peResourceFixture(false, [
     {

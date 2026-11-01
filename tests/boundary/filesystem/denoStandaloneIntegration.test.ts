@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 
 import { expect, it } from "vitest";
 
@@ -13,6 +15,7 @@ import {
 } from "../../../src/artifacts/deno/DenoStandalone.fixture.js";
 import { MAX_DENO_PATH_COMPONENT_BYTES } from "../../../src/artifacts/deno/DenoVirtualFs.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
+import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
 import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -107,6 +110,72 @@ it("does not write embedded environment values or certificate bytes as files", a
     }
   } finally {
     await resourceScope.close();
+  }
+});
+
+it("reports unknown extraction coverage for an unlisted virtual filesystem", async () => {
+  const root = await createTestTempDirectory("rea-deno-unlisted-vfs-");
+  const path = join(root, "app");
+  await writeFile(
+    path,
+    denoElf(
+      buildDenoSection({
+        vfs: { unexpected: true },
+        specifiers: [{ text: "https://example.com/mod.ts", id: 1 }],
+        remoteModules: [{ specifierId: 1, data: "remote" }],
+      }),
+    ),
+  );
+  const resourceScope = new ArtifactResourceScope();
+  try {
+    const extracted = await extractArtifact({
+      inputPath: path,
+      inputFormat: "elf",
+      outputRoot: join(root, "out"),
+      environment: process.env,
+      integrityPolicy: "fail",
+      resourceScope,
+    });
+    expect(extracted.coverage.status).toBe("unknown");
+    expect(
+      await readFile(
+        join(extracted.output_root, "deno-remote/example.com/mod.ts"),
+        "utf8",
+      ),
+    ).toBe("remote");
+  } finally {
+    await resourceScope.close();
+  }
+});
+
+it("publishes a remote module with a port to a Windows destination", async () => {
+  const root = await createTestTempDirectory("rea-deno-remote-port-");
+  const path = join(root, "app");
+  const body = Buffer.from("remote");
+  await writeFile(
+    path,
+    denoElf(
+      buildDenoSection({
+        specifiers: [{ text: "http://localhost:8000/mod.ts", id: 1 }],
+        remoteModules: [{ specifierId: 1, data: body }],
+      }),
+    ),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  const remote = snapshot.occurrences.find(
+    (row) =>
+      row.format_metadata?.kind === "deno-standalone-entry" &&
+      row.format_metadata.role === "remote-module",
+  );
+  if (remote === undefined) throw new Error("Expected a remote module");
+  const tree = await SafeOutputTree.create(join(root, "out"), "win32");
+  try {
+    await tree.write(remote.logical_path, Readable.from(body), {
+      sha256: createHash("sha256").update(body).digest("hex"),
+      bytes: body.length,
+    });
+  } finally {
+    await tree.rollback();
   }
 });
 

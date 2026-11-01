@@ -183,6 +183,21 @@ it("reports an invalid specifier as an unsupported listing", async () => {
   expect(parsed.specifierText).toBeNull();
 });
 
+it("keeps decoded specifiers when another remote id is missing", async () => {
+  const parsed = await parseDenoSectionBytes(
+    buildDenoSection({
+      specifiers: [{ text: "https://example.com/mod.ts", id: 1 }],
+      remoteModules: [
+        { specifierId: 1, data: "known" },
+        { specifierId: 2, data: "missing" },
+      ],
+    }),
+  );
+  expect(parsed.remoteModules.listing).toBe("unsupported");
+  expect(parsed.specifierText?.get(1)).toBe("https://example.com/mod.ts");
+  expect(parsed.specifierText?.has(2)).toBe(false);
+});
+
 it("honors cancellation before parsing", async () => {
   const controller = new AbortController();
   controller.abort(new Error("stop"));

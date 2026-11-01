@@ -406,7 +406,8 @@ export const locatePeResourcePayloads = async (
       const language = readPeResourceEntryFacts(
         languages.subarray(at, at + PE_RESOURCE_ENTRY_BYTES),
       );
-      if (language.target.kind !== "data") continue;
+      if (language.target.kind !== "data")
+        return peFailure(`PE ${name} resource language entry is a directory.`);
       const data = await tree.relative(
         language.target.offset,
         PE_RESOURCE_DATA_ENTRY_BYTES,
