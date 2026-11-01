@@ -45,7 +45,9 @@ export const ghidraNativeApiBoundary = z.discriminatedUnion("available", [
   availableNativeApiBoundarySchema.extend({
     provenance: z.literal("ghidra-high-function"),
     jump_tables: z.array(ghidraJumpTable),
-    unresolved_indirect_branches: z.array(ghidraUnresolvedIndirectBranch).exactOptional(),
+    unresolved_indirect_branches: z
+      .array(ghidraUnresolvedIndirectBranch)
+      .exactOptional(),
   }),
 ]);
 
