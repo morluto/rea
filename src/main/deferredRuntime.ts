@@ -1,3 +1,4 @@
+import { configuredUpdateNoticeFactory } from "../server/UpdateNotices.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
@@ -216,6 +217,9 @@ export const runDeferred = async (
                   throw cause;
                 }),
               config.mcpMaxInputElements,
+            );
+            server.updateNoticeFactory = configuredUpdateNoticeFactory(
+              dependencies.env,
             );
             return server;
           });

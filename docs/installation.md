@@ -428,6 +428,13 @@ their own status. `open_binary` keeps the refusal described above.
 
 ## Diagnose, update, and remove
 
+For opt-in MCP release reminders, set `REA_MCP_UPDATE_CHECK=1` in the
+REA MCP server environment and reconnect. Checks are disabled by default, run
+in the background and cache for 24 hours per connection. Notices never install
+updates. Clients must surface MCP logging notifications for the user or AI to
+see the reminder. See [MCP update notices](mcp-contracts.md#update-notices) for network,
+delivery and restart semantics.
+
 `rea doctor --json` is strictly read-only. `rea update` updates only the npm or Bun global installation that owns the running CLI. Source checkouts and package-runner copies must be updated through the mechanism that owns them; a fresh package-runner invocation can use `npx rea-agents@latest` or `bunx rea-agents@latest`. `rea uninstall` removes only REA-owned agent registrations and skill files; `--purge-data` additionally removes REA cache and state paths.
 
 ```bash
