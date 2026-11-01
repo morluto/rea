@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   installMacHopper,
+  macHopperHostVersionDetail,
+  macHopperIncomparableMinimumDetail,
   type MacHopperBundleVerification,
   type MacHopperBundleInstallResult,
   type MacHopperInstallHost,
@@ -70,6 +72,17 @@ class FakeMacHopperHost implements MacHopperInstallHost {
     this.verificationFailure === undefined
       ? Promise.resolve(this.verification)
       : Promise.reject(this.verificationFailure);
+  hostVersion: string | undefined = "14.5";
+  appMinimum: string | undefined = "12.4";
+  appMinimumFailure: Error | undefined;
+  appMinimumReads = 0;
+  macosVersion = () => Promise.resolve(this.hostVersion);
+  minimumSystemVersion = () => {
+    this.appMinimumReads += 1;
+    return this.appMinimumFailure === undefined
+      ? Promise.resolve(this.appMinimum)
+      : Promise.reject(this.appMinimumFailure);
+  };
   destinationExists = () => Promise.resolve(this.existing);
   installBundle = (
     _source: string,
@@ -222,6 +235,182 @@ describe("macOS Hopper installation", () => {
     expect(host.unmounts).toBe(1);
     expect(host.cleanups).toBe(1);
   });
+});
+
+const PACKAGE_URL =
+  "https://www.hopperapp.com:443/downloader/public/Hopper-6.6.1-demo.dmg";
+
+/** The refusal detail carries the observed facts, independent of its wording. */
+const expectNamed = (
+  result: Awaited<ReturnType<typeof installMacHopper>>,
+  facts: readonly string[],
+): void => {
+  const diagnostic = result.status === "failed" ? result.diagnostic : undefined;
+  for (const fact of facts) expect(diagnostic).toContain(fact);
+};
+
+/** The fixture's macOS row with vendor fields such as `deployment_target`. */
+const macFeed = (
+  host: FakeMacHopperHost,
+  fields: Readonly<Record<string, unknown>>,
+): Uint8Array =>
+  new TextEncoder().encode(
+    JSON.stringify({
+      "OS X": {
+        filename: PACKAGE_URL,
+        file_length: String(host.archive.byteLength),
+        file_hash: createHash("sha1").update(host.archive).digest("hex"),
+        version: "6.6.1",
+        ...fields,
+      },
+    }),
+  );
+
+describe("macOS Hopper release host requirements", () => {
+  it.each(["12", "12.0", "12.3", "12.3.9"])(
+    "refuses macOS %s below the release deployment target before downloading the package",
+    async (hostVersion) => {
+      const host = new FakeMacHopperHost();
+      host.hostVersion = hostVersion;
+      host.feedBytes = macFeed(host, { deployment_target: "12.4" });
+
+      const result = await installMacHopper({}, host);
+      expect(result).toEqual({
+        status: "failed",
+        reason: "incompatible_host_version",
+        diagnostic: macHopperHostVersionDetail({
+          source: "release_feed",
+          packageUrl: PACKAGE_URL,
+          minimumVersion: "12.4",
+          hostVersion,
+        }),
+      });
+      expectNamed(result, [PACKAGE_URL, "12.4", hostVersion]);
+      expect(host.packageDownloads).toBe(0);
+      expect(host.mounts).toBe(0);
+      expect(host.installs).toBe(0);
+    },
+  );
+
+  it.each(["12.4", "12.4.0", "12.4.1", "12.10", "13", "26.1"])(
+    "installs on macOS %s at or above both declared minimums",
+    async (hostVersion) => {
+      const host = new FakeMacHopperHost();
+      host.hostVersion = hostVersion;
+      host.feedBytes = macFeed(host, { deployment_target: "12.4" });
+
+      expect(await installMacHopper({}, host)).toMatchObject({
+        status: "installed",
+      });
+      expect(host.installs).toBe(1);
+    },
+  );
+
+  it.each([
+    { label: "an undeclared", fields: {} },
+    { label: "an unrecognized", fields: { deployment_target: "twelve" } },
+    { label: "a non-text", fields: { deployment_target: 12.4 } },
+    { label: "a lower", fields: { deployment_target: "11.0" } },
+  ])(
+    "lets the signed app refuse the host after $label feed deployment target",
+    async ({ fields }) => {
+      const host = new FakeMacHopperHost();
+      host.hostVersion = "12.0";
+      host.feedBytes = macFeed(host, fields);
+
+      const result = await installMacHopper({}, host);
+      expect(result).toEqual({
+        status: "failed",
+        reason: "incompatible_host_version",
+        diagnostic: macHopperHostVersionDetail({
+          source: "signed_app",
+          minimumVersion: "12.4",
+          hostVersion: "12.0",
+        }),
+      });
+      expectNamed(result, ["LSMinimumSystemVersion", "12.4", "12.0"]);
+      expect(host.packageDownloads).toBe(1);
+      expect(host.installs).toBe(0);
+      expect(host.opens).toBe(0);
+      expect(host.unmounts).toBe(1);
+      expect(host.cleanups).toBe(1);
+    },
+  );
+
+  it.each(["invalid_signature", "unverified_publisher"] as const)(
+    "reads the app's requirement only after its signature checks pass: %s",
+    async (verification) => {
+      const host = new FakeMacHopperHost();
+      host.verification = verification;
+
+      expect(await installMacHopper({}, host)).toMatchObject({
+        status: "failed",
+      });
+      expect(host.appMinimumReads).toBe(0);
+      expect(host.installs).toBe(0);
+    },
+  );
+
+  it("installs when neither the feed nor the signed app declares a minimum", async () => {
+    const host = new FakeMacHopperHost();
+    host.hostVersion = "12.0";
+    host.appMinimum = undefined;
+
+    expect(await installMacHopper({}, host)).toMatchObject({
+      status: "installed",
+    });
+  });
+
+  it("reports an incomparable signed-app minimum as a bundle failure without copying", async () => {
+    const host = new FakeMacHopperHost();
+    host.appMinimum = "12.x";
+
+    const result = await installMacHopper({}, host);
+    expect(result).toEqual({
+      status: "failed",
+      reason: "bundle",
+      diagnostic: macHopperIncomparableMinimumDetail("12.x", "14.5"),
+    });
+    expectNamed(result, ['"12.x"', "14.5"]);
+    expect(host.installs).toBe(0);
+    expect(host.unmounts).toBe(1);
+    expect(host.cleanups).toBe(1);
+  });
+
+  it("preserves an unreadable signed-app requirement as a bundle diagnostic", async () => {
+    const host = new FakeMacHopperHost();
+    host.appMinimumFailure = new Error("Info.plist: permission denied");
+
+    expect(await installMacHopper({}, host)).toMatchObject({
+      status: "failed",
+      reason: "bundle",
+      diagnostic: "Info.plist: permission denied",
+    });
+    expect(host.installs).toBe(0);
+    expect(host.unmounts).toBe(1);
+    expect(host.cleanups).toBe(1);
+  });
+
+  it.each([undefined, "", "14beta", "14.0\n"])(
+    "refuses an incomparable host version %j before any vendor request",
+    async (hostVersion) => {
+      const host = new FakeMacHopperHost();
+      host.hostVersion = hostVersion;
+      const download = host.download;
+      let requests = 0;
+      host.download = (url) => {
+        requests += 1;
+        return download(url);
+      };
+
+      expect(await installMacHopper({}, host)).toEqual({
+        status: "failed",
+        reason: "unsupported_host",
+      });
+      expect(requests).toBe(0);
+      expect(host.mounts).toBe(0);
+    },
+  );
 });
 
 it("reports an unresolved destination probe without claiming an existing installation", async () => {

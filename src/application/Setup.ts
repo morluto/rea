@@ -394,7 +394,8 @@ const runSetupWorkflow = async (
         appliedActions.includes("installed_hopper"),
         doctor.healthy,
         // Offer installation only where the explicit gate accepts it.
-        hopperPath === undefined && planDiscovery.hopperInstall.supported,
+        hopperPath === undefined &&
+          planDiscovery.hopperInstall.supported !== false,
       ),
     hopperWarning,
     manualRemediation,

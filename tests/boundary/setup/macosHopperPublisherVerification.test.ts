@@ -17,7 +17,7 @@ const run = promisify(execFile);
 const itDarwin = it.skipIf(process.platform !== "darwin");
 const executableSegments = ["Contents", "MacOS", "hopper"];
 
-const infoPlist = (identifier: string): string =>
+const infoPlist = (identifier: string, entries = ""): string =>
   `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -27,7 +27,7 @@ const infoPlist = (identifier: string): string =>
   <key>CFBundleExecutable</key>
   <string>hopper</string>
   <key>CFBundlePackageType</key>
-  <string>APPL</string>
+  <string>APPL</string>${entries}
 </dict>
 </plist>
 `;
@@ -56,8 +56,25 @@ const buildBundle = async (
   return app;
 };
 
+const minimumEntry = (value: string): string =>
+  `\n  <key>LSMinimumSystemVersion</key>\n  ${value}`;
+
+/** An unsigned bundle carrying only an Info.plist, for requirement reads. */
+const infoPlistBundle = async (entries: string): Promise<string> => {
+  const root = await createTestTempDirectory("rea-hopper-minimum-");
+  const app = join(root, "Hopper Disassembler.app");
+  await mkdir(join(app, "Contents"), { recursive: true });
+  await writeFile(
+    join(app, "Contents", "Info.plist"),
+    infoPlist(HOPPER_PUBLISHER.bundleIdentifier, entries),
+  );
+  return app;
+};
+
 const host = () =>
-  systemMacHopperInstallHost("/home/rea-test", { ...process.env });
+  systemMacHopperInstallHost("/home/rea-test", { ...process.env }, () =>
+    Promise.resolve(undefined),
+  );
 
 describe("macOS Hopper publisher verification", () => {
   itDarwin(
@@ -87,6 +104,36 @@ describe("macOS Hopper publisher verification", () => {
     const app = await buildBundle(root, HOPPER_PUBLISHER.bundleIdentifier);
     await appendFile(join(app, ...executableSegments), "appended\n");
     await expect(host().validBundle(app)).resolves.toBe("invalid_signature");
+  });
+
+  it.each([
+    { entries: minimumEntry("<string>12.4</string>"), declared: "12.4" },
+    { entries: "", declared: undefined },
+  ])(
+    "reads the XML Info.plist minimum macOS version $declared",
+    async ({ entries, declared }) => {
+      const app = await infoPlistBundle(entries);
+      await expect(host().minimumSystemVersion(app)).resolves.toBe(declared);
+    },
+  );
+
+  itDarwin("reads a binary Info.plist minimum macOS version", async () => {
+    const app = await infoPlistBundle(minimumEntry("<string>13.0.1</string>"));
+    await run("/usr/bin/plutil", [
+      "-convert",
+      "binary1",
+      join(app, "Contents", "Info.plist"),
+    ]);
+    await expect(host().minimumSystemVersion(app)).resolves.toBe("13.0.1");
+  });
+
+  it("refuses a minimum macOS version that is not text", async () => {
+    const app = await infoPlistBundle(minimumEntry("<real>12.4</real>"));
+    const failure = host().minimumSystemVersion(app);
+    await expect(failure).rejects.toBeInstanceOf(TypeError);
+    // The refusal names the key and the exact plist it read.
+    await expect(failure).rejects.toThrow("LSMinimumSystemVersion");
+    await expect(failure).rejects.toThrow(join(app, "Contents", "Info.plist"));
   });
 
   it("discloses the exact code requirement the installer enforces", () => {
@@ -122,6 +169,9 @@ describe("macOS Hopper publisher verification", () => {
     "accepts the officially signed Hopper application",
     async () => {
       await expect(host().validBundle(realApp ?? "")).resolves.toBe("verified");
+      await expect(host().minimumSystemVersion(realApp ?? "")).resolves.toMatch(
+        /^\d+(?:\.\d+)*$/u,
+      );
       await expect(
         verifyMacHopperNativeHelper(
           join(realApp ?? "", ...executableSegments),

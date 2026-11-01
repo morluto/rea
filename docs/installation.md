@@ -666,7 +666,8 @@ Hopper is separate commercial software with its own license. Its free demo has
 vendor-defined limits, and a paid license is optional. REA reuses any detected
 installation and preserves Hopper during uninstall.
 
-The automated Hopper installer supports macOS 12+ and x86_64 hosts running
+The automated Hopper installer supports macOS 12+, subject to the minimum
+macOS version of the current Hopper release, and x86_64 hosts running
 Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy. The
 official Linux packages are x86_64-only, so setup does not offer Hopper on other
 Linux architectures; configure [Ghidra](#ghidra) there instead. REA itself runs on any
@@ -701,6 +702,15 @@ and digest, validates the application bundle, and atomically installs it to
 `~/Applications/Hopper Disassembler.app`. REA then opens Hopper so the
 operator can choose its demo mode or activate an existing license. Homebrew and
 administrator access are not used.
+
+Each Hopper release declares its own minimum macOS version, so the setup plan
+cannot confirm support before approval. Setup compares this Mac's version with
+the release metadata's `deployment_target` before downloading the DMG, and with
+the signed application's `LSMinimumSystemVersion` before copying it. If this Mac
+is older, setup fails with `incompatible_host_version`, names both versions, and
+installs nothing. Update macOS, or install a Hopper release that supports this
+macOS version yourself and set `HOPPER_LAUNCHER_PATH`. An existing Hopper
+installation is not checked against the current release's minimum.
 
 The Hopper launcher action used by REA creates a document from an executable;
 its supported command-line interface does not attach to an already-open

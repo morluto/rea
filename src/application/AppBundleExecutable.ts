@@ -461,10 +461,11 @@ const resolveLayoutExecutable = async (
 
   let name: string;
   try {
-    name = hasBinaryPlistSignature(plist)
-      ? await (fileSystem.decodeBinaryPlist?.(plistPath) ??
-          parseBinaryPlistExecutable(plist))
-      : parseXmlPlistExecutable(decodeXmlPlistText(plist));
+    name =
+      hasBinaryPlistSignature(plist) &&
+      fileSystem.decodeBinaryPlist !== undefined
+        ? await fileSystem.decodeBinaryPlist(plistPath)
+        : executableName(decodeInfoPlistValue(plist));
   } catch (cause: unknown) {
     return err(
       new BinaryTargetError(
@@ -546,12 +547,18 @@ const resolveLayoutExecutable = async (
   }
 };
 
-/** Decode the top-level executable name with an XML parser, not a pattern. */
-const parseXmlPlistExecutable = (plist: string): string => {
-  // An unrelated `__proto__` entry must not make the bundle unreadable.
-  const { value } = parseXmlPropertyList(plist);
-  return executableName(value);
-};
+/**
+ * Decode one Info.plist's top-level value in-process, binary or XML, so no
+ * host plist tool is required. Values are read with format-aware parsers, not
+ * patterns; an unrelated `__proto__` entry must not make the bundle unreadable.
+ */
+export const decodeInfoPlistValue = (plist: Buffer): unknown =>
+  hasBinaryPlistSignature(plist)
+    ? decodeBinaryPlistValue(
+        plist,
+        preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES),
+      )
+    : parseXmlPropertyList(decodeXmlPlistText(plist)).value;
 
 /** The Info.plist decoded but declares no string CFBundleExecutable. */
 class UndeclaredBundleExecutable extends Error {}
@@ -564,12 +571,6 @@ const executableName = (value: unknown): string => {
 };
 
 const executableEntrySchema = z.looseObject({ CFBundleExecutable: z.string() });
-
-/** Decode a binary plist in-process, so no host plist tool is required. */
-const parseBinaryPlistExecutable = (plist: Buffer): string => {
-  const plan = preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES);
-  return executableName(decodeBinaryPlistValue(plist, plan));
-};
 
 /** Names are one local path component; backslash is literal on POSIX hosts. */
 const isSafeExecutableName = (name: string): boolean =>

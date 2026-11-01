@@ -4,6 +4,7 @@ import type { LinuxPackageInstallFailure } from "./LinuxHopper.js";
 
 export type SetupFailureCode =
   | "unsupported_host"
+  | "incompatible_host_version"
   | "download_failed"
   | "integrity_mismatch"
   | "authorization_or_package_manager_failed"
@@ -42,6 +43,7 @@ export type SetupHopperInstallFailure = Extract<
 
 export type HopperInstallFailureReason =
   | "unsupported_host"
+  | "incompatible_host_version"
   | "release_metadata"
   | "download"
   | "integrity"
@@ -116,6 +118,13 @@ export const setupInstallFailure = (
         status: "failed",
         code: "unsupported_host",
         remediation: "Use a supported host, then rerun rea setup.",
+      };
+    case "incompatible_host_version":
+      return {
+        status: "failed",
+        code: "incompatible_host_version",
+        remediation:
+          "The current Hopper release requires a newer macOS version than this Mac runs, so REA did not install it. Update macOS to at least the version the installer detail names, or install a Hopper release that supports this macOS version yourself and set HOPPER_LAUNCHER_PATH to its launcher, then rerun rea setup.",
       };
     case "integrity":
       return {
