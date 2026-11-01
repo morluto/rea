@@ -113,8 +113,11 @@ where `stdout_invalid_utf8` and `stderr_invalid_utf8` mark output that was not
 valid UTF-8 and so holds replacement characters.
 Each call's lookup, hash and probe use that call's `command_timeout_ms` budget
 and cancellation; a lookup or hash that reaches the deadline ends the call
-without running the command. REA probes before every command and reuses no
-reading: a launcher, such as a version-manager shim, keeps its path and SHA-256
+without running the command. A hash that fails for another reason, for example
+on an executable that can be run but not read, leaves the version unknown
+without a probe; the command still runs the path the lookup found, which
+Evidence records without a SHA-256. REA probes before every command and reuses
+no reading: a launcher, such as a version-manager shim, keeps its path and SHA-256
 while the tool it runs changes, so only the call's own probe describes the tool
 that answers. Each call therefore launches the executable twice, the probe and
 then the command. If the command then fails to start, for example with `E2BIG`

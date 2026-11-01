@@ -693,9 +693,9 @@ export class ReverseEngineeringService {
       }
     }
     if (earlyFailure !== undefined) {
-      // Without command output there is no Evidence to carry what the probe
-      // observed, so the failure keeps it.
-      if (identification.probed)
+      // Without command output there is no Evidence to carry what the lookup,
+      // hash and probe observed, so the failure keeps it.
+      if (identification.observed)
         earlyFailure.retainDiagnostics({
           provider: identification.identity,
           ...identification.parameters,
@@ -885,7 +885,8 @@ export class ReverseEngineeringService {
     const unidentified = (
       reason: string,
       executable = profile.executable,
-      // What the lookup, hash and probe observed; absent when no probe ran.
+      // What the lookup, hash and probe observed; absent when the lookup
+      // found no executable.
       observed?: Readonly<Record<string, JsonValue>>,
     ): ProviderIdentification => ({
       executable,
@@ -898,7 +899,7 @@ export class ReverseEngineeringService {
         probe === undefined
           ? {}
           : { ...observed, provider_identity: "assumed" },
-      probed: observed !== undefined,
+      observed: observed !== undefined,
     });
     if (probe === undefined)
       return ok(unidentified("no reliable version probe was performed"));
@@ -946,9 +947,13 @@ export class ReverseEngineeringService {
             ...reverseCommandTimeoutGuidance(timeoutMs),
           }),
         );
+      // The command still runs the path found, rather than searching PATH
+      // again, where another executable could answer.
       return ok(
         unidentified(
           `the executable could not be read${code === undefined ? "" : ` (${String(code)})`}`,
+          lookup.path,
+          { provider_executable_path: lookup.path },
         ),
       );
     }
@@ -997,7 +1002,7 @@ export class ReverseEngineeringService {
         ...identification.limitations,
       ],
       parameters: { ...bannerParameters, provider_identity: "banner" },
-      probed: true,
+      observed: true,
     });
   }
 
@@ -1111,8 +1116,8 @@ interface ProviderIdentification {
   readonly identity: Evidence["provider"];
   readonly limitations: readonly string[];
   readonly parameters: Readonly<Record<string, JsonValue>>;
-  /** A probe ran, so the parameters hold what it and the lookup observed. */
-  readonly probed: boolean;
+  /** The lookup found the executable; the parameters hold what it, the hash and any probe observed. */
+  readonly observed: boolean;
 }
 
 /** One version probe's outcome. */

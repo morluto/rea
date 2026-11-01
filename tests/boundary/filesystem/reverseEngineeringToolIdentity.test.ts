@@ -5,6 +5,7 @@ import { delimiter, dirname } from "node:path";
 import { expect, expectTypeOf, it, vi } from "vitest";
 
 import {
+  digestFile,
   type ReverseEngineeringProcesses,
   VERSION_PROBE_FAILURE_REASONS,
 } from "../../../src/application/reverse/ReverseEngineeringService.js";
@@ -574,6 +575,40 @@ posix(
     } finally {
       release.open();
     }
+  },
+);
+
+posix(
+  "runs the path it found, without searching PATH again, when the executable cannot be read for hashing",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    const run = versionProbeRunner(() => "rizin 0.9.1 @ linux-x86-64");
+    const service = new TestReverseEngineeringService({
+      run,
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: "rizin", PATH: dirname(executable) },
+      // As for an executable that can be run but not read (mode 0111).
+      digest: async (target, ...rest) =>
+        target === executable
+          ? Promise.reject(
+              Object.assign(new Error("permission denied"), { code: "EACCES" }),
+            )
+          : digestFile(target, ...rest),
+    });
+    const result = await service.executeRizinCommand({ path, command: "iI" });
+    if (!result.ok) throw result.error;
+    expect(run.mock.calls.map(([command]) => command)).toEqual([executable]);
+    expect(result.value.provider.version).toBeNull();
+    expect(result.value.parameters).toMatchObject({
+      provider_executable_path: executable,
+      provider_identity: "assumed",
+    });
+    expect(result.value.parameters).not.toHaveProperty(
+      "provider_executable_sha256",
+    );
+    expect(result.value.limitations).toContain(
+      "The executable version and supported formats are reported as unknown because the executable could not be read (EACCES).",
+    );
   },
 );
 
