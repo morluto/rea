@@ -438,6 +438,10 @@ affected consumer.
 - Where relevant, continue after a mixed success, failed request, cancellation
   or close/reopen. Verify the next supported recovery and preservation of prior
   results and resource ownership. Use the applicable lifecycle regressions below.
+- For lookup failures, distinguish malformed input from a valid missing or
+  ambiguous selector. Check the returned candidate and input identity, follow
+  an actionable recovery where possible, and verify that an inventory miss is
+  not presented as artifact-wide absence. Test schema-repair advice separately.
 - Record the provider version, host, fixture, actual entrypoint, controlled
   faults and skipped or unavailable coverage. A simulated provider tests the
   integration boundary; a scripted sequence tests that sequence, not an agent's

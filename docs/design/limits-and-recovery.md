@@ -316,8 +316,12 @@ request to change it.
   `runtime-configuration:` check. Re-run `rea setup` for that client when the
   setting is on the registration allowlist, then reconnect so the new process
   sees it.
-- `invalid_request`: correct the reported fields from the current schema or
-  CLI help. Do not repeat the unchanged call.
+- `invalid_request`: follow the specific recovery and reported issue. Inspect
+  the schema or CLI help when the input violates the contract or the response
+  asks for `inspect_input_contract`. A valid selector can instead require a
+  different choice, such as selecting a reported address; an inventory miss
+  does not establish that the target lacks the item. Do not repeat the
+  unchanged call when the response says it cannot succeed unchanged.
 
 A restart is required to adopt a changed launch environment or registration.
 The curated runtime settings above require no REA restart. It is not the first step for a transient
