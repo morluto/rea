@@ -1078,10 +1078,13 @@ export const TOKEN_READ_RETRY_DELAY_MS = 40;
  * read. Each attempt is a complete identity/token/identity read. A fact that
  * stays unreadable keeps its observation and its caller fails closed.
  *
- * `current` classifies whichever process now holds each PID, as a sweep does.
- * `first-observed` keeps a pre-signal check on the generation it first read:
- * a re-read that sees another generation marks that fact's identity changed,
- * because a reused PID is not proof that the unreadable generation exited.
+ * `current` classifies whichever process now holds each PID, as a sweep does;
+ * its facts are not signal authority. `first-observed` serves a pre-signal
+ * check: a re-read that sees another generation marks that fact's identity
+ * changed, because a reused PID is not proof that the unreadable generation
+ * exited. After any wait it also reads every other live fact once more, so a
+ * member that moved groups or changed while others waited is not signaled on
+ * its pre-wait relation.
  */
 export const reobserveUnavailableTokenFacts = async (
   facts: readonly ProcessOwnershipFact[],
@@ -1089,59 +1092,91 @@ export const reobserveUnavailableTokenFacts = async (
   exitSettlement: ProcessExitSettlementBudget,
   generation: "current" | "first-observed",
 ): Promise<readonly ProcessOwnershipFact[]> => {
-  let current = facts;
   const changed = new Set<number>();
-  for (let attempt = 0; attempt < TOKEN_READ_RETRY_ATTEMPTS; attempt += 1) {
-    const pending = current
-      .filter(
-        ({ process, state, token, identityAfter }) =>
-          token.state === "unavailable" &&
-          !processIdentityHasExited(identityAfter) &&
-          !processIdentityIsExiting(identityAfter) &&
-          (generation === "current" ||
-            (state !== "replaced" && !changed.has(process.pid))),
+  // Keep a pre-signal fact on its first generation; `current` takes the re-read.
+  // An inconclusive token re-read keeps the unreadable fact, while an
+  // inconclusive refresh replaces a stale readable one so it fails closed.
+  const bind = (
+    fact: ProcessOwnershipFact,
+    next: ProcessOwnershipFact | undefined,
+    inconclusive: "keep" | "replace",
+  ): ProcessOwnershipFact => {
+    if (next === undefined || generation === "current") return next ?? fact;
+    const first =
+      fact.state === "same-generation" &&
+      fact.identityAfter.state === "readable"
+        ? fact.identityAfter.identity
+        : undefined;
+    // An unbound first read has no generation to keep, and absence ends it.
+    if (first === undefined || next.identityAfter.state === "absent")
+      return next;
+    if (
+      [next.identityBefore, next.identityAfter].some(
+        (identity) =>
+          identity.state === "readable" && identity.identity !== first,
       )
-      .map(({ process }) => process);
-    if (pending.length === 0) break;
-    await delay(TOKEN_READ_RETRY_DELAY_MS);
-    const reread = new Map(
+    ) {
+      changed.add(fact.process.pid);
+      return {
+        ...fact,
+        state: "unavailable",
+        identityAfter: {
+          state: "unavailable",
+          reason: "process_identity_changed_during_token_reread",
+        },
+      };
+    }
+    return next.state === "same-generation" || inconclusive === "replace"
+      ? next
+      : fact;
+  };
+  const reread = async (
+    current: readonly ProcessOwnershipFact[],
+    processes: readonly ProcessTableEntry[],
+    inconclusive: "keep" | "replace",
+  ): Promise<readonly ProcessOwnershipFact[]> => {
+    const next = new Map(
       (
-        await readProcessOwnershipFacts(pending, host, undefined, {
+        await readProcessOwnershipFacts(processes, host, undefined, {
           exitSettlement,
         })
       ).map((fact) => [fact.process.pid, fact]),
     );
-    current = current.map((fact): ProcessOwnershipFact => {
-      const next = reread.get(fact.process.pid);
-      if (next === undefined || generation === "current") return next ?? fact;
-      const first =
-        fact.state === "same-generation" &&
-        fact.identityAfter.state === "readable"
-          ? fact.identityAfter.identity
-          : undefined;
-      // An unbound first read has no generation to keep, and absence ends it.
-      if (first === undefined || next.identityAfter.state === "absent")
-        return next;
-      if (
-        [next.identityBefore, next.identityAfter].some(
-          (identity) =>
-            identity.state === "readable" && identity.identity !== first,
-        )
-      ) {
-        changed.add(fact.process.pid);
-        return {
-          ...fact,
-          state: "unavailable",
-          identityAfter: {
-            state: "unavailable",
-            reason: "process_identity_changed_during_token_reread",
-          },
-        };
-      }
-      return next.state === "same-generation" ? next : fact;
-    });
+    return current.map((fact) =>
+      bind(fact, next.get(fact.process.pid), inconclusive),
+    );
+  };
+  // Replaced or changed generations already fail closed and are not re-read.
+  const rereadable = ({
+    process,
+    state,
+    identityAfter,
+  }: ProcessOwnershipFact) =>
+    !processIdentityHasExited(identityAfter) &&
+    (generation === "current" ||
+      (state !== "replaced" && !changed.has(process.pid)));
+
+  let current = facts;
+  let fresh: ReadonlySet<number> | undefined;
+  for (let attempt = 0; attempt < TOKEN_READ_RETRY_ATTEMPTS; attempt += 1) {
+    const pending = current
+      .filter(
+        (fact) =>
+          fact.token.state === "unavailable" &&
+          !processIdentityIsExiting(fact.identityAfter) &&
+          rereadable(fact),
+      )
+      .map(({ process }) => process);
+    if (pending.length === 0) break;
+    await delay(TOKEN_READ_RETRY_DELAY_MS);
+    current = await reread(current, pending, "keep");
+    fresh = new Set(pending.map(({ pid }) => pid));
   }
-  return current;
+  if (generation === "current" || fresh === undefined) return current;
+  const stale = current
+    .filter((fact) => !fresh.has(fact.process.pid) && rereadable(fact))
+    .map(({ process }) => process);
+  return stale.length === 0 ? current : reread(current, stale, "replace");
 };
 
 const isExpectedAbort = (
