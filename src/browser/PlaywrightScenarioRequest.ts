@@ -429,8 +429,8 @@ export const performScenarioRequest = async (input: {
       await route.fallback();
     }
   };
-  await page.route(matches, gate);
-  if (protectResponse !== undefined) page.on("request", watch);
+  // Attach before the aborting route is installed: a slow attachment must not
+  // leave the guard aborting application traffic before this step dispatches.
   const redirect =
     input.onRedirectResponse === undefined
       ? undefined
@@ -441,6 +441,13 @@ export const performScenarioRequest = async (input: {
           signal,
           onResponse: input.onRedirectResponse,
         }).catch(() => undefined);
+  try {
+    await page.route(matches, gate);
+  } catch (cause: unknown) {
+    await redirect?.stop();
+    throw cause;
+  }
+  if (protectResponse !== undefined) page.on("request", watch);
   let primaryFailure: { readonly cause: unknown } | undefined;
   let response: PageResponse;
   try {

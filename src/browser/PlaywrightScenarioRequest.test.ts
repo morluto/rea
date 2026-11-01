@@ -548,6 +548,44 @@ describe("request step redirect capture", () => {
     expect(session.detach).toHaveBeenCalledOnce();
     expect(Date.now() - started).toBeLessThan(1_500);
   });
+});
+
+describe("request step redirect observer ordering", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("attaches the redirect observer before the aborting route guard is installed", async () => {
+    const order: string[] = [];
+    const session = Object.assign(new EventEmitter(), {
+      send: async () => ({}),
+      detach: async () => {},
+    });
+    const emitter = new EventEmitter();
+    const page = Object.assign(emitter, fakePage({}), {
+      on: emitter.on.bind(emitter),
+      off: emitter.off.bind(emitter),
+      route: async () => {
+        order.push("route");
+      },
+      context: () => ({
+        newCDPSession: async () => {
+          order.push("attach");
+          return session;
+        },
+      }),
+    }) as unknown as Page;
+    stubFetch(200);
+    const parsed = scenario([requestStep({})]);
+    await performPlaywrightScenarioAction({
+      page,
+      action: parsed.actions[0]!,
+      secrets: resolved(parsed),
+      startOrigin: ORIGIN,
+      onRedirectResponse: vi.fn(),
+    });
+    expect(order).toEqual(["attach", "route"]);
+  });
 
   it("sends nothing when its time runs out while header values are read, or the step is cancelled", async () => {
     const calls = stubFetch(200);
