@@ -1017,6 +1017,7 @@ const manifestOf = (input: {
 const executionOptions = (signal: AbortSignal | undefined) => ({
   ...(signal === undefined ? {} : { signal }),
   selectorOrigin: "provider" as const,
+  retainEvidence: false,
 });
 
 const cancelled = (signal: AbortSignal | undefined): AnalysisCancelledError =>

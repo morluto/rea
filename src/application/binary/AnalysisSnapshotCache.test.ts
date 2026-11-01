@@ -777,7 +777,9 @@ describe("analysis snapshot cache policy", () => {
       );
     },
   );
+});
 
+describe("documentless procedure observations", () => {
   it("retains caller observations without a document while refusing to replay them", () => {
     const descriptor: CapabilityDescriptor = {
       operation: "procedure_callers",
@@ -822,9 +824,24 @@ describe("analysis snapshot cache policy", () => {
         pseudocode,
         parameters,
       ),
+    ).toBe(true);
+    expect(
+      isSnapshotCacheable("procedure_pseudo_code", pseudocode, parameters),
+    ).toBe(true);
+    expect(
+      isSourceEvidenceRetainable("procedure_pseudo_code", pseudocode, {}),
     ).toBe(false);
+    expect(isSnapshotCacheable("procedure_pseudo_code", pseudocode, {})).toBe(
+      false,
+    );
     expect(
       isSourceEvidenceRetainable("procedure_pseudo_code", pseudocode, {
+        ...parameters,
+        document: "fixture",
+      }),
+    ).toBe(true);
+    expect(
+      isSnapshotCacheable("procedure_pseudo_code", pseudocode, {
         ...parameters,
         document: "fixture",
       }),
