@@ -11,7 +11,7 @@ import { writeFile } from "node:fs/promises";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
-  "preserves classifier-known Hexagon ELF identity through Go and Rust CLI/MCP",
+  "preserves classifier-known Hexagon and Xtensa ELF identity through Go and Rust CLI/MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-machine-identity-");
     const { client, call } = await connectLocalToolsMcp();
@@ -22,6 +22,7 @@ cliTest(
         language === "go" ? "inspect-go-binary" : "inspect-rust-binary";
       for (const item of [
         { machine: 164, architecture: "hexagon", subject: "hexagon" },
+        { machine: 94, architecture: "xtensa", subject: "xtensa" },
         { machine: 62, architecture: "amd64", subject: "x86_64" },
       ]) {
         const bytes =

@@ -101,6 +101,7 @@ const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
   "powerpc",
   "m68k",
   "hexagon",
+  "xtensa",
 ]);
 
 /** Names every admitted family, so the refusal cannot drift from the set. */

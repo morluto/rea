@@ -207,6 +207,7 @@
     "verify:ghidra:ppc": "npm run build:cached && node scripts/verify-real-ghidra-ppc.mjs",
     "verify:ghidra:dol": "npm run build:cached && node scripts/verify-real-ghidra-dol.mjs",
     "verify:ghidra:riscv": "npm run build:cached && node scripts/verify-real-ghidra-riscv.mjs",
+    "verify:ghidra:xtensa": "npm run build:cached && node scripts/verify-real-ghidra-xtensa.mjs",
     "verify:ghidra:6502": "npm run build:cached && node scripts/verify-real-ghidra-6502.mjs",
     "verify:ghidra:m68k": "npm run build:cached && node scripts/verify-real-ghidra-m68k.mjs",
     "verify:ghidra:mips-shared": "npm run build:cached && node scripts/verify-real-ghidra-mips-shared.mjs",

@@ -122,6 +122,8 @@ export const elfArchitecture = (
       return "powerpc";
     case 40:
       return "arm";
+    case 94: // EM_XTENSA: core configuration and ABI remain separate ELF facts.
+      return "xtensa";
     case 164: // EM_HEXAGON: Qualcomm Hexagon DSP (QDSP6).
       return "hexagon";
     case 183:
