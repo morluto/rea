@@ -1,5 +1,8 @@
 import type { JsonValue } from "../domain/jsonValue.js";
-import { literalSubstringPredicate } from "../domain/analysisSearch.js";
+import {
+  literalSubstringPredicate,
+  matchProcedureNames,
+} from "../domain/analysisSearch.js";
 
 /** ASCII-only candidates are exact; every non-ASCII source value stays eligible.
  * Node owns Unicode folding, so the Java runtime's Unicode version cannot omit
@@ -32,19 +35,36 @@ export const ghidraAsciiLiteralCandidate = (pattern: string): string | null => {
   return candidate;
 };
 
-/** Leave invalid rows present so the inventory owner retains its output error. */
+/**
+ * Apply Node's folding to the bridge's candidate rows, including the secondary
+ * names a procedure row matched. Leave invalid rows present so the inventory
+ * owner retains its output error.
+ */
 export const filterGhidraLiteralCandidates = (
   value: JsonValue,
   pattern: string,
 ): JsonValue => {
   if (!Array.isArray(value)) return value;
   const matches = literalSubstringPredicate(pattern, false);
-  return value.filter(
-    (item) =>
+  return value.flatMap((item) => {
+    if (
       item === null ||
       typeof item !== "object" ||
       Array.isArray(item) ||
-      typeof item.value !== "string" ||
-      matches(item.value),
-  );
+      typeof item.value !== "string"
+    )
+      return [item];
+    const { matched_aliases: aliases, ...row } = item;
+    const candidates = Array.isArray(aliases) ? aliases : [];
+    if (
+      !candidates.every((alias): alias is string => typeof alias === "string")
+    )
+      return [item];
+    const matched = matchProcedureNames(
+      { ...row, value: item.value },
+      candidates,
+      matches,
+    );
+    return matched === undefined ? [] : [matched];
+  });
 };

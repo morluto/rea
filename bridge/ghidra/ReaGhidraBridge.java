@@ -2274,9 +2274,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("invalid_request", "mode must be literal or regex");
         }
         boolean caseSensitive = requireBoolean(params, "case_sensitive");
-        List<InventoryItem> inventory = procedureSearch
-            ? procedures().stream().map(FunctionEntry::item).toList()
-            : strings();
         ValueMatcher matcher;
         if (mode.equals("literal") && !caseSensitive) {
             if (!params.has("literal_ascii_candidate"))
@@ -2290,7 +2287,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 : regexMatcher(expression, caseSensitive);
         }
         JsonArray items = new JsonArray();
-        for (InventoryItem item : inventory) {
+        if (procedureSearch) {
+            // Search the names exact lookup accepts, keeping one row per
+            // procedure under its primary name.
+            for (FunctionEntry entry : procedures()) {
+                monitor.checkCancelled();
+                JsonArray aliases = matchingEntryAliases(entry, matcher);
+                if (aliases.size() == 0 && !matcher.matches(entry.item.value)) {
+                    continue;
+                }
+                JsonObject item = resultItem(entry.item, null);
+                if (aliases.size() > 0) item.add("matched_aliases", aliases);
+                items.add(item);
+            }
+            return items;
+        }
+        for (InventoryItem item : strings()) {
             monitor.checkCancelled();
             if (!matcher.matches(item.value)) {
                 continue;
@@ -2298,6 +2310,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
             items.add(resultItem(item, null));
         }
         return items;
+    }
+
+    /**
+     * Qualified names of the other symbols at a procedure's exact entry that
+     * match, in sorted order. resolveProcedure accepts these names; a label
+     * inside the body never names the procedure.
+     */
+    private JsonArray matchingEntryAliases(FunctionEntry entry, ValueMatcher matcher) throws Exception {
+        Set<String> matched = new TreeSet<>();
+        for (Symbol symbol : currentProgram.getSymbolTable().getSymbols(entry.function.getEntryPoint())) {
+            monitor.checkCancelled();
+            String name = symbol.getName(true);
+            if (!name.equals(entry.item.value) && matcher.matches(name)) matched.add(name);
+        }
+        JsonArray result = new JsonArray();
+        for (String name : matched) result.add(name);
+        return result;
     }
 
     private List<InventoryItem> names() throws Exception {

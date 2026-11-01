@@ -47,6 +47,8 @@ Windows is not supported yet. Supported targets are ELF and thin Mach-O executab
 | `xrefs`                                                     | Exact-address incoming reference sites, with forwarding aliases filtered explicitly                                              |
 | `analyze_function`                                          | Pseudocode and assembly from the export, plus call relationships; typed references, comments, strings and CFG remain unavailable |
 
+Kuna's inventory gives some entries aliases, such as ELF versioned-symbol names and generated `sub_` names. Name selectors accept an alias that names one entry and list every entry a shared alias names. `search_procedures` matches aliases too: each entry appears once under its primary name, with the matching aliases in `matched_aliases`. `list_procedures` shows primary names only.
+
 Typed procedure references, basic blocks, raw-memory tools, annotations and type recovery are not available from this provider. Use another provider for those operations.
 
 ## How answers are produced
