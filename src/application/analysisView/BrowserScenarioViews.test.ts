@@ -436,6 +436,7 @@ describe("browser scenario network observation", () => {
     const project = (capture: unknown) => {
       const result = projectBrowserScenarioView(
         {
+          predicateType: "rea.browser-scenario-capture",
           evidenceId: `ev:${"a".repeat(64)}`,
           operation: "capture_browser_scenario",
           normalizedResult: capture,
