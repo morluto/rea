@@ -232,6 +232,14 @@ interface DoctorCatalogExpectation {
   readonly expectedPromptNames: readonly string[];
 }
 
+const listPromptsWhenAdvertised = (
+  client: Client,
+  request: ReturnType<typeof requestOptions>,
+) =>
+  client.getServerCapabilities()?.prompts
+    ? client.listPrompts(undefined, request)
+    : Promise.resolve({ prompts: [] });
+
 const inspectProductionMcpSession = async (
   client: Client,
   deadline: number,
@@ -240,9 +248,13 @@ const inspectProductionMcpSession = async (
   budget: McpPhaseBudget,
 ) => {
   const request = requestOptions(deadline, signal);
+  // The SDK logs to stdout when listPrompts is called without the advertised
+  // capability, which corrupts the doctor's structured output. An absent
+  // capability is an empty prompt inventory for this diagnostic.
+  const promptsRequest = listPromptsWhenAdvertised(client, request);
   const [tools, prompts] = await Promise.all([
     client.listTools(undefined, request),
-    client.listPrompts(undefined, request),
+    promptsRequest,
   ]);
   const sessionTool = tools.tools.find(({ name }) => name === "binary_session");
   // A scope without the session family cannot serve request flow at all;

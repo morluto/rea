@@ -1,8 +1,8 @@
 import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -49,6 +49,42 @@ const expectDoctorDeadline = (
     ),
   );
 };
+
+const captureProductionCli = async (
+  arguments_: readonly string[],
+  environment: NodeJS.ProcessEnv,
+) =>
+  new Promise<{
+    readonly exitCode: number | null;
+    readonly stdout: string;
+    readonly stderr: string;
+  }>((finish, reject) => {
+    const child = spawn(
+      process.execPath,
+      [resolve("scripts/rea.mjs"), ...arguments_],
+      {
+        cwd: process.cwd(),
+        env: environment,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    const timeout = setTimeout(() => child.kill("SIGTERM"), 15_000);
+    child.once("error", reject);
+    child.once("close", (exitCode) => {
+      clearTimeout(timeout);
+      finish({ exitCode, stdout, stderr });
+    });
+  });
 
 afterEach(() => vi.useRealTimers());
 
@@ -358,6 +394,70 @@ describe("production MCP doctor family scopes", () => {
 });
 
 describe("production MCP doctor output", () => {
+  it("keeps both structured stdout formats parseable when prompts are not advertised", async () => {
+    const root = await createTestTempDirectory("rea-mcp-doctor-output-");
+    const directories = {
+      home: join(root, "home"),
+      config: join(root, "config"),
+      data: join(root, "data"),
+      cache: join(root, "cache"),
+      state: join(root, "state"),
+      temp: join(root, "temp"),
+    };
+    await Promise.all(
+      Object.values(directories).map((path) =>
+        mkdir(path, { recursive: true }),
+      ),
+    );
+    const environment = {
+      ...process.env,
+      REA_MCP_TOOL_FAMILIES: "browser",
+      HOME: directories.home,
+      XDG_CONFIG_HOME: directories.config,
+      XDG_DATA_HOME: directories.data,
+      XDG_CACHE_HOME: directories.cache,
+      XDG_STATE_HOME: directories.state,
+      TMPDIR: directories.temp,
+    };
+
+    const json = await captureProductionCli(
+      ["mcp", "doctor", "--json"],
+      environment,
+    );
+    const jsonl = await captureProductionCli(
+      ["mcp", "doctor", "--format", "jsonl"],
+      environment,
+    );
+
+    expect([json.exitCode, jsonl.exitCode]).toEqual([1, 1]);
+    const parseable = [json.stdout, jsonl.stdout].map((output) => {
+      try {
+        JSON.parse(output);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    expect(parseable).toEqual([true, true]);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      healthy: false,
+      inventory: {
+        prompts: { expected: 0, observed: 0, missing: [], unexpected: [] },
+      },
+    });
+    expect(JSON.parse(jsonl.stdout)).toMatchObject({
+      $rea: "jsonl/v1",
+      type: "error",
+      ok: false,
+      result: {
+        healthy: false,
+        inventory: {
+          prompts: { expected: 0, observed: 0, missing: [], unexpected: [] },
+        },
+      },
+    });
+  }, 35_000);
+
   it.each([false, true])(
     "frames unhealthy JSONL diagnostics and retains the selected envelope (%s)",
     async (full) => {
