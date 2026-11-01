@@ -716,6 +716,7 @@ export const MANUAL_VERIFIERS = [
   "scripts/verify-real-ghidra*.mjs",
   "scripts/verify-real-hopper*.mjs",
   "scripts/verify-real-ida.mjs",
+  "scripts/verify-real-binary-ninja.mjs",
   "scripts/verify-*-client.mjs",
   "scripts/verify-native-agent-client.mjs",
   "scripts/verify-jeb.mjs",

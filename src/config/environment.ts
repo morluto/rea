@@ -67,6 +67,11 @@ const environmentSchema = z.object({
     .min(1)
     .refine(isAbsolute, "REA_IDA_MCP_CONFIG must be absolute")
     .optional(),
+  REA_BINARY_NINJA_MCP_CONFIG: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "REA_BINARY_NINJA_MCP_CONFIG must be absolute")
+    .optional(),
   REA_JEB_MCP_TIMEOUT_MS: providerStartupTimeoutSchema.optional(),
   REA_JEB_MCP_URL: z
     .string()

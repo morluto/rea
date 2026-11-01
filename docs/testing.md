@@ -28,7 +28,7 @@ behavior, and complete CI evidence before merging.
 | `npm run test:python`             | LLDB and mitmproxy producer contracts plus analysis-efficiency checks; no real debugger or proxy required               |
 | `npm run test:watch`              | Dirty source tests in watch mode, without build                                                                         |
 | `npm run test:watch:all`          | Changed tests from every project; builds at startup, so rebuild after production edits before relying on compiled tests |
-| `npm run check:fast`              | Cached typecheck and lint                                                                                              |
+| `npm run check:fast`              | Cached typecheck and lint                                                                                               |
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
 | `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
@@ -1171,6 +1171,28 @@ See [Optional NativeAOT Ghidra analysis](testing-lanes.md#optional-nativeaot-ghi
 ## IDA MCP adapter
 
 See [IDA MCP adapter](testing-lanes.md#ida-mcp-adapter).
+
+## Binary Ninja lane
+
+`npm run verify:binary-ninja -- --target /absolute/path/to/program --procedure NAME`
+uses the existing `REA_BINARY_NINJA_MCP_CONFIG` registration and a running
+Binary Ninja 6.0+ GUI MCP server with the target already open. It installs and
+launches nothing. It runs the production CLI dispatcher and connects the pinned
+MCP client SDK to the production REA server, then checks function Evidence and
+CLI/MCP parity for inventories, search, Pseudo C, assembly, instructions,
+callers, callees and xrefs, invalid input, close, restoration of a previously
+selected shared view, and input preservation. `--second-procedure` with
+`--second-marker`, `--expected-string`, and `--expected-xref` add switching and
+independent oracles; without them those behaviors are listed in `unverified`.
+
+Adapter tests replay the observed Binary Ninja 6.0 protocol through a recording
+fixture and a loopback HTTP server. They do not establish real engine behavior.
+The initial real workflow used Binary Ninja Personal 6.0.10601 on Windows 10 x64
+with the shipped `notepad.exe`. The upstream port was additionally verified on
+macOS ARM64 with Personal 6.0.10905 using the repository's C fixture in debug,
+optimized, and stripped builds, including an independently checked tail-call
+reference and selection restoration across open files. See the
+[provider guide](binary-ninja.md) for exact oracles and remaining coverage gaps.
 
 ## Kuna lane
 

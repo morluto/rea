@@ -7,6 +7,10 @@ import { JADX_PROVIDER_IDENTITY } from "../android/JadxRelease.js";
 import { APK_SIGNATURE_PROVIDER_IDENTITY } from "../apkSignature/ApkSignatureRelease.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "../apktool/ApktoolProviderIdentity.js";
 import {
+  BINARY_NINJA_OPERATIONS,
+  BINARY_NINJA_PROVIDER_IDENTITY,
+} from "../binaryNinja/BinaryNinjaProviderCapabilities.js";
+import {
   HAR_CAPTURE_PROVIDER_IDENTITY,
   MITMPROXY_CAPTURE_PROVIDER_IDENTITY,
   QLOG_CAPTURE_PROVIDER_IDENTITY,
@@ -152,6 +156,11 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(APKTOOL_PROVIDER_IDENTITY, {
         group: "APKTOOL_TOOL_CONTRACTS",
       }),
+    ],
+  },
+  binaryNinja: {
+    providers: [
+      providerBinding(BINARY_NINJA_PROVIDER_IDENTITY, BINARY_NINJA_OPERATIONS),
     ],
   },
   appleApplicationGraph: {
