@@ -12,7 +12,7 @@ import {
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { err, ok } from "../../../src/domain/result.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 
 it.each([
@@ -107,7 +107,17 @@ it.each([
         { toolDefinition: contextDefinition },
       );
       expect(response.isError).not.toBe(true);
-      const parsed = toolContract("inspect_address_context").outputSchema.parse(
+      const contract = SESSION_TOOL_CONTRACTS.find(
+        (
+          candidate,
+        ): candidate is Extract<
+          (typeof SESSION_TOOL_CONTRACTS)[number],
+          { readonly name: "inspect_address_context" }
+        > => candidate.name === "inspect_address_context",
+      );
+      if (contract === undefined)
+        throw new Error("inspect_address_context contract is missing");
+      const parsed = contract.outputSchema.parse(
         response.structuredContent,
       ).result;
       const expected = projectAnalysisError(inputFailure);
