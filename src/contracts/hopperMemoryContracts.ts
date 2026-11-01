@@ -11,7 +11,7 @@ export const HOPPER_MEMORY_TOOL_DEFINITIONS = [
   {
     name: "search_bytes",
     description:
-      "Find masked byte signatures in initialized analyzed memory. Hex byte pairs and ?? wildcards are supported; an optional equal-length hex mask selects bits. Bounds are inclusive. Matches are ordered by provider address and never span blocks. Coverage describes this page; reuse the same query with next_cursor to continue. Uninitialized blocks are listed separately. Ghidra only; Hopper is unavailable.",
+      "Find masked byte signatures in initialized analyzed memory. Hex byte pairs and ?? wildcards are supported; an optional equal-length hex mask selects bits. Bounds are inclusive. Without bounds, unloaded blocks and loaded overlays are skipped and listed separately; select an overlay address space with start or end to search it. Matches are ordered by provider address and never span blocks. Complete means no more matches in the eligible selection, not that skipped blocks were searched; reuse the same query with next_cursor to continue. Uninitialized blocks are listed separately. Ghidra only; Hopper is unavailable.",
     inputSchema: z
       .strictObject({
         ...bytePatternFields,

@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import Ajv2020 from "ajv/dist/2020.js";
 
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
@@ -53,6 +54,17 @@ const env = {
   REA_ANALYSIS_PROVIDER: "ghidra",
   REA_PROCESS_RUN_ID: run.run_id,
   GHIDRA_INSTALL_DIR: process.env.GHIDRA_INSTALL_DIR,
+  ...(process.env.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
+    ? {}
+    : {
+        REA_MCP_INPUT_SCHEMA_PROFILE: process.env.REA_MCP_INPUT_SCHEMA_PROFILE,
+      }),
+  ...(process.env.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined
+    ? {}
+    : {
+        REA_MCP_OUTPUT_SCHEMA_PROFILE:
+          process.env.REA_MCP_OUTPUT_SCHEMA_PROFILE,
+      }),
   ...(process.env.JAVA_HOME === undefined
     ? {}
     : { JAVA_HOME: process.env.JAVA_HOME }),
@@ -78,8 +90,17 @@ transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
 });
 let report;
+let validateSearch;
 try {
   await client.connect(transport);
+  const searchContract = (await client.listTools()).tools.find(
+    (tool) => tool.name === "search_bytes",
+  );
+  assert.ok(searchContract?.outputSchema);
+  validateSearch = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(searchContract.outputSchema);
   const profiles = [];
   const sessions = [];
   for (const entryPoint of ["0x08000000", "0x8000000", "0x09000000"]) {
@@ -300,6 +321,124 @@ try {
   assert.equal(wrongCursor.isError, true);
   await call("close_binary");
   assert.deepEqual(await readFile(repeatedPath), repeatedBytes);
+  // Two ELF load segments name the same virtual range with different bytes.
+  // Ghidra imports the displaced segment into a loaded overlay address space.
+  const overlayBytes = Buffer.alloc(0x2010);
+  Buffer.from("7f454c46020101000000000000000000", "hex").copy(overlayBytes);
+  overlayBytes.writeUInt16LE(2, 16);
+  overlayBytes.writeUInt16LE(62, 18);
+  overlayBytes.writeUInt32LE(1, 20);
+  overlayBytes.writeBigUInt64LE(0x401000n, 24);
+  overlayBytes.writeBigUInt64LE(64n, 32);
+  overlayBytes.writeUInt16LE(64, 52);
+  overlayBytes.writeUInt16LE(56, 54);
+  overlayBytes.writeUInt16LE(2, 56);
+  overlayBytes.writeUInt16LE(64, 58);
+  for (const [index, offset] of [0x1000, 0x2000].entries()) {
+    const at = 64 + index * 56;
+    overlayBytes.writeUInt32LE(1, at);
+    overlayBytes.writeUInt32LE(5, at + 4);
+    overlayBytes.writeBigUInt64LE(BigInt(offset), at + 8);
+    overlayBytes.writeBigUInt64LE(0x401000n, at + 16);
+    overlayBytes.writeBigUInt64LE(0x401000n, at + 24);
+    overlayBytes.writeBigUInt64LE(16n, at + 32);
+    overlayBytes.writeBigUInt64LE(16n, at + 40);
+    overlayBytes.writeBigUInt64LE(0x1000n, at + 48);
+  }
+  Buffer.from("112233445566778899aabbccddeeffc3", "hex").copy(
+    overlayBytes,
+    0x1000,
+  );
+  Buffer.from("ffeeddccbbaa998877665544332211c3", "hex").copy(
+    overlayBytes,
+    0x2000,
+  );
+  const overlayPath = join(workspace, "overlap.elf");
+  const overlaySnapshot = join(workspace, "overlap-snapshot.json");
+  const overlaySha256 = createHash("sha256").update(overlayBytes).digest("hex");
+  await writeFile(overlayPath, overlayBytes);
+  await call("open_binary", { path: overlayPath, provider_id: "ghidra" });
+  const overlayImage = await call(
+    "inspect_native_load_image",
+    { detail: "complete" },
+    overlaySha256,
+    "elf",
+  );
+  const overlayBlock =
+    overlayImage.normalized_result.observations.mappings.find(
+      (mapping) => mapping.block === "segment_0",
+    );
+  assert.equal(overlayBlock.loaded, true);
+  assert.equal(overlayBlock.overlay, true);
+  const defaultSearch = await call(
+    "search_bytes",
+    { pattern: "11 22 33 44" },
+    overlaySha256,
+    "elf",
+  );
+  assert.deepEqual(defaultSearch.normalized_result.matches, []);
+  assert.equal(defaultSearch.normalized_result.complete, true);
+  assert.ok(
+    Array.isArray(defaultSearch.normalized_result.searched.skipped_overlays),
+    "The search must distinguish loaded overlays from unloaded blocks",
+  );
+  assert.ok(
+    defaultSearch.normalized_result.searched.skipped_overlays.some(
+      (block) => block.segment === "segment_0",
+    ),
+  );
+  assert.ok(
+    !defaultSearch.normalized_result.searched.skipped_not_loaded.some(
+      (block) => block.segment === "segment_0",
+    ),
+  );
+  const headerBlock = overlayImage.normalized_result.observations.mappings.find(
+    (mapping) => mapping.block === "_elfHeader",
+  );
+  assert.equal(headerBlock.loaded, false);
+  assert.equal(headerBlock.overlay, true);
+  assert.ok(
+    defaultSearch.normalized_result.searched.skipped_not_loaded.some(
+      (block) => block.segment === "_elfHeader",
+    ),
+  );
+  assert.ok(
+    !defaultSearch.normalized_result.searched.skipped_overlays.some(
+      (block) => block.segment === "_elfHeader",
+    ),
+  );
+  const overlayQuery = {
+    pattern: "11 22 33 44",
+    start: "segment_0:0x401000",
+    end: "segment_0:0x40100f",
+  };
+  const overlaySearch = await call(
+    "search_bytes",
+    overlayQuery,
+    overlaySha256,
+    "elf",
+  );
+  assert.deepEqual(
+    overlaySearch.normalized_result.matches.map((match) => match.address),
+    ["segment_0:0x401000"],
+  );
+  assert.equal(overlaySearch.normalized_result.matches[0].file_offset, 0x1000);
+  await call("close_binary", { snapshot_path: overlaySnapshot });
+  await call("open_binary", {
+    path: overlayPath,
+    provider_id: "ghidra",
+    snapshot_path: overlaySnapshot,
+  });
+  const reopened = await call(
+    "search_bytes",
+    overlayQuery,
+    overlaySha256,
+    "elf",
+  );
+  assert.deepEqual(reopened.normalized_result, overlaySearch.normalized_result);
+  assert.equal(reopened.evidence_id, overlaySearch.evidence_id);
+  await call("close_binary");
+  assert.deepEqual(await readFile(overlayPath), overlayBytes);
   report = {
     ok: true,
     mocked: false,
@@ -319,6 +458,7 @@ try {
     invalid_entry_preserves_active_session: true,
     load_images_verified: true,
     original_unchanged: true,
+    loaded_overlay_search_and_snapshot: true,
     x86_targets: x86Targets,
     byte_search: {
       matches: 1005,
@@ -349,7 +489,12 @@ process.stdout.write(
   }) + "\n",
 );
 
-async function call(name, args = {}, targetSha256 = sha256) {
+async function call(
+  name,
+  args = {},
+  targetSha256 = sha256,
+  format = "raw-binary",
+) {
   const result = await client.callTool(
     { name, arguments: args },
     { timeout: 240000 },
@@ -357,7 +502,9 @@ async function call(name, args = {}, targetSha256 = sha256) {
   if (["open_binary", "close_binary", "binary_session"].includes(name))
     return requireMcpLifecycleResult(result, name);
   const evidence = parseEvidence(requireMcpOutput(result, name));
+  if (name === "search_bytes")
+    assert.ok(validateSearch(evidence), JSON.stringify(validateSearch.errors));
   assert.equal(evidence.subject.digest.sha256, targetSha256);
-  assert.equal(evidence.subject.format, "raw-binary");
+  assert.equal(evidence.subject.format, format);
   return evidence;
 }

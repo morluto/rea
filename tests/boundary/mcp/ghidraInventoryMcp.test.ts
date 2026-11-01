@@ -75,6 +75,14 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
       skipped_not_loaded: [
         { segment: ".symtab", start: "0x0", end: "0x17f", bytes: 384 },
       ],
+      skipped_overlays: [
+        {
+          segment: "overlay",
+          start: "overlay:0x401000",
+          end: "overlay:0x40100f",
+          bytes: 16,
+        },
+      ],
     },
     complete: false,
     next_cursor: "continuation",
@@ -114,6 +122,27 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
       arguments: { pattern: "49 ??" },
     });
     expect(parseMcpToolError(malformed)).toMatchObject({
+      error: { code: "unreadable_output" },
+    });
+    output = jsonValueSchema.parse({
+      ...page,
+      searched: {
+        ...page.searched,
+        skipped_overlays: [
+          {
+            segment: "overlay",
+            start: "overlay:0x401000",
+            end: "overlay:0x40100f",
+            bytes: 15,
+          },
+        ],
+      },
+    });
+    const invalidOverlay = await harness.mcp.callTool({
+      name: "search_bytes",
+      arguments: { pattern: "48 ??" },
+    });
+    expect(parseMcpToolError(invalidOverlay)).toMatchObject({
       error: { code: "unreadable_output" },
     });
     for (const block of [

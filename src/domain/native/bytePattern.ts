@@ -160,9 +160,22 @@ export const byteSearchResultSchema = z
       blocks: z.array(coverageBlock),
       bytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
       skipped_uninitialized: z.array(coverageBlock),
-      skipped_not_loaded: z.array(coverageBlock),
+      skipped_not_loaded: z
+        .array(coverageBlock)
+        .describe(
+          "Unloaded blocks skipped by an unbounded search, including unloaded overlays.",
+        ),
+      skipped_overlays: z
+        .array(coverageBlock)
+        .describe(
+          "Loaded overlay blocks skipped by an unbounded search; select their address space with a bound.",
+        ),
     }),
-    complete: z.boolean(),
+    complete: z
+      .boolean()
+      .describe(
+        "No further matches remain in the eligible selection; skipped blocks were not searched.",
+      ),
     next_cursor: z.string().min(1).nullable(),
   })
   .superRefine((value, context) => {

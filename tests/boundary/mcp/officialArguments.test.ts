@@ -101,6 +101,7 @@ describe("official operation arguments", () => {
                   bytes: 0,
                   skipped_uninitialized: [],
                   skipped_not_loaded: [],
+                  skipped_overlays: [],
                 },
                 complete: true,
                 next_cursor: null,

@@ -367,6 +367,14 @@ const byteSearch = (space = "") => ({
         bytes: 16,
       },
     ],
+    skipped_overlays: [
+      {
+        segment: "overlay",
+        start: `${space}0x0040`,
+        end: `${space}0x004f`,
+        bytes: 16,
+      },
+    ],
   },
   complete: true,
   next_cursor: null as string | null,
@@ -392,6 +400,8 @@ it.each([
   ["uninitialized end", ["searched", "skipped_uninitialized", 0, "end"]],
   ["unloaded start", ["searched", "skipped_not_loaded", 0, "start"]],
   ["unloaded end", ["searched", "skipped_not_loaded", 0, "end"]],
+  ["overlay start", ["searched", "skipped_overlays", 0, "start"]],
+  ["overlay end", ["searched", "skipped_overlays", 0, "end"]],
 ] as const)(
   "rejects noncanonical %s at its owning address field",
   (_label, path) => {

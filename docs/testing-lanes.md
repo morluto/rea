@@ -501,8 +501,12 @@ instruction and byte readback, canonical-entry session reuse, replacement when
 the entry changes without `provider_id`, unchanged source bytes, and owned
 cleanup. Six-byte x86 and x86_64 controls also verify supported compiler
 specifications, independent mappings, unchanged bytes, and decompilation of a
-known return value. AArch64 remains covered by deterministic tests rather than
-this real-provider lane. See [raw binary analysis](raw-binary.md).
+known return value. A source-generated overlapping ELF also checks that a
+loaded overlay is reported separately from unloaded blocks, can be selected by
+address-space bounds, and remains searchable after a snapshot handoff. Search
+responses are validated against the advertised MCP schema. AArch64 remains
+covered by deterministic tests rather than this real-provider lane. See [raw
+binary analysis](raw-binary.md).
 
 `npm run verify:ghidra:address-context` runs on Linux with a caller-installed
 Ghidra, full JDK, and an x86-64 ELF GCC toolchain (`CC` selects another compatible
