@@ -310,18 +310,29 @@ const lastMemberValue = (
 };
 
 /**
- * Whether an options object proves it selects a Unix socket, in which case Node
- * never validates `port`. `true` is a non-empty literal `path`; `null` means the
- * `path` member is present but not readable, so a socket may still be selected.
+ * What a readable `path` member makes Node do before it validates `port`.
+ *
+ * - `socket`: a non-empty string selects a Unix socket, so `port` is ignored.
+ * - `port`: a readable falsy value (`""`, `null`, `false`, `0`) does not select
+ *   a socket, so `port` is still validated.
+ * - `invalid`: any other readable value throws `ERR_INVALID_ARG_TYPE` before a
+ *   socket exists, because Node only accepts a string path.
+ * - `unknown`: the member is not exactly readable, so nothing is decided.
  */
-const optionsSelectUnixSocket = (
+type SocketOptionsIntent = "socket" | "port" | "invalid" | "unknown";
+
+const socketOptionsIntent = (
   object: t.ObjectExpression,
-): boolean | null => {
+): SocketOptionsIntent => {
   const path = lastMemberValue(object, "path");
-  if (path === null) return null;
-  if (path === undefined) return false;
-  if (!t.isStringLiteral(path)) return null;
-  return path.value !== "";
+  if (path === null) return "unknown";
+  if (path === undefined) return "port";
+  if (t.isStringLiteral(path)) return path.value === "" ? "port" : "socket";
+  if (t.isNullLiteral(path)) return "port";
+  if (t.isBooleanLiteral(path)) return path.value ? "invalid" : "port";
+  if (t.isNumericLiteral(path)) return path.value === 0 ? "port" : "invalid";
+  if (t.isArrayExpression(path) || t.isObjectExpression(path)) return "invalid";
+  return "unknown";
 };
 
 /**
@@ -352,10 +363,13 @@ const rejectsSocketPortLiteral = (
   if (port === undefined || t.isSpreadElement(port)) return false;
   const value = unwrapJavaScriptExpression(port).node;
   // `net.connect({ port })` validates the member the same way the positional
-  // form validates the argument, but a Unix socket path member wins over it.
+  // form validates the argument, but a readable `path` decides first: a Unix
+  // socket ignores `port`, a falsy path still validates it, and any other
+  // readable path throws before a socket exists.
   if (t.isObjectExpression(value)) {
-    const socket = optionsSelectUnixSocket(value);
-    if (socket !== false) return false;
+    const intent = socketOptionsIntent(value);
+    if (intent === "socket" || intent === "unknown") return false;
+    if (intent === "invalid") return true;
     const member = lastMemberValue(value, "port");
     return member === undefined || member === null
       ? false
@@ -384,8 +398,11 @@ const tlsOptionsReplaceFirstArgument = (
   if (candidate.specifier !== "tls") return false;
   const options = candidate.node.arguments[1];
   if (options === undefined || !t.isObjectExpression(options)) return false;
-  const socket = optionsSelectUnixSocket(options);
-  if (socket !== false) return true;
+  const intent = socketOptionsIntent(options);
+  // A socket path or an unreadable member set may replace the argument; a
+  // readable non-socket path throws on its own, so the first argument still
+  // decides.
+  if (intent === "socket" || intent === "unknown") return true;
   const port = optionsSupplyPort(options, context);
   return port !== false;
 };
