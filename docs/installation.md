@@ -1419,8 +1419,11 @@ the original database; REA reads selected files only for fingerprinting and copy
 This mode does not copy unrelated sibling projects, rerun repair scripts, or
 admit bridge database edits. Cleanup removes the owned copy.
 The bridge checks the program's recorded import SHA-256 against the admitted
-target digest; mismatches and project changes fail explicitly. Reopen the target
-to resolve a new profile after intentionally changing the source project.
+target digest. An unavailable or malformed recorded digest is reported as an
+unverified identity, distinct from a known mismatch; neither admits the program
+or triggers a fresh import. Select a matching target or explicitly configure a
+different project or program. Changes to the source project also fail admission;
+reopen the target to resolve a new profile after intentionally changing it.
 
 The profile records the caller path, resolved project/name, program and content
 fingerprint. Original analysis settings and completeness remain **unknown**;

@@ -67,6 +67,7 @@ import {
 } from "./GhidraSessionValues.js";
 import type { Result } from "../domain/result.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { silentLogger } from "../logger.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -3585,6 +3586,46 @@ describe("Ghidra deadline guidance", () => {
     );
   });
 });
+
+it.each([
+  ["import_identity_unavailable", "did not report a valid imported SHA-256"],
+  ["import_identity_mismatch", "differs from the selected target"],
+] as const)(
+  "reports fresh-import %s without blaming project configuration",
+  async (code, message) => {
+    const failure = new GhidraSessionError(
+      "admission",
+      "Identity admission failed",
+      {},
+      {
+        cause: new GhidraAdmissionError(code),
+        remoteCode: code,
+      },
+    );
+    const ghidra = provider(installationHost(), () => ({
+      start: async () => err(failure),
+      callTool: async () => err(failure),
+      close: async () => ok(null),
+    }));
+    onTestFinished(async () => {
+      await ghidra.closeOwnedResources();
+    });
+    const target = executableTarget("elf", "x86_64");
+    const profile = await ghidra.resolveAnalysisProfile(target);
+    if (!profile.ok || profile.value.profile === null)
+      throw new Error("Expected profile");
+    const result = await ghidra
+      .createClient(target, profile.value.profile)
+      .execute("list_documents", {});
+    if (result.ok) throw new Error("Expected identity admission failure");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("execution_failure");
+    expect(projected.message).toContain(message);
+    expect(JSON.stringify(projected.details)).not.toContain(
+      "REA_GHIDRA_PROJECT_PATH",
+    );
+  },
+);
 
 describe("Ghidra startup deadline for a finished invocation", () => {
   const startupLimit = {
