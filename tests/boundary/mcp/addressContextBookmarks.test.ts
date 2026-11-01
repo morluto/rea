@@ -6,6 +6,10 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import {
+  ADDRESS_CONTEXT_FUNCTION_COMMENT_RECOVERY,
+  ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY,
+} from "../../../src/application/AnalysisContextQueries.js";
+import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisProtocolError,
@@ -149,6 +153,130 @@ it.each([false, true])(
           },
         },
       });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  },
+);
+
+it.each([
+  "containing",
+  "outside",
+  "unknown",
+  "retryable",
+  "provider",
+  "general",
+] as const)(
+  "offers function-comment recovery only when containment is known: %s",
+  async (containment) => {
+    const identity = { id: "fixture", name: "Fixture", version: "1" };
+    const directory = await createTestTempDirectory("rea-context-recovery-");
+    const target = join(directory, "fixture.com");
+    await writeFile(target, Buffer.from([0xb8, 0x00, 0x4c, 0xcd, 0x21]));
+    const calls: string[] = [];
+    const session = createTestBinarySession(() => ({
+      execute: async (operation) => {
+        calls.push(operation);
+        if (
+          operation === "comment" ||
+          operation === "inline_comment" ||
+          operation === "list_bookmarks" ||
+          (operation === "resolve_containing_procedure" &&
+            containment === "unknown")
+        )
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              identity.id,
+              operation,
+              "not declared",
+              {
+                retryable:
+                  containment === "retryable" && operation !== "list_bookmarks",
+                ...(containment === "provider" && operation !== "list_bookmarks"
+                  ? { remediationAction: "Provider-specific recovery." }
+                  : {}),
+                ...(containment === "general"
+                  ? { userMessage: "General provider discovery guidance." }
+                  : {}),
+              },
+            ),
+          );
+        const value =
+          operation === "resolve_containing_procedure"
+            ? containment === "containing" ||
+              containment === "retryable" ||
+              containment === "provider" ||
+              containment === "general"
+              ? {
+                  query_address: "0x401001",
+                  found: true,
+                  procedure: {
+                    address: "0x401000",
+                    name: "entry",
+                    classification: null,
+                    body: { available: false, reason: "not recorded" },
+                  },
+                }
+              : {
+                  query_address: "0x401001",
+                  found: false,
+                  procedure: null,
+                  reason: "not_in_procedure",
+                }
+            : "entry";
+        return ok(createAnalysisExecution(value, identity));
+      },
+      close: async () => ok(null),
+    }));
+    const server = createServer({ kind: "session", session });
+    const client = new Client({ name: "context-recovery", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      expect(
+        (
+          await client.callTool({
+            name: "open_binary",
+            arguments: { path: target, format: "dos-com" },
+          })
+        ).isError,
+      ).not.toBe(true);
+      const response = await client.callTool({
+        name: "inspect_address_context",
+        arguments: { address: "0x401001", document: "fixture" },
+      });
+      expect(response.isError).not.toBe(true);
+      const { result } = response.structuredContent as {
+        result: {
+          comment: { state: string; remediation: string };
+          inline_comment: { state: string; remediation: string };
+          bookmarks: { remediation: string };
+        };
+      };
+      for (const [name, facet] of [
+        ["comment", result.comment],
+        ["inline_comment", result.inline_comment],
+      ] as const) {
+        expect(facet.state).toBe("unavailable");
+        if (containment === "provider") {
+          expect(facet.remediation).toBe("Provider-specific recovery.");
+        } else if (containment === "retryable") {
+          expect(facet.remediation).toContain(name);
+        } else if (containment === "containing" || containment === "general") {
+          expect(facet.remediation).toBe(
+            ADDRESS_CONTEXT_FUNCTION_COMMENT_RECOVERY,
+          );
+        } else {
+          expect(facet.remediation).toBe(ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY);
+        }
+      }
+      expect(result.bookmarks.remediation).toBe(
+        ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY,
+      );
+      expect(calls).not.toContain("analyze_function");
     } finally {
       await client.close();
       await server.close();

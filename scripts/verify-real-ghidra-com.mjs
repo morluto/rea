@@ -16,6 +16,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import {
+  ADDRESS_CONTEXT_FUNCTION_COMMENT_RECOVERY,
+  ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY,
+} from "../dist/application/AnalysisContextQueries.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { nativeInstructionSchema } from "../dist/domain/native/nativeInstruction.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
@@ -276,6 +280,70 @@ try {
   assert.equal(updated.annotations.inline_comment, changes.inline_comment);
   assert.equal(updated.dossier.procedure.name, changes.name);
   assert.ok(updated.dossier.pseudocode.includes(changes.name));
+  // Exercise the documented recovery through the public MCP catalog on real
+  // Ghidra, rather than assuming the provider exposes direct comment methods.
+  const contextCall = async (name, args) => {
+    const definition = tools.find((tool) => tool.name === name);
+    assert.ok(definition?.outputSchema, `${name} must be advertised`);
+    const response = await client.callTool(
+      { name, arguments: args },
+      { timeout: 240000, toolDefinition: definition },
+    );
+    return requireMcpOutput(response, name);
+  };
+  const context = (
+    await contextCall("inspect_address_context", {
+      address: fixture.entry,
+    })
+  ).result;
+  assert.equal(context.procedure.state, "available");
+  assert.equal(context.procedure.value.found, true);
+  for (const facet of [context.comment, context.inline_comment]) {
+    assert.equal(facet.state, "unavailable");
+    assert.equal(facet.remediation, ADDRESS_CONTEXT_FUNCTION_COMMENT_RECOVERY);
+  }
+  assert.equal(
+    context.bookmarks.remediation,
+    ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY,
+  );
+  const summary = parseEvidence(
+    await contextCall("analyze_function", {
+      procedure: context.procedure.value.procedure.address,
+    }),
+  ).normalized_result;
+  const comments = parseEvidence(
+    await contextCall("inspect_analysis_view", {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: summary.parent_evidence_id,
+      },
+      view: { kind: "native", facet: "comments" },
+    }),
+  ).normalized_result;
+  for (const [kind, text] of [
+    ["comment", changes.comment],
+    ["inline", changes.inline_comment],
+  ])
+    assert.ok(
+      comments.item.some(
+        (item) =>
+          item.address === context.procedure.value.query_address &&
+          item.kind === kind &&
+          item.text === text,
+      ),
+    );
+  const outside = (
+    await contextCall("inspect_address_context", {
+      address: unlistedAddress,
+    })
+  ).result;
+  assert.equal(outside.procedure.state, "available");
+  assert.equal(outside.procedure.value.found, false);
+  assert.equal(outside.comment.state, "unavailable");
+  assert.equal(
+    outside.comment.remediation,
+    ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY,
+  );
   assert.equal(
     await call("procedure_address", { procedure: changes.name }),
     fixture.entry,
@@ -386,6 +454,7 @@ try {
       fresh_decompiler: true,
       clear_comments: true,
       cli_mcp_parity: true,
+      address_context_comment_recovery: true,
     },
     context_input_errors_preserved: true,
     original_unchanged: true,
