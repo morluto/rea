@@ -35,7 +35,7 @@ import {
   verifyKunaStrings,
 } from "./lib/kuna-string-verifier.mjs";
 import { nativeKunaIncomingSites } from "./lib/kuna-native-reference-verifier.mjs";
-import { MULTI_MODE_TARGET_REMEDIATION } from "../dist/application/CapabilityInventory.js";
+import { MULTI_MODE_REMEDIATION } from "../dist/application/CapabilityInventory.js";
 import {
   assertVerifierCleanupComplete,
   completeVerifierRun,
@@ -321,7 +321,7 @@ const verifyKuna = async (
         const nativeSeed = trace?.modes?.find(
           ({ name }) => name === "native_seed_call_trace",
         );
-        assert.equal(trace?.remediation, MULTI_MODE_TARGET_REMEDIATION);
+        assert.equal(trace?.remediation, MULTI_MODE_REMEDIATION);
         assert.notEqual(authored?.remediation, nativeSeed?.remediation);
         assert.ok(
           authored?.missing_operations.includes("decode_interface_builder"),

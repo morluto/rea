@@ -127,8 +127,8 @@ type AvailabilityModeResult =
       readonly reason: ToolUnavailabilityReason;
     });
 
-/** Recovery when no target-specific mode has the same prerequisites. */
-export const MULTI_MODE_TARGET_REMEDIATION =
+/** Recovery when unavailable modes require different actions. */
+export const MULTI_MODE_REMEDIATION =
   "No mode is currently advertised as available. Inspect each mode's missing operations and remediation.";
 type AvailabilityContext = {
   readonly name: string;
@@ -919,12 +919,9 @@ const composedAvailabilityFor = (
       missingOperations,
       availability: {
         reason:
-          unavailable.availability_code === "target_kind_unsupported" ||
-          unavailable.availability_code === "target_format_unsupported"
-            ? "target_unsupported"
-            : unavailable.availability_code === "unsupported_host"
-              ? "unsupported_host"
-              : "provider_unavailable",
+          unavailable.availability_code === "unsupported_host"
+            ? "unsupported_host"
+            : "provider_unavailable",
         remediation:
           unavailable.reason ?? "Choose another target or configured provider.",
       },
@@ -987,10 +984,9 @@ const availabilityForModes = (
   )[0];
   const specificFailureRemediation =
     failure?.reason === "provider_missing" ? undefined : failure?.remediation;
-  const distinctTargetRemediations =
+  const distinctModeRemediations =
     defaultMode === undefined &&
     failures.length > 1 &&
-    failures.every((mode) => mode.reason === "target_unsupported") &&
     new Set(failures.map((mode) => mode.remediation)).size > 1;
   const facts = {
     ...(defaultMode === undefined
@@ -1009,8 +1005,8 @@ const availabilityForModes = (
   return {
     ...facts,
     reason: failure?.reason ?? "provider_missing",
-    remediation: distinctTargetRemediations
-      ? MULTI_MODE_TARGET_REMEDIATION
+    remediation: distinctModeRemediations
+      ? MULTI_MODE_REMEDIATION
       : (specificFailureRemediation ??
         `Configure a provider for one of: ${missingOperations.join(", ")}.`),
   };

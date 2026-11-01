@@ -30,7 +30,7 @@ import {
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../native/NativeMacosProviderIdentity.js";
 import {
   buildCapabilityInventory,
-  MULTI_MODE_TARGET_REMEDIATION,
+  MULTI_MODE_REMEDIATION,
 } from "../CapabilityInventory.js";
 
 const projectedStatusSchema = z.object({
@@ -577,7 +577,7 @@ it.each([
         : ["inspect_native_dispatch_metadata", "list_names"],
     });
     if (!route) {
-      expect(trace?.remediation).toBe(MULTI_MODE_TARGET_REMEDIATION);
+      expect(trace?.remediation).toBe(MULTI_MODE_REMEDIATION);
       const authored = trace?.modes?.find(
         (mode) => mode.name === "authored_ui_dispatch",
       );
@@ -611,6 +611,38 @@ it("does not impose the Apple reader's target rule on another provider", async (
   expect(
     inventory.find((item) => item.name === "inspect_native_dispatch_metadata"),
   ).toMatchObject({ available: true });
+});
+
+it("keeps distinct recovery for an unbound non-bundle session", async () => {
+  const native = nativeMacOSCapabilities("darwin").find(
+    (item) => item.operation === "inspect_native_dispatch_metadata",
+  );
+  if (native === undefined) throw new Error("Missing native dispatch reader");
+  const status = await projectStatus(
+    [native, descriptor(providerA, "decode_interface_builder", [])],
+    [],
+    { target: dispatchTarget("mach-o") },
+  );
+  const inventory = buildCapabilityInventory(status, {
+    processCaptureEnabled: false,
+  });
+  const trace = inventory.find(
+    (item) => item.name === "trace_native_ui_action",
+  );
+  expect(trace).toMatchObject({
+    available: false,
+    reason: "provider_unavailable",
+    remediation: MULTI_MODE_REMEDIATION,
+  });
+  const authored = trace?.modes?.find(
+    (mode) => mode.name === "authored_ui_dispatch",
+  );
+  const nativeSeed = trace?.modes?.find(
+    (mode) => mode.name === "native_seed_call_trace",
+  );
+  expect(authored?.missing_operations).toContain("decode_interface_builder");
+  expect(nativeSeed?.missing_operations).toContain("procedure_address");
+  expect(authored?.remediation).not.toBe(nativeSeed?.remediation);
 });
 
 it("keeps host unavailability ahead of target applicability", async () => {
