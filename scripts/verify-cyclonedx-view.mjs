@@ -443,7 +443,12 @@ await withVerifierCleanup(async () => {
       ["auditable", "build", "--manifest-path", join(rustDir, "Cargo.toml")],
       { cwd: rustDir, env: rustEnvironment, timeout: 180_000 },
     );
-    const rustBinary = join(root.path, "rust-target", "debug", "app");
+    const rustBinary = join(
+      root.path,
+      "rust-target",
+      "debug",
+      process.platform === "win32" ? "app.exe" : "app",
+    );
     const rustService = createRustBinaryService();
     await withVerifierCleanup(async () => {
       const inspected = await rustService.inspect({ path: rustBinary });

@@ -452,6 +452,9 @@ const goComponentBytes = ({ component, original }: PublishedGoModule): number =>
   EMPTY_COMPONENT_BYTES +
   goIdentityBytes(component) +
   (original === null ? 0 : goIdentityBytes(original)) +
+  (original !== null && isGoModulePath(original.path)
+    ? packageUrlBytes("golang", original.path, original.version)
+    : 0) +
   (isGoModulePath(component.path)
     ? PACKAGE_URL_OCCURRENCES *
       packageUrlBytes("golang", component.path, component.version)

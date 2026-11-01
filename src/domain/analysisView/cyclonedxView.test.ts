@@ -557,9 +557,10 @@ it("never refuses early for a document inside the allowance", () => {
 });
 
 it("refuses a dense Rust graph before expanding its edges", () => {
-  const count = 300;
+  // Components fit the allowance, so only the edge check can refuse this.
+  const count = 400;
   const indices = Array.from({ length: count }, (_, index) => index);
-  const name = "n".repeat(4_000);
+  const name = "n".repeat(200);
   const error = refusedAllowance(
     "inspect_rust_binary",
     rustMetadata(
@@ -578,6 +579,28 @@ it("refuses a dense Rust graph before expanding its edges", () => {
   );
   expect(error.reportedLimits).toMatchObject(LOWER_BOUND);
   expect(error.message).toContain("export_evidence_bundle");
+});
+
+it("counts an original Go Package URL before building its property", () => {
+  const error = refusedAllowance(
+    "inspect_go_binary",
+    goReport({
+      path: "example.com/tool",
+      main: goModule("example.com/tool", "v1.0.0"),
+      dependencies: [
+        goModule(`example.com/${"é".repeat(200_000)}`, "v1.0.0", null, {
+          path: "./dep",
+          version: "",
+          sum: null,
+        }),
+      ],
+      settings: [],
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    }),
+  );
+  expect(error.reportedLimits).toMatchObject(LOWER_BOUND);
 });
 
 it("projects Rust edges, build scope and duplicate Package URLs", () => {
