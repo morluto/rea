@@ -1,3 +1,4 @@
+import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
 import type { GpuCodeObjectsPort } from "../application/gpu/GpuCodeObjectsPort.js";
 import {
@@ -51,11 +52,6 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 
-export const GPU_CODE_OBJECTS_PROVIDER_IDENTITY = {
-  id: "gpu-code-objects",
-  name: "REA static GPU code-object reader",
-  version: "1",
-} as const;
 const OPERATION = "inspect_gpu_code_objects";
 
 /** One admitted descriptor and bounded report at a time; retained cleanup blocks new work. */

@@ -27,6 +27,7 @@ type FixtureMode =
   | "future_id"
   | "analysis_timeout"
   | "remote_error"
+  | "decompile_timed_out"
   | "remote_startup_error"
   | "import_identity_unavailable"
   | "import_identity_mismatch"

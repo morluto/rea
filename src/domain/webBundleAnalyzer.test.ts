@@ -2066,6 +2066,7 @@ it("keeps known capture omissions in compact route summaries and queryable gap f
   );
   const report = analyzeWebBundleFixture(captured),
     parent = {
+      predicateType: "rea.web-bundle-analysis",
       evidenceId: `ev_${"a".repeat(64)}`,
       operation: "analyze_web_bundle",
       normalizedResult: report,

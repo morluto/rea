@@ -365,6 +365,41 @@ Do not report the warm result as a cold-suite improvement, and do not enable
 the cache in coverage or benchmark CI without first showing that its
 instrumentation remains equivalent.
 
+## CodeQL production scope
+
+[The production configuration](../.github/codeql/production.yml) excludes
+`tests/`, `scripts/fixtures/`, `*.test.*`, `*.fixture.*`, `test_*.py`, and `*_test.py` inputs
+during extraction. It retains the default queries and the existing `local`
+threat model. Production source, bridges, runtime scripts, installation and
+release controllers, and Actions remain in scope for the configured languages.
+Verification scripts remain included unless they match an explicit test path;
+excluding the entire `scripts/` directory would hide shipped entrypoints.
+The `paths` list retains repository-root traversal and explicitly includes
+`docs/.vitepress/`, which JavaScript extraction otherwise skips as a hidden
+directory. Keep directory entries here: the shared Python extractor does not
+accept individual files as traversal roots. When changing this list, compare the
+complete production file inventory as well as alert counts.
+These exclusions do not change which behavioral tests CI executes. CodeQL's
+JavaScript/TypeScript, Python, and Actions lanes do not add shell, Java, or Swift
+analysis; their existing checks remain responsible for those languages.
+
+[The production workflow](../.github/workflows/codeql.yml) is inactive until a
+repository administrator disables CodeQL **default setup** and sets the Actions
+repository variable `REA_CODEQL_ADVANCED` to `true`. Disable default setup first:
+it rejects advanced CodeQL uploads. Then enable the variable and manually run
+**CodeQL production** on `main`; verify all three analyses complete before
+relying on the new scope. While the variable is unset, the existing default
+setup continues scanning. Adding the configuration file alone does not change
+default setup in this user-owned repository.
+
+Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
+jobs run one at a time. Complete SARIF reports are retained for seven days.
+For a scope comparison, use the same source SHA, CodeQL bundle, default query
+suite, and `local` threat model on both runs. Change only extraction paths, inspect
+the extracted-file inventory and diagnostics, and retain both complete reports.
+Alert counts do not establish a false-positive rate or a speedup. Report elapsed
+time, CPU time, and process-family memory with their measurement limits.
+
 ## Choose verification for the change
 
 `test:local` is fast source-level feedback. For the strongest practical
@@ -408,11 +443,56 @@ affected consumer.
 - Where relevant, continue after a mixed success, failed request, cancellation
   or close/reopen. Verify the next supported recovery and preservation of prior
   results and resource ownership. Use the applicable lifecycle regressions below.
+- For lookup failures, distinguish malformed input from a valid missing or
+  ambiguous selector. Check the returned candidate and input identity, follow
+  an actionable recovery where possible, and verify that an inventory miss is
+  not presented as artifact-wide absence. Test schema-repair advice separately.
 - Record the provider version, host, fixture, actual entrypoint, controlled
   faults and skipped or unavailable coverage. A simulated provider tests the
   integration boundary; a scripted sequence tests that sequence, not an agent's
   ability to discover it. Run the matching real-provider and agent lanes when
   their respective claims require them.
+
+For prerequisite recovery, include a case where only the wrong alternative is
+configured: Unblob cannot enable Binwalk inspection, and Binwalk cannot enable
+Unblob extraction. Check the final readiness or capability output retains the
+producer's repair instructions, including which launch environment must change.
+When feasible, follow the advice and verify that the same operation now works.
+Report unexecuted recovery steps explicitly.
+
+### Checking installers and publisher downloads
+
+When changing setup or investigating an install failure, check the stages affected
+by the change:
+
+1. **Does REA support installation on this host?** Check the distribution and CPU
+   architecture, including an unsupported case. Recognizing RPM or DEB packages
+   does not mean REA can install on every related distribution. Check prompts in
+   a terminal and with redirected output; image builds cannot answer interactive
+   prompts. `doctor` checks health; `setup` installs.
+2. **Does the downloaded package match the publisher's metadata?** Record the
+   release version, package format, URL and check date. Verify the signature and
+   compare the launcher hash inside that package with the feed and installed
+   launcher. Check each format you claim works: a passing DEB check says nothing
+   about the RPM. Old fixtures cannot catch a newly published package mismatch.
+   Test both an invalid signature and a valid signature with a mismatched launcher
+   hash; setup must reject either before running the package manager.
+3. **Can download failures be diagnosed?** Use REA's request headers and timeout.
+   Check whether the setup result identifies the failed URL, HTTP status or
+   timeout, and next action; report missing details. Use controlled failures for
+   repeatable tests. A fast download on one network does not rule out a timeout
+   elsewhere, and curl with different headers may get a different response.
+4. **Does the installed provider run?** Check package-manager prerequisites and
+   run doctor for the selected provider. For Linux Hopper, check Python and REA's
+   private Xvfb display separately from package installation. Where relevant,
+   test an unusable `/tmp/.X11-unix` and a blocked user/mount namespace fallback.
+   Starting an extra X server does not test the display REA creates and cleans up.
+
+For a full Linux Hopper setup check, run `npm run verify:setup:linux` on a clean
+root Linux runner. Set `REA_VERIFY_SERVER_COMMAND` to the installed REA command.
+This checks setup, doctor, CLI/MCP analysis and repeated setup on that runner.
+Report which host, package format and steps you tested. Inspecting a Linux package
+on macOS verifies package contents, not a working Linux installation.
 
 ## Test design and pruning
 
@@ -1495,6 +1575,11 @@ Kuna 1.986 passed the fixture and a separate small, source-owned Mach-O with
 symbols and stripped on macOS arm64, including the Ghidra comparison and owned
 cleanup. Linux and other hosts have not been verified with 1.986; this check is
 not a repeat of the larger 1.833 matrix.
+
+Kuna 1.988 passed the real-provider lane on macOS arm64 with the generated
+Mach-O fixture and caller-built symbol-bearing and stripped x86-64 ELF fixtures.
+Linux and other hosts have not been verified with 1.988; this is not a repeat
+of the larger 1.833 matrix.
 
 ## DOS Ghidra analysis
 
