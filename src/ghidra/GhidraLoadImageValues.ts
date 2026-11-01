@@ -160,8 +160,10 @@ export const attestGhidraDosLoadImage = (
   // A multiset preserves duplicate relocations and aliases; iteration order is not semantic.
   const rows = (values: NativeLoadImageObservation["relocations"]): string[] =>
     values
-      .map(({ segment: _segment, offset: _offset, ...value }) =>
-        JSON.stringify(value),
+      // The independent DOS check does not attest Ghidra's symbol name.
+      .map(
+        ({ segment: _segment, offset: _offset, symbol: _symbol, ...value }) =>
+          JSON.stringify(value),
       )
       .sort();
   check(

@@ -14,6 +14,37 @@ import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImag
 import { parseGhidraInventoryResult } from "./GhidraInventoryValues.js";
 import { prepareGhidraDosLoadImage } from "./GhidraLoadImageValues.js";
 
+it("retains the provider symbol without claiming DOS verification of it", () => {
+  const fixture = fixtureDosLoadImage();
+  fixture.observation.relocations[0]!.symbol = "provider_name";
+  const result = compareDosFixture(
+    fixture.bytes,
+    fixture.sha256,
+    fixture.observation,
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(result.error);
+  expect(result.value.status).toBe("verified");
+  expect(result.value.observations.relocations[0]?.symbol).toBe(
+    "provider_name",
+  );
+});
+
+it("preserves Ghidra relocation symbol values at the inventory boundary", () => {
+  for (const symbol of ["audit_external", "", null] as const) {
+    const observation = structuredClone(fixtureDosLoadImage().observation);
+    observation.relocations[0]!.symbol = symbol;
+    const parsed = parseGhidraInventoryResult(
+      "inspect_native_load_image",
+      jsonValueSchema.parse(observation),
+    );
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: { value: { relocations: [{ symbol }] } },
+    });
+  }
+});
+
 it("accepts DOS header padding after a complete relocation table", () => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ", 0, "ascii");
