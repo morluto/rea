@@ -68,6 +68,30 @@ describe("evidence bundle failure classification", () => {
     if (parsed.ok) return;
     expect(parsed.error.kind).toBe("invalid-bundle");
     expect(parsed.error.cause).toBeInstanceOf(NonCanonicalEvidenceBundleError);
+    expect((parsed.error.cause as Error).message).toBe(
+      "Evidence bundle records are not in canonical order",
+    );
+  });
+
+  it("keeps the manifest diagnostic for inconsistent manifests", () => {
+    const records = ["first", "second"].map((label) =>
+      createEvidence(undefined, provider, {
+        operation: "observe",
+        parameters: { label },
+        result: { label },
+      }),
+    );
+    const canonical = createEvidenceBundle(records);
+    const parsed = safeParseEvidenceBundle({
+      ...canonical,
+      providers: [],
+    });
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.error.cause).toBeInstanceOf(NonCanonicalEvidenceBundleError);
+    expect((parsed.error.cause as Error).message).toBe(
+      "Evidence bundle manifests are not canonical",
+    );
   });
 
   it("treats only authenticated standalone Evidence as the wrong input kind", () => {
