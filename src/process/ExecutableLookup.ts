@@ -1,6 +1,6 @@
 import type { Stats } from "node:fs";
 import { constants as fsConstants } from "node:fs";
-import { access, stat as statPath } from "node:fs/promises";
+import { access as accessPath, stat as statPath } from "node:fs/promises";
 import { delimiter, isAbsolute, sep } from "node:path";
 
 import {
@@ -35,6 +35,7 @@ export interface ExecutableLookupBounds {
   /** Milliseconds for the whole lookup. */
   readonly timeoutMs?: number | undefined;
   readonly stat?: (path: string) => Promise<Stats>;
+  readonly access?: (path: string, mode: number) => Promise<void>;
 }
 
 /**
@@ -60,7 +61,7 @@ export const lookupExecutable = async (
   searchPath: string | undefined,
   bounds: ExecutableLookupBounds = {},
 ): Promise<ExecutableLookup> => {
-  const { signal, timeoutMs, stat = statPath } = bounds;
+  const { signal, timeoutMs, stat = statPath, access = accessPath } = bounds;
   let cwd: string | undefined;
   const readCwd = (): string => (cwd ??= workingDirectory());
   // An empty PATH component selects the working directory. Windows resolves
@@ -111,10 +112,7 @@ export const lookupExecutable = async (
             cause: metadata.cause,
           };
         checked.push(`${candidate}${systemErrorSuffix(code)}`);
-        // A spawned search moves past these and stops at any other error, so a
-        // later candidate would not run.
-        if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES")
-          continue;
+        if (searchMovesPast(code)) continue;
         return { status: "missing", checked };
       }
       if (!metadata.value.isFile()) {
@@ -132,9 +130,9 @@ export const lookupExecutable = async (
         return unnamed === undefined
           ? { status: "found", path: candidate }
           : { status: "no-working-directory", cause: unnamed.cause };
-      checked.push(
-        `${candidate}${systemErrorSuffix(systemErrorCode(executable.cause))}`,
-      );
+      const code = systemErrorCode(executable.cause);
+      checked.push(`${candidate}${systemErrorSuffix(code)}`);
+      if (!searchMovesPast(code)) return { status: "missing", checked };
     }
     return { status: "missing", checked };
   } finally {
@@ -184,6 +182,13 @@ const lookupInterruption = (
     },
   };
 };
+
+/**
+ * The errors a spawned PATH search moves past; it stops at any other, such as
+ * a symlink loop or an I/O error, so a later candidate would not run.
+ */
+const searchMovesPast = (code: string | undefined): boolean =>
+  code === "ENOENT" || code === "ENOTDIR" || code === "EACCES";
 
 const systemErrorCode = (cause: unknown): string | undefined =>
   typeof cause === "object" &&

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join, relative } from "node:path";
 
 import { expect, expectTypeOf, it, vi } from "vitest";
@@ -399,7 +399,7 @@ posix(
 );
 
 posix(
-  "ends the PATH search where a spawned search ends, at a symlink loop, but not at a non-executable file",
+  "ends the PATH search where a spawned search ends, at a symlink loop or an I/O error, but not at a non-executable file",
   async () => {
     const { executable } = await rizinExecutableFixture();
     const directory = dirname(executable);
@@ -422,6 +422,22 @@ posix(
     await expect(
       lookupExecutable("rizin", cwd, `${unexecutable}${delimiter}${directory}`),
     ).resolves.toEqual({ status: "found", path: executable });
+    // The execute check stops the same way, as at an I/O error on a mount.
+    const failing = join(unexecutable, "rizin");
+    await expect(
+      lookupExecutable(
+        "rizin",
+        cwd,
+        `${unexecutable}${delimiter}${directory}`,
+        {
+          access: async (target, mode) => {
+            if (target === failing)
+              throw Object.assign(new Error("i/o error"), { code: "EIO" });
+            return access(target, mode);
+          },
+        },
+      ),
+    ).resolves.toEqual({ status: "missing", checked: [`${failing} (EIO)`] });
   },
 );
 
