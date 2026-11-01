@@ -1,0 +1,30 @@
+{
+  "name": "rea-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reall: analyze, rebuild, and improve applications with your preferred model.",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "packages/agent",
+    "apps/worker",
+    "apps/web"
+  ],
+  "engines": {
+    "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
+  },
+  "scripts": {
+    "build:libs": "npm run build -w @rea-studio/core -w @rea-studio/agent -w @rea-studio/worker",
+    "build": "npm run build:libs && npm run build -w @rea-studio/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "studio": "node scripts/studio.mjs",
+    "dev": "node scripts/studio.mjs --dev"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "@rea-studio/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "rea-studio": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "4.0.90",
+    "@ai-sdk/google": "4.0.107",
+    "@ai-sdk/mcp": "2.0.86",
+    "@ai-sdk/openai": "4.0.104",
+    "@ai-sdk/openai-compatible": "3.0.80",
+    "@openrouter/ai-sdk-provider": "3.1.0",
+    "ai": "7.0.155",
+    "ollama-ai-provider-v2": "4.1.0",
+    "zod": "4.6.6",
+    "@rea-studio/core": "0.1.0"
+  }
+}
