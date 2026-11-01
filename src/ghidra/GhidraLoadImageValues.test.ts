@@ -12,7 +12,10 @@ import {
 } from "../domain/native/nativeLoadImage.js";
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
 import { parseGhidraInventoryResult } from "./GhidraInventoryValues.js";
-import { prepareGhidraDosLoadImage } from "./GhidraLoadImageValues.js";
+import {
+  GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION,
+  prepareGhidraDosLoadImage,
+} from "./GhidraLoadImageValues.js";
 
 it("retains the provider symbol without claiming DOS verification of it", () => {
   const fixture = fixtureDosLoadImage();
@@ -27,10 +30,8 @@ it("retains the provider symbol without claiming DOS verification of it", () => 
   expect(result.value.observations.relocations[0]?.symbol).toBe(
     "provider_name",
   );
-  expect(result.value.limitations).toContainEqual(
-    expect.stringContaining(
-      "relocation symbol names are retained observations, not independently verified",
-    ),
+  expect(result.value.limitations).toContain(
+    GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION,
   );
 });
 
