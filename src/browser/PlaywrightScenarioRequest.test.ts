@@ -551,6 +551,40 @@ describe("request step redirect capture", () => {
 });
 
 describe("request step redirect observer ordering", () => {
+  it("installs no route guard when the step expires during the attachment", async () => {
+    const route = vi.fn(async () => {});
+    const session = Object.assign(new EventEmitter(), {
+      send: async () => ({}),
+      detach: vi.fn(async () => {}),
+    });
+    const emitter = new EventEmitter();
+    const page = Object.assign(emitter, fakePage({}), {
+      on: emitter.on.bind(emitter),
+      off: emitter.off.bind(emitter),
+      route,
+      context: () => ({
+        newCDPSession: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          return session;
+        },
+      }),
+    }) as unknown as Page;
+    const calls = stubFetch(200);
+    const parsed = scenario([requestStep({ timeout_ms: 10 })]);
+    await expect(
+      performPlaywrightScenarioAction({
+        page,
+        action: parsed.actions[0]!,
+        secrets: resolved(parsed),
+        startOrigin: ORIGIN,
+        onRedirectResponse: vi.fn(),
+      }),
+    ).rejects.toThrow("ran out of time");
+    expect(route).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+    expect(session.detach).toHaveBeenCalledOnce();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });

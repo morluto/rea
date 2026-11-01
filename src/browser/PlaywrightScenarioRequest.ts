@@ -356,11 +356,15 @@ export const performScenarioRequest = async (input: {
   if (action.json !== undefined && !hasContentType)
     appendHeader("content-type", "application/json");
   // A step the boundary abandoned, or whose time ran out while values were read, sends nothing.
-  const remaining = deadline === undefined ? undefined : deadline - Date.now();
-  if (signal?.aborted === true || (remaining !== undefined && remaining <= 0))
-    throw new ScenarioRequestError(
-      `Request step ${action.step_id} ran out of time before its request was sent.`,
-    );
+  const requireTimeBeforeSending = (): void => {
+    const remaining =
+      deadline === undefined ? undefined : deadline - Date.now();
+    if (signal?.aborted === true || (remaining !== undefined && remaining <= 0))
+      throw new ScenarioRequestError(
+        `Request step ${action.step_id} ran out of time before its request was sent.`,
+      );
+  };
+  requireTimeBeforeSending();
   if (action.json !== undefined) admitSavedJson(action.json, secrets);
   const json =
     action.json === undefined ? undefined : withSavedJson(action.json, secrets);
@@ -442,6 +446,8 @@ export const performScenarioRequest = async (input: {
           onResponse: input.onRedirectResponse,
         }).catch(() => undefined);
   try {
+    // The attachment can outlast the step; an abandoned step installs no guard.
+    requireTimeBeforeSending();
     await page.route(matches, gate);
   } catch (cause: unknown) {
     await redirect?.stop();
