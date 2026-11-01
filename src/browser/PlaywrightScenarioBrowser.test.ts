@@ -25,6 +25,7 @@ import type {
 
 import { DEFAULT_CDP_COMMAND_TIMEOUT_MS } from "../domain/browserDeadline.js";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
+import { PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS } from "./PlaywrightExecutionBoundary.js";
 import {
   absoluteCallerPath,
   appendCallerPath,
@@ -99,7 +100,9 @@ it("passes the selected environment to the actual browser launch boundary", asyn
         },
       },
     }),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
   expect(launchedEnvironment).toEqual({
     LANG: "selected-language",
     PATH: "/selected/bin",
@@ -139,7 +142,9 @@ it.skipIf(process.platform === "win32")(
             },
           },
         ),
-      ).rejects.toThrow("fake launch boundary reached");
+      ).rejects.toMatchObject({
+        diagnostics: { startup_error: "fake launch boundary reached" },
+      });
 
       expect(launchedExecutable).toBe(selected);
       expect(selected).toBe(`${root}/link/../browser`);
@@ -176,7 +181,9 @@ it("keeps Termux execution support when launching Chromium on Android", async ()
         },
       },
     }),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
 
   expect(launchOptions?.args).toEqual([
     "--no-sandbox",
@@ -225,7 +232,9 @@ const captureAndroidLaunch = async (
         },
       },
     ),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
   return { launchedProfile, launchOptions };
 };
 
@@ -409,12 +418,16 @@ it("does not let a stuck Android launch block later launches", async () => {
       opening(secondRoot, async () => {
         secondLookup = nodeOs.tmpdir();
       }),
-    ).rejects.toThrow("launch boundary reached");
+    ).rejects.toMatchObject({
+      diagnostics: { startup_error: "launch boundary reached" },
+    });
   } finally {
     releaseFirst.resolve(undefined);
     await Promise.allSettled([first]);
   }
-  await expect(first).rejects.toThrow("launch boundary reached");
+  await expect(first).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
   expect(firstLookup).toBe(appendCallerPath(firstRoot, "tmp"));
   expect(firstLookupAfterWait).toBe(appendCallerPath(firstRoot, "tmp"));
   expect(secondLookup).toBe(appendCallerPath(secondRoot, "tmp"));
@@ -435,7 +448,11 @@ it("places Playwright's host artifact directory on the Termux temp directory", a
       androidLaunchScenario(join(prefix, "missing-chromium")),
       { PREFIX: prefix, TMPDIR: "", TMP: "", TEMP: "" },
     ),
-  ).rejects.toThrow(/executable doesn't exist/);
+  ).rejects.toMatchObject({
+    diagnostics: {
+      startup_error: expect.stringMatching(/executable doesn't exist/),
+    },
+  });
   expect(
     (await readdir(join(prefix, "tmp"))).some((name) =>
       name.startsWith("playwright-artifacts-"),
@@ -455,7 +472,11 @@ it("publishes a writable Playwright browsers path before an Android launch", asy
       androidLaunchScenario(join(prefix, "missing-chromium")),
       { PREFIX: prefix, TMPDIR: "", TMP: "", TEMP: "" },
     ),
-  ).rejects.toThrow(/executable doesn't exist/);
+  ).rejects.toMatchObject({
+    diagnostics: {
+      startup_error: expect.stringMatching(/executable doesn't exist/),
+    },
+  });
   expect(process.env.PLAYWRIGHT_BROWSERS_PATH).toBe(
     appendCallerPath(appendCallerPath(prefix, "tmp"), "ms-playwright"),
   );
@@ -487,7 +508,9 @@ it("launches Termux Chromium from the binary next to its ICU data", async () => 
         },
       },
     ),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
   expect(executablePath).toBe(
     appendCallerPath(dirname(wrapper), "../lib/chromium/chrome"),
   );
@@ -534,7 +557,9 @@ it.skipIf(process.platform === "win32")(
           },
         },
       ),
-    ).rejects.toThrow("launch boundary reached");
+    ).rejects.toMatchObject({
+      diagnostics: { startup_error: "launch boundary reached" },
+    });
     const sibling = appendCallerPath(
       dirname(wrapper),
       "../lib/chromium/chrome",
@@ -575,7 +600,9 @@ it("keeps a caller-selected Android browser that is not Termux Chromium", async 
         },
       },
     ),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
   expect(executablePath).toBe(selected);
 });
 
@@ -602,11 +629,11 @@ it("places each overlapping Playwright artifact directory in its own Termux temp
   ]);
   for (const result of settled)
     if (result.status === "rejected")
-      expect(result.reason).toEqual(
-        expect.objectContaining({
-          message: expect.stringMatching(/executable doesn't exist/),
-        }),
-      );
+      expect(result.reason).toMatchObject({
+        diagnostics: {
+          startup_error: expect.stringMatching(/executable doesn't exist/),
+        },
+      });
   const artifactCount = async (root: string) =>
     (await readdir(join(root, "tmp"))).filter((name) =>
       name.startsWith("playwright-artifacts-"),
@@ -616,6 +643,35 @@ it("places each overlapping Playwright artifact directory in its own Termux temp
   expect(process.env.TMPDIR).toBe("");
   expect(process.env.TMP).toBe("");
   expect(process.env.TEMP).toBe("");
+});
+
+it("waits for bounded event finalization and owned browser teardown", async () => {
+  vi.useFakeTimers();
+  try {
+    const closeBrowser = vi.fn(
+      () => new Promise<void>((resolve) => setTimeout(resolve, 1_500)),
+    );
+    const removeProfile = vi.fn(async () => undefined);
+    const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
+      closeBrowser,
+      removeProfile,
+    });
+    const finished = cleanup
+      .close(() => new Promise<void>((resolve) => setTimeout(resolve, 4_500)))
+      .then(
+        () => ({ ok: true }),
+        (cause: unknown) => ({ ok: false, cause }),
+      );
+    await vi.advanceTimersByTimeAsync(4_500);
+    expect(removeProfile).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(await finished).toEqual({ ok: true });
+    expect(cleanup.browserClosed).toBe(true);
+    expect(closeBrowser).toHaveBeenCalledOnce();
+    expect(removeProfile).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("keeps attached-target ownership after the cleanup response timeout", async () => {
@@ -648,7 +704,9 @@ it("keeps attached-target ownership after the cleanup response timeout", async (
         responseSettled = true;
       })
       .catch(() => {});
-    await vi.advanceTimersByTimeAsync(29_999);
+    await vi.advanceTimersByTimeAsync(
+      PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS - 1,
+    );
     expect(responseSettled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     await timeoutExpectation;
@@ -1150,7 +1208,9 @@ it("cancels same-target queued connection before acquiring a browser", async () 
   });
   await expect(
     openPlaywrightScenarioBrowser(launch, environment, { launcher }),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
   expect(launchPersistentContext).toHaveBeenCalledTimes(1);
 
   if (rejectFirst === undefined)
@@ -1499,7 +1559,9 @@ it("applies command_timeout_ms to launch startup", async () => {
         },
       },
     ),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
   expect(timeout).toBe(4_321);
 });
 
@@ -1526,7 +1588,9 @@ it("uses the default command deadline for an omitted launch timeout", async () =
         },
       },
     ),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
   expect(timeout).toBe(DEFAULT_CDP_COMMAND_TIMEOUT_MS);
 });
 
@@ -1844,7 +1908,14 @@ it.each([
           },
         },
       ),
-    ).rejects.toBe(failure);
+    ).rejects.toMatchObject({
+      _tag: "ProviderAdapterError",
+      cause: failure,
+      diagnostics: {
+        executable_path: process.execPath,
+        startup_error: failure.message,
+      },
+    });
     expect(profilePath).toBeDefined();
     await expect(access(profilePath!)).rejects.toMatchObject({
       code: "ENOENT",
@@ -1889,6 +1960,7 @@ it("normalizes a genuine Playwright launch timeout and releases its profile", as
     diagnostics: {
       phase: "launch",
       command_timeout_ms: 4_321,
+      executable_path: process.execPath,
       producer_message: "native launch deadline",
     },
   });

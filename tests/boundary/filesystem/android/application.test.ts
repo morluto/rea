@@ -19,6 +19,7 @@ import {
 
 import { projectAndroidApplicationEvidence } from "../../../../src/application/android/AndroidApplicationService.js";
 import { androidApplicationProjectionResultSchema } from "../../../../src/domain/android/androidApplication.js";
+import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 
 describe("Android application projection", () => {
   it("projects deterministic APK components and explicit bridge hypotheses", async () => {
@@ -321,11 +322,19 @@ describe("case-distinct APK resource names", () => {
     );
     expect(projection.components.manifests).toHaveLength(1);
     expect(projection.components.dex).toHaveLength(1);
-    expect(JSON.stringify(inventory)).toContain("res/2F.xml");
-    expect(JSON.stringify(inventory)).toContain("res/2f.xml");
-    expect(JSON.stringify(inventory)).toContain(
-      "English (en-US) Unicode case folding",
+    const graph = artifactInventoryResultSchema.parse(
+      inventory.normalized_result,
     );
+    for (const logicalPath of ["res/2F.xml", "res/2f.xml"]) {
+      expect(graph.occurrences).toContainEqual(
+        expect.objectContaining({
+          logical_path: logicalPath,
+          limitations: expect.arrayContaining([
+            expect.stringContaining("English (en-US) Unicode case folding"),
+          ]),
+        }),
+      );
+    }
   });
 });
 

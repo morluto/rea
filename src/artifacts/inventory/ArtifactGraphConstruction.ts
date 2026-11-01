@@ -1,7 +1,12 @@
+import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
 import { hasUImageMagic } from "../../domain/uimageFormat.js";
 import { hasUnityFsHeader } from "../../domain/unityfsFormat.js";
 import { detectHexRecordEncoding } from "../../domain/firmware/hexRecords.js";
+import { recognizeEspImage } from "../../domain/firmware/espImage.js";
+import { hasUf2Block } from "../../domain/firmware/uf2.js";
+import { isDfuSeFile } from "../../domain/firmware/dfuse.js";
+import { hasFitImagesNode } from "../../domain/firmware/fitImage.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
 import { hasDestinationPath } from "../ArtifactPaths.js";
@@ -27,7 +32,6 @@ import type {
 } from "../../domain/artifactGraph.js";
 import {
   hasZipSignature,
-  isZipPackageFormat,
   zipPackageFormatForPath,
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
@@ -37,6 +41,10 @@ import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
+import {
+  nesContainerFormat,
+  parseInesLayout,
+} from "../../domain/inesContainer.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -134,7 +142,10 @@ export const createOccurrence = (
       entry.byteOffset === null ||
       entry.declaredSize === null
         ? null
-        : { offset: entry.byteOffset, length: entry.declaredSize },
+        : {
+            offset: entry.byteOffset,
+            length: entry.byteLength ?? entry.declaredSize,
+          },
     limitations: [...entry.limitations],
     ...(entry.declaredIntegrity === null
       ? {}
@@ -276,20 +287,7 @@ export const rootOccurrenceFor = (
   logical_path: ".",
   entry_kind: metadata.format === "directory" ? "directory" : "file",
   artifact_kind:
-    metadata.format === "directory" ||
-    isZipPackageFormat(metadata.format) ||
-    [
-      "asar",
-      "godot-pck",
-      "unityfs",
-      "uimage",
-      "dmg",
-      "pkg",
-      "pyinstaller",
-      "node-sea",
-      "intel-hex",
-      "srec",
-    ].includes(metadata.format)
+    artifactFormatDescriptor(metadata.format)?.occurrenceContainer === true
       ? "container"
       : artifactRoleForFormat(metadata.path, metadata.format).kind,
   artifact_format: metadata.format,
@@ -580,13 +578,7 @@ const artifactRoleForFormat = (
       format: zipPackageFormatForPath(path) ?? format,
     };
   if (format === "plist") return { kind: "plist", format };
-  if (
-    format === "godot-pck" ||
-    format === "unityfs" ||
-    format === "uimage" ||
-    format === "intel-hex" ||
-    format === "srec"
-  )
+  if (artifactFormatDescriptor(format)?.roleContainer === true)
     return { kind: "container", format };
   return {
     kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
@@ -601,13 +593,25 @@ export const classifyArtifactBytes = (
   evidence: ArtifactClassificationEvidence,
   fileSize = evidence.prefix.length,
 ): ArtifactNode["format"] => {
-  const { prefix, mzWindowsHeaderSignature } = evidence;
+  const { prefix, suffix, mzWindowsHeaderSignature } = evidence;
+  // A header-only region has the signature but not the declared cartridge
+  // extent. Keep it as a file instead of inventing another container.
+  if (
+    nesContainerFormat(prefix) === "ines" &&
+    parseInesLayout(prefix, fileSize).ok
+  )
+    return "ines";
   if (hasZipSignature(prefix)) return "zip";
   if (hasGodotPckHeader(prefix)) return "godot-pck";
   if (hasUnityFsHeader(prefix)) return "unityfs";
   if (hasUImageMagic(prefix)) return "uimage";
   const hexRecords = detectHexRecordEncoding(prefix);
   if (hexRecords !== undefined) return hexRecords;
+  if (hasUf2Block(prefix)) return "uf2";
+  if (suffix !== undefined && isDfuSeFile(prefix, suffix, fileSize))
+    return "dfuse";
+  if (recognizeEspImage(prefix, fileSize) === "esp-image") return "esp-image";
+  if (hasFitImagesNode(prefix)) return "fit";
   if (hasBinaryPlistSignature(prefix)) return "plist";
   if (hasXmlPlistSignature(prefix)) return "plist";
   const fatFormat = classifyFatArtifact(evidence, fileSize);

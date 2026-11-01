@@ -70,6 +70,7 @@ export const liveBinaryTargetSummaryVariants = [
     format: z.enum([
       ...ZIP_PACKAGE_FORMATS,
       "asar",
+      "ines",
       "godot-pck",
       "unityfs",
       "uimage",
@@ -77,8 +78,36 @@ export const liveBinaryTargetSummaryVariants = [
       "pkg",
       "intel-hex",
       "srec",
+      "esp-image",
+      "uf2",
+      "dfuse",
+      "fit",
     ]),
     architecture: z.null(),
+  }),
+  z.object({
+    ...identity,
+    kind: z.literal("archive"),
+    format: z.literal("esp-flash-image"),
+    architecture: z.null(),
+    flash_offset: z
+      .number()
+      .int()
+      .min(0)
+      .max(0xffff_ffff)
+      .nullable()
+      .describe(
+        "Caller-selected flash address of the dump's first byte; null reads it as flash address 0.",
+      ),
+    partition_table_offset: z
+      .number()
+      .int()
+      .min(0)
+      .max(0xffff_ffff)
+      .nullable()
+      .describe(
+        "Caller-selected partition table address; null tries 0x8000, then a scan.",
+      ),
   }),
   z.object({
     ...identity,

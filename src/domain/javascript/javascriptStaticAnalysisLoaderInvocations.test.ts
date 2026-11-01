@@ -70,6 +70,30 @@ it.each([
 );
 
 const imported = "import {createRequire as make} from 'node:module';";
+it("retains consecutive native resolver calls while keeping replaced or escaped loaders uncertain", () => {
+  const references = (source: string) =>
+    analyzeJavaScriptStaticSource(source).references.map(
+      ({ operation, specifier }) => ({ operation, specifier }),
+    );
+  expect(
+    references('require.resolve("./first.js");require.resolve("./second.js");'),
+  ).toEqual([
+    { operation: "resolve", specifier: "./first.js" },
+    { operation: "resolve", specifier: "./second.js" },
+  ]);
+  for (const prefix of [
+    "require.resolve=custom;",
+    "opaque(require);",
+    "const box={r:require};box.r.resolve=custom;",
+    'Object.defineProperty(require,"resolve",{value:custom});',
+  ])
+    expect(
+      references(`${prefix}require.resolve("./second.js");`).at(-1),
+    ).toEqual({
+      operation: "load",
+      specifier: null,
+    });
+});
 it.each([
   [
     "proven factory",

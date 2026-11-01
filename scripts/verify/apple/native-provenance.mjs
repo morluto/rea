@@ -134,11 +134,20 @@ export async function verifyNativeProvenance(app, executable) {
         ]);
 
       if (operation === "inspect_macho") {
+        const encryption = cli.normalized_result.encryption;
+        assert.equal(encryption.exhaustive, true);
+        assert.ok(encryption.total > 0);
+        assert.equal(encryption.items.length, encryption.total);
+        for (const slice of encryption.items) {
+          assert.equal(slice.status, "absent");
+          assert.deepEqual(slice.commands, []);
+          assert.equal(slice.range, null);
+        }
         const delayed = cli.normalized_result.load_commands.items.find(
           ({ fields }) => fields.name === "@rpath/libdelay.dylib (offset 28)",
         );
         assert.equal(delayed?.kind, "LC_LOAD_DYLIB");
-        assert.equal(delayed.fields.options, "delay-init");
+        assert.equal(delayed.fields.options, 8); // DYLIB_USE_DELAYED_INIT
         assert.equal(delayed.fields["time stamp"], undefined);
         assert.ok(
           cli.normalized_result.dependencies.items.some(
@@ -247,7 +256,7 @@ async function verifyInstallNames() {
           ?.source,
         importSource,
       );
-      assert.ok(result.provenance.some(({ tool }) => tool === "otool"));
+      assert.ok(result.provenance.some(({ tool }) => tool === "dyld_info"));
       await withArtifactMcp(consumer, async (client) => {
         const response = await artifactMcpCall(client, {
           name: "inspect_macho",

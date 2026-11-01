@@ -1,6 +1,7 @@
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
 import type { AnalysisSettingLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
+import type { AnalysisCleanupRetry } from "./analysisErrorRecovery.js";
 
 /** Stable tags exposed by safe analysis-error projections. */
 const ANALYSIS_ERROR_TAGS = [
@@ -92,6 +93,7 @@ export abstract class AnalysisError extends Error {
   #ownedCleanupResources: readonly string[];
   #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
   #cleanupCompletionOwner: AnalysisCleanupResourceOwner | undefined;
+  #cleanupRetry: AnalysisCleanupRetry | undefined;
   #secondaryFailures: AnalysisError[] = [];
   constructor(message: string, options?: AnalysisErrorOptions) {
     super(message, options);
@@ -161,6 +163,17 @@ export abstract class AnalysisError extends Error {
   /** Observe exact completion without replacing the producer's resource facts. */
   bindCleanupCompletionOwner(owner: AnalysisCleanupResourceOwner): this {
     this.#cleanupCompletionOwner = owner;
+    return this;
+  }
+
+  /** Caller retry for the live cleanup; undefined once cleanup completes. */
+  get cleanupRetry(): AnalysisCleanupRetry | undefined {
+    return this.cleanupIncomplete ? this.#cleanupRetry : undefined;
+  }
+
+  /** Bind only from the owner retaining every reported resource for this retry. */
+  bindCleanupRetry(retry: AnalysisCleanupRetry): this {
+    this.#cleanupRetry = Object.freeze({ ...retry });
     return this;
   }
 
@@ -251,6 +264,7 @@ import type {
 } from "./process/processCapture.js";
 import type { FileOffsetPartialObservation } from "./native/fileOffsetPartialObservation.js";
 import type { NativeCallPartialObservation } from "./native/nativeCallPartialObservation.js";
+import type { HopperCallerReconciliationPartial } from "./native/hopperCallerReconciliation.js";
 import type { ElectronActivePartialObservation } from "./javascript/electronActiveObservation.js";
 import type { JavaScriptRuntimeObservation } from "./javascript/javascriptRuntimeObservation.js";
 import type {
@@ -270,7 +284,10 @@ import type {
   AdbPackagePullPartialObservation,
   AdbDisplayPartialObservation,
 } from "./adb/adbDeviceAnalysis.js";
-import type { InspectSignature } from "./native/nativeInspection.js";
+import type {
+  InspectMacho,
+  InspectSignature,
+} from "./native/nativeInspection.js";
 import type { NativeUiObservationResult } from "./native/nativeUiObservation.js";
 import type { BinaryLayout } from "./native/binaryLayout.js";
 import type {
@@ -314,6 +331,7 @@ export type AnalysisPartialObservation =
   | FileSnapshotPartialObservation
   | PartialProcessCaptureObservation
   | NativeCallPartialObservation
+  | HopperCallerReconciliationPartial
   | FileOffsetPartialObservation
   | ElectronActivePartialObservation
   | BrowserScenarioPartialObservation
@@ -337,6 +355,7 @@ export type AnalysisPartialObservation =
   | FirmwarePartialObservation
   | NativeUiObservationResult
   | InspectSignature
+  | InspectMacho
   | ElectronPagePartialObservation
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation

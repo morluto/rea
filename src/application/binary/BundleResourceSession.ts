@@ -24,6 +24,13 @@ export const BUNDLE_RESOURCE_OPERATIONS = new Set<AnalysisOperation>([
   ...BUNDLE_ARTIFACT_RESOURCE_OPERATIONS,
 ]);
 
+/** Share the dispatch owner's resource-session operation policy with discovery. */
+export const isBundleResourceOperation = (name: string): boolean => {
+  for (const operation of BUNDLE_RESOURCE_OPERATIONS)
+    if (operation === name) return true;
+  return false;
+};
+
 /** Provider-specific owner of the four read-only app-resource operations. */
 export interface BundleResourceClientFactory {
   createClient(

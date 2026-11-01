@@ -32,7 +32,21 @@ import { hasXmlPlistSignature } from "../../../src/domain/apple/appleArchiveForm
 import { parseExecutableHeader } from "../../../src/domain/binaryTarget.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { ESP8266_REFUSAL } from "../../../src/domain/firmware/espImage.js";
+import {
+  ESP32C3_APP_SEGMENTS,
+  ESP32C3_BOOTLOADER_SEGMENTS,
+  esp8266Image,
+  espImage,
+} from "../../fixtures/espImage.js";
+import { espFlashDump } from "../../../src/domain/firmware/espFlash.fixture.js";
 import { javaClassFile } from "../../fixtures/javaClassFile.js";
+import { dfuseFile } from "../../../src/domain/firmware/dfuse.fixture.js";
+import {
+  patternBytes,
+  uf2File,
+  uf2Image,
+} from "../../../src/domain/firmware/uf2.fixture.js";
 import {
   MAX_JVM_CLASS_IDENTITY_BYTES,
   JVM_CLASS_IDENTITY_LIMIT_REASON,
@@ -45,6 +59,11 @@ import {
   rpathCommand,
   codeSignatureCommand,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
+import {
+  FIT_EMBEDDED,
+  FIT_EXTERNAL,
+} from "../../../src/artifacts/fit/FitImage.fixture.js";
+import { devicetreeFixture } from "../../../src/firmware/devicetree/Devicetree.fixture.js";
 
 it.each([
   [4000, false],
@@ -463,16 +482,19 @@ describe("binary target I/O: package classification", () => {
     });
   });
 
-  it("classifies a binary plist by its magic under any extension", async () => {
-    const directory = await createTestTempDirectory("rea-bplist-target-");
-    const path = join(directory, "Model.archive");
-    await writeFile(path, buildBinary({ $archiver: "NSKeyedArchiver" }));
-    const result = await parseBinaryTarget(path);
-    expect(result.ok && result.value).toMatchObject({
-      kind: "artifact",
-      format: "plist",
-    });
-  });
+  it.each(["archive", "hop"])(
+    "classifies binary plist magic under a .%s extension",
+    async (suffix) => {
+      const directory = await createTestTempDirectory("rea-bplist-target-");
+      const path = join(directory, `Model.${suffix}`);
+      await writeFile(path, buildBinary({ $archiver: "NSKeyedArchiver" }));
+      const result = await parseBinaryTarget(path);
+      expect(result.ok && result.value).toMatchObject({
+        kind: "artifact",
+        format: "plist",
+      });
+    },
+  );
 
   it("classifies XML plists by content while preserving named formats", async () => {
     const directory = await createTestTempDirectory("rea-xml-plist-target-");
@@ -540,6 +562,40 @@ describe("binary target I/O: package classification", () => {
       error: { _tag: "BinaryTargetError" },
     });
   });
+});
+
+describe("binary target I/O: image classification", () => {
+  it("classifies ESP images by bytes and refuses ESP8266 v1 images", async () => {
+    const directory = await createTestTempDirectory("rea-esp-target-");
+    const app = join(directory, "firmware.ota");
+    const truncated = join(directory, "download.bin");
+    const esp8266 = join(directory, "esp8266.bin");
+    const encrypted = join(directory, "encrypted.bin");
+    const image = espImage({ segments: ESP32C3_APP_SEGMENTS });
+    await Promise.all([
+      writeFile(app, image),
+      writeFile(truncated, image.subarray(0, 40)),
+      writeFile(esp8266, esp8266Image()),
+      writeFile(encrypted, Buffer.alloc(4096, 0x5a)),
+    ]);
+    for (const path of [app, truncated])
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { kind: "archive", format: "esp-image" },
+      });
+    expect(await parseBinaryTarget(esp8266)).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "BinaryTargetError",
+        constraint: "file_format_rejected",
+        reason: ESP8266_REFUSAL,
+      },
+    });
+    // Flash-encrypted bytes carry no magic; they stay unrecognized, not ESP.
+    const unrecognized = await parseBinaryTarget(encrypted);
+    expect(unrecognized.ok).toBe(false);
+    expect(JSON.stringify(unrecognized)).not.toContain("ESP");
+  });
 
   it("does not trust a ZIP-family extension without ZIP magic", async () => {
     const directory = await createTestTempDirectory("rea-fake-archive-");
@@ -553,12 +609,195 @@ describe("binary target I/O: package classification", () => {
   });
 });
 
+describe("binary target I/O: firmware containers", () => {
+  it("classifies UF2 by block magics and DfuSe by its prefix and suffix", async () => {
+    const directory = await createTestTempDirectory("rea-firmware-target-");
+    const uf2 = uf2File(uf2Image(0xe48b_ff56, 0x1000_0000, patternBytes(300)));
+    const dfu = dfuseFile({
+      targets: [{ alternateSetting: 0, elements: [{ address: 0, data: [1] }] }],
+    });
+    const paths = {
+      uf2: join(directory, "firmware.bin"),
+      dfuse: join(directory, "firmware.img"),
+      badCrc: join(directory, "bad-crc.dfu"),
+      shortUf2: join(directory, "short.uf2"),
+      noSuffix: join(directory, "no-suffix.dfu"),
+    };
+    // The suffix CRC is checked by inventory, not by recognition.
+    const badCrc = Buffer.from(dfu);
+    badCrc.writeUInt32LE(0x1234_5678, badCrc.length - 4);
+    await Promise.all([
+      writeFile(paths.uf2, uf2),
+      writeFile(paths.dfuse, dfu),
+      writeFile(paths.badCrc, badCrc),
+      writeFile(paths.shortUf2, uf2.subarray(0, 511)),
+      writeFile(paths.noSuffix, dfu.subarray(0, dfu.length - 16)),
+    ]);
+    for (const [path, format] of [
+      [paths.uf2, "uf2"],
+      [paths.dfuse, "dfuse"],
+      [paths.badCrc, "dfuse"],
+    ] as const)
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { kind: "archive", format },
+      });
+    for (const path of [paths.shortUf2, paths.noSuffix])
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: false,
+        error: { _tag: "BinaryTargetError" },
+      });
+  });
+});
+
+describe("binary target I/O: ESP flash layouts", () => {
+  it("detects a flash layout before the bootloader it begins with", async () => {
+    const directory = await createTestTempDirectory("rea-esp-flash-target-");
+    const dump = join(directory, "flash.bin");
+    const bootloader = join(directory, "bootloader.bin");
+    const image = espImage({ segments: ESP32C3_BOOTLOADER_SEGMENTS });
+    await Promise.all([
+      writeFile(dump, espFlashDump({ bootloader: { at: 0, bytes: image } })),
+      writeFile(bootloader, image),
+    ]);
+    expect(await parseBinaryTarget(dump)).toMatchObject({
+      ok: true,
+      value: {
+        kind: "archive",
+        format: "esp-flash-image",
+        espFlash: {
+          selected: false,
+          flashOffset: null,
+          partitionTableOffset: null,
+        },
+      },
+    });
+    expect(await parseBinaryTarget(bootloader)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: "esp-image" },
+    });
+  });
+
+  it("keeps refusing an ESP8266 dump that has an ESP-IDF-style table", async () => {
+    const directory = await createTestTempDirectory("rea-esp8266-flash-");
+    const dump = join(directory, "esp8266-flash.bin");
+    await writeFile(
+      dump,
+      espFlashDump({ bootloader: { at: 0, bytes: esp8266Image() } }),
+    );
+    expect(await parseBinaryTarget(dump)).toMatchObject({
+      ok: false,
+      error: {
+        constraint: "file_format_rejected",
+        reason: ESP8266_REFUSAL,
+      },
+    });
+  });
+
+  it("reads a selected flash dump with caller inputs and refuses bad pairings", async () => {
+    const directory = await createTestTempDirectory("rea-esp-flash-select-");
+    const esp32 = espImage({
+      segments: ESP32C3_BOOTLOADER_SEGMENTS,
+      chipId: 0,
+    });
+    const partial = join(directory, "from-0x1000.bin");
+    const noise = join(directory, "noise.bin");
+    await Promise.all([
+      writeFile(
+        partial,
+        espFlashDump({ bootloader: { at: 0x1000, bytes: esp32 } }).subarray(
+          0x1000,
+        ),
+      ),
+      writeFile(noise, Buffer.alloc(0x1_0000, 0x5a)),
+    ]);
+    expect(
+      await parseBinaryTarget(partial, {
+        formatHint: "esp-flash-image",
+        espFlash: { flashOffset: 0x1000 },
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        kind: "archive",
+        format: "esp-flash-image",
+        espFlash: {
+          selected: true,
+          flashOffset: 0x1000,
+          partitionTableOffset: null,
+        },
+      },
+    });
+    for (const [options, reason] of [
+      [
+        { espFlash: { flashOffset: 0x1000 } },
+        "flash_offset and partition_table_offset apply only with format=esp-flash-image",
+      ],
+      [
+        {
+          formatHint: "esp-flash-image",
+          espFlash: { partitionTableOffset: 0x8800 },
+        },
+        "partition_table_offset must be a multiple of 0x1000, as ESP-IDF requires",
+      ],
+    ] as const)
+      expect(await parseBinaryTarget(partial, options)).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "BinaryTargetError",
+          constraint: "load_selection_rejected",
+          reason,
+        },
+      });
+    // Ciphertext is not recognized as a layout: unknown, not malformed.
+    expect(
+      await parseBinaryTarget(noise, { formatHint: "esp-flash-image" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        constraint: "file_format_rejected",
+        reason: expect.stringContaining(
+          "ESP flash image layout is not recognized",
+        ),
+      },
+    });
+  });
+});
+
+it("classifies a FIT by its /images node and leaves a plain DTB rejected", async () => {
+  const directory = await createTestTempDirectory("rea-fit-target-");
+  const itb = join(directory, "boot.itb");
+  const extensionless = join(directory, "boot");
+  const dtb = join(directory, "board.dtb");
+  await Promise.all([
+    writeFile(itb, FIT_EMBEDDED),
+    writeFile(extensionless, FIT_EXTERNAL),
+    writeFile(dtb, devicetreeFixture()),
+  ]);
+  for (const path of [itb, extensionless])
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: "fit" },
+    });
+  expect(await parseBinaryTarget(dtb)).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "BinaryTargetError",
+      constraint: "file_format_rejected",
+    },
+  });
+});
+
 describe("binary target I/O: filesystem and app bundle target resolution", () => {
   it("resolves relative Hopper databases and rejects unknown or unreadable paths", async () => {
     const directory = await createTestTempDirectory("rea-target-");
     await writeFile(join(directory, "sample.hop"), "database");
     await writeFile(join(directory, "text"), "hello");
     const database = await parseBinaryTarget("sample.hop", { cwd: directory });
+    expect(database).toMatchObject({
+      ok: true,
+      value: { kind: "database", format: "analysis-database" },
+    });
     expect(database.ok && database.value.sha256).toBe(
       "3549b0028b75d981cdda2e573e9cb49dedc200185876df299f912b79f69dabd8",
     );
@@ -623,6 +862,48 @@ describe("binary target I/O: filesystem and app bundle target resolution", () =>
       format: "mach-o",
     });
   });
+
+  it.skipIf(process.platform === "win32")(
+    "preserves a literal backslash in a POSIX app executable name",
+    async () => {
+      const directory = await createTestTempDirectory("rea-target-");
+      const app = join(directory, "Back.app");
+      const programs = join(app, "Contents", "MacOS");
+      const executable = join(programs, "App\\Name");
+      await mkdir(programs, { recursive: true });
+      await writeFile(
+        join(app, "Contents", "Info.plist"),
+        "<plist><dict><key>CFBundleExecutable</key><string>App\\Name</string></dict></plist>",
+      );
+      await writeFile(executable, thinMach(0xfeedfacf, 0x0100000c));
+      const result = await parseBinaryTarget(app, {
+        cwd: directory,
+        hostArchitecture: "arm64",
+      });
+      expect(result.ok && result.value).toMatchObject({
+        path: await realpath(executable),
+        format: "mach-o",
+      });
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "rejects a Windows separator in an app executable declaration",
+    async () => {
+      const directory = await createTestTempDirectory("rea-target-");
+      const app = join(directory, "Broken.app");
+      await mkdir(join(app, "Contents", "MacOS"), { recursive: true });
+      await writeFile(
+        join(app, "Contents", "Info.plist"),
+        "<plist><dict><key>CFBundleExecutable</key><string>..\\escape</string></dict></plist>",
+      );
+      const result = await parseBinaryTarget(app, { cwd: directory });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "app has an unsafe CFBundleExecutable" },
+      });
+    },
+  );
 
   it.each([
     ["missing plist", undefined],

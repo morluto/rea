@@ -96,6 +96,34 @@ setInterval(() => {}, 1000);
   return { reader, readyPath: join(directory, "ready") };
 };
 
+// Preserve an early operation outcome instead of reporting only a missing file.
+const waitForCompilerReady = async (
+  readyPath: string,
+  pending: Promise<unknown>,
+): Promise<void> => {
+  let settled: { readonly value: unknown } | undefined;
+  void pending.then(
+    (value) => {
+      settled = { value };
+    },
+    (value: unknown) => {
+      settled = { value };
+    },
+  );
+  const outcome = await vi.waitFor(
+    async () => {
+      if (settled !== undefined) return settled;
+      expect(await readFile(readyPath, "utf8")).toBe("ready");
+      return undefined;
+    },
+    { timeout: 10_000 },
+  );
+  if (outcome !== undefined)
+    throw new Error("Compiler operation settled before its ready marker", {
+      cause: outcome.value,
+    });
+};
+
 it
   .skipIf(process.platform === "win32")
   .each(["ordinary", "cancel during cleanup"] as const)(
@@ -177,23 +205,26 @@ it
     const preparation = reader
       .prepare(controller.signal)
       .catch((cause: unknown) => cause);
-    await vi.waitFor(async () =>
-      expect(await readFile(readyPath, "utf8")).toBe("ready"),
-    );
-    const root = [...fault.roots][0];
-    if (root === undefined) throw new Error("Expected helper root");
-    controller.abort(reason);
-    const failure: unknown = await preparation;
-    expect(failure).toBeInstanceOf(DarwinProcessOwnershipInspectionError);
-    if (!(failure instanceof DarwinProcessOwnershipInspectionError))
-      throw new Error("Expected retained cleanup failure");
-    expect(failure.cause).toBe(reason);
-    expect(failure.cancellation?.reason).toBe(reason);
-    expect(failure.cleanupFailure?.cleanupIncomplete).toBe(true);
-    fault.blocked = false;
-    await reader.close();
-    expect(failure.cleanupFailure?.cleanupIncomplete).toBe(false);
-    await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
+    try {
+      await waitForCompilerReady(readyPath, preparation);
+      const root = [...fault.roots][0];
+      if (root === undefined) throw new Error("Expected helper root");
+      controller.abort(reason);
+      const failure: unknown = await preparation;
+      expect(failure).toBeInstanceOf(DarwinProcessOwnershipInspectionError);
+      if (!(failure instanceof DarwinProcessOwnershipInspectionError))
+        throw new Error("Expected retained cleanup failure");
+      expect(failure.cause).toBe(reason);
+      expect(failure.cancellation?.reason).toBe(reason);
+      expect(failure.cleanupFailure?.cleanupIncomplete).toBe(true);
+      fault.blocked = false;
+      await reader.close();
+      expect(failure.cleanupFailure?.cleanupIncomplete).toBe(false);
+      await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      controller.abort(reason);
+      await preparation;
+    }
   },
 );
 
@@ -365,9 +396,7 @@ it
       { signal: controller.signal },
     );
     try {
-      await vi.waitFor(async () =>
-        expect(await readFile(readyPath, "utf8")).toBe("ready"),
-      );
+      await waitForCompilerReady(readyPath, pending);
       controller.abort(reason);
       const result = await pending;
       if (result.ok) throw new Error("Expected cancelled preparation");
@@ -384,8 +413,11 @@ it
       expect(result.error.cleanupIncomplete).toBe(false);
     } finally {
       controller.abort(reason);
-      await pending;
-      await client.close();
+      try {
+        await pending;
+      } finally {
+        await client.close();
+      }
     }
   },
 );

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { emptyArraySchema } from "../emptyArraySchema.js";
 import { evidenceSchema } from "../evidence.js";
+import { evidenceInputSchema } from "../evidenceReference.js";
 import {
   cliMetadataGuidSchema,
   managedMetadataTokenSchema,
@@ -28,20 +29,38 @@ import { digestSchema, prefixedDigestSchema } from "../digests.js";
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const boundedTextSchema = z.string().min(1);
 
-/** Two authenticated managed member observations. */
+const memberComparisonShape = <Source extends z.ZodType>(source: Source) => ({
+  left: source,
+  right: source,
+});
+
+const distinctMemberSources = (
+  input: {
+    readonly left: { readonly evidence_id: string };
+    readonly right: { readonly evidence_id: string };
+  },
+  context: z.RefinementCtx,
+): void => {
+  if (
+    typeof input.left?.evidence_id === "string" &&
+    input.left.evidence_id === input.right?.evidence_id
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["right"],
+      message: "Managed member Evidence must be distinct",
+    });
+};
+
+/** Two complete managed member observations for semantic consumers. */
 export const compareManagedMembersInputSchema = z
-  .strictObject({
-    left: evidenceSchema,
-    right: evidenceSchema,
-  })
-  .superRefine((input, context) => {
-    if (input.left.evidence_id === input.right.evidence_id)
-      context.addIssue({
-        code: "custom",
-        path: ["right"],
-        message: "Managed member Evidence must be distinct",
-      });
-  });
+  .strictObject(memberComparisonShape(evidenceSchema))
+  .superRefine(distinctMemberSources);
+
+/** Public member comparison selects records inline or by exact retained identity. */
+export const compareManagedMembersRequestSchema = z
+  .strictObject(memberComparisonShape(evidenceInputSchema))
+  .superRefine(distinctMemberSources);
 
 const concreteMatchBasisSchema = z.enum([
   "exact-il-signature",

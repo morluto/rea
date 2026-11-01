@@ -1000,8 +1000,10 @@ export const openPlaywrightScenarioBrowser = async (
     launchedBrowser.executable_path,
   );
   const headless = scenario.browser.headless;
+  let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
+    launchStarted = true;
     context = await withAndroidHostTempDirectory(preferredTemp, () =>
       withScenarioCommandDeadline(
         () =>
@@ -1041,6 +1043,8 @@ export const openPlaywrightScenarioBrowser = async (
           }),
         commandTimeoutMs,
         "launch",
+        undefined,
+        executablePath,
       ),
     );
   } catch (cause: unknown) {
@@ -1048,10 +1052,31 @@ export const openPlaywrightScenarioBrowser = async (
       await releaseLateScenarioCommand(cause);
       await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
     }, ["browser_profile"]);
+    // Preserve Playwright's launch diagnostics before the generic provider
+    // boundary discards an untyped error. Keep the original cause for late
+    // command cleanup and leave typed timeout/cancellation failures intact.
+    const primary =
+      launchStarted && !(cause instanceof AnalysisError)
+        ? new ProviderAdapterError(
+            PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
+            OPERATION,
+            {
+              cause,
+              userMessage: "The selected browser could not start.",
+              remediationAction:
+                "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.",
+              diagnostics: {
+                executable_path: executablePath,
+                startup_error:
+                  cause instanceof Error ? cause.message : String(cause),
+              },
+            },
+          )
+        : cause;
     try {
-      return await failBrowserScenarioOperation(cleanup, cause);
+      return await failBrowserScenarioOperation(cleanup, primary);
     } catch (failure: unknown) {
-      if (failure !== cause) options.retainCleanup?.(cleanup);
+      if (failure !== primary) options.retainCleanup?.(cleanup);
       throw failure;
     }
   }

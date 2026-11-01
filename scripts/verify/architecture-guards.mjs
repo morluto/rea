@@ -156,6 +156,9 @@ check(
   files,
   /`[^`\n]*\\0/,
   [
+    // Bundle fingerprint: fixed packaged paths (no NUL/newline) and 64 hex
+    // digest characters per record, never guide contents. Preserve v1 locators.
+    "src/application/GuidanceAccess.ts",
     "src/application/javascript/ElectronBoundaryAnalysis.ts",
     "src/application/javascript/ElectronBoundaryGraphContext.ts",
     "src/application/javascript/JavaScriptArtifactGraphContext.ts",

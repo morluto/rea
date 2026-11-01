@@ -22,51 +22,93 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
-import { WebBundleAnalysisWorker } from "./WebBundleAnalysisWorker.js";
+import {
+  WebBundleAnalysisWorker,
+  WebBundleWorkerCleanup,
+} from "./WebBundleAnalysisWorker.js";
 
-// A process-wide admission, rather than one permit per provider instance, bounds
-// simultaneous web analyzer children and their source/result transfer reservations.
 export type WebBundleAnalysisWorkerPort = Pick<
   WebBundleAnalysisWorker,
   "analyze" | "close"
 >;
 
-let activeAnalyzer: IsolatedWebBundleAnalyzer | undefined;
+/**
+ * One host's web-analyzer permit and failed-cleanup set. Independent
+ * admissions do not share a reservation.
+ */
+export class WebBundleAnalysisAdmission {
+  readonly workers = new WebBundleWorkerCleanup();
+  #active: IsolatedWebBundleAnalyzer | undefined;
+  readonly #pendingCleanup = new Set<IsolatedWebBundleAnalyzer>();
+
+  active(): IsolatedWebBundleAnalyzer | undefined {
+    return this.#active;
+  }
+
+  hold(analyzer: IsolatedWebBundleAnalyzer): void {
+    this.#active = analyzer;
+  }
+
+  release(analyzer: IsolatedWebBundleAnalyzer): void {
+    if (this.#active === analyzer) this.#active = undefined;
+  }
+
+  pending(): readonly IsolatedWebBundleAnalyzer[] {
+    return [...this.#pendingCleanup];
+  }
+
+  retain(analyzer: IsolatedWebBundleAnalyzer): void {
+    this.#pendingCleanup.add(analyzer);
+  }
+
+  forget(analyzer: IsolatedWebBundleAnalyzer): void {
+    this.#pendingCleanup.delete(analyzer);
+  }
+}
 
 /** Own one bundle's sequential analysis and finalization through provider close. */
 export class IsolatedWebBundleAnalyzer {
-  static readonly #pendingCleanup = new Set<IsolatedWebBundleAnalyzer>();
+  readonly #admission: WebBundleAnalysisAdmission;
   #closed = false;
   #running: Promise<Result<WebBundleAnalysis, AnalysisError>> | undefined;
   #controller: AbortController | undefined;
   #worker: WebBundleAnalysisWorkerPort | undefined;
 
+  readonly createWorker: (heapMb: number) => WebBundleAnalysisWorkerPort;
+
   constructor(
-    readonly createWorker: (heapMb: number) => WebBundleAnalysisWorkerPort = (
-      heapMb,
-    ) => new WebBundleAnalysisWorker(heapMb),
-  ) {}
+    createWorker?: (heapMb: number) => WebBundleAnalysisWorkerPort,
+    admission: WebBundleAnalysisAdmission = new WebBundleAnalysisAdmission(),
+  ) {
+    this.#admission = admission;
+    this.createWorker =
+      createWorker ??
+      ((heapMb) =>
+        new WebBundleAnalysisWorker(heapMb, undefined, admission.workers));
+  }
 
   /** Reserve capacity before capture, so concurrent captures cannot retain source inventories. */
   async reserve(): Promise<Result<void, AnalysisError>> {
     if (this.#closed)
       return err(new AnalysisCancelledError("analyze_web_bundle"));
-    if (activeAnalyzer !== undefined)
+    if (this.#admission.active() !== undefined)
       return err(
         new AnalysisResourceConstraintError(
           "analyze_web_bundle",
           "capacity",
-          "Another web-bundle capture or analysis owns the process-wide source and result reservation",
+          "Another web-bundle capture or analysis owns this admission's source and result reservation",
           { concurrent_web_bundle_analyses: 1 },
         ),
       );
-    // Retry exact earlier owners before a replacement capture can retain sources.
+    // Claim the slot before awaiting cleanup so another host cannot pass the check.
+    this.#admission.hold(this);
     try {
-      for (const owner of [...IsolatedWebBundleAnalyzer.#pendingCleanup])
+      for (const owner of this.#admission.pending())
         await owner.#releaseWorker();
-      await WebBundleAnalysisWorker.retryPending();
+      await this.#admission.workers.retry();
       await this.#releaseWorker();
     } catch (cause) {
+      this.#admission.release(this);
       return err(
         cause instanceof AnalysisError
           ? cause
@@ -78,23 +120,15 @@ export class IsolatedWebBundleAnalyzer {
             ),
       );
     }
-    if (this.#closed)
+    if (this.#closed) {
+      this.#admission.release(this);
       return err(new AnalysisCancelledError("analyze_web_bundle"));
-    if (activeAnalyzer !== undefined)
-      return err(
-        new AnalysisResourceConstraintError(
-          "analyze_web_bundle",
-          "capacity",
-          "Another web-bundle capture or analysis owns the process-wide source and result reservation",
-          { concurrent_web_bundle_analyses: 1 },
-        ),
-      );
-    activeAnalyzer = this;
+    }
     return ok(undefined);
   }
 
   releaseReservation(): void {
-    if (activeAnalyzer === this) activeAnalyzer = undefined;
+    this.#admission.release(this);
   }
 
   analyze(
@@ -331,9 +365,9 @@ export class IsolatedWebBundleAnalyzer {
     try {
       await this.#worker?.close();
       this.#worker = undefined;
-      IsolatedWebBundleAnalyzer.#pendingCleanup.delete(this);
+      this.#admission.forget(this);
     } catch (cause) {
-      IsolatedWebBundleAnalyzer.#pendingCleanup.add(this);
+      this.#admission.retain(this);
       throw cause;
     }
   }
