@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import type { Dirent } from "node:fs";
 import { lstat, opendir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
@@ -130,6 +131,10 @@ const PDB_READ_LIMIT = 4;
 const LIMITATION_CAP = 8;
 /** Decoded representation bound for one binary plist text member. */
 const RELEASE_EXPOSURE_PLIST_DECODE_BYTES = 16 * 1024 * 1024;
+/** Bytes of a member that decide how its NULs are read. */
+const MEMBER_ENCODING_HEADER_BYTES = 512;
+/** One header byte in this many being NUL is too many for UTF-8 text. */
+const WIDE_TEXT_NUL_DIVISOR = 8;
 const PE_MEMBER_NAME = /\.(?:dll|exe|sys)$/iu;
 const JAVASCRIPT_MEMBER_NAME = /\.(?:[cm]?[jt]s|[jt]sx)$/iu;
 
@@ -1215,9 +1220,10 @@ const decodeBinaryPlistMember = (bytes: Buffer): MemberText => {
 
 /**
  * The text a member's bytes encode, or null when they cannot be read as text.
- * A member's kind says nothing about its encoding: NULs that no byte order mark
- * explains are not UTF-8, so a scan of them would match nothing and still count
- * as complete. A binary plist has its own object encoding, so its owner decodes it.
+ * A member's kind says nothing about its encoding: wide text has no byte order
+ * mark to explain its NULs, and a scan of it would match nothing and still count
+ * as complete. A NUL inside UTF-8 text does not change how the rest of it reads.
+ * A binary plist has its own object encoding, so its owner decodes it.
  */
 const decodeMemberText = (bytes: Buffer): MemberText | null => {
   const encoding = byteOrderMarkEncoding(bytes);
@@ -1225,7 +1231,7 @@ const decodeMemberText = (bytes: Buffer): MemberText | null => {
   if (encoding !== null)
     return { text: new TextDecoder(encoding).decode(bytes), complete: true };
   if (hasBinaryPlistSignature(bytes)) return decodeBinaryPlistMember(bytes);
-  if (hasBinaryNul(bytes)) return null;
+  if (hasNonUtf8Nul(bytes)) return null;
   return { text: bytes.toString("utf8"), complete: true };
 };
 
@@ -2137,11 +2143,18 @@ const targetKind = (
   return "file";
 };
 
-const hasBinaryNul = (bytes: Buffer): boolean => {
-  const prefix = Math.min(bytes.length, 512);
-  for (let index = 0; index < prefix; index += 1)
-    if (bytes[index] === 0) return true;
-  return false;
+/**
+ * Wide text is valid UTF-8 when its characters are ASCII, so validity alone
+ * cannot separate it from UTF-8 holding a NUL. Density can: UTF-16 puts a NUL in
+ * every other byte of each ASCII character, and a stray NUL is one byte of many.
+ */
+const hasNonUtf8Nul = (bytes: Buffer): boolean => {
+  const header = bytes.subarray(0, MEMBER_ENCODING_HEADER_BYTES);
+  const nuls = header.reduce((count, byte) => count + (byte === 0 ? 1 : 0), 0);
+  return (
+    nuls > 0 &&
+    (nuls * WIDE_TEXT_NUL_DIVISOR >= header.length || !isUtf8(bytes))
+  );
 };
 
 const pushSample = (samples: string[], value: string): void => {

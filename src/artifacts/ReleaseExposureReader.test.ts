@@ -1258,6 +1258,14 @@ const bundled = async (
 
 describe("ReleaseExposureReader text encodings", () => {
   const marker = "-----BEGIN PRIVATE KEY-----\n";
+  const inlineMap = `//# sourceMappingURL=data:application/json;base64,${Buffer.from(
+    JSON.stringify({
+      version: 3,
+      sources: ["src/app.ts"],
+      sourcesContent: ["export {};"],
+      mappings: "",
+    }),
+  ).toString("base64")}`;
 
   const utf16 = (text: string, order: "le" | "be"): Buffer => {
     const little = Buffer.from(`\ufeff${text}`, "utf16le");
@@ -1308,6 +1316,31 @@ describe("ReleaseExposureReader text encodings", () => {
     const { texts, members } = await visited(root);
     expect(texts).toEqual([]);
     expect(members).toEqual({ scanned: 0, skipped: 3 });
+  });
+
+  it("scans UTF-8 that holds a NUL, with its inline maps", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-text-");
+    const script = `const sep = "\0";\nconst key = \`${marker}\`;\n${inlineMap}\n`;
+    await writeFile(join(root, "app.js"), script);
+    const scanned = await inspect(root);
+    expect(scanned.text_members).toEqual({ scanned: 1, skipped: 0 });
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect((await visited(root)).texts).toEqual([script]);
+  });
+
+  it("does not read NUL-bearing bytes that are not UTF-8 as complete text", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-text-");
+    await writeFile(
+      join(root, "app.js"),
+      Buffer.concat([
+        Buffer.from(`const sep = "\0";\n`),
+        Buffer.from([0xff]),
+        Buffer.alloc(64, 0x20),
+      ]),
+    );
+    const { texts, members } = await visited(root);
+    expect(texts).toEqual([]);
+    expect(members).toEqual({ scanned: 0, skipped: 1 });
   });
 
   /** One dictionary whose value objects are the given encoded objects. */
@@ -1367,20 +1400,9 @@ describe("ReleaseExposureReader text encodings", () => {
 
   it("reads an inline map from a UTF-16 script", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-text-");
-    const map = Buffer.from(
-      JSON.stringify({
-        version: 3,
-        sources: ["src/app.ts"],
-        sourcesContent: ["export {};"],
-        mappings: "",
-      }),
-    ).toString("base64");
     await writeFile(
       join(root, "app.js"),
-      utf16(
-        `console.log(1);\n//# sourceMappingURL=data:application/json;base64,${map}\n`,
-        "le",
-      ),
+      utf16(`console.log(1);\n${inlineMap}\n`, "le"),
     );
     const scanned = await inspect(root);
     expect(scanned.text_members).toEqual({ scanned: 1, skipped: 0 });
