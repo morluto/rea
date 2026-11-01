@@ -1,54 +1,27 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { delimiter, dirname, join } from "node:path";
+import { stat, writeFile } from "node:fs/promises";
+import { delimiter, dirname } from "node:path";
 
 import { expect, expectTypeOf, it, vi } from "vitest";
 
 import {
   type ReverseEngineeringProcesses,
   VERSION_PROBE_FAILURE_REASONS,
-} from "../../src/application/reverse/ReverseEngineeringService.js";
-import { lookupExecutable } from "../../src/process/ExecutableLookup.js";
-import { RIZIN_VERSION_PROBE } from "../../src/rizin/RizinCommand.js";
-import { OwnedCommandFailure } from "../../src/process/OwnedCommand.js";
-import type { ProviderProcessSupervisor } from "../../src/process/ProviderProcess.js";
-import type { execFileOutput } from "../../src/process/ExecFileOutput.js";
-import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
-import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtures.js";
-import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
-import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
-
-type ExecFileOutputOptions = NonNullable<Parameters<typeof execFileOutput>[2]>;
-
-/** A selected executable on disk; the injected runner never executes it. */
-const fixture = async () => {
-  const directory = await createTestTempDirectory("rea-rizin-identity-");
-  const executable = join(directory, "rizin");
-  const path = join(directory, "sample.bin");
-  await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  await writeFile(path, "sample");
-  const digest = async () =>
-    createHash("sha256")
-      .update(await readFile(executable))
-      .digest("hex");
-  return { executable, path, digest };
-};
-
-const runner = (banner: () => string) =>
-  vi.fn(
-    async (
-      _command: string,
-      args: readonly string[],
-      _options?: ExecFileOutputOptions,
-    ) => ({
-      stdout: args[0] === "-v" ? banner() : "command output",
-      stderr: "",
-    }),
-  );
-
-const probes = (run: ReturnType<typeof runner>) =>
-  run.mock.calls.filter(([, args]) => args[0] === "-v").length;
+} from "../../../src/application/reverse/ReverseEngineeringService.js";
+import { lookupExecutable } from "../../../src/process/ExecutableLookup.js";
+import { RIZIN_VERSION_PROBE } from "../../../src/rizin/RizinCommand.js";
+import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
+import type { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import {
+  type ExecFileOutputOptions,
+  rizinExecutableFixture,
+  versionProbeCount,
+  versionProbeRunner,
+} from "../../support/rizinToolIdentity.js";
+import { providerSnapshot } from "../../support/reverseEngineeringCompositionFixtures.js";
+import { TestReverseEngineeringService } from "../../support/reverseEngineeringService.js";
+import { createReverseEngineeringCommandPort } from "../../../src/composition/reverseEngineering.js";
 
 /** Wait for launched work, failing instead of hanging past a bounded deadline. */
 const within = async <Value>(
@@ -87,10 +60,10 @@ const posix = it.skipIf(process.platform === "win32");
 posix(
   "records the version from the banner and probes the path it hashed before every command",
   async () => {
-    const { executable, path, digest } = await fixture();
+    const { executable, path, digest } = await rizinExecutableFixture();
     // Homebrew's Rizin 0.9.1 printed this banner, package suffix included.
     const banner = "rizin 0.9.1 @ darwin-arm-64, package: 0.9.1_2 (Homebrew)";
-    const run = runner(() => `${banner}\ncommit: abc`);
+    const run = versionProbeRunner(() => `${banner}\ncommit: abc`);
     const service = new TestReverseEngineeringService({
       run,
       lookup: lookupExecutable,
@@ -138,14 +111,14 @@ posix(
     expect(changed.value.parameters.provider_executable_sha256).toBe(
       await digest(),
     );
-    expect(probes(run)).toBe(3);
+    expect(versionProbeCount(run)).toBe(3);
   },
 );
 
 posix(
   "gives a fake runner's results to its commands when an executable rizin is first on PATH",
   async () => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     const results = ["first result", "second result"];
     const run = vi.fn(
       async (
@@ -240,8 +213,8 @@ posix.each([
 ])(
   "runs the command for -v output %j and records what it identified",
   async (stdout, banner, provider, identity, limitation) => {
-    const { executable, path } = await fixture();
-    const run = runner(() => stdout);
+    const { executable, path } = await rizinExecutableFixture();
+    const run = versionProbeRunner(() => stdout);
     const service = new TestReverseEngineeringService({
       run,
       lookup: lookupExecutable,
@@ -266,7 +239,7 @@ posix.each([
 posix(
   "keeps a failed probe's exit and output and still runs the command",
   async () => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     const run = vi.fn(
       async (
         _command: string,
@@ -313,14 +286,14 @@ posix(
         stdout: "command output",
       });
     }
-    expect(probes(run)).toBe(2);
+    expect(versionProbeCount(run)).toBe(2);
   },
 );
 
 posix(
   "runs each caller's probe under its own deadline and cancellation",
   async () => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     const firstStarted = gate();
     const secondStarted = gate();
     const release = gate();
@@ -331,7 +304,7 @@ posix(
         options?: ExecFileOutputOptions,
       ) => {
         if (args[0] !== "-v") return { stdout: "command output", stderr: "" };
-        (probes(run) === 1 ? firstStarted : secondStarted).open();
+        (versionProbeCount(run) === 1 ? firstStarted : secondStarted).open();
         const signal = options?.signal;
         const aborted = new Promise<"aborted">((resolve) => {
           if (signal?.aborted === true) resolve("aborted");
@@ -391,10 +364,10 @@ posix(
 posix.each(["cancellation", "deadline"] as const)(
   "stops a stalled executable lookup on its %s without running anything",
   async (interruption) => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     const lookupStarted = gate();
     const release = gate();
-    const run = runner(() => "rizin 0.9.1 @ linux-x86-64");
+    const run = versionProbeRunner(() => "rizin 0.9.1 @ linux-x86-64");
     const service = new TestReverseEngineeringService({
       run,
       // The lookup stalls on the executable, as on an unresponsive PATH mount.
@@ -453,7 +426,7 @@ posix.each(["cancellation", "deadline"] as const)(
 posix(
   "returns the caller's cancellation from the probe without starting the command",
   async () => {
-    const { executable, path, digest } = await fixture();
+    const { executable, path, digest } = await rizinExecutableFixture();
     const caller = new AbortController();
     const reason = { caller: "stop during version probe" };
     const run = vi.fn(
@@ -492,7 +465,7 @@ posix(
 posix(
   "retains a probe whose cleanup is incomplete until its owner stops",
   async () => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     let stopped = false;
     const owner = {
       stop: async () =>
@@ -545,10 +518,10 @@ posix(
 posix(
   "ends the call without running anything when hashing the executable reaches the deadline",
   async () => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     const digestStarted = gate();
     const release = gate();
-    const run = runner(() => "rizin 0.9.1 @ linux-x86-64");
+    const run = versionProbeRunner(() => "rizin 0.9.1 @ linux-x86-64");
     const service = new TestReverseEngineeringService({
       run,
       lookup: lookupExecutable,
@@ -591,10 +564,10 @@ posix.each([
 ] as const)(
   "keeps at most 2,048 UTF-8 bytes of a banner of %s characters, cut between code points, and identifies nothing from it",
   async (_kind, filler, kept) => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     // 27 bytes; with it, 2,021 ASCII characters or 505 four-byte ones fit.
     const prefix = "rizin 0.9.1 @ linux-x86-64 ";
-    const run = runner(() => prefix + filler.repeat(5_000));
+    const run = versionProbeRunner(() => prefix + filler.repeat(5_000));
     const service = new TestReverseEngineeringService({
       run,
       lookup: lookupExecutable,
@@ -615,7 +588,7 @@ posix.each([
 posix(
   "cuts a failed probe's diagnostic streams within 2,048 UTF-8 bytes, between code points",
   async () => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     const astral = "\u{1F600}";
     const run = vi.fn(
       async (
@@ -651,7 +624,7 @@ posix(
 posix(
   "leaves the version unknown when the banner is not valid UTF-8",
   async () => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     const run = vi.fn(
       async (
         _command: string,
@@ -699,7 +672,7 @@ posix(
 posix(
   "reports no exit status for a probe whose output was not fully collected",
   async () => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     const bannerOutput = {
       stdout: {
         text: "rizin 0.9.1 @ linux-x86-64",
@@ -740,7 +713,7 @@ posix.each([
 ] as const)(
   "flags output that is not valid UTF-8 in a %s probe's diagnostics",
   async (outcome, invalid) => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     const output = {
       stdout: {
         text: "rizin \uFFFD",
@@ -787,7 +760,7 @@ posix.each([
 posix.each(["cancelled", "cleanup-incomplete"] as const)(
   "keeps invalid UTF-8 flags in a %s probe's captured output",
   async (outcome) => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     const caller = new AbortController();
     let stopped = false;
     const owner = {
@@ -863,13 +836,15 @@ posix.each(["cancelled", "cleanup-incomplete"] as const)(
 posix(
   "identifies the tool a launcher runs on each call, though the launcher's digest stays the same",
   async () => {
-    const { executable, path, digest } = await fixture();
+    const { executable, path, digest } = await rizinExecutableFixture();
     // A version-manager shim: the same file delegates to whichever tool is selected.
     const banners = [
       "rizin 0.9.1 @ linux-x86-64",
       "rizin 0.8.1 @ linux-x86-64",
     ];
-    const run = runner(() => banners[probes(run) - 1] ?? "unexpected probe");
+    const run = versionProbeRunner(
+      () => banners[versionProbeCount(run) - 1] ?? "unexpected probe",
+    );
     const service = new TestReverseEngineeringService({
       run,
       lookup: lookupExecutable,
@@ -885,73 +860,6 @@ posix(
     }
     expect(versions).toEqual(["0.9.1", "0.8.1"]);
     expect(digests).toEqual([await digest(), await digest()]);
-  },
-);
-
-/** As when the server's working directory has been removed. */
-const unreadableWorkingDirectory = () =>
-  vi.spyOn(process, "cwd").mockImplementation(() => {
-    throw Object.assign(new Error("uv_cwd"), { code: "ENOENT" });
-  });
-
-posix(
-  "identifies and runs an absolute command and target without reading the working directory",
-  async () => {
-    const { executable, path } = await fixture();
-    const run = runner(() => "rizin 0.9.1 @ linux-x86-64");
-    const service = new TestReverseEngineeringService({
-      run,
-      lookup: lookupExecutable,
-      // A relative PATH entry is not searched for an explicit command.
-      environment: { REA_RIZIN_COMMAND: executable, PATH: "bin" },
-    });
-    const cwd = unreadableWorkingDirectory();
-    try {
-      const result = await service.executeRizinCommand({ path, command: "iI" });
-      if (!result.ok) throw result.error;
-      expect(result.value.provider.version).toBe("0.9.1");
-      expect(result.value.parameters).toMatchObject({
-        provider_executable_path: executable,
-        provider_identity: "banner",
-      });
-      expect(cwd).not.toHaveBeenCalled();
-    } finally {
-      cwd.mockRestore();
-    }
-  },
-);
-
-posix.each([
-  ["a relative command", { REA_RIZIN_COMMAND: "bin/rizin" }],
-  ["a relative PATH entry", { REA_RIZIN_COMMAND: "rizin", PATH: "bin" }],
-] as const)(
-  "returns a result when %s needs a working directory that cannot be read",
-  async (_case, environment) => {
-    const { path } = await fixture();
-    const run = runner(() => "rizin 0.9.1 @ linux-x86-64");
-    const service = new TestReverseEngineeringService({
-      run,
-      lookup: lookupExecutable,
-      environment,
-    });
-    const cwd = unreadableWorkingDirectory();
-    try {
-      const result = await service.executeRizinCommand({ path, command: "iI" });
-      if (!result.ok) throw result.error;
-      expect(result.value.provider).toEqual({
-        id: "rizin",
-        name: "Rizin",
-        version: null,
-      });
-      expect(result.value.parameters.provider_identity).toBe("assumed");
-      expect(result.value.parameters).not.toHaveProperty(
-        "provider_executable_path",
-      );
-      expect(probes(run)).toBe(0);
-      expect(cwd).toHaveBeenCalled();
-    } finally {
-      cwd.mockRestore();
-    }
   },
 );
 
@@ -971,7 +879,7 @@ posix.each([
 ] as const)(
   "keeps the probe's diagnostics beside %s that identifies no tool",
   async (_case, stdout, stderr, banner) => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     const run = vi.fn(
       async (
         _command: string,
@@ -1006,10 +914,10 @@ posix.each([
 posix(
   "reports no version from a banner cut inside its version token",
   async () => {
-    const { executable, path } = await fixture();
+    const { executable, path } = await rizinExecutableFixture();
     // The version token runs past the 2,048-byte cut.
     const line = `rizin ${"1".repeat(3_000)} @ linux-x86-64`;
-    const run = runner(() => line);
+    const run = versionProbeRunner(() => line);
     const service = new TestReverseEngineeringService({
       run,
       lookup: lookupExecutable,
