@@ -8,6 +8,7 @@ import { collectElectronWrappedCallPathsSteps } from "./electronWrappedCallPaths
 import {
   ELECTRON_IDENTITY_LIMITATION,
   ELECTRON_MODULE,
+  ELECTRON_REFERENCE_KINDS,
 } from "./javascriptElectronMemberWrites.js";
 
 import {
@@ -199,9 +200,14 @@ const finalizeStaticAnalysis = (
 ): JavaScriptStaticAnalysis => {
   const parserErrors = file.errors.length;
   const typeOnlySideEffect = hasUncertainTypeOnlyModuleSideEffect(file.program);
+  // A `worker` or `service-worker` reference records a URL relative to the
+  // importing source, so `new Worker(new URL("electron", import.meta.url))` is
+  // not an Electron module. Read the same kinds the Electron boundary owner uses.
   const electronObserved = accumulator.references.some(
     ({ value }) =>
-      value.specifier !== null && ELECTRON_MODULE.test(value.specifier),
+      value.specifier !== null &&
+      ELECTRON_REFERENCE_KINDS.has(value.kind) &&
+      ELECTRON_MODULE.test(value.specifier),
   );
   const resourceLimits = [...bindings.valueResourceLimits].sort();
   const coverage: JavaScriptStaticCoverage = {

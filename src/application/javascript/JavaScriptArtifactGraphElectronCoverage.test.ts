@@ -250,3 +250,19 @@ it("does not treat a worker URL path as an Electron module", async () => {
   );
   expect(electronSemantics).toBeUndefined();
 });
+
+it("reports the same Electron applicability as the retained static fact", async () => {
+  // `analysis_coverage.applicability.electron` is the domain owner of the same
+  // question, so a worker URL path must be unknown for both outputs.
+
+  const entry = await analyzedEntry(
+    `const worker = new Worker(new URL("electron", import.meta.url));\n`,
+  );
+  expect(entry.javascript?.analysis_coverage?.applicability.electron).toBe(
+    "unknown",
+  );
+  const graph = await graphFor(
+    `const worker = new Worker(new URL("electron", import.meta.url));\n`,
+  );
+  expect(graph.electronSemantics).toBeUndefined();
+});
