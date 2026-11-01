@@ -79,6 +79,7 @@ import { registerCutterCommands } from "./cli/cutterCommands.js";
 import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArguments.js";
 import { rejectSurplusCliArguments } from "./cli/strictPositionals.js";
 import { presentCliArgumentErrors } from "./cli/argumentErrors.js";
+import { augmentCliHelpOutput } from "./cli/cliHelp.js";
 import { completionHelpNote, createCliCompletions } from "./cli/completions.js";
 import {
   closeCliGuidanceResources,
@@ -252,6 +253,12 @@ export const createCli = (
   );
   cli.serve = (arguments_ = process.argv.slice(2), options) => {
     if (complete(arguments_, options ?? {})) return Promise.resolve();
+    const effectiveOptions = {
+      ...options,
+      stdout: options?.stdout
+        ? (text: string) => options.stdout!(augmentCliHelpOutput(text))
+        : (text: string) => process.stdout.write(augmentCliHelpOutput(text)),
+    };
     const normalized = normalizeCliArguments(arguments_);
     const { command, flags } = splitIncurBuiltinArguments(normalized);
     const builtin = command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
@@ -411,7 +418,7 @@ export const createCli = (
         const runRegistration = (backupPath?: string): Promise<void> => {
           const result = serveStrict(
             serveArguments,
-            options ?? {},
+            effectiveOptions,
             (tokens, selected) =>
               serveDeclared(tokens, selected, (declared, declaredOptions) =>
                 serve(
@@ -512,16 +519,18 @@ export const createCli = (
         );
       }
     }
-    const result = serveStrict(normalized, options ?? {}, (tokens, selected) =>
-      serveDeclared(tokens, selected, (declared, declaredOptions) =>
-        serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
-      ),
+    const result = serveStrict(
+      normalized,
+      effectiveOptions,
+      (tokens, selected) =>
+        serveDeclared(tokens, selected, (declared, declaredOptions) =>
+          serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
+        ),
     );
     const note = completionHelpNote(normalized);
     if (note === undefined) return result;
     return result.then(() => {
-      const write =
-        options?.stdout ?? ((text: string) => process.stdout.write(text));
+      const write = effectiveOptions.stdout;
       write(`\n${note}`);
     });
   };
