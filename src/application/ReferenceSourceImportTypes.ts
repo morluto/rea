@@ -125,6 +125,8 @@ export interface ReferenceSourceImportOptions {
 export const DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS = [
   ".git/",
   ".git/hooks/",
+  // Match pointer files after directory rules to preserve their provenance.
+  ".git",
   "node_modules/",
   "dist/",
   "build/",
