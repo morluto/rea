@@ -252,7 +252,7 @@ export const createCli = (
   );
   cli.serve = (arguments_ = process.argv.slice(2), options) => {
     if (complete(arguments_, options ?? {})) return Promise.resolve();
-    const normalized = normalizeCliArguments(arguments_);
+    let normalized = normalizeCliArguments(arguments_);
     const { command, flags } = splitIncurBuiltinArguments(normalized);
     const builtin = command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
     if (
@@ -320,10 +320,34 @@ export const createCli = (
       // prevents a save. Guard that path: reject a settings file REA cannot
       // update, back up the file, preserve the caller's environment, and verify
       // the registration landed.
+      // SyncMcp.register also writes Amp when no agents are selected. Mode
+      // switches return before registration and must not touch its settings.
+      // Use the same normalized arguments for selection and dispatch, including
+      // non-Amp equals forms. Incur consumes command values before agent flags.
+      normalized = serveArguments;
+      const registration = splitIncurBuiltinArguments(serveArguments);
+      const rest = registration.command.slice(builtin + 2);
+      const agents: string[] = [];
+      for (let index = 0; index < rest.length; index += 1) {
+        if (
+          (rest[index] === "--command" || rest[index] === "-c") &&
+          rest[index + 1]
+        )
+          index += 1;
+        else if (rest[index] === "--agent" && rest[index + 1])
+          agents.push(rest[++index]!);
+      }
       const ampRequested =
-        command.some(
-          (token, index) => token === "--agent" && command[index + 1] === "amp",
-        ) || command.includes("--agent=amp");
+        ![
+          "--help",
+          "-h",
+          "--llms",
+          "--llms-full",
+          "--mcp",
+          "--update",
+          "--incur-update-check",
+        ].some((flag) => registration.flags.has(flag)) &&
+        (agents.length === 0 || agents.includes("amp"));
       if (ampRequested) {
         const settingsPath = join(homedir(), ".config", "amp", "settings.json");
         let priorEnv: unknown;
@@ -409,9 +433,17 @@ export const createCli = (
         }
 
         const runRegistration = (backupPath?: string): Promise<void> => {
+          let failed = false;
           const result = serveStrict(
             serveArguments,
-            options ?? {},
+            {
+              ...options,
+              exit: (code) => {
+                failed ||= code !== 0;
+                if (options?.exit !== undefined) options.exit(code);
+                else process.exitCode = code;
+              },
+            },
             (tokens, selected) =>
               serveDeclared(tokens, selected, (declared, declaredOptions) =>
                 serve(
@@ -421,6 +453,7 @@ export const createCli = (
               ),
           );
           return result.then(() => {
+            if (failed) return;
             let failure: string | undefined;
             try {
               if (!existsSync(settingsPath))
