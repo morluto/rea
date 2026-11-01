@@ -845,6 +845,18 @@ it("labels unbound provider observations as selection-time after a repair", asyn
     "unavailable",
   );
   expect(
+    (await mcp.callTool({ name: "open_binary", arguments: { path: target } }))
+      .isError,
+  ).toBeFalsy();
+  const reused = toolContract("binary_session").outputSchema.parse(
+    (await mcp.callTool({ name: "binary_session", arguments: {} }))
+      .structuredContent,
+  ).result;
+  expect(reused.analysis_provider_binding).toBeNull();
+  expect(reused.analysis_provider_candidates[0]?.availability.status).toBe(
+    "unavailable",
+  );
+  expect(
     (
       await mcp.callTool({
         name: "open_binary",

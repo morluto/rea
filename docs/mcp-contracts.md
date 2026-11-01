@@ -803,8 +803,9 @@ new analysis profile or start a provider client. Later transitions and analysis
 calls wait for the inspection to finish, including cleanup. Current-route capabilities
 remain those of the bound session. Candidate statuses can still be unknown when
 an inspection cannot complete.
-an explicit `open_binary` performs a new selection. A changed route can retire
-the previous engine and its ephemeral edits. Each candidate's capability sets, returned with complete detail,
+`open_binary` with an explicit `provider_id` performs a new selection. Reopening
+the same target without `provider_id` reuses its current route. A changed route
+can retire the previous engine and its ephemeral edits. Each candidate's capability sets, returned with complete detail,
 describe that possible provider;
 they do not select it. The top-level `capabilities` describe the current route,
 while `analysis_provider_binding` identifies the concrete selected route. These
