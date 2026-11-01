@@ -28,6 +28,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
+import { MULTI_MODE_TARGET_REMEDIATION } from "../dist/application/CapabilityInventory.js";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { verifyKunaReferences } from "./lib/kuna-reference-verifier.mjs";
 import {
@@ -313,6 +314,20 @@ const verifyKuna = async (
           ?.available,
         false,
       );
+      if (process.platform === "darwin") {
+        const authored = trace?.modes?.find(
+          ({ name }) => name === "authored_ui_dispatch",
+        );
+        const nativeSeed = trace?.modes?.find(
+          ({ name }) => name === "native_seed_call_trace",
+        );
+        assert.equal(trace?.remediation, MULTI_MODE_TARGET_REMEDIATION);
+        assert.notEqual(authored?.remediation, nativeSeed?.remediation);
+        assert.ok(
+          authored?.missing_operations.includes("decode_interface_builder"),
+        );
+        assert.ok(nativeSeed?.missing_operations.includes("list_names"));
+      }
     }
     answers.push({
       strings: await verifyKunaStrings({

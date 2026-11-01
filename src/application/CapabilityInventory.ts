@@ -126,6 +126,10 @@ type AvailabilityModeResult =
   | (Extract<ToolAvailabilityMode, { available: false }> & {
       readonly reason: ToolUnavailabilityReason;
     });
+
+/** Recovery when no target-specific mode has the same prerequisites. */
+export const MULTI_MODE_TARGET_REMEDIATION =
+  "No mode is currently advertised as available. Inspect each mode's missing operations and remediation.";
 type AvailabilityContext = {
   readonly name: string;
   readonly kind: ToolKind;
@@ -983,6 +987,11 @@ const availabilityForModes = (
   )[0];
   const specificFailureRemediation =
     failure?.reason === "provider_missing" ? undefined : failure?.remediation;
+  const distinctTargetRemediations =
+    defaultMode === undefined &&
+    failures.length > 1 &&
+    failures.every((mode) => mode.reason === "target_unsupported") &&
+    new Set(failures.map((mode) => mode.remediation)).size > 1;
   const facts = {
     ...(defaultMode === undefined
       ? {}
@@ -1000,9 +1009,10 @@ const availabilityForModes = (
   return {
     ...facts,
     reason: failure?.reason ?? "provider_missing",
-    remediation:
-      specificFailureRemediation ??
-      `Configure a provider for one of: ${missingOperations.join(", ")}.`,
+    remediation: distinctTargetRemediations
+      ? MULTI_MODE_TARGET_REMEDIATION
+      : (specificFailureRemediation ??
+        `Configure a provider for one of: ${missingOperations.join(", ")}.`),
   };
 };
 

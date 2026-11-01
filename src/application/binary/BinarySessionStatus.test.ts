@@ -28,7 +28,10 @@ import {
   nativeMacOSCapabilities,
 } from "../../native/NativeMacOSProviderMetadata.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../native/NativeMacosProviderIdentity.js";
-import { buildCapabilityInventory } from "../CapabilityInventory.js";
+import {
+  buildCapabilityInventory,
+  MULTI_MODE_TARGET_REMEDIATION,
+} from "../CapabilityInventory.js";
 
 const projectedStatusSchema = z.object({
   capabilities: sessionProviderFacts.shape.capabilities,
@@ -541,6 +544,7 @@ it.each([
     if (native === undefined) throw new Error("Missing native dispatch reader");
     const capabilities = [
       native,
+      descriptor(providerA, "decode_interface_builder", []),
       descriptor(providerA, "procedure_address", []),
       descriptor(providerA, "procedure_callees", []),
       ...(symbols ? [descriptor(providerA, "list_names", [])] : []),
@@ -572,6 +576,19 @@ it.each([
         ? []
         : ["inspect_native_dispatch_metadata", "list_names"],
     });
+    if (!route) {
+      expect(trace?.remediation).toBe(MULTI_MODE_TARGET_REMEDIATION);
+      const authored = trace?.modes?.find(
+        (mode) => mode.name === "authored_ui_dispatch",
+      );
+      const nativeSeed = trace?.modes?.find(
+        (mode) => mode.name === "native_seed_call_trace",
+      );
+      expect(authored?.remediation).not.toBe(nativeSeed?.remediation);
+      expect(authored?.missing_operations).toContain(
+        "decode_interface_builder",
+      );
+    }
   },
 );
 
