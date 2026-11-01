@@ -14,6 +14,23 @@ import {
   startHopperFixtureClient as startClient,
 } from "./hopperClient.fixture.js";
 
+// Reaching V8's real string limit would need about 512 MB of socket traffic.
+const runtime = vi.hoisted(() => ({
+  maxStringLength: undefined as number | undefined,
+}));
+vi.mock("node:buffer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:buffer")>();
+  return {
+    ...actual,
+    constants: {
+      ...actual.constants,
+      get MAX_STRING_LENGTH() {
+        return runtime.maxStringLength ?? actual.constants.MAX_STRING_LENGTH;
+      },
+    },
+  };
+});
+
 describe("HopperClient protocol", () => {
   it("does not start cold and preserves normal dispatch once ready", async () => {
     const launcher = new FixtureLauncher();
@@ -128,6 +145,31 @@ describe("HopperClient response lifecycle", () => {
     const result = await client.callTool("echo", { label });
 
     expect(result).toEqual({ ok: true, value: { label } });
+  });
+
+  it("fails only the request whose reply exceeds the runtime string limit", async () => {
+    runtime.maxStringLength = 1024 * 1024;
+    onTestFinished(() => {
+      runtime.maxStringLength = undefined;
+    });
+    const launcher = new FixtureLauncher();
+    const client = await startClient(launcher);
+
+    await expect(
+      client.callTool("echo", { label: "x".repeat(2 * 1024 * 1024) }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        operation: "echo",
+        resource: "transport",
+      },
+    });
+    await expect(client.callTool("echo", { label: "after" })).resolves.toEqual({
+      ok: true,
+      value: { label: "after" },
+    });
+    expect(launcher.processes).toHaveLength(1);
   });
 
   it("clears a partial reply when closing and restarting the owned session", async () => {

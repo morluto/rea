@@ -4,6 +4,7 @@ import type {
 } from "../application/ProgressReporter.js";
 import { hopperOperationStage } from "./HopperOperationStage.js";
 import type { HopperBridgeEvent } from "./protocol.js";
+import type { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   hopperCancelledBySignal,
   type HopperError,
@@ -15,7 +16,9 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
 
-export type HopperRequestResult = Result<JsonValue, HopperError>;
+/** A bridge failure, or a reply too long for the runtime to assemble. */
+export type HopperRequestError = HopperError | AnalysisResourceConstraintError;
+export type HopperRequestResult = Result<JsonValue, HopperRequestError>;
 
 /** Node timer ceiling; larger deadlines would be clamped instead of honored. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -388,9 +391,9 @@ export class HopperRequestQueue {
 }
 
 const withRequestContext = (
-  error: HopperError,
+  error: HopperRequestError,
   entry: QueuedRequest,
-): HopperError => {
+): HopperRequestError => {
   if (error instanceof HopperProcessError)
     return new HopperProcessError(error.exitCode, {
       ...error,

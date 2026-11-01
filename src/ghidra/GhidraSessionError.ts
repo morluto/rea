@@ -30,6 +30,7 @@ export type GhidraSessionFailureKind =
   | "process"
   | "protocol"
   | "remote"
+  | "resource"
   | "analysis_timeout";
 
 /** Message of the failure raised when the provider startup deadline elapses. */

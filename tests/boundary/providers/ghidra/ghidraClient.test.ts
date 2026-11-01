@@ -50,6 +50,27 @@ import {
 } from "../../../../src/ghidra/GhidraSessionValues.js";
 import { waitForExit as waitForChildExit } from "../../../support/process/processFixture.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+
+// Reaching V8's real string limit would need about 512 MB of socket traffic.
+const runtime = vi.hoisted(() => ({
+  maxStringLength: undefined as number | undefined,
+}));
+vi.mock("node:buffer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:buffer")>();
+  return {
+    ...actual,
+    constants: {
+      ...actual.constants,
+      get MAX_STRING_LENGTH() {
+        return runtime.maxStringLength ?? actual.constants.MAX_STRING_LENGTH;
+      },
+    },
+  };
+});
+
+const fixturePath = fileURLToPath(
+  new URL("../../../fixtures/fakeGhidra.mjs", import.meta.url),
+);
 import {
   GhidraFixtureLauncher as FixtureLauncher,
   ghidraFixturePath as fixturePath,
@@ -1082,6 +1103,23 @@ describe("GhidraClient", () => {
     expect(value.length).toBe(64 * 1024 * 1024 + 1);
     expect(value.slice(0, 4)).toBe("xxxx");
     expect(value.slice(-4)).toBe("xxxx");
+  });
+
+  it("fails only the request whose reply exceeds the runtime string limit", async () => {
+    runtime.maxStringLength = 1024 * 1024;
+    onTestFinished(() => {
+      runtime.maxStringLength = undefined;
+    });
+    const launcher = new FixtureLauncher("oversized_result");
+    const client = clientFor(launcher);
+
+    await expect(
+      client.callTool("list_strings", { document: null }),
+    ).resolves.toMatchObject({ ok: false, error: { kind: "resource" } });
+    await expect(
+      client.callTool("list_procedures", { document: null }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(launcher.processes).toHaveLength(1);
   });
 
   it("completes the same authenticated handshake over loopback TCP", async () => {
