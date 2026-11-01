@@ -647,6 +647,59 @@ posix(
 );
 
 posix(
+  "keeps a probe's timeout as the failure when its cleanup is also incomplete",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    let stopped = false;
+    const owner = {
+      stop: async () =>
+        stopped
+          ? { status: "stopped" as const }
+          : { status: "incomplete" as const, reason: "probe still running" },
+    } as unknown as ProviderProcessSupervisor;
+    const runOwned = vi.fn(
+      async (request: { readonly arguments: readonly string[] }) => {
+        if (request.arguments[0] === "-v")
+          throw new OwnedCommandFailure(
+            "timeout",
+            "Command deadline elapsed.",
+            providerSnapshot({
+              stdout: { text: "", bytes: 0, observedBytes: 0 },
+              exitCode: null,
+              signal: "SIGTERM",
+            }),
+            "probe still running",
+            undefined,
+            ["pid:9"],
+            owner,
+          );
+        return providerSnapshot();
+      },
+    );
+    const service = new TestReverseEngineeringService({
+      runOwned,
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: executable },
+    });
+    const failed = await service.executeRizinCommand({ path, command: "iI" });
+    expect(failed).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisTimeoutError",
+        cleanup: { reason: "probe still running", resources: ["pid:9"] },
+        diagnostics: { phase: "version_probe" },
+      },
+    });
+    expect(failed.ok ? undefined : failed.error.cleanupIncomplete).toBe(true);
+    expect(runOwned).toHaveBeenCalledOnce();
+
+    stopped = true;
+    expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
+    expect(failed.ok ? undefined : failed.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+posix(
   "reports no exit status in a probe's captured output when that output was not fully collected",
   async () => {
     const { executable, path } = await rizinExecutableFixture();

@@ -1116,14 +1116,22 @@ export class ReverseEngineeringService {
             cleanupOwner,
           ),
         );
+      // Incomplete cleanup ends the call; a deadline that also ended the
+      // probe stays the failure, with the cleanup attached, as for the command.
       if (cause instanceof OwnedOutputFailure && cause.cleanup !== undefined)
         return err(
           this.#registerCleanupFailure(
-            new AnalysisOutputError(
-              operation,
-              "The provider version probe's process cleanup remains incomplete.",
-              { cause, ...probeOutput },
-            ),
+            code === "ETIMEDOUT"
+              ? new AnalysisTimeoutError(operation, timeoutMs, {
+                  cause,
+                  ...probeOutput,
+                  ...reverseCommandTimeoutGuidance(timeoutMs),
+                })
+              : new AnalysisOutputError(
+                  operation,
+                  "The provider version probe's process cleanup remains incomplete.",
+                  { cause, ...probeOutput },
+                ),
             cleanupOwner,
           ),
         );
