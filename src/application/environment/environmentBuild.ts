@@ -43,6 +43,7 @@ import {
   parseViewEvidence,
 } from "./environmentSource.js";
 import { prepareServedState } from "./environmentState.js";
+import { appendAll } from "../../domain/arrayAppend.js";
 
 /** Operation name the build command's own refusals report; each stage keeps its own. */
 export const ENVIRONMENT_BUILD_OPERATION = "environment-build";
@@ -318,10 +319,8 @@ export const buildEnvironment = async (
     name,
     operation: ENVIRONMENT_EXPORT_OPERATION,
   });
-  warnings.push(
-    ...credentialScanWarnings(recorded.value),
-    ...savedCredentialWarnings(capture.parameters),
-  );
+  appendAll(warnings, credentialScanWarnings(recorded.value));
+  appendAll(warnings, savedCredentialWarnings(capture.parameters));
 
   const packageSource: EnvironmentPackageSource =
     input.packageTarball === undefined

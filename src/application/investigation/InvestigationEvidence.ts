@@ -4,6 +4,7 @@ import { uniqueSorted } from "../../domain/canonicalOrdering.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ok, type Result } from "../../domain/result.js";
+import { appendAll } from "../../domain/arrayAppend.js";
 
 /** Follow exact session references without exporting unrelated records or Unknowns. */
 export const resolveInvestigationEvidenceClosure = (
@@ -30,7 +31,7 @@ export const resolveInvestigationEvidenceClosure = (
     );
     if (!evidence.ok) return evidence;
     visited.add(evidenceId);
-    pending.push(...evidence.value.evidence_links);
+    appendAll(pending, evidence.value.evidence_links);
   }
   return ok(uniqueSorted([...visited]));
 };

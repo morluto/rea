@@ -79,7 +79,8 @@ export const semanticRuntimeExportValueSources = (
   const values: t.Node[] = [];
   if (t.isVariableDeclaration(node.declaration))
     for (const declaration of node.declaration.declarations)
-      values.push(...semanticWriteTargets(declaration.id));
+      for (const target of semanticWriteTargets(declaration.id))
+        values.push(target);
   else if (
     (t.isFunctionDeclaration(node.declaration) ||
       t.isClassDeclaration(node.declaration)) &&

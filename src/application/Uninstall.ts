@@ -67,6 +67,7 @@ import {
   redirectedWriteBlocker,
   type MsixPackageView,
 } from "./MsixPackageStorage.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 interface ManagedPathStats {
   readonly uid?: number;
@@ -253,7 +254,7 @@ const removeAll = async (
       ];
   }
   items.push(await host.removeSkill());
-  if (purgeData) items.push(...(await host.purgeData()));
+  if (purgeData) appendAll(items, await host.purgeData());
   return items;
 };
 
@@ -1175,16 +1176,18 @@ const purgeSelectedData = async (
   // Resolve selections before a managed namespace removal can delete cwd.
   // Keep the existing result and removal order after planning those facts.
   items.unshift(
+    // oxlint-disable-next-line rea/no-bulk-append-spread -- one item per literal name.
     ...(await purgeManagedData(appendCallerPath(home, ".rea"), fileSystem, [
       "cache",
       "state",
     ])),
   );
   for (const directory of directories)
-    items.push(
-      ...(await purgeManagedData(dirname(directory), fileSystem, [
+    appendAll(
+      items,
+      await purgeManagedData(dirname(directory), fileSystem, [
         basename(directory),
-      ])),
+      ]),
     );
   return items;
 };
@@ -1538,8 +1541,9 @@ const collapseUninstallItems = (
   for (const next of items) {
     const { name, actions, ...action } = next;
     const group = grouped.get(name) ?? [];
-    group.push(
-      ...(actions !== undefined && actions.length > 0 ? actions : [action]),
+    appendAll(
+      group,
+      actions !== undefined && actions.length > 0 ? actions : [action],
     );
     grouped.set(name, group);
   }

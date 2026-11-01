@@ -33,6 +33,7 @@ import {
 } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 interface WorkspaceRoot {
   readonly root: PrivateRuntimeRoot;
@@ -226,7 +227,10 @@ export class KunaTargetCommands {
         // The exact process lease remains available for the next retry.
       }
     }
-    failures.push(...this.#retained.map(({ error }) => error));
+    appendAll(
+      failures,
+      this.#retained.map(({ error }) => error),
+    );
     const workspace = await this.#workspace;
     if (this.#retained.length === 0) {
       if (workspace?.ok === true) {

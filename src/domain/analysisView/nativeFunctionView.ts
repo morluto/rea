@@ -16,6 +16,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { appendAll } from "../arrayAppend.js";
 
 type Artifact = { readonly path: string; readonly sha256: string };
 
@@ -40,11 +41,10 @@ const parentFields = (
       "native_value_flow is truncated; omitted observations remain unknown",
     );
   if (api === null) unknowns.push("native_api was not recorded");
-  else if (!api.available)
-    unknowns.push(
-      "native_api unavailable: " + api.reason,
-      ...api.residual_unknowns,
-    );
+  else if (!api.available) {
+    unknowns.push("native_api unavailable: " + api.reason);
+    appendAll(unknowns, api.residual_unknowns);
+  }
   return {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "analyze_function" as const,

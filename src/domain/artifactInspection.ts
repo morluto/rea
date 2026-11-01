@@ -25,6 +25,7 @@ import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { offsetText } from "./firmware/espImageStructures.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
+import { appendAll } from "./arrayAppend.js";
 
 const textSchema = z.string().min(1);
 const evidenceIdSchema = prefixedDigestSchema("ev");
@@ -549,8 +550,9 @@ const allUnexploredBranches = (
   nextProbes: ArtifactInspectionResult["next_probes"],
 ): ArtifactInspectionResult["unexplored_branches"] => {
   const branches: ArtifactInspectionResult["unexplored_branches"] = [];
-  branches.push(
-    ...nextProbes.map((probe) =>
+  appendAll(
+    branches,
+    nextProbes.map((probe) =>
       branch(
         "format-specific-analysis-required",
         `${probe.operation} was not run by provider-neutral artifact inspection.`,

@@ -53,6 +53,7 @@ import {
   readPtxTarget,
 } from "./PtxKernels.js";
 import type { AmdGpuTargetIdentity } from "./AmdGpuTarget.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 /** File declarations only. Every child range stays in its named parent coordinate space. */
 export class GpuInventory {
@@ -110,7 +111,7 @@ export class GpuInventory {
   }
   #objectLimitations(row: GpuObject, messages: string[]): void {
     this.#retain(messages);
-    row.limitations.push(...messages);
+    appendAll(row.limitations, messages);
   }
   /** Reserve input/output work atomically, before any payload allocation or read. */
   #budgetWork(...sizes: number[]): void {

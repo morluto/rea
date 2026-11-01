@@ -17,6 +17,7 @@ import {
   type SourceLimitation,
 } from "../SourceLimitations.js";
 import { createValueTraceBudget } from "./NativeValueTraceBudget.js";
+import { appendAll } from "../../domain/arrayAppend.js";
 
 /** Compose bounded high-p-code def-use graphs across exactly referenced call destinations. */
 export const traceNativeValues = async (
@@ -277,8 +278,9 @@ export const traceNativeValues = async (
             ),
           ),
         );
-      sourceLimitations.push(
-        ...targets.data.limitations.map((limitation) => ({
+      appendAll(
+        sourceLimitations,
+        targets.data.limitations.map((limitation) => ({
           provider: resolved.value.provider,
           operation: "resolve_native_call_targets" as const,
           limitation,

@@ -24,6 +24,7 @@ import type {
   ReferenceSourceRead,
 } from "../reference/ReferenceSourceReaderTypes.js";
 import { typescriptEmittedSourceCandidates } from "./TypeScriptEmittedSourceCandidates.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 export interface ParsedReferenceSourceEntries {
   readonly entries: HistoricalSourceGraphInput["entries"];
@@ -473,8 +474,9 @@ const resolveInternalSpecifier = (
   // Retain present runtime files first; substitute only a missing counterpart.
   // Counterparts cover explicit filenames, not directory/index resolution.
   if (!directoryReference)
-    candidates.push(
-      ...typescriptEmittedSourceCandidates(fromPath, normalized).map(
+    appendAll(
+      candidates,
+      typescriptEmittedSourceCandidates(fromPath, normalized).map(
         ({ path }) => path,
       ),
     );
@@ -564,7 +566,7 @@ const appendFile = (
     limitations: [...(parsed?.limitations ?? [])],
   });
   if (parsed === undefined) return;
-  output.limitations.push(...parsed.limitations);
+  appendAll(output.limitations, parsed.limitations);
   for (const relationship of parsed.relationships) {
     const { resolutionStrategy, resolutionBasePath, ...graphRelationship } =
       relationship;
@@ -598,7 +600,7 @@ const appendFile = (
       resolution: resolved.resolution,
     });
   }
-  output.parseFailures.push(...parsed.parse_failures);
+  appendAll(output.parseFailures, parsed.parse_failures);
 };
 
 const appendReadEntry = (

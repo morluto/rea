@@ -30,6 +30,7 @@ import {
   jadxXrefsSchema,
   normalizeJadxText,
 } from "./JadxProtocol.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 /** The adapter consumes tool payloads, never provider RPC details outside this layer. */
 export interface JadxToolPort {
@@ -336,7 +337,7 @@ const searchClasses = async (
         request.operation,
         "JADX class pagination is incomplete",
       );
-    matches.push(...page.items);
+    appendAll(matches, page.items);
     offset = page.next_offset;
   } while (offset < loaded.class_count);
   const occurrences = new Map<string, number>();

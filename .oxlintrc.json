@@ -76,12 +76,14 @@
     {
       "files": ["src/**/*.ts"],
       "rules": {
+        "rea/no-bulk-append-spread": "error",
         "typescript/no-misused-promises": "error"
       }
     },
     {
       "files": ["tests/**/*.ts", "src/**/*.test.ts", "src/**/*.fixture.ts"],
       "rules": {
+        "rea/no-bulk-append-spread": "off",
         "max-lines": "off",
         "max-lines-per-function": [
           "error",

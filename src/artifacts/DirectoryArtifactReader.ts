@@ -35,6 +35,7 @@ import {
 import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { resolveArtifactSourcePath } from "./ArtifactSelectedSource.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 export type DirectoryArtifactEntry = ArtifactEntry & {
   readonly kind: "file" | "directory" | "symlink";
@@ -298,7 +299,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
     }
     if (traversal.kind === "failed") throw traversal.cause;
     childDirectories.reverse();
-    pending.push(...childDirectories);
+    appendAll(pending, childDirectories);
   }
 
   async #finishDirectory(

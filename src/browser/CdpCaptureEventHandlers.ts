@@ -53,6 +53,7 @@ import {
   type CapturedScript,
   type NetworkState,
 } from "./CdpCaptureEventTypes.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 export const handleExecutionContextCreated = (
   state: CdpCaptureEventsState,
@@ -434,7 +435,7 @@ export const handleResponseReceived = (
     state.allowedOrigins,
   );
   state.responseMetadata.push(metadata.response);
-  state.agentHints.push(...metadata.agentHints);
+  appendAll(state.agentHints, metadata.agentHints);
 };
 
 export const handleLoadingFinished = (

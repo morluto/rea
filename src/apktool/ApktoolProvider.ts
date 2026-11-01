@@ -70,6 +70,7 @@ import {
   parseApktoolYml,
   parseManifestPackage,
 } from "./ApktoolDecodeOutput.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 const DECODE_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MANIFEST_MAX_BYTES = 512 * 1024;
@@ -656,7 +657,7 @@ export class ApktoolProvider {
       const projectedStrings = projection.ok
         ? projection.value
         : projection.error.partial;
-      limitations.push(...projectedStrings.limitations);
+      appendAll(limitations, projectedStrings.limitations);
       const coverage =
         projectedStrings.coverage === "partial" ||
         manifestRead.truncated ||

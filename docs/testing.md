@@ -172,6 +172,15 @@ operation names, schemas or types; display-only selection remains allowed.
 `rea/no-fixture-root-cleanup` follows `const` fixture-root aliases into teardown
 deletion; mutable bindings and mixed root arrays remain outside its scope.
 
+`rea/no-bulk-append-spread` rejects spread arguments to `push`, `unshift` and
+`splice` in production sources. Each element becomes a call argument, and V8
+bounds argument count by stack size (about 125,000 on a default main-thread
+stack), so a data-sized collection throws `RangeError`. Use `appendAll` from
+`src/domain/arrayAppend.ts`, or name the structural bound in a disable comment.
+The rule does not check receiver types or other variadic calls such as
+`Math.max` and `String.fromCharCode`. Reproduce such limits in a forked test
+project: worker threads default to a larger stack.
+
 `rea/no-shared-module-mock` resolves Vitest import bindings before rejecting
 module mocks in projects without per-file isolation. The test-project definitions
 own isolation for Vitest and lint; the executable gate checks the resolved policy

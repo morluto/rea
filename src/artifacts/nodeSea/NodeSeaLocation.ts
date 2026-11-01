@@ -41,6 +41,7 @@ import {
   observeNodeSeaFuseMatches,
   type NodeSeaFuseObservation,
 } from "./NodeSeaBlob.js";
+import { appendAll } from "../../domain/arrayAppend.js";
 
 const LC_SEGMENT = 0x1;
 const LC_SEGMENT_64 = 0x19;
@@ -226,7 +227,7 @@ const locateFatMachO = async (
   const found: BlobRange[] = [];
   for (const [index, slice] of header.slices.entries()) {
     if (slice === undefined || header.rangeIssues[index] != null) continue;
-    found.push(...(await locateThinMachO(carrier, slice.offset, slice.size)));
+    appendAll(found, await locateThinMachO(carrier, slice.offset, slice.size));
   }
   return found;
 };
@@ -396,7 +397,7 @@ const locateElfNotes = async (
         found.length > 0,
       );
       if (scanned === undefined) opaque = true;
-      else found.push(...scanned);
+      else appendAll(found, scanned);
     }
   // The runtime locates the blob through PT_NOTE segments. Injectors can
   // leave stale or misaligned SHT_NOTE entries, so section notes are only a
@@ -444,7 +445,7 @@ const locateElfNotes = async (
         found.length > 0,
       );
       if (scanned === undefined) opaque = true;
-      else found.push(...scanned);
+      else appendAll(found, scanned);
     }
   if (found.length > 0 && opaque)
     throw formatFailure(NODE_SEA_ELF_TABLE_TRUNCATED);

@@ -20,6 +20,7 @@ import {
   WEB_NETWORK_CAPTURE_LIMITS,
   webNetworkCapturePayloadSchema,
 } from "../../domain/webNetworkCapture.js";
+import { appendAll } from "../../domain/arrayAppend.js";
 
 const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({
@@ -160,5 +161,5 @@ const excludeNormalizedNumbers = (
   projection.numeric_literals = projection.numeric_literals.filter(
     (number) => !excluded.has(number.pointer),
   );
-  projection.redactions.push(...redaction.redactions);
+  appendAll(projection.redactions, redaction.redactions);
 };

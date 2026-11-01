@@ -35,6 +35,7 @@ import type {
   JavaScriptBundlerRegistration,
 } from "./javascriptStaticAnalysisTypes.js";
 import { JAVASCRIPT_AST_FINGERPRINT_ALGORITHM } from "./javascriptStaticAnalysisTypes.js";
+import { appendAll } from "../arrayAppend.js";
 
 /** Inspect a bundler registration call and recover its module table. */
 export const inspectBundlerRegistration = (
@@ -230,7 +231,7 @@ const recoverBundlerModules = (
     );
     if (recovered === null) continue;
     modules.push(recovered.module);
-    asyncChunkKeys.push(...recovered.asyncChunkKeys);
+    appendAll(asyncChunkKeys, recovered.asyncChunkKeys);
     unknownAsyncChunkKeys += recovered.unknownAsyncChunkKeys;
   }
   return {

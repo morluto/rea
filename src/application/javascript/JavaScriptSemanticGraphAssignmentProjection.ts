@@ -7,6 +7,7 @@ import {
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
+import { appendAll } from "../../domain/arrayAppend.js";
 
 /** Connect retained reads to writes without claiming assignment values or order. */
 export function* projectSemanticAssignments(
@@ -35,8 +36,9 @@ export function* projectSemanticAssignments(
         );
     // Compound assignments consume the previous value as well as the RHS.
     if (flow.operator !== "=")
-      reads.push(
-        ...readsWithin(flow.target).filter((node) =>
+      appendAll(
+        reads,
+        readsWithin(flow.target).filter((node) =>
           sourceRangesEqual(node.identity.source_range, flow.target),
         ),
       );

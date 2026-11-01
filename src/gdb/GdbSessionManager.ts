@@ -2313,6 +2313,7 @@ export const miStringField = (
       )
         return undefined;
       const value = String.fromCodePoint(codePoint);
+      // oxlint-disable-next-line rea/no-bulk-append-spread -- one code point encodes to at most four UTF-8 bytes.
       bytes.push(...Buffer.from(value, "utf8"));
       index += value.length;
       continue;

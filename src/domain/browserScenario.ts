@@ -19,6 +19,7 @@ import {
   validBasicCredentialUsername,
 } from "./browserScenarioValues.js";
 import type { JsonValue } from "./jsonValue.js";
+import { appendAll } from "./arrayAppend.js";
 
 export const browserScenarioInputSchema = z.strictObject({
   browser: browserScenarioBrowserSchema.describe(
@@ -226,13 +227,13 @@ const validateRequestSteps = (
 const validateStorage = (scenario: ScenarioShape): readonly string[] => {
   const references: string[] = [];
   scenario.storage.cookies.forEach((cookie) => {
-    references.push(...secretReferencesInValue(cookie.value));
-    references.push(...destinationSecretReferences(cookie.destination));
+    appendAll(references, secretReferencesInValue(cookie.value));
+    appendAll(references, destinationSecretReferences(cookie.destination));
   });
   for (const collection of ["local_storage", "session_storage"] as const)
     scenario.storage[collection].forEach((storage) => {
       for (const entry of storage.entries)
-        references.push(...secretReferencesInValue(entry.value));
+        appendAll(references, secretReferencesInValue(entry.value));
     });
   return references;
 };
@@ -287,8 +288,8 @@ const validateBrowserScenario = (
   validateRequestSteps(scenario, context);
   validateSavedValues(scenario, context);
   const references = scenario.actions.flatMap(actionSecretReferences);
-  references.push(...destinationSecretReferences(scenario.start_url));
-  references.push(...validateStorage(scenario));
+  appendAll(references, destinationSecretReferences(scenario.start_url));
+  appendAll(references, validateStorage(scenario));
   validateSecretReferences(scenario, references, context);
 };
 

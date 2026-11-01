@@ -2,6 +2,7 @@ import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 /** Smallest phase budget. Zero is not a deadline, and Node's timer needs a positive delay. */
 export const MCP_PHASE_BUDGET_FLOOR_MS = 1;
@@ -135,7 +136,7 @@ export const parseMcpStartupBudgets = (
   const budgets = new Map<keyof McpStartupBudgets, McpPhaseBudget>();
   for (const phase of PHASES) {
     const parsed = parsePhaseBudget(phase, environment[phase.setting]);
-    if (!parsed.ok) issues.push(...parsed.error.settings);
+    if (!parsed.ok) appendAll(issues, parsed.error.settings);
     else budgets.set(phase.key, parsed.value);
   }
   if (issues.length > 0)

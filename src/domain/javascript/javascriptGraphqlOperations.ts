@@ -17,6 +17,7 @@ import type {
   JavaScriptRpcEndpoint,
   JavaScriptRpcScan,
 } from "./javascriptRpcEndpoint.js";
+import { appendAll } from "../arrayAppend.js";
 
 /**
  * Find source-body string values owned by a GraphQL Source-shaped literal.
@@ -59,7 +60,7 @@ const graphqlSourceBodyLiterals = (
     const current = pending.pop();
     if (current === undefined || visited.has(current)) continue;
     visited.add(current);
-    bodies.push(...bodyStrings(current));
+    appendAll(bodies, bodyStrings(current));
     for (const property of current.properties) {
       if (t.isSpreadElement(property)) {
         const spread = unwrapJavaScriptExpression(property.argument).node;

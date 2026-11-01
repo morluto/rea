@@ -70,6 +70,7 @@ import {
   registrationWriteBlocker,
   type SetupClient,
 } from "./SupportedClients.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 export class ClientConfigurationCleanupRollbackFailure extends RegularFileCleanupFailure<string> {
   constructor(
@@ -728,8 +729,9 @@ const registrationOwnershipBlocker = (
       value: parsed.legacyServers[name],
       paths: [client.configPath],
     });
-    entries.push(
-      ...shadowedClientServers(original, parsed, name).legacyServers.map(
+    appendAll(
+      entries,
+      shadowedClientServers(original, parsed, name).legacyServers.map(
         (value) => ({ value, paths: [client.configPath] }),
       ),
     );

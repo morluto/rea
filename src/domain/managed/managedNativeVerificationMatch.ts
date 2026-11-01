@@ -8,6 +8,7 @@ import type {
   NativeSymbol,
   PinvokeVerification,
 } from "./managedNativeVerificationSchemas.js";
+import { appendAll } from "../arrayAppend.js";
 
 type PinvokeImport = ManagedNativeBoundaryInspection["pinvoke_imports"][number];
 type VerifiedPinvoke = {
@@ -35,7 +36,7 @@ export const collectNativeSymbols = (
       unsupported += 1;
     } else {
       accepted += 1;
-      symbols.push(...observation.symbols);
+      appendAll(symbols, observation.symbols);
     }
   }
   return { symbols, accepted, unsupported, moduleFormatsByEvidenceId };

@@ -32,6 +32,7 @@ import {
   XHTML_NAMESPACE,
 } from "./CdpCaptureDomNamespaces.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 export type CapturedResource = Omit<
   WebPageInspection["resources"][number],
@@ -403,8 +404,8 @@ export function* captureDom(
           pendingMetadata,
           completeness,
         );
-        urls.push(...metadata.urls);
-        agentHints.push(...metadata.agentHints);
+        appendAll(urls, metadata.urls);
+        appendAll(agentHints, metadata.agentHints);
         excludedUrls += metadata.excludedUrls;
         unresolvedSvgNodes += metadata.unresolvedSvgNodes;
         pendingMetadata.length = 0;
@@ -412,8 +413,8 @@ export function* captureDom(
     }
     if (pendingMetadata.length > 0) {
       const metadata = yield* captureDomMetadata(pendingMetadata, completeness);
-      urls.push(...metadata.urls);
-      agentHints.push(...metadata.agentHints);
+      appendAll(urls, metadata.urls);
+      appendAll(agentHints, metadata.agentHints);
       excludedUrls += metadata.excludedUrls;
       unresolvedSvgNodes += metadata.unresolvedSvgNodes;
       pendingMetadata.length = 0;
@@ -499,7 +500,7 @@ function* captureDomMetadata(
         );
       }
     }
-    agentHints.push(...metadata.agentHints);
+    appendAll(agentHints, metadata.agentHints);
   }
   return { urls, agentHints, unresolvedSvgNodes, excludedUrls };
 }

@@ -71,6 +71,7 @@ import {
   type SlugSource,
   type UpdateEvidence,
 } from "./environmentStateWriteChanges.js";
+import { appendAll } from "../arrayAppend.js";
 
 /** What explaining a create reads: the observed entity, the call that wrote it and the entities it joined. */
 export interface CreateEvidence {
@@ -604,12 +605,12 @@ export const explainUpdate = (
       defaults.push({ member: field, value: evidence.after[field]! });
     else unexplained.push(field);
   }
-  rules.push(...pairedStamps(evidence, rules));
+  appendAll(rules, pairedStamps(evidence, rules));
   // A member a reference reads names an entity, which any held one may be.
   for (const rule of rules)
     if (rule.rule === "reference") echoed.add(rule.member);
   // Serving renews one UUID alike in every field, so the call must have.
-  unexplained.push(...unexplainedRenewals(rules, evidence));
+  appendAll(unexplained, unexplainedRenewals(rules, evidence));
   const pinned = unreferenced(rules, pinnedEchoes(evidence.after, body));
   const shaped = bodyOf(
     Object.fromEntries(

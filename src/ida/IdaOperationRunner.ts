@@ -59,6 +59,7 @@ import {
   type IdaDisassembly,
   type IdaFunction,
 } from "./IdaProtocolValues.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 /** One operation's raw source observations, retained alongside normalized results. */
 export interface IdaRawObservation {
@@ -160,7 +161,10 @@ export class IdaOperationRunner {
             )[0];
       if (value === undefined)
         throw new AnalysisProtocolError("IDA MCP omitted its function page.");
-      result.push(...value.data.map((fn) => idaFunctionSchema.parse(fn)));
+      appendAll(
+        result,
+        value.data.map((fn) => idaFunctionSchema.parse(fn)),
+      );
       offset = nextPageOffset(value.next_offset, current);
     }
     return result;
@@ -322,7 +326,7 @@ export class IdaOperationRunner {
             (tool, args) => this.call(tool, args),
             fn.address,
           );
-    this.limitations.push(...graph.limitations);
+    appendAll(this.limitations, graph.limitations);
     for (const callee of graph.callees)
       if (!result.has(callee.address))
         result.set(callee.address, identity(callee));
@@ -362,8 +366,9 @@ export class IdaOperationRunner {
           throw new AnalysisProtocolError(
             `${this.protocol === "native" ? "Native IDA" : "IDA"} string search failed: ${page.error}`,
           );
-        result.push(
-          ...page.matches.map((s) => ({ address: s.addr, value: s.string })),
+        appendAll(
+          result,
+          page.matches.map((s) => ({ address: s.addr, value: s.string })),
         );
         offset = nextOffset(page.cursor, current);
       }
@@ -399,7 +404,7 @@ export class IdaOperationRunner {
         );
       this.verifyAssembly(fn, page.asm);
       if (result === undefined) result = page.asm;
-      else result.lines.push(...page.asm.lines);
+      else appendAll(result.lines, page.asm.lines);
       offset = nextOffset(page.cursor, offset);
     }
     if (result === undefined)

@@ -10,6 +10,7 @@ import type {
   DoctorHost,
   DoctorProviderInspection,
 } from "./Doctor.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 /** Ordered environment diagnostics consumed by the Doctor report assembler. */
 export interface DoctorDiagnostics {
@@ -30,13 +31,13 @@ export const collectDoctorDiagnostics = async (
   checks.push(hopperCheck(host, hopperPath));
   const hopperTimeoutCheck = optionalHopperStartupTimeoutCheck(host);
   if (hopperTimeoutCheck !== undefined) checks.push(hopperTimeoutCheck);
-  checks.push(...runtimeConfigurationChecks(host));
+  appendAll(checks, runtimeConfigurationChecks(host));
   const hopperVersionCheck = await optionalHopperVersionCheck(host, hopperPath);
   if (hopperVersionCheck !== undefined) checks.push(hopperVersionCheck);
 
   const providerInspections = await host.providerInspections?.();
   if (providerInspections !== undefined)
-    checks.push(...providerInspections.flatMap(providerDoctorChecks));
+    appendAll(checks, providerInspections.flatMap(providerDoctorChecks));
 
   const ilspyCheck = await optionalIlspyCheck(host);
   if (ilspyCheck !== undefined) checks.push(ilspyCheck);

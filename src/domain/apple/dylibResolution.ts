@@ -21,6 +21,7 @@ import {
   isLazyLoadCommand,
   type TracedRootSlice,
 } from "./dylibResolutionFindings.js";
+import { appendAll } from "../arrayAppend.js";
 
 /**
  * Normalized path below the analyzed root: nonempty segments joined by single
@@ -654,7 +655,7 @@ const traceProcess = async (
         context.byInstallName.set(slice.install_name, image);
       created.push(image);
     }
-    pending.push(...created.reverse());
+    appendAll(pending, created.reverse());
   }
   return edges;
 };
@@ -790,8 +791,9 @@ export const traceDylibLoading = async (
         environmentRoots.add(root);
       roots.push({ image: root, architecture: slice.architecture });
       rootSlices.push({ image: root, slice });
-      edges.push(
-        ...(await traceProcess(
+      appendAll(
+        edges,
+        await traceProcess(
           {
             view,
             root,
@@ -813,7 +815,7 @@ export const traceDylibLoading = async (
           },
           slice,
           request.signal,
-        )),
+        ),
       );
     }
   }

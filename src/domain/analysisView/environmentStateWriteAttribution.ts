@@ -45,6 +45,14 @@ export interface WriteHistory {
   readonly unmodelledAt: readonly number[];
 }
 
+/** A target's last check or pending write, whichever ran later. */
+const lastRecorded = (history: WriteHistory, key: string): number => {
+  let latest = history.checked.get(key) ?? -1;
+  for (const at of history.pending.get(key)?.at.values() ?? [])
+    latest = Math.max(latest, at);
+  return latest;
+};
+
 /** The tools a failed read's difference an unmodelled write may explain: it came after the tool's call on a target where its effect survives, and after every differing target's last check and pending writes. */
 export const interference = (
   history: WriteHistory,
@@ -58,12 +66,7 @@ export const interference = (
   const after = (since: number) =>
     history.unmodelledAt.some((index) => index > since);
   const explained = (read.differing ?? []).every((key) =>
-    after(
-      Math.max(
-        history.checked.get(key) ?? -1,
-        ...(history.pending.get(key)?.at.values() ?? []),
-      ),
-    ),
+    after(lastRecorded(history, key)),
   );
   return (tool) =>
     explained &&

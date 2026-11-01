@@ -40,6 +40,7 @@ import {
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { prepareWakaruExecution } from "./WakaruExecution.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
+import { appendAll } from "../../domain/arrayAppend.js";
 
 const OPERATION = "recover_javascript_sources";
 
@@ -196,7 +197,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       if (cleanupOwner !== undefined)
         residuals.push(cleanupOwner.launch.ownership?.runId ?? "wakaru-worker");
       const filesPending = this.#resources.hasPending;
-      if (filesPending) residuals.push(...this.#resources.cleanupResources);
+      if (filesPending) appendAll(residuals, this.#resources.cleanupResources);
       if (root !== undefined && cleanupOwner === undefined && !filesPending) {
         const failedRoot = root;
         try {

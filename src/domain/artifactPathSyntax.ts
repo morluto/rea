@@ -69,6 +69,7 @@ export const percentDecodeUrlPath = (value: string): string | null => {
       continue;
     }
     const character = String.fromCodePoint(value.codePointAt(index) ?? 0);
+    // oxlint-disable-next-line rea/no-bulk-append-spread -- one code point encodes to at most four UTF-8 bytes.
     bytes.push(...UTF8_ENCODER.encode(character));
     index += character.length;
   }

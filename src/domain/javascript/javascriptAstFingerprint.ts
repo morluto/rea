@@ -18,6 +18,7 @@ import {
   resolveSemanticBindingState,
   type JavaScriptBindingIndex,
 } from "./javascriptSemanticState.js";
+import { appendAll } from "../arrayAppend.js";
 
 /** Static CommonJS export names. */
 export interface StaticExports {
@@ -31,7 +32,7 @@ export const fingerprintJavaScriptAst = (node: t.Node): string => {
   const tokens: string[] = [];
   traverseJavaScriptAst(node, {
     enter: (current) => {
-      tokens.push(...semanticTokens(current));
+      appendAll(tokens, semanticTokens(current));
       return undefined;
     },
   });

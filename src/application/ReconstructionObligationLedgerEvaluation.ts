@@ -37,6 +37,7 @@ import {
 } from "./ReconstructionObligationOriginalCases.js";
 import { obligationLedgerEvidenceLinks } from "./ReconstructionObligationLedgerProjection.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 type Diagnostic = ReconstructionObligation["diagnostics"][number];
 type Binding = NonNullable<ReconstructionObligation["binding"]>;
@@ -210,13 +211,15 @@ const evaluateObligation = (
     );
   if (binding !== null)
     evaluateBinding(candidate, binding, context, diagnostics);
-  diagnostics.push(
-    ...originalCaseDiagnostics(candidate, originalCases, context.evidence),
+  appendAll(
+    diagnostics,
+    originalCaseDiagnostics(candidate, originalCases, context.evidence),
   );
   evaluateAuthority(candidate, originalCases, context, diagnostics);
   evaluateDisposition(candidate, diagnostics);
-  diagnostics.push(
-    ...contradictionDiagnostics(
+  appendAll(
+    diagnostics,
+    contradictionDiagnostics(
       candidate.obligation_id,
       context.contradictions,
       context.evidence,
