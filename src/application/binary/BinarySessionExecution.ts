@@ -76,6 +76,13 @@ export const prepareSessionExecution = (
         active.route.binding?.identity.id ?? active.route.identity.id,
         operation,
         capability?.reason ?? "operation is not declared by this provider",
+        capability === undefined
+          ? {
+              userMessage: `The selected provider does not declare ${operation}.`,
+              remediationAction:
+                'In MCP, inspect binary_session with detail: "complete" for candidate capabilities then explicitly call open_binary with the same target and a chosen provider_id. In CLI, use rea providers and rea capabilities, then select a provider with --provider. Review session effects before switching; candidate availability does not guarantee support for this target.',
+            }
+          : undefined,
       ),
     );
   }

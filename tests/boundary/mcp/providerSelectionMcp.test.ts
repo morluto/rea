@@ -193,6 +193,24 @@ describe("provider selection over MCP", () => {
     });
     expect(starts).toEqual(["beta"]);
 
+    const unsupported = await mcp.callTool({
+      name: "read_bytes",
+      arguments: { address: "0x1000", length: 4 },
+    });
+    expect(unsupported.isError).toBe(true);
+    expect(structured(unsupported)).toMatchObject({
+      error: {
+        code: "capability_unavailable",
+        details: { provider_id: "beta", operation: "read_bytes" },
+        remediation: {
+          action: expect.stringMatching(
+            /binary_session.*complete.*open_binary.*provider_id/u,
+          ),
+        },
+      },
+    });
+    expect(starts).toEqual(["beta"]);
+
     const status = structured(
       await mcp.callTool({
         name: "binary_session",
