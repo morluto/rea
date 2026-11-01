@@ -236,7 +236,10 @@ const readValidatedSourceFacts = (
       );
       functionSources.push({
         evidence_id: source.evidence_id,
-        callCoverageBlockers: callCoverage.blockers,
+        callCoverageBlockers: [
+          ...callCoverage.blockers,
+          ...callCoverage.discoveryLimitations,
+        ],
         callCoverageDiagnostics: callCoverage.diagnostics,
       });
     } else {

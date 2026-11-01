@@ -129,7 +129,11 @@ side declares a required facet unavailable. An empty legacy facet without a
 coverage declaration is also unknown. A producer that actually observed an
 empty facet can declare it available so observed absence remains comparable.
 Call comparison additionally retains the Evidence relationship coverage
-checks. Ghidra and Hopper declare their observed dossier facets and complete
+checks. Its call status compares the provider-observed sets; discovery
+limitations stay on that dimension even when the observed sets match or differ.
+A structural reconstruction claim about calls remains unknown unless both
+directions have established static direct-call discovery. An independent
+observed change in another dimension can still fail an overall claim. Ghidra and Hopper declare their observed dossier facets and complete
 provider-observed caller/callee sets, including empty sets. Missing decompiler
 output remains unavailable; complete call coverage does not claim every runtime
 target. When Ghidra's decompiler fails on one function, its dossier is still

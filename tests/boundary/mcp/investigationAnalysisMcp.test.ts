@@ -656,7 +656,27 @@ const close = async (
 it("keeps an aggregate function reconstruction unknown while a constituent dimension is unresolved", async () => {
   const { session, server, client } = await connected();
   try {
-    const left = FUNCTION_COMPARISON_EXAMPLE.left;
+    const fixture = FUNCTION_COMPARISON_EXAMPLE.left;
+    const discovery = {
+      callers: { status: "complete" },
+      callees: { status: "complete" },
+    } as const;
+    const left = createEvidence(
+      {
+        path: fixture.subject!.local_path,
+        sha256: fixture.subject!.digest.sha256,
+        format: fixture.subject!.format,
+      },
+      fixture.provider,
+      {
+        operation: fixture.operation,
+        parameters: fixture.parameters,
+        result: fixture.normalized_result,
+        confidence: fixture.confidence,
+        authority: fixture.authority,
+        relationshipCoverage: { status: "complete", discovery },
+      },
+    );
     const right = createEvidence(
       {
         path: "/tmp/rebuilt-function",
@@ -670,7 +690,7 @@ it("keeps an aggregate function reconstruction unknown while a constituent dimen
         result: left.normalized_result,
         confidence: left.confidence,
         authority: left.authority,
-        relationshipCoverage: { status: "complete" },
+        relationshipCoverage: { status: "complete", discovery },
       },
     );
     const compared = await client.callTool({

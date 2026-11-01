@@ -96,6 +96,8 @@ export interface FunctionCallCoverageAssessment {
   readonly unresolvedCallCaveats: readonly string[];
   /** Provider caveats that remain relevant even with complete coverage. */
   readonly diagnostics: readonly string[];
+  /** Discovery limits do not invalidate comparisons of the observed sets. */
+  readonly discoveryLimitations: readonly string[];
 }
 
 /** Keep observed-set blockers separate from descriptive provider caveats. */
@@ -108,6 +110,21 @@ export const assessFunctionCallCoverage = (
       ({ address, reason }) => `Unresolved call at ${address}: ${reason}`,
     ),
   );
+  const missingDiscovery: string[] = [];
+  const discoveryLimitations: string[] = [];
+  for (const direction of ["callers", "callees"] as const) {
+    const discovery = coverage?.discovery?.[direction];
+    if (discovery?.status === "complete") continue;
+    if (discovery?.reason === undefined) missingDiscovery.push(direction);
+    else
+      discoveryLimitations.push(
+        `Static direct-call discovery for ${direction} is ${discovery.status}: ${discovery.reason}`,
+      );
+  }
+  if (missingDiscovery.length > 0)
+    discoveryLimitations.push(
+      `Static direct-call discovery is not established for ${missingDiscovery.join(" and ")}.`,
+    );
   return {
     blockers: uniqueSorted([
       ...relationshipCoverageLimitations(coverage),
@@ -115,5 +132,6 @@ export const assessFunctionCallCoverage = (
     ]),
     unresolvedCallCaveats,
     diagnostics: uniqueSorted(coverage?.diagnostics ?? []),
+    discoveryLimitations,
   };
 };
