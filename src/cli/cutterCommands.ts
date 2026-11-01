@@ -2,8 +2,7 @@ import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 
-import { CutterBridgeClient } from "../cutter/CutterBridgeClient.js";
-import { CutterBridgeService } from "../cutter/CutterBridgeService.js";
+import { createCutterBridgeService } from "../composition/cutter.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -17,8 +16,7 @@ export const registerCutterCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  const createCutter = () =>
-    new CutterBridgeService(new CutterBridgeClient(environment));
+  const createCutter = () => createCutterBridgeService(environment);
 
   cli.command(CLI_COMMANDS.listCutterSessions, {
     description:

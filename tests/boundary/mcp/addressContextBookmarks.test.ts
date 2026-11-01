@@ -11,8 +11,10 @@ import {
 } from "../../../src/application/AnalysisContextQueries.js";
 import {
   AnalysisCapabilityUnavailableError,
+  AnalysisCancelledError,
   AnalysisProtocolError,
 } from "../../../src/domain/analysisErrorCore.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 
@@ -93,7 +95,79 @@ it.each([
   },
 );
 
-it.each(["containing", "outside", "unknown", "retryable", "provider"] as const)(
+it.each([false, true])(
+  "reports each unresolved facet cleanup over MCP (cancellation=%s)",
+  async (cancelled) => {
+    const identity = { id: "fixture", name: "Fixture", version: "1" };
+    const directory = await createTestTempDirectory("rea-context-cleanup-");
+    const target = join(directory, "fixture.com");
+    await writeFile(target, Buffer.from([0xb8, 0x00, 0x4c, 0xcd, 0x21]));
+    const session = createTestBinarySession(() => ({
+      execute: async (operation) => {
+        if (cancelled && operation === "resolve_containing_procedure")
+          return err(new AnalysisCancelledError(operation));
+        if (operation === "comment" || operation === "inline_comment")
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              identity.id,
+              operation,
+              "controlled failure",
+              {
+                cleanup: {
+                  reason: "controlled cleanup failure",
+                  resources: [operation],
+                },
+              },
+            ),
+          );
+        return ok(createAnalysisExecution(null, identity));
+      },
+      close: async () => ok(null),
+    }));
+    const server = createServer({ kind: "session", session });
+    const client = new Client({ name: "context-cleanup", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      expect(
+        (
+          await client.callTool({
+            name: "open_binary",
+            arguments: { path: target, format: "dos-com" },
+          })
+        ).isError,
+      ).not.toBe(true);
+      const response = await client.callTool({
+        name: "inspect_address_context",
+        arguments: { address: "0x401001", document: "fixture" },
+      });
+      expect(response.isError).toBe(true);
+      expect(parseMcpToolError(response)).toMatchObject({
+        error: {
+          code: "cleanup_incomplete",
+          details: {
+            cleanup: "incomplete",
+            resources: expect.arrayContaining(["comment", "inline_comment"]),
+          },
+        },
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  },
+);
+
+it.each([
+  "containing",
+  "outside",
+  "unknown",
+  "retryable",
+  "provider",
+  "general",
+] as const)(
   "offers function-comment recovery only when containment is known: %s",
   async (containment) => {
     const identity = { id: "fixture", name: "Fixture", version: "1" };
@@ -122,6 +196,9 @@ it.each(["containing", "outside", "unknown", "retryable", "provider"] as const)(
                 ...(containment === "provider" && operation !== "list_bookmarks"
                   ? { remediationAction: "Provider-specific recovery." }
                   : {}),
+                ...(containment === "general"
+                  ? { userMessage: "General provider discovery guidance." }
+                  : {}),
               },
             ),
           );
@@ -129,7 +206,8 @@ it.each(["containing", "outside", "unknown", "retryable", "provider"] as const)(
           operation === "resolve_containing_procedure"
             ? containment === "containing" ||
               containment === "retryable" ||
-              containment === "provider"
+              containment === "provider" ||
+              containment === "general"
               ? {
                   query_address: "0x401001",
                   found: true,
@@ -187,7 +265,7 @@ it.each(["containing", "outside", "unknown", "retryable", "provider"] as const)(
           expect(facet.remediation).toBe("Provider-specific recovery.");
         } else if (containment === "retryable") {
           expect(facet.remediation).toContain(name);
-        } else if (containment === "containing") {
+        } else if (containment === "containing" || containment === "general") {
           expect(facet.remediation).toBe(
             ADDRESS_CONTEXT_FUNCTION_COMMENT_RECOVERY,
           );

@@ -9,9 +9,9 @@ import { GhidraProvider } from "./GhidraProvider.js";
 // Digests commit to the current shared policy, including the instruction status
 // revision that prevents reuse of snapshots with the previous ambiguous result.
 const RAW_DIGESTS = {
-  "6502": "8e33776d1cc5c5d77d32923d5978c05ec2d989d00920dd458cc2dafb4c9c0cad",
+  "6502": "bf79f425a94feb3d4150b6fe31f446dfb299af974c123cf3d4eaebdfe02319d6",
   "x86-disabled-analyzer":
-    "d17bddc8ac110c891d30fb989fc7906df421bd9bea5df4aac05a950f50c7bdaf",
+    "a89f116ac233a91a8a7fae5e7a24cc72126ee1c33219c79bb20e95cc440b2fae",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
@@ -44,6 +44,8 @@ describe("raw-binary analysis profile digest", () => {
       language_id: "6502:LE:16:default",
       language_selection: "caller-supplied-v1",
       load_image_evidence: "independent-raw-mapping-context-v4",
+      load_image_observations:
+        "source-mappings-entry-context-relocation-symbol-v3",
       instruction_status: "unlisted-address-without-decode-v1",
       analyzer_preset: "ghidra-default",
     });

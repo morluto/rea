@@ -2,10 +2,13 @@ import { objcClassSymbol } from "../objcClassSymbol.js";
 import { z } from "zod";
 import {
   BINARY_ARCHITECTURES,
-  isMachOFormat,
   type BinaryTarget,
 } from "../binaryTargetTypes.js";
 import { providerSchema } from "../evidence.js";
+import {
+  targetApplicabilityRefusal,
+  type TargetApplicability,
+} from "../targetApplicability.js";
 import { isSwiftSymbolName } from "../swiftSymbolClassification.js";
 import { nativeCallReferenceSchema } from "./nativeCallReference.js";
 import { machoTargetSelectionSchema } from "../apple/machoTargetSelection.js";
@@ -20,8 +23,15 @@ import {
 } from "../unicodeCodePointOrder.js";
 
 /** Targets admitted to the Apple byte reader; the reader validates slice support. */
+export const APPLE_DISPATCH_TARGET_APPLICABILITY: TargetApplicability = {
+  kinds: ["executable"],
+  formats: ["mach-o", "mach-o-universal"],
+  reason:
+    "Binary Apple metadata requires Mach-O; other providers can report symbol-only metadata",
+};
 export const isAppleDispatchMetadataTarget = (target: BinaryTarget): boolean =>
-  target.kind === "executable" && isMachOFormat(target.format);
+  targetApplicabilityRefusal(APPLE_DISPATCH_TARGET_APPLICABILITY, target) ===
+  undefined;
 
 /** Objective-C method type. */
 export const objcMethodTypeSchema = z.enum([

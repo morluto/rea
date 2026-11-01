@@ -42,10 +42,8 @@ import {
   createIdaMcpConnection,
   type IdaMcpConnection,
 } from "./IdaMcpConnection.js";
-import {
-  idaCapabilities,
-  IDA_PROVIDER_IDENTITY,
-} from "./IdaProviderCapabilities.js";
+import { idaCapabilities } from "./IdaProviderCapabilities.js";
+import { IDA_PROVIDER_IDENTITY } from "./IdaProviderMetadata.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { inspectIdaWorkspaceReadiness } from "./IdaWorkspaceReadiness.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
