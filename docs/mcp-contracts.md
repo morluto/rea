@@ -1059,6 +1059,16 @@ Those raw observations are not recorded in the Evidence bundle. If the SDK
 suppresses the error reply after client cancellation, Evidence tools cannot
 recover them. An empty bundle does not prove that no partial work or side
 effect occurred; output receipts and cleanup observations remain distinct.
+If an authenticated Evidence record exceeds the investigation's retention
+allowance, the refusal carries it inline as
+`details.partial_observation: {kind: "unretained-evidence", evidence: ...}`
+when it fits the response budget. Its ID identifies the supplied content; it
+is not a retained-session reference. If authentication itself failed or lacked
+headroom, no authenticated Evidence is claimed. When the completed record does
+not fit the MCP response, the original retention error carries
+`details.partial_observation_omitted` with the response constraint if the
+remaining error fits; the observation remains unretained. Otherwise the usual
+oversized-error recovery applies.
 The broader retention decision is tracked in
 [#4276](https://github.com/morluto/rea/issues/4276).
 

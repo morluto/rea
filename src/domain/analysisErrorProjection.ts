@@ -56,16 +56,27 @@ import {
 /** Project expected failures into exhaustive, secret-safe caller fields. */
 export const projectAnalysisError = (
   error: AnalysisError,
-): AnalysisErrorProjection => projectError(error, true);
+): AnalysisErrorProjection =>
+  projectError(error, { capturedOutput: true, partialObservation: true });
 
 /** Cleanup history references output retained by its enclosing error owner. */
 export const projectAnalysisErrorWithoutCapturedOutput = (
   error: AnalysisError,
-): AnalysisErrorProjection => projectError(error, false);
+): AnalysisErrorProjection =>
+  projectError(error, { capturedOutput: false, partialObservation: true });
+
+/** Bounded fallback when the completed observation itself cannot be delivered. */
+export const projectAnalysisErrorWithoutPartialObservation = (
+  error: AnalysisError,
+): AnalysisErrorProjection =>
+  projectError(error, { capturedOutput: true, partialObservation: false });
 
 const projectError = (
   error: AnalysisError,
-  includeCapturedOutput: boolean,
+  options: {
+    readonly capturedOutput: boolean;
+    readonly partialObservation: boolean;
+  },
 ): AnalysisErrorProjection => {
   const composed = error;
   error = resolvedAnalysisError(error);
@@ -122,14 +133,14 @@ const projectError = (
             primaryDetails?.execution_failure ?? underlyingCode,
         }
       : {}),
-    ...(!includeCapturedOutput || capturedOutput === undefined
+    ...(!options.capturedOutput || capturedOutput === undefined
       ? {}
       : {
           captured_output: {
             ...capturedOutput,
           },
         }),
-    ...(partialObservation === undefined
+    ...(!options.partialObservation || partialObservation === undefined
       ? {}
       : {
           partial_observation: isImmutableJsonSnapshot(partialObservation)

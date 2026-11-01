@@ -12,6 +12,7 @@ import {
   type ResidualUnknown,
 } from "../../domain/residualUnknown.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";
+import { isImmutableJsonSnapshot } from "../../domain/immutableJson.js";
 
 const provider = { id: "fixture", name: "Retention fixture", version: "1" };
 const observe = (index: number, path = "/fixture") =>
@@ -56,6 +57,39 @@ const recordCost = (evidence: Evidence): number => {
   if (!result.ok) throw result.error;
   return records.statistics().retainedRepresentationBytes;
 };
+
+it("returns only authenticated Evidence when a completed record exceeds retention capacity", () => {
+  const evidence = observe(7);
+  const records = new InvestigationRecords({ maximumRepresentationBytes: 0 });
+  const refused = records.recordEvidence(evidence);
+  if (refused.ok) throw new Error("Expected retention refusal");
+  expect(refused.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(refused.error.partialObservation).toEqual({
+    kind: "unretained-evidence",
+    evidence,
+  });
+  expect(isImmutableJsonSnapshot(refused.error.partialObservation)).toBe(true);
+  expect(records.hasEvidence(evidence.evidence_id)).toBe(false);
+  const invalid = records.recordEvidence({
+    ...evidence,
+    normalized_result: "tampered",
+  });
+  if (invalid.ok) throw new Error("Expected integrity refusal");
+  expect(invalid.error._tag).toBe("EvidenceIntegrityError");
+  expect(invalid.error.partialObservation).toBeUndefined();
+  const mutable = createEvidence(undefined, provider, {
+    operation: "health",
+    parameters: {},
+    result: { value: 1 },
+  });
+  const noHeadroom = new InvestigationRecords({
+    availableAuthenticationBytes: () => 0,
+  }).recordEvidence(mutable);
+  if (noHeadroom.ok)
+    throw new Error("Expected authentication headroom refusal");
+  expect(noHeadroom.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(noHeadroom.error.partialObservation).toBeUndefined();
+});
 
 it("admits exact capacity, rejects cumulative growth atomically, and releases accounting on clear", () => {
   const first = observe(1);

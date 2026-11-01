@@ -115,6 +115,15 @@ it.each(["compact", "full"] as const)(
       expect(direct.isError).toBe(true);
       const expected = parseMcpToolError(direct).error;
       expect(expected.code).toBe("resource_constraint");
+      expect(expected.details).toMatchObject({
+        partial_observation: {
+          kind: "unretained-evidence",
+          evidence: {
+            operation: "resolve_containing_procedure",
+            normalized_result: { found: true, query_address: "0x100" },
+          },
+        },
+      });
       expect(context.name).toEqual({ state: "available", value: "entry" });
       expect(context.procedure).toEqual({
         state: "unavailable",

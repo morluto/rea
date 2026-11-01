@@ -180,15 +180,50 @@ export class ToolResultDelivery {
     projected: AnalysisErrorProjection,
     targetContent: boolean,
   ): CallToolResult {
-    const structuredContent = { error: projected };
+    let structuredContent = { error: projected };
     // Errors reach the wire as text only; the structured copy is a private
     // carrier the transport removes after its own budget check.
-    const encoded = encodeToolResult(
+    let encoded = encodeToolResult(
       structuredContent,
       this.resultBudgetBytes,
       "error-text",
       targetContent,
     );
+    const partial = projected.details?.partial_observation;
+    if (
+      !encoded.ok &&
+      typeof partial === "object" &&
+      partial !== null &&
+      !Array.isArray(partial) &&
+      partial.kind === "unretained-evidence"
+    ) {
+      const { partial_observation: _partial, ...details } = projected.details!;
+      const compact = {
+        ...projected,
+        remediation: {
+          action: `${projected.remediation.action} The completed observation was not retained and could not fit within MCP delivery limits.`,
+        },
+        details: {
+          ...details,
+          partial_observation_omitted: {
+            reason: "mcp-response-limit",
+            constraint: encoded.constraint,
+            response_bytes_at_least: encoded.bytesAtLeast,
+          },
+        },
+      };
+      const compactContent = { error: compact };
+      const compactEncoded = encodeToolResult(
+        compactContent,
+        this.resultBudgetBytes,
+        "error-text",
+        targetContent,
+      );
+      if (compactEncoded.ok) {
+        structuredContent = compactContent;
+        encoded = compactEncoded;
+      }
+    }
     // The transport retains an oversized projected error before replacing it
     // with a recoverable delivery constraint, using this same budget.
     return {

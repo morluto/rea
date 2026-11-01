@@ -13,6 +13,7 @@ import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
+import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import { safeParseImmutableEvidence } from "../../domain/evidenceValidation.js";
 import {
   createResidualUnknown,
@@ -107,7 +108,17 @@ export class EvidenceLedger {
       "record_evidence",
       new Map([[evidence.evidence_id, evidence]]),
     );
-    if (!admitted.ok) return admitted;
+    // Authentication already produced an immutable record; admission did not
+    // commit it, so expose it without claiming a retained-session reference.
+    if (!admitted.ok)
+      return err(
+        admitted.error.retainPartialObservation(
+          freezeJsonSnapshot({
+            kind: "unretained-evidence" as const,
+            evidence,
+          }),
+        ),
+      );
     this.#records.set(evidence.evidence_id, evidence);
     this.#commitAccounting(admitted.value);
     return ok("added");
