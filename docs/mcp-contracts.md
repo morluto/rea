@@ -742,6 +742,19 @@ requirements. Compare the union of group names with `tools/list` when checking
 that a client received the full catalog. An operation absent from all groups is
 missing from the complete inventory; it is not an implicit unavailable entry.
 
+Availability also reflects the active provider client's dispatched requests. A
+refusal or provider failure observed for an operation keeps that operation
+unavailable until a request for it dispatched later succeeds. A provider adapter
+or process failure also marks that provider's other declared-available
+operations unavailable until any request to that provider dispatched later
+succeeds; their remediation states that the status was inferred rather than
+observed for them. Recovery is not proof that each operation works, and failures
+observed on other operations or providers remain. Outcomes are ordered by
+dispatch to the provider client rather than reply completion, so a late reply
+from an older request does not override a newer outcome. Request deadlines and
+cancellations neither mark nor clear availability. A new provider client starts
+without these outcomes.
+
 `detail` selects the projection and the result echoes it. The default
 `summary` keeps open state, target identity, the binding, current-route
 `capabilities`, run, activity and health status, and each provider candidate's
