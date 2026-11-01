@@ -59,7 +59,9 @@ const registerWebMcp = (
       endpoint: z
         .string()
         .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      targetId: discoverWebMcpToolsInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...browserScopeOptions,
@@ -177,7 +179,9 @@ const registerScreenshot = (
       endpoint: z
         .string()
         .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      targetId: captureWebScreenshotInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...browserScopeOptions,

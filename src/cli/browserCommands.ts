@@ -19,6 +19,7 @@ import {
 import { logCliCommand } from "../cliLogging.js";
 import {
   inspectWebPageInputSchema,
+  inspectWebPageWithSourceInputSchema,
   listBrowserTargetsInputSchema,
 } from "../domain/browserObservation.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
@@ -105,7 +106,9 @@ const registerPageInspection = (
       endpoint: z
         .string()
         .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      targetId: inspectWebPageWithSourceInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: browserPageInspectionOptions,
     run: ({ args, options }) =>
@@ -162,7 +165,9 @@ const registerBundleAnalysis = (
       endpoint: z
         .string()
         .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      targetId: analyzeWebBundleInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...browserScopeOptions,
@@ -248,7 +253,9 @@ const registerObservationSession = (
       endpoint: z
         .string()
         .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      targetId: observeWebSessionInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...browserScopeOptions,
