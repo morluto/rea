@@ -23,6 +23,14 @@ type Facet =
       readonly remediation: string;
     };
 
+/** Recovery for a comment inside an observed containing function. */
+export const ADDRESS_CONTEXT_FUNCTION_COMMENT_RECOVERY =
+  'If analyze_function and inspect_analysis_view are available and analyze_function uses the same document, analyze result.procedure.value.procedure.address (summary), then page view {kind:"native", facet:"comments"} using normalized_result.parent_evidence_id. Match result.procedure.value.query_address and kind; respect coverage and limitations.';
+
+/** Fallback when an unavailable capability has no narrower recovery. */
+export const ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY =
+  "Check binary_session for other available operations. This facet remains unknown.";
+
 const parameters = (
   document: string | undefined,
   address?: string,
@@ -123,7 +131,7 @@ export const inspectAddressContext = async (
     : unavailableFacet(resolution?.error, operations[1]);
   const commentRecovery =
     resolution?.ok && resolution.value.found
-      ? 'If analyze_function and inspect_analysis_view are available and analyze_function uses the same document, analyze result.procedure.value.procedure.address (summary), then page view {kind:"native", facet:"comments"} using normalized_result.parent_evidence_id. Match result.procedure.value.query_address and kind; respect coverage and limitations.'
+      ? ADDRESS_CONTEXT_FUNCTION_COMMENT_RECOVERY
       : undefined;
   const comment = facet(results[2], operations[2], commentRecovery);
   const inlineComment = facet(results[3], operations[3], commentRecovery);
@@ -165,7 +173,7 @@ const unavailableFacet = (
     error instanceof AnalysisCapabilityUnavailableError && !error.retryable
       ? (error.remediationAction ??
         capabilityRecovery ??
-        "Check binary_session for other available operations. This facet remains unknown.")
+        ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY)
       : `Call ${operation} directly to inspect provider availability and diagnostics.`,
 });
 

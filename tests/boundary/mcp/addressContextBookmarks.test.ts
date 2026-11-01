@@ -6,6 +6,10 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import {
+  ADDRESS_CONTEXT_FUNCTION_COMMENT_RECOVERY,
+  ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY,
+} from "../../../src/application/AnalysisContextQueries.js";
+import {
   AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
 } from "../../../src/domain/analysisErrorCore.js";
@@ -174,26 +178,26 @@ it.each(["containing", "outside", "unknown", "retryable", "provider"] as const)(
           bookmarks: { remediation: string };
         };
       };
-      for (const facet of [result.comment, result.inline_comment]) {
+      for (const [name, facet] of [
+        ["comment", result.comment],
+        ["inline_comment", result.inline_comment],
+      ] as const) {
         expect(facet.state).toBe("unavailable");
         if (containment === "provider") {
           expect(facet.remediation).toBe("Provider-specific recovery.");
         } else if (containment === "retryable") {
-          expect(facet.remediation).toContain(
-            "directly to inspect provider availability",
-          );
+          expect(facet.remediation).toContain(name);
         } else if (containment === "containing") {
-          expect(facet.remediation).toContain("uses the same document");
-          expect(facet.remediation).toContain(
-            "result.procedure.value.query_address",
+          expect(facet.remediation).toBe(
+            ADDRESS_CONTEXT_FUNCTION_COMMENT_RECOVERY,
           );
-          expect(facet.remediation).toContain('facet:"comments"');
         } else {
-          expect(facet.remediation).not.toContain("analyze_function");
-          expect(facet.remediation).toContain("remains unknown");
+          expect(facet.remediation).toBe(ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY);
         }
       }
-      expect(result.bookmarks.remediation).toContain("remains unknown");
+      expect(result.bookmarks.remediation).toBe(
+        ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY,
+      );
       expect(calls).not.toContain("analyze_function");
     } finally {
       await client.close();

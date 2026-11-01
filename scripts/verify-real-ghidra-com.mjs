@@ -15,6 +15,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import {
+  ADDRESS_CONTEXT_FUNCTION_COMMENT_RECOVERY,
+  ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY,
+} from "../dist/application/AnalysisContextQueries.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { nativeInstructionSchema } from "../dist/domain/native/nativeInstruction.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
@@ -267,11 +271,12 @@ try {
   assert.equal(context.procedure.value.found, true);
   for (const facet of [context.comment, context.inline_comment]) {
     assert.equal(facet.state, "unavailable");
-    assert.match(facet.remediation, /analyze_function/u);
-    assert.match(facet.remediation, /inspect_analysis_view/u);
-    assert.match(facet.remediation, /same document/u);
+    assert.equal(facet.remediation, ADDRESS_CONTEXT_FUNCTION_COMMENT_RECOVERY);
   }
-  assert.match(context.bookmarks.remediation, /remains unknown/u);
+  assert.equal(
+    context.bookmarks.remediation,
+    ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY,
+  );
   const summary = parseEvidence(
     await contextCall("analyze_function", {
       procedure: context.procedure.value.procedure.address,
@@ -305,8 +310,11 @@ try {
   ).result;
   assert.equal(outside.procedure.state, "available");
   assert.equal(outside.procedure.value.found, false);
-  assert.match(outside.comment.remediation, /remains unknown/u);
-  assert.doesNotMatch(outside.comment.remediation, /analyze_function/u);
+  assert.equal(outside.comment.state, "unavailable");
+  assert.equal(
+    outside.comment.remediation,
+    ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY,
+  );
   assert.equal(
     await call("procedure_address", { procedure: changes.name }),
     fixture.entry,
