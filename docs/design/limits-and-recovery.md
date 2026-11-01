@@ -222,20 +222,24 @@ Error copying, attribution, redaction, and delivery must preserve these facts.
 Human-readable remediation explains the same failure; clients should not need
 to parse that sentence to identify an editable setting.
 
-Those runtime fields describe a continuing caller, such as an MCP connection.
-A one-shot invocation, such as a CLI command, has released its provider session
-and exited its runtime before its caller reads the failure, so its adapter
-projects with an explicit `"invocation"` caller lifetime. `details.limit` then
-keeps the setting, effective value, unit, bounds and any `source`,
-`required_value` or `parameter`, and reports `scope: "rea-invocation"`,
-`applies_at: "next_invocation"` and the launch `environment` seed when one
-exists, without `agent_editable` or `rea_restart_required`. A producer keeps
-guidance that holds only while its caller retains the session, such as "the
-Ghidra session remains usable" or a same-session runtime update, in
-`continuingCallerGuidance`; the shared presentation adds it only for a
-continuing caller. The producer's own message and remediation must stay true
-after the session is released. Failures retained inside Evidence keep the
-continuing form, so CLI and MCP Evidence stay identical.
+`scope` and `applies_at` describe a continuing caller, such as an MCP
+connection. A one-shot invocation, such as a CLI command, has released its
+provider session and exited its runtime before its caller reads the failure,
+so its adapter projects with an explicit `"invocation"` caller lifetime.
+`details.limit` then keeps every other field and reports
+`scope: "rea-invocation"`, `applies_at: "next_invocation"` and the launch
+`environment` seed when one exists. `agent_editable: true` still holds, because
+the caller chooses that environment value or per-call `parameter` for the new
+invocation; `rea_restart_required: false` means no running REA process needs a
+restart. A producer keeps guidance that holds only while its caller retains the
+session, such as "the Ghidra session remains usable" or a same-session runtime
+update, in `continuingCallerGuidance`; the shared presentation adds it only for
+a continuing caller. The producer's own message and remediation must stay true
+after the session is released. A composed error records each embedded child
+failure through `childFailureDiagnostics`, which snapshots it at composition
+for both lifetimes when they differ, so cleanup history keeps its state and
+the final projection selects the caller's form. Failures retained inside
+Evidence keep the continuing form, so CLI and MCP Evidence stay identical.
 
 Cache policy is part of enforcement. Successful reusable analysis can survive
 a budget update. Transient Ghidra decompile failures remain uncached so a raised

@@ -66,18 +66,26 @@ it("does not promote ordinary partial evidence into a completed result", () => {
 });
 
 it("keeps a regex deadline's continuing-session guidance when attributing it to a provider operation", () => {
+  const source = regexMatchingDeadlineError("search_procedures");
   const attributed = analysisClientFailureForOperation(
-    regexMatchingDeadlineError("search_procedures"),
+    source,
     "hopper",
     "search_procedures",
   );
-  const continuing = projectAnalysisError(attributed);
-  expect(continuing.message).toContain("The service remains available.");
-  expect(continuing.remediation.action).toContain("retry in the same session");
-  const invocation = projectAnalysisError(attributed, "invocation");
-  expect(invocation.message).not.toContain("remains available");
-  expect(invocation.remediation.action).not.toContain("same session");
-  expect(invocation.details?.limit).toMatchObject({
+  for (const lifetime of ["continuing", "invocation"] as const) {
+    const delivered = projectAnalysisError(attributed, lifetime);
+    const owned = projectAnalysisError(source, lifetime);
+    expect(delivered.message).toBe(owned.message);
+    expect(delivered.remediation).toEqual(owned.remediation);
+    expect(delivered.details?.limit).toEqual(owned.details?.limit);
+  }
+  // The two lifetimes receive different guidance from the same owner.
+  expect(projectAnalysisError(attributed).remediation).not.toEqual(
+    projectAnalysisError(attributed, "invocation").remediation,
+  );
+  expect(
+    projectAnalysisError(attributed, "invocation").details?.limit,
+  ).toMatchObject({
     setting: "regex.matching_deadline_ms",
     scope: "rea-invocation",
     environment: "REA_REGEX_MATCHING_DEADLINE_MS",

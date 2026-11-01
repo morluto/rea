@@ -1,5 +1,12 @@
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  childFailureDiagnostics,
+  projectAnalysisError,
+} from "../domain/analysisErrorProjection.js";
+import {
+  analysisErrorUserMessage,
+  composedCallerGuidance,
+} from "../domain/analysisErrorPresentation.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, type Result } from "../domain/result.js";
@@ -123,18 +130,20 @@ export const managedAnalysisCleanupFailure = (
         : failure,
     );
   }
-  const cleanup = projectAnalysisError(error);
   const failure = new ProviderAdapterError(
     error instanceof ProviderAdapterError ? error.providerId : "rea",
     "close_binary",
     {
       cause: error,
-      remediationAction: cleanup.remediation.action,
-      cleanup: { reason: cleanup.message, resources: error.cleanupResources },
-      diagnostics: {
-        cleanup_error: cleanup,
-        partial_observation: jsonValueSchema.parse(result.value),
+      ...composedCallerGuidance({ remediation: error }),
+      cleanup: {
+        reason: analysisErrorUserMessage(error, "invocation"),
+        resources: error.cleanupResources,
       },
+      ...childFailureDiagnostics(
+        { cleanup_error: { error } },
+        { partial_observation: jsonValueSchema.parse(result.value) },
+      ),
     },
   );
   return err(

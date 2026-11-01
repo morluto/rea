@@ -85,6 +85,13 @@ export interface AnalysisErrorOptions extends ErrorOptions {
   readonly continuingCallerGuidance?:
     | AnalysisContinuingCallerGuidance
     | undefined;
+  /**
+   * The same diagnostics recorded for an invocation caller, present only when
+   * an embedded child failure projects differently for that lifetime.
+   */
+  readonly invocationDiagnostics?:
+    | Readonly<Record<string, JsonValue>>
+    | undefined;
   readonly capturedOutput?: AnalysisCapturedOutput | undefined;
   readonly cleanup?: AnalysisCleanupObservation | undefined;
   readonly partialObservation?: AnalysisPartialObservation | undefined;
@@ -114,6 +121,9 @@ export abstract class AnalysisError extends Error {
   readonly continuingCallerGuidance:
     | Readonly<AnalysisContinuingCallerGuidance>
     | undefined;
+  readonly invocationDiagnostics:
+    | Readonly<Record<string, JsonValue>>
+    | undefined;
   readonly capturedOutput: AnalysisCapturedOutput | undefined;
   readonly cleanup: AnalysisCleanupObservation | undefined;
   cleanupIncomplete: boolean;
@@ -134,6 +144,10 @@ export abstract class AnalysisError extends Error {
       options?.continuingCallerGuidance === undefined
         ? undefined
         : Object.freeze({ ...options.continuingCallerGuidance });
+    this.invocationDiagnostics =
+      options?.invocationDiagnostics === undefined
+        ? undefined
+        : structuredClone(options.invocationDiagnostics);
     this.capturedOutput =
       options?.capturedOutput === undefined
         ? undefined
@@ -217,8 +231,25 @@ export abstract class AnalysisError extends Error {
   retainDiagnostics(diagnostics: Readonly<Record<string, JsonValue>>): this {
     Object.assign(this, {
       diagnostics: structuredClone({ ...this.diagnostics, ...diagnostics }),
+      ...(this.invocationDiagnostics === undefined
+        ? {}
+        : {
+            invocationDiagnostics: structuredClone({
+              ...this.invocationDiagnostics,
+              ...diagnostics,
+            }),
+          }),
     });
     return this;
+  }
+
+  /** Diagnostics recorded for a caller with this lifetime. */
+  diagnosticsFor(
+    callerLifetime: AnalysisCallerLifetime,
+  ): Readonly<Record<string, JsonValue>> | undefined {
+    return callerLifetime === "invocation"
+      ? (this.invocationDiagnostics ?? this.diagnostics)
+      : this.diagnostics;
   }
 
   retainSecondaryFailure(

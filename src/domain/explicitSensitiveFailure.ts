@@ -169,6 +169,9 @@ const redactFailure = (
     ...(error.diagnostics === undefined
       ? {}
       : { diagnostics: diagnostics(error.diagnostics) }),
+    ...(error.invocationDiagnostics === undefined
+      ? {}
+      : { invocationDiagnostics: diagnostics(error.invocationDiagnostics) }),
     ...(error.capturedOutput === undefined
       ? {}
       : {

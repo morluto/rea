@@ -1149,7 +1149,8 @@ const projectPrimarySessionError = (
       ...ghidraRequestOutcome(
         failure,
         "Only the decompiler failed for this procedure.",
-        "The Ghidra session remains usable.",
+        GHIDRA_SESSION_RETAINED,
+        limits.ghidraExistingProject !== undefined,
       ),
       remediationAction:
         "Call analyze_function (CLI: `rea function`) for the same procedure. It returns assembly, callers, callees, references and basic blocks from the Ghidra listing and records this decompiler failure under facet_availability.pseudocode. Repeating the unchanged decompile request is not expected to succeed.",
@@ -1165,7 +1166,12 @@ const projectPrimarySessionError = (
     const outcome = ghidraRequestOutcome(
       failure,
       "Only this procedure's decompilation was stopped.",
-      "The Ghidra session remains usable.",
+      GHIDRA_SESSION_RETAINED,
+      limits.ghidraExistingProject !== undefined,
+    );
+    const recovery = ghidraDecompileTimeoutRecovery(
+      limits.ghidraDecompileTimeoutSeconds,
+      limits.ghidraExistingProject !== undefined,
     );
     return new AnalysisTimeoutError(
       operation,
@@ -1178,13 +1184,10 @@ const projectPrimarySessionError = (
           undefined,
         ),
         userMessage: outcome.userMessage,
-        remediationAction: ghidraInvocationDecompileTimeoutAction(
-          limits.ghidraDecompileTimeoutSeconds,
-        ),
+        remediationAction: recovery.remediationAction,
         continuingCallerGuidance: {
           ...outcome.continuingCallerGuidance,
-          remediationAction:
-            "Use analyze_function (CLI: `rea function`) for listing facts. Call update_analysis_settings with setting ghidra.decompile_timeout_seconds and action set to raise the per-function deadline for the next operation on this Program. For CLI or future REA processes, set REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS. Set the MCP tool-call deadline to cover startup and the full call; earlier cancellation closes the session. `rea setup` estimates deadlines for new Codex/Kimi registrations and preserves existing positive values; edit existing deadlines yourself.",
+          remediationAction: recovery.continuingRemediationAction,
         },
       },
     );
@@ -1202,7 +1205,8 @@ const projectPrimarySessionError = (
     const outcome = ghidraRequestOutcome(
       failure,
       undefined,
-      "The active analysis session and annotations remain available.",
+      GHIDRA_ANNOTATIONS_RETAINED,
+      limits.ghidraExistingProject !== undefined,
     );
     return new AnalysisResourceConstraintError(
       operation,
@@ -1455,13 +1459,39 @@ const projectObservedJvmMemoryFailure = (
   );
 };
 
-/** A finished invocation can raise the deadline only for a new invocation. */
-const ghidraInvocationDecompileTimeoutAction = (seconds: number): string =>
-  `${
+/** Outcome addition that only a caller keeping the Ghidra session receives. */
+export const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
+
+/** The same addition when a failed search leaves session annotations intact. */
+export const GHIDRA_ANNOTATIONS_RETAINED =
+  "The active analysis session and annotations remain available.";
+
+/** What a new Ghidra session repeats in the configured startup mode. */
+const ghidraSessionRestart = (existingProject: boolean): string =>
+  existingProject
+    ? "copies and opens the selected REA_GHIDRA_PROJECT_PATH project again, without import or auto-analysis"
+    : "repeats import and analysis";
+
+/**
+ * Decompile-deadline recovery for each caller lifetime. A finished invocation
+ * can raise the deadline only for a new invocation; a continuing caller can
+ * update it for the next operation on the same Program.
+ */
+export const ghidraDecompileTimeoutRecovery = (
+  seconds: number,
+  existingProject: boolean,
+): {
+  readonly remediationAction: string;
+  readonly continuingRemediationAction: string;
+} => ({
+  remediationAction: `${
     seconds < MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS
       ? `Set REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS above ${String(seconds)} seconds (maximum ${String(MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)}), or unset it to leave decompilation unbounded,`
       : `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS is already at its maximum of ${String(seconds)} seconds; unset it to leave decompilation unbounded`
-  } in the environment of a new REA invocation, then rerun the command. That invocation starts a new Ghidra session and repeats import and analysis. Use \`rea function\` for this procedure's listing facts without pseudocode.`;
+  } in the environment of a new REA invocation, then rerun the command. That invocation starts a new Ghidra session and ${ghidraSessionRestart(existingProject)}. Use \`rea function\` for this procedure's listing facts without pseudocode.`,
+  continuingRemediationAction:
+    "Use analyze_function (CLI: `rea function`) for listing facts. Call update_analysis_settings with setting ghidra.decompile_timeout_seconds and action set to raise the per-function deadline for the next operation on this Program. For CLI or future REA processes, set REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS. Set the MCP tool-call deadline to cover startup and the full call; earlier cancellation closes the session. `rea setup` estimates deadlines for new Codex/Kimi registrations and preserves existing positive values; edit existing deadlines yourself.",
+});
 
 /**
  * Interpret the queue's observed cancellation and cleanup outcome once. A
@@ -1472,6 +1502,7 @@ const ghidraRequestOutcome = (
   failure: GhidraSessionError,
   requestScope: string | undefined,
   retainedSession: string,
+  existingProject: boolean,
 ): {
   readonly userMessage: string;
   readonly continuingCallerGuidance?: { readonly userMessage: string };
@@ -1486,7 +1517,7 @@ const ghidraRequestOutcome = (
   return {
     userMessage: `${detail} ${
       failure.cleanupFailure === undefined
-        ? "The request was also cancelled before the failure settled, so REA closed the Ghidra session; the next request starts a new session and repeats import and analysis."
+        ? `The request was also cancelled before the failure settled, so REA closed the Ghidra session; the next request starts a new session and ${ghidraSessionRestart(existingProject)}.`
         : "The request was also cancelled, and Ghidra session shutdown left cleanup unconfirmed. Close the target to retry retained cleanup before starting another Ghidra session."
     }`,
   };
@@ -1565,7 +1596,7 @@ const projectSigkill = (
 };
 
 /** Name the settings that change Ghidra's startup deadline for the configured startup mode. */
-const ghidraStartupTimeoutGuidance = (
+export const ghidraStartupTimeoutGuidance = (
   timeoutMs: number,
   existingProject: boolean,
 ) => {

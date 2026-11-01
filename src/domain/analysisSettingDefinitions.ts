@@ -252,9 +252,7 @@ export const analysisSettingLimit = (
 /** Re-scope an enforced limit for a caller whose runtime ended with this invocation. */
 export const invocationSettingLimit = ({
   applies_at: _appliesAt,
-  agent_editable: _agentEditable,
   scope: _scope,
-  rea_restart_required: _restartRequired,
   ...facts
 }: AnalysisSettingLimit): AnalysisInvocationSettingLimit => {
   const environment = analysisSettingDefinition(facts.setting).environment;

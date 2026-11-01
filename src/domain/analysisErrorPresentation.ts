@@ -25,6 +25,7 @@ import {
   ResourceSnapshotMismatchError,
 } from "./evidenceErrors.js";
 import {
+  HOPPER_STARTUP_TIMEOUT_REMEDIATION,
   HopperRemoteError,
   HopperProcessError,
   HopperStartError,
@@ -39,6 +40,7 @@ import {
   primaryAnalysisError,
   resolvedAnalysisError,
   type AnalysisCallerLifetime,
+  type AnalysisContinuingCallerGuidance,
   type AnalysisError,
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
@@ -132,7 +134,7 @@ export const analysisErrorRemediationAction = (
     return "Use an artifact within the capacity reported in details.detail. Changing output detail or retrying the unchanged input does not remove this boundary.";
   if (error instanceof HopperTimeoutError)
     return error.operation === undefined
-      ? hopperStartupTimeoutRemediation(callerLifetime)
+      ? HOPPER_STARTUP_TIMEOUT_REMEDIATION
       : error.providerState === "busy"
         ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
         : "Check binary_session for Hopper health, then retry the operation.";
@@ -374,13 +376,60 @@ export const analysisErrorUserMessage = (
   error: AnalysisError,
   callerLifetime: AnalysisCallerLifetime = "continuing",
 ): string => {
+  const { outcome, continuing } = analysisErrorUserMessageParts(error);
+  return callerLifetime === "invocation" || continuing === undefined
+    ? outcome
+    : `${outcome} ${continuing}`;
+};
+
+/** The outcome every caller receives and the addition only a continuing caller does. */
+const analysisErrorUserMessageParts = (
+  error: AnalysisError,
+): { readonly outcome: string; readonly continuing?: string } => {
   error = resolvedAnalysisError(error);
   const outcome = outcomeUserMessage(error);
-  const continuing =
-    callerLifetime === "continuing"
-      ? error.continuingCallerGuidance?.userMessage
-      : undefined;
-  return continuing === undefined ? outcome : `${outcome} ${continuing}`;
+  const continuing = error.continuingCallerGuidance?.userMessage;
+  return continuing === undefined ? { outcome } : { outcome, continuing };
+};
+
+/**
+ * Re-attribute one failure's message and another's remediation to a composed
+ * error, keeping the form each caller lifetime receives.
+ */
+export const composedCallerGuidance = (sources: {
+  readonly message?: AnalysisError;
+  readonly remediation: AnalysisError;
+}): {
+  readonly userMessage?: string;
+  readonly remediationAction: string;
+  readonly continuingCallerGuidance?: AnalysisContinuingCallerGuidance;
+} => {
+  const message =
+    sources.message === undefined
+      ? undefined
+      : analysisErrorUserMessageParts(sources.message);
+  const remediationAction = analysisErrorRemediationAction(
+    sources.remediation,
+    "invocation",
+  );
+  const continuingRemediation = analysisErrorRemediationAction(
+    sources.remediation,
+  );
+  const continuingCallerGuidance = {
+    ...(message?.continuing === undefined
+      ? {}
+      : { userMessage: message.continuing }),
+    ...(continuingRemediation === remediationAction
+      ? {}
+      : { remediationAction: continuingRemediation }),
+  };
+  return {
+    ...(message === undefined ? {} : { userMessage: message.outcome }),
+    remediationAction,
+    ...(Object.keys(continuingCallerGuidance).length === 0
+      ? {}
+      : { continuingCallerGuidance }),
+  };
 };
 
 const outcomeUserMessage = (error: AnalysisError): string => {
@@ -534,14 +583,6 @@ const standardErrorMessage = (tag: AnalysisErrorTag): string | undefined => {
     return "Analysis could not start or stopped unexpectedly. Run `rea doctor`, then try again.";
   return undefined;
 };
-
-/** A finished invocation has no runtime to update; only its launch environment applies. */
-const hopperStartupTimeoutRemediation = (
-  callerLifetime: AnalysisCallerLifetime,
-): string =>
-  callerLifetime === "continuing"
-    ? "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, use update_analysis_settings with setting hopper.startup_timeout_ms and action set for the next startup attempt without restarting REA, or increase REA_HOPPER_STARTUP_TIMEOUT_MS for future REA processes. Allow at least that long in the MCP client. Resolve retained cleanup before reopening."
-    : "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, set REA_HOPPER_STARTUP_TIMEOUT_MS higher in the environment of a new REA invocation, then rerun the command; that invocation starts Hopper again. Resolve retained cleanup before rerunning.";
 
 const timeoutUserMessage = (error: AnalysisTimeoutError): string =>
   `REA's ${error.operation} operation reached its ${String(error.timeoutMs)}ms server/provider deadline. This is not a client-side timeout; extending only the MCP client's deadline does not change this budget.`;

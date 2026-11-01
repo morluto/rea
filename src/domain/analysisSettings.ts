@@ -40,11 +40,12 @@ export interface AnalysisSettingLimit {
 /**
  * The same limit for a caller whose REA runtime ended with one invocation. No
  * runtime override can reach it; a new invocation reads the launch
- * environment seed or the per-call argument.
+ * environment seed or the per-call argument. The caller can still choose that
+ * value, and no running REA process needs a restart.
  */
 export interface AnalysisInvocationSettingLimit extends Omit<
   AnalysisSettingLimit,
-  "applies_at" | "agent_editable" | "scope" | "rea_restart_required"
+  "applies_at" | "scope"
 > {
   readonly applies_at: "next_invocation";
   readonly scope: "rea-invocation";

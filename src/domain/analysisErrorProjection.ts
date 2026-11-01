@@ -52,6 +52,7 @@ import {
   resolvedAnalysisError,
   type AnalysisCallerLifetime,
   type AnalysisError,
+  type AnalysisErrorOptions,
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
 import { invocationSettingLimit } from "./analysisSettingDefinitions.js";
@@ -74,6 +75,65 @@ export const projectAnalysisErrorWithoutCapturedOutput = (
   callerLifetime: AnalysisCallerLifetime = "continuing",
 ): AnalysisErrorProjection => projectError(error, false, callerLifetime);
 
+/** A child failure embedded in a composed error's diagnostics. */
+export interface AnalysisChildFailure {
+  readonly error: AnalysisError;
+  /** Omit output that the composing error already retains. */
+  readonly capturedOutput?: "omit";
+}
+
+/**
+ * Record child failures as composition-time snapshots, so cleanup history
+ * keeps the state it had. The invocation form is recorded only when a child's
+ * projection depends on the caller lifetime; the final projection selects it.
+ */
+export const childFailureDiagnostics = (
+  children: Readonly<Record<string, AnalysisChildFailure>>,
+  diagnostics: Readonly<Record<string, JsonValue>> = {},
+): Pick<AnalysisErrorOptions, "diagnostics" | "invocationDiagnostics"> => {
+  const entries = Object.entries(children);
+  const project = (
+    { error, capturedOutput }: AnalysisChildFailure,
+    callerLifetime: AnalysisCallerLifetime,
+  ) => projectError(error, capturedOutput !== "omit", callerLifetime);
+  const continuing = {
+    ...diagnostics,
+    ...Object.fromEntries(
+      entries.map(([key, child]) => [key, project(child, "continuing")]),
+    ),
+  };
+  const varying = entries.filter(([, { error }]) =>
+    projectionDependsOnCallerLifetime(error),
+  );
+  return varying.length === 0
+    ? { diagnostics: continuing }
+    : {
+        diagnostics: continuing,
+        invocationDiagnostics: {
+          ...continuing,
+          ...Object.fromEntries(
+            varying.map(([key, child]) => [key, project(child, "invocation")]),
+          ),
+        },
+      };
+};
+
+/** Every lifetime-dependent input the projection reads lies on this chain. */
+const projectionDependsOnCallerLifetime = (error: AnalysisError): boolean => {
+  for (
+    let node: AnalysisError | undefined = error;
+    node !== undefined;
+    node = node.cleanupPrimary
+  )
+    if (
+      node.limit !== undefined ||
+      node.continuingCallerGuidance !== undefined ||
+      node.invocationDiagnostics !== undefined
+    )
+      return true;
+  return false;
+};
+
 const projectError = (
   error: AnalysisError,
   includeCapturedOutput: boolean,
@@ -87,7 +147,9 @@ const projectError = (
     diagnosticSource.cleanupPrimary !== undefined
   )
     diagnosticSource = diagnosticSource.cleanupPrimary;
-  const diagnostics = diagnosticSource.diagnostics;
+  const diagnostics = diagnosticSource.diagnosticsFor(callerLifetime);
+  const cleanupHistory =
+    composed === error ? undefined : composed.diagnosticsFor(callerLifetime);
   const capturedOutput = composed.capturedOutput ?? error.capturedOutput;
   const partialObservation =
     composed.partialObservation ?? error.partialObservation;
@@ -127,9 +189,9 @@ const projectError = (
             ? {}
             : { provider_diagnostics: primaryDetails.diagnostics }),
         }),
-    ...(composed === error || composed.diagnostics === undefined
+    ...(cleanupHistory === undefined
       ? {}
-      : { cleanup_history: composed.diagnostics }),
+      : { cleanup_history: cleanupHistory }),
     ...(error.cleanupIncomplete
       ? {
           cleanup: "incomplete",
