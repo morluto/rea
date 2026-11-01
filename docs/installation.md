@@ -700,7 +700,8 @@ that retrying will succeed. Doctor and Linux launches report the same request
 and status when publisher verification cannot download the current package.
 
 Hopper metadata and package downloads require HTTPS throughout the redirect
-chain; a redirect to HTTP is refused before that destination is requested.
+chain; a redirect to HTTP or to a URL carrying credentials is refused before
+that destination is requested, and those credentials are not reported.
 
 On macOS, approved setup downloads the official DMG, checks its published size
 and digest, validates the application bundle, and atomically installs it to

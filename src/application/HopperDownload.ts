@@ -1,16 +1,19 @@
+import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Why a URL was refused before any vendor response could be admitted. */
 export type HopperUrlRefusal =
   | "invalid_url"
   | "non_https"
+  | "credentials"
   | "redirect_without_location"
   | "redirect_limit";
 
 /**
  * Transport facts for one Hopper request that yielded no admitted bytes.
- * `url` is the caller-selected request: REA's vendor endpoint or a feed row the
- * caller admitted (no credentials by construction), never a redirect target.
+ * `url` is the caller-selected request with any URL userinfo removed, never a
+ * redirect target. URLs carrying credentials are refused before any request,
+ * so no transport detail can contain them.
  */
 export type HopperDownloadFailure = { readonly url: string } & (
   | {
@@ -62,9 +65,12 @@ export const downloadHopperPackage = async (
   )
     throw new RangeError("Invalid Hopper response byte budget");
   const deadline = AbortSignal.timeout(timeoutMs);
+  // Remove transport credentials once, where every failure is created.
+  const reported = sanitizeBrowserUrl(url).url;
   try {
     return await readHopperResponse(
       url,
+      reported,
       options.signal === undefined
         ? deadline
         : AbortSignal.any([options.signal, deadline]),
@@ -72,25 +78,31 @@ export const downloadHopperPackage = async (
     );
   } catch (cause: unknown) {
     if (options.signal?.aborted === true) throw cause;
-    if (deadline.aborted) return err({ url, kind: "timeout", timeoutMs });
+    if (deadline.aborted)
+      return err({ url: reported, kind: "timeout", timeoutMs });
     // Fetch reports network errors (DNS, TLS, reset, truncated body) as TypeError.
     if (cause instanceof TypeError)
-      return err({ url, kind: "network", detail: networkDetail(cause) });
+      return err({
+        url: reported,
+        kind: "network",
+        detail: networkDetail(cause),
+      });
     throw cause;
   }
 };
 
 const readHopperResponse = async (
+  requested: string,
   url: string,
   signal: AbortSignal,
   maxBytes: number,
 ): Promise<HopperDownload> => {
-  const fetched = await fetchHopperResponse(url, signal);
+  const fetched = await fetchHopperResponse(requested, signal);
   if (!fetched.ok)
     return err({ url, kind: "url_refused", refusal: fetched.error });
   const response = fetched.value;
   if (!response.ok) {
-    await response.body?.cancel();
+    await releaseBody(response.body);
     return err(
       Number.isInteger(response.status) &&
         response.status >= 300 &&
@@ -101,7 +113,7 @@ const readHopperResponse = async (
   }
   const tooLarge = { url, kind: "response_too_large", maxBytes } as const;
   if (Number(response.headers.get("content-length")) > maxBytes) {
-    await response.body?.cancel();
+    await releaseBody(response.body);
     return err(tooLarge);
   }
   if (response.body === null) return ok(new Uint8Array());
@@ -113,7 +125,7 @@ const readHopperResponse = async (
       const chunk = await reader.read();
       if (chunk.done) return ok(Buffer.concat(chunks, bytes));
       if (chunk.value.byteLength > maxBytes - bytes) {
-        await reader.cancel();
+        await releaseBody(reader);
         return err(tooLarge);
       }
       chunks.push(chunk.value);
@@ -121,6 +133,22 @@ const readHopperResponse = async (
     }
   } finally {
     reader.releaseLock();
+  }
+};
+
+/**
+ * Release a body REA will not admit. A stream that already failed (for example
+ * a truncated error body) has nothing left to release, and its error must not
+ * replace the response outcome that was already observed.
+ */
+const releaseBody = async (
+  body: { cancel(): Promise<void> } | null,
+): Promise<void> => {
+  try {
+    await body?.cancel();
+  } catch (cause: unknown) {
+    // best-effort cleanup: an errored stream is already released.
+    void cause;
   }
 };
 
@@ -149,6 +177,9 @@ const fetchHopperResponse = async (
   let requested = url;
   for (let redirects = 0; ; redirects++) {
     if (selected.protocol !== "https:") return err("non_https");
+    // Fetch cannot request userinfo and would echo it in its TypeError message.
+    if (selected.username !== "" || selected.password !== "")
+      return err("credentials");
     const response = await fetch(requested, {
       redirect: "manual",
       headers: { accept: "application/json", "user-agent": "rea-installer" },
@@ -156,7 +187,7 @@ const fetchHopperResponse = async (
     });
     if (!REDIRECT_STATUSES.has(response.status)) return ok(response);
     const location = response.headers.get("location");
-    await response.body?.cancel();
+    await releaseBody(response.body);
     if (location === null) return err("redirect_without_location");
     if (redirects === FETCH_REDIRECT_LIMIT) return err("redirect_limit");
     let next: URL;
@@ -181,6 +212,7 @@ const requestSubjects: Readonly<Record<HopperVendorRequest, string>> = {
 const refusals: Readonly<Record<HopperUrlRefusal, string>> = {
   invalid_url: "a request or redirect URL was not a valid absolute URL",
   non_https: "a request or redirect URL did not use HTTPS",
+  credentials: "a request or redirect URL contained credentials",
   redirect_without_location: "a redirect response omitted its Location",
   redirect_limit: `the response redirected more than ${FETCH_REDIRECT_LIMIT} times`,
 };
