@@ -4,7 +4,11 @@
  * split between a7 and the stack, small structures of two floats and of a
  * float and an int, a large structure and a long double passed and returned
  * by reference, a variadic call with aligned double pairs, and an indirect
- * call through a typed pointer. It moves floating-point values without arithmetic or
+ * call through a typed pointer. Single-float builds add the shapes only
+ * ilp32f separates: an integer-then-float structure, float registers running
+ * out, and an indirect call with a float-and-integer structure; with
+ * REA_RISCV_ABI_UNMODELLED they add shapes __rea_ilp32f cannot express. It
+ * moves floating-point values without arithmetic or
  * comparisons, so a soft-float build links no compiler-rt helpers. The
  * expected storage per ABI is in tests/conformance/ghidra/riscv-checks.mjs.
  */
@@ -112,7 +116,68 @@ __attribute__((noinline)) unsigned int rea_riscv_abi_caller(int sel)
         ((unsigned int *)&large.second)[1] ^ ((unsigned int *)&quad)[3] ^ folded ^ *(unsigned int *)&called;
 }
 
+#if defined(__riscv_float_abi_single)
+/* A char, then a float: a0 and fa0. */
+struct rea_riscv_abi_flagged {
+    char flag;
+    float value;
+};
+
+__attribute__((noinline)) struct rea_riscv_abi_flagged rea_riscv_abi_flagged(struct rea_riscv_abi_flagged value, float scale)
+{
+    rea_riscv_abi_sink = *(volatile unsigned int *)&scale;
+    value.flag ^= 1;
+    return value;
+}
+
+/* a to h fill fa0-fa7, so value and z use the integer convention. */
+__attribute__((noinline)) float rea_riscv_abi_fill(float a, float b, float c, float d, float e, float f, float g, float h,
+                                                    struct rea_riscv_abi_tagged value, float z)
+{
+    rea_riscv_abi_sink = *(volatile unsigned int *)&z ^ (unsigned int)value.tag;
+    return h;
+}
+
+/* Volatile so the indirect call through this typed pointer is not folded. */
+struct rea_riscv_abi_tagged (*volatile rea_riscv_abi_tagged_callback)(struct rea_riscv_abi_tagged, int) = rea_riscv_abi_tagged;
+
+__attribute__((noinline)) unsigned int rea_riscv_abi_single_caller(int sel)
+{
+    struct rea_riscv_abi_flagged flagged = rea_riscv_abi_flagged((struct rea_riscv_abi_flagged){ 42, 22.5f }, 23.5f);
+    float filled = rea_riscv_abi_fill(1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
+                                      (struct rea_riscv_abi_tagged){ 27.5f, 28 }, 29.5f);
+    struct rea_riscv_abi_tagged tagged = rea_riscv_abi_tagged_callback((struct rea_riscv_abi_tagged){ 31.5f, 32 }, sel);
+    return (unsigned int)flagged.flag ^ *(unsigned int *)&filled ^ (unsigned int)tagged.tag;
+}
+
+#if defined(REA_RISCV_ABI_UNMODELLED)
+/* Shapes __rea_ilp32f would misplace: the lane must refuse this build. Three
+ * fields use the integer convention, although one 4-byte part is a float. */
+struct rea_riscv_abi_spread {
+    float value;
+    short low;
+    short high;
+};
+
+__attribute__((noinline)) struct rea_riscv_abi_spread rea_riscv_abi_spread(struct rea_riscv_abi_spread value, int tag)
+{
+    value.low = (short)tag;
+    return value;
+}
+
+__attribute__((noinline)) _Float16 rea_riscv_abi_half(_Float16 value)
+{
+    return value;
+}
+
+void (*volatile rea_riscv_abi_spread_callback)(struct rea_riscv_abi_spread, int);
+#endif
+#define REA_RISCV_ABI_CALLERS(sel) (rea_riscv_abi_caller(sel) ^ rea_riscv_abi_single_caller(sel))
+#else
+#define REA_RISCV_ABI_CALLERS(sel) rea_riscv_abi_caller(sel)
+#endif
+
 __attribute__((noinline)) unsigned int rea_riscv_entry(unsigned int selector)
 {
-    return rea_riscv_probe(rea_riscv_isa_probe(rea_riscv_abi_caller((int)selector)) + rea_riscv_global);
+    return rea_riscv_probe(rea_riscv_isa_probe(REA_RISCV_ABI_CALLERS((int)selector)) + rea_riscv_global);
 }

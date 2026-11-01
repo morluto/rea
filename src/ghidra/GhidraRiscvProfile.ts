@@ -14,6 +14,7 @@ import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js
 /** Calling-convention policy ids an analysis profile can commit. */
 export const GHIDRA_RISCV_CALLING_CONVENTION_IDS = [
   "ilp32-prototype-v1",
+  "ilp32f-prototype-v1",
 ] as const;
 export type GhidraRiscvCallingConvention =
   (typeof GHIDRA_RISCV_CALLING_CONVENTION_IDS)[number];
@@ -31,6 +32,7 @@ export const GHIDRA_RISCV_CALLING_CONVENTIONS: Readonly<
   >
 > = {
   "ilp32-prototype-v1": { abi: "ilp32", prototype: "__rea_ilp32" },
+  "ilp32f-prototype-v1": { abi: "ilp32f", prototype: "__rea_ilp32f" },
 };
 
 /** One admitted ELF class and declared float ABI. */
@@ -39,6 +41,8 @@ export interface GhidraRiscvLane {
   readonly floatAbi: RiscvFloatAbi;
   /** Absent: Ghidra's stock double-float model applies unchanged. */
   readonly callingConvention?: GhidraRiscvCallingConvention;
+  /** Extensions `Tag_RISCV_arch` must declare for the float ABI to exist. */
+  readonly requiredExtensions?: readonly string[];
 }
 
 /** Every class and float ABI pair the Ghidra lane admits; others are refused. */
@@ -46,6 +50,12 @@ export const GHIDRA_RISCV_LANES: readonly GhidraRiscvLane[] = [
   { elfClass: 64, floatAbi: "double" },
   { elfClass: 32, floatAbi: "double" },
   { elfClass: 32, floatAbi: "soft", callingConvention: "ilp32-prototype-v1" },
+  {
+    elfClass: 32,
+    floatAbi: "single",
+    callingConvention: "ilp32f-prototype-v1",
+    requiredExtensions: ["f"],
+  },
 ];
 
 /** Lane ids are built from their fields, so a new ABI or load model adds a value. */
@@ -73,12 +83,24 @@ export const GHIDRA_RISCV32_DECODED_EXTENSIONS: ReadonlySet<string> = new Set([
   "zcd",
 ]);
 
-/** Outcome the post-analysis script records for the bridge handshake. */
-export interface GhidraRiscvCallingConventionReport {
-  readonly policy: GhidraRiscvCallingConvention;
-  readonly functions: number;
-  readonly definitions: number;
-}
+/**
+ * Outcome the post-analysis script records for the bridge handshake. The
+ * ilp32f policy instead refuses an image whose signatures its prototype
+ * misplaces.
+ */
+export type GhidraRiscvCallingConventionReport =
+  | {
+      readonly policy: GhidraRiscvCallingConvention;
+      readonly functions: number;
+      readonly definitions: number;
+    }
+  | { readonly policy: "ilp32f-prototype-v1"; readonly refused: string };
+
+/**
+ * Bound on the bridge's refusal reason. The script names at most eight
+ * signatures, each cut to 160 characters, so a longer report is malformed.
+ */
+export const GHIDRA_RISCV_REFUSAL_MAX_LENGTH = 2048;
 
 const EF_RISCV_RVC = 0x0001;
 const EF_RISCV_FLOAT_ABI = 0x0006;
@@ -112,16 +134,22 @@ const ghidraRiscvFloatAbiRefusal = (metadata: RiscvElfMetadata): string => {
   const admitted = GHIDRA_RISCV_LANES.filter(
     (lane) => lane.elfClass === metadata.elfClass,
   ).map((lane) => `${lane.floatAbi}-float`);
-  return `This Ghidra RISC-V lane admits ELF${metadata.elfClass} images that declare the ${admitted.join(
-    " or ",
-  )} ABI; the ${floatAbi}-float ABI${
+  return `This Ghidra RISC-V lane admits ELF${metadata.elfClass} images that declare the ${
+    admitted.length < 3
+      ? admitted.join(" or ")
+      : `${admitted.slice(0, -1).join(", ")} or ${admitted.slice(-1).join("")}`
+  } ABI; the ${floatAbi}-float ABI${
     name === null ? "" : ` (${name})`
   } declared by e_flags has no verified calling-convention policy.`;
 };
 
-/** Lanes with a calling-convention policy admit declared, decoded RV32I only. */
+/**
+ * Lanes with a calling-convention policy admit declared, decoded RV32I only,
+ * with every extension their float ABI requires.
+ */
 const ghidraRiscvIsaRefusal = (
   isa: RiscvIsaDeclaration | undefined,
+  lane: GhidraRiscvLane,
 ): string | null => {
   if (isa === undefined)
     return "This RISC-V lane requires the image's .riscv.attributes ISA declaration, which was not inspected.";
@@ -134,13 +162,23 @@ const ghidraRiscvIsaRefusal = (
   const outside = isa.extensions.filter(
     (extension) => !GHIDRA_RISCV32_DECODED_EXTENSIONS.has(extension),
   );
-  return outside.length === 0
+  if (outside.length > 0)
+    return `Tag_RISCV_arch declares extensions outside the set this lane decodes: ${outside.join(
+      ", ",
+    )}. Ghidra 12.1.4's generic RV32 language implements only ${[
+      ...GHIDRA_RISCV32_DECODED_EXTENSIONS,
+    ].join(", ")} with p-code; see docs/ghidra-riscv.md.`;
+  const missing = (lane.requiredExtensions ?? []).filter(
+    (extension) => !isa.extensions.includes(extension),
+  );
+  const name = riscvAbiName(lane.elfClass, lane.floatAbi);
+  return missing.length === 0
     ? null
-    : `Tag_RISCV_arch declares extensions outside the set this lane decodes: ${outside.join(
+    : `Tag_RISCV_arch declares ${isa.arch} without ${missing.join(
         ", ",
-      )}. Ghidra 12.1.4's generic RV32 language implements only ${[
-        ...GHIDRA_RISCV32_DECODED_EXTENSIONS,
-      ].join(", ")} with p-code; see docs/ghidra-riscv.md.`;
+      )}, which the ${lane.floatAbi}-float ABI${
+        name === null ? "" : ` (${name})`
+      } declared by e_flags requires.`;
 };
 
 /**
@@ -183,7 +221,7 @@ export const ghidraRiscvUnsupportedReason = (
     return `RISC-V e_flags declares bits outside the verified lane (0x${unsupportedFlags.toString(16)}); reserved or newer declarations are not treated as compatible with this profile.`;
   return lane.callingConvention === undefined
     ? null
-    : ghidraRiscvIsaRefusal(metadata.isa);
+    : ghidraRiscvIsaRefusal(metadata.isa, lane);
 };
 
 /** The calling-convention policy an admitted target's lane applies, if any. */
@@ -277,16 +315,21 @@ export const ghidraRiscvLimitations = (
   ];
 };
 
-/** Fail closed unless the bridge applied exactly the committed policy. */
+/**
+ * Fail closed unless the bridge applied exactly the committed policy. A policy
+ * that refused the image's signatures is a failure with the bridge's reason.
+ */
 export const ghidraRiscvCallingConventionFailure = (
   expected: GhidraRiscvCallingConvention | undefined,
   report: GhidraRiscvCallingConventionReport | undefined,
 ): string | undefined =>
-  expected === report?.policy
-    ? undefined
-    : expected === undefined
+  expected !== report?.policy
+    ? expected === undefined
       ? "The Ghidra session reported a RISC-V calling-convention policy that the profile did not commit."
-      : `The Ghidra session did not report the committed RISC-V calling-convention policy ${expected}.`;
+      : `The Ghidra session did not report the committed RISC-V calling-convention policy ${expected}.`
+    : report !== undefined && "refused" in report
+      ? `RISC-V calling-convention policy ${report.policy} refused this image, so REA does not serve its analysis: ${report.refused} See docs/ghidra-riscv.md.`
+      : undefined;
 
 /** State the prototype REA applies, and its outcome once the bridge reports it. */
 export const ghidraRiscvCallingConventionLimitations = (
@@ -297,7 +340,7 @@ export const ghidraRiscvCallingConventionLimitations = (
   const { abi, prototype } = GHIDRA_RISCV_CALLING_CONVENTIONS[expected];
   return [
     `RISC-V ${abi}: Ghidra's generic RV32 compiler specification models ilp32d. After analysis REA installs a program-specific \`${prototype}\` prototype, derived from the default prototype by policy ${expected} (docs/ghidra-riscv.md), and assigns it with dynamic storage to every function, external function and function definition. Thunks follow their targets.`,
-    ...(report === undefined
+    ...(report === undefined || "refused" in report
       ? []
       : [
           `RISC-V calling-convention outcome: ${report.functions} functions and ${report.definitions} function definitions use ${prototype}.`,
