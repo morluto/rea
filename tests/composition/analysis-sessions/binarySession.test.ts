@@ -944,7 +944,6 @@ describe("replay of exact immutable calls", () => {
     expect(profileOpened.ok).toBe(false);
     if (!profileOpened.ok) {
       expect(profileOpened.error._tag).toBe("EvidenceIntegrityError");
-      expect(profileOpened.error.message).toContain("Analysis snapshot");
       expect(projectAnalysisError(profileOpened.error).details).toMatchObject({
         binding_mismatch: {
           profile_digest: {
@@ -966,7 +965,6 @@ describe("replay of exact immutable calls", () => {
     );
     expect(activeImport.ok).toBe(false);
     if (!activeImport.ok) {
-      expect(activeImport.error.message).toContain("Analysis snapshot");
       expect(projectAnalysisError(activeImport.error).details).toMatchObject({
         binding_mismatch: {
           profile_digest: {

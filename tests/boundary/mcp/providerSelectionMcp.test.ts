@@ -22,6 +22,8 @@ import {
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
+import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
+import { AnalysisSnapshotMismatchError } from "../../../src/domain/evidenceErrors.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
@@ -548,10 +550,12 @@ describe("binary_session detail over MCP", () => {
 });
 
 it("reports confirmed snapshot binding differences and keeps the active session", async () => {
-  directory = await createTestTempDirectory("rea-snapshot-mismatch-mcp-");
-  const first = join(directory, "first.hop");
-  const second = join(directory, "second.hop");
-  const snapshotPath = join(directory, "analysis.json");
+  const testDirectory = await createTestTempDirectory(
+    "rea-snapshot-mismatch-mcp-",
+  );
+  const first = join(testDirectory, "first.hop");
+  const second = join(testDirectory, "second.hop");
+  const snapshotPath = join(testDirectory, "analysis.json");
   await writeFile(first, "first fixture");
   await writeFile(second, "second fixture");
   const sha = (value: string) =>
@@ -603,7 +607,9 @@ it("reports confirmed snapshot binding differences and keeps the active session"
     expect(result.isError).toBe(true);
     const error = parseMcpToolError(result).error;
     expect(error.code).toBe("evidence_integrity_mismatch");
-    expect(error.remediation.action).toContain("matching the snapshot");
+    expect(error.remediation.action).toBe(
+      analysisErrorRemediationAction(new AnalysisSnapshotMismatchError("")),
+    );
     expect((await call("binary_session", {})).structuredContent).toMatchObject({
       result: { open: true, path: first },
     });
@@ -647,8 +653,8 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   );
 
   revision = 1;
-  const raw = join(directory, "raw.bin");
-  const rawSnapshot = join(directory, "raw-snapshot.json");
+  const raw = join(testDirectory, "raw.bin");
+  const rawSnapshot = join(testDirectory, "raw-snapshot.json");
   await writeFile(raw, Buffer.from([0, 1, 2, 3]));
   const rawTarget = {
     path: raw,

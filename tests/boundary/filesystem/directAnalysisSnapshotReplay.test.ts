@@ -1480,7 +1480,6 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   const rejectedReader = session.importAnalysisSnapshot(wrongReader);
   expect(rejectedReader.ok).toBe(false);
   if (!rejectedReader.ok) {
-    expect(rejectedReader.error.message).toContain("Analysis snapshot");
     expectReaderBindingMismatch(
       rejectedReader.error,
       readerIdentity.version,
@@ -1526,7 +1525,9 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   ).toBe(false);
   expect(rejectedMixed.ok).toBe(false);
   if (!rejectedMixed.ok)
-    expect(rejectedMixed.error.message).toContain("Analysis snapshot");
+    expect(projectAnalysisError(rejectedMixed.error).details).toMatchObject({
+      binding_mismatch: { workflow_scope: "incompatible" },
+    });
 
   const deepProfile = createAnalysisProfile(
     { id: "ghidra", name: "Ghidra", version: "fixture-version" },
@@ -1586,7 +1587,12 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   const rejectedDeepOnly = session.importAnalysisSnapshot(deepSnapshot);
   expect(rejectedDeepOnly.ok).toBe(false);
   if (!rejectedDeepOnly.ok)
-    expect(rejectedDeepOnly.error.message).toContain("Analysis snapshot");
+    expect(projectAnalysisError(rejectedDeepOnly.error).details).toMatchObject({
+      binding_mismatch: {
+        provider: { snapshot: { id: "ghidra" } },
+        profile_digest: { snapshot: deepProfile.digest },
+      },
+    });
 };
 
 it("retains a native dispatch workflow snapshot without a deep provider profile", async () => {
