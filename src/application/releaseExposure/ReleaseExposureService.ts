@@ -1,5 +1,6 @@
 import { basename, dirname } from "node:path";
 
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { DesktopApplicationService } from "../artifacts/DesktopApplicationService.js";
 import type { ElectronFuseService } from "../electron/ElectronFuseService.js";
@@ -156,7 +157,15 @@ export class ReleaseExposureService {
       },
     );
     if (owned.cancelled !== undefined)
-      return err(owned.cancelled.retainPartialObservation(evidence));
+      return err(
+        // An owner's own partial is one image, not this audit's report.
+        owned.cancelled.partialObservation === undefined
+          ? owned.cancelled.retainPartialObservation(evidence)
+          : new AnalysisCancelledError(RELEASE_EXPOSURE_OPERATION, {
+              cause: owned.cancelled.cause,
+              partialObservation: evidence,
+            }),
+      );
     return completeProviderEvidence(evidence, options?.signal);
   }
 
@@ -185,15 +194,15 @@ export class ReleaseExposureService {
       archivePaths: [],
     });
     const prepared = limitNativeSample(scan, desktop.archivePaths);
-    const inventoried = new Set(
+    const digests = new Map(
       scan.native_images.flatMap((image) =>
-        image.sha256 === undefined ? [] : [image.sha256],
+        image.sha256 === undefined ? [] : [[image.path, image.sha256] as const],
       ),
     );
     const fuseImages: FuseImageFact[] = [];
     for (const candidate of prepared.scan.fuse_candidates)
       fuseImages.push(
-        await settle(() => this.#fuseImage(candidate, inventoried, options), {
+        await settle(() => this.#fuseImage(candidate, digests, options), {
           kind: "failed",
           role: candidate.role,
           path: candidate.path,
@@ -269,7 +278,7 @@ export class ReleaseExposureService {
 
   async #fuseImage(
     candidate: ReleaseExposureFuseCandidate,
-    inventoried: ReadonlySet<string>,
+    digests: ReadonlyMap<string, string>,
     options: ExecutionOptions | undefined,
   ): Promise<Result<FuseImageFact, AnalysisError>> {
     let result: Result<Evidence, AnalysisError>;
@@ -313,9 +322,7 @@ export class ReleaseExposureService {
         path: candidate.path,
         reason: "Electron fuse report did not match its schema.",
       });
-    // An app bundle resolves to a file the audit did not select by path, so
-    // its digest is compared with every inventoried native image.
-    if (inventoried.size > 0 && !inventoried.has(report.data.artifact.sha256))
+    if (fuseImageChanged(candidate, digests, report.data.artifact.sha256))
       return ok({
         kind: "failed",
         role: candidate.role,
@@ -452,9 +459,15 @@ const ownerCloseFailure = (
   const typed = failures.flatMap(({ cause }) =>
     cause instanceof AnalysisError ? [cause] : [],
   );
+  const resources = failures.flatMap(({ cause }) => {
+    if (cause instanceof AnalysisError) return cause.cleanupResources;
+    return cause instanceof ArtifactReaderFailure
+      ? (cause.cleanup?.resources ?? [])
+      : [];
+  });
   const aggregate = new ProviderCleanupError(
     RELEASE_EXPOSURE_PROVIDER.id,
-    [...new Set(typed.flatMap((cause) => cause.cleanupResources))],
+    [...new Set(resources)],
     {
       failures: failures.map(({ owner, cause }) => ({
         owner,
@@ -478,6 +491,20 @@ const ownerCloseFailure = (
   // An opaque rejection supplies no release authority, so it stays incomplete.
   if (live.length === failures.length) aggregate.bindCleanupDependencies(live);
   return aggregate;
+};
+
+/**
+ * An app bundle resolves to a file through paths the inventory may spell
+ * differently, so its digest must match some inventoried native image.
+ */
+const fuseImageChanged = (
+  candidate: ReleaseExposureFuseCandidate,
+  digests: ReadonlyMap<string, string>,
+  sha256: string,
+): boolean => {
+  const expected = digests.get(candidate.path);
+  if (expected !== undefined) return expected !== sha256;
+  return digests.size > 0 && ![...digests.values()].includes(sha256);
 };
 
 const imageChanged = (
@@ -661,11 +688,27 @@ const filesystemPath = (value: string | null | undefined): string | null => {
   return null;
 };
 
-/** Go build settings whose values are compiler, linker, or cgo flags. */
-const GO_FLAG_SETTING = /^(?:CGO_[A-Z]+FLAGS|-asmflags|-gcflags|-ldflags)$/u;
-/** A path value after a flag prefix, `=`, `,`, or a quote, as in `-I/opt/include`. */
+/** Go build settings whose values are flags or a build input path. */
+const GO_FLAG_SETTING =
+  /^(?:CGO_[A-Z]+FLAGS|-asmflags|-gccgoflags|-gcflags|-ldflags|-pgo)$/u;
+/** One whitespace-separated field. Quotes keep their spaces inside it. */
+const GO_FLAG_FIELD = /(?:[^\s"']|"[^"]*"|'[^']*')+/gu;
+/** A path after a flag prefix, whitespace, `=`, or `,`, as in `-isystem/opt/x`. */
 const GO_FLAG_PATH =
-  /(?:^|[\s=,"'])(?:-[BFIL])?((?:\.{1,2}\/|\/|[A-Za-z]:[\\/])[^\s,"']+)/gu;
+  /(?:^|[\s=,])(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT]))?((?:\.{1,2}\/|\/|[A-Za-z]:[\\/])[^=,]+)/gu;
+
+/** Paths in one flag value, with a quoted path kept whole up to the next flag. */
+const goFlagPaths = (value: string): string[] =>
+  [...value.matchAll(GO_FLAG_FIELD)].flatMap(([field]) =>
+    field
+      .replace(/["']/gu, "")
+      .split(/\s+(?=-)/u)
+      .flatMap((flag) =>
+        [...flag.matchAll(GO_FLAG_PATH)].flatMap(([, path]) =>
+          path === undefined ? [] : [path.trimEnd()],
+        ),
+      ),
+  );
 
 const goPaths = (
   module: NonNullable<GoBinary["build_info"]>["module"],
@@ -684,7 +727,7 @@ const goPaths = (
   }
   for (const setting of module.settings) {
     if (!GO_FLAG_SETTING.test(setting.key)) continue;
-    for (const match of setting.value.matchAll(GO_FLAG_PATH)) add(match[1]);
+    for (const path of goFlagPaths(setting.value)) add(path);
   }
   return [...paths];
 };

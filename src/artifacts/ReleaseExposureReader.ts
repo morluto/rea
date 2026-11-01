@@ -1,6 +1,6 @@
 import type { Dirent } from "node:fs";
 import { lstat, opendir } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute } from "node:path";
 import type { Readable } from "node:stream";
 
 import type {
@@ -53,6 +53,7 @@ import {
   readMachoHeaderPrefixFacts,
 } from "../domain/apple/machoContainer.js";
 import { inspectPeCodeViewFromBuffer } from "../domain/binaryTarget.js";
+import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -138,7 +139,11 @@ interface OpenContainer {
   readonly path: string;
   readonly reader: ArtifactReader;
   entries: readonly ArtifactEntry[] | null;
-  /** Same-path entries stay distinct: each occurrence takes the next one. */
+  /**
+   * Keyed by source spelling, which inventory keeps when it normalizes a
+   * logical path. Same-path entries stay distinct: each occurrence takes the
+   * next one.
+   */
   readonly byPath: Map<string, ArtifactEntry[]>;
   readonly byOccurrence: Map<string, ArtifactEntry | null>;
 }
@@ -1455,7 +1460,9 @@ const readContainerMember = async (
     let entry = container.byOccurrence.get(occurrence.occurrence_id);
     if (entry === undefined) {
       entry =
-        container.byPath.get(entryPath(occurrence, parent))?.shift() ?? null;
+        container.byPath
+          .get(occurrence.source_path ?? entryPath(occurrence, parent))
+          ?.shift() ?? null;
       container.byOccurrence.set(occurrence.occurrence_id, entry);
     }
     if (entry === null || entry.kind !== "file") return { kind: "unread" };
@@ -1531,8 +1538,9 @@ const containerEntries = async (
       continue;
     }
     listed.push(entry);
-    const sameName = container.byPath.get(entry.path);
-    if (sameName === undefined) container.byPath.set(entry.path, [entry]);
+    const sourceName = entry.sourcePath ?? entry.path;
+    const sameName = container.byPath.get(sourceName);
+    if (sameName === undefined) container.byPath.set(sourceName, [entry]);
     else sameName.push(entry);
   }
   const coverage = traversal.snapshot();
@@ -1821,7 +1829,13 @@ const diskPath = (
   if (occurrence.logical_path.split("/").includes("..")) return null;
   if (occurrence.logical_path.length === 0 || occurrence.logical_path === ".")
     return input.path;
-  return join(input.path, occurrence.logical_path);
+  const source = occurrence.source_path;
+  return appendCallerPath(
+    input.path,
+    source !== undefined && logicalPathNfc(source) === occurrence.logical_path
+      ? source
+      : occurrence.logical_path,
+  );
 };
 
 const packageAncestor = (

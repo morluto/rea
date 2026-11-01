@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
+import { deflateRawSync } from "node:zlib";
 import type { Dirent } from "node:fs";
 import { mkdir, symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -1257,6 +1258,98 @@ describe("ReleaseExposureReader text recognition", () => {
       stableRead.impl = real;
       await reader.close();
     }
+  });
+});
+
+describe("ReleaseExposureReader source spellings", () => {
+  const decomposed = "caf\u0065\u0301";
+  const key = "-----BEGIN PRIVATE KEY-----\n";
+
+  it("reopens a decomposed ASAR member through its source spelling", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-nfd-");
+    await writeFile(
+      join(root, "app.asar"),
+      asarArchive([
+        { name: `${decomposed}.js.map`, bytes: embeddedSourceMap() },
+        { name: `${decomposed}.txt`, bytes: Buffer.from(key) },
+      ]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(scanned.text_members.scanned).toBeGreaterThan(0);
+    expect(scanned.text_members.skipped).toBe(0);
+    expect(scanned.extractable).toMatchObject({ unreadable_members: 0 });
+  });
+
+  it("reopens a decomposed compressed .NET member", async () => {
+    const stored = deflateRawSync(Buffer.from(key));
+    const root = await createTestTempDirectory("rea-release-exposure-nfd-");
+    await writeFile(
+      join(root, "app.dll"),
+      dotnetBundleFixture([
+        {
+          path: `${decomposed}.txt`,
+          bytes: Buffer.from(key),
+          compressed: true,
+          storedBytes: stored,
+        },
+      ]).bytes,
+    );
+    const scanned = await inspect(join(root, "app.dll"));
+    expect(scanned.text_members).toEqual({ scanned: 1, skipped: 0 });
+    expect(scanned.extractable).toMatchObject({
+      readable_members: 1,
+      unreadable_members: 0,
+    });
+  });
+
+  it("finds a compressed member whose source name differs from its path", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-src-");
+    const file = join(root, "app.exe");
+    await writeFile(
+      file,
+      cArchiveExecutable({
+        carrier: "pe",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          {
+            name: "docs\\notes.txt",
+            typeCode: "x",
+            compress: true,
+            payload: Buffer.from(key),
+          },
+        ],
+      }),
+    );
+    const scanned = await inspect(file);
+    expect(scanned.text_members).toEqual({ scanned: 1, skipped: 0 });
+    expect(scanned.extractable).toMatchObject({
+      readable_members: 1,
+      unreadable_members: 0,
+    });
+  });
+
+  it("reads a decomposed directory member by its source spelling", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-nfd-");
+    await mkdir(join(root, "nested"));
+    const name = join(root, "nested", `${decomposed}.txt`);
+    await writeFile(name, key);
+    const scanned = await inspect(root);
+    expect(scanned.textLocations).toEqual([name]);
+    expect(scanned.text_members).toEqual({ scanned: 1, skipped: 0 });
+  });
+
+  it("keeps symlink traversal in a selected directory path", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-link-");
+    await mkdir(join(root, "real", "child"), { recursive: true });
+    await writeFile(join(root, "real", "notes.txt"), key);
+    await writeFile(join(root, "notes.txt"), "decoy\n");
+    await symlink(join(root, "real", "child"), join(root, "link"));
+    const selected = `${root}/link/..`;
+    const scanned = await inspect(selected);
+    expect(scanned.textLocations).toEqual([`${selected}/notes.txt`]);
+    expect(scanned.text_members).toEqual({ scanned: 1, skipped: 0 });
   });
 });
 

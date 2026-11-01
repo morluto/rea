@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -21,6 +22,7 @@ import {
   releaseExposureReportSchema,
   type ReleaseExposureScan,
 } from "../../domain/releaseExposure.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
@@ -293,9 +295,38 @@ describe("ReleaseExposureService cancellation", () => {
   });
 });
 
-describe("ReleaseExposureService image identity", () => {
-  const CHANGED = "cd".repeat(32);
+describe("ReleaseExposureService cancellation partials", () => {
+  it("reports the audit, not an owner's own partial Evidence", async () => {
+    const reason = new Error("caller stopped");
+    const { service, goBinaries } = owners(
+      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
+    );
+    goBinaries.inspect.mockResolvedValue(
+      err(
+        new AnalysisCancelledError("inspect_go_binary", {
+          cause: reason,
+          partialObservation: evidence({ owner: "go" }),
+        }),
+      ),
+    );
+    const result = await service.inspect({ path: "/work/app" });
+    if (result.ok) throw new Error("Expected a failed audit.");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("cancelled");
+    expect(
+      releaseExposureReportSchema.parse(
+        (result.error.partialObservation as Evidence).normalized_result,
+      ).limitations,
+    ).toEqual(expect.arrayContaining([expect.stringContaining("cancelled")]));
+    expect(JSON.stringify(projected)).toContain("javascript.source_maps");
+  });
+});
 
+const CHANGED = "cd".repeat(32);
+
+describe("ReleaseExposureService image identity", () => {
   it("does not attach Go facts from a file replaced after inventory", async () => {
     const { service, goBinaries } = owners(
       scan({
@@ -375,6 +406,70 @@ describe("ReleaseExposureService image identity", () => {
     expect(check?.status).toBe("unknown");
     expect(check?.observation.counts.packages).toBe(0);
     expect(check?.observation.samples).not.toContain("serde");
+  });
+});
+
+describe("ReleaseExposureService fuse image identity", () => {
+  it("binds a native-image fuse read to that image, not any inventoried digest", async () => {
+    const { service, electronFuses } = owners(
+      scan({
+        native_images: [
+          { path: "/work/app", format: "elf", sha256: CHANGED },
+          { path: "/work/helper", format: "elf", sha256: SHA },
+        ],
+      }),
+    );
+    electronFuses.inspect.mockImplementation(async (input) =>
+      (input as { path: string }).path === "/work/app"
+        ? ok(evidence(fuseReport([slice(0)])))
+        : err(
+            new AnalysisUnsupportedTargetError(
+              "inspect_electron_fuses",
+              "/work/helper",
+              "unsupported",
+            ),
+          ),
+    );
+    const result = await service.inspect({ path: "/work/app" });
+    if (!result.ok) throw result.error;
+    expect(
+      releaseExposureReportSchema
+        .parse(result.value.normalized_result)
+        .checks.find((item) => item.id === "electron.run_as_node")?.status,
+    ).toBe("unknown");
+  });
+
+  it("accepts an app bundle's fuse read when its file is an inventoried image", async () => {
+    const bundle = scan({
+      target: {
+        selected_path: "/work/App.app",
+        kind: "app",
+        format: "directory",
+        sha256: null,
+      },
+      fuse_candidates: [{ path: "/work/App.app", role: "app-bundle" }],
+    });
+    const status = async (sha256: string) => {
+      const { service, desktop, electronFuses } = owners({
+        ...bundle,
+        native_images: [
+          { path: "/work/App.app/framework", format: "elf", sha256 },
+        ],
+      });
+      desktop.inspect.mockResolvedValue(
+        err(new AnalysisInputError("inspect_desktop_application")),
+      );
+      electronFuses.inspect.mockResolvedValue(
+        ok(evidence(fuseReport([slice(0)]))),
+      );
+      const result = await service.inspect({ path: "/work/App.app" });
+      if (!result.ok) throw result.error;
+      return releaseExposureReportSchema
+        .parse(result.value.normalized_result)
+        .checks.find((item) => item.id === "electron.run_as_node")?.status;
+    };
+    expect(await status(SHA)).toBe("not_observed");
+    expect(await status(CHANGED)).toBe("unknown");
   });
 
   it("does not attach fuse facts when the resolved file left the inventory", async () => {
@@ -733,6 +828,30 @@ describe("ReleaseExposureService cleanup", () => {
     await expect(service.close()).rejects.toBe(denied);
   });
 
+  it("keeps a reader failure's resources beside a typed owner failure", async () => {
+    const { service, desktop, goBinaries } = owners(scan());
+    desktop.close.mockRejectedValue(
+      new ArtifactReaderFailure("unavailable", "close denied", {
+        cleanup: { reason: "EPERM", resources: ["/work/app/descriptor"] },
+      }),
+    );
+    goBinaries.close.mockRejectedValue(
+      new ProviderCleanupError(
+        "rea-go",
+        ["/work/app/go"],
+        { reason: "EPERM" },
+        { operation: "inspect_go_binary" },
+      ),
+    );
+    const failure: unknown = await service.close().catch((cause) => cause);
+    if (!(failure instanceof ProviderCleanupError))
+      throw new Error("Expected a typed cleanup failure.");
+    expect(failure.cleanupResources).toEqual([
+      "/work/app/descriptor",
+      "/work/app/go",
+    ]);
+  });
+
   it("keeps resources and live bindings when several typed owners fail to close", async () => {
     const { service, desktop, goBinaries } = owners(scan());
     const first = new ProviderCleanupError(
@@ -764,6 +883,41 @@ describe("ReleaseExposureService cleanup", () => {
 });
 
 describe("ReleaseExposureService Go paths", () => {
+  it("keeps Go paths with spaces and attached compiler flags whole", async () => {
+    const report = await goReport({
+      path: "github.com/acme/app",
+      main: null,
+      dependencies: [],
+      settings: [
+        { key: "CGO_CFLAGS", value: `"-I/opt/my sdk/include" -O2` },
+        {
+          key: "CGO_CXXFLAGS",
+          value: "-isystem/opt/isystem -iquote /opt/quote",
+        },
+        { key: "CGO_LDFLAGS", value: `-L'/opt/my libs' -T/opt/link.ld` },
+        { key: "-ldflags", value: `-extldflags "-L/srv/ext lib -static"` },
+        { key: "-gcflags", value: "all=-trimpath=/src/a=/b" },
+        { key: "-pgo", value: "/srv/default.pgo" },
+      ],
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    });
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.counts.paths).toBe(9);
+    expect(check?.observation.samples).toEqual([
+      "/opt/my sdk/include",
+      "/opt/isystem",
+      "/opt/quote",
+      "/opt/my libs",
+      "/opt/link.ld",
+      "/srv/ext lib",
+      "/src/a",
+      "/b",
+    ]);
+  });
+
   it("reports Go paths retained in cgo and linker flags", async () => {
     const module = (settings: { key: string; value: string }[]) => ({
       path: "github.com/acme/app",
