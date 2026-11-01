@@ -421,6 +421,11 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
     error.constraint === "wasm_requires_static_inspection"
   )
     return `${error.message}. Static WebAssembly inspection uses a separate optional WABT lane, not a native analysis engine.`;
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "target_in_use"
+  )
+    return "The selected target is held open by another process without read sharing. Close that application or select a copy, then retry.";
   if (error instanceof BinaryTargetError)
     return error.constraint === "directory_requires_file"
       ? `open_binary accepts files and Apple bundle directories (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}). This target is another directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application or \`rea analyze <directory>\`.`

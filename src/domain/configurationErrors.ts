@@ -50,13 +50,18 @@ export type BundleTargetConstraint =
   | "bundle_current_version_missing"
   | "bundle_path_escapes";
 
-/** Additional constraints identified while admitting a filesystem target. */
+/**
+ * Additional constraints identified while admitting a filesystem target.
+ * `target_in_use` names a transient refusal: another process holds the file
+ * without read sharing, and the unchanged request succeeds once it is released.
+ */
 export interface BinaryTargetErrorOptions extends AnalysisErrorOptions {
   readonly constraint?:
     | "directory_requires_file"
     | "wasm_requires_static_inspection"
     | "file_format_rejected"
     | "load_selection_rejected"
+    | "target_in_use"
     | BundleTargetConstraint;
   /** Info.plist whose declaration selected, or failed to select, the program file. */
   readonly infoPlist?: string;

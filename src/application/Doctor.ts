@@ -658,10 +658,13 @@ export const systemDoctorHost = (
       return {
         name: "target",
         ok: false,
+        // A target held by another process is supported; only its current read failed.
         classification:
-          targetError?.constraint !== undefined
-            ? "unsupported_target"
-            : "config_drift",
+          targetError?.constraint === "target_in_use"
+            ? "runtime_failure"
+            : targetError?.constraint !== undefined
+              ? "unsupported_target"
+              : "config_drift",
         detail: path,
         details: {
           reason: targetError?.reason ?? error.message,
