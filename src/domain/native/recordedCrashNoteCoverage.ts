@@ -1,7 +1,7 @@
 type Range = { readonly offset: string; readonly bytes: string };
 type Segment = {
   readonly index: number;
-  readonly type: string | number;
+  readonly type_id: number;
   readonly offset: string;
   readonly file_size: string;
 };
@@ -87,7 +87,7 @@ export function recordedNoteCoverageIssues(
     if (start + BigInt(range.bytes) > end) end = start + BigInt(range.bytes);
   }
   for (const segment of segments) {
-    if (segment.type !== "PT_NOTE") continue;
+    if (segment.type_id !== 4) continue;
     let cursor = BigInt(segment.offset);
     for (const range of (bySegment.get(segment.index) ?? []).sort(compare)) {
       if (BigInt(range.offset) !== cursor)

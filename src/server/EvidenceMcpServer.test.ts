@@ -13,11 +13,9 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
-import {
-  EvidenceMcpServer,
-  forgetPendingMcpRequest,
-} from "./EvidenceMcpServer.js";
-import { ToolResultDelivery } from "./toolResult.js";
+import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import { forgetPendingMcpRequest } from "./EvidenceMcpServerCore.js";
+import { createToolResultDelivery } from "./toolResult.js";
 
 const firstText = (result: {
   readonly content: readonly {
@@ -48,13 +46,17 @@ const expectFittingSdkValidationRecovery = (result: {
       },
       details: {
         operation: "procedure_pseudo_code",
-        issues: [
-          {
-            path: [],
-            reason: "invalid_value",
-            message: expect.stringContaining("required"),
-          },
-        ],
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["required"],
+            reason: "missing_argument",
+            expected: "string",
+          }),
+          expect.objectContaining({
+            path: ["unexpected"],
+            reason: "unknown_argument",
+          }),
+        ]),
       },
     },
   });
@@ -116,7 +118,7 @@ describe("MCP request bookkeeping", () => {
 describe("Modern protocol error delivery", () => {
   it("preserves the modern wire envelope when replacing an oversized error", async () => {
     const records = new InvestigationRecords();
-    const delivery = new ToolResultDelivery(16384);
+    const delivery = createToolResultDelivery(16384);
     const info = { name: "wire-error-recovery", version: "1" };
     const handler = createMcpHandler(() => {
       const server = new EvidenceMcpServer(
@@ -226,7 +228,7 @@ describe("SDK validation error delivery", () => {
   it.each(["2025-11-25", "2026-07-28"])(
     "bounds and retains errors through the public stdio entry on %s",
     async (revision) => {
-      const delivery = new ToolResultDelivery(4096);
+      const delivery = createToolResultDelivery(4096);
       const records = new InvestigationRecords();
       const server = new EvidenceMcpServer(
         { name: "sdk-validation-budget-test", version: "1" },

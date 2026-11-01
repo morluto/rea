@@ -3,7 +3,6 @@ import type {
   JavaScriptSourceRange,
   JavaScriptStaticAnalysis,
 } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
 import type {
   ExternalSourceMapSection,
@@ -21,6 +20,14 @@ interface JavaScriptStructuredObservation {
   readonly sha256: string;
 }
 
+/** Present source declarations only; non-strings stay bounded and retain source ownership. */
+export type JavaScriptPackageRendererDeclarations = Partial<
+  Record<
+    "renderer" | "browser" | "module",
+    string | { readonly status: "non-string" }
+  >
+>;
+
 interface JavaScriptPackageValues {
   readonly name: string | null;
   readonly version: string | null;
@@ -28,7 +35,12 @@ interface JavaScriptPackageValues {
   readonly main_status: "default" | "declared" | "invalid";
   /** Node launch declaration; an empty string requests the package index fallback. */
   readonly main_entrypoint: string;
-  readonly renderer: string | null;
+  readonly renderer_declarations: JavaScriptPackageRendererDeclarations;
+  /** Selected static renderer candidate, retaining the declaration that supplied it. */
+  readonly renderer_entrypoint: {
+    readonly field: "renderer" | "browser" | "module";
+    readonly path: string;
+  } | null;
 }
 
 /** Parsed package metadata used only for static entrypoint discovery. */
@@ -45,7 +57,8 @@ export type JavaScriptPackageObservation = JavaScriptStructuredObservation &
         readonly main: null;
         readonly main_status: "unavailable";
         readonly main_entrypoint: null;
-        readonly renderer: null;
+        readonly renderer_declarations: null;
+        readonly renderer_entrypoint: null;
         readonly limitation: string;
       }
   );
@@ -54,6 +67,8 @@ export type JavaScriptPackageObservation = JavaScriptStructuredObservation &
 export interface JavaScriptHtmlScriptObservation {
   readonly html_path: string;
   readonly script_path: string;
+  /** Parsed JavaScript type; null for data blocks or other non-JavaScript types. */
+  readonly script_type: "classic" | "module" | null;
   readonly base_href: string | null;
   readonly location: JavaScriptSourceRange;
 }
@@ -162,14 +177,12 @@ export interface JavaScriptArtifactAnalysisFailure {
   readonly limits: Readonly<Record<string, JsonValue>> | null;
 }
 
-/** One relevant file plus optional AST-only JavaScript facts. */
-export interface AnalyzedJavaScriptArtifactFile<
-  SemanticIr extends JavaScriptModuleSemanticIr = JavaScriptSemanticIr,
-> {
+/** One relevant file and the module facts retained after file-local projection. */
+export interface AnalyzedJavaScriptArtifactFile {
   readonly file: JavaScriptArtifactFile;
   readonly javascript: JavaScriptStaticAnalysis | null;
   readonly semantic: {
-    readonly ir: SemanticIr;
+    readonly ir: JavaScriptModuleSemanticIr;
   } | null;
   /** Operational incompleteness, distinct from a malformed source file. */
   readonly analysis_failure?: JavaScriptArtifactAnalysisFailure;
@@ -197,13 +210,11 @@ export const isSkippedJavaScriptAnalysis = (
   entry.javascript === null &&
   entry.analysis_failure !== undefined;
 
-/** Complete static-analysis projection before graph construction. */
-export interface JavaScriptArtifactAnalysis<
-  SemanticIr extends JavaScriptModuleSemanticIr = JavaScriptSemanticIr,
-> {
+/** Retained source facts shared by application graph construction. */
+export interface JavaScriptArtifactAnalysis {
   /** Internal source-facts owner shared with graph path resolution. */
   readonly jsonDocuments: JavaScriptJsonDocuments;
-  readonly files: readonly AnalyzedJavaScriptArtifactFile<SemanticIr>[];
+  readonly files: readonly AnalyzedJavaScriptArtifactFile[];
   readonly packages: readonly JavaScriptPackageObservation[];
   readonly json_modules: readonly JavaScriptJsonModuleObservation[];
   readonly html_scripts: readonly JavaScriptHtmlScriptObservation[];
@@ -215,7 +226,3 @@ export interface JavaScriptArtifactAnalysis<
   readonly parse_failures: number;
   readonly limitations: readonly string[];
 }
-
-/** Artifact facts retaining only semantics used by application relationships. */
-export type JavaScriptModuleArtifactAnalysis =
-  JavaScriptArtifactAnalysis<JavaScriptModuleSemanticIr>;

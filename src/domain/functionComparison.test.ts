@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../contracts/functionComparisonExample.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
+import { createFunctionCoordinateContext } from "./native/functionCoordinateContext.js";
+import { createAnalysisProfile } from "./analysisProfile.js";
 import { createEvidence, type Evidence } from "./evidence.js";
-import { functionDossierSchema } from "./hopperValues.js";
+import { functionDossierSchema } from "./native/functionDossier.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
@@ -16,6 +18,13 @@ import type { RelationshipCoverage } from "./relationshipCoverage.js";
 const procedure = (address: string, name: string) => ({
   address,
   name,
+  symbol: {
+    primary: true,
+    dynamic: false,
+    external: false,
+    type: "function",
+    source: "imported" as const,
+  },
   classification: null,
   body: {
     available: false as const,
@@ -115,10 +124,26 @@ const observe = (
       path: `/tmp/function-${digit}`,
       sha256: digit.repeat(64),
       format: "mach-o",
+      architecture: "arm64",
     },
     { id: providerId, name: providerId, version: "1" },
     {
       operation: "analyze_function",
+      analysisProfile: createAnalysisProfile(
+        { id: providerId, name: providerId, version: "1" },
+        {
+          architecture: "arm64",
+          loader: "auto-from-header",
+          function_coordinate_context: createFunctionCoordinateContext({
+            loader: "auto-from-header",
+            language_id: "auto-from-header",
+            compiler_spec_id: "auto-default",
+            load_segment: null,
+            address_coordinates: null,
+            entry_point: null,
+          }),
+        },
+      ),
       parameters: enhancedInputSchemas.analyze_function.parse({
         procedure: "main",
       }),
@@ -144,6 +169,57 @@ const rejectsMalformedFacetAvailability = (): void => {
   ).toBe(false);
 };
 
+it.each(["imported", null] as const)(
+  "preserves same-entry correspondence across a rename from symbol origin %s",
+  (origin) => {
+    const before = dossier("int evaluate(void) { return 0; }", "0x1000");
+    before.procedure.name = "evaluate";
+    before.procedure.symbol =
+      origin === null
+        ? null
+        : { ...procedure("0x1000", "evaluate").symbol, source: origin };
+    const after = functionDossierSchema.parse({
+      ...before,
+      procedure: {
+        ...before.procedure,
+        name: "renamed_evaluate",
+        symbol: {
+          ...procedure("0x1000", "evaluate").symbol,
+          source: "user_defined",
+        },
+      },
+      pseudocode: "int renamed_evaluate(void) { return 0; }",
+    });
+    const left = observe("a", before);
+    const right = observe("a", after);
+    const result = compareFunctions(
+      functionSnapshotFixture(left),
+      functionSnapshotFixture(right),
+    );
+    expect(result.function_match).toMatchObject({
+      status: "matched",
+      method: "same-entry",
+      left_name: "evaluate",
+      right_name: "renamed_evaluate",
+    });
+    expect(result.status).toBe("changed");
+    for (const name of ["identity", "pseudocode"])
+      expect(
+        result.dimensions.find(({ dimension }) => dimension === name),
+      ).toMatchObject({ status: "changed" });
+    expect(
+      result.dimensions.find(({ dimension }) => dimension === "assembly"),
+    ).toMatchObject({ status: "unchanged" });
+    expect(
+      result.dimensions.every(
+        ({ evidence_links }) =>
+          evidence_links.includes(left.evidence_id) &&
+          evidence_links.includes(right.evidence_id),
+      ),
+    ).toBe(true);
+  },
+);
+
 const keepsGeneratedNamesAmbiguous = (): void => {
   const named = (base: "0x1000" | "0x2000", name: string) =>
     functionDossierSchema.parse({
@@ -154,9 +230,16 @@ const keepsGeneratedNamesAmbiguous = (): void => {
         locals: [],
       },
     });
+  const unknownOrigin = (base: "0x1000" | "0x2000", name: string) => {
+    const value = named(base, name);
+    return functionDossierSchema.parse({
+      ...value,
+      procedure: { ...value.procedure, symbol: null },
+    });
+  };
   const generated = compareFunctions(
-    functionSnapshotFixture(observe("1", named("0x1000", "sub_1000"))),
-    functionSnapshotFixture(observe("2", named("0x2000", "sub_2000"))),
+    functionSnapshotFixture(observe("1", unknownOrigin("0x1000", "sub_1000"))),
+    functionSnapshotFixture(observe("2", unknownOrigin("0x2000", "sub_2000"))),
   );
   expect(generated.function_match.status).toBe("ambiguous");
   expect(generated.status).toBe("unknown");
@@ -247,7 +330,13 @@ describe("function comparison normalized identity", () => {
     keepsGeneratedNamesAmbiguous,
   );
 
-  it.each(["sub_deallocate", "sub_deadbeef_handler", "fcn.dispatch"])(
+  it.each([
+    "sub_deallocate",
+    "sub_deadbeef_handler",
+    "fcn.dispatch",
+    "EntryPoint",
+    "FUN_deadBEEF",
+  ])(
     "recognizes the explicit symbol %s without a generated-name prefix false positive",
     (name) => {
       const named = (base: "0x1000" | "0x2000") =>
@@ -274,14 +363,15 @@ describe("function comparison normalized identity", () => {
     },
   );
 
-  it.each(["sub_deadbeef", "fcn.00401000", "FUN_deadBEEF"])(
-    "keeps %s as an address-derived name",
+  it.each(["sub_deadbeef", "fcn.00401000", "FUN_deadBEEF", "EntryPoint"])(
+    "keeps unqualified label %s unknown regardless of spelling",
     (name) => {
       const generated = (base: "0x1000" | "0x2000") =>
         functionDossierSchema.parse({
           ...dossier("return 0;", base),
           procedure: {
             ...procedure(base, name),
+            symbol: null,
             name,
             signature: "int helper(void)",
             locals: [],
@@ -301,21 +391,42 @@ describe("function comparison normalized identity", () => {
 
 describe("function comparison address-derived call names", () => {
   it.each([
-    { name: "sub_deallocate", status: "unchanged", diagnostic: undefined },
+    {
+      name: "sub_deallocate",
+      source: "imported",
+      status: "unchanged",
+      diagnostic: undefined,
+    },
     {
       name: "sub_deadbeef",
+      source: "default",
       status: "unknown",
       diagnostic: "Provider retained an unresolved call target.",
     },
-    { name: "FUN_00401000", status: "unknown", diagnostic: undefined },
-    { name: "FUN_initialize", status: "unchanged", diagnostic: undefined },
+    {
+      name: "FUN_00401000",
+      source: "default",
+      status: "unknown",
+      diagnostic: undefined,
+    },
+    {
+      name: "FUN_initialize",
+      source: "imported",
+      status: "unchanged",
+      diagnostic: undefined,
+    },
   ])(
     "preserves the calls dimension for callee $name",
-    ({ name, status, diagnostic }) => {
+    ({ name, source, status, diagnostic }) => {
       const calling = (base: "0x1000" | "0x2000") =>
         functionDossierSchema.parse({
           ...dossier("return helper();", base),
-          callees: [procedure(base === "0x1000" ? "0x1010" : "0x2010", name)],
+          callees: [
+            {
+              ...procedure(base === "0x1000" ? "0x1010" : "0x2010", name),
+              symbol: { ...procedure(base, name).symbol, source },
+            },
+          ],
         });
       const result = compareFunctions(
         functionSnapshotFixture(observe("6", calling("0x1000"))),
@@ -338,7 +449,7 @@ describe("function comparison address-derived call names", () => {
         expect(calls).toMatchObject({
           status: "unknown",
           limitations: expect.arrayContaining([
-            "Address-derived callee or caller names cannot be matched safely.",
+            "Unnamed relationship endpoints, generated symbols and unknown symbol origins have no stable identity outside a common executable coordinate context.",
             `Right: ${diagnostic}`,
           ]),
         });
@@ -485,7 +596,11 @@ describe("function collection collation ties", () => {
     const calls = result.dimensions.find(
       ({ dimension }) => dimension === "calls",
     );
-    expect(calls).toMatchObject({ status: "changed" });
+    expect(calls).toMatchObject({
+      status: "changed",
+      left_digest: expect.any(String),
+      right_digest: expect.any(String),
+    });
     expect(calls?.left_digest).not.toBe(calls?.right_digest);
   });
 
@@ -494,7 +609,12 @@ describe("function collection collation ties", () => {
       (name, index) => procedure(`0x${(0x2000 + index).toString(16)}`, name),
     );
     const canonicalProjection = callees
-      .map(({ name }) => ({ direction: "out", name }))
+      .map(({ name }) => ({
+        direction: "out",
+        source: null,
+        target: { kind: "name", name, ambiguous: false },
+        kind: null,
+      }))
       .sort((left, right) =>
         compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
       );
@@ -514,12 +634,14 @@ describe("function collection collation ties", () => {
 });
 
 describe("function comparison ordering controls", () => {
-  const composed = procedure("0x2000", "caf\u00e9");
-  const decomposed = procedure("0x3000", "cafe\u0301");
-
   it("preserves duplicate Unicode collections and nullable endpoints", () => {
     const controlled = (base: "0x1000" | "0x2000", reverse: boolean) => {
       const endpoint = base === "0x1000" ? "0x1010" : "0x2010";
+      const composed = procedure(endpoint, "caf\u00e9");
+      const decomposed = procedure(
+        base === "0x1000" ? "0x1020" : "0x2020",
+        "cafe\u0301",
+      );
       const edges = [
         {
           source_address: base,
@@ -597,7 +719,7 @@ describe("function comparison ordering controls", () => {
           parameters: enhancedInputSchemas.analyze_function.parse({
             procedure: "dispatch",
           }),
-          result: jsonValueSchema.parse(result),
+          result,
           confidence: "derived",
           authority: "shipped-artifact",
           relationshipCoverage: { status: "complete" },
@@ -622,7 +744,7 @@ describe("function comparison ordering controls", () => {
     ).toMatchObject({
       status: "unknown",
       limitations: expect.arrayContaining([
-        expect.stringContaining("Unnamed reference endpoints"),
+        expect.stringContaining("Unnamed relationship endpoints"),
       ]),
     });
     expect(comparison.status).toBe("unknown");
@@ -971,6 +1093,7 @@ describe("function comparison identity and malformed CFG", () => {
         ...dossier("return 0;", base),
         procedure: {
           ...procedure(base, "sub_1000"),
+          symbol: null,
           name: "sub_1000",
           signature: "int helper(void)",
           locals: [],
@@ -1024,7 +1147,11 @@ describe("function comparison identity and malformed CFG", () => {
     const pseudocode = comparison.dimensions.find(
       ({ dimension }) => dimension === "pseudocode",
     );
-    expect(pseudocode).toMatchObject({ status: "changed" });
+    expect(pseudocode).toMatchObject({
+      status: "changed",
+      left_digest: expect.any(String),
+      right_digest: expect.any(String),
+    });
     expect(pseudocode?.left_digest).not.toBe(pseudocode?.right_digest);
   });
 });
@@ -1053,6 +1180,21 @@ const stringsDimension = (
   ).dimensions.find(({ dimension }) => dimension === "strings_names");
 
 describe("function comparison Swift string literals", () => {
+  it("retains literal comparisons when legacy dossiers omit facet declarations", () => {
+    const legacy = (base: "0x1000" | "0x2000", value: string) => {
+      const result = withLiterals(base, [value]);
+      delete result.facet_availability;
+      return result;
+    };
+    const left = legacy("0x1000", "SleepDisabled");
+    expect(
+      stringsDimension("1", left, "2", legacy("0x2000", "SleepDisabled")),
+    ).toMatchObject({ status: "unchanged" });
+    expect(
+      stringsDimension("1", left, "2", legacy("0x2000", "Holding awake")),
+    ).toMatchObject({ status: "changed" });
+  });
+
   it("treats differing decoded literals as a strings and names change", () => {
     expect(
       stringsDimension(
@@ -1390,6 +1532,128 @@ it.each([
   },
 );
 
+describe("function call endpoint identity", () => {
+  const calling = (
+    direction: "callers" | "callees",
+    entries: readonly ReturnType<typeof procedure>[],
+  ) =>
+    functionDossierSchema.parse({
+      ...dossier("return helper();", "0x1000"),
+      [direction]: entries,
+    });
+  const calls = (
+    left: ReturnType<typeof dossier>,
+    right: ReturnType<typeof dossier>,
+    sameArtifact: boolean,
+  ) =>
+    compareFunctions(
+      functionSnapshotFixture(observe("a", left)),
+      functionSnapshotFixture(observe(sameArtifact ? "a" : "b", right)),
+    ).dimensions.find(({ dimension }) => dimension === "calls");
+
+  it.each(["callers", "callees"] as const)(
+    "uses known procedure entries rather than %s labels within an artifact",
+    (direction) => {
+      const left = calling(direction, [procedure("ram:0x1010", "helper")]);
+      expect(
+        calls(
+          left,
+          calling(direction, [procedure("ram:0x1020", "helper")]),
+          true,
+        ),
+      ).toMatchObject({ status: "changed" });
+      expect(
+        calls(
+          left,
+          calling(direction, [procedure("ram:0X001010", "renamed")]),
+          true,
+        ),
+      ).toMatchObject({ status: "unchanged" });
+      expect(
+        calls(
+          left,
+          calling(direction, [procedure("rom:0x1010", "helper")]),
+          true,
+        ),
+      ).toMatchObject({ status: "changed" });
+      expect(
+        calls(
+          left,
+          calling(direction, [procedure("unparsed", "helper")]),
+          true,
+        ),
+      ).toMatchObject({
+        status: "unknown",
+        limitations: [expect.stringContaining("could not be parsed")],
+      });
+    },
+  );
+
+  it.each(["callers", "callees"] as const)(
+    "keeps repeated cross-artifact %s labels ambiguous without reference edges",
+    (direction) => {
+      const left = calling(direction, [
+        procedure("0x1010", "helper"),
+        procedure("0x1020", "helper"),
+      ]);
+      const right = calling(direction, [
+        procedure("0x2010", "helper"),
+        procedure("0x2020", "helper"),
+      ]);
+      expect(calls(left, right, false)).toMatchObject({
+        status: "unknown",
+        left_count: 2,
+        right_count: 2,
+        left_digest: null,
+        right_digest: null,
+        limitations: [
+          expect.stringContaining("unique comparable procedure entry"),
+        ],
+      });
+    },
+  );
+
+  it("retains duplicate counts when a name resolves to one entry per artifact", () => {
+    const left = calling("callees", [
+      procedure("0x1010", "helper"),
+      procedure("0X001010", "helper"),
+    ]);
+    const right = calling("callees", [
+      procedure("0x2010", "helper"),
+      procedure("0x2010", "helper"),
+    ]);
+    expect(calls(left, right, false)).toMatchObject({
+      status: "unchanged",
+      left_count: 2,
+      right_count: 2,
+    });
+    expect(
+      calls(left, calling("callees", [procedure("0x2010", "helper")]), false),
+    ).toMatchObject({ status: "changed" });
+  });
+
+  it("shares procedure-name ambiguity across call and reference observations", () => {
+    const observed = (base: "0x1000" | "0x2000") =>
+      functionDossierSchema.parse({
+        ...dossierWithReference(base, "call"),
+        callees: [procedure(base === "0x1000" ? "0x1020" : "0x2020", "helper")],
+      });
+    const result = compareFunctions(
+      functionSnapshotFixture(observe("a", observed("0x1000"))),
+      functionSnapshotFixture(observe("b", observed("0x2000"))),
+    );
+    for (const dimension of ["calls", "references"])
+      expect(
+        result.dimensions.find((value) => value.dimension === dimension),
+      ).toMatchObject({
+        status: "unknown",
+        limitations: [
+          expect.stringContaining("unique comparable procedure entry"),
+        ],
+      });
+  });
+});
+
 describe("function comparison unnamed reference endpoints", () => {
   it("distinguishes unnamed reference targets by address within one artifact", () => {
     const unnamedTarget = (target: string) =>
@@ -1434,5 +1698,22 @@ describe("function comparison unnamed reference endpoints", () => {
         functionSnapshotFixture(observe("b", unnamed("data"))),
       ).dimensions.find(({ dimension }) => dimension === "references"),
     ).toMatchObject({ status: "changed" });
+  });
+});
+
+it("does not equate matching numeric entries from different providers", () => {
+  const before = dossier("return 0;", "0x1000");
+  before.procedure.name = "evaluate";
+  const after = functionDossierSchema.parse({
+    ...before,
+    procedure: { ...before.procedure, name: "renamed_evaluate" },
+  });
+  const result = compareFunctions(
+    functionSnapshotFixture(observe("a", before, "provider-a")),
+    functionSnapshotFixture(observe("a", after, "provider-b")),
+  );
+  expect(result.function_match).toMatchObject({
+    status: "ambiguous",
+    method: "explicit",
   });
 });

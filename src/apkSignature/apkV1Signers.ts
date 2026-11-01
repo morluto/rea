@@ -186,16 +186,10 @@ export const v1SignerFacts = ({
     // Without verification, a block with several SignerInfos has no one signer.
     certificate:
       infos.length === 1 ? named(infos[0]?.certificateIndex ?? null) : null,
-    certificates: facts.flatMap((fact) =>
-      fact === null
-        ? []
-        : [
-            {
-              sha256_fingerprint: fact.sha256_fingerprint,
-              subject: fact.subject,
-            },
-          ],
-    ),
+    certificates: facts.map(({ sha256_fingerprint, subject }) => ({
+      sha256_fingerprint,
+      subject,
+    })),
     signer_infos: infos.map((info) => ({
       identified_by: info.identifiedBy,
       certificate_sha256:

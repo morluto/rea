@@ -7,7 +7,9 @@ import type {
   ProviderFailureStage,
 } from "./providerOperationHealth.js";
 import {
+  dialogTimeoutFromDiagnostic,
   hopperStartupFailure,
+  invalidDialogTimeoutMessage,
   type HopperStartupFailureCode,
   type HopperStartupFailureDiagnostic,
 } from "./hopperStartupFailure.js";
@@ -163,6 +165,12 @@ export class HopperProcessError extends HopperError {
     this.requestId = context.requestId;
     this.launcherFailure = context.launcherFailure;
     const failure = hopperStartupFailure(exitCode);
+    this.userMessage =
+      failure?.code === "invalid_dialog_timeout"
+        ? invalidDialogTimeoutMessage(
+            dialogTimeoutFromDiagnostic(context.diagnostic),
+          )
+        : failure?.message;
     this.stage =
       context.stage ??
       (failure === undefined
@@ -171,19 +179,30 @@ export class HopperProcessError extends HopperError {
           : "analysis"
         : "launch");
     this.failureCode = failure?.code;
-    this.userMessage = failure?.message;
     this.providerState =
       context.providerState ?? (exitCode === null ? "unknown" : "exited");
   }
 }
 
 /** Parsed facts about rejecting an application before execution. */
-export interface HopperLaunchRejection {
-  /** The selected application was rejected before it was executed. */
-  readonly boundary: "publisher_verification";
-  /** Parsed failure reason supplied by the verification owner. */
-  readonly reason: string;
-}
+export type HopperLaunchRejection =
+  | {
+      /** The selected application was rejected before it was executed. */
+      readonly boundary: "publisher_verification";
+      /** Parsed failure reason supplied by the verification owner. */
+      readonly reason: string;
+    }
+  | ({
+      readonly boundary: "argument_encoding";
+      readonly reason: "applescript_literal";
+    } & (
+      | { readonly source: "launcher_path" }
+      | {
+          readonly source: "argument";
+          /** Zero-based index in the final vendor argv, excluding the executable. */
+          readonly argument_index: number;
+        }
+    ));
 
 /** Hopper or the repository bridge could not be started. */
 export class HopperStartError extends HopperError {

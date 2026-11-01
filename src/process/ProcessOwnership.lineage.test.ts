@@ -44,6 +44,52 @@ const nativeIdentity = (
 });
 
 it.each(
+  [false, true].flatMap((native) =>
+    ([undefined, "foreign"] as const).map((runId) => ({ native, runId })),
+  ),
+)(
+  "keeps missing ownership distinct from an observed foreign token, native=$native, runId=$runId",
+  async ({ native, runId }) => {
+    const signalGroup = vi.fn();
+    const host: ProcessOwnershipHost = {
+      platform: "linux",
+      listProcesses: async () => [launcher],
+      environment: async () =>
+        runId === undefined ? {} : { REA_PROCESS_RUN_ID: runId },
+      ...(native
+        ? {
+            processIdentities: async (rows: readonly ProcessTableEntry[]) =>
+              new Map(rows.map((row) => [row.pid, nativeIdentity(row)])),
+          }
+        : {}),
+      signalGroup,
+    };
+    const ownership = {
+      runId: "owned",
+      leaderPid: launcher.pid,
+      processGroupId: launcher.processGroupId,
+      expectedParentPid: launcher.parentPid,
+      expectedCommand: launcher.command,
+    };
+    await expect(
+      observeOwnedProcessLineage(ownership, host),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason:
+        runId === undefined
+          ? "REA_PROCESS_RUN_ID was absent from the readable environment for PID 100; process lineage ownership remains unverified"
+          : "process lineage contains an unowned or PID-reused process",
+    });
+    await expect(
+      cleanupOwnedProcessGroup(ownership, host),
+    ).resolves.toMatchObject({
+      cleaned: false,
+    });
+    expect(signalGroup).not.toHaveBeenCalled();
+  },
+);
+
+it.each(
   (["parent", "group", "command"] as const).flatMap((mismatch) =>
     (
       ["foreign", "missing", "unavailable", "identity-unavailable"] as const

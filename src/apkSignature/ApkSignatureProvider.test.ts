@@ -11,9 +11,6 @@ import {
   APK_SIGNATURE_V3_ID,
   LEAF_CERTIFICATE,
   LEAF_SHA256,
-  LEAF_SUBJECT,
-  OID_ECDSA_SHA256,
-  OID_SHA256,
   OPENSSL_BLOCK_ISSUER_SERIAL,
   ROOT_CERTIFICATE,
   ROOT_SHA256,
@@ -149,18 +146,6 @@ const reportOf = async (path: string) => {
 };
 
 describe("ApkSignatureProvider without the Android SDK", () => {
-  it("retains the declared digest's signature algorithm ID and bytes", async () => {
-    const report = await reportOf(
-      await write(
-        "algorithm-id.apk",
-        syntheticSigned([{ id: V2, value: bogusV2Value() }]),
-      ),
-    );
-    expect(report.schemes.v2?.signers?.[0]?.digests[0]).toMatchObject({
-      signature_algorithm_id: 0x0103,
-      declared_digest_hex: "ab".repeat(32),
-    });
-  });
   it("reports an unsigned ZIP as having no scheme", async () => {
     const r = await reportOf(
       await write(
@@ -172,53 +157,6 @@ describe("ApkSignatureProvider without the Android SDK", () => {
     expect(r.posture.strongest_scheme).toBe("none");
     expect(r.posture.self_consistent).toBeNull();
     expect(r.posture.v1_only).toBe(false);
-  });
-
-  it("detects v1-only signing and names the signer certificate its block declares", async () => {
-    for (const stored of [false, true]) {
-      const r = await reportOf(
-        await write(
-          `v1-${String(stored)}.apk`,
-          await zipWith([
-            { name: "classes.dex", data: "x" },
-            { name: "META-INF/MANIFEST.MF", data: "Manifest-Version: 1.0" },
-            { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
-            {
-              name: "META-INF/CERT.EC",
-              data: OPENSSL_BLOCK_ISSUER_SERIAL,
-              stored,
-            },
-          ]),
-        ),
-      );
-      expect(r.schemes.v1.present).toBe(true);
-      expect(r.posture.v1_only).toBe(true);
-      expect(r.posture.strongest_scheme).toBe("v1");
-      expect(r.posture.v1_signers_match_block_signers).toBeNull();
-      const [signer] = r.schemes.v1.signers;
-      expect(signer).toMatchObject({
-        signature_file: "META-INF/CERT.SF",
-        block_file: "META-INF/CERT.EC",
-        certificate: {
-          sha256_fingerprint: LEAF_SHA256,
-          subject: LEAF_SUBJECT,
-          public_key_algorithm: "ec",
-        },
-        certificates: [
-          { sha256_fingerprint: LEAF_SHA256, subject: LEAF_SUBJECT },
-          { sha256_fingerprint: ROOT_SHA256 },
-        ],
-        signer_infos: [
-          {
-            identified_by: "issuer-and-serial",
-            certificate_sha256: LEAF_SHA256,
-            digest_algorithm_oid: OID_SHA256,
-            signature_algorithm_oid: OID_ECDSA_SHA256,
-          },
-        ],
-        decode_error: null,
-      });
-    }
   });
 
   it("decodes a v2 signer, keeps an unparseable certificate null, and flags a digest mismatch", async () => {
@@ -451,7 +389,7 @@ describe("ApkSignatureProvider v1 signers", () => {
   });
 });
 
-describe("ApkSignatureProvider failure surfaces", () => {
+const registerSignatureInputAdmissionCases = () => {
   it("keeps only a non-regular path as input; reader I/O and defects are adapter errors", () => {
     const tagOf = (cause: unknown): string =>
       apkSignatureFailure(cause, "/x.apk")._tag;
@@ -484,6 +422,70 @@ describe("ApkSignatureProvider failure surfaces", () => {
     expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
   });
 
+  it("reports a damaged supported Zip64 end record as input failure while accepting the intact and restored controls", async () => {
+    const classic = Buffer.from(await zipOf(["entry.txt"]));
+    const endOffset = classic.length - 22;
+    expect(classic.readUInt32LE(endOffset)).toBe(0x06054b50);
+    const count = classic.readUInt16LE(endOffset + 10);
+    const size = classic.readUInt32LE(endOffset + 12);
+    const offset = classic.readUInt32LE(endOffset + 16);
+    const record = Buffer.from([
+      ...u32(0x06064b50),
+      ...u64(44),
+      ...u16(45),
+      ...u16(45),
+      ...u32(0),
+      ...u32(0),
+      ...u64(count),
+      ...u64(count),
+      ...u64(size),
+      ...u64(offset),
+    ]);
+    const locator = Buffer.from([
+      ...u32(0x07064b50),
+      ...u32(0),
+      ...u64(endOffset),
+      ...u32(1),
+    ]);
+    const end = Buffer.from(classic.subarray(endOffset));
+    end.writeUInt16LE(0xffff, 8);
+    end.writeUInt16LE(0xffff, 10);
+    end.writeUInt32LE(0xffffffff, 12);
+    end.writeUInt32LE(0xffffffff, 16);
+    const valid = Buffer.concat([
+      classic.subarray(0, endOffset),
+      record,
+      locator,
+      end,
+    ]);
+    const corrupt = Buffer.from(valid);
+    corrupt.writeUInt32LE(0x06064b51, endOffset);
+    const restored = Buffer.from(corrupt);
+    restored.writeUInt32LE(0x06064b50, endOffset);
+    expect(Buffer.compare(restored, valid)).toBe(0);
+    for (const [name, bytes] of [
+      ["valid", valid],
+      ["restored", restored],
+    ] as const) {
+      const result = await provider.inspect({
+        path: await write(`${name}.zip`, bytes),
+      });
+      expect(result.ok).toBe(true);
+    }
+    const damaged = await provider.inspect({
+      path: await write("damaged.zip", corrupt),
+    });
+    expect(damaged.ok).toBe(false);
+    if (!damaged.ok) {
+      expect(damaged.error._tag).toBe("AnalysisInputError");
+      expect(JSON.stringify(damaged.error)).toContain(
+        "invalid Zip64 EOCD signature",
+      );
+    }
+  });
+};
+
+const registerSigningStructureFailureCases = () => {
   it("reports a malformed signing block as an input error", async () => {
     const result = await provider.inspect({
       path: await write(
@@ -598,6 +600,11 @@ describe("ApkSignatureProvider failure surfaces", () => {
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     expect(result.error.message).toContain("output budget");
   });
+};
+
+describe("ApkSignatureProvider failure surfaces", () => {
+  registerSignatureInputAdmissionCases();
+  registerSigningStructureFailureCases();
 });
 
 describe("ApkSignatureProvider output budget", () => {

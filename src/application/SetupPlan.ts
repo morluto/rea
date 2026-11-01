@@ -1,3 +1,4 @@
+import { SetupSkillInstallError, type SkillDestination } from "./SetupSkill.js";
 import { classifyClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import type { LinuxPackageFamily } from "./HopperReleaseFeed.js";
 import {
@@ -5,7 +6,6 @@ import {
   LINUX_HOPPER_SETUP_HOSTS,
   type LinuxDistribution,
 } from "./LinuxHopper.js";
-import type { SkillDestination } from "./SetupSkill.js";
 import { macHopperInstallDisclosure } from "./MacHopper.js";
 import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
 import type {
@@ -24,6 +24,7 @@ import { redirectedWriteBlocker } from "./MsixPackageStorage.js";
 import type { DoctorReport } from "./Doctor.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+import { macosMajorVersion } from "../domain/macosVersion.js";
 
 /** Whether automated Hopper installation can run on this host, and why not. */
 export type HopperInstallEligibility =
@@ -211,6 +212,19 @@ export const planSetupActions = async (input: {
       blocker: `${invalid.client.displayName ?? invalid.client.name}: ${invalid.inspection.remediation}`,
     };
   }
+  let skillDestinations: readonly SkillDestination[] = [];
+  try {
+    if (input.installSkill)
+      skillDestinations = input.host.skillDestinations(input.skillClientIds);
+  } catch (cause: unknown) {
+    if (!(cause instanceof SetupSkillInstallError)) throw cause;
+    return {
+      plannedActions: [],
+      selectedClients,
+      clientsToConfigure: [],
+      blocker: cause.remediation,
+    };
+  }
   const clientPlans = plannedClientWrites(
     inspections,
     input.discovery.installHopper,
@@ -224,7 +238,7 @@ export const planSetupActions = async (input: {
     installHopper: input.discovery.installHopper,
     installSkill: input.installSkill,
     skillClientIds: input.skillClientIds,
-    skillDestinations: input.host.skillDestinations(input.skillClientIds),
+    skillDestinations,
     clients: clientPlans,
     providerEnvironment: input.providerEnvironment,
     ...(input.discovery.linuxPackageFamily === undefined
@@ -395,11 +409,8 @@ const hopperInstallEligibility = (
   linuxDistribution: LinuxDistribution | undefined,
 ): HopperInstallEligibility => {
   if (platform === "darwin") {
-    const major =
-      macosVersion === undefined
-        ? undefined
-        : /^(\d+)(?:\.|$)/u.exec(macosVersion)?.[1];
-    return major !== undefined && Number(major) >= 12
+    const major = macosMajorVersion(macosVersion);
+    return major !== undefined && major >= 12
       ? { supported: true }
       : { supported: false, remediation: "Upgrade to macOS 12 or newer." };
   }

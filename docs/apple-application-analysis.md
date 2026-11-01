@@ -101,8 +101,8 @@ limitation reports how many inventoried entries were left out. IPA projection
 still lists every archive component, including `SwiftSupport/`.
 
 `platforms` lists `macos` for application roots with `Contents/`. It lists `ios`
-for shallow application roots that have an `Info.plist`. An application root
-with neither, such as an empty inventory, has no platform.
+for shallow application roots that have an `Info.plist` at their root. An
+application root with neither, such as an empty inventory, has no platform.
 
 ## macOS bundle anatomy
 
@@ -149,6 +149,11 @@ directories rather than `Versions/Current`. A framework's `info_plist_path` is
 because `Versions/Current` decides which one applies) or when its single
 version directory has no `Resources/Info.plist`.
 
+A `shallow` bundle's `info_plist_path` is its root `Info.plist`. Without one,
+it is `Resources/Info.plist`: a flattened macOS framework keeps its binary,
+`_CodeSignature/`, and `Resources/` directly in the `.framework`, like a single
+`Versions/<version>/` directory without the `Versions/` wrapper.
+
 AppleDouble sidecar files (`._*` and `__MACOSX/`) are inventory facts, but they
 describe neighbouring files. They are excluded from roots, bundle roles, and the
 anatomy components.
@@ -156,6 +161,10 @@ anatomy components.
 The projection does not read plists. Use `inspect_plist` on a bundle's
 `info_plist_path` or a launchd plist to read `CFBundleExecutable`, identifiers,
 `SMPrivilegedExecutables`, `BundleProgram`, URL schemes, and usage descriptions.
+MCP calls require an existing `open_binary` or `open_bundle_resources` session,
+including when `inspect_plist.path` is explicit. For a bundle without a resolved
+executable, open its resource session first. The CLI `rea inspect-plist <path>`
+opens the selected artifact for its one invocation.
 Use `inspect_signature` on an executable candidate for code-signing claims.
 
 ## Dylib load resolution
@@ -209,6 +218,9 @@ Resolution follows dyld:
   already loaded image reuses it.
 - Symlinks such as `Versions/Current` are followed inside the analyzed root.
   An escape through `..` or an absolute link is `escapes-target`.
+- Dyld path components are POSIX names. On Windows hosts, link text uses `\`
+  as its separator, and a dyld component that contains `\` or `:` cannot name
+  a file in the analyzed root, so its candidate is `absent`.
 
 Each edge lists every candidate path tried, with its outcome: `resolved`,
 `absent`, `not-mach-o`, `malformed`, `unsupported` (recognized Mach-O outside
@@ -242,7 +254,7 @@ A `conditional` image is still traced, because it is an in-root candidate
 that may load. Every edge below it has `loader_conditional: true`, and a
 request that reuses it by install name is `conditional` too. An in-root dylib
 with no platform load command remains unknown unless the root is an executable
-with observed macOS platform and the candidate’s CPU type is x86_64, i386, or arm64. In that macOS context,
+with observed macOS platform and the candidate's CPU type is x86_64, i386, or arm64. In that macOS context,
 [Apple's dyld](https://github.com/apple-oss-distributions/dyld/blob/fd8d0c4d52320ebf64db34f3cb280310d905c5ae/mach_o/UnsafeHeader.cpp#L1137-L1145) supplies an implicit macOS platform to legacy dylibs on those CPU
 types. The candidate records `platform_basis: "macos-dyld-implicit"`; the
 reported slice fields `platform: null` and `platforms: []` remain the parsed

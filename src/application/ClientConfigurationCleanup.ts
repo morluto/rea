@@ -60,9 +60,11 @@ export const retryClientConfigurationCleanup = async (
 ): Promise<{
   readonly primary: unknown;
   readonly failures: readonly RegularFileCleanupFailure[];
+  readonly cleanupLeases: readonly AnalysisCleanupLease[];
   readonly cleanup?: AnalysisCleanupObservation;
 }> => {
   const failures: RegularFileCleanupFailure[] = [];
+  const cleanupLeases = new Set<AnalysisCleanupLease>();
   const observations: AnalysisCleanupObservation[] = [];
   let current = failure;
   let primary: unknown;
@@ -71,6 +73,7 @@ export const retryClientConfigurationCleanup = async (
     if (current instanceof RegularFileCleanupFailure) {
       const retried = await retryRegularFileCleanupFailures(current, resources);
       failures.push(...retried.failures);
+      for (const lease of retried.cleanupLeases) cleanupLeases.add(lease);
       if (retried.cleanup !== undefined) observations.push(retried.cleanup);
       primary = retried.primary;
       const last = retried.failures.at(-1)!;
@@ -84,13 +87,15 @@ export const retryClientConfigurationCleanup = async (
         resource: current.owner.resource,
         lease: current.cleanupLease,
       });
-      if (released.kind === "failed")
+      if (released.kind === "failed") {
+        cleanupLeases.add(released.lease);
         observations.push(
           ArtifactReaderFailure.cleanupObservation(
             released.cause,
             current.owner.resource,
           ),
         );
+      }
       primary =
         current.outcome.kind === "failed"
           ? current.outcome.cause
@@ -104,6 +109,7 @@ export const retryClientConfigurationCleanup = async (
   return {
     primary,
     failures,
+    cleanupLeases: [...cleanupLeases],
     ...(observations.length === 0
       ? {}
       : {

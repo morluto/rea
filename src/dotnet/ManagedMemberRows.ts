@@ -1,3 +1,7 @@
+import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
+import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
+import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
+import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { isManagedMemberReferenceInstruction } from "../domain/managed/managedMemberInstructionFacts.js";
 import {
@@ -7,9 +11,13 @@ import {
 } from "./ManagedDecodeBudget.js";
 import type { ManagedPeLayout } from "./ManagedPeReader.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import {
+  MANAGED_CODED_INDEXES,
+  type ManagedMetadataLayout,
+} from "./ManagedMetadataLayout.js";
 import {
   metadataSignature,
+  memberTargetIdentity,
   signatureGenericArity,
   type ManagedCallEdge,
   type ManagedExportedType,
@@ -17,15 +25,18 @@ import {
   type ManagedFieldAccess,
   type ManagedMemberRef,
   type ManagedMethod,
+  type DecodedMethod,
   type MemberCore,
   type SignatureTypeName,
+  type SignatureDisplayTypeName,
+  type DeclarationTypeName,
   type TypeRange,
 } from "./ManagedMemberInspectorCore.js";
 import {
   metadataToken,
+  type MetadataTokenFact,
   metadataRowCursor,
-  metadataCodedToken,
-  metadataCodedTokenInvalidReason,
+  decodeMetadataCodedIndex,
   readMetadataBlob,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
@@ -56,9 +67,13 @@ export const parseFields = (
   memberLists: TypeMemberListFacts,
   {
     signatureTypeName,
+    displayTypeName,
+    declarationTypeName,
     selected = null,
   }: {
     readonly signatureTypeName: SignatureTypeName;
+    readonly displayTypeName: SignatureDisplayTypeName;
+    readonly declarationTypeName: DeclarationTypeName;
     readonly selected?: SelectedTypeTokens;
   },
 ): {
@@ -69,6 +84,7 @@ export const parseFields = (
   const fields: ManagedField[] = [];
   const core = new Map<string, MemberCore>();
   const issues: ManagedParseIssue[] = [];
+  const constant = createManagedFieldConstantReader(bytes, layout, issues);
   const table = layout.table(4);
   const ownerRow = readManagedValue(
     () => memberDeclaringTypeRowLookup(bytes, layout, 4, memberLists),
@@ -76,12 +92,12 @@ export const parseFields = (
   );
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 4, row);
-      const flags = cursor.readUInt16();
+      const { token, rowOffset, flags, nameIndex, signatureIndex } =
+        readFieldDefinitionRow(bytes, layout, row);
       const name = readMetadataString(
         bytes,
         layout,
-        cursor.readIndex(layout.stringIndexSize),
+        nameIndex,
         layout.strings.size,
       );
       const owner =
@@ -89,7 +105,6 @@ export const parseFields = (
           ? 0
           : (readManagedValue(() => ownerRow(row), issues) ?? 0);
       const declared = ranges[owner - 1];
-      const token = metadataToken(4, row);
       core.set(token, {
         token,
         name,
@@ -100,23 +115,38 @@ export const parseFields = (
       const sig = readMetadataBlob(
         bytes,
         layout,
-        cursor.readIndex(layout.blobIndexSize),
+        signatureIndex,
         layout.blob?.size ?? 0,
       );
+      const decoded = budgetedSignature(
+        sig,
+        layout,
+        signatureTypeName,
+        displayTypeName,
+        issues,
+        { scope: `Field:${token}.signature`, kind: "field", artifact: bytes },
+      );
+      core.set(token, {
+        token,
+        name,
+        declaringType: declared?.fullName ?? null,
+        kind: "field",
+        identitySha256: memberTargetIdentity(
+          name,
+          declared === undefined ? null : { table: 2, row: owner },
+          decoded,
+          declarationTypeName,
+        ),
+      });
       fields.push({
         token,
-        row_offset: cursor.start,
+        row_offset: rowOffset,
         declaring_type_token: declared?.token ?? null,
         declaring_type: declared?.fullName ?? null,
         name,
         flags,
-        signature: budgetedSignature(
-          sig,
-          layout,
-          signatureTypeName,
-          issues,
-          `Field:${token}.signature`,
-        ),
+        signature: decoded,
+        constant: constant(row, flags),
       });
     }, issues);
   }
@@ -158,21 +188,21 @@ export const parseExportedTypes = (
         layout.codedIndexSize("Implementation"),
       );
       const token = metadataToken(39, row);
-      const implementationReason = metadataCodedTokenInvalidReason(
+      const implementation = decodeMetadataCodedIndex(
         implementationRaw,
-        2,
-        [38, 35, 39],
+        MANAGED_CODED_INDEXES.Implementation.bits,
+        MANAGED_CODED_INDEXES.Implementation.tables,
         layout.rowCounts,
       );
-      if (implementationReason !== null || implementationRaw === 0)
+      if (implementation.kind !== "valid")
         issues.push({
           code: "invalid-row",
           scope: `metadata.ExportedType:${token}`,
           offset: implementationOffset,
           detail:
-            implementationReason === null
+            implementation.kind === "null"
               ? "ExportedType implementation coded index 0x0 is null, but the Implementation column must reference a row"
-              : `ExportedType implementation coded index 0x${implementationRaw.toString(16)} is invalid: ${implementationReason}`,
+              : `ExportedType implementation coded index 0x${implementationRaw.toString(16)} is invalid: ${implementation.reason}`,
         });
       exportedTypes.push({
         token,
@@ -182,12 +212,8 @@ export const parseExportedTypes = (
         flags,
         forwarder: (flags & TYPE_FORWARDER_FLAG) !== 0,
         type_def_id: typeDefId,
-        implementation_token: metadataCodedToken(
-          implementationRaw,
-          2,
-          [38, 35, 39],
-          layout.rowCounts,
-        ),
+        implementation_token:
+          implementation.kind === "valid" ? implementation.token : null,
       });
     }, issues);
   }
@@ -197,8 +223,19 @@ export const parseExportedTypes = (
 export const parseMemberRefs = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  typeName: (token: string | null) => string | null,
-  signatureTypeName: SignatureTypeName,
+  {
+    typeName,
+    signatureTypeName,
+    displayTypeName,
+    declarationTypeName,
+  }: {
+    readonly typeName: (
+      reference: Pick<MetadataTokenFact, "table" | "row" | "token"> | null,
+    ) => string | null;
+    readonly signatureTypeName: SignatureTypeName;
+    readonly displayTypeName: SignatureDisplayTypeName;
+    readonly declarationTypeName: DeclarationTypeName;
+  },
 ): {
   readonly refs: readonly ManagedMemberRef[];
   readonly core: ReadonlyMap<string, MemberCore>;
@@ -210,56 +247,43 @@ export const parseMemberRefs = (
   const table = layout.table(10);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 10, row);
-      const parentRaw = cursor.readIndex(
-        layout.codedIndexSize("MemberRefParent"),
-      );
+      const { token, rowOffset, parentRaw, parent, nameIndex, signatureIndex } =
+        readMemberReferenceRowFacts(bytes, layout, row);
       const name = readMetadataString(
         bytes,
         layout,
-        cursor.readIndex(layout.stringIndexSize),
+        nameIndex,
         layout.strings.size,
       );
       const sig = readMetadataBlob(
         bytes,
         layout,
-        cursor.readIndex(layout.blobIndexSize),
+        signatureIndex,
         layout.blob?.size ?? 0,
       );
-      const token = metadataToken(10, row);
-      const parentReason = metadataCodedTokenInvalidReason(
-        parentRaw,
-        3,
-        [2, 1, 26, 6, 27],
-        layout.rowCounts,
-      );
-      if (parentReason !== null || parentRaw === 0)
+      if (parent.kind !== "valid")
         issues.push({
           code: "invalid-row",
           scope: `metadata.MemberRef:${token}`,
-          offset: cursor.start,
+          offset: rowOffset,
           detail:
-            parentReason === null
+            parent.kind === "null"
               ? "MemberRef parent coded index 0x0 is null, but the Class column must reference a row"
-              : `MemberRef parent coded index 0x${parentRaw.toString(16)} is invalid: ${parentReason}`,
+              : `MemberRef parent coded index 0x${parentRaw.toString(16)} is invalid: ${parent.reason}`,
         });
-      const parentToken = metadataCodedToken(
-        parentRaw,
-        3,
-        [2, 1, 26, 6, 27],
-        layout.rowCounts,
-      );
-      const parentName = typeName(parentToken);
+      const parentToken = parent.kind === "valid" ? parent.token : null;
+      const parentName = typeName(parent.kind === "valid" ? parent : null);
       const decoded = budgetedSignature(
         sig,
         layout,
         signatureTypeName,
+        displayTypeName,
         issues,
-        `MemberRef:${token}.signature`,
+        { scope: `MemberRef:${token}.signature`, artifact: bytes },
       );
       refs.push({
         token,
-        row_offset: cursor.start,
+        row_offset: rowOffset,
         parent_token: parentToken,
         parent_name: parentName,
         name,
@@ -271,6 +295,12 @@ export const parseMemberRefs = (
         declaringType: parentName,
         kind: decoded.kind,
         genericArity: signatureGenericArity(decoded),
+        identitySha256: memberTargetIdentity(
+          name,
+          parent.kind === "valid" ? parent : null,
+          decoded,
+          declarationTypeName,
+        ),
       });
     }, issues);
   }
@@ -283,6 +313,8 @@ interface ParseMethodsInput {
   readonly pe: ManagedPeLayout;
   readonly ranges: readonly TypeRange[];
   readonly signatureTypeName: SignatureTypeName;
+  readonly displayTypeName: SignatureDisplayTypeName;
+  readonly declarationTypeName: DeclarationTypeName;
   readonly memberRefKinds: ReadonlyMap<string, "field" | "method">;
   readonly memberLists: TypeMemberListFacts;
   readonly selected?: SelectedTypeTokens;
@@ -296,13 +328,15 @@ export const parseMethods = ({
   pe,
   ranges,
   signatureTypeName,
+  displayTypeName,
+  declarationTypeName,
   memberRefKinds,
   memberLists,
   selected = null,
   methodOffset = 0,
   methodLimit = Number.MAX_SAFE_INTEGER,
 }: ParseMethodsInput): {
-  readonly methods: readonly ManagedMethod[];
+  readonly methods: readonly DecodedMethod[];
   readonly core: ReadonlyMap<string, MemberCore>;
   readonly issues: readonly ManagedParseIssue[];
   /**
@@ -311,7 +345,7 @@ export const parseMethods = ({
    */
   readonly unscannedMethods: number;
 } => {
-  const methods: ManagedMethod[] = [];
+  const methods: DecodedMethod[] = [];
   const core = new Map<string, MemberCore>();
   const issues: ManagedParseIssue[] = [];
   let unscannedMethods = 0;
@@ -333,22 +367,28 @@ export const parseMethods = ({
       inPage &&
       (selected === null ||
         owner === undefined ||
+        owner === 0 ||
         isSelected(selected, declared) ||
         // A type whose name is unreadable may be one the caller requested.
         declared?.fullName === null);
     const produced = methods.length;
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 6, row);
-      const rva = cursor.readUInt32();
-      const implFlags = cursor.readUInt16();
-      const flags = cursor.readUInt16();
+      const {
+        token,
+        rowOffset,
+        rva,
+        implFlags,
+        flags,
+        nameIndex,
+        signatureIndex,
+        implementation,
+      } = readMethodDefinitionRow(bytes, layout, row);
       const name = readMetadataString(
         bytes,
         layout,
-        cursor.readIndex(layout.stringIndexSize),
+        nameIndex,
         layout.strings.size,
       );
-      const token = metadataToken(6, row);
       const member = {
         token,
         name,
@@ -361,23 +401,35 @@ export const parseMethods = ({
       const sig = readMetadataBlob(
         bytes,
         layout,
-        cursor.readIndex(layout.blobIndexSize),
+        signatureIndex,
         layout.blob?.size ?? 0,
       );
-      cursor.readIndex(layout.tableIndexSize(8));
       const decoded = budgetedSignature(
         sig,
         layout,
         signatureTypeName,
+        displayTypeName,
         issues,
-        `MethodDef:${token}.signature`,
+        {
+          scope: `MethodDef:${token}.signature`,
+          kind: "method",
+          artifact: bytes,
+        },
       );
       core.set(token, {
         ...member,
         genericArity: signatureGenericArity(decoded),
+        identitySha256: memberTargetIdentity(
+          name,
+          declared === undefined || owner === undefined
+            ? null
+            : { table: 2, row: owner },
+          decoded,
+          declarationTypeName,
+        ),
       });
       const read = methodBody(bytes, pe, rva, {
-        implementation: { implFlags, flags },
+        implementation,
         budget: managedDecodeBudget(layout),
         metadataLayout: layout,
         methodToken: token,
@@ -385,17 +437,22 @@ export const parseMethods = ({
       });
       appendManagedParseIssues(issues, read.issues);
       if (!read.scanned) unscannedMethods += 1;
+      managedDecodeBudget(layout).reserve(128, rowOffset);
       methods.push({
-        token,
-        row_offset: cursor.start,
-        declaring_type_token: declared?.token ?? null,
-        declaring_type: declared?.fullName ?? null,
-        name,
-        rva,
-        impl_flags: implFlags,
-        flags,
-        signature: decoded,
-        body: read.body,
+        tokenInstructions: read.tokenInstructions,
+        catchTokens: read.catchTokens,
+        method: {
+          token,
+          row_offset: rowOffset,
+          declaring_type_token: declared?.token ?? null,
+          declaring_type: declared?.fullName ?? null,
+          name,
+          rva,
+          impl_flags: implFlags,
+          flags,
+          signature: decoded,
+          body: read.body,
+        },
       });
     }, issues);
     if (mayBeSelected && methods.length === produced) unscannedMethods += 1;
@@ -412,12 +469,12 @@ const NAMEABLE_KINDS = new Map<string, ReadonlySet<MemberCore["kind"]>>([
   ["field", new Set(["field"])],
 ]);
 
-const targetKind = (token: string): ManagedCallEdge["target_kind"] =>
-  token.startsWith("0x06")
+const targetKind = (table: number): ManagedCallEdge["target_kind"] =>
+  table === 6
     ? "method-def"
-    : token.startsWith("0x0a")
+    : table === 0x0a
       ? "member-ref"
-      : token.startsWith("0x2b")
+      : table === 0x2b
         ? "method-spec"
         : "unknown";
 
@@ -435,7 +492,7 @@ const namedTarget = (
 };
 
 export const edges = (
-  methods: readonly ManagedMethod[],
+  methods: readonly DecodedMethod[],
   members: ReadonlyMap<string, MemberCore>,
   budget: ManagedDecodeBudget,
 ): {
@@ -444,14 +501,23 @@ export const edges = (
 } => {
   const callEdges: ManagedCallEdge[] = [];
   const fieldAccesses: ManagedFieldAccess[] = [];
-  for (const method of methods) {
-    const derives = method.body.anchors.some(
-      isManagedMemberReferenceInstruction,
+  for (const { method, tokenInstructions } of methods) {
+    const derives = tokenInstructions.some((instruction) =>
+      isManagedMemberReferenceInstruction({
+        opcode: instruction.opcode,
+        operand_kind: instruction.operandKind,
+        operand: instruction.operand,
+      }),
     );
     if (derives) budget.admitTransient(callerNameBytes(method), null);
     // Built once per method, only after its exact size was admitted.
     const caller = derives ? callerName(method) : method.name;
-    for (const anchor of method.body.anchors) {
+    for (const instruction of tokenInstructions) {
+      const anchor = {
+        opcode: instruction.opcode,
+        operand_kind: instruction.operandKind,
+        operand: instruction.operand,
+      };
       if (!isManagedMemberReferenceInstruction(anchor)) continue;
       const { operand } = anchor;
       const target = namedTarget(members, anchor.operand_kind, operand);
@@ -461,10 +527,12 @@ export const edges = (
           admitManagedProjection(
             {
               caller_token: method.token,
+              il_offset: instruction.offset,
+              target_identity_sha256: target?.identitySha256 ?? null,
               caller,
               opcode: anchor.opcode,
               target_token: operand,
-              target_kind: targetKind(operand),
+              target_kind: targetKind(instruction.reference.table),
               target_name: target?.name ?? null,
               target_declaring_type: target?.declaringType ?? null,
             },
@@ -477,6 +545,8 @@ export const edges = (
           admitManagedProjection(
             {
               method_token: method.token,
+              il_offset: instruction.offset,
+              target_identity_sha256: target?.identitySha256 ?? null,
               method: caller,
               opcode: anchor.opcode,
               field_token: operand,
@@ -511,8 +581,14 @@ const budgetedSignature = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   signatureTypeName: SignatureTypeName,
+  displayTypeName: SignatureDisplayTypeName,
   issues: ManagedParseIssue[],
-  scope: string,
+  owner: {
+    readonly scope: string;
+    readonly kind?: "field" | "method";
+    /** The artifact the blob was read from, for artifact issue offsets. */
+    readonly artifact: Buffer;
+  },
 ): ReturnType<typeof metadataSignature> => {
   const budget = managedDecodeBudget(layout);
   budget.admitTransient(
@@ -524,9 +600,20 @@ const budgetedSignature = (
       metadataSignature(bytes, {
         rawSha256: budget.digest(bytes, "sha256"),
         typeName: signatureTypeName,
+        displayTypeName: (operand, copies) => {
+          const name = displayTypeName(operand, copies);
+          if (name !== null)
+            budget.admitTransient(
+              (name.length * 6 + 2) * copies,
+              layout.blob?.offset ?? layout.rootOffset,
+            );
+          return name;
+        },
         layout,
         issues,
-        scope,
+        scope: owner.scope,
+        blobOffset: bytes.byteOffset - owner.artifact.byteOffset,
+        ...(owner.kind === undefined ? {} : { expectedKind: owner.kind }),
       }),
       budget,
     );

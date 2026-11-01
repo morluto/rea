@@ -19,6 +19,7 @@ import {
 import { metadataToken } from "./ManagedMetadataHeaps.js";
 import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";
 import {
+  appendManagedParseIssues,
   readManagedValue,
   uniqueManagedParseIssues,
 } from "./ManagedReaderFailure.js";
@@ -214,7 +215,7 @@ export const readManagedMetadataInventory = (
   typeNames?: ManagedMetadataTypeNameLookup,
 ): ManagedMetadataInventory => {
   const issues: ManagedParseIssue[] = [...memberLists.issues];
-  issues.push(...identity.issues);
+  appendManagedParseIssues(issues, identity.issues);
   const { module } = identity;
   const assembly =
     readManagedValue(

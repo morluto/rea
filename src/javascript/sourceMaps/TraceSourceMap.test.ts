@@ -63,7 +63,8 @@ it("uses the same conservative section classification for URL-plus-map and malfo
   expect(malformed).toThrow(
     expect.objectContaining({
       reason: "format",
-      message: "External source-map section URL must be a string.",
+      message:
+        "External source-map section URL must be a string. Section path: [0].",
     }),
   );
 });

@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -63,6 +63,7 @@ globalThis.__nativeShellCalls = [];
 const shell = {
   openExternal: () => Promise.resolve(),
   openPath: () => Promise.resolve(),
+  trashItem: (path) => require("node:fs/promises").unlink(path),
   showItemInFolder: (path) => { globalThis.__nativeShellCalls.push(["showItemInFolder", path]); },
   writeShortcutLink: (path) => { globalThis.__nativeShellCalls.push(["writeShortcutLink", path]); return true; },
 };
@@ -298,6 +299,42 @@ process.stdout.write(JSON.stringify({
   expect(JSON.stringify(result.snapshot)).not.toContain("secret-folder");
   expect(JSON.stringify(result.snapshot)).not.toContain("payload.exe");
   electronActiveTimelineEventSchema.array().parse(result.snapshot.events);
+});
+
+it("blocks trashItem asynchronously, records the attempt, and preserves the selected file", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-trash-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const selected = join(root, "retained.txt");
+  await writeFile(selected, "must remain");
+  const script = join(root, "trash.cjs");
+  await writeFile(
+    script,
+    `const { shell } = require("electron");
+const result = shell.trashItem(${JSON.stringify(selected)});
+const promise = result instanceof Promise;
+result.then(
+  () => { throw new Error("trashItem unexpectedly succeeded"); },
+  error => process.stdout.write(JSON.stringify({ promise, message: error.message, snapshot: globalThis.__reaElectronActiveSnapshot() }) + "\\n"),
+);
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(execution.stdout.trim());
+  expect(result.promise).toBe(true);
+  expect(result.message).toBe("External shell effects are blocked");
+  expect(await readFile(selected, "utf8")).toBe("must remain");
+  expect(result.snapshot.events).toContainEqual(
+    expect.objectContaining({
+      kind: "shell-attempt",
+      event: "trashItem",
+      phase: "blocked",
+      argument_shapes: ["string"],
+      error: true,
+    }),
+  );
+  expect(JSON.stringify(result.snapshot)).not.toContain(selected);
 });
 
 it("classifies a dropped browser preload as preload configuration at capture", async () => {
@@ -969,7 +1006,7 @@ it("matches native once dispatch and retains only established invocations", asyn
   await copyFile(
     fileURLToPath(
       new URL(
-        "../../../experiments/analysis-efficiency/electron-once-runtime.mjs",
+        "../../../tests/support/analysis-efficiency/electron-once-runtime.mjs",
         import.meta.url,
       ),
     ),
@@ -3287,6 +3324,101 @@ it("preserves fatal process termination after recording uncaught exceptions", as
   expect(result.stderr).toContain("fatal-hook-secret");
 });
 
+it.each([{ sandboxPrefix: [] }, { sandboxPrefix: ["--no-sandbox"] }])(
+  "restores the exact application argv with Playwright prefix %j",
+  async ({ sandboxPrefix }) => {
+    const root = await createTestTempDirectory("rea-electron-argv-");
+    temporary.push(root);
+    await writeElectronFixture(root);
+    const hook = join(root, "electron-active-hook.cjs");
+    const callerArguments = [
+      "--",
+      "/caller/plugin.asar",
+      "--config=/caller/app.asar/settings",
+      "-r",
+      hook,
+      `--require=${hook}`,
+      "--inspect=0",
+      "--remote-debugging-port=0",
+      "/caller/electron-active-hook.cjs",
+      "",
+      "中文",
+    ];
+    const plan = ["-r", hook, "/selected/app.asar", ...callerArguments];
+    const script = join(root, "argv.cjs");
+    await writeFile(
+      script,
+      `
+      const argv = ["/runner/electron", ...${JSON.stringify(sandboxPrefix)},
+        "--inspect=0", "--remote-debugging-port=0", ...${JSON.stringify(plan)}];
+      process.argv = argv;
+      const plan = ${JSON.stringify(plan)};
+      process.env.REA_ELECTRON_CAPTURE_ARGV = JSON.stringify({ length: plan.length,
+        sha256: require("node:crypto").createHash("sha256").update(JSON.stringify(plan)).digest("hex") });
+      require("./electron-active-hook.cjs");
+      console.log(JSON.stringify({ argv: process.argv, same: process.argv === argv,
+        handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
+        hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
+    `,
+    );
+    // The bootstrap script establishes Electron's observed argv before loading the hook.
+    const result = await runNode(script, root, undefined, false);
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual({
+      argv: ["/runner/electron", "/selected/app.asar", ...callerArguments],
+      same: true,
+      handoff_present: false,
+      hook_error: false,
+    });
+  },
+);
+
+it.each([
+  "absent",
+  "invalid-json",
+  "mismatch",
+  "foreign-hook",
+  "unknown-prefix",
+  "no-entry",
+])("preserves observed argv for an %s capture handoff", async (mode) => {
+  const root = await createTestTempDirectory("rea-electron-argv-guard-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const hook = join(root, "electron-active-hook.cjs");
+  const plan = ["-r", hook, "/selected/app", "caller-document"];
+  const script = join(root, "guard.cjs");
+  await writeFile(
+    script,
+    `
+      const mode = ${JSON.stringify(mode)};
+      const plan = ${JSON.stringify(plan)};
+      const argv = ["/runner/electron", "--inspect=0", "--remote-debugging-port=0", ...plan];
+      process.argv = argv;
+      if (mode === "unknown-prefix") argv[1] = "--inspect=1234";
+      if (mode === "mismatch") argv[argv.length - 1] = "another-document";
+      if (mode === "foreign-hook") plan[1] = "/other/electron-active-hook.cjs";
+      if (mode === "no-entry") plan.length = 2;
+      if (mode === "absent") delete process.env.REA_ELECTRON_CAPTURE_ARGV;
+      else process.env.REA_ELECTRON_CAPTURE_ARGV = mode === "invalid-json" ? "{" : JSON.stringify({
+        length: plan.length,
+        sha256: require("node:crypto").createHash("sha256").update(JSON.stringify(plan)).digest("hex") });
+      const before = JSON.stringify(argv);
+      require("./electron-active-hook.cjs");
+      console.log(JSON.stringify({ unchanged: JSON.stringify(process.argv) === before,
+        same: process.argv === argv, handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
+        hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
+    `,
+  );
+  const result = await runNode(script, root, undefined, false);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout.trim())).toEqual({
+    unchanged: true,
+    same: true,
+    handoff_present: false,
+    hook_error: mode !== "absent",
+  });
+});
+
 const writeElectronFixture = async (
   root: string,
   source = electronModuleSource,
@@ -3322,6 +3454,7 @@ const runNode = async (
   script: string,
   root: string,
   sourceHook?: string,
+  preloadHook = true,
 ): Promise<{
   readonly code: number | null;
   readonly stdout: string;
@@ -3329,11 +3462,15 @@ const runNode = async (
 }> => {
   const hook = await stageHook(root, sourceHook);
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-r", hook, script], {
-      cwd: root,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = spawn(
+      process.execPath,
+      preloadHook ? ["-r", hook, script] : [script],
+      {
+        cwd: root,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));

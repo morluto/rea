@@ -1,13 +1,11 @@
+import { analysisOperationInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import type { PcapAnalysisPort } from "./PcapAnalysisPort.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import {
   pcapRequestSchema,
   type PcapOperation,
 } from "../../domain/pcap/pcapAnalysis.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createPcapEvidence } from "../../domain/pcap/pcapEvidence.js";
@@ -32,7 +30,14 @@ export class PcapAnalysisService {
       );
     const request = pcapRequestSchema.safeParse({ operation, input });
     if (!request.success)
-      return err(new AnalysisInputError(operation, { cause: request.error }));
+      return err(
+        analysisOperationInputErrorFromIssues(
+          operation,
+          request.error.issues,
+          input,
+          request.error,
+        ),
+      );
     const executed = await this.provider.execute(request.data, options);
     if (!executed.ok) return executed;
     return completeProviderEvidence(

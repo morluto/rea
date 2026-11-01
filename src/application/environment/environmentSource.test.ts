@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -6,6 +7,7 @@ import {
   timedCaptureEvidence,
 } from "../../../tests/fixtures/analysisView.js";
 import { scenarioCaptureEvidence } from "../../../tests/fixtures/browserScenarioCapture.js";
+import { readRecordedRequestLine } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import {
   environmentServeFixture,
   environmentServeSource,
@@ -14,7 +16,81 @@ import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
-import { loadEnvironmentSource } from "./environmentSource.js";
+import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
+import {
+  loadEnvironmentSource,
+  recordedExchange,
+  replayedBody,
+} from "./environmentSource.js";
+
+it.each([
+  { text: "hello", encoding: undefined, expected: "hello" },
+  { text: "aGVsbG8=", encoding: "base64", expected: "hello" },
+  { text: "68656c6c6f", encoding: "hex", expected: null },
+  { text: "aGVsbG8", encoding: "base64url", expected: null },
+  { text: "hello", encoding: "", expected: null },
+  { text: "hello", encoding: null, expected: null },
+  { text: "", encoding: undefined, expected: "" },
+  { text: "", encoding: "base64", expected: "" },
+])(
+  "replays only decoded bodies for the declared encoding $encoding",
+  ({ text, encoding, expected }) => {
+    const bytes =
+      encoding === "base64" ? Buffer.from(text, "base64") : Buffer.alloc(0);
+    const record: WebNetworkCaptureRecord = {
+      ordinal: 0,
+      location: { kind: "json-pointer", pointer: "/log/entries/0" },
+      reported: {
+        request: { method: "GET", url: "https://example.invalid/hello" },
+        response: {
+          status: 200,
+          content: {
+            mimeType: "text/plain",
+            text,
+            ...(encoding === undefined ? {} : { encoding }),
+          },
+        },
+      },
+      numeric_literals: [],
+      binary_fields:
+        encoding === "base64"
+          ? [
+              {
+                pointer: "/response/content/text",
+                representation: "har-base64-content",
+                state: "retained",
+                content_base64: text,
+                bytes: bytes.length,
+                sha256: createHash("sha256").update(bytes).digest("hex"),
+              },
+            ]
+          : [],
+      redactions: [],
+      limitations: [],
+    };
+    const line = readRecordedRequestLine(record.reported, true, () => true);
+    if (line?.kind !== "line")
+      throw new Error("Expected a recorded request line");
+    const exchange = recordedExchange(record, line);
+    expect(exchange.bodyText).toBe(expected);
+    expect(replayedBody(exchange)).toEqual(
+      expected === null ? { kind: "none" } : { kind: "text", text: expected },
+    );
+    expect(record.reported).toMatchObject({
+      response: {
+        content: { text, ...(encoding === undefined ? {} : { encoding }) },
+      },
+    });
+    if (encoding === undefined && text !== "") {
+      record.redactions.push({
+        pointer: "/response/content",
+        reason: "explicit-sensitive-value",
+        scope: "property-name",
+      });
+      expect(recordedExchange(record, line).bodyText).toBeNull();
+    }
+  },
+);
 
 const refusal = (manifest: unknown, evidence: unknown, operation?: string) => {
   const loaded = loadEnvironmentSource(manifest, evidence, operation);

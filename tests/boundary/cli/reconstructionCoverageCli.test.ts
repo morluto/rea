@@ -1,3 +1,5 @@
+import { reconstructionClosureResultSchema } from "../../../src/domain/reconstructionCoverage.js";
+import { reconstructionCoverageScopeCases } from "../../../src/domain/reconstructionCoverageScope.fixture.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -113,5 +115,41 @@ cliTest(
         issues: [{ path: ["coverage", "owners"], reason: "invalid_type" }],
       },
     });
+  },
+);
+
+cliTest(
+  "accounts for effective scope and conflicting proofs through CLI and MCP",
+  async ({ cli }) => {
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected shared file MCP session");
+    for (const {
+      label,
+      coverage,
+      status,
+      codes,
+      surfaces,
+      evidenceIds,
+    } of reconstructionCoverageScopeCases()) {
+      coverage.verifier_results[0]!.observed_at = new Date().toISOString();
+      const cliResult = await evaluate(cli, coverage);
+      expect(cliResult.exitCode, label).toBe(0);
+      const mcpResult = await call("evaluate_reconstruction_coverage", {
+        coverage,
+        boundary_id: "replacement.cli",
+      });
+      expect(mcpResult.isError, label).not.toBe(true);
+      for (const output of [cliResult.json, mcpResult.structuredContent]) {
+        const result = reconstructionClosureResultSchema.parse(output);
+        expect(result.status, label).toBe(status);
+        expect(result.summary.required_surfaces, label).toBe(surfaces);
+        expect(result.reasons.map(({ code }) => code).sort(), label).toEqual(
+          [...codes].sort(),
+        );
+        expect(result.evidence_ids, label).toEqual(
+          expect.arrayContaining([...evidenceIds]),
+        );
+      }
+    }
   },
 );

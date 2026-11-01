@@ -58,8 +58,10 @@ const languageDirectories = async (installDir: string): Promise<string[]> => {
     let modules: string[];
     try {
       modules = await readdir(join(installDir, root));
-    } catch {
-      continue;
+    } catch (cause: unknown) {
+      if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+        continue;
+      throw cause;
     }
     for (const module of modules.sort())
       directories.push(join(installDir, root, module, "data", "languages"));
@@ -80,7 +82,7 @@ const readLanguageDefinitionFile = (
     path,
     resources,
     signal,
-    async (file) => {
+    async ({ handle: file }) => {
       const bytes = await readBoundedFileBytes(file, MAX_LDEFS_BYTES, {
         signal,
         cancellationFailure: (reason) =>
@@ -111,8 +113,15 @@ export const readGhidraLanguageCatalog = (
       let entries: string[];
       try {
         entries = await readdir(directory);
-      } catch {
-        continue;
+      } catch (cause: unknown) {
+        // A module may contain no language directory; inability to read one is not absence.
+        if (
+          cause instanceof Error &&
+          "code" in cause &&
+          (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+        )
+          continue;
+        throw cause;
       }
       for (const entry of entries.sort()) {
         if (!entry.endsWith(".ldefs")) continue;

@@ -39,6 +39,7 @@ interface RuntimeCaptureBase {
   readonly evidence: Evidence;
   readonly captureSha256: string;
   readonly scriptsCompleteWithinScope: boolean;
+  readonly codeInventoryCompleteWithinScope: boolean;
 }
 
 interface NormalizedV8Inspection {
@@ -125,7 +126,7 @@ export type ParsedRuntimeCapture =
 
 /** Parse only supported passive web/Electron inspection Evidence. */
 export const parseRuntimeCaptures = (
-  observations: readonly Evidence[],
+  observations: readonly unknown[],
   path: readonly (string | number)[] = ["runtime_observations"],
 ): ParsedRuntimeCapture[] =>
   observations
@@ -139,8 +140,9 @@ export const parseRuntimeCaptures = (
       ),
     );
 
-const parseRuntimeCapture = (
-  input: Evidence,
+/** Authenticate one source before interpreting its runtime capture. */
+export const parseRuntimeCapture = (
+  input: unknown,
   evidencePath: readonly (string | number)[],
 ): ParsedRuntimeCapture => {
   const evidence = authenticateRuntimeEvidence(input, evidencePath);
@@ -199,6 +201,9 @@ const parseBrowserCapture = (
     inspection,
     captureSha256: digestCanonicalValue(inspection, "Runtime reconciliation"),
     scriptsCompleteWithinScope: scriptsComplete(inspection.completeness),
+    codeInventoryCompleteWithinScope: codeInventoryComplete(
+      inspection.completeness,
+    ),
   };
 };
 
@@ -241,6 +246,9 @@ const parseElectronCapture = (
     inspection,
     captureSha256: digestCanonicalValue(inspection, "Runtime reconciliation"),
     scriptsCompleteWithinScope: scriptsComplete(inspection.completeness),
+    codeInventoryCompleteWithinScope: codeInventoryComplete(
+      inspection.completeness,
+    ),
   };
 };
 
@@ -273,6 +281,7 @@ const parseV8Capture = (
     inspection: normalizeV8Inspection(result),
     captureSha256: digestCanonicalValue(result, "Runtime reconciliation"),
     scriptsCompleteWithinScope: false,
+    codeInventoryCompleteWithinScope: false,
   };
 };
 
@@ -285,21 +294,25 @@ const assertV8RuntimeParameters = (
     z
       .object({
         inspector_endpoint: browserEndpointSchema,
-        target_id: z.string().trim().min(1),
+        target_id: z.string().min(1),
         runtime_kind: javascriptRuntimeKindSchema.optional(),
       })
       .passthrough(),
     evidence.parameters,
     [...path, "parameters"],
   );
-  if (
-    parameters.target_id !== result.target.target_id ||
-    (parameters.runtime_kind !== undefined &&
-      parameters.runtime_kind !== result.target.runtime_kind)
-  )
+  if (parameters.target_id !== result.target.target_id)
     throw invalidInput(
       [...path, "parameters", "target_id"],
-      "Runtime Evidence target or declared role disagrees with its result",
+      "Runtime Evidence target disagrees with its result",
+    );
+  if (
+    parameters.runtime_kind !== undefined &&
+    parameters.runtime_kind !== result.target.runtime_kind
+  )
+    throw invalidInput(
+      [...path, "parameters", "runtime_kind"],
+      "Runtime Evidence declared role disagrees with its result",
     );
   if (
     result.target.location.kind === "builtin" &&
@@ -444,7 +457,7 @@ const assertRuntimeParameters = (
   path: readonly (string | number)[],
 ): void => {
   const common = {
-    target_id: z.string().trim().min(1),
+    target_id: z.string().min(1),
     include_script_sources: z.boolean(),
   };
   if (expected.kind === "browser") {
@@ -494,10 +507,20 @@ const assertRuntimeParameters = (
 };
 
 const scriptsComplete = (completeness: {
+  readonly attach_limited_sections: readonly string[];
   readonly truncated_sections: readonly string[];
   readonly unavailable_sections: readonly string[];
   readonly dropped_events: { readonly scripts: number };
 }): boolean =>
+  !completeness.attach_limited_sections.includes("scripts") &&
   !completeness.truncated_sections.includes("scripts") &&
   !completeness.unavailable_sections.includes("scripts") &&
   completeness.dropped_events.scripts === 0;
+
+// Missing worker inventory cannot establish absence of a worker code asset,
+// even when the selected page's own script inventory is complete.
+const codeInventoryComplete = (completeness: BrowserCompleteness): boolean =>
+  scriptsComplete(completeness) &&
+  !completeness.unavailable_sections.includes("workers") &&
+  !completeness.truncated_sections.includes("workers") &&
+  !completeness.attach_limited_sections.includes("workers");

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { FUNCTION_COMPARISON_EVIDENCE } from "../contracts/investigationExamples.js";
 import {
   changedBehaviorResultSchema,
   findChangedBehavior,
   type ChangedBehaviorResult,
 } from "./changedBehavior.js";
 import { createEvidence, type Evidence } from "./evidence.js";
+import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
 
 const source = (digit: string): Evidence =>
@@ -296,17 +298,20 @@ describe("changed-behavior input and Evidence validation", () => {
     );
   });
 
-  it("classifies an invalid authenticated result payload as an integrity failure", () => {
-    const malformed = comparison("compare_process_captures", {
-      status: "unchanged",
-    });
-    expect(() => aggregate([malformed])).toThrowError(
-      expect.objectContaining({
-        _tag: "EvidenceIntegrityError",
-        cause: expect.any(Error),
-      }),
-    );
-  });
+  it.each(["compare_process_captures", "compare_artifacts"] as const)(
+    "classifies an invalid authenticated %s result payload as an integrity failure",
+    (operation) => {
+      const malformed = comparison(operation, {
+        status: "unchanged",
+      });
+      expect(() => aggregate([malformed])).toThrowError(
+        expect.objectContaining({
+          _tag: "EvidenceIntegrityError",
+          cause: expect.any(Error),
+        }),
+      );
+    },
+  );
 
   it("rejects contradictory dimensions in authenticated comparison results", () => {
     const contradictory = comparison(
@@ -318,15 +323,49 @@ describe("changed-behavior input and Evidence validation", () => {
     );
   });
 
-  it("rejects nested citations outside the top-level Evidence closure", () => {
+  it("rejects artifact citations outside the top-level Evidence closure", () => {
     const danglingNested = comparison(
       "compare_artifacts",
       artifactResult([`ev_${"f".repeat(64)}`, right.evidence_id]),
     );
     expect(() => aggregate([danglingNested])).toThrowError(
       expect.toSatisfy(
-        (error: { _tag?: unknown; cause?: unknown }) =>
-          error._tag === "EvidenceIntegrityError" && error.cause === undefined,
+        (error: { _tag?: unknown; message?: unknown; cause?: unknown }) =>
+          error._tag === "EvidenceIntegrityError" &&
+          error.message ===
+            "Comparison finding cites Evidence outside its top-level closure" &&
+          error.cause === undefined,
+      ),
+    );
+  });
+
+  it("rejects authenticated function citations outside the top-level Evidence closure", () => {
+    const base = FUNCTION_COMPARISON_EVIDENCE;
+    const result = functionComparisonResultSchema.parse(base.normalized_result);
+    const dimensions = result.dimensions.map((dimension) => ({
+      ...dimension,
+      evidence_links: [...dimension.evidence_links, `ev_${"f".repeat(64)}`],
+    }));
+    const danglingNested = createEvidence(undefined, base.provider, {
+      predicateType: base.predicate_type,
+      operation: base.operation,
+      parameters: base.parameters,
+      result: functionComparisonResultSchema.parse({
+        ...result,
+        dimensions,
+        changes: dimensions.filter(({ status }) => status !== "unchanged"),
+      }),
+      confidence: base.confidence,
+      authority: base.authority,
+      evidenceLinks: base.evidence_links,
+    });
+    expect(() => aggregate([danglingNested])).toThrowError(
+      expect.toSatisfy(
+        (error: { _tag?: unknown; message?: unknown; cause?: unknown }) =>
+          error._tag === "EvidenceIntegrityError" &&
+          error.message ===
+            "Comparison finding cites Evidence outside its top-level closure" &&
+          error.cause === undefined,
       ),
     );
   });

@@ -1,42 +1,44 @@
+import type { ExecutionOptions } from "../AnalysisProvider.js";
 import {
-  resolveEvidenceInput,
+  resolveEvidenceRequest,
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
-import { retainedEvidenceReferenceSchema } from "../../domain/evidenceReference.js";
+import {
+  compareApplicationVersionsRequestSchema,
+  compareJavaScriptExportShapesRequestSchema,
+  compareSourceToBundleCliInputSchema,
+  compareSourceToBundleRequestSchema,
+  traceApplicationFeatureRequestSchema,
+} from "../../contracts/javascript/applicationWorkflowInputContracts.js";
+import type { EvidenceWorkflowExecution } from "../investigation/EvidenceWorkflowExecution.js";
+import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { ResolvedSourceToBundleReference } from "./SourceToBundleReference.js";
-import { z } from "zod";
 
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { compareJavaScriptApplicationVersions } from "../../domain/javascript/javascriptApplicationVersionComparison.js";
 import {
-  compareApplicationVersionsInputSchema,
   applicationVersionIdentitiesSchema,
   type ApplicationVersionComparisonResult,
 } from "../../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { compareJavaScriptExportShapes } from "../../domain/javascript/javascriptExportShapeComparison.js";
 import {
-  compareJavaScriptExportShapesInputSchema,
   javaScriptExportShapeIdentitiesSchema,
   type JavaScriptExportShapeComparisonResult,
 } from "../../domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { traceApplicationFeature } from "../../domain/javascript/javascriptFeatureTrace.js";
 import {
-  traceApplicationFeatureInputSchema,
   applicationTraceIdentitiesSchema,
   type ApplicationFeatureTraceResult,
 } from "../../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { compareSourceToBundle } from "../../domain/javascript/sourceToBundleComparison.js";
-import {
-  compareSourceToBundleInputSchema,
-  type SourceToBundleComparisonResult,
-} from "../../domain/javascript/sourceToBundleComparisonSchemas.js";
+import type { SourceToBundleComparisonResult } from "../../domain/javascript/sourceToBundleComparisonSchemas.js";
 import {
   applicationGraphEvidenceInputError,
   parseApplicationGraphEvidence,
   parseNativeApplicationEvidence,
+  type ApplicationGraphEvidenceSource,
 } from "./JavaScriptApplicationEvidenceGraph.js";
 import {
   createApplicationFeatureTraceEvidence,
@@ -46,60 +48,54 @@ import {
 } from "./JavaScriptApplicationWorkflowEvidence.js";
 
 /** Completed workflow facts and authenticated sources retained for adapter delivery. */
-export interface ApplicationWorkflowExecution<Projection> {
-  readonly evidence: Evidence;
+export interface ApplicationWorkflowExecution<
+  Projection,
+> extends EvidenceWorkflowExecution {
   readonly result: Projection;
-  readonly sources: readonly Evidence[];
 }
 
-// Validate the request frame without cloning source payloads before their owner reads them.
-const featureTraceFrameSchema = z.strictObject({
-  ...traceApplicationFeatureInputSchema.shape,
-  application: z.unknown().nonoptional(),
-  native_observations: z.array(z.unknown()).default([]),
-});
-const versionComparisonFrameSchema = z.strictObject({
-  ...compareApplicationVersionsInputSchema.shape,
-  left: z.unknown().nonoptional(),
-  right: z.unknown().nonoptional(),
-  left_native_observations: z.array(z.unknown()).default([]),
-  right_native_observations: z.array(z.unknown()).default([]),
-});
-const exportShapeFrameSchema = z.strictObject({
-  ...compareJavaScriptExportShapesInputSchema.shape,
-  left: z.unknown().nonoptional(),
-  right: z.unknown().nonoptional(),
-});
-
-const resolveWorkflowEvidence = (
-  raw: unknown,
-  lookup: EvidenceLookup | undefined,
-): Result<unknown, AnalysisError> => {
-  const reference = retainedEvidenceReferenceSchema.safeParse(raw);
-  return reference.success
-    ? resolveEvidenceInput(reference.data, lookup)
-    : ok(raw);
+/** Authenticate the resolved graph pair at the owning domain boundary. */
+const parseApplicationGraphPair = (
+  operation: string,
+  input: { readonly left: unknown; readonly right: unknown },
+): Result<
+  {
+    readonly left: ApplicationGraphEvidenceSource;
+    readonly right: ApplicationGraphEvidenceSource;
+  },
+  AnalysisError
+> => {
+  const left = parseApplicationGraphEvidence(input.left, ["left"]);
+  if (!left.ok)
+    return err(applicationGraphEvidenceInputError(operation, left.error));
+  const right = parseApplicationGraphEvidence(input.right, ["right"]);
+  if (!right.ok)
+    return err(applicationGraphEvidenceInputError(operation, right.error));
+  return ok({
+    left: left.value,
+    right: right.value,
+  });
 };
 
 /** Authenticate Evidence and derive one bounded cross-layer feature trace. */
 export const traceApplicationFeatureEvidence = (
   rawInput: unknown,
   lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
 ): Result<
   ApplicationWorkflowExecution<ApplicationFeatureTraceResult>,
   AnalysisError
 > => {
   const operation = "trace_application_feature";
-  const request = featureTraceFrameSchema.safeParse(rawInput);
-  if (!request.success)
-    return err(
-      analysisInputErrorFromIssues(operation, request.error.issues, rawInput, {
-        cause: request.error,
-      }),
-    );
-  const selected = resolveWorkflowEvidence(request.data.application, lookup);
-  if (!selected.ok) return selected;
-  const input = { ...request.data, application: selected.value };
+  const request = resolveEvidenceRequest(
+    operation,
+    rawInput,
+    traceApplicationFeatureRequestSchema,
+    lookup,
+    options,
+  );
+  if (!request.ok) return request;
+  const input = request.value.input;
   const sourceResult = parseApplicationGraphEvidence(input.application, [
     "application",
   ]);
@@ -127,6 +123,10 @@ export const traceApplicationFeatureEvidence = (
   const result = traceApplicationFeature({
     sourceEvidenceId: source.evidence.evidence_id,
     graph: source.graph,
+    semanticGraph: source.semanticGraph,
+    ...(input.semantic_page === undefined
+      ? {}
+      : { semanticPage: input.semantic_page }),
     nativeEvidence,
     seed: input.seed,
     direction: input.direction,
@@ -137,6 +137,9 @@ export const traceApplicationFeatureEvidence = (
       native_evidence_ids: nativeEvidence.map(({ evidence_id: id }) => id),
       seed: input.seed,
       direction: input.direction,
+      ...(input.semantic_page === undefined
+        ? {}
+        : { semantic_page: input.semantic_page }),
     },
     result,
   );
@@ -151,35 +154,24 @@ export const traceApplicationFeatureEvidence = (
 export const compareApplicationVersionsEvidence = (
   rawInput: unknown,
   lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
 ): Result<
   ApplicationWorkflowExecution<ApplicationVersionComparisonResult>,
   AnalysisError
 > => {
   const operation = "compare_application_versions";
-  const request = versionComparisonFrameSchema.safeParse(rawInput);
-  if (!request.success)
-    return err(
-      analysisInputErrorFromIssues(operation, request.error.issues, rawInput, {
-        cause: request.error,
-      }),
-    );
-  const selectedLeft = resolveWorkflowEvidence(request.data.left, lookup);
-  if (!selectedLeft.ok) return selectedLeft;
-  const selectedRight = resolveWorkflowEvidence(request.data.right, lookup);
-  if (!selectedRight.ok) return selectedRight;
-  const input = {
-    ...request.data,
-    left: selectedLeft.value,
-    right: selectedRight.value,
-  };
-  const leftResult = parseApplicationGraphEvidence(input.left, ["left"]);
-  if (!leftResult.ok)
-    return err(applicationGraphEvidenceInputError(operation, leftResult.error));
-  const rightResult = parseApplicationGraphEvidence(input.right, ["right"]);
-  if (!rightResult.ok)
-    return err(
-      applicationGraphEvidenceInputError(operation, rightResult.error),
-    );
+  const request = resolveEvidenceRequest(
+    operation,
+    rawInput,
+    compareApplicationVersionsRequestSchema,
+    lookup,
+    options,
+  );
+  if (!request.ok) return request;
+  const input = request.value.input;
+  const pair = parseApplicationGraphPair(operation, input);
+  if (!pair.ok) return pair;
+  const { left, right } = pair.value;
   const leftNativeResult = parseNativeApplicationEvidence(
     input.left_native_observations,
     ["left_native_observations"],
@@ -196,8 +188,6 @@ export const compareApplicationVersionsEvidence = (
     return err(
       applicationGraphEvidenceInputError(operation, rightNativeResult.error),
     );
-  const left = leftResult.value;
-  const right = rightResult.value;
   const leftNative = leftNativeResult.value;
   const rightNative = rightNativeResult.value;
   const identities = applicationVersionIdentitiesSchema.safeParse({
@@ -240,10 +230,47 @@ export const compareApplicationVersionsEvidence = (
   });
 };
 
-/** Compare source and bundle inputs already parsed by a trusted adapter. */
-export const compareSourceToBundleEvidence = (
-  input: ResolvedSourceToBundleReference &
-    Pick<z.output<typeof compareSourceToBundleInputSchema>, "application">,
+/** Select the application record and historical graph through their shared owners. */
+export const executeSourceToBundleComparison = async (
+  rawInput: unknown,
+  schema:
+    | typeof compareSourceToBundleCliInputSchema
+    | typeof compareSourceToBundleRequestSchema,
+  lookup: EvidenceLookup | undefined,
+  resources: ArtifactResourceScope,
+  options: Pick<ExecutionOptions, "signal"> = {},
+): Promise<
+  Result<
+    ApplicationWorkflowExecution<SourceToBundleComparisonResult>,
+    AnalysisError
+  >
+> => {
+  const selected = resolveEvidenceRequest(
+    "compare_source_to_bundle",
+    rawInput,
+    schema,
+    lookup,
+    options,
+  );
+  if (!selected.ok) return selected;
+  const { resolveSourceToBundleReference } =
+    await import("./SourceToBundleReference.js");
+  const reference = await resolveSourceToBundleReference(
+    selected.value.input.reference,
+    options.signal,
+    resources,
+  );
+  return reference.ok
+    ? compareSourceToBundleEvidence({
+        ...reference.value,
+        application: selected.value.input.application,
+      })
+    : reference;
+};
+
+/** Compare an owner-parsed historical graph with an unadmitted application source. */
+const compareSourceToBundleEvidence = (
+  input: ResolvedSourceToBundleReference & { readonly application: unknown },
 ): Result<
   ApplicationWorkflowExecution<SourceToBundleComparisonResult>,
   AnalysisError
@@ -285,37 +312,24 @@ export const compareSourceToBundleEvidence = (
 export const compareJavaScriptExportShapesEvidence = (
   rawInput: unknown,
   lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
 ): Result<
   ApplicationWorkflowExecution<JavaScriptExportShapeComparisonResult>,
   AnalysisError
 > => {
   const operation = "compare_javascript_export_shapes";
-  const request = exportShapeFrameSchema.safeParse(rawInput);
-  if (!request.success)
-    return err(
-      analysisInputErrorFromIssues(operation, request.error.issues, rawInput, {
-        cause: request.error,
-      }),
-    );
-  const selectedLeft = resolveWorkflowEvidence(request.data.left, lookup);
-  if (!selectedLeft.ok) return selectedLeft;
-  const selectedRight = resolveWorkflowEvidence(request.data.right, lookup);
-  if (!selectedRight.ok) return selectedRight;
-  const input = {
-    ...request.data,
-    left: selectedLeft.value,
-    right: selectedRight.value,
-  };
-  const leftResult = parseApplicationGraphEvidence(input.left, ["left"]);
-  if (!leftResult.ok)
-    return err(applicationGraphEvidenceInputError(operation, leftResult.error));
-  const rightResult = parseApplicationGraphEvidence(input.right, ["right"]);
-  if (!rightResult.ok)
-    return err(
-      applicationGraphEvidenceInputError(operation, rightResult.error),
-    );
-  const left = leftResult.value;
-  const right = rightResult.value;
+  const request = resolveEvidenceRequest(
+    operation,
+    rawInput,
+    compareJavaScriptExportShapesRequestSchema,
+    lookup,
+    options,
+  );
+  if (!request.ok) return request;
+  const input = request.value.input;
+  const pair = parseApplicationGraphPair(operation, input);
+  if (!pair.ok) return pair;
+  const { left, right } = pair.value;
   const identities = javaScriptExportShapeIdentitiesSchema.safeParse({
     left: left.evidence,
     right: right.evidence,

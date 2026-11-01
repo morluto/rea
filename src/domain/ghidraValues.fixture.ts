@@ -19,6 +19,13 @@ export const ghidraFunctionBody = () => ({
 export const ghidraFunctionIdentity = () => ({
   address: "0x401000",
   name: "fixture_main",
+  symbol: {
+    primary: true,
+    dynamic: false,
+    external: false,
+    type: "function",
+    source: "imported" as const,
+  },
   classification: ghidraFunctionClassification(),
   body: ghidraFunctionBody(),
 });

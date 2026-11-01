@@ -4,7 +4,7 @@ import { test } from "vitest";
 
 test("packet page verification rejects skipped matches with unchanged counts and monotone frames", () => {
   const moduleUrl = new URL(
-    "../../experiments/analysis-efficiency/packet-entry.mjs",
+    "../../tests/support/analysis-efficiency/packet-entry.mjs",
     import.meta.url,
   ).href;
   const source = `

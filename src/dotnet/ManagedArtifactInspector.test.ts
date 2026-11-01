@@ -93,6 +93,22 @@ describe("managed PE optional-header directory count", () => {
 });
 
 describe("managed CLI directory availability", () => {
+  it("keeps a readable CLI directory when later declared entries are truncated", () => {
+    const bytes = buildManagedPeFixture();
+    const optional = bytes.readUInt32LE(0x3c) + 24;
+    bytes.writeUInt32LE(0xffffffff, optional + 92);
+    expect(readManagedPeLayout(bytes)).toMatchObject({
+      cliDirectoryState: "present",
+      cliIssue: null,
+      cli: expect.objectContaining({ headerSize: 72 }),
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.metadata.status).toBe("complete");
+  });
+
   it("keeps a declared but truncated CLI directory malformed", () => {
     const bytes = buildManagedPeFixture();
     const peOffset = bytes.readUInt32LE(0x3c);
@@ -318,6 +334,95 @@ describe("managed artifact inventory", () => {
   );
 });
 
+describe("managed attribute SerString encoding", () => {
+  it.each([
+    [0, [0x00]],
+    [0x7f, [0x7f]],
+    [0x80, [0x80, 0x80]],
+    [0x3fff, [0xbf, 0xff]],
+    [0x4000, [0xc0, 0x00, 0x40, 0x00]],
+  ] as const)(
+    "reads a target-framework SerString of %i UTF-8 bytes",
+    (length, prefix) => {
+      const targetFramework =
+        "é".repeat(Math.floor(length / 2)) + (length % 2 === 0 ? "" : "A");
+      const value = Buffer.concat([
+        Buffer.from([1, 0, ...prefix]),
+        Buffer.from(targetFramework),
+        Buffer.from([0, 0]),
+      ]);
+      const bytes = buildManagedPeFixture({ targetFramework });
+      const result = inspectManagedArtifactBytes(
+        bytes,
+        managedPeFixtureTarget(bytes),
+      );
+
+      expect(result.target_frameworks).toEqual([targetFramework]);
+      expect(result.attributes).toMatchObject([
+        {
+          decoded_fixed_string: targetFramework,
+          value_length: value.length,
+          value_sha256: createHash("sha256").update(value).digest("hex"),
+        },
+      ]);
+      expect(result.coverage).toEqual({ state: "complete", issues: [] });
+    },
+  );
+
+  it.each([
+    { name: "missing length", value: [1, 0], decoded: null },
+    { name: "null sentinel", value: [1, 0, 0xff], decoded: null },
+    { name: "truncated two-byte prefix", value: [1, 0, 0x80], decoded: null },
+    {
+      name: "truncated four-byte prefix",
+      value: [1, 0, 0xc0, 0, 0],
+      decoded: null,
+    },
+    { name: "reserved prefix", value: [1, 0, 0xe0], decoded: null },
+    { name: "content outside value", value: [1, 0, 5, 0x41], decoded: null },
+    {
+      name: "maximum length without content",
+      value: [1, 0, 0xdf, 0xff, 0xff, 0xff],
+      decoded: null,
+    },
+    { name: "invalid UTF-8", value: [1, 0, 1, 0xff, 0, 0], decoded: null },
+    { name: "invalid prolog", value: [0, 0, 1, 0x41, 0, 0], decoded: null },
+    {
+      name: "overlong two-byte length",
+      value: [1, 0, 0x80, 1, 0x41, 0, 0],
+      decoded: "A",
+    },
+    {
+      name: "overlong four-byte length",
+      value: [1, 0, 0xc0, 0, 0, 1, 0x41, 0, 0],
+      decoded: "A",
+    },
+  ])("preserves attribute evidence for $name", ({ value, decoded }) => {
+    const customAttributeValue = Buffer.from(value);
+    const bytes = buildManagedPeFixture({ customAttributeValue });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.attributes).toMatchObject([
+      {
+        parent_token: "0x20000001",
+        constructor_token: "0x0a000001",
+        type_name: "System.Runtime.Versioning.TargetFrameworkAttribute",
+        decoded_fixed_string: decoded,
+        value_length: customAttributeValue.length,
+        value_sha256: createHash("sha256")
+          .update(customAttributeValue)
+          .digest("hex"),
+      },
+    ]);
+    expect(result.target_frameworks).toEqual(decoded === null ? [] : [decoded]);
+    expect(result.metadata.status).toBe("complete");
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  });
+});
+
 describe("managed artifact coded indexes", () => {
   it("reports an invalid ManifestResource implementation while retaining the resource", () => {
     const bytes = buildManagedPeFixture({ resourceImplementationRaw: 9 });
@@ -477,6 +582,35 @@ describe("managed artifact coded indexes", () => {
     ).toBe(true);
   }, 30_000);
 });
+
+it.each([false, true])(
+  "resolves an attribute type without reading malformed constructor heaps (bad name %s)",
+  (badName) => {
+    const bytes = buildManagedPeFixture();
+    const layout = metadataLayoutFor(bytes);
+    const row = layout.table(10)!;
+    const nameColumn = row.offset + layout.codedIndexSize("MemberRefParent");
+    const signatureColumn = nameColumn + layout.stringIndexSize;
+    if (badName) {
+      if (layout.stringIndexSize === 2) bytes.writeUInt16LE(0xffff, nameColumn);
+      else bytes.writeUInt32LE(0xffffffff, nameColumn);
+    }
+    if (layout.blobIndexSize === 2)
+      bytes.writeUInt16LE(0xffff, signatureColumn);
+    else bytes.writeUInt32LE(0xffffffff, signatureColumn);
+
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.attributes[0]).toMatchObject({
+      constructor_token: "0x0a000001",
+      type_name: "System.Runtime.Versioning.TargetFrameworkAttribute",
+      decoded_fixed_string: ".NETCoreApp,Version=v8.0",
+    });
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  },
+);
 
 describe("managed artifact reference inventory", () => {
   it("qualifies local custom-attribute names with their enclosing types", () => {

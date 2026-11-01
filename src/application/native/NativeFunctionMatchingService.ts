@@ -18,9 +18,16 @@ import { err, ok, type Result } from "../../domain/result.js";
 import type { EvidenceLookup } from "../EvidenceInputResolver.js";
 import { resolveNativeMatchingSources } from "./NativeMatchingSources.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { NativeMatchingAllowance } from "../../config/nativeMatchingAllowance.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "../../domain/comparisonEvidenceIdentity.js";
+import { NATIVE_FUNCTION_MATCHING_PREDICATE } from "../../domain/native/functionMatching.js";
 
 const OPERATION = "match_native_functions";
+
+/** Effective admission budget, separate from caller-authored Evidence parameters. */
+export interface NativeFunctionMatchingOptions extends ExecutionOptions {
+  readonly representationAllowance?: NativeMatchingAllowance;
+}
 export interface NativeFunctionMatchingResult {
   readonly evidence: Evidence;
   readonly sources: readonly Evidence[];
@@ -30,10 +37,14 @@ export interface NativeFunctionMatchingResult {
 /** Pair existing observations through one source/analysis admission. */
 export const matchNativeFunctions = async (
   rawInput: unknown,
-  options?: ExecutionOptions,
+  options?: NativeFunctionMatchingOptions,
   lookup?: EvidenceLookup,
 ): Promise<Result<NativeFunctionMatchingResult, AnalysisError>> => {
-  const admission = new NativeMatchingAdmission(OPERATION, options?.signal);
+  const admission = new NativeMatchingAdmission(
+    OPERATION,
+    options?.signal,
+    options?.representationAllowance,
+  );
   try {
     await setImmediate();
     await admission.checkpoint();
@@ -134,7 +145,7 @@ const matchWithAdmission = async (
   await checkpoint();
   const evidence = createEvidence(undefined, FUNCTION_COMPARISON_PROVIDER, {
     operation: OPERATION,
-    predicateType: "rea.native-function-matching",
+    predicateType: NATIVE_FUNCTION_MATCHING_PREDICATE,
     confidence: "derived",
     authority: "analyst-inference",
     parameters: {
@@ -171,10 +182,14 @@ export const matchNativeFunctionsFromBundles = async (
   input: MatchNativeFunctionsInput,
   paths: readonly string[],
   resources: ArtifactResourceScope,
-  options?: ExecutionOptions,
+  options?: NativeFunctionMatchingOptions,
 ): Promise<Result<NativeFunctionMatchingResult, AnalysisError>> => {
   try {
-    const admission = new NativeMatchingAdmission(OPERATION, options?.signal);
+    const admission = new NativeMatchingAdmission(
+      OPERATION,
+      options?.signal,
+      options?.representationAllowance,
+    );
     await admission.admit(input);
     const loaded = await loadNativeMatchingBundleSources({
       input,

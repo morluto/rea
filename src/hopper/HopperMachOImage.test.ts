@@ -1,11 +1,14 @@
+import { requirePermissionDenial } from "../../tests/fixtures/permissionDenial.js";
 import { createHash } from "node:crypto";
 import {
   access,
   chmod,
   mkdir,
+  open,
   readFile,
   readdir,
   writeFile,
+  type FileHandle,
 } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -129,9 +132,46 @@ const resolveHopperMachOImage = (
     resourceScope: inspectionResources.owner,
   });
 
-it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+it("retains Hopper FAT selection across short header, table and slice reads", async () => {
+  const root = await createTestTempDirectory("rea-hopper-short-reads-");
+  const fixture = buildFat32Container([
+    { cpuType: CPU_TYPES.arm64, cpuSubtype: 0, little: true },
+  ]);
+  const path = await writeFixture(root, "fat", fixture);
+  const target = fat32Target(path, fixture, "arm64");
+  const expected = await resolveHopperMachOImage(target);
+  expect(expected.ok).toBe(true);
+  let shortReads = 0;
+  const handles: FileHandle[] = [];
+  const actual = await resolveHopperMachOImageWithOwner(target, {
+    resourceScope: inspectionResources.owner,
+    fileSystem: {
+      open: (async (...args: Parameters<typeof open>) => {
+        const handle = await open(...args);
+        handles.push(handle);
+        const read = handle.read.bind(handle);
+        vi.spyOn(handle, "read").mockImplementation((async (
+          ...readArgs: unknown[]
+        ) => {
+          if (typeof readArgs[2] === "number" && readArgs[2] > 3) {
+            readArgs[2] = 3;
+            shortReads += 1;
+          }
+          return Reflect.apply(read, handle, readArgs);
+        }) as typeof handle.read);
+        return handle;
+      }) as typeof open,
+    },
+  });
+  expect(actual).toEqual(expected);
+  expect(shortReads).toBeGreaterThan(5);
+  expect(handles.every((handle) => handle.fd === -1)).toBe(true);
+});
+
+it.skipIf(process.platform === "win32")(
   "reports a FAT64 source that became unreadable as a host read denial",
-  async () => {
+  async (context) => {
+    await requirePermissionDenial(context, "file-read");
     const directory = await createTestTempDirectory("rea-hopper-fat64-");
     const path = join(directory, "universal");
     await writeFile(path, Buffer.alloc(64));
@@ -383,7 +423,7 @@ it("copies exactly the selected FAT32 slice bytes and verifies the source", asyn
     arm64eOffset,
     arm64eOffset + FAT32_SLICE_SIZE,
   );
-  expect(await readFile(destination)).toEqual(copied);
+  expect(Buffer.compare(await readFile(destination), copied)).toBe(0);
 });
 
 it("retains the caller reason when a FAT copy is cancelled after its final write", async () => {
@@ -419,12 +459,15 @@ it("retains the caller reason when a FAT copy is cancelled after its final write
   expect(prepared.error._tag).toBe("HopperCancelledError");
   expect(prepared.error.cause).toBe(reason);
   // The private session directory remains the owner of partial output.
-  await expect(readFile(destination)).resolves.toEqual(
-    fixture.container.subarray(
-      fixture.sliceOffsets[0],
-      fixture.sliceOffsets[0]! + FAT32_SLICE_SIZE,
+  expect(
+    Buffer.compare(
+      await readFile(destination),
+      fixture.container.subarray(
+        fixture.sliceOffsets[0],
+        fixture.sliceOffsets[0]! + FAT32_SLICE_SIZE,
+      ),
     ),
-  );
+  ).toBe(0);
 });
 
 it("retains a failed prepared-image close through launcher cleanup and blocks another launch", async () => {
@@ -520,9 +563,12 @@ it("retains a failed prepared-image close through launcher cleanup and blocks an
   expect(initial.error.cleanupIncomplete).toBe(false);
   expect(blocked.error.cleanupIncomplete).toBe(false);
   expect(cleanupPending.error.cleanupIncomplete).toBe(false);
-  await expect(
-    readFile(join(sessionDirectory, "image.macho")),
-  ).resolves.toEqual(bytes);
+  expect(
+    Buffer.compare(
+      await readFile(join(sessionDirectory, "image.macho")),
+      bytes,
+    ),
+  ).toBe(0);
 });
 
 it("observes caller cancellation that arrives during final source-handle cleanup", async () => {
@@ -572,9 +618,9 @@ it("observes caller cancellation that arrives during final source-handle cleanup
   if (prepared.ok) throw new Error("Finalization cancellation was ignored");
   expect(prepared.error._tag).toBe("HopperCancelledError");
   expect(prepared.error.cause).toBe(reason);
-  await expect(readFile(join(directory, "image.macho"))).resolves.toEqual(
-    bytes,
-  );
+  expect(
+    Buffer.compare(await readFile(join(directory, "image.macho")), bytes),
+  ).toBe(0);
 });
 
 it("rejects FAT32 preparation when the source table changed after resolution", async () => {
@@ -644,7 +690,7 @@ it("copies an admitted thin Mach-O through the owned verified-image path", async
   );
   if (!prepared.ok) throw new Error(prepared.error.userMessage);
   expect(prepared.value).toBe(destination);
-  expect(await readFile(destination)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(destination), bytes)).toBe(0);
   expect(target.path).toBe(path);
 });
 
@@ -775,6 +821,29 @@ it("retains an owned partial thin image and exact cancellation reason after a wr
   if (prepared.ok) throw new Error("Cancelled partial copy was accepted");
   expect(prepared.error._tag).toBe("HopperCancelledError");
   expect(prepared.error.cause).toBe(reason);
-  await expect(readFile(destination)).resolves.toEqual(partial);
+  expect(Buffer.compare(await readFile(destination), partial)).toBe(0);
   await expect(access(destination)).resolves.toBeUndefined();
 });
+
+it.each([0, 129])(
+  "keeps Hopper FAT count admission explicit for count %i",
+  async (count) => {
+    const directory = await createTestTempDirectory("rea-hopper-fat-count-");
+    const fixture = buildFat32Container([
+      { cpuType: CPU_TYPES.arm64, cpuSubtype: 0 },
+    ]);
+    fixture.container.writeUInt32BE(count, 4);
+    const path = await writeFixture(directory, "counts.fat", fixture);
+    const result = await resolveHopperMachOImage(
+      fat32Target(path, fixture, "arm64"),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Invalid FAT count was admitted");
+    expect(result.error).toMatchObject({
+      _tag: "BinaryTargetError",
+      path,
+      reason:
+        "FAT architecture table is truncated or exceeds the supported 128 entries",
+    });
+  },
+);

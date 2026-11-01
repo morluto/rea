@@ -11,11 +11,11 @@ import {
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 
-/** Prove Node's path resolver before applying its argument-selection semantics. */
-export const createStaticNodePathResolveQuery = (
+/** Prove path and URL intrinsic identity before applying native semantics. */
+export const createStaticPathIntrinsicQuery = (
   index: JavaScriptBindingIndex,
 ): JavaScriptStaticPathIntrinsicQuery => {
-  const facts = new WeakMap<t.Node, boolean>();
+  const facts = new WeakMap<t.Node, Map<string, boolean>>();
   const nativeMethod = (
     callee: t.Node,
     method: string,
@@ -64,10 +64,25 @@ export const createStaticNodePathResolveQuery = (
             nativeMethod(callee.callee, "dirname", ["path", "path/posix"]) &&
             sourceFile(callee.arguments[0]);
     }
-    const cached = facts.get(callee);
+    const kind = fact ?? "resolve";
+    const cached = facts.get(callee)?.get(kind);
     if (cached !== undefined) return cached;
-    const proven = nativeMethod(callee, "resolve", ["path", "path/posix"]);
-    facts.set(callee, proven);
+    const proven =
+      kind === "source-url"
+        ? t.isNewExpression(callee) &&
+          callee.arguments.length === 2 &&
+          (isUnmodifiedGlobalReference(callee.callee, index.bindings, "URL") ||
+            nativeMethod(callee.callee, "URL", ["url"])) &&
+          isUnmodifiedImportMetaUrl(callee.arguments[1], index.bindings)
+        : kind === "file-url-to-path"
+          ? nativeMethod(callee, "fileURLToPath", ["url"])
+          : nativeMethod(callee, kind, ["path", "path/posix"]);
+    let entry = facts.get(callee);
+    if (entry === undefined) {
+      entry = new Map();
+      facts.set(callee, entry);
+    }
+    entry.set(kind, proven);
     return proven;
   };
 };

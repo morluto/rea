@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { absoluteLocalPathStringSchema } from "../../domain/localPath.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { electronFuseOutputSchemas } from "../toolOutputSchemaGroups.js";
@@ -27,21 +28,25 @@ import {
   analyzeJavaScriptApplicationInputSchema,
   javascriptApplicationAnalysisResultSchema,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import {
-  javascriptRuntimeReconciliationResultSchema,
-  reconcileJavaScriptRuntimeInputSchema,
-} from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
+import { javascriptRuntimeReconciliationResultSchema } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
+import { reconcileJavaScriptRuntimeRequestSchema } from "./applicationWorkflowInputContracts.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "./javascriptRuntimeReconciliationExample.js";
 
 const listOutputSchema = evidenceResultOf(electronTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(electronPageInspectionSchema);
+const javascriptApplicationMcpInputSchema =
+  analyzeJavaScriptApplicationInputSchema.extend({
+    input_path: absoluteLocalPathStringSchema.describe(
+      "Absolute path to the JavaScript application on the machine running REA.",
+    ),
+  });
 /** Caller-selected delivery of a completed JavaScript application analysis. */
 export const analyzeJavaScriptApplicationRequestSchema = z
   .discriminatedUnion("detail", [
-    analyzeJavaScriptApplicationInputSchema.extend(
+    javascriptApplicationMcpInputSchema.extend(
       javaScriptRoutesCompleteDeliveryShape,
     ),
-    analyzeJavaScriptApplicationInputSchema.extend(
+    javascriptApplicationMcpInputSchema.extend(
       javaScriptRoutesSummaryDeliveryShape,
     ),
   ])
@@ -142,7 +147,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
     description:
       "Reconcile verified static JavaScript application graphs with existing passive web/Electron CDP, passive V8 Inspector, or provider-owned active Electron Evidence. Active Electron captures contribute an explicitly partial target-only runtime record; they never invent renderer scripts, frames, workers, or execution claims. Exact captured-source digests take priority over caller-declared file/URL mappings; target, frame, script, and worker ambiguity remains explicit, and source-map authority stays separate.",
     kind: "electron-provider",
-    inputSchema: reconcileJavaScriptRuntimeInputSchema,
+    inputSchema: reconcileJavaScriptRuntimeRequestSchema,
     outputSchema: reconciliationOutputSchema,
     examples: [
       {
@@ -167,6 +172,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
     name: "inspect_electron_fuses",
     ...toolContractMetadata("inspect_electron_fuses"),
     kind: "artifact-provider",
+    requiresActiveTarget: true,
     description:
       "Inspect packaged Electron fuse bytes in one local macOS app bundle, Electron Framework binary, Windows PE executable, or Linux ELF executable. Returns the artifact digest, per-slice wire version, fuse index, version-1 name, state, and raw byte, plus derived implications for Inspector flags, ELECTRON_RUN_AS_NODE, embedded ASAR integrity, and app.asar-only loading. A missing sentinel is unknown fuse state. Reads artifact bytes only and does not modify the selected file or open a runtime target.",
     inputSchema: inspectElectronFusesInputSchema,

@@ -57,7 +57,8 @@ name, original type ID, dimensions, relative data offset, file offset and derive
 byte length. Alignment accepts every positive UINT32 multiple of eight, including
 non-powers of two. Partial Evidence retains explicit alignment once validated;
 the default alignment becomes known after metadata completes. Cancellation
-digests or file identity. Metadata keys preserve their spelling and use lowercase
+retains completed declarations with unknown digests and unverified final file
+identity. Metadata keys preserve their spelling and use lowercase
 ASCII alphanumeric components separated by dots, underscores or hyphens;
 standard numeric components such as `general.base_model.0.name` are preserved.
 Hyphenated components are retained for compatibility with the published
@@ -79,6 +80,84 @@ integer metadata and all shape dimensions use decimal strings without rounding.
 Nonfinite floating metadata uses `NaN`, `+Infinity` or `-Infinity` with its
 declared float type; negative zero is `"-0"`. Unknown tensor types retain their numeric IDs and null byte
 lengths; affected totals and storage validation remain unknown.
+
+Q8_1 (type ID 9) has two released layouts: 40 bytes per 32 elements in
+[llama.cpp b1500](https://github.com/ggml-org/llama.cpp/blob/57ad015dc3011b046ed5a23186c86ea55f987c54/ggml-quants.h#L49-L55)
+and 36 bytes in the pinned
+[modern ggml layout](https://github.com/ggml-org/ggml/blob/da8e2a54b919557b816b1c2beb432ccb766f7ce0/src/ggml-common.h#L242-L253). Both use GGUF v3 and
+quantization version 2, so those declarations do not select a storage layout.
+REA retains the known type, shape, parameter count and starting offsets, with
+`byte_length: null`, `storage_validation: "unknown"`, partial storage/range
+coverage and an explicit limitation for nonempty Q8_1 tensors. Per-type and
+overall byte totals remain unknown where affected. Padding, the next tensor's
+offset and file size do not establish a layout; retained queries preserve the
+same uncertainty. Empty Q8_1 tensors still have a derived zero-byte length,
+and the known 32-element row-block constraint remains enforced.
+
+K-quantization IDs 10–15 also have incompatible released layouts. The
+[b1500 build option](https://github.com/ggml-org/llama.cpp/blob/57ad015dc3011b046ed5a23186c86ea55f987c54/CMakeLists.txt#L88)
+`LLAMA_QKK_64` selects `GGML_QKK_64`; the same release's default and
+[b3001](https://github.com/ggml-org/llama.cpp/blob/c429b33beb35f13934a4dfbe0c138d30b45e5d54/ggml-common.h)
+use 256-element blocks. The
+[b1500 structures](https://github.com/ggml-org/llama.cpp/blob/57ad015dc3011b046ed5a23186c86ea55f987c54/ggml-quants.h#L61-L169)
+give these source-derived sizes:
+
+| ID  | Stable name | Bytes per 64 elements, K64 | Bytes per 256 elements, K256 | Padded extent for 256 elements, either layout |
+| --- | ----------- | -------------------------- | ---------------------------- | --------------------------------------------- |
+| 10  | Q2_K        | 24                         | 84                           | 96                                            |
+| 11  | Q3_K        | 28                         | 110                          | 128                                           |
+| 12  | Q4_K        | 38                         | 144                          | 160                                           |
+| 13  | Q5_K        | 46                         | 176                          | 192                                           |
+| 14  | Q6_K        | 54                         | 210                          | 224                                           |
+| 15  | Q8_K        | 76                         | 292                          | 320                                           |
+
+Both builds write GGUF v3 and quantization version 2. The
+[quantizer](https://github.com/ggml-org/llama.cpp/blob/57ad015dc3011b046ed5a23186c86ea55f987c54/llama.cpp#L7430-L7492)
+writes `general.file_type` directly from the selected `llama_ftype`, without
+encoding the K64 build option. `GGML_QNT_VERSION_FACTOR` is defined in the
+header but is not used by this GGUF serialization path. Global file type also
+does not identify individual tensor types: the quantizer
+[retains unselected tensors](https://github.com/ggml-org/llama.cpp/blob/57ad015dc3011b046ed5a23186c86ea55f987c54/llama.cpp#L7561-L7586).
+The [writer pads each payload](https://github.com/ggml-org/llama.cpp/blob/57ad015dc3011b046ed5a23186c86ea55f987c54/ggml.c#L19549-L19565)
+to the default 32-byte alignment; the final column shows why even the same file
+extents need not distinguish these layouts.
+REA preserves each K type's name and enforces the common 64-element row
+multiple, which does not establish a storage block size. Nonempty K tensor
+lengths and affected totals are now unknown, including common modern files.
+Empty K tensors still have derived zero-byte storage.
+
+Integer IDs also shifted each time IQ types were added. These released
+`ggml.h` snapshots all declare GGUF v3 and quantization version 2:
+
+| Released snapshot                                                                                   | I8 ID | I16 ID | I32 ID |
+| --------------------------------------------------------------------------------------------------- | ----- | ------ | ------ |
+| [b1500](https://github.com/ggml-org/llama.cpp/blob/57ad015dc3011b046ed5a23186c86ea55f987c54/ggml.h) | 16    | 17     | 18     |
+| [b1803](https://github.com/ggml-org/llama.cpp/blob/36e5a08b203542dca53cca4eaf172c5dc4bbc991/ggml.h) | 17    | 18     | 19     |
+| [b1871](https://github.com/ggml-org/llama.cpp/blob/bb0c1392479398f9aba86d9ec98db0b95ede6e6d/ggml.h) | 18    | 19     | 20     |
+| [b2100](https://github.com/ggml-org/llama.cpp/blob/4aa43fab569215a13495a7f1a0f8afc541b16d03/ggml.h) | 19    | 20     | 21     |
+| [b2172](https://github.com/ggml-org/llama.cpp/blob/bd2d4e393b2b7d2a1b2e201058e26017c9728ead/ggml.h) | 20    | 21     | 22     |
+| [b2221](https://github.com/ggml-org/llama.cpp/blob/a14679cc30c785e75d38028bae6ec39c6209ddef/ggml.h) | 21    | 22     | 23     |
+| [b2253](https://github.com/ggml-org/llama.cpp/blob/4c4cb30736582cacb1a164a9d4bc8e17b1014be7/ggml.h) | 22    | 23     | 24     |
+| [b2275](https://github.com/ggml-org/llama.cpp/blob/a33e6a0d2a66104ea9a906bdbf8a94d050189d91/ggml.h) | 23    | 24     | 25     |
+| [b2300](https://github.com/ggml-org/llama.cpp/blob/6ea0f010ff6967034528d9e0b8330b9b0f0b7c13/ggml.h) | 24    | 25     | 26     |
+
+[Upstream PR 6050](https://github.com/ggml-org/llama.cpp/pull/6050) later pinned
+integer values explicitly. Modern IDs 16–23 mean IQ2_XXS, IQ2_XS, IQ3_XXS,
+IQ1_S, IQ4_NL, IQ3_S, IQ2_S and IQ4_XS, respectively. Thus every ID 16–25 has
+multiple released meanings. REA keeps its numeric `type_id`, uses
+`AMBIGUOUS_<id>` for `type`, and records the released candidate names in a
+limitation. Nonempty byte lengths are unknown. Empty declarations still derive
+zero-byte storage, while their textual identity remains ambiguous. Type filters
+match the reported `AMBIGUOUS_<id>` label. ID 26 remains I32 across these
+snapshots; later stable entries retain their existing interpretation. This audit
+does not establish compatibility with every producer fork or future revision.
+
+The inventory does not select a historical layout from model names, global
+file types, padding or guessed producer provenance. A source revision together
+with its build configuration can establish an external layout fact; these
+headers do not carry that identification, and REA currently has no layout
+selection input. Authored regression fixtures use the source-derived sizes
+above; historical executables were not run.
 
 Safetensors reports the header extent, exact string `__metadata__` values, dtype,
 shape and declared data ranges. A null `__metadata__` is treated as omitted;

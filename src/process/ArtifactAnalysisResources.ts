@@ -9,20 +9,27 @@ import {
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import {
+  AnalysisAccessDeniedError,
   AnalysisCancelledError,
+  AnalysisArtifactChangedError,
+  AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisOutputError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import {
+  fixedAllowanceOptions,
+  fixedProducerInputAllowance,
+} from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -32,13 +39,34 @@ import {
   type LinuxResourceLimits,
 } from "./LinuxResourceLimits.js";
 import type { PrivateRuntimeRoot } from "./PrivateRuntimeRoot.js";
-import type { ProviderProcessSupervisor } from "./ProviderProcess.js";
+import type {
+  ProviderProcessSnapshot,
+  ProviderProcessSupervisor,
+} from "./ProviderProcess.js";
 import { OwnedCommandFailure, ownedCommandResources } from "./OwnedCommand.js";
 
 export type ArtifactAnalysisRuntime = Pick<
   PrivateRuntimeRoot,
   "path" | "close"
 >;
+
+interface SelectedArtifactRead {
+  readonly path: string;
+  readonly maximumBytes: number;
+  readonly allowanceName: string;
+  readonly observedOutput: AnalysisCapturedOutput | undefined;
+  readonly signal?: AbortSignal | undefined;
+}
+
+export const artifactCommandOutput = (
+  snapshot: ProviderProcessSnapshot,
+): AnalysisCapturedOutput => ({
+  stdout: snapshot.stdout.text,
+  stderr: snapshot.stderr.text,
+  truncated: snapshot.diagnosticTruncated ?? false,
+  exit_code: snapshot.exitCode ?? null,
+  signal: snapshot.signal ?? null,
+});
 
 /** Own admission, artifact descriptors, producer cleanup and private workspaces together. */
 export class ArtifactAnalysisResources {
@@ -132,8 +160,141 @@ export class ArtifactAnalysisResources {
     );
   }
 
+  /** Admit a selected input and classify its physical failure before later stages. */
+  async readSelectedArtifact(input: SelectedArtifactRead) {
+    const operation = this.#artifacts.operation;
+    try {
+      return await this.read(input.path, input.maximumBytes, input.signal);
+    } catch (cause: unknown) {
+      throw this.#selectedArtifactFailure(cause, input, operation);
+    }
+  }
+
+  #selectedArtifactFailure(
+    cause: unknown,
+    input: SelectedArtifactRead,
+    operation: string,
+  ): AnalysisError {
+    const { path, maximumBytes, allowanceName, observedOutput } = input;
+    if (cause instanceof AnalysisError) return cause;
+    const observation = completedStableArtifactObservation(cause, path);
+    if (cause instanceof ArtifactReaderFailure && observation !== undefined)
+      cause.retainPartialObservation(observation);
+    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
+      return this.cleanupFailure(
+        cause,
+        (primary) => this.#selectedArtifactFailure(primary, input, operation),
+        observedOutput,
+        operation,
+      );
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+      return new AnalysisCancelledError(operation, {
+        cause: artifactFileCancellationCause(cause),
+        ...(observedOutput === undefined
+          ? {}
+          : { capturedOutput: observedOutput }),
+        ...(cause.partialObservation === undefined
+          ? {}
+          : { partialObservation: cause.partialObservation }),
+      });
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
+      return new AnalysisResourceConstraintError(
+        operation,
+        "file-size",
+        reason,
+        { input_bytes: maximumBytes },
+        {
+          cause,
+          ...fixedProducerInputAllowance(maximumBytes, allowanceName),
+        },
+      );
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
+      return new AnalysisArtifactChangedError(operation, path, reason, {
+        cause,
+      });
+    if (
+      cause instanceof Error &&
+      "code" in cause &&
+      (cause.code === "EACCES" || cause.code === "EPERM")
+    )
+      return new AnalysisAccessDeniedError(operation, path, cause.code, {
+        cause,
+      });
+    return new AnalysisInputError(operation, { cause }, [
+      { path: ["path"], reason: "invalid_value", message: reason },
+    ]);
+  }
+
   readLimits(limits: LinuxResourceLimits): Promise<LinuxResourceLimits> {
     return this.readKernelLimits(limits, this.#artifacts.scope);
+  }
+
+  /** Finish bounded identity reads after output, independently of caller cancellation. */
+  async readCommandAfterRun(
+    command: string,
+    limiter: { readonly path: string; readonly sha256: string },
+    capturedOutput: AnalysisCapturedOutput,
+    operation = this.operation,
+  ) {
+    const read = async (path: string) => {
+      try {
+        return await this.read(path, 64 * 1024 * 1024);
+      } catch (cause: unknown) {
+        throw this.integrityFailure(cause, path, capturedOutput, operation);
+      }
+    };
+    const current = await read(command);
+    const currentLimiter = await read(limiter.path);
+    if (currentLimiter.sha256 !== limiter.sha256)
+      throw new AnalysisArtifactChangedError(
+        operation,
+        limiter.path,
+        "Configured resource limiter changed during analysis.",
+        { capturedOutput },
+      );
+    return current;
+  }
+
+  integrityFailure(
+    cause: unknown,
+    path: string,
+    capturedOutput?: AnalysisCapturedOutput,
+    operation = this.operation,
+  ): AnalysisError {
+    if (cause instanceof AnalysisError) return cause;
+    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
+      return this.cleanupFailure(
+        cause,
+        (primary) =>
+          this.integrityFailure(primary, path, capturedOutput, operation),
+        capturedOutput,
+        operation,
+      );
+    const detail = {
+      cause,
+      ...(capturedOutput === undefined ? {} : { capturedOutput }),
+    };
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+      return new AnalysisCancelledError(operation, {
+        ...detail,
+        cause: artifactFileCancellationCause(cause),
+      });
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      ["limit", "integrity", "path"].includes(cause.reason)
+    )
+      return new AnalysisArtifactChangedError(
+        operation,
+        path,
+        `Post-run identity verification failed for ${path}: ${reason}`,
+        detail,
+      );
+    return new ProviderAdapterError(this.providerId, operation, {
+      ...detail,
+      diagnostics: { stage: "integrity", resource_path: path, reason },
+    });
   }
 
   retain(
@@ -313,6 +474,8 @@ export class ArtifactAnalysisResources {
         partialObservation: cause.partialObservation,
       });
     }
+    if (cause.partialObservation !== undefined)
+      (primary ?? failure).retainPartialObservation(cause.partialObservation);
     return primary === undefined
       ? failure
       : analysisErrorWithCleanupFailure(
@@ -334,13 +497,7 @@ export class ArtifactAnalysisResources {
     const capturedOutput =
       cause.snapshot === null
         ? undefined
-        : {
-            stdout: cause.snapshot.stdout.text,
-            stderr: cause.snapshot.stderr.text,
-            truncated: cause.snapshot.diagnosticTruncated ?? false,
-            exit_code: cause.snapshot.exitCode ?? null,
-            signal: cause.snapshot.signal ?? null,
-          };
+        : artifactCommandOutput(cause.snapshot);
     const detail = {
       cause,
       ...(capturedOutput === undefined ? {} : { capturedOutput }),

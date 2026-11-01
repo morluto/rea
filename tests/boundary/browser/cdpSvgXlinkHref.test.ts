@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { waitForBrowserDevtoolsPort } from "../../../src/browser/BrowserProcessStartup.js";
+import { waitForBrowserDevtoolsPort } from "../../../scripts/lib/browser-process-startup.mjs";
 import {
   inspectWebPageInputSchema,
   listBrowserTargetsInputSchema,

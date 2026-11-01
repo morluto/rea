@@ -3,6 +3,8 @@ import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -28,12 +30,38 @@ afterEach(() => {
 
 it("passes the selected environment and ownership token to Electron launch", async () => {
   vi.stubEnv("LANG", "ambient-language");
+  vi.stubEnv("XAUTHORITY", "/ambient/.Xauthority");
   let launchedEnvironment: unknown;
+  const callerArguments = [
+    "--",
+    "/caller/plugin.asar",
+    "-r",
+    "caller-hook.cjs",
+    "\\server\\share\\".repeat(150),
+  ];
+  const launchPlan = [
+    "-r",
+    fileURLToPath(
+      new URL("../../scripts/electron-active-hook.cjs", import.meta.url),
+    ),
+    process.execPath,
+    ...callerArguments,
+  ];
+  const handoff = JSON.stringify({
+    length: launchPlan.length,
+    sha256: createHash("sha256")
+      .update(JSON.stringify(launchPlan))
+      .digest("hex"),
+  });
   const provider = new PlaywrightElectronActiveProvider(
     {
       LANG: "selected-language",
       PATH: "/selected/bin",
+      DISPLAY: ":selected-display",
+      XAUTHORITY: "/selected/display-authorization",
+      WAYLAND_DISPLAY: "selected-wayland",
       REA_PRIVATE_VALUE: "not-a-launch-setting",
+      REA_ELECTRON_CAPTURE_ARGV: "forged ambient launch plan",
     },
     async (options) => {
       launchedEnvironment = options?.env;
@@ -44,6 +72,7 @@ it("passes the selected environment and ownership token to Electron launch", asy
     ...electronActiveObservationInputSchema.parse({
       executable_path: process.execPath,
       application_path: process.execPath,
+      args: callerArguments,
     }),
     application_root: dirname(process.execPath),
   });
@@ -52,8 +81,13 @@ it("passes the selected environment and ownership token to Electron launch", asy
   expect(launchedEnvironment).toEqual({
     LANG: "selected-language",
     PATH: "/selected/bin",
+    DISPLAY: ":selected-display",
+    XAUTHORITY: "/selected/display-authorization",
+    WAYLAND_DISPLAY: "selected-wayland",
     REA_PROCESS_RUN_ID: expect.any(String),
+    REA_ELECTRON_CAPTURE_ARGV: handoff,
   });
+  expect(handoff.length).toBeLessThan(128);
 });
 
 it("passes required Windows runtime variables without inheriting unrelated values", () => {
@@ -511,6 +545,11 @@ it("records actions after a failed action as not executed and keeps the capture"
     process: () => ({ pid: 424242 }),
     close: vi.fn(async () => undefined),
     windows: () => [page],
+    browserWindow: async () => ({
+      evaluate: async (read: (window: { id: number }) => unknown) =>
+        read({ id: 42 }),
+      dispose: async () => {},
+    }),
     firstWindow: async () => page,
   };
 
@@ -538,7 +577,7 @@ it("records actions after a failed action as not executed and keeps the capture"
       step_id: "fail",
       kind: "click",
       window_index: 0,
-      target: "window:0",
+      target: "window:42",
       status: "failed",
       elapsed_ms: expect.any(Number),
       error: "strict mode violation",
@@ -859,7 +898,7 @@ it.each(["process", "transport"] as const)(
     vi.spyOn(electronActions, "runElectronActions").mockImplementation(
       async () => {
         controller.abort(reason);
-        return [];
+        return { actions: [] };
       },
     );
     if (failure === "process") {

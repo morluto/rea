@@ -15,9 +15,15 @@ import {
 import { readSafetensorsHeader } from "../../../src/model/SafetensorsHeader.js";
 import { GgufHeader } from "../../../src/model/GgufHeader.js";
 import { createModelArtifactService } from "../../../src/composition/model.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { modelArtifactSchema } from "../../../src/domain/model/modelArtifact.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { ggufFixture, safetensorsFixture } from "../../fixtures/model/model.js";
+import {
+  ggufFixture,
+  ggufKLayouts,
+  ggufShiftedTypeLayouts,
+  safetensorsFixture,
+} from "../../fixtures/model/model.js";
 
 const hash = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -197,6 +203,7 @@ it.each([false, true])(
 it.each([
   { name: "excess rank", type: 0, shape: [1n, 1n, 1n, 1n, 1n], bytes: 4 },
   { name: "quantized scalar", type: 2, shape: [], bytes: 0 },
+  { name: "Q8_1 incomplete block", type: 9, shape: [31n], bytes: 40 },
 ])(
   "rejects GGUF $name without relaxing representation constraints",
   async (tensor) => {
@@ -305,7 +312,7 @@ it("accepts standardized GGUF metadata keys containing numeric hierarchy compone
   });
 });
 
-it.each([99_999_993, 100_000_000])(
+it.each([67_324_752, 67_324_760, 99_999_993, 100_000_000])(
   "admits safetensors declared header length %s before its independent representation limit",
   async (length) => {
     const bytes = Buffer.alloc(9);
@@ -441,6 +448,239 @@ it("returns unknown lengths for unknown GGUF types without inventing storage siz
   });
   expect(result.value.coverage.tensor_ranges).toBe("partial");
   expect(result.value.totals.tensor_bytes).toBeNull();
+});
+
+it.each([
+  { version: 2, bigEndian: false, blockBytes: 36 },
+  { version: 2, bigEndian: false, blockBytes: 40 },
+  { version: 3, bigEndian: false, blockBytes: 36 },
+  { version: 3, bigEndian: false, blockBytes: 40 },
+  { version: 3, bigEndian: true, blockBytes: 36 },
+  { version: 3, bigEndian: true, blockBytes: 40 },
+])(
+  "preserves unresolved Q8_1 storage for GGUF v$version, endian=$bigEndian, block bytes=$blockBytes",
+  async ({ version, bigEndian, blockBytes }) => {
+    const base = ggufFixture({ bigEndian });
+    const fixture = ggufFixture({
+      version,
+      bigEndian,
+      metadata: [
+        { key: "general.quantization_version", type: 4, value: base.u32(2) },
+      ],
+      tensors: [
+        { name: "control", type: 0, shape: [4n], offset: 0n, bytes: 16 },
+        {
+          name: "weight",
+          type: 9,
+          shape: [320n],
+          offset: 32n,
+          bytes: 10 * blockBytes,
+        },
+      ],
+    });
+    const { provider, path } = await providerAt(
+      Buffer.concat([fixture.bytes, Buffer.alloc(16)]),
+    );
+    const result = await provider.inspect({ path, hash: "header" });
+    if (!result.ok) throw result.error;
+    expect(result.value.tensors).toMatchObject([
+      { name: "control", byte_length: 16, storage_validation: "consistent" },
+      {
+        name: "weight",
+        type: "Q8_1",
+        type_id: 9,
+        shape: ["320"],
+        data_offset: 32,
+        file_offset: fixture.dataOffset + 32,
+        parameter_count: "320",
+        byte_length: null,
+        byte_length_state: "unknown",
+        storage_validation: "unknown",
+      },
+    ]);
+    expect(result.value.totals).toMatchObject({
+      parameter_count: "324",
+      tensor_bytes: null,
+      by_type: [
+        { type: "F32", bytes: 16, parameter_count: "4" },
+        { type: "Q8_1", bytes: null, parameter_count: "320" },
+      ],
+    });
+    expect(result.value.coverage).toMatchObject({
+      header: "complete",
+      tensor_ranges: "partial",
+      storage_sizes: "partial",
+    });
+    expect(result.value.limitations).toContainEqual(
+      expect.stringContaining("Q8_1 has released 40-byte and 36-byte layouts"),
+    );
+    expect(result.value.limitations.join(" ")).not.toContain(
+      "Unknown tensor type Q8_1",
+    );
+    expect(result.value.artifact.bytes_read).toBe(fixture.header.length);
+  },
+);
+
+it("derives empty Q8_1 storage without choosing a historical block layout", async () => {
+  const fixture = ggufFixture({
+    metadata: [],
+    tensors: [
+      { name: "empty", type: 9, shape: [32n, 0n], offset: 0n, bytes: 0 },
+    ],
+  });
+  const { provider, path } = await providerAt(fixture.bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (!result.ok) throw result.error;
+  expect(result.value.tensors[0]).toMatchObject({
+    type: "Q8_1",
+    parameter_count: "0",
+    byte_length: 0,
+    byte_length_state: "derived",
+    storage_validation: "consistent",
+  });
+  expect(result.value.totals.tensor_bytes).toBe(0);
+  expect(result.value.coverage).toMatchObject({
+    tensor_ranges: "complete",
+    storage_sizes: "complete",
+  });
+});
+
+it.each(ggufKLayouts)(
+  "preserves $name identity while leaving released K64/K256 storage unresolved",
+  async ({ id, name, bytes64, bytes256 }) => {
+    // The released GGUF writer pads each tensor to 32 bytes. For 256 elements,
+    // both layouts have the same padded extent, despite different byte lengths.
+    expect(Math.ceil((4 * bytes64) / 32)).toBe(Math.ceil(bytes256 / 32));
+    for (const [elements, bytes] of [
+      [64, bytes64],
+      [256, 4 * bytes64],
+      [256, bytes256],
+    ] as const) {
+      const base = ggufFixture();
+      const fixture = ggufFixture({
+        metadata: [
+          { key: "general.quantization_version", type: 4, value: base.u32(2) },
+          { key: "general.file_type", type: 4, value: base.u32(15) },
+        ],
+        tensors: [
+          {
+            name: "weight",
+            type: id,
+            shape: [BigInt(elements)],
+            offset: 0n,
+            bytes,
+          },
+        ],
+      });
+      const { provider, path } = await providerAt(
+        Buffer.concat([
+          fixture.bytes,
+          Buffer.alloc(Math.ceil(bytes / 32) * 32 - bytes),
+        ]),
+      );
+      const result = await provider.inspect({ path, hash: "header" });
+      if (!result.ok) throw result.error;
+      expect(result.value.tensors[0]).toMatchObject({
+        type: name,
+        type_id: id,
+        shape: [String(elements)],
+        parameter_count: String(elements),
+        byte_length: null,
+        storage_validation: "unknown",
+      });
+      expect(result.value.coverage).toMatchObject({
+        tensor_ranges: "partial",
+        storage_sizes: "partial",
+      });
+      expect(result.value.totals.tensor_bytes).toBeNull();
+      expect(result.value.limitations).toContainEqual(
+        expect.stringContaining("common 64-element row constraint"),
+      );
+    }
+    const { provider, path } = await providerAt(
+      ggufFixture({
+        tensors: [
+          {
+            name: "invalid",
+            type: id,
+            shape: [32n],
+            offset: 0n,
+            bytes: bytes64,
+          },
+        ],
+      }).bytes,
+    );
+    const rejected = await provider.inspect({ path, hash: "header" });
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok) throw new Error("Incomplete common K row admitted");
+    expect(rejected.error).toMatchObject({
+      constraint: "file_format_rejected",
+      reason: expect.stringContaining("multiple of 64 elements"),
+    });
+  },
+);
+
+it.each(ggufShiftedTypeLayouts)(
+  "retains ambiguous numeric type $id for released integer and $modernName bodies",
+  async ({ id, integerBytes, modernName, modernBytes256 }) => {
+    for (const [elements, bytes] of [
+      [3, 3 * integerBytes],
+      [256, 256 * integerBytes],
+      [256, modernBytes256],
+      [0, 0],
+    ] as const) {
+      const fixture = ggufFixture({
+        tensors: [
+          {
+            name: "weight",
+            type: id,
+            shape: [BigInt(elements)],
+            offset: 0n,
+            bytes,
+          },
+        ],
+      });
+      const { provider, path } = await providerAt(fixture.bytes);
+      const result = await provider.inspect({ path, hash: "header" });
+      if (!result.ok) throw result.error;
+      expect(result.value.tensors[0]).toMatchObject({
+        type: `AMBIGUOUS_${String(id)}`,
+        type_id: id,
+        shape: [String(elements)],
+        parameter_count: String(elements),
+        byte_length: elements === 0 ? 0 : null,
+        storage_validation: elements === 0 ? "consistent" : "unknown",
+      });
+      expect(result.value.limitations).toContainEqual(
+        expect.stringContaining(`type ID ${String(id)} has released`),
+      );
+      expect(result.value.limitations.join(" ")).toContain(modernName);
+      expect(result.value.totals.tensor_bytes).toBe(elements === 0 ? 0 : null);
+    }
+  },
+);
+
+it("retains established storage for stable GGUF types and zero-byte K declarations", async () => {
+  const fixture = ggufFixture({
+    tensors: [
+      { name: "integer", type: 26, shape: [3n], offset: 0n, bytes: 12 },
+      { name: "empty-k", type: 10, shape: [64n, 0n], offset: 32n, bytes: 0 },
+      { name: "quant", type: 2, shape: [32n], offset: 32n, bytes: 18 },
+    ],
+  });
+  const { provider, path } = await providerAt(fixture.bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (!result.ok) throw result.error;
+  expect(result.value.tensors).toMatchObject([
+    { type: "I32", byte_length: 12, storage_validation: "consistent" },
+    { type: "Q2_K", byte_length: 0, storage_validation: "consistent" },
+    { type: "Q4_0", byte_length: 18, storage_validation: "consistent" },
+  ]);
+  expect(result.value.totals.tensor_bytes).toBe(30);
+  expect(result.value.coverage).toMatchObject({
+    tensor_ranges: "complete",
+    storage_sizes: "complete",
+  });
 });
 
 it("keeps unknown safetensors storage validation separate from observed valid byte ranges", async () => {
@@ -824,6 +1064,48 @@ it.each(malformed)(
   },
 );
 
+it("retains GGUF declarations and metadata when storage overlap is refused", async () => {
+  const seed = ggufFixture();
+  const fixture = ggufFixture({
+    metadata: [{ key: "general.name", type: 8, value: seed.text("Overlap") }],
+    tensors: [
+      { name: "a", type: 0, shape: [1n], offset: 0n, bytes: 4 },
+      { name: "b", type: 0, shape: [1n], offset: 0n, bytes: 4 },
+    ],
+  });
+  const { provider, path } = await providerAt(fixture.bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (result.ok) throw new Error("Overlapping tensors admitted");
+  expect(result.error).toMatchObject({
+    _tag: "BinaryTargetError",
+    constraint: "file_format_rejected",
+  });
+  const evidence = parseEvidence(result.error.partialObservation);
+  expect(evidence.subject).toBeNull();
+  expect(evidence.normalized_result).toMatchObject({
+    artifact: {
+      header_sha256: null,
+      sha256: null,
+      file_identity: "unverified",
+    },
+    coverage: { header: "partial", metadata: "complete", tensors: "partial" },
+    metadata: [{ key: "general.name", value: "Overlap" }],
+    tensors: [],
+    tensor_declarations: [
+      {
+        name: "a",
+        file_offset: fixture.dataOffset,
+        storage_validation: "not-established",
+      },
+      {
+        name: "b",
+        file_offset: fixture.dataOffset,
+        storage_validation: "not-established",
+      },
+    ],
+  });
+});
+
 it("accepts null safetensors metadata and ignores tensor extension fields", async () => {
   const fixture = safetensorsFixture(
     '{"__metadata__":null,"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":{"source":"local","flags":[null,false,-1,1.25]}}}',
@@ -891,6 +1173,12 @@ it.each([640, 896, 1152, 1408, 66_176])(
 
 it.each([
   // Protocol 2 pickle of {"a": 1}: PROTO 2, EMPTY_DICT, BINPUT 0, ...
+  ["a ZIP local header", Buffer.from("504b0304140000000000", "hex")],
+  ["a short ZIP signature", Buffer.from("504b0304", "hex")],
+  [
+    "a ZIP signature followed by a brace and an inadmissible length",
+    Buffer.from("504b0304140000007b", "hex"),
+  ],
   ["a real pickle", Buffer.from("80027d710058010000006171014b01732e", "hex")],
   // Protocol 2 pickle of {}: six bytes, shorter than a safetensors prefix.
   ["an empty dict", Buffer.from("80027d71002e", "hex")],

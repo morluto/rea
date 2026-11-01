@@ -11,7 +11,7 @@ type RequestEvent = Extract<BrowserScenarioEvent, { kind: "request" }>;
 
 /** Join script response bytes only through explicit transaction and event identity. */
 export const scenarioScripts = (
-  capture: BrowserScenarioCapture,
+  capture: Pick<BrowserScenarioCapture, "events">,
 ): CapturedWebScript[] => {
   const index = indexBrowserScenarioTransactions(capture.events.items);
   return capture.events.items.flatMap((request): CapturedWebScript[] => {

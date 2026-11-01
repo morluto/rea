@@ -26,7 +26,11 @@ import {
   type ManagedMetadataLayout,
 } from "./ManagedMetadataLayout.js";
 import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
+import {
+  ManagedReaderFailure,
+  managedMetadataFailureStatus,
+  type ManagedMetadataHeaderFacts,
+} from "./ManagedReaderFailure.js";
 
 const flagNames = (flags: number): string[] => {
   const names: string[] = [];
@@ -313,6 +317,7 @@ interface PartialMetadataContext {
   readonly bytes: Buffer;
   readonly layout: ManagedPeLayout;
   readonly issue: ManagedParseIssue;
+  readonly metadataHeader?: ManagedMetadataHeaderFacts | null;
 }
 
 const partialMetadataResult = ({
@@ -320,10 +325,14 @@ const partialMetadataResult = ({
   bytes,
   layout,
   issue,
+  metadataHeader,
 }: PartialMetadataContext): ManagedArtifactInspection => ({
   ...base(target, bytes, layout),
   classification: {
-    status: issue.code === "resource-limit" ? "managed" : "malformed",
+    status:
+      managedMetadataFailureStatus(issue) === "partial"
+        ? "managed"
+        : "malformed",
     container: "pe",
     runtime_family: runtimeFamilyFromCliHeader(layout.cli),
     implementation: "unknown",
@@ -337,9 +346,9 @@ const partialMetadataResult = ({
     ],
   },
   metadata: {
-    status: issue.code === "resource-limit" ? "partial" : "malformed",
-    version: null,
-    stream_names: [],
+    status: managedMetadataFailureStatus(issue),
+    version: metadataHeader?.version ?? null,
+    stream_names: [...(metadataHeader?.streamNames ?? [])],
     table_row_counts: {},
   },
   module: null,
@@ -350,9 +359,11 @@ const partialMetadataResult = ({
   attributes: [],
   coverage: { state: "partial", issues: [issue] },
   limitations: [
-    issue.code === "resource-limit"
-      ? "CLI metadata inspection stopped at its representation budget; omitted facts are unknown."
-      : "CLI metadata could not be read because the PE/CLI structure is malformed or unsupported.",
+    issue.code === "unsupported-metadata"
+      ? issue.detail
+      : issue.code === "resource-limit"
+        ? "CLI metadata inspection stopped at its representation budget; omitted facts are unknown."
+        : "CLI metadata could not be read because the PE/CLI structure is malformed or unsupported.",
   ],
 });
 
@@ -385,6 +396,7 @@ export const inspectManagedArtifactBytes = (
           bytes,
           layout,
           issue: cause.issue,
+          metadataHeader: cause.metadataHeader,
         }),
       ),
     );
@@ -445,7 +457,13 @@ export const inspectManagedArtifactBytes = (
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
     return managedArtifactInspectionSchema.parse(
       admitManagedProjection(
-        partialMetadataResult({ target, bytes, layout, issue: cause.issue }),
+        partialMetadataResult({
+          target,
+          bytes,
+          layout,
+          issue: cause.issue,
+          metadataHeader: cause.metadataHeader,
+        }),
       ),
     );
   }

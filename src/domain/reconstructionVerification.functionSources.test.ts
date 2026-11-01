@@ -11,7 +11,7 @@ import {
   type EvidenceSubjectTarget,
 } from "./evidence.js";
 import { createEvidenceBundle, parseEvidenceBundle } from "./evidenceBundle.js";
-import { functionDossierSchema } from "./hopperValues.js";
+import { functionDossierSchema } from "./native/functionDossier.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
@@ -27,6 +27,13 @@ const dossier = jsonValueSchema.parse(
     procedure: {
       address: "0x1000",
       name: "main",
+      symbol: {
+        primary: true,
+        dynamic: false,
+        external: false,
+        type: "function",
+        source: "imported",
+      },
       classification: null,
       body: {
         available: false,
@@ -230,6 +237,13 @@ describe("historical calls-only reconstruction changes", () => {
           {
             address: "0x2000",
             name: "puts",
+            symbol: {
+              primary: true,
+              dynamic: false,
+              external: true,
+              type: "function",
+              source: "imported",
+            },
             classification: null,
             body: { available: false, reason: "External function." },
           },
@@ -277,6 +291,7 @@ describe("historical calls-only reconstruction changes", () => {
       );
       expect(historicalResult).toMatchObject({
         status: "changed",
+        function_match: { status: "matched", method: "symbol" },
         summary: { changed: 1 },
       });
       expect(historicalResult.changes).toMatchObject([
@@ -467,7 +482,10 @@ describe("function reconstruction call coverage", () => {
       {},
       changedResult,
     );
-    expect(oldChanged.normalized_result).toMatchObject({ status: "changed" });
+    expect(oldChanged.normalized_result).toMatchObject({
+      status: "changed",
+      function_match: { status: "matched", method: "symbol" },
+    });
     expect(
       admittedVerification(oldChanged, [left, incomplete], "overall")(),
     ).toMatchObject({

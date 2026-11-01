@@ -1,4 +1,9 @@
-import { decodedSegment } from "../../domain/analysisView/environmentStateRules.js";
+import {
+  ownMember,
+  decodedSegment,
+  same,
+} from "../../domain/analysisView/environmentStateRules.js";
+import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -19,9 +24,12 @@ import {
   translatePath,
 } from "./environmentCompareIds.js";
 import {
+  bulkIds,
   collectionScope,
   literalPositions,
+  bodyTools,
   matchProbeRequest,
+  probeArguments,
   parameterScopes,
   type ProbeToolCall,
 } from "./environmentCompareMatch.js";
@@ -52,11 +60,7 @@ import {
   environmentToolAnswer,
   type EnvironmentToolAnswer,
 } from "./environmentToolAnswer.js";
-import {
-  environmentToolArguments,
-  type EnvironmentToolDefinition,
-} from "./environmentTools.js";
-import { same } from "../../domain/analysisView/environmentStateRules.js";
+import type { EnvironmentToolDefinition } from "./environmentTools.js";
 
 /** One probe capture file: its label for the report and its parsed JSON. */
 export interface CompareProbeInput {
@@ -139,26 +143,44 @@ const entityOf = (
   run: ProbeRun,
   tool: EnvironmentManifestTool,
   segments: readonly string[],
+  answer: ReplayResult,
 ): {
   readonly scope: string;
   readonly at: string;
   readonly identity: boolean;
+  readonly rules: readonly FieldRule[];
 } => {
   const view = run.store?.state.views.get(tool.name);
   const plan = run.store?.state.writes.get(tool.name);
   const response = plan?.response;
   const scope = collectionScope(tool, segments);
   if (view?.shape === "item" || view?.shape === "list")
-    return { scope, at: view.pointer, identity: false };
+    return { scope, at: view.pointer, identity: false, rules: [] };
   const identity = response?.shape === "identity";
   const at = identity
     ? (response.pointer ?? "")
     : (response?.pointer ?? plan?.observation?.pointer ?? "");
-  return { scope, at, identity };
+  const provenance = (answer as Partial<StateAnswer>).state;
+  const renderedWrite =
+    provenance?.source === "state" &&
+    (provenance.view === "create" ||
+      provenance.view === "update" ||
+      provenance.view === "document-write" ||
+      provenance.view === "delete");
+  // A missing target replays a recorded absence with state provenance too;
+  // only an applied write can render the plan's entity response.
+  const rules =
+    plan?.served === true && response?.shape === "entity" && renderedWrite
+      ? plan.rules
+      : [];
+  return { scope, at, identity, rules };
 };
 
-const fromState = (answer: ReplayResult): boolean =>
-  (answer as Partial<StateAnswer>).state?.source === "state";
+const fromState = (answer: ReplayResult): boolean => {
+  const state = (answer as Partial<StateAnswer>).state;
+  // Missing-item selection comes from state, but its response is a recording.
+  return state?.source === "state" && state.view !== "missing";
+};
 
 /** Identity facts come from decoded JSON or text scalars, never binary presentations or truncated bodies. */
 const identityValue = (body: ReplayedBody): JsonValue | undefined => {
@@ -216,10 +238,10 @@ const answersCall = (
     !selectsRecordedLine(call.tool, exchange, args)
   )
     return false;
-  const body = environmentToolArguments(call.tool).body;
+  const body = probeArguments(call.tool, run.bodies).body;
   // A tool with no body parameter matches; one that takes a body matches only the body this call sent, including none.
   if (body === undefined) return true;
-  return same(run.recordedBodies.get(exchange.ordinal), args[body]);
+  return same(run.recordedBodies.get(exchange.ordinal), ownMember(args, body));
 };
 
 /** A served tool's input check: the first problem with a call's arguments, or undefined. */
@@ -246,6 +268,8 @@ interface ProbeRun {
   readonly store: EnvironmentStateStore | undefined;
   /** The tools the environment offers, by name, with their input checks. */
   readonly served: ReadonlyMap<string, InputCheck>;
+  /** The served tools that take a body their method does not, as a bulk delete names its entities. */
+  readonly bodies: ReadonlySet<string>;
   readonly map: IdMap;
   readonly normalised: Normalised;
 }
@@ -298,22 +322,20 @@ const compareStep = (
   // Matched in the environment's terms, so a tool whose path holds a seeded id literally still matches. Scopes and
   // literals come from the live path: translating a parent id first would name a different collection than learning did.
   const liveSegments = request.path.slice(1).split("/");
-  const fitted = matchProbeRequest(manifest, request);
+  const fitted = matchProbeRequest(manifest, request, run.bodies);
   const scopes =
     fitted === undefined
       ? undefined
       : parameterScopes(fitted.tool, liveSegments);
   const literals =
     fitted === undefined ? undefined : literalPositions(fitted.tool);
-  const call = matchProbeRequest(manifest, {
-    ...request,
-    path: translatePath(
-      request.path,
-      run.map,
-      (index) => scopes?.get(index),
-      (index) => literals?.has(index) === true,
-    ),
-  });
+  const path = translatePath(
+    request.path,
+    run.map,
+    (index) => scopes?.get(index),
+    (index) => literals?.has(index) === true,
+  );
+  const call = matchProbeRequest(manifest, { ...request, path }, run.bodies);
   if (call === undefined)
     return report(call, {
       env_status: null,
@@ -327,7 +349,7 @@ const compareStep = (
     });
   const held = heldIds(run.store);
   const unknownPath = call.pathArguments.some((name) => {
-    const value = call.args[name];
+    const value = ownMember(call.args, name);
     if (typeof value !== "string") return false;
     const id = decodedSegment(value);
     return !run.map.hasEnv(id) && !held.has(id);
@@ -339,7 +361,8 @@ const compareStep = (
         { category: "refused", pointer: "", env: message.slice(0, 200) },
       ],
     });
-  const args = environmentArguments(call, run.map);
+  const bulk = bulkIds(run, call, liveSegments);
+  const args = environmentArguments(call, run.map, bulk);
   const problem = check(args);
   if (problem !== undefined)
     return refusedWith(`Invalid arguments: ${problem}`);
@@ -350,7 +373,7 @@ const compareStep = (
     status: answered.value.status,
     body: envBody(run, answered.value),
   };
-  const entity = entityOf(run, call.tool, liveSegments);
+  const entity = entityOf(run, call.tool, liveSegments, answered.value);
   // Another call's recording holds other entities, whose ids would map wrongly and, the first pairing winning, for good.
   if (answersCall(run, call, args, answered.value))
     learnIds(identityValue(live.body), identityValue(env.body), run.map, {
@@ -460,6 +483,7 @@ export const compareEnvironment = (input: {
       inputCheck(definition),
     ]),
   );
+  const bodies = bodyTools(catalog.value.tools);
   const recorded = parseCaptureEvidence(
     operation,
     input.captureValue,
@@ -507,6 +531,7 @@ export const compareEnvironment = (input: {
       answer: environmentToolAnswer(source, store),
       store,
       served,
+      bodies,
       map: new IdMap(),
       normalised: emptyNormalised(),
     };

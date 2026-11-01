@@ -141,6 +141,92 @@ export const createGoBinaryFixture = (
   return { bytes, headerOffset, versionOffset, moduleOffset, moduleBytes };
 };
 
+/** Legacy strings in declared PE header memory, with the record still in .data. */
+export const createGoPeHeaderPointerFixture = (
+  bits: 32 | 64,
+  placement: "contents" | "descriptors",
+) => {
+  const fixture = createGoBinaryFixture({
+    format: "pe",
+    bits,
+    encoding: "pointer",
+  });
+  const { bytes, headerOffset } = fixture;
+  const width = bits / 8;
+  const word = (offset: number, value: number) => {
+    if (bits === 64) bytes.writeBigUInt64LE(BigInt(value), offset);
+    else bytes.writeUInt32LE(value, offset);
+  };
+  const section = 152 + bytes.readUInt16LE(148);
+  bytes.writeUInt16LE(0x22, 150);
+  bytes.writeUInt32LE(4096, 184); // SectionAlignment.
+  bytes.writeUInt32LE(512, 188); // FileAlignment.
+  bytes.writeUInt32LE(8192, 208); // SizeOfImage.
+  bytes.writeUInt32LE(1024, 212); // SizeOfHeaders.
+  bytes.writeUInt32LE(4096, section + 12);
+  const sectionAddress = (offset: number) => 0x11000 + offset - 1024;
+  word(headerOffset + 16, sectionAddress(1536));
+  word(headerOffset + 16 + width, sectionAddress(1536 + width * 2));
+  word(1536, sectionAddress(fixture.versionOffset));
+  word(1536 + width * 2, sectionAddress(fixture.moduleOffset));
+  if (placement === "descriptors") {
+    bytes.copy(bytes, 512, 1536, 1536 + width * 4);
+    word(headerOffset + 16, 0x10200);
+    word(headerOffset + 16 + width, 0x10200 + width * 2);
+    return fixture;
+  }
+  const versionOffset = 512;
+  const moduleOffset = 528;
+  bytes.copy(
+    bytes,
+    versionOffset,
+    fixture.versionOffset,
+    fixture.versionOffset + 8,
+  );
+  fixture.moduleBytes.copy(bytes, moduleOffset);
+  word(1536, 0x10000 + versionOffset);
+  word(1536 + width * 2, 0x10000 + moduleOffset);
+  return { ...fixture, versionOffset, moduleOffset };
+};
+
+/** A pointer string or its two-word descriptor crossing adjacent ELF PT_LOADs. */
+export const createGoCrossLoadPointerFixture = (
+  placement: "contents" | "descriptor",
+) => {
+  const fixture = createGoBinaryFixture({ encoding: "pointer" });
+  const bytes = Buffer.alloc(8192);
+  fixture.bytes.copy(bytes);
+  bytes.writeUInt16LE(2, 56);
+  bytes.writeBigUInt64LE(4096n, 160);
+  bytes.writeBigUInt64LE(4096n, 168);
+  bytes.writeBigUInt64LE(4096n, 176);
+  bytes.writeUInt32LE(1, 184);
+  bytes.writeUInt32LE(6, 188);
+  bytes.writeBigUInt64LE(4096n, 192);
+  bytes.writeBigUInt64LE(0x11000n, 200);
+  bytes.writeBigUInt64LE(4096n, 216);
+  bytes.writeBigUInt64LE(4096n, 224);
+  bytes.writeBigUInt64LE(4096n, 232);
+  bytes.writeBigUInt64LE(32n, 416); // Named discovery section contains only the record.
+  const moduleOffset = 5000;
+  fixture.moduleBytes.copy(bytes, moduleOffset);
+  bytes.writeBigUInt64LE(0x10000n + BigInt(moduleOffset), 1552);
+  if (placement === "descriptor") {
+    bytes.copy(bytes, 4088, 1536, 1552);
+    bytes.writeBigUInt64LE(0x10ff8n, fixture.headerOffset + 16);
+    return { ...fixture, bytes, moduleOffset };
+  }
+  const versionOffset = 4092;
+  bytes.copy(
+    bytes,
+    versionOffset,
+    fixture.versionOffset,
+    fixture.versionOffset + 8,
+  );
+  bytes.writeBigUInt64LE(0x10ffcn, 1536);
+  return { ...fixture, bytes, versionOffset, moduleOffset };
+};
+
 /** Build an ELF inline record with a selected aggregate string-content size. */
 export const createGoInlineAggregateFixture = (contentBytes: number) => {
   const fixture = createGoBinaryFixture({ moduleText: "" });

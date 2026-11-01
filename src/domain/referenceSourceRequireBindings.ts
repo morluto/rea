@@ -18,7 +18,7 @@ import {
   traverseJavaScriptAst,
 } from "./javascript/javascriptSemanticTraversal.js";
 import {
-  isExplicitModuleSourcePath,
+  javaScriptRuntimeContext,
   type ParsedJavaScriptSource,
 } from "./javascript/javascriptSourceParser.js";
 
@@ -30,32 +30,38 @@ export type ReferenceSourceRequireResolutionBase =
 export interface ReferenceSourceRequireCall {
   readonly arguments: JavaScriptRequireCallFact["arguments"];
   readonly resolutionBase: ReferenceSourceRequireResolutionBase;
+  readonly limitation?: string;
 }
 
 /** Identify exact calls through a source-owned Node loader and their resolver base. */
 export const referenceSourceRequireCalls = (
   file: Pick<ParsedJavaScriptSource, "program">,
   path: string,
-): ReadonlyMap<t.CallExpression, ReferenceSourceRequireCall> => {
+): ReadonlyMap<
+  t.CallExpression | t.OptionalCallExpression,
+  ReferenceSourceRequireCall
+> => {
   // Unmarked paths depend on package scope or compiler options. Preserve their
   // candidate CommonJS edges; explicit module paths have no wrapper loader.
-  const wrapperMode = commonJsWrapperMode(path);
+  const runtimeContext = javaScriptRuntimeContext(file.program);
   const index = completeSemanticSteps(
     indexJavaScriptBindingsWithReceiversSteps(
       file.program,
-      wrapperMode === "absent" ? undefined : "commonjs-wrapper",
+      runtimeContext === "module" ? undefined : "commonjs-wrapper",
     ),
   );
   const factoryBindings: ReadonlySet<string> = new Set();
   const candidates: {
-    readonly call: t.CallExpression;
+    readonly call: t.CallExpression | t.OptionalCallExpression;
     readonly identifier: t.Identifier;
     readonly arguments: JavaScriptRequireCallFact["arguments"];
     readonly resolutionBase: ReferenceSourceRequireResolutionBase;
+    readonly limitation?: string;
   }[] = [];
   traverseJavaScriptAst(file.program, {
     enter: (node) => {
-      if (!t.isCallExpression(node)) return;
+      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+        return;
       const identifier = callReceiverIdentifier(node.callee);
       if (identifier === undefined) return;
       let fact = semanticRequireLoaderAt(node, index.bindings, factoryBindings);
@@ -72,7 +78,6 @@ export const referenceSourceRequireCalls = (
       );
       if (callFact === undefined || callFact.loader === "local") return;
       if (fact !== "create-require" && fact !== "commonjs-loader") return;
-      if (fact === "commonjs-loader" && wrapperMode === "absent") return;
       const sourceRelativePath = callFact.sourceRelativePath;
       const normalizedSourceRelativePath =
         sourceRelativePath === undefined
@@ -81,36 +86,45 @@ export const referenceSourceRequireCalls = (
               posix.join(posix.dirname(path), sourceRelativePath),
             );
       const base: ReferenceSourceRequireResolutionBase =
-        callFact.loader === "create-require"
-          ? sourceRelativePath === undefined
-            ? callFact.sourceRelative === true
-              ? "source-file"
-              : "unknown"
-            : normalizedSourceRelativePath === undefined ||
-                normalizedSourceRelativePath === ".." ||
-                normalizedSourceRelativePath.startsWith("../")
-              ? "unknown"
-              : normalizedSourceRelativePath === path
+        runtimeContext === "unknown"
+          ? "unknown"
+          : callFact.loader === "create-require"
+            ? sourceRelativePath === undefined
+              ? callFact.sourceRelative === true
                 ? "source-file"
-                : {
-                    kind: "source-relative-file",
-                    path: normalizedSourceRelativePath,
-                  }
-          : fact === "commonjs-loader" && callFact.loader === "commonjs-loader"
-            ? "source-file"
-            : "unknown";
+                : "unknown"
+              : normalizedSourceRelativePath === undefined ||
+                  normalizedSourceRelativePath === ".." ||
+                  normalizedSourceRelativePath.startsWith("../")
+                ? "unknown"
+                : normalizedSourceRelativePath === path
+                  ? "source-file"
+                  : {
+                      kind: "source-relative-file",
+                      path: normalizedSourceRelativePath,
+                    }
+            : fact === "commonjs-loader" &&
+                callFact.loader === "commonjs-loader" &&
+                runtimeContext === "commonjs"
+              ? "source-file"
+              : "unknown";
       const searchBase = requireResolveSearchBase(
-        node,
+        callFact.operation,
         callFact.arguments,
         index.bindings,
         base,
-        wrapperMode === "present",
+        runtimeContext === "commonjs",
       );
       candidates.push({
         call: node,
         identifier,
         arguments: callFact.arguments,
         resolutionBase: searchBase,
+        ...(runtimeContext === "unknown"
+          ? {
+              limitation: `Module context is unknown in ${path}; the requested dependency was retained without a proven loader base.`,
+            }
+          : {}),
       });
     },
   });
@@ -118,11 +132,18 @@ export const referenceSourceRequireCalls = (
     completeSemanticSteps(index.indexMemberMutationFactsSteps());
   return new Map(
     candidates.map(
-      ({ call, identifier, arguments: callArguments, resolutionBase }) =>
+      ({
+        call,
+        identifier,
+        arguments: callArguments,
+        resolutionBase,
+        limitation,
+      }) =>
         [
           call,
           {
             arguments: callArguments,
+            ...(limitation === undefined ? {} : { limitation }),
             resolutionBase:
               !t.isIdentifier(call.callee) &&
               hasPriorMemberMutation(index, call, identifier)
@@ -136,14 +157,14 @@ export const referenceSourceRequireCalls = (
 
 /** `require.resolve` options replace the default search paths unless exact current-directory paths are supplied. */
 const requireResolveSearchBase = (
-  call: t.CallExpression,
+  operation: JavaScriptRequireCallFact["operation"],
   callArguments: JavaScriptRequireCallFact["arguments"],
   bindings: JavaScriptSemanticAnalysisState,
   loaderBase: ReferenceSourceRequireResolutionBase,
   hasCommonJsWrapper: boolean,
 ): ReferenceSourceRequireResolutionBase => {
   const arguments_ = callArguments ?? [];
-  if (!isRequireResolveCall(call) || arguments_.length < 2) return loaderBase;
+  if (operation !== "resolve" || arguments_.length < 2) return loaderBase;
   if (arguments_.length !== 2) return "unknown";
   const options = t.isExpression(arguments_[1]) ? arguments_[1] : undefined;
   if (options === undefined || !t.isObjectExpression(options)) return "unknown";
@@ -164,35 +185,16 @@ const requireResolveSearchBase = (
     : "unknown";
 };
 
-const isRequireResolveCall = (call: t.CallExpression): boolean => {
-  const callee = call.callee;
-  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
-    return false;
-  return (
-    semanticStaticPropertyKey(callee.property, callee.computed) === "resolve"
-  );
-};
-
-type CommonJsWrapperMode = "present" | "absent" | "unknown";
-
-const commonJsWrapperMode = (path: string): CommonJsWrapperMode =>
-  path.endsWith(".cjs")
-    ? "present"
-    : path.endsWith(".mjs")
-      ? "absent"
-      : isExplicitModuleSourcePath(path)
-        ? "absent"
-        : "unknown";
-
 const hasPriorMemberMutation = (
   index: JavaScriptReceiverIndex,
-  site: t.CallExpression,
+  site: t.CallExpression | t.OptionalCallExpression,
   identifier: t.Identifier,
 ): boolean => {
   const callee = site.callee;
-  const property = t.isMemberExpression(callee)
-    ? semanticStaticPropertyKey(callee.property, callee.computed)
-    : undefined;
+  const property =
+    t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
+      ? semanticStaticPropertyKey(callee.property, callee.computed)
+      : undefined;
   if (property === undefined || property === null) return true;
   const facts = index.effectsForReferenceAt(site, identifier, [property]);
   return (

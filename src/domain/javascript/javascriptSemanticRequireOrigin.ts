@@ -7,19 +7,25 @@ import {
   type SemanticCapturedSelection,
 } from "./javascriptSemanticProjectedSources.js";
 import * as t from "@babel/types";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,
-  isUnmodifiedCommonJsWrapperBinding,
-  commonJsWrapperBindingDeclaration,
   semanticResolutionBlocked,
   semanticStableInitializer,
-  semanticBindingHasPriorValueWrite,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+import {
+  commonJsWrapperBindingDeclaration,
+  isUnmodifiedCommonJsWrapperBinding,
+  semanticBindingAtRead,
+  semanticBindingHasPriorValueWrite,
+  semanticEffectTiming,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticStaticPropertyKey,
   semanticMemberChain,
@@ -30,15 +36,13 @@ import {
   staticSourceRelativeUrlPath,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
-import {
-  semanticEffectTiming,
-  semanticBindingAtRead,
-  semanticTopLevelEffectFollowsCapture,
-} from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
-import { semanticCommonJsRequireOwnEnumerableAt } from "./javascriptSemanticReferenceSources.js";
+import {
+  semanticCommonJsRequireOwnEnumerableAt,
+  semanticReferenceSourcesInactive,
+} from "./javascriptSemanticReferenceSources.js";
 import {
   semanticArrayPropertyReferences,
   semanticObjectPropertyReferences,
@@ -50,22 +54,19 @@ import {
 } from "./javascriptSemanticAliasSelections.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
+  semanticRequireOriginReaders,
+  type JavaScriptRequireLoaderFact,
+  type JavaScriptRequireOrigin,
+} from "./javascriptSemanticRequireOriginSlot.js";
+import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
-import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 
-export interface JavaScriptRequireOrigin {
-  readonly origin: JavaScriptModuleOrigin;
-  readonly call: t.CallExpression;
-}
-
-export type JavaScriptRequireLoaderFact =
-  | "commonjs-loader"
-  | "factory-loader"
-  | "create-require"
-  | "local"
-  | "unknown";
+export type {
+  JavaScriptRequireLoaderFact,
+  JavaScriptRequireOrigin,
+} from "./javascriptSemanticRequireOriginSlot.js";
 
 const possibleCommonJsDelegateWriteStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();
@@ -139,7 +140,15 @@ export const semanticRequireLoaderAt = (
     )
       ? callee.object
       : callee;
-  return requireLoaderValueAt(loader, node, state, factoryBindingIds);
+  const selected = selectedRequireSourcesAt(
+    loader,
+    node,
+    state,
+    factoryBindingIds,
+  )?.loader;
+  return selected !== undefined && selected !== "unknown"
+    ? selected
+    : requireLoaderValueAt(loader, node, state, factoryBindingIds);
 };
 
 /** Classify Node's wrapper and exact factory bindings by their lexical owner. */
@@ -163,7 +172,11 @@ const requireLoaderValueAt = (
     return "create-require";
   if (loader.name !== "require") return "local";
   if (binding === undefined) {
-    if (semanticResolutionBlocked(state, loader, "require")) return "unknown";
+    if (
+      javaScriptRuntimeContext(state.program) === "module" ||
+      semanticResolutionBlocked(state, loader, "require")
+    )
+      return "unknown";
     return (state.ambientBindingWrites.get("require") ?? []).some(
       (write) => semanticEffectTiming(node, write, state) !== "after",
     )
@@ -542,6 +555,38 @@ const selectedRequireSourcesAt = (
         },
       );
     } else if (t.isCallExpression(node)) {
+      const callee = unwrapJavaScriptExpression(node.callee).node;
+      if (
+        target === "loader" &&
+        current.path.length === 0 &&
+        t.isFunction(callee)
+      ) {
+        if (callee.async || callee.generator) {
+          // A direct async/generator invocation returns a wrapper, not its contents.
+          local = true;
+          continue;
+        }
+        const returned = returnedLoaderReferences(state, "direct-call")(
+          node.callee,
+          node,
+        );
+        // The shared result owner is a may-reference graph. A block may also
+        // fall through or throw; only an expression arrow supplies its whole result.
+        unknown ||=
+          returned.unresolvedInvocation === true ||
+          !t.isArrowFunctionExpression(callee) ||
+          t.isBlockStatement(callee.body);
+        pending.push(
+          ...inheritLoaderSourceContext(
+            current,
+            returned.references.map((reference) => ({
+              node: reference.node,
+              path: reference.projection,
+            })),
+          ),
+        );
+        continue;
+      }
       if (target === "factory") {
         const origin = semanticRequireOrigin(node, state)?.origin;
         if (
@@ -654,6 +699,7 @@ const loaderInvocationInterop = (state: JavaScriptSemanticAnalysisState) => {
 };
 
 export interface JavaScriptRequireCallFact {
+  readonly operation: "load" | "resolve";
   readonly loader: JavaScriptRequireLoaderFact;
   readonly arguments:
     | readonly t.CallExpression["arguments"][number][]
@@ -670,7 +716,12 @@ export const semanticRequireCallAt = (
   factoryBindingIds: ReadonlySet<string>,
 ): JavaScriptRequireCallFact | undefined => {
   if (semanticModuleRequireCallAt(node, state))
-    return { loader: "unknown", arguments: undefined, sourceRelative: false };
+    return {
+      operation: "load",
+      loader: "unknown",
+      arguments: undefined,
+      sourceRelative: false,
+    };
   const callee = unwrapJavaScriptExpression(node.callee).node;
   if (
     (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
@@ -680,7 +731,12 @@ export const semanticRequireCallAt = (
     selectedRequireSourcesAt(callee, node, state, factoryBindingIds)?.loader ===
       "local"
   )
-    return { loader: "local", arguments: undefined, sourceRelative: false };
+    return {
+      operation: "load",
+      loader: "local",
+      arguments: undefined,
+      sourceRelative: false,
+    };
   if (
     (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
     semanticStaticPropertyKey(callee.property, callee.computed) === "resolve"
@@ -691,6 +747,13 @@ export const semanticRequireCallAt = (
       state,
       factoryBindingIds,
     );
+    if (loader === "unknown")
+      return {
+        operation: "load",
+        loader,
+        arguments: undefined,
+        sourceRelative: false,
+      };
     // Bundler factory loaders can share the `require` shape, but their
     // `.resolve` member is not Node's module resolver.
     if (loader === "commonjs-loader" || loader === "create-require") {
@@ -701,6 +764,7 @@ export const semanticRequireCallAt = (
         factoryBindingIds,
       );
       return {
+        operation: "resolve",
         loader: selected?.loader ?? loader,
         arguments: node.arguments,
         sourceRelative:
@@ -726,6 +790,7 @@ export const semanticRequireCallAt = (
     );
     if (selected !== undefined || loader !== "local")
       return {
+        operation: "load",
         loader: selected?.loader ?? loader,
         arguments: node.arguments,
         sourceRelative: selected?.sourceRelative ?? loader !== "create-require",
@@ -767,6 +832,7 @@ export const semanticRequireCallAt = (
         factoryBindingIds,
       );
       return {
+        operation: "load",
         loader:
           invocation.path[1] === "local"
             ? "local"
@@ -790,6 +856,7 @@ export const semanticRequireCallAt = (
   return factory === undefined
     ? undefined
     : {
+        operation: "load",
         loader: factory,
         arguments: node.arguments.slice(t.isIdentifier(node.callee) ? 0 : 1),
         sourceRelative: true,
@@ -847,6 +914,24 @@ const moduleReturnedReferences = new WeakMap<
   >
 >();
 
+/** Reuse one result-reference owner for loader values and module receivers. */
+const returnedLoaderReferences = (
+  state: JavaScriptSemanticAnalysisState,
+  mode: "direct-call" | "awaited-call",
+): ReturnType<typeof createSemanticReturnedReferences> => {
+  let factories = moduleReturnedReferences.get(state);
+  if (factories === undefined) {
+    factories = new Map();
+    moduleReturnedReferences.set(state, factories);
+  }
+  let returned = factories.get(mode);
+  if (returned === undefined) {
+    returned = createSemanticReturnedReferences(state, mode);
+    factories.set(mode, returned);
+  }
+  return returned;
+};
+
 type ModuleObjectSource = {
   readonly node: t.Node;
   readonly path: SemanticAliasSelectionPath;
@@ -885,16 +970,22 @@ const inheritLoaderSourceContext = (
     ),
   }));
 
+// A later read site selects only the remaining path. This member selects its
+// own key when it is evaluated, so `o.k = o.k || d` reads o.k before the write.
 const loaderMemberSource = (
   current: ModuleObjectSource,
   member: t.MemberExpression | t.OptionalMemberExpression,
 ): ModuleObjectSource => ({
   node: member.object,
   readAt: current.readAt ?? member,
-  capturedSelections: semanticShiftCapturedSelections(
-    current.capturedSelections,
-    1,
-  ),
+  capturedSelections:
+    current.readAt === undefined
+      ? semanticShiftCapturedSelections(current.capturedSelections, 1)
+      : semanticNormalizeCapturedSelections([
+          { at: member, depth: 1 },
+          ...(semanticShiftCapturedSelections(current.capturedSelections, 1) ??
+            []),
+        ]),
   path: [
     semanticStaticPropertyKey(member.property, member.computed),
     ...current.path,
@@ -971,13 +1062,10 @@ const hasCommonJsModuleSource = (
   readAt?: t.Node,
 ): boolean => {
   type Work = ModuleObjectSource & {
-    readonly ancestors: ReadonlySet<object>;
     /** Await occurs after this many requested outer property selections. */
     readonly awaitDepths: readonly number[];
   };
-  const pending: Work[] = [
-    { node, path: [], readAt, ancestors: new Set(), awaitDepths: [] },
-  ];
+  const pending: Work[] = [{ node, path: [], readAt, awaitDepths: [] }];
   // Keep depths separate and join finite key alternatives at each source read.
   const selections = new SemanticAliasSelections(() => {
     state.valueResourceLimits.add("alias-selections");
@@ -1023,13 +1111,10 @@ const hasCommonJsModuleSource = (
       identity = {};
       context.identities.set(pathKey, identity);
     }
-    if (next.ancestors.has(identity)) {
-      if (includeUnknown) return true;
-      continue;
-    }
+    // A revisited state adds no source. A cycle's other entries are expanded
+    // once each, so a cycle is not an unknown loader.
     if (examined.has(identity)) continue;
     examined.add(identity);
-    const ancestors = new Set([...next.ancestors, identity]);
     const enqueueAt = (
       depths: readonly number[],
       ...sources: ModuleObjectSource[]
@@ -1037,7 +1122,6 @@ const hasCommonJsModuleSource = (
       pending.push(
         ...inheritLoaderSourceContext(next, sources).map((source) => ({
           ...source,
-          ancestors,
           awaitDepths: depths,
         })),
       );
@@ -1100,20 +1184,10 @@ const hasCommonJsModuleSource = (
       t.isOptionalCallExpression(value) ||
       t.isNewExpression(value)
     ) {
-      let factories = moduleReturnedReferences.get(state);
-      if (factories === undefined) {
-        factories = new Map();
-        moduleReturnedReferences.set(state, factories);
-      }
       const mode = awaitDepths.includes(path.length)
         ? "awaited-call"
         : "direct-call";
-      let returned = factories.get(mode);
-      if (returned === undefined) {
-        returned = createSemanticReturnedReferences(state, mode);
-        factories.set(mode, returned);
-      }
-      const returnedResult = returned(
+      const returnedResult = returnedLoaderReferences(state, mode)(
         value.callee,
         t.isNewExpression(value) ? undefined : value,
       );
@@ -1329,7 +1403,7 @@ const writesModuleRequire = (
     // Only a retained module identity can revoke the host delegate. Escaping
     // an unrelated local table is not evidence that it became the host module.
     isCommonJsModuleObject(node, state, false);
-  traverseJavaScriptAst(state.program, {
+  traverseJavaScriptValueAst(state.program, state.erasedSyntaxNodes, {
     enter: (node) => {
       const target = t.isAssignmentExpression(node)
         ? node.left
@@ -1460,17 +1534,9 @@ export const semanticGlobalProcessPathOrigin = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptModuleOrigin | undefined => {
-  const members: string[] = [];
-  let current = unwrapJavaScriptExpression(node).node;
-  while (
-    t.isMemberExpression(current) ||
-    t.isOptionalMemberExpression(current)
-  ) {
-    const key = semanticStaticPropertyKey(current.property, current.computed);
-    if (key === null) return undefined;
-    members.unshift(key);
-    current = unwrapJavaScriptExpression(current.object).node;
-  }
+  const chain = semanticMemberChain(node);
+  if (chain === undefined) return undefined;
+  const { root: current, members } = chain;
   if (
     !t.isIdentifier(current) ||
     !["globalThis", "global", "window", "self"].includes(current.name) ||
@@ -1511,7 +1577,8 @@ export const semanticRequireOrigin = (
       !isUnmodifiedCommonJsWrapperBinding(current.callee, "require", state) &&
       !isWrapperRequireInitializerCall(requireBinding, current, state)) ||
     (requireBinding === undefined &&
-      semanticResolutionBlocked(state, current.callee, "require")) ||
+      (javaScriptRuntimeContext(state.program) === "module" ||
+        semanticResolutionBlocked(state, current.callee, "require"))) ||
     (state.ambientBindingWrites.get("require") ?? []).some(
       (write) =>
         !semanticTopLevelEffectFollowsCapture(
@@ -1591,3 +1658,6 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
     ? { specifier, path }
     : undefined;
 };
+
+semanticRequireOriginReaders.origin = semanticRequireOrigin;
+semanticRequireOriginReaders.loader = semanticRequireLoaderAt;

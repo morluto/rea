@@ -117,15 +117,18 @@ const certificateParts = (certificate: Uint8Array) => {
 };
 
 /** tbsCertificate fields a SignerInfo names: issuer Name TLV and serial content. */
-const issuerAndSerial = (certificate: Uint8Array): Uint8Array => {
+const issuerAndSerial = (
+  certificate: Uint8Array,
+  serial?: Uint8Array,
+): Uint8Array => {
   // Fixture certificates are v3 with short-form serials: walk the known layout.
   const { fields } = certificateParts(certificate);
-  const serial = fields[1]!;
+  const serialField = fields[1]!;
   const issuer = fields[3]!;
   return tlv(
     0x30,
     certificate.subarray(issuer.start, issuer.end),
-    certificate.subarray(serial.start, serial.end),
+    serial ?? certificate.subarray(serialField.start, serialField.end),
   );
 };
 
@@ -162,18 +165,85 @@ export const withSubject = (
   );
 };
 
+/** Replace a fixture serial INTEGER (the full TLV) without asserting a valid signature. */
+export const withSerial = (
+  certificate: Uint8Array,
+  serial: Uint8Array,
+): Uint8Array => {
+  const { fields, outer } = certificateParts(certificate);
+  const part = ({ start, end }: DerSpan) => certificate.subarray(start, end);
+  return tlv(
+    0x30,
+    tlv(
+      0x30,
+      ...fields.map((field, index) => (index === 1 ? serial : part(field))),
+    ),
+    ...outer.map(part),
+  );
+};
+
+/** Replace a fixture's issuer or extensions without asserting a valid signature. */
+export const withIssuer = (
+  certificate: Uint8Array,
+  issuer: Uint8Array,
+): Uint8Array => {
+  const { fields, outer } = certificateParts(certificate);
+  const part = ({ start, end }: DerSpan) => certificate.subarray(start, end);
+  return tlv(
+    0x30,
+    tlv(
+      0x30,
+      ...fields.map((field, index) => (index === 3 ? issuer : part(field))),
+    ),
+    ...outer.map(part),
+  );
+};
+export const withExtension = (
+  certificate: Uint8Array,
+  bytes: Uint8Array,
+): Uint8Array => {
+  const { fields, outer } = certificateParts(certificate);
+  const part = ({ start, end }: DerSpan) => certificate.subarray(start, end);
+  const extension = tlv(
+    0xa3,
+    tlv(0x30, tlv(0x30, oid("1.2.3.4"), tlv(0x04, bytes))),
+  );
+  return tlv(
+    0x30,
+    tlv(
+      0x30,
+      ...fields.map((field) =>
+        certificate[field.start] === 0xa3 ? extension : part(field),
+      ),
+    ),
+    ...outer.map(part),
+  );
+};
+
 export interface SignerInfoSpec {
   /** Certificate whose issuer and serial the SignerInfo names. */
   readonly names: Uint8Array;
   /** Replace the required signature TLV, including omission for malformed fixtures. */
   readonly signature?: Uint8Array;
+  /**
+   * INTEGER content of issuerAndSerialNumber.serialNumber when it must differ
+   * from the certificate named by `names`.
+   */
+  readonly serial?: Uint8Array;
 }
 
-export const signerInfo = ({ names, signature }: SignerInfoSpec): Uint8Array =>
+export const signerInfo = ({
+  names,
+  signature,
+  serial,
+}: SignerInfoSpec): Uint8Array =>
   tlv(
     0x30,
     integer(1),
-    issuerAndSerial(names),
+    issuerAndSerial(
+      names,
+      serial === undefined ? undefined : tlv(0x02, serial),
+    ),
     algorithm(OID_SHA256),
     algorithm(OID_ECDSA_SHA256),
     signature ?? tlv(0x04, Uint8Array.from([1, 2, 3])),

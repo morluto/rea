@@ -18,6 +18,7 @@ type TypeInventory = Pick<
   | "types"
   | "nesting_read"
   | "selection"
+  | "method_rows"
   | "limitations"
 >;
 

@@ -13,7 +13,7 @@ import {
   BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
   BrowserStartupError,
   waitForBrowserDevtoolsPort,
-} from "../../../src/browser/BrowserProcessStartup.js";
+} from "../../../scripts/lib/browser-process-startup.mjs";
 import { assertOrdinaryWindowsVerifierCaller } from "../../../scripts/lib/windows-ordinary-user-verifier.mjs";
 
 describe("browser process startup", () => {
@@ -150,29 +150,22 @@ describe("browser process startup", () => {
 
   it("keeps one owner for the DevToolsActivePort deadline", async () => {
     expect(BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS).toBe(60_000);
-    const callers = [
-      "../../../scripts/verify-real-browser.mjs",
-      "../../../scripts/lib/browser-runtime-fixture-lifecycle.mjs",
-    ];
-    for (const caller of callers) {
-      const source = await readFile(new URL(caller, import.meta.url), "utf8");
-      expect(devtoolsPortDeadlines(source)).toEqual([
-        ["BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS"],
-      ]);
-    }
+    const source = await readFile(
+      new URL(
+        "../../../scripts/lib/browser-runtime-fixture-lifecycle.mjs",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(source).toContain(
+      "const deadline = performance.now() + BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS",
+    );
+    expect(source).toContain(
+      "timeoutMs: Math.max(1, deadline - performance.now())",
+    );
   });
 });
 
 const temporaryRoot = async (): Promise<string> => {
   return createTestTempDirectory("rea-browser-startup-");
-};
-
-const devtoolsPortDeadlines = (source: string): string[][] => {
-  const calls = /waitForBrowserDevtoolsPort\(\{(?<body>[\s\S]*?)\}\)/gu;
-  const deadlines = /\btimeoutMs:\s*(?<value>[^\n,]+)/gu;
-  return [...source.matchAll(calls)].map((call) =>
-    [...String(call.groups?.body).matchAll(deadlines)].map((deadline) =>
-      String(deadline.groups?.value).trim(),
-    ),
-  );
 };

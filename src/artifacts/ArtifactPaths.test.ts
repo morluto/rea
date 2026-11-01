@@ -18,7 +18,7 @@ it.each(["drive", "escaped", "normalization", "prefix", "collision"])(
     const name = "x".repeat(1024 * 1024);
     const registry = new ArtifactPathRegistry();
     const fail = () => {
-      if (kind === "drive") normalizeArtifactPath("C:" + name);
+      if (kind === "drive") normalizeArtifactPath("C:/" + name);
       else if (kind === "escaped")
         normalizeArtifactPath("\0".repeat(name.length));
       else if (kind === "normalization")
@@ -38,6 +38,13 @@ it.each(["drive", "escaped", "normalization", "prefix", "collision"])(
     })();
     expect(failure).toMatchObject({ reason: "path" });
     expect((failure as Error).message.length).toBeLessThan(1024);
+  },
+);
+
+it.each(["a:b", "C:cache/file.txt", "a:"])(
+  "preserves a literal POSIX colon name %s",
+  (path) => {
+    expect(normalizeArtifactPath(path)).toBe(path);
   },
 );
 
@@ -180,3 +187,13 @@ it.each([["app.js"], ["app.js", "App.js"], ["other.js"]])(
     expect(destinationCaseCollision("res/app.js", names)).toBeUndefined();
   },
 );
+
+it("reserves prefix capacity atomically without declaring destination kinds", () => {
+  const registry = new ArtifactPathRegistry({ maxParts: 4, maxNodes: 3 });
+  registry.reservePath("a/b");
+  expect(() => registry.reservePath("a/c/d")).toThrow();
+  expect(() => registry.reservePath("z")).not.toThrow();
+  expect(() => registry.reservePath("a/b")).not.toThrow();
+  registry.add("a/b", "file");
+  expect(() => registry.add("a/b", "directory")).toThrow();
+});

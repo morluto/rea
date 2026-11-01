@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -12,7 +13,7 @@ import {
   clientConfigurationAligned,
 } from "../../../src/application/SetupClientConfiguration.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   effectiveClientConfiguration,
@@ -20,9 +21,88 @@ import {
 } from "../../../src/application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "../../../src/application/ClientRegistrationEnvironment.js";
 
-const command = npxRegistrationCommand(process.platform);
+const command = currentClientRegistrationCommand({
+  platform: process.platform,
+});
 const language = "x86:LE:32:default";
 const compiler = "borlandcpp";
+
+it.each(["missing", "empty", "legacy", "native"] as const)(
+  "uses effective OpenCode native activation when the upper layer is %s",
+  async (shape) => {
+    const home = await createTestTempDirectory(
+      "rea-opencode-effective-dialect-",
+    );
+    const root = join(home, ".config", "opencode");
+    await mkdir(root, { recursive: true });
+    const lower = join(root, "opencode.json");
+    const upper = join(root, "opencode.jsonc");
+    const originalLower = JSON.stringify({
+      mcp: {
+        servers: {
+          rea: { type: "local", command, disabled: true },
+          other: { type: "local", command: ["other"], disabled: true },
+        },
+      },
+    });
+    await writeFile(lower, originalLower);
+    if (shape !== "missing")
+      await writeFile(
+        upper,
+        JSON.stringify({
+          theme: "caller-theme",
+          ...(shape === "legacy"
+            ? {
+                mcp: {
+                  rea: {
+                    type: "local",
+                    command,
+                    enabled: true,
+                    future_policy: { retain: true },
+                  },
+                },
+              }
+            : {}),
+          ...(shape === "native" ? { mcp: { servers: {} } } : {}),
+        }),
+      );
+    const client = {
+      name: "opencode",
+      format: "opencode",
+      configPath: upper,
+      configPaths: [lower, upper],
+    } as const;
+    expect(
+      await configureClientConfiguration(client, {}, command),
+    ).toMatchObject({ status: "configured" });
+    const files = await readClientConfigurationFiles(client);
+    expect(files.ok).toBe(true);
+    if (!files.ok) throw new Error(files.error.detail);
+    const effective = effectiveClientConfiguration(files.value);
+    expect(effective?.dialect).toBe("opencode_v2");
+    expect(
+      effective === undefined
+        ? undefined
+        : effectiveClientServer(effective, "rea"),
+    ).toMatchObject({ disabled: false });
+    const written = JSON.parse(await readFile(upper, "utf8"));
+    expect(written.mcp.servers.rea).toMatchObject({
+      type: "local",
+      command,
+      disabled: false,
+    });
+    if (shape === "legacy")
+      expect(written.mcp.servers.rea.future_policy).toEqual({ retain: true });
+    expect(written.mcp.rea).toBeUndefined();
+    expect(await inspectClientConfiguration(client, {}, command)).toEqual({
+      status: "already_current",
+    });
+    expect(await configureClientConfiguration(client, {}, command)).toEqual({
+      status: "unchanged",
+    });
+    expect(await readFile(lower, "utf8")).toBe(originalLower);
+  },
+);
 
 const layered = async (lower: unknown, upper: unknown) => {
   const home = await createTestTempDirectory("rea-layered-environment-");
@@ -52,7 +132,7 @@ const layered = async (lower: unknown, upper: unknown) => {
   } as const;
   const status = async () =>
     (
-      await readClientRegistrationStatuses(home, "rea", {
+      await readClientRegistrationStatuses(home, command[1], {
         environment: { XDG_CONFIG_HOME: join(home, ".config") },
       })
     ).find(({ client }) => client === "opencode");

@@ -6,15 +6,15 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import {
   webBundleWorkerMessageSchema,
   type WebBundleWorkerMessage,
+  WEB_BUNDLE_WORKER_LIMITS,
 } from "./WebBundleAnalysisWorkerProtocol.js";
-import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
 
 const makeScript = (text: string): IncludedScript => ({
   script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
@@ -110,17 +110,147 @@ const readStream = async (stream: NodeJS.ReadableStream): Promise<string> => {
   return output;
 };
 
-const send = async (
+const writeInput = async (
   worker: ChildProcessWithoutNullStreams,
-  request: unknown,
+  frame: string | Buffer,
 ): Promise<void> => {
-  const frame = `${JSON.stringify(request)}\n`;
   await new Promise<void>((resolve, reject) => {
     worker.stdin.write(frame, (error) =>
       error === null || error === undefined ? resolve() : reject(error),
     );
   });
 };
+
+const send = async (
+  worker: ChildProcessWithoutNullStreams,
+  request: unknown,
+): Promise<void> => writeInput(worker, `${JSON.stringify(request)}\n`);
+
+const closeServer = async (
+  worker: ChildProcessWithoutNullStreams,
+): Promise<void> => {
+  worker.stdin.end();
+  if (worker.exitCode === null && worker.signalCode === null) {
+    const exited = once(worker, "exit");
+    const timeout = setTimeout(() => worker.kill("SIGKILL"), 2_000);
+    await exited;
+    clearTimeout(timeout);
+  }
+};
+
+const framingServer = async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-web-worker-framing-"));
+  let worker: ChildProcessWithoutNullStreams | undefined;
+  onTestFinished(async () => {
+    if (worker !== undefined) await closeServer(worker);
+    await rm(root, { recursive: true, force: true });
+  });
+  const server = await startServer(root);
+  worker = server.process;
+  expect(await server.next()).toMatchObject({ kind: "ready" });
+  return { root, ...server };
+};
+
+it("serves fragmented and coalesced LF/CRLF requests as separate jobs", async () => {
+  const server = await framingServer();
+  const input = sourceDescriptor(makeScript("fetch('/framed');"));
+  const ids = [randomUUID(), randomUUID()];
+  const requests = ids.map((id) => ({
+    kind: "analyze",
+    id,
+    source: input.descriptor,
+    result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
+  }));
+  for (const id of ids) await writeSource(server.root, id, input.bytes);
+  const first = JSON.stringify(requests[0]);
+  await writeInput(server.process, first.slice(0, 17));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await writeInput(
+    server.process,
+    `${first.slice(17)}\n${JSON.stringify(requests[1])}\r\n`,
+  );
+  for (const id of ids) {
+    expect(await server.next()).toMatchObject({ kind: "phase", id });
+    expect(await server.next()).toMatchObject({ kind: "complete", id });
+    expect(
+      JSON.parse(await readFile(join(server.root, `${id}.result`), "utf8")),
+    ).toMatchObject({ status: "analyzed" });
+  }
+});
+
+it.each([
+  ["multibyte", Buffer.from("é🙂")],
+  ["replacement-decoded", Buffer.from([0xff])],
+] as const)(
+  "accepts an exact-budget %s JSON request with fragmented UTF-8 and split CRLF",
+  async (_name, text) => {
+    const server = await framingServer();
+    const input = sourceDescriptor(makeScript("fetch('/exact-budget');"));
+    const id = randomUUID();
+    await writeSource(server.root, id, input.bytes);
+    const request = JSON.stringify({
+      kind: "analyze",
+      id,
+      source: input.descriptor,
+      result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
+    });
+    // JSON.parse retains the final known key, so non-ASCII input exercises the
+    // decoder while the request admitted by the named schema stays unchanged.
+    const prefix = Buffer.from('{"kind":"');
+    const json = Buffer.concat([
+      prefix,
+      text,
+      Buffer.from(`",${request.slice(1)}`),
+    ]);
+    const decodedBytes = Buffer.byteLength(json.toString("utf8"));
+    const frame = Buffer.concat([
+      json,
+      Buffer.alloc(WEB_BUNDLE_WORKER_LIMITS.protocolBytes - decodedBytes, 0x20),
+    ]);
+    expect(Buffer.byteLength(frame.toString("utf8"))).toBe(
+      WEB_BUNDLE_WORKER_LIMITS.protocolBytes,
+    );
+    await writeInput(server.process, frame.subarray(0, prefix.length + 1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await writeInput(
+      server.process,
+      Buffer.concat([frame.subarray(prefix.length + 1), Buffer.from("\r")]),
+    );
+    // Let the worker consume the terminal CR before delivering its LF.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await writeInput(server.process, "\n");
+    expect(await server.next()).toMatchObject({ kind: "phase", id });
+    expect(await server.next()).toMatchObject({ kind: "complete", id });
+    expect(
+      JSON.parse(await readFile(join(server.root, `${id}.result`), "utf8")),
+    ).toMatchObject({ status: "analyzed" });
+  },
+);
+
+it("rejects an oversized unterminated frame at EOF without starting analysis", async () => {
+  const server = await framingServer();
+  const input = sourceDescriptor(makeScript("fetch('/not-analyzed');"));
+  const id = randomUUID();
+  await writeSource(server.root, id, input.bytes);
+  const request = JSON.stringify({
+    kind: "analyze",
+    id,
+    source: input.descriptor,
+    result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
+  });
+  const frame = request.padEnd(WEB_BUNDLE_WORKER_LIMITS.protocolBytes + 1, " ");
+  const exited = once(server.process, "exit");
+  server.process.stdin.end(frame);
+  await expect(server.next()).rejects.toThrow(
+    "RangeError: Web bundle worker request exceeds its byte budget",
+  );
+  expect(await exited).toEqual([1, null]);
+  await expect(
+    readFile(join(server.root, `${id}.result`)),
+  ).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
 
 it("bounds and binds per-script worker jobs, then reuses one worker for the next script", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-web-worker-server-test-"));
@@ -256,13 +386,7 @@ it("bounds and binds per-script worker jobs, then reuses one worker for the next
     expect(selected.route_facts.candidates.length).toBeLessThan(3);
   } finally {
     if (worker !== undefined) {
-      worker.stdin.end();
-      if (worker.exitCode === null && worker.signalCode === null) {
-        const exited = once(worker, "exit");
-        const timeout = setTimeout(() => worker?.kill("SIGKILL"), 2_000);
-        await exited;
-        clearTimeout(timeout);
-      }
+      await closeServer(worker);
     }
     await rm(root, { recursive: true, force: true });
   }

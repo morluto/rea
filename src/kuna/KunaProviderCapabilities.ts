@@ -1,9 +1,13 @@
+import {
+  KUNA_PROVIDER_IDENTITY,
+  KUNA_OPERATIONS,
+} from "./KunaProviderMetadata.js";
 import type {
   AnalysisOperation,
   CapabilityDescriptor,
 } from "../application/AnalysisProvider.js";
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
-import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
+
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   type RegexMatchingDeadline,
@@ -15,29 +19,6 @@ import {
 import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
 
-/** Static identity; the observed Kuna release is reported in each analysis profile. */
-export const KUNA_PROVIDER_IDENTITY = Object.freeze({
-  id: KUNA_PROVIDER_ID,
-  name: "Kuna",
-  version: null,
-});
-
-/** Analyst outcomes Kuna's inventory and project export can answer. */
-export const KUNA_OPERATIONS = Object.freeze([
-  "list_documents",
-  "list_procedures",
-  "search_procedures",
-  "list_strings",
-  "search_strings",
-  "procedure_address",
-  "address_name",
-  "procedure_pseudo_code",
-  "procedure_assembly",
-  "analyze_function",
-  "procedure_callers",
-  "procedure_callees",
-  "xrefs",
-] as const satisfies readonly Exclude<AnalysisOperation, "health">[]);
 export type KunaOperation = (typeof KUNA_OPERATIONS)[number];
 
 export const KUNA_RELATIONSHIP_LIMITATION =

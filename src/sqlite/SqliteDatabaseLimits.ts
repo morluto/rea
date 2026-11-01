@@ -13,6 +13,7 @@ export class SqliteInspectionFailure extends Error {
       | "selection"
       | "column-selection"
       | "column-evaluation"
+      | "row-evaluation"
       | "column-limit"
       | "unsupported"
       | "unavailable"

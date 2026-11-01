@@ -106,6 +106,36 @@ it("says diagnostic capture has no runtime override", () => {
   );
 });
 
+it.each(["/selected.db", "./Database files/another.db"])(
+  "retains the caller-selected path %s when the owned worker reports V8 heap exhaustion",
+  (path) => {
+    const stderr =
+      "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory";
+    const cause = new OwnedCommandFailure("process", "Worker exited.", {
+      stdout: { text: "", bytes: 0, observedBytes: 0 },
+      stderr: {
+        text: stderr,
+        bytes: Buffer.byteLength(stderr),
+        observedBytes: Buffer.byteLength(stderr),
+      },
+      exitCode: null,
+      signal: "SIGABRT",
+    });
+    const failure = sqliteDatabaseFailure(cause, path, "worker");
+    expect(failure.cause).toBe(cause);
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        operation: "inspect_sqlite_database",
+        resource: "memory",
+        reported_limits: { javascript_heap_bytes: 256 * 1024 * 1024 },
+        diagnostics: { selected_path: path },
+        captured_output: { stderr },
+      },
+    });
+  },
+);
+
 it("does not infer cancellation from a later signal when cleanup carries no cancellation fact", () => {
   const controller = new AbortController();
   const cause = new ArtifactReaderFailure("io", "cleanup remains owned", {

@@ -1,8 +1,16 @@
 import type { JsonObject } from "../../domain/analysisView/environmentStateRules.js";
+import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
+import { matchesClockFormat } from "../../domain/analysisView/environmentStateWriteClockFormats.js";
 import {
+  composedPartText,
+  composedValue,
+} from "../../domain/analysisView/environmentStateWriteComposed.js";
+import {
+  likeGeneratedInteger,
   isUuid,
   readClock,
   type ClockFormat,
+  type ClockReading,
 } from "../../domain/analysisView/environmentStateWriteValues.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ReplayedBody } from "./environmentSource.js";
@@ -74,20 +82,18 @@ const formatKey = (format: ClockFormat): string =>
     ? `epoch-${format.unit}`
     : `iso${format.separator}${String(format.fraction)}${format.zone === "" ? "" : format.zone === "Z" ? "Z" : "offset"}`;
 
-/** The format of a clock value: an ISO-8601 string, or an epoch number under a time-named field or as an array item. */
-const clockFormat = (
+/** ISO text has its own clock syntax; numeric epochs require a time-named field. */
+const clockReading = (
   value: JsonValue,
   key: string | undefined,
-): string | undefined => {
+): ClockReading | undefined => {
   if (
     typeof value === "number" &&
-    key !== undefined &&
-    !TIME_FIELD.test(key) &&
-    !TIME_FIELD_CAMEL.test(key)
+    (key === undefined ||
+      (!TIME_FIELD.test(key) && !TIME_FIELD_CAMEL.test(key)))
   )
     return undefined;
-  const clock = readClock(value);
-  return clock === undefined ? undefined : formatKey(clock.format);
+  return readClock(value);
 };
 
 const characterClasses = (text: string): string =>
@@ -102,16 +108,50 @@ const characterClasses = (text: string): string =>
     .sort()
     .join("");
 
-/** Two values each side generated on its own: both UUIDs, or one length of eight or more with the same character classes and a digit. */
-const generatedPair = (live: string, env: string): boolean =>
-  (isUuid(live) && isUuid(env)) ||
-  (live.length === env.length &&
+/** A confirmed response field's rule, and the pointer within that field (`*` marks actual array traversal). */
+interface Generation {
+  readonly rule: FieldRule;
+  readonly pointer: string;
+}
+
+/** Whether a confirmed generation rule applies here and both values retain its generated format. */
+const generatedPair = (
+  live: string | number,
+  env: string | number,
+  generation: Generation | undefined,
+): boolean => {
+  if (generation === undefined) return false;
+  const { rule, pointer } = generation;
+  if (
+    rule.rule === "unique" &&
+    pointer === "" &&
+    likeGeneratedInteger(live, env)
+  )
+    return true;
+  if (typeof live !== "string" || typeof env !== "string") return false;
+  if (rule.rule === "renewed")
+    return rule.pointers.includes(pointer) && isUuid(live) && isUuid(env);
+  if (pointer !== "") return false;
+  if (
+    rule.rule === "unique" ||
+    (rule.rule === "identity" && rule.generator === "uuid")
+  )
+    return isUuid(live) && isUuid(env);
+  if (rule.rule !== "sequence" && rule.rule !== "identity") return false;
+  return (
+    live.length === env.length &&
     live.length >= 8 &&
     /\d/u.test(live) &&
     /\d/u.test(env) &&
-    characterClasses(live) === characterClasses(env));
+    characterClasses(live) === characterClasses(env)
+  );
+};
 
 class Differ {
+  readonly #rules: ReadonlyMap<string, FieldRule>;
+  readonly #composedRules: readonly Extract<FieldRule, { rule: "composed" }>[];
+  readonly #generatedToEnv = new Map<string, string>();
+  readonly #generatedToLive = new Map<string, string>();
   readonly differences: Difference[] = [];
   readonly normalised: Normalised = {
     ids: 0,
@@ -128,11 +168,48 @@ class Differ {
       readonly scope: string | undefined;
       readonly at: string;
       readonly identity: boolean;
+      /** Parsed rules of the confirmed write whose entity response is being compared. */
+      readonly rules: readonly FieldRule[];
     },
-  ) {}
+  ) {
+    this.#rules = new Map(entity.rules.map((rule) => [rule.field, rule]));
+    this.#composedRules = entity.rules.filter(
+      (rule) => rule.rule === "composed",
+    );
+  }
 
   add(difference: Difference): void {
     this.differences.push(difference);
+  }
+
+  /** One answer's generated identities must rename consistently in both directions. */
+  #pairGenerated(
+    live: string | number,
+    env: string | number,
+    rule: FieldRule,
+  ): boolean {
+    const uuid =
+      rule.rule === "unique" ||
+      rule.rule === "renewed" ||
+      (rule.rule === "identity" && rule.generator === "uuid");
+    const identity = (value: string | number) =>
+      typeof value === "number"
+        ? `number:${String(value)}`
+        : uuid
+          ? `uuid:${value.toLowerCase()}`
+          : `string:${value}`;
+    const liveKey = identity(live);
+    const envKey = identity(env);
+    const knownEnv = this.#generatedToEnv.get(liveKey);
+    const knownLive = this.#generatedToLive.get(envKey);
+    if (
+      (knownEnv !== undefined && knownEnv !== envKey) ||
+      (knownLive !== undefined && knownLive !== liveKey)
+    )
+      return false;
+    this.#generatedToEnv.set(liveKey, envKey);
+    this.#generatedToLive.set(envKey, liveKey);
+    return true;
   }
 
   /** Whether a value compares within the call's collection, as an entity's own identity or a create's bare id does; other ids compare by the probe's mapping. */
@@ -162,10 +239,29 @@ class Differ {
     live: JsonValue,
     env: JsonValue,
     pointer: string,
-    at: { readonly key?: string; readonly own?: boolean } = {},
+    at: {
+      readonly key?: string;
+      readonly own?: boolean;
+      readonly clockKey?: string | undefined;
+    } = {},
+    generation?: Generation,
   ): void {
+    const key = at.clockKey ?? at.key;
+    const liveClock = clockReading(live, key);
+    const envClock = clockReading(env, key);
+    const generatedMatch =
+      generation !== undefined &&
+      (typeof live === "string" || typeof live === "number") &&
+      (typeof env === "string" || typeof env === "number") &&
+      liveClock === undefined &&
+      envClock === undefined &&
+      !this.map.hasLive(live) &&
+      !this.map.hasEnv(env) &&
+      generatedPair(live, env, generation)
+        ? this.#pairGenerated(live, env, generation.rule)
+        : undefined;
     if (live === env) {
-      if (this.#reassigned(live, pointer, at))
+      if (generatedMatch === false || this.#reassigned(live, pointer, at))
         this.add({
           category: "value",
           pointer,
@@ -174,17 +270,17 @@ class Differ {
         });
       return;
     }
-    const { key } = at;
+    const field = at.key;
     if (
       (typeof live === "string" || typeof live === "number") &&
       (typeof env === "string" || typeof env === "number")
     ) {
       const mapsAsId =
-        (key !== undefined && ID_FIELD.test(key)) ||
+        (field !== undefined && ID_FIELD.test(field)) ||
         this.#inCollection(pointer, at) ||
         (typeof live === "string" &&
-          key !== undefined &&
-          this.map.isStateReference(live, key));
+          field !== undefined &&
+          this.map.isStateReference(live, field));
       const mapped = mapsAsId
         ? this.map.env(
             live,
@@ -195,10 +291,18 @@ class Differ {
         this.normalised.ids += 1;
         return;
       }
-      const liveClock = clockFormat(live, key);
-      const envClock = clockFormat(env, key);
       if (liveClock !== undefined && envClock !== undefined) {
-        if (liveClock === envClock) this.normalised.clocks += 1;
+        const rule = generation?.pointer === "" ? generation.rule : undefined;
+        const format =
+          rule?.rule === "clock" || rule?.rule === "held-clock"
+            ? rule.format
+            : undefined;
+        const matches =
+          format?.kind === "iso" && format.trimmed === true
+            ? matchesClockFormat(format, liveClock) &&
+              matchesClockFormat(format, envClock)
+            : formatKey(liveClock.format) === formatKey(envClock.format);
+        if (matches) this.normalised.clocks += 1;
         else
           this.add({
             category: "clock-format",
@@ -208,13 +312,7 @@ class Differ {
           });
         return;
       }
-      if (
-        typeof live === "string" &&
-        typeof env === "string" &&
-        !this.map.hasLive(live) &&
-        !this.map.hasEnv(env) &&
-        generatedPair(live, env)
-      ) {
+      if (generatedMatch === true) {
         this.normalised.generated += 1;
         return;
       }
@@ -227,9 +325,28 @@ class Differ {
     });
   }
 
-  array(live: JsonValue[], env: JsonValue[], pointer: string): void {
+  array(
+    live: JsonValue[],
+    env: JsonValue[],
+    pointer: string,
+    clockKey: string | undefined,
+    generation: Generation | undefined,
+  ): void {
     const own = pointer === this.entity.at;
-    if (this.sameItems(live, env, pointer)) return;
+    if (this.sameItems(live, env, pointer)) {
+      // Equal/reordered scalar sets still establish unchanged generated pairs;
+      // otherwise another field could split an alias hidden by this fast path.
+      if (generation !== undefined)
+        for (const [index, item] of live.entries())
+          this.scalar(
+            item,
+            item,
+            `${pointer}/${String(index)}`,
+            { own, clockKey },
+            { ...generation, pointer: `${generation.pointer}/*` },
+          );
+      return;
+    }
     const pairs = pairElements(live, env);
     if (live.length !== env.length || pairs.length !== live.length)
       this.add({
@@ -244,9 +361,18 @@ class Differ {
     )
       this.add({ category: "order", pointer });
     for (const [left, right] of pairs)
-      this.value(live[left]!, env[right]!, `${pointer}/${String(left)}`, {
-        own,
-      });
+      this.value(
+        live[left]!,
+        env[right]!,
+        `${pointer}/${String(left)}`,
+        {
+          own,
+          clockKey,
+        },
+        generation === undefined
+          ? undefined
+          : { ...generation, pointer: `${generation.pointer}/*` },
+      );
   }
 
   /** Arrays of scalars holding the same items in another order differ only in order, as sets an application returns unordered do. */
@@ -282,6 +408,7 @@ class Differ {
     env: JsonObject,
     pointer: string,
     own = false,
+    generation?: Generation,
   ): void {
     const self = own || pointer === this.entity.at;
     // An object keyed by ids compares each member under the environment's key; any other compares field by field.
@@ -295,6 +422,10 @@ class Differ {
         : key;
     };
     const matched = new Set<string>();
+    const composed =
+      self && this.#composedRules.length > 0
+        ? { agreed: new Set<string>(), fields: new Map<string, string>() }
+        : undefined;
     for (const [key, value] of Object.entries(live)) {
       const child = `${pointer}/${escapePointer(key)}`;
       const other = envKey(key);
@@ -306,11 +437,60 @@ class Differ {
         });
       else {
         matched.add(other);
-        this.value(value, env[other]!, child, {
-          key,
-          own: self,
-          keyed: self && keyed,
-        });
+        const rule = self ? this.#rules.get(key) : undefined;
+        if (rule?.rule === "composed" && composed !== undefined) {
+          composed.fields.set(key, other);
+          continue;
+        }
+        const before = this.differences.length;
+        this.value(
+          value,
+          env[other]!,
+          child,
+          {
+            key,
+            own: self,
+            keyed: self && keyed,
+          },
+          rule !== undefined
+            ? { rule, pointer: "" }
+            : generation === undefined
+              ? undefined
+              : {
+                  ...generation,
+                  pointer: `${generation.pointer}/${escapePointer(key)}`,
+                },
+        );
+        if (this.differences.length === before) composed?.agreed.add(key);
+      }
+    }
+    // Compare source fields once, then reuse their clock/identity decisions.
+    // Validate each response's spelling before normalizing its composition.
+    if (composed !== undefined) {
+      for (const rule of this.#composedRules) {
+        const other = composed.fields.get(rule.field);
+        if (other === undefined) continue;
+        const coherent =
+          composedValue(rule.parts, live) === live[rule.field] &&
+          composedValue(rule.parts, env) === env[other];
+        if (
+          coherent &&
+          rule.parts.every(
+            (part) =>
+              !("from" in part) ||
+              composed.agreed.has(part.from) ||
+              composedPartText(part, live) === composedPartText(part, env),
+          )
+        ) {
+          composed.agreed.add(rule.field);
+          if (live[rule.field] !== env[other]) this.normalised.generated += 1;
+        } else
+          this.add({
+            category: "value",
+            pointer: `${pointer}/${escapePointer(rule.field)}`,
+            live: shown(live[rule.field]),
+            env: shown(env[other]),
+          });
       }
     }
     for (const [key, value] of Object.entries(env))
@@ -331,16 +511,19 @@ class Differ {
       readonly key?: string;
       readonly own?: boolean;
       readonly keyed?: boolean;
+      readonly clockKey?: string | undefined;
     } = {},
+    generation?: Generation,
   ): void {
     if (Array.isArray(live) && Array.isArray(env))
-      this.array(live, env, pointer);
+      this.array(live, env, pointer, at.clockKey ?? at.key, generation);
     else if (isObject(live) && isObject(env))
       this.object(
         live,
         env,
         pointer,
         at.own === true && (at.key === undefined || at.keyed === true),
+        generation,
       );
     else if (
       Array.isArray(live) ||
@@ -354,7 +537,7 @@ class Differ {
         live: shown(live),
         env: shown(env),
       });
-    else this.scalar(live, env, pointer, at);
+    else this.scalar(live, env, pointer, at, generation);
   }
 }
 
@@ -375,12 +558,14 @@ export const compareAnswers = (
     readonly scope?: string;
     readonly at?: string;
     readonly identity?: boolean;
+    readonly rules?: readonly FieldRule[];
   } = {},
 ): { readonly differences: Difference[]; readonly normalised: Normalised } => {
   const differ = new Differ(map, {
     scope: entity.scope,
     at: entity.at ?? "",
     identity: entity.identity === true,
+    rules: entity.rules ?? [],
   });
   if (live.status !== env.status)
     differ.add({

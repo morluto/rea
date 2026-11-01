@@ -1,8 +1,7 @@
 import { z } from "zod";
 
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
 import { functionComparisonDimensionNameSchema } from "./functionComparisonSchemas.js";
 

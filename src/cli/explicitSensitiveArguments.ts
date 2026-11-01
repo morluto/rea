@@ -1,12 +1,15 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { Errors, Formatter, z, type MiddlewareHandler } from "incur";
+import { Errors, z, type MiddlewareHandler } from "incur";
 
 import {
-  cliOutputValueRejection,
-  splitIncurBuiltinArguments,
-  type IncurBuiltinArgumentSplit,
+  parseCliOutputArguments,
+  renderCliOutputArgumentError,
 } from "../cliOutput.js";
+import {
+  declaredSensitiveValues,
+  splitIncurBuiltinArguments,
+} from "../cliBuiltinArguments.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import type { CliInstance } from "./types.js";
 import { visitRegisteredCommands } from "./visitRegisteredCommands.js";
@@ -23,65 +26,17 @@ export const explicitSensitiveValueOptions = {
 
 const OPTION =
   "sensitiveValue" satisfies keyof typeof explicitSensitiveValueOptions;
-/** Incur accepts the schema key and its kebab-case spelling. */
-const FLAGS = ["--sensitive-value", "--sensitiveValue"] as const;
-
-/**
- * Read declarations from the tokens Incur leaves for command parsing. Incur
- * rejects a malformed token before it reaches later declarations, so this scan
- * is independent of parse success. A token following a declaration flag counts
- * as declared even where the command parser would bind it to another option.
- */
-const declaredSensitiveValues = (
-  command: IncurBuiltinArgumentSplit["command"],
-): readonly string[] => {
-  const values = new Set<string>();
-  for (let index = 0; index < command.length; index += 1) {
-    const token = command[index]!;
-    const flag = FLAGS.find(
-      (candidate) => token === candidate || token.startsWith(`${candidate}=`),
-    );
-    if (flag === undefined) continue;
-    if (token !== flag) values.add(token.slice(flag.length + 1));
-    else if (index + 1 < command.length) {
-      values.add(command[index + 1]!);
-      index += 1;
-    }
-  }
-  values.delete("");
-  return [...values];
-};
-
 type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 
-/**
- * Incur rejects an output value in its builtin pass, before command resolution
- * and outside any middleware, then renders the message it built. Report that
- * same first rejection here so the whole message follows the declarations,
- * as parser failures do; the code and Incur's rendering stay unchanged. It
- * precedes command resolution, so declarations apply whichever command follows.
- */
+/** Share the executable boundary's output admission and structured diagnostics. */
 const reportDeclaredOutputRejection = (
   arguments_: readonly string[],
-  outputValues: IncurBuiltinArgumentSplit["outputValues"],
-  values: readonly string[],
   options: ServeOptions,
 ): boolean => {
-  const rejection = outputValues
-    .map(({ flag, index }) => cliOutputValueRejection(flag, arguments_[index]!))
-    .find((message) => message !== undefined);
-  if (rejection === undefined) return false;
-  const error = {
-    code: "UNKNOWN",
-    message: redactExplicitText(rejection, values),
-  };
-  // Incur has not seen --format or --json yet, so only a TTY selects prose.
-  const output =
-    process.stdout.isTTY === true
-      ? `Error: ${error.message}`
-      : Formatter.format(error, "toon");
+  const validation = parseCliOutputArguments(arguments_).validation;
+  if (validation.ok) return false;
   (options.stdout ?? ((text: string) => process.stdout.write(text)))(
-    output.endsWith("\n") ? output : `${output}\n`,
+    renderCliOutputArgumentError(validation),
   );
   (options.exit ?? ((code: number) => process.exit(code)))(1);
   return true;
@@ -169,15 +124,7 @@ export const excludeDeclaredSensitiveArguments = (
     const split = splitIncurBuiltinArguments(arguments_);
     const values = declaredSensitiveValues(split.command);
     if (values.length === 0) return serve([...arguments_], options);
-    if (
-      reportDeclaredOutputRejection(
-        arguments_,
-        split.outputValues,
-        values,
-        options,
-      )
-    )
-      return;
+    if (reportDeclaredOutputRejection(arguments_, options)) return;
     return declarations.run(values, () => serve([...arguments_], options));
   };
 };

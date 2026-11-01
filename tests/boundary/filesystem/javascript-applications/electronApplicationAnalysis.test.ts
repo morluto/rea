@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
-import { reconstructJavaScriptArtifact } from "../../../support/javascriptApplicationScope.js";
+import {
+  analyzeJavaScriptApplication,
+  reconstructJavaScriptArtifact,
+} from "../../../support/javascriptApplicationScope.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { parseJavaScriptApplicationGraph } from "../../../../src/domain/javascript/javascriptApplicationGraph.js";
 import { analyzeJavaScriptApplicationInputSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -428,9 +430,10 @@ const expectElectronSummary = (result: Reconstruction): void => {
     ipc: {
       literal_channels: 5,
       dynamic_channel_operations: 2,
-      paired_renderer_transmissions: 4,
-      ambiguous_renderer_transmissions: 1,
-      unpaired_literal_renderer_transmissions: 1,
+      // Retained module gaps leave preload/renderer application ownership unknown.
+      paired_renderer_transmissions: 0,
+      ambiguous_renderer_transmissions: 7,
+      unpaired_literal_renderer_transmissions: 0,
     },
     sender_validation_observations: 2,
     utility_processes: 1,
@@ -589,12 +592,7 @@ const expectElectronBoundaries = (graph: ApplicationGraph): void => {
     ({ properties }) =>
       properties.pairing_basis === "unique-exact-literal-channel",
   );
-  expect(pairingEdges).toHaveLength(4);
-  expect(
-    pairingEdges.some(
-      ({ properties }) => properties.channel === "rea:ambiguous",
-    ),
-  ).toBe(false);
+  expect(pairingEdges).toHaveLength(0);
   expect(graph.limitations.join(" ")).toMatch(/dynamic IPC|ambiguous/iu);
 };
 

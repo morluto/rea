@@ -1,11 +1,9 @@
-/** Source whose concatenated alternatives exceed primitive candidate storage. */
-export const primitiveCandidateExpansionSource = (): string => {
-  const expression = Array.from(
+/** Independent unknown host inputs keep both conditional arms reachable. */
+export const primitiveCandidateExpansionExpression = (): string =>
+  Array.from(
     { length: 20 },
-    () => '(true ? "a" : "b")',
+    (_, index) => `(globalThis.choice${String(index)} ? "a" : "b")`,
   ).join(" + ");
-  return `const answer = { nested: ${expression} };`;
-};
 
 /** Source whose repeated doubling exceeds derived primitive string storage. */
 export const primitiveByteExpansionSource = (): string => {

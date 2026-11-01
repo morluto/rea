@@ -33,7 +33,7 @@ it("retains and retries a source handle that fails close during admission", asyn
         undefined,
         {
           openSource: async (path, options) => {
-            const handle = await openRegularFile(path, options);
+            const { handle } = await openRegularFile(path, options);
             const close = handle.close.bind(handle);
             const owner = new OwnedFileHandle(handle);
             handle.close = async () => {

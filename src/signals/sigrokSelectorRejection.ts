@@ -14,6 +14,8 @@ export type SigrokSelection =
     >
   | Pick<InspectSignalDecodersInput, "decoder">;
 
+type SigrokDiagnosticMatcher = (message: string) => boolean;
+
 const rejectedSelector = (
   field: "decoder" | "decoders" | "annotations" | "input_format",
   producerMessage: string,
@@ -32,6 +34,8 @@ const CHANNEL_RECOVERY =
   "Set each decoder channel target to a channel present in the recording; inspect_signal_decoders shows the selected decoder's channel IDs.";
 const INPUT_FORMAT_RECOVERY =
   "Use a supported sigrok input format name, or omit input_format to let sigrok-cli autodetect the recording.";
+const INPUT_OPTION_RECOVERY =
+  "Use options supported by the selected sigrok input format, or remove the rejected option.";
 
 /**
  * sigrok-cli loads selected decoders before decoding or showing help, so an
@@ -40,13 +44,13 @@ const INPUT_FORMAT_RECOVERY =
  * whose own imports or code fail to load.
  */
 const unknownDecoderRefusal = (
-  lines: ReadonlySet<string>,
+  hasDiagnostic: SigrokDiagnosticMatcher,
   id: string,
 ): string | undefined => {
   const producerMessage = `Failed to load protocol decoder ${id}.`;
   return id !== "" &&
-    lines.has(producerMessage) &&
-    lines.has(
+    hasDiagnostic(producerMessage) &&
+    hasDiagnostic(
       `srd: ModuleNotFoundError: Failed to load decoder ${id}: import by name failed: No module named '${id}'`,
     )
     ? producerMessage
@@ -55,12 +59,12 @@ const unknownDecoderRefusal = (
 
 /**
  * The sigrok-cli 0.7.2 channel mapper reports missing and unknown targets as
- * plain stderr lines, even though it continues with the other mappings. Match
+ * plain stderr diagnostics, even though it continues with the other mappings. Match
  * the exact selected channel key or target value rather than searching the
  * selector text for a substring.
  */
 const missingSelectedChannelRefusal = (
-  lines: ReadonlySet<string>,
+  hasDiagnostic: SigrokDiagnosticMatcher,
   decoders: string,
 ): string | undefined => {
   const selectedValues = new Set<string>();
@@ -69,14 +73,14 @@ const missingSelectedChannelRefusal = (
       const separator = assignment.indexOf("=");
       if (separator < 0 && assignment !== "") {
         const producerMessage = `Channel name for "${assignment}" missing.`;
-        if (lines.has(`cli: ${producerMessage}`)) return producerMessage;
+        if (hasDiagnostic(`cli: ${producerMessage}`)) return producerMessage;
       }
       if (separator > 0) selectedValues.add(assignment.slice(separator + 1));
     }
   }
   for (const channel of selectedValues) {
     const producerMessage = `No channel with name "${channel}" found.`;
-    if (lines.has(`cli: ${producerMessage}`)) return producerMessage;
+    if (hasDiagnostic(`cli: ${producerMessage}`)) return producerMessage;
   }
   return undefined;
 };
@@ -89,32 +93,54 @@ export const parseSigrokSelectorRejection = (
   stderr: string,
   selection: SigrokSelection,
 ): SigrokSelectorRejection | undefined => {
-  const lines = new Set(stderr.split("\n"));
+  // Selected option keys may contain LF, which the tagged producer prints verbatim.
+  // Match the complete caption at diagnostic boundaries without splitting it.
+  const hasDiagnostic: SigrokDiagnosticMatcher = (message) =>
+    stderr === message ||
+    stderr.startsWith(`${message}\n`) ||
+    stderr.endsWith(`\n${message}`) ||
+    stderr.includes(`\n${message}\n`);
   if ("decoder" in selection) {
     const refusal =
       selection.decoder === null
         ? undefined
-        : unknownDecoderRefusal(lines, selection.decoder);
+        : unknownDecoderRefusal(hasDiagnostic, selection.decoder);
     return refusal === undefined
       ? undefined
       : rejectedSelector("decoder", refusal, HELP_RECOVERY);
   }
-  const inputFormat = selection.input_format?.split(":")[0] ?? "";
+  const [inputFormat = "", ...inputOptions] =
+    selection.input_format?.split(":") ?? [];
   const inputFormatRefusal = `Error: unknown input module '${inputFormat}'.`;
-  if (inputFormat !== "" && lines.has(`cli: ${inputFormatRefusal}`))
+  if (inputFormat !== "" && hasDiagnostic(`cli: ${inputFormatRefusal}`))
     return rejectedSelector(
       "input_format",
       inputFormatRefusal,
       INPUT_FORMAT_RECOVERY,
     );
+  // sigrok-cli 0.7.2 parses format:option=value with colon separators and
+  // warns on unknown option keys, then continues with the supported options.
+  for (const option of inputOptions) {
+    const key = option.split("=", 1)[0] ?? "";
+    const producerMessage = `Unknown keyword: ${key}.`;
+    if (key !== "" && hasDiagnostic(producerMessage))
+      return rejectedSelector(
+        "input_format",
+        producerMessage,
+        INPUT_OPTION_RECOVERY,
+      );
+  }
   // sigrok-cli stacks decoders with "," and appends options with ":".
   for (const entry of selection.decoders.split(",")) {
-    const refusal = unknownDecoderRefusal(lines, entry.split(":")[0] ?? "");
+    const refusal = unknownDecoderRefusal(
+      hasDiagnostic,
+      entry.split(":")[0] ?? "",
+    );
     if (refusal !== undefined)
       return rejectedSelector("decoders", refusal, DECODE_RECOVERY);
   }
   const missingChannel = missingSelectedChannelRefusal(
-    lines,
+    hasDiagnostic,
     selection.decoders,
   );
   if (missingChannel !== undefined)
@@ -125,7 +151,7 @@ export const parseSigrokSelectorRejection = (
     if (decoder === "" || classes === undefined || rest.length > 0) continue;
     for (const annotation of classes.split(":")) {
       const producerMessage = `Annotation '${annotation}' not found for protocol decoder '${decoder}'.`;
-      if (annotation !== "" && lines.has(producerMessage))
+      if (annotation !== "" && hasDiagnostic(producerMessage))
         return rejectedSelector(
           "annotations",
           producerMessage,

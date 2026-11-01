@@ -1,10 +1,10 @@
 import { z } from "zod";
+import { javaScriptFileOccurrenceSchema } from "./javascriptArtifactFiles.js";
 
 import { evidenceSchema } from "../evidence.js";
 import { JAVASCRIPT_APPLICATION_NODE_KINDS } from "./javascriptApplicationGraphSchemas.js";
 import { historicalSourceGraphSchema } from "../referenceSourceGraph.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
@@ -44,6 +44,8 @@ const sourceToBundleSignalSchema = z.strictObject({
 });
 
 const sourceToBundleCandidateSchema = z.strictObject({
+  current_file_occurrence: javaScriptFileOccurrenceSchema.exactOptional(),
+  representation_node_ids: z.array(nodeIdSchema).min(1).exactOptional(),
   current_node_id: nodeIdSchema,
   current_node_kind: z.enum(JAVASCRIPT_APPLICATION_NODE_KINDS),
   score: z.int().min(1),

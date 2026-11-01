@@ -25,6 +25,73 @@ spec.loader.exec_module(tracer)
 
 
 class NativeTraceBudgetTests(unittest.TestCase):
+    def test_invalid_launch_process_reports_explicit_no_creation(self):
+        class InvalidProcess:
+            def IsValid(self):
+                return False
+
+            def Kill(self):
+                raise AssertionError("an invalid process cannot own target cleanup")
+
+        class LaunchError:
+            def Success(self):
+                return False
+
+            def GetCString(self):
+                return "No such file or directory: fixture/absent"
+
+        class Target:
+            def IsValid(self):
+                return True
+
+            def Launch(self, _launch_info, _error):
+                return InvalidProcess()
+
+        class Debugger:
+            def SetAsync(self, _enabled):
+                pass
+
+            def GetInstanceName(self):
+                return "fixture"
+
+            def CreateTarget(self, *_arguments):
+                return Target()
+
+        class Pipe:
+            def __init__(self, *_arguments):
+                self.closed = False
+                pipes.append(self)
+
+            def start(self):
+                pass
+
+            def close(self, expected_exit=False):
+                self.closed = True
+
+        pipes = []
+        debugger_api = types.SimpleNamespace(SetInternalVariable=lambda *_arguments: None)
+        with patch.object(tracer.lldb, "SBDebugger", debugger_api, create=True), patch.object(
+            tracer.lldb, "SBError", LaunchError, create=True
+        ), patch.object(tracer.lldb, "SBListener", lambda _name: object(), create=True), patch.object(
+            tracer, "_hash_file", return_value="expected"
+        ), patch.object(tracer, "_file_identity", return_value=(1, 2)), patch.object(
+            tracer, "_module_identity", return_value=("fixture", (1, 2), "fixture-uuid")
+        ), patch.object(tracer, "_launch_info", return_value=object()), patch.object(
+            tracer, "_OutputPipe", Pipe
+        ):
+            result = tracer.trace(Debugger(), {
+                "executable": "fixture", "architecture": "arm64", "expected_sha256": "expected",
+                "breakpoints": [], "working_directory": "fixture/absent",
+                "stdout_path": "stdout", "stdout_capture_path": "stdout-capture",
+                "stderr_path": "stderr", "stderr_capture_path": "stderr-capture",
+            })
+        self.assertEqual(result["status"], "launch-error")
+        self.assertEqual(result["error"], "No such file or directory: fixture/absent")
+        self.assertIs(result["target_process_created"], False)
+        self.assertNotIn("target_process_exit_observed", result)
+        self.assertEqual(len(pipes), 2)
+        self.assertTrue(all(pipe.closed for pipe in pipes))
+
     def test_failed_launch_does_not_infer_exit_from_a_failed_kill(self):
         class Process:
             def IsValid(self):

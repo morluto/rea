@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { projectManagedApplicationGraphEvidence } from "../../../src/application/managed/ManagedApplicationGraphService.js";
-import { managedApplicationGraphReferenceInputSchema } from "../../../src/contracts/managed/managedWorkflowToolContracts.js";
+import {
+  managedApplicationGraphReferenceInputSchema,
+  managedApplicationGraphResultSchema,
+} from "../../../src/domain/managed/managedApplicationGraph.js";
 import { MANAGED_APPLICATION_GRAPH_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { traceApplicationFeatureEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { MANAGED_STATIC_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
-import { managedApplicationGraphResultSchema } from "../../../src/domain/managed/managedApplicationGraph.js";
 import {
   managedMemberInspectionSchema,
   managedNativeBoundaryInspectionSchema,
@@ -24,9 +26,12 @@ import {
 const tinyIl = (il: readonly number[]): Buffer =>
   Buffer.from([(il.length << 2) | 2, ...il]);
 
-const memberGraph = (bytes: Buffer) => {
+const memberGraph = (
+  bytes: Buffer,
+  options: Parameters<typeof inspectManagedMembersBytes>[2] = {},
+) => {
   const binary = managedPeFixtureTarget(bytes, "/fixture/ManagedCalls.exe");
-  const members = inspectManagedMembersBytes(bytes, binary);
+  const members = inspectManagedMembersBytes(bytes, binary, options);
   const memberEvidence = createEvidence(binary, MANAGED_STATIC_PROVIDER, {
     operation: "inspect_managed_members",
     parameters: {},
@@ -42,10 +47,7 @@ const memberGraph = (bytes: Buffer) => {
     parseEvidence(projection.value).normalized_result,
   );
   const graph = parseJavaScriptApplicationGraph(result.graph);
-  const labels = new Map(
-    graph.nodes.map((node) => [node.node_id, node.observations[0]?.label]),
-  );
-  return { members, memberEvidence, result, graph, labels };
+  return { members, memberEvidence, result, graph };
 };
 
 const createManagedInteropEvidence = () => {
@@ -88,6 +90,57 @@ const createManagedInteropEvidence = () => {
     }),
   };
 };
+
+describe("managed application graph MethodDef scope", () => {
+  it("preserves MethodDef page omissions from decoded member Evidence", () => {
+    const bytes = buildManagedPeFixture({
+      ilBody: tinyIl([0x2a]),
+      methodRowCount: 3,
+    });
+    const full = memberGraph(bytes);
+    expect(full.members.method_rows).toEqual({ offset: 0, count: 3, total: 3 });
+    expect(full.result.coverage.status).toBe("complete-within-inputs");
+    for (const options of [
+      { methodLimit: 0 },
+      { methodOffset: 1, methodLimit: 1 },
+      { methodOffset: 3 },
+    ]) {
+      const page = memberGraph(bytes, options);
+      expect(page.members.coverage.state).toBe("complete");
+      expect(page.result.summary.methods).toBe(page.members.method_rows!.count);
+      expect(page.result.coverage.status).toBe("partial");
+      expect(page.result.limitations).toContain(
+        `Managed member Evidence examined MethodDef rows at offset ${page.members.method_rows!.offset} with count ${page.members.method_rows!.count} of 3 total rows; methods outside that interval and their relations are omitted, not absent.`,
+      );
+    }
+  });
+
+  it("keeps unrecorded legacy MethodDef scope unknown", () => {
+    const bytes = buildManagedPeFixture({ ilBody: tinyIl([0x2a]) });
+    const binary = managedPeFixtureTarget(bytes);
+    const members = inspectManagedMembersBytes(bytes, binary);
+    const { method_rows: _methodRows, ...legacy } = members;
+    const evidence = createEvidence(binary, MANAGED_STATIC_PROVIDER, {
+      operation: "inspect_managed_members",
+      parameters: {},
+      result: legacy,
+      rawResult: null,
+      limitations: members.limitations,
+    });
+    const projection = projectManagedApplicationGraphEvidence({
+      managed_members: evidence,
+    });
+    if (!projection.ok) throw new Error(JSON.stringify(projection.error));
+    const result = managedApplicationGraphResultSchema.parse(
+      parseEvidence(projection.value).normalized_result,
+    );
+    expect(result.coverage.status).toBe("partial");
+    expect(result.summary.methods).toBe(1);
+    expect(result.limitations).toContain(
+      "Managed member Evidence did not record its MethodDef row scope; coverage of methods and their relations outside the supplied observations is unknown.",
+    );
+  });
+});
 
 describe("managed application graph projection", () => {
   it("projects managed metadata and native declarations into authenticated graph Evidence", () => {
@@ -167,9 +220,11 @@ describe("managed application graph projection", () => {
     expect(observedEvidenceIds("managed-pinvoke-import")).toEqual([
       boundaryEvidence.evidence_id,
     ]);
-    for (const edge of graph.edges.filter(
+    const containmentEdges = graph.edges.filter(
       ({ relation }) => relation === "contains",
-    ))
+    );
+    expect(containmentEdges.length).toBeGreaterThan(0);
+    for (const edge of containmentEdges)
       expect(edge.evidence.evidence_ids).toEqual(allEvidenceIds);
     const method = graph.nodes.find(
       ({ kind, observations }) =>
@@ -828,32 +883,40 @@ describe("managed call and field-access relations", () => {
     });
 
   it("links in-module calls and field accesses once per source and target", () => {
-    const { members, memberEvidence, result, graph, labels } =
+    const { members, memberEvidence, result, graph } =
       memberGraph(relationsFixture());
     expect(members.call_edges).toHaveLength(10);
     expect(members.field_accesses).toHaveLength(6);
+    const memberTokens = new Map(
+      graph.nodes.map((node) => [
+        node.node_id,
+        node.observations[0]?.properties.token,
+      ]),
+    );
     const relation = (name: string) =>
       graph.edges
         .filter((edge) => edge.relation === name)
         .map((edge) => ({
-          source: labels.get(edge.source_node_id),
-          target: labels.get(edge.target_node_id),
+          source: memberTokens.get(edge.source_node_id),
+          target: memberTokens.get(edge.target_node_id),
           properties: edge.properties,
           evidence_ids: edge.evidence.evidence_ids,
-        }))
-        .sort((left, right) =>
-          `${left.source}${left.target}` < `${right.source}${right.target}`
-            ? -1
-            : 1,
-        );
-    const [first, second] = members.methods.map(
-      ({ declaring_type, name }) => `${declaring_type}.${name}`,
-    );
-    const field = `${members.fields[0]?.declaring_type}.${members.fields[0]?.name}`;
+        }));
+    // These distinct metadata methods intentionally have the same display name.
+    expect(
+      members.methods.map(
+        ({ declaring_type, name }) => `${declaring_type}.${name}`,
+      ),
+    ).toEqual(["Fixture.Program.Main", "Fixture.Program.Main"]);
+    const [first, second] = members.methods.map(({ token }) => token);
+    expect(first).not.toBe(second);
+    const field = members.fields[0]?.token;
     const evidence_ids = [memberEvidence.evidence_id];
 
-    expect(relation("calls")).toEqual(
-      [
+    const calls = relation("calls");
+    expect(calls).toHaveLength(2);
+    expect(calls).toEqual(
+      expect.arrayContaining([
         {
           source: first,
           target: second,
@@ -874,14 +937,12 @@ describe("managed call and field-access relations", () => {
           },
           evidence_ids,
         },
-      ].sort((left, right) =>
-        `${left.source}${left.target}` < `${right.source}${right.target}`
-          ? -1
-          : 1,
-      ),
+      ]),
     );
+    const accesses = relation("accesses");
+    expect(accesses).toHaveLength(2);
     for (const source of [first, second])
-      expect(relation("accesses")).toContainEqual({
+      expect(accesses).toContainEqual({
         source,
         target: field,
         properties: {

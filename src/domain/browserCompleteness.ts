@@ -36,6 +36,9 @@ const browserExclusionReasonSchema = z.enum([
   "unattributed_origin",
   "not_approved",
   "out_of_target_scope",
+  "unattributed_target",
+  // Accepted for previously retained captures; new producers use unattributed_target.
+  "unknown_target_relationship",
   "provider_unavailable",
   "invalid_protocol_value",
   "resource_budget_exhausted",
@@ -44,7 +47,7 @@ export type BrowserExclusionReason = z.infer<
   typeof browserExclusionReasonSchema
 >;
 
-const browserExclusionSchema = z.object({
+export const browserExclusionSchema = z.object({
   section: browserSectionSchema,
   reason: browserExclusionReasonSchema,
   count: z.int().min(0).nullable(),

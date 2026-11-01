@@ -5,6 +5,12 @@ modules, replacements and build settings are embedded in one selected local
 executable or library. It reads the file without running it and requires no
 Go installation, active binary target, Hopper, Ghidra or IDA.
 
+If a stable read completes but descriptor finalization fails or receives
+cancellation, the error retains the selected path, SHA-256 and byte length as
+a `file-snapshot-hash` partial observation. It does not claim that Go metadata
+was decoded. Failed cleanup stays incomplete until its exact owner confirms
+release; cancellation keeps the caller's reason.
+
 ```bash
 rea inspect-go-binary /absolute/path/to/application --json
 ```
@@ -112,9 +118,28 @@ module record and no dependency records has an observed empty dependency list.
 The built-in TypeScript reader supports ELF, PE and thin Mach-O images, and one
 selected slice of a universal Mach-O, with Go's inline or historical pointer
 build-info encoding. Source ranges refer to the original stable file snapshot,
-including pointer-backed strings. Legacy pointer-backed fields are decoded at
+including pointer-backed strings. The shared native container owns address
+mapping, including file-backed PE headers. A descriptor or string can cross
+adjacent mappings when their virtual addresses map to physically contiguous
+file bytes with the same translation. Gaps, conflicting aliases, zero-fill
+aliases and noncontiguous string source bytes cannot establish a single source
+range and are refused. Native export C strings use the same mapping checks but
+can join multiple source chunks because their result has no single-span source
+contract. Legacy pointer-backed fields are decoded at
 the width declared by Go's build-info record, independently of the image's ELF
 class. It does not scan arbitrary byte strings as compiler metadata.
+
+Legacy string descriptors and contents may use the declared file-backed PE
+headers. A descriptor or string may also cross adjacent loader mappings when
+their virtual ranges cover every requested byte and identify one contiguous
+file range. Gaps, conflicting file aliases and nonempty zero-fill overlap remain
+invalid. Discovery policy and the aggregate 1 MiB string-content limit are
+unchanged. These are static reads over REA's native mapping facts; they do not
+establish Windows/Linux loading or parity with Go's standard reader, whose
+[Go 1.24.0 ELF/PE readers](https://github.com/golang/go/blob/go1.24.0/src/debug/buildinfo/buildinfo.go#L445)
+read within individual segments or sections. The historical two-word string
+descriptor follows the
+[Go 1.17.13 reader](https://github.com/golang/go/blob/go1.17.13/src/cmd/go/internal/version/version.go#L212).
 
 A universal (FAT) Mach-O needs `architecture` (`x86`, `x86_64`, `arm`
 or `arm64`; CLI `--architecture`). REA reads its own FAT table, without `lipo`,
@@ -187,3 +212,8 @@ those questions require a disassembler.
 `npm run verify:go:binary` exercises compiler-built fixtures through the public
 CLI and MCP, comparing their metadata with Go's standard `debug/buildinfo`
 reader. The verification lane requires Go; normal inspection does not.
+
+Reader architecture names remain verbatim in the report. Evidence subjects use
+the recognized canonical family: `386` maps to `x86`, `amd64` to `x86_64`, and
+`ppc` to `powerpc`. Unknown families such as `ppc64` remain unknown rather than
+being inferred from a related spelling.

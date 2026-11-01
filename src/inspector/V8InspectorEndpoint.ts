@@ -8,6 +8,7 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 import { parseCdpEndpointValue, readCdpJson } from "../browser/CdpEndpoint.js";
+import { parseCdpDiscoveryTargets } from "../browser/CdpDiscoveryTargets.js";
 
 const versionSchema = z
   .object({
@@ -16,20 +17,6 @@ const versionSchema = z
     "V8-Version": z.string().optional(),
   })
   .passthrough();
-
-const targetSchema = z
-  .object({
-    id: z.string().min(1),
-    type: z.string().min(1),
-    url: z.string(),
-    attached: z.boolean().nullable().optional(),
-    // Node may publish anonymous/evaluated targets without a direct socket.
-    // Keep malformed values local to their target so one row cannot discard
-    // otherwise usable siblings from the endpoint inventory.
-    webSocketDebuggerUrl: z.unknown().optional(),
-  })
-  .passthrough();
-const targetsSchema = z.array(targetSchema);
 
 export interface V8InspectorTarget {
   readonly id: string;
@@ -40,6 +27,8 @@ export interface V8InspectorTarget {
 }
 
 export interface V8InspectorDiscovery {
+  readonly limitations: readonly string[];
+  readonly ambiguousTargetIds?: readonly string[];
   readonly runtime: JavaScriptRuntimeTargetList["runtime"];
   readonly targets: readonly V8InspectorTarget[];
 }
@@ -55,8 +44,13 @@ export const discoverV8Inspector = async (
     readCdpJson(new URL("/json/list", endpoint), operation, signal),
   ]);
   const version = parseCdpEndpointValue(versionSchema, versionInput, operation);
-  const targets = parseCdpEndpointValue(targetsSchema, targetsInput, operation);
+  const { targets, limitations, ambiguousTargetIds } = parseCdpDiscoveryTargets(
+    targetsInput,
+    operation,
+  );
   return {
+    limitations,
+    ambiguousTargetIds,
     runtime: {
       product: version.Browser,
       protocol_version: version["Protocol-Version"],

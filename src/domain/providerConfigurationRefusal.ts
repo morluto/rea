@@ -17,5 +17,6 @@ export const providerConfigurationRefusal = (
   return new AnalysisCapabilityUnavailableError(providerId, operation, reason, {
     cause: failure,
     userMessage: reason,
+    diagnostics: failure.diagnostics,
   });
 };

@@ -6,18 +6,17 @@ import { decodeLz4Block } from "./Lz4Block.js";
 import { rejectGpu } from "./GpuSource.js";
 const unzip = promisify(inflate);
 const unzstd = promisify(zstdDecompress);
-export const decodeGpuPayload = async (
+/** Completed codec bytes and their encoded extent share one completion owner. */
+export const decodeGpuPayloadStream = async (
   bytes: Buffer,
-  compression: "zlib" | "zstd" | "lz4",
-  expected: number,
+  compression: "zlib" | "zstd",
+  maximumDecodedSize: number,
   signal?: AbortSignal,
-  allowZeroPadding = false,
-): Promise<Buffer> => {
+): Promise<{ buffer: Buffer; consumedBytes: number }> => {
   assertArtifactReadActive(signal);
-  if (compression === "lz4") return decodeLz4Block(bytes, expected, signal);
   let result: unknown;
   try {
-    const maxOutputLength = Math.max(1, expected);
+    const maxOutputLength = Math.max(1, maximumDecodedSize);
     result = await (compression === "zstd"
       ? unzstd(bytes, {
           maxOutputLength,
@@ -34,16 +33,32 @@ export const decodeGpuPayload = async (
   assertArtifactReadActive(signal);
   const { buffer: decoded, consumedBytes: consumed } = nodeCodecResult(result);
   if (
-    consumed !== bytes.length &&
-    (!allowZeroPadding ||
-      consumed < 0 ||
-      consumed > bytes.length ||
-      !bytes.subarray(consumed).every((byte) => byte === 0))
+    !Number.isSafeInteger(consumed) ||
+    consumed <= 0 ||
+    consumed > bytes.length
   )
+    rejectGpu("GPU decoder returned an invalid complete codec extent");
+  return { buffer: decoded, consumedBytes: consumed };
+};
+export const decodeGpuPayload = async (
+  bytes: Buffer,
+  compression: "zlib" | "zstd" | "lz4",
+  expected: number,
+  signal?: AbortSignal,
+): Promise<Buffer> => {
+  assertArtifactReadActive(signal);
+  if (compression === "lz4") return decodeLz4Block(bytes, expected, signal);
+  const decoded = await decodeGpuPayloadStream(
+    bytes,
+    compression,
+    expected,
+    signal,
+  );
+  if (decoded.consumedBytes !== bytes.length)
     rejectGpu(
       "GPU compressed payload contains bytes outside its complete codec stream",
     );
-  if (decoded.length !== expected)
+  if (decoded.buffer.length !== expected)
     rejectGpu("GPU decompressed length disagrees with its declaration");
-  return decoded;
+  return decoded.buffer;
 };

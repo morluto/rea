@@ -35,6 +35,7 @@ import {
   verifyKunaStrings,
 } from "./lib/kuna-string-verifier.mjs";
 import { nativeKunaIncomingSites } from "./lib/kuna-native-reference-verifier.mjs";
+import { MULTI_MODE_REMEDIATION } from "../dist/application/CapabilityInventory.js";
 import {
   assertVerifierCleanupComplete,
   completeVerifierRun,
@@ -115,7 +116,9 @@ __attribute__((noinline)) int rea_classify(int c) {
 }
 int main(int argc, char **argv) {
   if (argc < 2) return 2;
-  printf("%u %d\n", rea_checksum((const unsigned char *)argv[1], strlen(argv[1])),
+  size_t length = strlen(argv[1]);
+  printf("%u %u %d\n", rea_checksum((const unsigned char *)argv[1], length),
+         rea_checksum((const unsigned char *)argv[1], length ? length - 1 : 0),
          rea_classify(argv[1][0]));
   return 0;
 }
@@ -282,8 +285,12 @@ const quality = (text) => ({
 const verifyKuna = async (
   path,
   functions,
-  expectedCaller,
-  expectedStrings = [],
+  {
+    expectedCaller,
+    expectedStrings = [],
+    verifyNamedTrace = false,
+    minimumTraceReferences = {},
+  } = {},
 ) => {
   const sha256 = createHash("sha256")
     .update(await readFile(path))
@@ -292,6 +299,36 @@ const verifyKuna = async (
   const answers = [];
   let coldFailure;
   try {
+    const status = await cold.call("binary_session", { detail: "complete" });
+    if (status.value.format === "elf") {
+      const availability = status.value.tool_availability;
+      const dispatch = availability.find(
+        ({ name }) => name === "inspect_native_dispatch_metadata",
+      );
+      const trace = availability.find(
+        ({ name }) => name === "trace_native_ui_action",
+      );
+      assert.equal(dispatch?.available, false);
+      assert.equal(
+        trace?.modes?.find(({ name }) => name === "native_seed_call_trace")
+          ?.available,
+        false,
+      );
+      if (process.platform === "darwin") {
+        const authored = trace?.modes?.find(
+          ({ name }) => name === "authored_ui_dispatch",
+        );
+        const nativeSeed = trace?.modes?.find(
+          ({ name }) => name === "native_seed_call_trace",
+        );
+        assert.equal(trace?.remediation, MULTI_MODE_REMEDIATION);
+        assert.notEqual(authored?.remediation, nativeSeed?.remediation);
+        assert.ok(
+          authored?.missing_operations.includes("decode_interface_builder"),
+        );
+        assert.ok(nativeSeed?.missing_operations.includes("list_names"));
+      }
+    }
     answers.push({
       strings: await verifyKunaStrings({
         call: cold.call,
@@ -320,6 +357,8 @@ const verifyKuna = async (
         name,
         address,
         expectedCaller,
+        verifyNamedTrace,
+        minimumTraceReferences: minimumTraceReferences[name],
         nativeIncoming: (targetAddress) =>
           nativeKunaIncomingSites({
             executable: kuna,
@@ -369,6 +408,7 @@ const verifyKuna = async (
       );
       const dossier = await cold.call("analyze_function", {
         procedure: address,
+        detail: "complete",
       });
       assert.deepEqual(
         dossier.structured.relationship_coverage,
@@ -548,10 +588,12 @@ try {
   for (const binary of [built, stripped])
     results.push({
       binary: binary.slice(workspace.length + 1),
-      kuna: await verifyKuna(binary, [...fixtureFunctions], fixtureMain, [
-        "＿φ( °-°)/ REA unicode marker",
-        "REA wide marker",
-      ]),
+      kuna: await verifyKuna(binary, [...fixtureFunctions], {
+        expectedCaller: fixtureMain,
+        expectedStrings: ["＿φ( °-°)/ REA unicode marker", "REA wide marker"],
+        verifyNamedTrace: binary === built,
+        minimumTraceReferences: { rea_checksum: 2 },
+      }),
     });
 
   // Caller-built matrix.

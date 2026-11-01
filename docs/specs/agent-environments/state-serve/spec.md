@@ -110,7 +110,9 @@ this increment: write tools are not served from the state.
   differs from the entity's id (refused at that view's `fields`),
   documents naming document views once at the initial path, and the optional
   `state_evidence_id` and `types` that `data/get` reports equal to the served
-  ones. Refuse numbers without an exact native value and `__proto__` members.
+  ones. Refuse numbers without an exact native value. Preserve all own JSON
+  members in caller data, including `__proto__`, and reject unknown structural
+  members before projecting the document's declared fields.
   Name the first problem by JSON pointer, never deeper than a caller-data
   member (`fields`, `value`, `types`), and leave the state unchanged.
 - Keep record citations Evidence provenance: refuse `record_ordinals` or a

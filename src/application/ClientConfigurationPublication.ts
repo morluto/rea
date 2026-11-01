@@ -1,16 +1,10 @@
 import { constants, type Stats } from "node:fs";
-import {
-  link,
-  lstat,
-  mkdtemp,
-  open,
-  realpath,
-  rename,
-  type FileHandle,
-} from "node:fs/promises";
+import { link, lstat, mkdtemp, open, realpath, rename } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { fileHandleMatchesBytes } from "../filesystem/fileHandleMatchesBytes.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 import {
@@ -22,6 +16,49 @@ import { readRegularFileTextSnapshot } from "./RegularFileRead.js";
 import { ClientConfigurationPublicationFailure } from "./ClientConfigurationCleanup.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+
+/** Facts captured where a configuration write operation failed. */
+export interface ClientConfigurationWriteProblem {
+  readonly kind: "write";
+  readonly operation:
+    | "serialize"
+    | "publish"
+    | "preserve_ownership"
+    | "preserve_mode";
+  readonly path: string;
+  readonly detail: string;
+  readonly systemCode?: string;
+  readonly syscall?: string;
+  readonly requestedOwnership?: { readonly uid: number; readonly gid: number };
+}
+
+/** Preserve the operation and original cause before publication cleanup runs. */
+export class ClientConfigurationWriteError extends Error {
+  readonly _tag = "ClientConfigurationWriteError";
+  readonly problem: ClientConfigurationWriteProblem;
+  constructor(
+    path: string,
+    operation: ClientConfigurationWriteProblem["operation"],
+    cause: unknown,
+    requestedOwnership?: { readonly uid: number; readonly gid: number },
+  ) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(`Configuration ${operation} failed at ${path}: ${detail}`, { cause });
+    const code: unknown =
+      cause instanceof Error ? Reflect.get(cause, "code") : undefined;
+    const syscall: unknown =
+      cause instanceof Error ? Reflect.get(cause, "syscall") : undefined;
+    this.problem = {
+      kind: "write",
+      operation,
+      path,
+      detail,
+      ...(typeof code === "string" ? { systemCode: code } : {}),
+      ...(typeof syscall === "string" ? { syscall } : {}),
+      ...(requestedOwnership === undefined ? {} : { requestedOwnership }),
+    };
+  }
+}
 
 /** The original read owner's selection, before merging and preparing a backup. */
 export interface ClientConfigurationSelection {
@@ -43,11 +80,13 @@ export class ClientConfigurationPublication {
     path: string,
     contents: string,
     previous: string | undefined,
-    mode?: number,
     selection?: ClientConfigurationSelection,
   ): Promise<ClientConfigurationPublication> {
     const parent = await realpath(dirname(path));
-    const destination = join(parent, basename(path));
+    // Retain the transaction owner's directory requirement through final-file
+    // publication rather than allowing basename/join to select a regular file.
+    const destination =
+      join(parent, basename(path)) + (path.endsWith(sep) ? sep : "");
     const input = await selectedConfiguration(destination, previous);
     if (selection !== undefined) {
       await assertRequestedConfigurationPath(path, selection.requestedPath);
@@ -79,13 +118,7 @@ export class ClientConfigurationPublication {
       );
       staging.setFile(owner);
       await owner.handle.writeFile(contents, { encoding: "utf8" });
-      const created = await owner.handle.stat();
-      if (
-        input !== undefined &&
-        (input.uid !== created.uid || input.gid !== created.gid)
-      )
-        await owner.handle.chown(input.uid, input.gid);
-      await owner.handle.chmod(mode ?? (input?.mode ?? 0o600) & 0o7777);
+      await preserveConfigurationAttributes(owner, input, destination);
       await owner.handle.sync();
       if ((await owner.handle.stat()).ino === 0)
         throw new RegularFileChangedError(stagedPath);
@@ -138,12 +171,12 @@ export class ClientConfigurationPublication {
     return outcome.value;
   }
 
-  async assertCurrent(readback?: string): Promise<void> {
+  async assertCurrent(readback: string): Promise<void> {
     const owned = await this.owner.handle.stat();
     const named = await lstat(this.path);
     if (
       owned.ino === 0 ||
-      (readback !== undefined && readback !== this.contents) ||
+      readback !== this.contents ||
       named.isSymbolicLink() ||
       !sameRegularFileState(owned, named)
     )
@@ -160,7 +193,10 @@ export class ClientConfigurationPublication {
       !before.isFile() ||
       named.isSymbolicLink() ||
       !sameRegularFileState(before, named) ||
-      !(await this.#hasPublishedBytes(handle)) ||
+      !(await fileHandleMatchesBytes(
+        handle,
+        Buffer.from(this.contents, "utf8"),
+      )) ||
       !sameRegularFileState(before, await handle.stat()) ||
       !sameRegularFileState(before, await lstat(this.path))
     )
@@ -185,30 +221,42 @@ export class ClientConfigurationPublication {
     if (!sameRegularFileState(await handle.stat(), await lstat(this.path)))
       throw new RegularFileChangedError(this.path);
   }
-
-  async #hasPublishedBytes(handle: FileHandle): Promise<boolean> {
-    const expected = Buffer.from(this.contents, "utf8");
-    if ((await handle.stat()).size !== expected.length) return false;
-    const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, expected.length));
-    for (let position = 0; position < expected.length;) {
-      const { bytesRead } = await handle.read(
-        chunk,
-        0,
-        Math.min(chunk.length, expected.length - position),
-        position,
-      );
-      if (
-        bytesRead === 0 ||
-        !chunk
-          .subarray(0, bytesRead)
-          .equals(expected.subarray(position, position + bytesRead))
-      )
-        return false;
-      position += bytesRead;
-    }
-    return true;
-  }
 }
+
+const preserveConfigurationAttributes = async (
+  owner: OwnedFileHandle,
+  input: Stats | undefined,
+  destination: string,
+): Promise<void> => {
+  const created = await owner.handle.stat();
+  if (
+    input !== undefined &&
+    (input.uid !== created.uid || input.gid !== created.gid)
+  ) {
+    try {
+      await owner.handle.chown(input.uid, input.gid);
+    } catch (cause: unknown) {
+      throw new ClientConfigurationWriteError(
+        destination,
+        "preserve_ownership",
+        cause,
+        {
+          uid: input.uid,
+          gid: input.gid,
+        },
+      );
+    }
+  }
+  try {
+    await owner.handle.chmod((input?.mode ?? 0o600) & 0o7777);
+  } catch (cause: unknown) {
+    throw new ClientConfigurationWriteError(
+      destination,
+      "preserve_mode",
+      cause,
+    );
+  }
+};
 
 const assertRequestedConfigurationPath = async (
   path: string,
@@ -244,10 +292,10 @@ const isParentAliasRetarget = async (
     );
   }
   if (requestedStats.isSymbolicLink()) return false;
-  const requestedParent = dirname(resolve(requestedPath));
+  const requestedParent = dirname(absoluteCallerPath(requestedPath));
   try {
     const canonicalParent = await realpath(requestedParent);
-    return resolve(canonicalParent) !== requestedParent;
+    return canonicalParent !== requestedParent;
   } catch (cause: unknown) {
     void cause;
     return false;

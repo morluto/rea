@@ -2,13 +2,19 @@ import { createHash } from "node:crypto";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import {
   artifactFileCompletion,
+  mapArtifactFileFailure,
   ArtifactFileCleanupFailure,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import {
+  RegularFileCapacityError,
+  readStableFileBytes,
+} from "../filesystem/readStableFileBytes.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { fixedProducerInputAllowance } from "../domain/fixedAllowanceRemediation.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
-import { readStableFileBytes } from "../filesystem/readStableFileBytes.js";
 import { ghidraApplicationProperties } from "./GhidraInstallationPolicy.js";
 import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
 
@@ -36,7 +42,7 @@ export const readGhidraInstallationProperties = async (
             ),
         },
         options.signal,
-        async (file) =>
+        async ({ handle: file }) =>
           (
             await readStableFileBytes(
               file,
@@ -54,7 +60,7 @@ export const readGhidraInstallationProperties = async (
       ),
     );
   } catch (cause: unknown) {
-    const physical = artifactFilePrimaryFailure(cause);
+    const { cause: physical } = artifactFilePrimaryFacts(cause);
     if (
       !(cause instanceof ArtifactFileCleanupFailure) &&
       physical instanceof Error &&
@@ -85,6 +91,27 @@ export const readGhidraInstallationProperties = async (
             },
           }),
     };
-    throw ghidraFileFailure(cause, "ghidra:installation", diagnostics);
+    const qualified = mapArtifactFileFailure(cause, (primary) =>
+      primary instanceof RegularFileCapacityError
+        ? new AnalysisResourceConstraintError(
+            "ghidra:installation",
+            "file-size",
+            primary.message,
+            {
+              maximum_bytes: primary.maximumBytes,
+              observed_bytes: primary.observedBytes.toString(),
+            },
+            {
+              cause: primary,
+              diagnostics,
+              ...fixedProducerInputAllowance(
+                MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES,
+                "The Ghidra installation-properties read allowance",
+              ),
+            },
+          )
+        : primary,
+    );
+    throw ghidraFileFailure(qualified, "ghidra:installation", diagnostics);
   }
 };

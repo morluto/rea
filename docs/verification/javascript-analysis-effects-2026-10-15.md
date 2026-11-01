@@ -62,7 +62,7 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { toolAvailabilityInventory } from "./dist/contracts/toolOutputSchemaPrimitives.js";
-import { closeVerifierResources } from "./scripts/lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./scripts/lib/verifier-cleanup.mjs";
 
 const client = new Client({
   name: "javascript-effect-verification",
@@ -73,8 +73,7 @@ const transport = new StdioClientTransport({
   args: ["scripts/rea.mjs", "mcp"],
   stderr: "pipe",
 });
-let primaryError;
-try {
+await withVerifierCleanup(async () => {
   await client.connect(transport);
   transport.stderr?.resume();
   const { tools } = await client.listTools();
@@ -101,15 +100,7 @@ try {
       catalog_tool_count: tools.length,
     }),
   );
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [() => client.close(), () => transport.close()],
-    primaryError,
-  );
-}
+}, [() => client.close(), () => transport.close()]);
 ```
 
 For the real workflow, follow the artifact acquisition/digest instructions in

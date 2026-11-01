@@ -2,6 +2,8 @@ import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it as test, vi } from "vitest";
+import { withVerifierCleanup } from "../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { createSystemDoctorHost } from "./doctorRuntime.js";
 import { DOCTOR_PROVIDER_IDS } from "./application/DoctorProviderIds.js";
@@ -16,6 +18,7 @@ import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
 import { runDoctorOwned } from "./application/Doctor.js";
 import { waitForAbortable } from "./process/AbortablePromise.js";
+import { AnalysisCleanupLease } from "./artifacts/AnalysisCleanupLease.js";
 
 const readyDisplay = {
   ok: true,
@@ -49,8 +52,9 @@ test.each([undefined, "controlled close refusal"])(
     const python = vi
       .spyOn(pythonRuntime, "inspectLinuxHopperPythonRuntime")
       .mockImplementation(async (_environment, signal) => {
-        expect(signal).toBe(controller.signal);
+        expect(signal?.aborted).toBe(false);
         controller.abort(reason);
+        expect(signal?.reason).toBe(reason);
         return err(
           new pythonRuntime.LinuxHopperPythonError(
             "cancelled",
@@ -102,6 +106,55 @@ test.each([undefined, "controlled close refusal"])(
     }
   },
 );
+
+test("retains a failed display-probe owner until doctor closure confirms release", async () => {
+  let released = false;
+  const lease = new AnalysisCleanupLease(async () => {
+    if (!released) throw new Error("Fixture probe remains owned");
+  }, ["fixture-private-display-probe"]);
+  const display = vi
+    .spyOn(privateDisplay, "selectLinuxPrivateDisplayStrategy")
+    .mockResolvedValue({
+      ok: false,
+      strategy: "unavailable",
+      exitCode: 70,
+      diagnostic: {
+        ...readyDisplay.diagnostic,
+        status: "error",
+        failure_code: "private_display_unavailable",
+        strategy: "unavailable",
+        reason: "probe_timeout",
+      },
+      cleanup: {
+        status: "pending",
+        lease,
+        reason: "Fixture probe remains owned",
+      },
+    });
+  const host = createSystemDoctorHost({});
+  try {
+    const failure = await host.linuxDemoRuntimeCheck().then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    if (!(failure instanceof AnalysisError))
+      throw new Error("Expected retained probe cleanup failure");
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.cleanupResources).toEqual(["fixture-private-display-probe"]);
+    await expect(host.close?.()).rejects.toMatchObject({
+      cleanupIncomplete: true,
+    });
+    expect(failure.cleanupIncomplete).toBe(true);
+    released = true;
+    expect(await host.close?.()).toBeUndefined();
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(failure.cleanupResources).toEqual([]);
+  } finally {
+    released = true;
+    await host.close?.();
+    display.mockRestore();
+  }
+});
 
 test.each(["unavailable", "unknown"] as const)(
   "does not report a healthy Hopper runtime when Python is %s",
@@ -222,16 +275,15 @@ test.each([true, false])(
       .finally(() => {
         settled = true;
       });
-    try {
-      await entered;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(entered, pending, "display selection");
       expect(selected.mock.calls).toHaveLength(1);
       if (cancel) {
         controller.abort(reason);
         const result = await pending;
-        expect(selected.mock.calls[0]?.[0]).toHaveProperty(
-          "signal",
-          controller.signal,
-        );
+        const selectedSignal = selected.mock.calls[0]?.[0].signal;
+        expect(selectedSignal?.aborted).toBe(true);
+        expect(selectedSignal?.reason).toBe(reason);
         expect(inspected).not.toHaveBeenCalled();
         expect(result.error).toBeInstanceOf(AnalysisCancelledError);
         expect((result.error as Error).cause).toBe(reason);
@@ -245,13 +297,17 @@ test.each([true, false])(
           expect.objectContaining({ name: "hopper-demo-runtime", ok: true }),
         );
       }
-    } finally {
-      release();
-      await pending;
-      await system.close?.();
-      inspected.mockRestore();
-      selected.mockRestore();
-    }
+    }, [
+      release,
+      async () => {
+        await pending;
+      },
+      async () => {
+        await system.close?.();
+      },
+      () => inspected.mockRestore(),
+      () => selected.mockRestore(),
+    ]);
   },
   5_000,
 );
@@ -290,8 +346,8 @@ test("joins display finalization before preserving a late cancellation", async (
     .finally(() => {
       settled = true;
     });
-  try {
-    await entered;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered, pending, "display finalization");
     controller.abort(reason);
     await Promise.resolve();
     expect(settled).toBe(false);
@@ -301,13 +357,17 @@ test("joins display finalization before preserving a late cancellation", async (
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
     expect((failure as Error).cause).toBe(reason);
     expect(inspected).not.toHaveBeenCalled();
-  } finally {
-    release();
-    await pending;
-    await system.close?.();
-    inspected.mockRestore();
-    selected.mockRestore();
-  }
+  }, [
+    release,
+    async () => {
+      await pending;
+    },
+    async () => {
+      await system.close?.();
+    },
+    () => inspected.mockRestore(),
+    () => selected.mockRestore(),
+  ]);
 });
 
 test("rejects a pre-aborted caller before the Hopper display check", async () => {

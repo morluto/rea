@@ -14,7 +14,6 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   byteEntropySchema,
   computeBlockEntropy,
@@ -36,7 +35,9 @@ import {
 } from "../../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 /** Bound retained result rows before constructing the Evidence representation. */
 export const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
@@ -96,18 +97,14 @@ export class ByteEntropyService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const parsed = inspectByteEntropyInputSchema.safeParse(rawInput);
-    if (!parsed.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput, {
-          cause: parsed.error,
-        }),
-      );
-    const input = parsed.data;
+    const parsed = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectByteEntropyInputSchema,
+      options?.signal,
+    );
+    if (!parsed.ok) return parsed;
+    const input = parsed.value;
     if (!isAbsolute(input.path))
       return err(
         invalid("path", "Expected an absolute filesystem path on this host."),
@@ -201,14 +198,8 @@ export class ByteEntropyService {
               input.path,
               "File identity, size or timestamps changed during entropy inspection.",
             );
-          const same = (value: typeof initial) =>
-            value.isFile() &&
-            value.dev === initial.dev &&
-            value.ino === initial.ino &&
-            value.size === initial.size &&
-            value.mtimeNs === initial.mtimeNs &&
-            value.ctimeNs === initial.ctimeNs;
-          if (!same(before)) throw changed();
+          if (!initial.isFile() || !sameRegularFileState(initial, before))
+            throw changed();
           const size = Number(initial.size);
           if (!Number.isSafeInteger(size))
             throw invalid(
@@ -246,7 +237,10 @@ export class ByteEntropyService {
             );
           const end = input.offset + length;
           const blocks: ByteEntropy["blocks"] = [];
-          const buffer = Buffer.alloc(input.block_size);
+          // Physical reads must not shrink with report resolution, including
+          // outside the selected window. Every admitted power-of-two block
+          // size divides this buffer, so only the window's final block is short.
+          const buffer = Buffer.alloc(65_536);
           const counts = new Float64Array(256);
           const hash = createHash("sha256");
           let position = 0;
@@ -255,7 +249,7 @@ export class ByteEntropyService {
             const selected = position >= input.offset && position < end;
             const boundary =
               position < input.offset ? input.offset : selected ? end : size;
-            const wanted = Math.min(input.block_size, boundary - position);
+            const wanted = Math.min(buffer.length, boundary - position);
             let filled = 0;
             while (filled < wanted) {
               assertArtifactReadActive(options?.signal);
@@ -272,16 +266,26 @@ export class ByteEntropyService {
             hash.update(bytes);
             for (const byte of bytes) counts[byte] = (counts[byte] ?? 0) + 1;
             if (selected)
-              blocks.push({
-                offset: position,
-                length: filled,
-                entropy: computeBlockEntropy(bytes),
-              });
+              for (
+                let offset = 0;
+                offset < filled;
+                offset += input.block_size
+              ) {
+                const block = bytes.subarray(offset, offset + input.block_size);
+                blocks.push({
+                  offset: position + offset,
+                  length: block.length,
+                  entropy: computeBlockEntropy(block),
+                });
+              }
             position += filled;
           }
           if (
-            !same(await file.stat({ bigint: true })) ||
-            !same(await this.files.stat(input.path, { bigint: true }))
+            !sameRegularFileState(initial, await file.stat({ bigint: true })) ||
+            !sameRegularFileState(
+              initial,
+              await this.files.stat(input.path, { bigint: true }),
+            )
           )
             throw changed();
           assertArtifactReadActive(options?.signal);

@@ -74,8 +74,11 @@ credentials and resets it between sequences.
   another environment value (a reference keeps raw equality, as the probe's mapping cannot tell which collection it
   names); an object's members compare under the environment's mapped keys only when it is keyed by learned ids as
   learning reads one, and any other object compares field by field; two clock values (ISO-8601 strings, or epoch numbers under
-  time-named fields) compare by format only; two different generated values (both UUIDs, or both of one length and the
-  same character classes with a digit) that neither side maps compare equal and are counted. A body over the replay
+  time-named fields) compare by format only; numeric array elements remain literal.
+  Different strings normalize as generated only at direct entity fields where
+  the executed served write plan proves a unique token or UUID/token identity
+  generator, and neither side participates in an ID mapping. A UUID or token
+  shape alone is insufficient evidence. A body over the replay
   limit, text or binary, compares by status only, as does a live body the probe did not record, unless the answer has
   none by definition (204, 205, 304, or an answer to `HEAD`). Both are counted.
 - A step agrees when the statuses are equal and the normalised bodies are. Differences are categorised: `status`,

@@ -54,9 +54,12 @@ export const createSwiftClassVtableDecoder = (input: {
     record,
     descriptor,
     flags,
-    name: owner,
+    name,
+    context,
   }: SwiftNominalDescriptor): void => {
     if ((flags & 31) !== 16) return;
+    const owner = context.path ?? name;
+    if (context.reason !== null) failure({ record, message: context.reason });
     try {
       const specific = flags >>> 16;
       if ((flags & 0x80) !== 0 || (specific & 0x2000) !== 0)

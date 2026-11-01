@@ -27,6 +27,16 @@ import { appleApplicationProjectionResultSchema } from "../domain/apple/appleApp
 import { harmonyApplicationProjectionResultSchema } from "../domain/harmony/harmonyApplication.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
+import {
+  readGuidanceSectionInputSchema,
+  readGuidanceSectionOutputSchema,
+  searchGuidanceInputSchema,
+  searchGuidanceOutputSchema,
+} from "./guidanceContracts.js";
+import {
+  guidedWorkflowsInputSchema,
+  guidedWorkflowsOutputSchema,
+} from "./guidedWorkflowSchemas.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
@@ -69,6 +79,54 @@ const retained = (evidence_id: string) => ({
 
 /** Provider-neutral graph workflow contracts shared by MCP and CLI adapters. */
 export const APPLICATION_TOOL_CONTRACTS = [
+  {
+    name: "search_guidance",
+    ...toolContractMetadata("search_guidance"),
+    description:
+      "Search only the installed REA workflow guidance. Every non-generic query word must occur in a section; sections holding every word in their own text rank before parents whose words are spread across subsections. Returns ranked sections, bounded pages, and locators for read_guidance_section. No target or provider is accessed.",
+    kind: "application",
+    inputSchema: searchGuidanceInputSchema,
+    outputSchema: searchGuidanceOutputSchema,
+    examples: [
+      {
+        title: "Find exact JavaScript module guidance",
+        input: { query: "exact JavaScript module" },
+      },
+    ],
+  },
+  {
+    name: "guided_workflows",
+    ...toolContractMetadata("guided_workflows"),
+    description:
+      "List or render REA's existing guided workflows. Rendering returns guidance only; it does not inspect targets, start analysis, or change session state.",
+    kind: "application",
+    inputSchema: guidedWorkflowsInputSchema,
+    outputSchema: guidedWorkflowsOutputSchema,
+    examples: [
+      {
+        title: "List the available guided workflows",
+        input: { action: "list" },
+      },
+      {
+        title: "Render feature investigation guidance",
+        input: {
+          action: "render",
+          workflow_id: "investigate_feature",
+          arguments: { feature: "offline search" },
+        },
+      },
+    ],
+  },
+  {
+    name: "read_guidance_section",
+    ...toolContractMetadata("read_guidance_section"),
+    description:
+      "Retrieve a section selected by search_guidance from the installed REA guidance bundle. Reports stale locators and unavailable bundles explicitly. Returns documentation, not target observations or Evidence.",
+    kind: "application",
+    inputSchema: readGuidanceSectionInputSchema,
+    outputSchema: readGuidanceSectionOutputSchema,
+    examples: [],
+  },
   {
     name: "trace_application_feature",
     ...toolContractMetadata("trace_application_feature"),
@@ -319,45 +377,3 @@ export const APPLICATION_TOOL_CONTRACTS = [
     ],
   },
 ] as const satisfies readonly ToolContract[];
-
-/** Resolve one named application contract without relying on array position. */
-export function applicationToolContract(
-  name: "trace_application_feature",
-): (typeof APPLICATION_TOOL_CONTRACTS)[0];
-export function applicationToolContract(
-  name: "trace_javascript_semantics",
-): (typeof APPLICATION_TOOL_CONTRACTS)[1];
-export function applicationToolContract(
-  name: "compare_application_versions",
-): (typeof APPLICATION_TOOL_CONTRACTS)[2];
-export function applicationToolContract(
-  name: "compare_source_to_bundle",
-): (typeof APPLICATION_TOOL_CONTRACTS)[3];
-export function applicationToolContract(
-  name: "compare_javascript_export_shapes",
-): (typeof APPLICATION_TOOL_CONTRACTS)[4];
-export function applicationToolContract(
-  name: "build_reconstruction_obligation_ledger",
-): (typeof APPLICATION_TOOL_CONTRACTS)[5];
-export function applicationToolContract(
-  name: "evaluate_reconstruction_coverage",
-): (typeof APPLICATION_TOOL_CONTRACTS)[6];
-export function applicationToolContract(
-  name: "project_android_application_graph",
-): (typeof APPLICATION_TOOL_CONTRACTS)[7];
-export function applicationToolContract(
-  name: "project_apple_application_graph",
-): (typeof APPLICATION_TOOL_CONTRACTS)[8];
-export function applicationToolContract(
-  name: "project_harmony_application_graph",
-): (typeof APPLICATION_TOOL_CONTRACTS)[9];
-export function applicationToolContract(
-  name: (typeof APPLICATION_TOOL_CONTRACTS)[number]["name"],
-): (typeof APPLICATION_TOOL_CONTRACTS)[number] {
-  const contract = APPLICATION_TOOL_CONTRACTS.find(
-    ({ name: candidate }) => candidate === name,
-  );
-  if (contract === undefined)
-    throw new Error(`Missing application tool contract: ${name}`);
-  return contract;
-}

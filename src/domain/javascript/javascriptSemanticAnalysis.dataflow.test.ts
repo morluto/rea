@@ -347,7 +347,7 @@ describe("JavaScript semantic analysis: dataflow 2", () => {
     });
   });
 
-  it("fails closed on assignment ambiguity and alias cycles", () => {
+  it("preserves initializer uncertainty, assignment ambiguity and alias cycles", () => {
     const ambiguous = analyzeJavaScriptSemantics(`
       let current = "first";
       current = "second";
@@ -358,7 +358,8 @@ describe("JavaScript semantic analysis: dataflow 2", () => {
       status: "ambiguous",
     });
     expect(topLevelBinding(ambiguous, "left").value).toMatchObject({
-      status: "cycle",
+      status: "unknown",
+      reason: "Binding right has no proven initializer at this read.",
     });
     expect(topLevelBinding(ambiguous, "right").provenance).toMatchObject({
       status: "cycle",
@@ -472,9 +473,9 @@ describe("JavaScript semantic analysis: mapped arguments writes", () => {
       .returnSites[0]?.value;
     if (value?.status !== "object")
       throw new Error("Expected an object return value");
-    expect(
-      value.properties.find(({ name }) => name === "value")?.value.status,
-    ).not.toBe("literal");
+    const property = value.properties.find(({ name }) => name === "value");
+    expect(property).toBeDefined();
+    expect(property?.value.status).not.toBe("literal");
   });
 });
 

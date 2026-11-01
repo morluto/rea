@@ -3,9 +3,10 @@ import type { PythonPycService } from "../application/python/PythonPycService.js
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
-import { createEvidenceToolHandler } from "./contractToolHandler.js";
+import { createRetainedSummaryToolHandler } from "./contractToolHandler.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { applicationToolRegistrationOptions } from "./toolRegistrationOptions.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 
 /** Register the explicit-file CPython pyc workflow and retain its complete Evidence. */
 export const registerPythonPycTool = (
@@ -14,18 +15,20 @@ export const registerPythonPycTool = (
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
   withAdmittedAnalysis?: WithAdmittedAnalysis,
+  evidenceById?: EvidenceLookup,
 ): void => {
   const contract = toolContract("inspect_python_pyc");
-  const handler = createEvidenceToolHandler(
+  const handler = createRetainedSummaryToolHandler(
     server,
+    contract,
     (input, options) => service.inspect(input, options),
     logger,
-    recordEvidence,
+    { recordEvidence, evidenceById },
     withAdmittedAnalysis,
   );
   server.registerTool(
     contract.name,
-    toolRegistrationOptions(contract),
-    handler(contract),
+    applicationToolRegistrationOptions(contract),
+    handler,
   );
 };

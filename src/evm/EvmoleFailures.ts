@@ -7,6 +7,7 @@ import {
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
+  type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import {
@@ -27,11 +28,31 @@ import {
   MAX_EVM_TIMEOUT_MS,
 } from "../domain/evm/evmInterface.js";
 import {
-  EVMOLE_PROVIDER_IDENTITY,
   EVM_CPU_SECONDS,
   EVM_INTERFACE_LIMITS,
   EVM_FILE_SIZE_FAILURE_EXIT,
 } from "./EvmoleRelease.js";
+import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+
+/** Both a structured worker refusal and reply-file admission name this allowance. */
+export const evmReplyBudgetFailure = (
+  reason: string,
+  options: AnalysisErrorOptions,
+) =>
+  new AnalysisResourceConstraintError(
+    "inspect_evm_interface",
+    "file-size",
+    reason,
+    { maximum_reply_bytes: EVM_INTERFACE_LIMITS.outputBytes },
+    {
+      ...options,
+      ...fixedAllowanceOptions(
+        `The complete EVMole worker reply allowance of ${String(EVM_INTERFACE_LIMITS.outputBytes)} bytes (this release has no runtime override)`,
+        "report",
+      ),
+    },
+  );
 
 const fixedEvmRecovery = (allowance: string): string =>
   `${allowance}. This release has no runtime override. timeout_ms does not raise it. Repeating the unchanged request fails the same way.`;

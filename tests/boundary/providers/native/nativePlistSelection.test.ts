@@ -1,4 +1,11 @@
-import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
@@ -49,6 +56,34 @@ it("resolves selected paths and defaults without conflating intent and file read
     value: { path: chosen, origin: "selected" },
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "preserves selected plist symlink-parent semantics for absolute and app-relative input",
+  async () => {
+    const root = await createTestTempDirectory("rea-plist-physical-selection-");
+    const selected = join(root, "physical");
+    await mkdir(join(selected, "child"), { recursive: true });
+    await writeFile(join(root, "program"), "inert executable");
+    await writeFile(join(root, "Info.plist"), "lexical decoy");
+    await writeFile(join(selected, "Info.plist"), "physical selected plist");
+    await symlink(join(selected, "child"), join(root, "alias"));
+    const target = nativeMachoTarget(join(root, "program"));
+    for (const requested of [
+      "alias/../Info.plist",
+      `${root}/alias/../Info.plist`,
+      join(selected, "Info.plist"),
+    ]) {
+      const selection = await resolveNativePlistSelection(target, requested);
+      if (!selection.ok) throw selection.error;
+      expect(await realpath(selection.value.path)).toBe(
+        await realpath(join(selected, "Info.plist")),
+      );
+      expect(await readFile(selection.value.path, "utf8")).toBe(
+        "physical selected plist",
+      );
+    }
+  },
+);
 
 it.each(["missing", "directory"] as const)(
   "retains selected target intent for a %s plist",

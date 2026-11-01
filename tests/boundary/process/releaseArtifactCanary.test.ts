@@ -28,14 +28,20 @@ it.skipIf(process.platform === "win32")(
     const harness = await createApplicationMcpHarness();
     let snapshot;
     try {
+      const tools = await harness.client.listTools();
+      const sessionDefinition = tools.tools.find(
+        ({ name }) => name === "binary_session",
+      );
+      if (sessionDefinition === undefined)
+        throw new Error("Canary snapshot omitted binary_session");
       snapshot = {
         serverInfo: harness.client.getServerVersion(),
         protocolVersion: harness.client.getNegotiatedProtocolVersion(),
-        tools: await harness.client.listTools(),
-        reply: await harness.client.callTool({
-          name: "binary_session",
-          arguments: {},
-        }),
+        tools,
+        reply: await harness.client.callTool(
+          { name: "binary_session", arguments: {} },
+          { toolDefinition: sessionDefinition },
+        ),
       };
     } finally {
       await harness.close();
@@ -84,6 +90,7 @@ if (process.argv[2] === "mcp") {
     for (const file of [
       "scripts/verify-release-artifact.mjs",
       "scripts/lib/release-package-canary.mjs",
+      "scripts/lib/verify-package-core.mjs",
       "scripts/lib/mcp-verifier-results.mjs",
       "scripts/lib/verifier-run.mjs",
     ]) {

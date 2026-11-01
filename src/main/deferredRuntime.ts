@@ -18,7 +18,8 @@ import { ToolResultDelivery } from "../server/ToolResultDelivery.js";
 import { createLogger } from "../logger.js";
 import { reportMcpShutdownFailure } from "./shutdown.js";
 import type { McpServerHandle, RuntimeDependencies } from "./types.js";
-import { MCP_CONNECTION_LOST, SERVER_START_FAILED } from "./messages.js";
+import { SERVER_START_FAILED } from "./messages.js";
+import { reportMcpTransportError } from "./reportMcpTransportError.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
@@ -54,6 +55,7 @@ const initializeRuntime = async (
 ): Promise<void> => {
   let shutdown: (() => Promise<void>) | undefined;
   let closeSession: (() => Promise<void>) | undefined;
+  let disposeSession: (() => Promise<void>) | undefined;
   let sessionClosed = false;
   server.ownRuntimeCleanup(async () => {
     if (shutdown !== undefined) return shutdown();
@@ -71,6 +73,7 @@ const initializeRuntime = async (
     );
     if (failures.length > 0)
       throw new AggregateError(failures, "MCP startup cleanup failed");
+    await disposeSession?.();
   });
   const [{ runEager }, { createServer }] = await Promise.all([
     import("./eagerRuntime.js"),
@@ -79,18 +82,29 @@ const initializeRuntime = async (
   const result = await runEager(
     {
       ...dependencies,
+      // The outer SDK transport already owns and frames this stream. Eager
+      // materialization owns providers only, never another copy of raw input.
+      stdin: undefined,
       registerShutdown: () => () => undefined,
       captureShutdown: (close) => {
         shutdown = close;
       },
       createServer: (source, options) => {
-        if (source.kind === "session")
+        if (source.kind === "session") {
           closeSession = async () => {
+            source.session.beginShutdown();
             const result = await source.session.close({
               retainProviderDocuments: true,
             });
             if (!result.ok) throw result.error;
           };
+          disposeSession = async () => {
+            const result = await source.session.dispose({
+              retainProviderDocuments: true,
+            });
+            if (!result.ok) throw result.error;
+          };
+        }
         return createServer(source, {
           ...options,
           mcpServer: server,
@@ -201,6 +215,7 @@ export const runDeferred = async (
                   dependencies.setExitCode(1);
                   throw cause;
                 }),
+              config.mcpMaxInputElements,
             );
             return server;
           });
@@ -212,10 +227,12 @@ export const runDeferred = async (
           return server;
         },
         {
-          onerror: () => {
-            serverLogger.error(MCP_CONNECTION_LOST);
-            dependencies.writeStderr(`${MCP_CONNECTION_LOST}\n`);
-          },
+          onerror: (error) =>
+            reportMcpTransportError(
+              error,
+              serverLogger,
+              dependencies.writeStderr,
+            ),
         },
       );
     } finally {

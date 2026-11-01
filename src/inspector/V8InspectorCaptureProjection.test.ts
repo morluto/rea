@@ -271,6 +271,32 @@ it("preserves raw script facts without authorizing locations in partial projecti
   );
 });
 
+it("counts retained unresolved script locations after deduplication in partial captures", async () => {
+  const draft = {
+    rawUrl: "file:///fixture/duplicate.js",
+    executionContextKey: "1",
+    cdpHash: "same",
+    length: 7,
+    isModule: false,
+  };
+  const result = await finalizeInspectorCapture({
+    input: {
+      inspector_endpoint: "http://127.0.0.1:9222",
+      target_id: target.id,
+      observation_ms: 0,
+    },
+    runtime: { product: "Node.js", protocol_version: "1.3", v8_version: null },
+    target,
+    state: stateFor([draft, { ...draft }]),
+    locationMode: "reported",
+  });
+  expect(result.scripts.items).toHaveLength(1);
+  expect(result.scripts.observed_total).toBe(2);
+  expect(result.unknowns).toContain(
+    "1 observed script location remains unverified; raw URLs and script metadata are retained.",
+  );
+});
+
 it("waits for active authorization workers to settle before returning a failure", async () => {
   const scripts = Array.from({ length: 12 }, (_, index) => ({
     rawUrl: `file:///fixture/failure-${String(index)}.js`,

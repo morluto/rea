@@ -1,4 +1,6 @@
-import { resolveAsarHeaderAdmission } from "./AsarHeader.js";
+import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
 import { artifactTargetRefusal } from "../domain/apple/artifactTargetApplicability.js";
 import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -13,9 +15,13 @@ import {
   type ProviderIdentity,
   type ExecutionOptions,
 } from "../application/AnalysisProvider.js";
-import { inspectBundleKeyedArchive } from "./apple/KeyedArchiveReader.js";
+import {
+  inspectBundleKeyedArchive,
+  inspectStandaloneKeyedArchive,
+} from "./apple/KeyedArchiveReader.js";
 import { traceDylibResolution } from "./apple/DylibResolutionReader.js";
-import { basename, dirname } from "node:path";
+import { dirname } from "node:path";
+import { withArtifactTargetIdentity } from "./withArtifactTargetIdentity.js";
 import { inventoryArtifact } from "./inventory/ArtifactInventory.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import { analyzeInterfaceBuilderBundle } from "./apple/InterfaceBuilderAnalysis.js";
@@ -26,10 +32,12 @@ import {
   artifactExtractionExecutionSchema,
   type ArtifactAnalysisOperation,
 } from "../contracts/artifactToolContracts.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import {
+  artifactTargetSelectedPath,
+  type BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -41,7 +49,10 @@ import { artifactCapabilities } from "./ArtifactProviderMetadata.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import { createEvidence } from "../domain/evidence.js";
 import { freezeJsonSnapshot } from "../domain/immutableJson.js";
-import { createArtifactInspection } from "../domain/artifactInspection.js";
+import {
+  artifactInspectionSources,
+  createArtifactInspection,
+} from "../domain/artifactInspection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
 import type { BundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
@@ -56,6 +67,7 @@ export class ArtifactProvider implements AnalysisProvider {
   constructor(
     environment: Readonly<NodeJS.ProcessEnv>,
     platform: NodeJS.Platform = process.platform,
+    private readonly settings?: AnalysisSettingsReader,
   ) {
     this.environment = snapshotEnvironment(environment, platform);
     this.#capabilities = artifactCapabilities(platform);
@@ -71,7 +83,12 @@ export class ArtifactProvider implements AnalysisProvider {
   }
 
   createClient(target: BinaryTarget): AnalysisClient {
-    return new ArtifactClient(target, this.environment, this.#platform);
+    return new ArtifactClient(
+      target,
+      this.environment,
+      this.#platform,
+      this.settings,
+    );
   }
 
   createBundleResourceClient(
@@ -127,6 +144,7 @@ class BundleResourceArtifactClient implements AnalysisClient {
               bundlePath: this.root.canonicalPath,
               targetSha256: null,
               resourceRoot,
+              resources: this.#resourceScope,
               limits: interfaceBuilderLimitsSchema.parse(parameters),
               ...(options?.signal === undefined
                 ? {}
@@ -139,6 +157,7 @@ class BundleResourceArtifactClient implements AnalysisClient {
                 resourceRoot,
                 parameters,
                 platform: this.platform,
+                resources: this.#resourceScope,
                 ...(options?.signal === undefined
                   ? {}
                   : { signal: options.signal }),
@@ -149,6 +168,7 @@ class BundleResourceArtifactClient implements AnalysisClient {
                   targetSha256: null,
                   resourceRoot,
                   environment: this.environment,
+                  resources: this.#resourceScope,
                   page: parameters,
                   ...(options?.signal === undefined
                     ? {}
@@ -196,6 +216,7 @@ class ArtifactClient implements AnalysisClient {
     private readonly target: BinaryTarget,
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
     private readonly platform: NodeJS.Platform,
+    private readonly settings?: AnalysisSettingsReader,
   ) {}
 
   async execute(
@@ -223,12 +244,21 @@ class ArtifactClient implements AnalysisClient {
       }
       if (operation === "decode_interface_builder") {
         const limits = interfaceBuilderLimitsSchema.parse(parameters);
-        const result = await analyzeInterfaceBuilderBundle({
-          bundlePath: this.target.sourcePath ?? this.target.path,
-          targetSha256: this.target.sha256,
-          limits,
-          ...(options?.signal === undefined ? {} : { signal: options.signal }),
-        });
+        const result = await withArtifactTargetIdentity(
+          this.target,
+          this.#resourceScope,
+          () =>
+            analyzeInterfaceBuilderBundle({
+              bundlePath: this.target.sourcePath ?? this.target.path,
+              targetSha256: this.target.sha256,
+              limits,
+              resources: this.#resourceScope,
+              ...(options?.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+            }),
+          options?.signal,
+        );
         return ok(
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             limitations: result.limitations,
@@ -242,42 +272,48 @@ class ArtifactClient implements AnalysisClient {
       if (operation === "inspect_keyed_archive") {
         const standalone =
           this.target.kind === "artifact" && this.target.format === "plist";
-        if (
-          standalone &&
-          parameters.path !== undefined &&
-          parameters.path !== "." &&
-          parameters.path !== basename(this.target.path)
-        )
-          throw new AnalysisInputError(operation, undefined, [
-            {
-              path: ["path"],
-              reason: "invalid_value",
-              message:
-                "For an active plist, path must select that archive (omit path or use its basename).",
-              expected: basename(this.target.path),
-            },
-          ]);
-        const bundlePath = standalone
-          ? dirname(this.target.path)
-          : (this.target.sourcePath ?? this.target.path);
-        const result = await inspectBundleKeyedArchive({
-          bundlePath,
-          targetSha256: this.target.sha256,
-          parameters: standalone
-            ? { ...parameters, path: basename(this.target.path) }
-            : parameters,
-          platform: this.platform,
-          ...(options?.signal === undefined ? {} : { signal: options.signal }),
-        });
-        if (standalone && result.archive_sha256 !== this.target.sha256)
-          throw new ArtifactReaderFailure(
-            "integrity",
-            `Active archive digest changed: expected ${this.target.sha256}, observed ${result.archive_sha256}`,
-          );
+        const selectedPath = artifactTargetSelectedPath(this.target);
+        const result = standalone
+          ? await inspectStandaloneKeyedArchive({
+              path: this.target.path,
+              selectedPath,
+              targetSha256: this.target.sha256,
+              parameters,
+              platform: this.platform,
+              resources: this.#resourceScope,
+              ...(options?.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+            })
+          : await withArtifactTargetIdentity(
+              this.target,
+              this.#resourceScope,
+              () =>
+                inspectBundleKeyedArchive({
+                  bundlePath: this.target.sourcePath ?? this.target.path,
+                  targetSha256: this.target.sha256,
+                  parameters,
+                  platform: this.platform,
+                  resources: this.#resourceScope,
+                  ...(options?.signal === undefined
+                    ? {}
+                    : { signal: options.signal }),
+                }),
+              options?.signal,
+            );
         return ok(
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             limitations: result.limitations,
             locations: [{ kind: "artifact-path", path: result.archive_path }],
+            ...(standalone
+              ? {
+                  subject: {
+                    path: selectedPath,
+                    sha256: result.archive_sha256,
+                    format: "plist" as const,
+                  },
+                }
+              : {}),
           }),
         );
       }
@@ -291,9 +327,19 @@ class ArtifactClient implements AnalysisClient {
         const result = await extractArtifact(
           {
             inputPath: this.target.sourcePath ?? this.target.path,
+            expectedRootSha256:
+              this.target.bundleInfoPlist === undefined
+                ? this.target.sha256
+                : undefined,
+            selectedPath: this.target.artifactSelectedPath,
             inputFormat: this.target.format,
+            espFlashSelection: espFlashSelection(this.target),
             outputRoot: parsed.output_root,
             environment: this.environment,
+            asarHeaderAdmission: runtimeAsarHeaderAdmission(
+              this.environment,
+              this.settings,
+            ),
             integrityPolicy: parsed.integrity_policy,
             resourceScope: this.#resourceScope,
           },
@@ -304,7 +350,7 @@ class ArtifactClient implements AnalysisClient {
             rawResult: null,
             limitations: result.limitations,
             subject: subjectFor(
-              this.target.sourcePath ?? this.target.path,
+              artifactTargetSelectedPath(this.target),
               result.manifest,
             ),
             // Each extracted file's path is already in artifacts.
@@ -319,7 +365,7 @@ class ArtifactClient implements AnalysisClient {
           rawResult: null,
           limitations: result.limitations,
           subject: subjectFor(
-            this.target.sourcePath ?? this.target.path,
+            artifactTargetSelectedPath(this.target),
             result.manifest,
           ),
           // Each occurrence's logical path is already in the result.
@@ -372,13 +418,20 @@ class ArtifactClient implements AnalysisClient {
     options?: ExecutionOptions,
   ) {
     const bundlePath = this.target.sourcePath ?? this.target.path;
-    const result = await analyzeAppleAssetCatalogs({
-      environment: this.environment,
-      bundlePath,
-      targetSha256: this.target.sha256,
-      page: parameters,
-      ...(options?.signal === undefined ? {} : { signal: options.signal }),
-    });
+    const result = await withArtifactTargetIdentity(
+      this.target,
+      this.#resourceScope,
+      () =>
+        analyzeAppleAssetCatalogs({
+          environment: this.environment,
+          bundlePath,
+          resources: this.#resourceScope,
+          targetSha256: this.target.sha256,
+          page: parameters,
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        }),
+      options?.signal,
+    );
     return ok(
       createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
         limitations: result.limitations,
@@ -440,7 +493,7 @@ class ArtifactClient implements AnalysisClient {
       await this.inventory(inventoryParameters, options),
     );
     const subject = subjectFor(
-      this.target.sourcePath ?? this.target.path,
+      artifactTargetSelectedPath(this.target),
       inventory.manifest,
     );
     const inventoryEvidence = createEvidence(subject, ARTIFACT_GRAPH_PROVIDER, {
@@ -466,6 +519,7 @@ class ArtifactClient implements AnalysisClient {
       createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
         rawResult: null,
         limitations: result.limitations,
+        sourceEvidence: artifactInspectionSources(result),
         subject,
         locations: [],
       }),
@@ -479,14 +533,34 @@ class ArtifactClient implements AnalysisClient {
     options?: ExecutionOptions,
   ) {
     return inventoryArtifact(this.target.sourcePath ?? this.target.path, {
+      expectedRootSha256:
+        this.target.bundleInfoPlist === undefined
+          ? this.target.sha256
+          : undefined,
+      selectedPath: this.target.artifactSelectedPath,
       resourceScope: this.#resourceScope,
       environment: this.environment,
-      asarHeaderAdmission: resolveAsarHeaderAdmission(this.environment),
+      asarHeaderAdmission: runtimeAsarHeaderAdmission(
+        this.environment,
+        this.settings,
+      ),
+      espFlashSelection: espFlashSelection(this.target),
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
-      integrity: { mode: parsed.integrity_policy },
+      integrity: parsed.integrity_policy,
     });
   }
 }
+
+/** Caller inputs of an explicitly selected ESP flash image, for its readers. */
+const espFlashSelection = (
+  target: BinaryTarget,
+): EspFlashSelection | undefined =>
+  target.format === "esp-flash-image" && target.espFlash.selected
+    ? {
+        flashOffset: target.espFlash.flashOffset ?? undefined,
+        partitionTableOffset: target.espFlash.partitionTableOffset ?? undefined,
+      }
+    : undefined;
 
 const isArtifactOperation = (
   operation: AnalysisOperation,

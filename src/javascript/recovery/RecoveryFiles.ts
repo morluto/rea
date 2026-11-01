@@ -4,15 +4,25 @@ import {
   ArtifactFileCleanupFailure,
   withArtifactRegularFile,
 } from "../../artifacts/ArtifactFileOperation.js";
+import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { OwnedDirectoryHandle } from "../../filesystem/OwnedDirectoryHandle.js";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, opendir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  lstat,
+  mkdir,
+  opendir,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { TextDecoder } from "node:util";
 import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
 import {
+  AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -62,9 +72,8 @@ const scanRecoveryFile = async (
       path,
       resources ?? new ArtifactResourceScope(),
       signal,
-      async (handle) => {
+      async ({ handle, initial: before }) => {
         const hash = createHash("sha256");
-        const before = await handle.stat();
         if (before.size > maximum)
           throw new RecoveryFileSizeError(
             `Expected a regular file no larger than ${String(maximum)} bytes: ${path}`,
@@ -89,22 +98,37 @@ const scanRecoveryFile = async (
           before.size !== bytes ||
           [after, current].some((state) => !sameRegularFileState(before, state))
         )
-          throw new AnalysisOutputError(
+          throw new AnalysisArtifactChangedError(
             OPERATION,
+            path,
             `File identity changed while reading: ${path}`,
           );
         return { sha256: hash.digest("hex"), bytes };
       },
     );
   } catch (cause: unknown) {
-    if (
-      cause instanceof ArtifactFileCleanupFailure ||
-      cause instanceof ArtifactFileCancelled
-    )
-      throw cause;
+    if (cause instanceof ArtifactFileCleanupFailure) throw cause;
+    if (cause instanceof ArtifactFileCancelled)
+      throw new AnalysisCancelledError(OPERATION, {
+        cause: cause.fileCancellation.reason,
+        partialObservation: fileSnapshotPartialObservationSchema.parse(
+          Object.assign({}, cause.fileCancellation.outcome.value, {
+            kind: "file-snapshot-hash",
+            path,
+          }),
+        ),
+      });
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
       throw new AnalysisCancelledError(OPERATION, {
         cause: artifactFileCancellationCause(cause),
+      });
+    if (
+      cause instanceof Error &&
+      "code" in cause &&
+      (cause.code === "EACCES" || cause.code === "EPERM")
+    )
+      throw new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
+        cause,
       });
     if (cause instanceof NonRegularFileReadError)
       throw new AnalysisOutputError(
@@ -158,19 +182,15 @@ const snapshotRecoveryInput = async (
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
 ): Promise<RecoveryInputSnapshot> => {
-  if (!isAbsolute(path))
-    throw recoveryInputFailure(
-      "path",
-      "Select an absolute JavaScript file path",
-    );
   let bytes: Buffer;
   try {
     bytes = await readRecoveryFile(path, maximum, signal, resources);
   } catch (cause: unknown) {
     if (
       cause instanceof AnalysisCancelledError ||
-      cause instanceof ArtifactFileCleanupFailure ||
-      cause instanceof ArtifactFileCancelled
+      cause instanceof AnalysisAccessDeniedError ||
+      cause instanceof AnalysisArtifactChangedError ||
+      cause instanceof ArtifactFileCleanupFailure
     )
       throw cause;
     // The operation-wide input allowance is a deterministic byte budget, not
@@ -236,17 +256,69 @@ const snapshotRecoveryInput = async (
   };
 };
 
-/** Preserve each selected file and its relative input layout without concatenation. */
+/** Resolve native parent traversal while keeping the selected final filename. */
+const recoveryInputLayoutPath = async (
+  path: string,
+  signal?: AbortSignal,
+): Promise<string> => {
+  if (!isAbsolute(path))
+    throw recoveryInputFailure(
+      "path",
+      "Select an absolute JavaScript file path",
+    );
+  try {
+    checkRecoveryCancellation(signal);
+    const parent = dirname(path);
+    // Native lookup must accept the parent before realpath can collapse it:
+    // Darwin realpath(file/..) otherwise succeeds despite ENOTDIR on reads.
+    if (!(await stat(parent)).isDirectory())
+      throw new NonRegularFileReadError(path, false);
+    const canonicalParent = await realpath(parent);
+    checkRecoveryCancellation(signal);
+    return join(canonicalParent, basename(path));
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisCancelledError) throw cause;
+    if (
+      cause instanceof Error &&
+      "code" in cause &&
+      (cause.code === "EACCES" || cause.code === "EPERM")
+    )
+      throw new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
+        cause,
+      });
+    throw recoveryInputFailure(
+      "path",
+      `Cannot resolve selected JavaScript input parent ${path}: ${recoveryFailureMessage(cause)}`,
+      cause,
+    );
+  }
+};
+
+/** Own selected path interpretation, native collisions and sequential snapshots. */
 export const snapshotRecoveryInputs = async (
   paths: readonly [string, ...string[]],
   directory: string,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
 ): Promise<readonly [RecoveryInputSnapshot, ...RecoveryInputSnapshot[]]> => {
-  let commonDirectory = dirname(resolve(paths[0]));
-  for (const path of paths) {
+  const selections: [
+    { readonly path: string; readonly layoutPath: string },
+    ...{ readonly path: string; readonly layoutPath: string }[],
+  ] = [
+    {
+      path: paths[0],
+      layoutPath: await recoveryInputLayoutPath(paths[0], signal),
+    },
+  ];
+  for (const path of paths.slice(1))
+    selections.push({
+      path,
+      layoutPath: await recoveryInputLayoutPath(path, signal),
+    });
+  let commonDirectory = dirname(selections[0].layoutPath);
+  for (const { layoutPath } of selections) {
     while (true) {
-      const fromCommon = relative(commonDirectory, resolve(path));
+      const fromCommon = relative(commonDirectory, layoutPath);
       if (
         fromCommon !== ".." &&
         !fromCommon.startsWith(`..${sep}`) &&
@@ -264,11 +336,11 @@ export const snapshotRecoveryInputs = async (
   }
   const snapshots: RecoveryInputSnapshot[] = [];
   let remaining = RECOVERY_LIMITS.inputBytes;
-  for (const path of paths) {
+  for (const { path, layoutPath } of selections) {
     const relativePath =
-      paths.length === 1
+      selections.length === 1
         ? "bundle.js"
-        : relative(commonDirectory, resolve(path)).split(sep).join("/");
+        : relative(commonDirectory, layoutPath).split(sep).join("/");
     try {
       // Wakaru's multi-input public paths interpret backslashes as separators.
       if (relativePath.includes("\\"))

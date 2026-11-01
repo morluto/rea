@@ -1,3 +1,7 @@
+import {
+  metadataTokenFact,
+  type MetadataTokenFact,
+} from "./ManagedMetadataHeaps.js";
 import type { ManagedDecodeBudget } from "./ManagedDecodeBudget.js";
 import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 import type {
@@ -240,20 +244,14 @@ const OPCODES = new Map<
   [0xfe1e, { name: "readonly.", operand: "none" }],
 ]);
 
-const tokenKind = (token: string): ManagedInstructionAnchor["operand_kind"] => {
-  if (token.startsWith("0x06") || token.startsWith("0x2b")) return "method";
-  if (token.startsWith("0x04")) return "field";
-  if (token.startsWith("0x70")) return "string";
-  if (token.startsWith("0x11")) return "signature";
-  // MemberRef rows can name either fields or methods; the table alone cannot
-  // establish the kind. Callers with parsed metadata may supply that fact.
-  if (token.startsWith("0x0a")) return "token";
-  if (
-    token.startsWith("0x01") ||
-    token.startsWith("0x02") ||
-    token.startsWith("0x1b")
-  )
-    return "type";
+const tokenKind = (table: number): ManagedInstructionAnchor["operand_kind"] => {
+  if (table === 6 || table === 0x2b) return "method";
+  if (table === 4) return "field";
+  if (table === 0x70) return "string";
+  if (table === 0x11) return "signature";
+  // MemberRefs need their signature to distinguish methods from fields.
+  if (table === 0x0a) return "token";
+  if (table === 1 || table === 2 || table === 0x1b) return "type";
   return "token";
 };
 
@@ -261,6 +259,7 @@ type OperandResult = {
   readonly next: number;
   readonly anchorKind: ManagedInstructionAnchor["operand_kind"];
   readonly value: string | null;
+  readonly reference?: MetadataTokenFact;
 };
 
 type OperandReader = (il: Buffer, offset: number) => OperandResult;
@@ -425,21 +424,22 @@ const readOperand = (
   }
   if (!TOKEN_OPERAND_KINDS.has(kind) && kind !== "token")
     return { next: offset, anchorKind: "unknown", value: null };
-  const raw = il.readUInt32LE(offset);
-  const token = `0x${raw.toString(16).padStart(8, "0")}`;
+  const reference = metadataTokenFact(il.readUInt32LE(offset));
+  const { token } = reference;
   return {
     next: offset + TOKEN_OPERAND_WIDTH,
     anchorKind:
       TOKEN_OPERAND_KINDS.get(kind) ??
       (kind === "token" ? memberRefKind?.(token) : undefined) ??
-      tokenKind(token),
+      tokenKind(reference.table),
     value: token,
+    reference,
   };
 };
 
 export const decodeInstructions = (
   il: Buffer,
-  admitInstruction?: (offset: number) => void,
+  admitInstruction?: (offset: number, hasReference: boolean) => void,
   memberRefKind?: (token: string) => "field" | "method" | undefined,
 ): {
   readonly parsed: readonly ParsedInstruction[];
@@ -476,15 +476,18 @@ export const decodeInstructions = (
         issue = `Instruction ${descriptor.name} at IL offset ${String(start)} leaves method body`;
         break;
       }
+      // The extent is admitted; bound transient records before allocating token facts.
+      admitInstruction?.(
+        start,
+        TOKEN_OPERAND_KINDS.has(descriptor.operand) ||
+          descriptor.operand === "token",
+      );
       const operand = readOperand(
         il,
         offset,
         descriptor.operand,
         memberRefKind,
       );
-      // Charge each actual instruction before growing the decoded arrays.
-      // A multi-byte operand must not consume a full record per raw IL byte.
-      admitInstruction?.(start);
       offset = operand.next;
       if (PREFIX_OPCODES.has(descriptor.name)) {
         prefixStart ??= start;
@@ -497,6 +500,7 @@ export const decodeInstructions = (
         opcode: descriptor.name,
         operandKind: operand.anchorKind,
         operand: operand.value,
+        reference: operand.reference ?? null,
       });
     }
   } catch (cause: unknown) {
@@ -517,6 +521,7 @@ export const parseExceptionRegions = (
   budget?: ManagedDecodeBudget,
 ): ExceptionRegionParseResult => {
   const regions: ManagedExceptionRegion[] = [];
+  const catchTokens = new Map<number, MetadataTokenFact>();
   let sectionOffset = offset;
   let hasMoreSections = true;
   while (hasMoreSections) {
@@ -529,6 +534,7 @@ export const parseExceptionRegions = (
       return malformedExceptionRegions(
         "Exception section header leaves artifact",
         regions,
+        catchTokens,
       );
 
     const kind = bytes.readUInt8(sectionOffset);
@@ -536,6 +542,7 @@ export const parseExceptionRegions = (
       return malformedExceptionRegions(
         `Unsupported method data section kind ${String(kind & 0x3f)}`,
         regions,
+        catchTokens,
       );
     const fat = (kind & 0x40) !== 0;
     const size = fat
@@ -552,6 +559,7 @@ export const parseExceptionRegions = (
       return malformedExceptionRegions(
         "Exception section size leaves artifact",
         regions,
+        catchTokens,
       );
     let count: number;
     let sectionSize = size;
@@ -560,6 +568,7 @@ export const parseExceptionRegions = (
         return malformedExceptionRegions(
           "Exception section size does not contain whole clauses",
           regions,
+          catchTokens,
         );
       count = (size - 4) / clauseSize;
     } else if ((size - 4) % clauseSize === 0) {
@@ -573,6 +582,7 @@ export const parseExceptionRegions = (
       return malformedExceptionRegions(
         "Exception section size does not contain whole clauses",
         regions,
+        catchTokens,
       );
     }
     if (
@@ -582,6 +592,7 @@ export const parseExceptionRegions = (
       return malformedExceptionRegions(
         "Exception section size leaves artifact",
         regions,
+        catchTokens,
       );
     if (
       !fat &&
@@ -590,45 +601,64 @@ export const parseExceptionRegions = (
       return malformedExceptionRegions(
         "Small exception section reserved bytes are nonzero",
         regions,
+        catchTokens,
       );
 
     // Accumulates with the method IL bound; the body reserves what it retains.
     budget?.admitTransient(count * 256, sectionOffset);
     for (const region of readExceptionClauses(
       bytes,
-      sectionOffset + 4,
-      count,
-      fat,
+      { start: sectionOffset + 4, count, fat, budget },
+      catchTokens,
+      regions.length,
     ))
       regions.push(region);
 
     hasMoreSections = (kind & 0x80) !== 0;
     sectionOffset += sectionSize;
   }
-  return { status: "complete", regions };
+  return { status: "complete", regions, catchTokens };
 };
 
 export type ExceptionRegionParseResult =
   | {
       readonly status: "complete";
       readonly regions: ManagedExceptionRegion[];
+      readonly catchTokens: ReadonlyMap<number, MetadataTokenFact>;
     }
   | {
       readonly status: "malformed";
       readonly regions: ManagedExceptionRegion[];
+      readonly catchTokens: ReadonlyMap<number, MetadataTokenFact>;
       readonly issue: string;
     };
 
 const malformedExceptionRegions = (
   issue: string,
-  regions: ManagedExceptionRegion[] = [],
-): ExceptionRegionParseResult => ({ status: "malformed", regions, issue });
+  regions: ManagedExceptionRegion[],
+  catchTokens: ReadonlyMap<number, MetadataTokenFact>,
+): ExceptionRegionParseResult => ({
+  status: "malformed",
+  regions,
+  catchTokens,
+  issue,
+});
 
 const readExceptionClauses = (
   bytes: Buffer,
-  start: number,
-  count: number,
-  fat: boolean,
+  {
+    start,
+    count,
+    fat,
+    budget,
+  }: {
+    readonly start: number;
+    readonly count: number;
+    readonly fat: boolean;
+    readonly budget: ManagedDecodeBudget | undefined;
+  },
+  catchTokens: Map<number, MetadataTokenFact>,
+  firstOrdinal: number,
 ): ManagedExceptionRegion[] => {
   const regions: ManagedExceptionRegion[] = [];
   const clauseSize = fat ? 24 : 12;
@@ -636,6 +666,9 @@ const readExceptionClauses = (
     const clause = start + index * clauseSize;
     const flags = fat ? bytes.readUInt32LE(clause) : bytes.readUInt16LE(clause);
     const extra = bytes.readUInt32LE(clause + (fat ? 20 : 8));
+    if (flags === 0) budget?.admitTransient(256, clause);
+    const reference = flags === 0 ? metadataTokenFact(extra) : null;
+    if (reference !== null) catchTokens.set(firstOrdinal + index, reference);
     regions.push({
       flags,
       try_offset: fat
@@ -650,8 +683,7 @@ const readExceptionClauses = (
       handler_length: fat
         ? bytes.readUInt32LE(clause + 16)
         : bytes.readUInt8(clause + 7),
-      class_token:
-        flags === 0 ? `0x${extra.toString(16).padStart(8, "0")}` : null,
+      class_token: reference?.token ?? null,
       class_type: null,
       class_type_name_sha256: null,
       class_type_identity_resolved: null,

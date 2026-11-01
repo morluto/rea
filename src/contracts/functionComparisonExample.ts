@@ -7,6 +7,13 @@ const dossier = (text: string) =>
     procedure: {
       address: "0x1000",
       name: "main",
+      symbol: {
+        primary: true,
+        dynamic: false,
+        external: false,
+        type: "function",
+        source: "imported" as const,
+      },
       classification: null,
       body: {
         available: false,

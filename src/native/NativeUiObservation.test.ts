@@ -561,7 +561,22 @@ describe("native UI target and cancellation failures", () => {
       }),
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.message).toContain(code);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.message).toBe(
+        "Grant permission or select an unambiguous window",
+      );
+      if (code === "ambiguous-window")
+        expect(projected).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [
+              { path: ["window_id"], message: expect.stringContaining(code) },
+            ],
+          },
+        });
+      else expect(projected.details?.reason).toContain(code);
+    }
   });
   it("preserves the underlying helper failure reason in diagnostics", async () => {
     const result = await observeNativeUi(target, "observe_native_ui", scope, {

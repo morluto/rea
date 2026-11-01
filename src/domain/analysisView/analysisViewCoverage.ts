@@ -1,5 +1,15 @@
 import { uniqueSorted } from "../canonicalOrdering.js";
-import type { AnalysisViewCoverage } from "./analysisView.js";
+import { z } from "zod";
+
+export const analysisViewCoverageSchema = z.strictObject({
+  status: z.enum(["complete-within-view", "page", "empty"]),
+  examined: z.int().nonnegative(),
+  total: z.int().nonnegative(),
+  next_offset: z.int().nonnegative().nullable(),
+  exhausted: z.boolean(),
+});
+
+export type AnalysisViewCoverage = z.output<typeof analysisViewCoverageSchema>;
 
 /** Coverage for a summary, facet, or single selected object. */
 export const completeWithinViewCoverage = (

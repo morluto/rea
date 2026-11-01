@@ -10,6 +10,37 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 const contract = toolContract("inspect_native_exports");
 
 cliTest(
+  "retains export rows when their ELF version metadata is unavailable",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-elf-version-coverage-");
+    const path = join(root, "versioned.so");
+    await writeFile(
+      path,
+      elfExportImage({
+        symbols: [{ name: "a" }, { name: "b", version: 2 }],
+        versionDefinitions: ["lib.so", "V1"],
+        versionsOutsideFile: true,
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-native-exports", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = nativeExportsSchema.parse(
+      contract.outputSchema.parse(result.json).normalized_result,
+    );
+    expect(report.exports.map(({ name }) => name)).toEqual(["a", "b"]);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      exports: 2,
+      reason:
+        "1 export table issue(s) affect reported rows or metadata; see issues",
+    });
+    expect(report.issues).toMatchObject([{ code: "version_unresolved" }]);
+  },
+);
+
+cliTest(
   "reports defined ELF symbols named by the version-requirement table",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-version-requirements-");

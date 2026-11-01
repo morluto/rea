@@ -157,7 +157,10 @@ const scriptEntities = (
       nodeKind: "runtime-script-instance",
       runtimeKey: script.script_key,
       targetKey: capture.inspection.target.target_id,
-      frameKey: script.frame_id,
+      frameKey:
+        "frame_scope" in script && script.frame_scope === "unknown"
+          ? null
+          : script.frame_id,
       scriptKey: script.script_key,
       location,
       staticKind: "javascript",
@@ -175,6 +178,18 @@ const scriptEntities = (
           : { location: location.value }),
         ...("reported_url" in script && script.reported_url !== undefined
           ? { reported_url: script.reported_url }
+          : {}),
+        ...("frame_scope" in script && script.frame_scope !== undefined
+          ? {
+              frame_scope: script.frame_scope,
+              reported_frame_id: script.frame_id,
+            }
+          : {}),
+        ...("has_source_url" in script && script.has_source_url !== undefined
+          ? { has_source_url: script.has_source_url }
+          : {}),
+        ...("frame_claims" in script && script.frame_claims !== undefined
+          ? { frame_claims: script.frame_claims }
           : {}),
         cdp_hash: script.cdp_hash,
         length: script.length,

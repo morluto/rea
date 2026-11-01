@@ -1,3 +1,4 @@
+import * as t from "@babel/types";
 import { expect, it } from "vitest";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
@@ -29,6 +30,116 @@ const analyze = (source: string, budget?: number) => {
   });
   return complete(scan.finishSteps());
 };
+
+it("reads route-record keys at most once beyond inspecting each property", () => {
+  const count = 128;
+  const source = ["candidate", "router"]
+    .map(
+      (name) =>
+        `const ${name} = { ${Array.from({ length: count }, (_, i) => `path: "${name}${String(i)}"`).join(", ")}${name === "router" ? ", component: Page" : ""} };`,
+    )
+    .join("\n");
+  const file = parseJavaScriptSource(source);
+  if (file === null) throw new Error("fixture must parse");
+  const index = complete(
+    indexJavaScriptBindingsWithReceiversSteps(file.program),
+  );
+  complete(index.indexAmbientWritesSteps());
+  const facts: { value: string; interpretation: "candidate" | undefined }[] =
+    [];
+  const scan = complete(
+    JavaScriptRouteScan.createSteps(file, index, (fact) => {
+      facts.push({ value: fact.value, interpretation: fact.interpretation });
+    }),
+  );
+  let inspecting = false;
+  let propertyCount = 0;
+  let keyReads = 0;
+  traverseJavaScriptAst(file, {
+    enter: (node) => {
+      if (!t.isObjectProperty(node)) return;
+      propertyCount += 1;
+      const key = node.key;
+      // Observe real parsed keys without changing their values. Count only
+      // owner work, excluding the AST walk's own reads and setup/indexing.
+      Object.defineProperty(node, "key", {
+        enumerable: true,
+        configurable: true,
+        get: () => {
+          if (inspecting) keyReads += 1;
+          return key;
+        },
+      });
+    },
+  });
+  traverseJavaScriptAst(file, {
+    enter: (node, parent) => {
+      inspecting = true;
+      try {
+        scan.inspect(node, parent);
+      } finally {
+        inspecting = false;
+      }
+    },
+  });
+  expect(facts).toEqual(
+    ["candidate", "router"].flatMap((name) =>
+      Array.from({ length: count }, (_, i) => ({
+        value: `${name}${String(i)}`,
+        interpretation: name === "candidate" ? "candidate" : undefined,
+      })),
+    ),
+  );
+  expect(propertyCount).toBe(count * 2 + 1);
+  expect(keyReads).toBeGreaterThanOrEqual(propertyCount);
+  expect(keyReads).toBeLessThanOrEqual(propertyCount * 2);
+});
+
+it.each(["true", "(true as const)", "INDEX"])(
+  "retains an index route with flag %s",
+  (flag) => {
+    const facts = analyze(
+      `const INDEX=true;createBrowserRouter([{index:${flag},Component:Home}]);`,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/"]);
+    expect(facts.unresolved).toEqual([]);
+  },
+);
+
+it.each([
+  "createBrowserRouter([{index:INDEX,Component:Home}]);const INDEX=true;",
+  "const INDEX=runtime;createBrowserRouter([{index:INDEX,Component:Home}]);",
+])("retains unknown index flags without inventing a route: %s", (source) => {
+  const facts = analyze(source);
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toEqual([
+    expect.objectContaining({
+      reason: expect.stringContaining("index-route flag"),
+    }),
+  ]);
+});
+
+it("keeps a known false index flag absent", () => {
+  const facts = analyze(
+    "const INDEX=false;createBrowserRouter([{index:INDEX,Component:Home}]);",
+  );
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toEqual([]);
+});
+
+it("keeps module references out of Next page declarations and retains unknown runtime applicability", () => {
+  const facts = analyze(
+    `import Page from './components/app/string-only/page.js';const ordinary=require('./components/app/module-only/page.js');const page='app/unproven/page.js';`,
+  );
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toMatchObject([
+    { mechanism: "next-app-chunk", reason: expect.stringContaining("context") },
+  ]);
+  const after = analyze(
+    `const page='app/reports/page.js';globalThis.TURBOPACK=[];`,
+  );
+  expect(after.candidates.map(({ path }) => path)).toEqual(["/reports"]);
+});
 
 it("joins router children and preserves each segment's source", () => {
   const facts = analyze(
@@ -246,7 +357,7 @@ it.each([
   ["app/%5Fcomponents/page.tsx", "/_components"],
   ["app/blog/%5fdraft/page.js", "/blog/%5fdraft"],
   ["app/%61/page.tsx", "/%61"],
-  ["https://example.test/app/%61/page.tsx", "/%61"],
+  ["https://example.test/app/%61/page.tsx", undefined],
   ["app/a/page.tsx", "/a"],
   ["app/100%/page.tsx", "/100%"],
   ["app/team%2Fadmin/page.tsx", "/team%2Fadmin"],
@@ -260,7 +371,10 @@ it.each([
 ] as const)(
   "interprets Next App Router path %s without claiming reachability",
   (value, expected) => {
-    const route = classifyNextAppRoutePath(value);
+    const route = classifyNextAppRoutePath(value, {
+      kind: "source-literal",
+      runtime: "next",
+    });
     expect(route?.kind === "known" ? route.path : undefined).toBe(expected);
   },
 );
@@ -657,7 +771,7 @@ it("keeps callable bodies independent of navigation data ownership", () => {
 });
 
 it.each([
-  "const modulePath='app/feed/(.)photo/page.tsx';",
+  "globalThis.TURBOPACK=[];const modulePath='app/feed/(.)photo/page.tsx';",
   "globalThis.TURBOPACK=[];const modulePath='/app/feed/(.)photo/page.tsx';",
 ] as const)("retains intercepted module paths as unknown: %s", (source) => {
   const facts = analyze(source);
@@ -665,7 +779,9 @@ it.each([
   expect(facts.unresolved).toEqual([
     expect.objectContaining({
       mechanism: "next-app-chunk",
-      reason: expect.stringContaining("intercepted"),
+      reason: expect.stringContaining(
+        source.includes("='/app/") ? "context" : "intercepted",
+      ),
     }),
   ]);
 });
@@ -673,9 +789,30 @@ it.each([
 it.each(["app/(.)photo/_private/page.tsx", "app/_private/(.)photo/page.tsx"])(
   "keeps private pages excluded before interpreting %s",
   (value) => {
-    expect(classifyNextAppRoutePath(value)).toBeUndefined();
+    expect(
+      classifyNextAppRoutePath(value, {
+        kind: "source-literal",
+        runtime: "next",
+      }),
+    ).toBeUndefined();
   },
 );
+
+it("tests long literals for page-shaped Next paths in linear time", () => {
+  const classify = (value: string) =>
+    classifyNextAppRoutePath(value, {
+      kind: "source-literal",
+      runtime: "unknown",
+    })?.kind;
+  const started = performance.now();
+  expect(classify("app/".repeat(64_000))).toBeUndefined();
+  expect(classify(`app/${"x/page?".repeat(32_000)}\nend`)).toBeUndefined();
+  expect(performance.now() - started).toBeLessThan(1_000);
+  expect(classify("lib/app/a\nb/page.tsx")).toBe("unknown");
+  expect(classify("app/page-a\nb.js?v=1")).toBe("unknown");
+  expect(classify("app/x/page?first\nsecond")).toBeUndefined();
+  expect(classify("app/x/page.tsx/extra")).toBeUndefined();
+});
 
 it("keeps the already-covered aliased binary fragment excluded", () => {
   const facts = analyze(

@@ -225,6 +225,30 @@ it("stops an inflate that exceeds the section ratio", () => {
   ).toThrow(/1 MiB/);
 });
 
+it("retains the compressed-stream limit for a PE section with padding", () => {
+  const compressed = deflateSync(Buffer.alloc(RUST_SECTION_BYTES), {
+    level: 0,
+  });
+  expect(compressed.length).toBeGreaterThan(RUST_SECTION_BYTES);
+  const fileAlignment = 512;
+  const stored = Buffer.alloc(
+    Math.ceil(compressed.length / fileAlignment) * fileAlignment,
+  );
+  compressed.copy(stored);
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, stored, {
+      peFileAlignment: fileAlignment,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      constraint: {
+        resource: "memory",
+        reported_limits: { maximum_bytes: RUST_SECTION_BYTES },
+      },
+    }),
+  );
+});
+
 it.each([0, 8])("reads documented cargo-auditable revision %i", (format) => {
   const parsed = section({
     format,

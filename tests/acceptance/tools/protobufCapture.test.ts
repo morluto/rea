@@ -2,7 +2,7 @@ import { z } from "zod";
 import { readFile, unlink, writeFile, mkdir, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   protobufCaptureDescriptor,
@@ -156,6 +156,15 @@ captureTest(
     });
     const missingError = parseMcpToolError(missing).error;
     expect(missingError.code).toBe("invalid_request");
+    expect(missingError.details).toMatchObject({
+      issues: [
+        {
+          path: ["protobuf", "schema", "message_type"],
+          reason: "invalid_value",
+          message: expect.stringContaining("capture.Missing"),
+        },
+      ],
+    });
     const retainedSource = retainedCaptureDetailsSchema.parse(
       missingError.details,
     ).partial_observation;
@@ -601,7 +610,7 @@ captureTest.for(
       `application/${framing}`,
     );
     await writeFile(path, original);
-    const response = await cli.run({
+    const options = {
       arguments: [
         "inspect-web-network-capture",
         path,
@@ -612,7 +621,10 @@ captureTest.for(
         "auto",
         "--json",
       ],
-    });
+    };
+    const response = await (name === "valid"
+      ? cli.run(options)
+      : runFileCli(cli, options));
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     const evidence = parseEvidence(response.json);
     const report = webNetworkCaptureSchema.parse(evidence.normalized_result);

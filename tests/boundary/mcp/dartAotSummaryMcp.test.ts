@@ -1,4 +1,5 @@
 import { unlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { FlutterBuildAnalysisService } from "../../../src/application/flutter/FlutterBuildAnalysisService.js";
@@ -14,39 +15,13 @@ import { flutterResultSchemas } from "../../../src/domain/flutter/flutterBuildAn
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import {
   REFERENCE_HASH,
+  appendElfRanges,
   aotFixtureImage,
-  buildStrippedElf64Image,
-  snapshotSection,
+  strippedAotFixtureImage,
 } from "../../../src/flutter/FlutterBuild.fixture.js";
 import { createFlutterApk } from "../../fixtures/flutterApk.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-
-const strippedAotImage = (): Buffer => {
-  const symbols = buildStrippedElf64Image([
-    { name: "_kDartVmSnapshotData", value: 0x1000, size: 52 },
-    { name: "_kDartVmSnapshotInstructions", value: 0x1800, size: 16 },
-    { name: "_kDartIsolateSnapshotData", value: 0x2000, size: 0x600 },
-    { name: "_kDartIsolateSnapshotInstructions", value: 0x2600, size: 16 },
-  ]);
-  const vmSection = snapshotSection(REFERENCE_HASH);
-  const isolateSection = Buffer.concat([
-    snapshotSection(REFERENCE_HASH),
-    Buffer.from([0]),
-    Buffer.from("package:example/main.dart\0dart:core\0Example\0"),
-  ]);
-  return Buffer.concat([
-    symbols,
-    Buffer.alloc(0x1000 - symbols.length),
-    vmSection,
-    Buffer.alloc(0x1800 - 0x1000 - vmSection.length),
-    Buffer.alloc(16),
-    Buffer.alloc(0x2000 - 0x1800 - 16),
-    isolateSection,
-    Buffer.alloc(0x600 - isolateSection.length),
-    Buffer.alloc(16),
-  ]);
-};
 
 const dynamicSegmentOffset = (image: Buffer): number =>
   Number(image.readBigUInt64LE(64 + 56 + 8));
@@ -333,14 +308,24 @@ it("rejects unavailable retention, invalid delivery and cancellation before prod
   expect(execute).not.toHaveBeenCalled();
 });
 
-it.each([0n, 0xffffffffffffffffn])(
-  "accepts a complete PT_DYNAMIC DT_NULL entry with ignored value %s through MCP",
-  async (ignoredValue) => {
-    const image = strippedAotImage();
+it.each([
+  { ignoredValue: 0n, retainedSections: false },
+  { ignoredValue: 0xffffffffffffffffn, retainedSections: false },
+  { ignoredValue: 0n, retainedSections: true },
+])(
+  "accepts bounded PT_DYNAMIC through MCP (ignored value: $ignoredValue, retained sections: $retainedSections)",
+  async ({ ignoredValue, retainedSections }) => {
+    const image = strippedAotFixtureImage();
     const dynamic = dynamicSegmentOffset(image);
     image.writeBigUInt64LE(ignoredValue, dynamic + 5 * 16 + 8);
+    const selected = retainedSections
+      ? appendElfRanges(image, "section", [
+          { type: 1, offset: 0x1000, size: 52 },
+          { type: 1, offset: 0x2000, size: 0x600 },
+        ])
+      : image;
     const path = await createFlutterApk("dt-null.apk", [
-      { path: "lib/arm64-v8a/libapp.so", bytes: image },
+      { path: "lib/arm64-v8a/libapp.so", bytes: selected },
     ]);
     const provider = createFlutterBuildAnalysisProvider();
     onTestFinished(() => provider.close());
@@ -360,6 +345,12 @@ it.each([0n, 0xffffffffffffffffn])(
       coverage: "complete",
       snapshot_hash: REFERENCE_HASH,
       snapshot_hash_sources: 2,
+      sha256: createHash("sha256").update(selected).digest("hex"),
+    });
+    expect(report.libapp.sections).toHaveLength(4);
+    expect(report.string_pool).toMatchObject({
+      coverage: "complete",
+      package_uris: ["package:example/main.dart"],
     });
   },
 );
@@ -378,7 +369,7 @@ it.each([
 ])(
   "refuses unusable dynamic tables for $label",
   async ({ truncate, reason }) => {
-    const image = strippedAotImage();
+    const image = strippedAotFixtureImage();
     const dynamic = dynamicSegmentOffset(image);
     if (truncate) {
       image.writeBigUInt64LE(5n * 16n + 15n, 64 + 56 + 0x20);

@@ -152,6 +152,12 @@ export const rawBinarySelectionError = (input: {
 }): string | undefined => {
   const hasArchitecture = input.architecture !== undefined;
   const hasEntry = input.entryPoint !== undefined;
+  if (input.format === "gamecube-dol") {
+    // The DOL header fixes architecture; entry_point is checked against it at admission.
+    return hasArchitecture
+      ? "format=gamecube-dol takes its architecture from the DOL header; omit architecture"
+      : undefined;
+  }
   if (input.format === "raw-binary") {
     if (!hasArchitecture || !hasEntry)
       return "format=raw-binary requires architecture and entry_point";

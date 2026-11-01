@@ -1,3 +1,4 @@
+import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
 import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
 
@@ -5,23 +6,24 @@ import type { BinarySession } from "../application/binary/BinarySession.js";
 import type { Logger } from "pino";
 import { createServer } from "../server/createServer.js";
 import { StreamableHttpListenError } from "../server/http/streamableHttpListenError.js";
-import type { ToolResultDelivery } from "../server/toolResult.js";
+import type { ToolResultDelivery } from "../server/ToolResultDelivery.js";
 import type { McpServerHandle, RuntimeDependencies } from "./types.js";
 import type { OptionalProviderLoadResult } from "../application/OptionalObservationProviders.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
-  MCP_CONNECTION_LOST,
   MCP_CONNECTION_START_FAILED,
   MCP_HTTP_LISTEN_FAILED,
 } from "./messages.js";
+import { reportMcpTransportError } from "./reportMcpTransportError.js";
 
 interface ServerContext {
+  readonly analysisSettings?: AnalysisSettings;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly delivery: ToolResultDelivery;
   readonly logger: Logger;
   readonly serverLogger: Logger;
   readonly loadOptionalProviders: () => Promise<OptionalProviderLoadResult>;
+  readonly signal?: AbortSignal;
 }
 
 type ClosableOptionalProvider = {
@@ -40,7 +42,13 @@ export const startMcpTransport = async (
       readonly closeAndroid: () => Promise<void>;
       readonly closeOptionalProviders: () => Promise<void>;
     }
-  | { readonly ok: false }
+  | {
+      readonly ok: false;
+      readonly cancelled: boolean;
+      readonly handle: McpServerHandle;
+      readonly closeAndroid: () => Promise<void>;
+      readonly closeOptionalProviders: () => Promise<void>;
+    }
 > => {
   const { serverLogger } = serverContext;
   let optionalProviders: OptionalProviderLoadResult = {};
@@ -62,7 +70,7 @@ export const startMcpTransport = async (
       "Optional MCP adapter could not load; its peers remain available",
     );
   }
-  const androidProviders: AndroidAnalysisPort[] = [];
+  const androidProviders = new Set<AndroidAnalysisPort>();
   const servers = new OwnedMcpServers<ReturnType<typeof createServer>>();
   const closeServers = async (): Promise<void> => {
     const results = await servers.closeAll();
@@ -74,10 +82,17 @@ export const startMcpTransport = async (
   };
   const closeAndroid = async (): Promise<void> => {
     const results = await Promise.allSettled(
-      androidProviders.map((provider) => provider.close()),
+      [...androidProviders].map(async (provider) => {
+        await provider.close();
+        androidProviders.delete(provider);
+      }),
     );
-    for (const result of results)
-      if (result.status === "rejected") throw result.reason;
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(failures, "Android provider cleanup failed");
   };
   // Optional providers are shared by every server instance the SDK creates,
   // including a discarded discovery probe, so only process shutdown closes them.
@@ -108,17 +123,28 @@ export const startMcpTransport = async (
   };
   let handle: McpServerHandle;
   try {
+    if (serverContext.signal?.aborted) throw serverContext.signal.reason;
     handle = await dependencies.serve(
       () =>
         servers.create(() => {
           // The SDK can discard a discovery probe and construct a replacement server.
           const android = createAndroidAnalysisProvider(
             serverContext.environment,
+            undefined,
+            serverContext.analysisSettings?.read,
           );
-          androidProviders.push(android);
+          androidProviders.add(android);
+          const closeAndroidProvider = android.close.bind(android);
+          android.close = async () => {
+            await closeAndroidProvider();
+            androidProviders.delete(android);
+          };
           const server = (dependencies.createServer ?? createServer)(
             { kind: "session", session },
             {
+              ...(serverContext.analysisSettings === undefined
+                ? {}
+                : { analysisSettings: serverContext.analysisSettings }),
               logger: serverContext.logger,
               environment: serverContext.environment,
               delivery: serverContext.delivery,
@@ -130,46 +156,45 @@ export const startMcpTransport = async (
           return server;
         }),
       {
-        onerror: () => {
-          serverLogger.error(MCP_CONNECTION_LOST);
-          dependencies.writeStderr(`${MCP_CONNECTION_LOST}\n`);
-        },
+        onerror: (error) =>
+          reportMcpTransportError(
+            error,
+            serverLogger,
+            dependencies.writeStderr,
+          ),
         logger: serverLogger,
+        ...(serverContext.signal === undefined
+          ? {}
+          : { signal: serverContext.signal }),
       },
     );
   } catch (cause: unknown) {
-    const [
-      binaryCleanup,
-      androidCleanup,
-      serverCleanup,
-      optionalProviderCleanup,
-    ] = await Promise.allSettled([
-      session.close(),
-      closeAndroid(),
-      closeServers(),
-      closeOptionalProviders(),
-    ]);
-    const startFailure =
-      cause instanceof StreamableHttpListenError
-        ? MCP_HTTP_LISTEN_FAILED
-        : MCP_CONNECTION_START_FAILED;
-    serverLogger.error(
-      {
-        error: cause instanceof Error ? cause.message : String(cause),
-      },
-      startFailure,
-    );
-    dependencies.writeStderr(`${startFailure}\n`);
-    if (binaryCleanup.status === "fulfilled" && !binaryCleanup.value.ok) {
-      const cleanupError = projectAnalysisError(binaryCleanup.value.error);
+    const cancelled =
+      serverContext.signal?.aborted === true &&
+      cause === serverContext.signal.reason;
+    const [androidCleanup, serverCleanup, optionalProviderCleanup] =
+      await Promise.allSettled([
+        closeAndroid(),
+        closeServers(),
+        closeOptionalProviders(),
+      ]);
+    if (!cancelled) {
+      const startFailure =
+        cause instanceof StreamableHttpListenError
+          ? cause.classification.ok &&
+            cause.classification.value.kind === "host_allowlist"
+            ? cause.remediationAction
+            : MCP_HTTP_LISTEN_FAILED
+          : MCP_CONNECTION_START_FAILED;
       serverLogger.error(
-        { cleanup_error: cleanupError },
-        "Binary provider cleanup failed after MCP startup",
+        {
+          error: cause instanceof Error ? cause.message : String(cause),
+        },
+        startFailure,
       );
-      dependencies.writeStderr(`${cleanupError.message}\n`);
+      dependencies.writeStderr(`${startFailure}\n`);
     }
     for (const cleanup of [
-      binaryCleanup,
       androidCleanup,
       serverCleanup,
       optionalProviderCleanup,
@@ -186,7 +211,15 @@ export const startMcpTransport = async (
         dependencies.writeStderr(`Provider cleanup failed: ${reason}\n`);
       }
     }
-    return { ok: false };
+    // Return the same partial owners for retry; the caller owns the binary
+    // session independently of transport admission.
+    return {
+      ok: false,
+      cancelled,
+      handle: { close: closeServers },
+      closeAndroid,
+      closeOptionalProviders,
+    };
   }
   return {
     ok: true,

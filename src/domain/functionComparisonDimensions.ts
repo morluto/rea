@@ -1,16 +1,23 @@
+import { hasStableNativeSymbol } from "./native/nativeSymbol.js";
 import { canonicalJson } from "./comparisonSemantics.js";
-import { compareFunctionReferences } from "./functionReferenceComparison.js";
+import {
+  compareFunctionRelationships,
+  type FunctionRelationshipComparison,
+} from "./functionRelationshipComparison.js";
 import { diffLines } from "diff";
 
-import type { FunctionSnapshot } from "./functionDossierEvidence.js";
+import type {
+  FunctionSnapshot,
+  FunctionSnapshotCoordinateContext,
+} from "./functionDossierEvidence.js";
 import {
   commentProjection,
   identityProjection,
-  isAutoName,
   nameAndSwiftProjection,
   normalizeCfg,
   referencedStringProjection,
   sorted,
+  swiftLiteralCoverage,
   swiftLiteralSitesConflict,
 } from "./functionComparisonNormalization.js";
 import type {
@@ -26,13 +33,21 @@ import {
 type ComparisonContext = Pick<
   DimensionResultInput,
   "links" | "providersDiffer"
->;
+> & {
+  readonly sameEntry: boolean;
+  readonly coordinateContext: FunctionSnapshotCoordinateContext;
+};
 
 export const compareDimensions = (
   left: FunctionSnapshot,
   right: FunctionSnapshot,
   context: ComparisonContext,
 ): FunctionDimension[] => {
+  const relationships = compareFunctionRelationships(
+    left,
+    right,
+    context.coordinateContext,
+  );
   return [
     compareIdentity(left, right, context),
     compareText(
@@ -48,8 +63,8 @@ export const compareDimensions = (
       context,
     ),
     compareComments(left, right, context),
-    compareCalls(left, right, context),
-    compareReferences(left, right, context),
+    compareCalls(left, right, relationships.calls, context),
+    compareReferences(relationships.references, context),
     compareStringsAndNames(left, right, context),
     compareCfg(left, right, context),
   ].map((result) => {
@@ -97,7 +112,9 @@ const facetLimitations = (
     strings_names: [
       [
         "strings_names",
-        dossier.referenced_strings.length + dossier.referenced_names.length,
+        dossier.referenced_strings.length +
+          dossier.referenced_names.length +
+          (dossier.swift_string_literals?.length ?? 0),
       ],
     ],
     cfg: [["cfg", dossier.basic_blocks.length]],
@@ -511,21 +528,10 @@ const groupStringsByOffset = (
   return groups;
 };
 
-const swiftLiteralCoverage = (
-  snapshot: FunctionSnapshot,
-): "absent" | "complete" | "partial" =>
-  (snapshot.dossier.swift_string_literal_omissions ?? []).length > 0
-    ? "partial"
-    : snapshot.dossier.swift_string_literals === undefined
-      ? "absent"
-      : "complete";
-
 const compareReferences = (
-  left: FunctionSnapshot,
-  right: FunctionSnapshot,
+  compared: FunctionRelationshipComparison,
   context: ComparisonContext,
 ): FunctionDimension => {
-  const compared = compareFunctionReferences(left, right);
   if (compared.status === "unknown")
     return unresolvedDimension({
       dimension: "references",
@@ -548,8 +554,15 @@ const compareIdentity = (
   context: ComparisonContext,
 ): FunctionDimension => {
   if (
-    isAutoName(left.dossier.procedure.name) ||
-    isAutoName(right.dossier.procedure.name)
+    !context.sameEntry &&
+    (!hasStableNativeSymbol(
+      left.dossier.procedure.name,
+      left.dossier.procedure.symbol,
+    ) ||
+      !hasStableNativeSymbol(
+        right.dossier.procedure.name,
+        right.dossier.procedure.symbol,
+      ))
   )
     return unresolvedDimension({
       dimension: "identity",
@@ -557,7 +570,7 @@ const compareIdentity = (
       leftCount: null,
       rightCount: null,
       limitations: [
-        "Address-derived function names are not stable cross-version identity.",
+        "Empty names, generated symbols and unknown symbol origins do not establish cross-version identity.",
       ],
     });
   return compareValues(
@@ -571,10 +584,9 @@ const compareIdentity = (
 const compareCalls = (
   left: FunctionSnapshot,
   right: FunctionSnapshot,
+  comparison: FunctionRelationshipComparison,
   context: ComparisonContext,
 ): FunctionDimension => {
-  const leftValues = callProjection(left);
-  const rightValues = callProjection(right);
   const coverageLimitations = [
     ...left.callCoverageBlockers.map((reason) => `Left: ${reason}`),
     ...right.callCoverageBlockers.map((reason) => `Right: ${reason}`),
@@ -587,40 +599,26 @@ const compareCalls = (
     return unresolvedDimension({
       dimension: "calls",
       links: context.links,
-      leftCount: leftValues.length,
-      rightCount: rightValues.length,
+      leftCount: comparison.leftCount,
+      rightCount: comparison.rightCount,
       limitations: [...coverageLimitations, ...coverageDiagnostics],
     });
-  if ([...leftValues, ...rightValues].some(({ name }) => isAutoName(name)))
+  if (comparison.status === "unknown")
     return unresolvedDimension({
       dimension: "calls",
       links: context.links,
-      leftCount: leftValues.length,
-      rightCount: rightValues.length,
-      limitations: [
-        "Address-derived callee or caller names cannot be matched safely.",
-        ...coverageDiagnostics,
-      ],
+      leftCount: comparison.leftCount,
+      rightCount: comparison.rightCount,
+      limitations: [...comparison.limitations, ...coverageDiagnostics],
     });
-  return compareValues(
-    "calls",
-    sorted(leftValues),
-    sorted(rightValues),
-    context,
-    coverageDiagnostics,
-  );
+  return dimensionResult({
+    dimension: "calls",
+    ...comparison,
+    ...context,
+    textDelta: null,
+    limitations: [...comparison.limitations, ...coverageDiagnostics],
+  });
 };
-
-const callProjection = (snapshot: FunctionSnapshot) => [
-  ...snapshot.dossier.callers.map(({ name }) => ({
-    direction: "in" as const,
-    name,
-  })),
-  ...snapshot.dossier.callees.map(({ name }) => ({
-    direction: "out" as const,
-    name,
-  })),
-];
 
 const compareCfg = (
   left: FunctionSnapshot,

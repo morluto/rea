@@ -1,3 +1,4 @@
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { WorkerFrameSignal } from "../process/WorkerFrameSignal.js";
 import { createHash, randomUUID } from "node:crypto";
 import { open, rm } from "node:fs/promises";
@@ -16,7 +17,10 @@ import {
   artifactFileCancellationCause,
   withArtifactFileHandle,
 } from "../artifacts/ArtifactFileOperation.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  completedStableArtifact,
+  readStableArtifact,
+} from "../artifacts/readStableArtifact.js";
 import type { StableArtifactSnapshot } from "../artifacts/readStableArtifact.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -28,6 +32,7 @@ import {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonParts, bufferedJsonParts } from "../domain/jsonSerialization.js";
+import { safeParseUtf8Json } from "../domain/safeJson.js";
 import { javaScriptRuntime } from "../domain/runtimeVersion.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
@@ -35,7 +40,11 @@ import {
   webBundleScriptAnalysisSchema,
   type WebBundleScriptAnalysis,
 } from "../domain/webBundleScriptAnalysis.js";
-import { OwnedWorkerRuntime } from "../process/OwnedWorkerRuntime.js";
+import {
+  OwnedWorkerRuntime,
+  WorkerCleanupRegistry,
+  processWorkerCleanup,
+} from "../process/OwnedWorkerRuntime.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
@@ -107,21 +116,6 @@ type WebBundleActiveJob = {
   readonly resultBudgetBytes: number;
 };
 
-const stableSnapshotValue = (
-  value: unknown,
-): StableArtifactSnapshot | undefined => {
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    !("bytes" in value) ||
-    !Buffer.isBuffer(value.bytes) ||
-    !("sha256" in value) ||
-    typeof value.sha256 !== "string"
-  )
-    return undefined;
-  return { bytes: value.bytes, sha256: value.sha256 };
-};
-
 export interface WebBundleScriptAnalysisFailure {
   readonly error: AnalysisError;
   readonly completed: WebBundleScriptAnalysis | null;
@@ -130,7 +124,7 @@ export interface WebBundleScriptAnalysisFailure {
 
 /** Sequential inert-source analysis; only bounded completed facts cross into the host. */
 export class WebBundleAnalysisWorker {
-  static readonly #pendingCleanup = new Set<WebBundleAnalysisWorker>();
+  readonly #workerCleanup: WebBundleWorkerCleanup;
   readonly #runtime: OwnedWorkerRuntime;
   readonly #files = new ArtifactResourceScope();
   readonly #cleanup: AnalysisCleanupLease;
@@ -187,7 +181,9 @@ export class WebBundleAnalysisWorker {
   constructor(
     readonly heapMb = DEFAULT_WEB_BUNDLE_HEAP_MB,
     launcher: typeof spawnOwnedProviderProcess = spawnOwnedProviderProcess,
+    workerCleanup: WebBundleWorkerCleanup = processWebBundleCleanup,
   ) {
+    this.#workerCleanup = workerCleanup;
     if (
       !Number.isSafeInteger(heapMb) ||
       heapMb < MIN_WEB_BUNDLE_HEAP_MB ||
@@ -199,6 +195,7 @@ export class WebBundleAnalysisWorker {
     this.#runtime = new OwnedWorkerRuntime({
       rootPrefix: "rea-web-bundle-analysis-",
       launcher,
+      cleanupRegistry: workerCleanup.runtimes,
       retryCleanup: () => this.close(),
       onInputFailure: (cause) => {
         if (this.#activeDeadline?.interruption !== undefined) return;
@@ -269,8 +266,7 @@ export class WebBundleAnalysisWorker {
   }
 
   static async retryPending(): Promise<void> {
-    for (const worker of [...this.#pendingCleanup]) await worker.close();
-    await OwnedWorkerRuntime.retryPending();
+    await processWebBundleCleanup.retry();
   }
 
   async analyze(
@@ -291,7 +287,12 @@ export class WebBundleAnalysisWorker {
       error: AnalysisError,
     ): Result<WebBundleScriptAnalysis, WebBundleScriptAnalysisFailure> =>
       err({
-        error,
+        error: signal?.aborted
+          ? analysisErrorWithCancellation(
+              error,
+              new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+            )
+          : error,
         completed,
         ...(continuation === undefined ? {} : { continuation }),
       });
@@ -394,7 +395,7 @@ export class WebBundleAnalysisWorker {
       result = ok(facts);
     } catch (cause) {
       const completion = artifactFileCompletion(cause);
-      const snapshot = stableSnapshotValue(completion?.value);
+      const snapshot = completedStableArtifact(cause);
       if (snapshot !== undefined && resultDescriptor !== undefined) {
         try {
           completed = this.#validateCompletedResult(
@@ -474,13 +475,20 @@ export class WebBundleAnalysisWorker {
         await rm(join(root, `${id}.result`), { force: true });
       }
     } catch (cause) {
-      return failed(
-        this.#cleanupFailure(cause, result.ok ? undefined : result.error),
-      );
+      const previous = result.ok ? undefined : result.error;
+      const primary = signal?.aborted
+        ? analysisErrorWithCancellation(
+            previous,
+            new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+          )
+        : previous;
+      return failed(this.#cleanupFailure(cause, primary));
     }
-    if (signal?.aborted && result.ok)
+    if (signal?.aborted)
       return failed(
-        new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+        result.ok
+          ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
+          : result.error,
       );
     return result.ok ? result : failed(result.error);
   }
@@ -799,9 +807,9 @@ export class WebBundleAnalysisWorker {
         OPERATION,
         "Web analyzer result differs from its descriptor",
       );
-    const facts = webBundleScriptAnalysisSchema.parse(
-      JSON.parse(stored.bytes.toString("utf8")),
-    );
+    const parsed = safeParseUtf8Json(stored.bytes);
+    if (!parsed.ok) throw parsed.cause;
+    const facts = webBundleScriptAnalysisSchema.parse(parsed.value);
     if (facts.status !== "analyzed" || facts.script_key !== script.script_key)
       throw new AnalysisOutputError(
         OPERATION,
@@ -824,7 +832,7 @@ export class WebBundleAnalysisWorker {
   }
 
   #cleanupFailure(cause: unknown, primary?: AnalysisError): AnalysisError {
-    WebBundleAnalysisWorker.#pendingCleanup.add(this);
+    this.#workerCleanup.retain(this);
     this.#runtime.retainForCleanup();
     const cleanup = new ProviderCleanupError(
       PROVIDER,
@@ -857,11 +865,39 @@ export class WebBundleAnalysisWorker {
       await this.#files.close();
       await this.#runtime.close();
       this.#reset();
-      WebBundleAnalysisWorker.#pendingCleanup.delete(this);
+      this.#workerCleanup.release(this);
     } catch (cause) {
-      WebBundleAnalysisWorker.#pendingCleanup.add(this);
+      this.#workerCleanup.retain(this);
       this.#runtime.retainForCleanup();
       throw cause;
     }
   }
 }
+
+/** Web-analyzer workers and their runtimes retained by one host. */
+export class WebBundleWorkerCleanup {
+  readonly #workers = new Set<WebBundleAnalysisWorker>();
+  readonly runtimes: WorkerCleanupRegistry;
+
+  constructor(runtimes?: WorkerCleanupRegistry) {
+    this.runtimes = runtimes ?? new WorkerCleanupRegistry();
+  }
+
+  retain(worker: WebBundleAnalysisWorker): void {
+    this.#workers.add(worker);
+  }
+
+  release(worker: WebBundleAnalysisWorker): void {
+    this.#workers.delete(worker);
+  }
+
+  async retry(): Promise<void> {
+    for (const worker of [...this.#workers]) await worker.close();
+    await this.runtimes.retry();
+  }
+}
+
+/** Workers constructed without a host. Their runtimes stay on the process registry. */
+export const processWebBundleCleanup = new WebBundleWorkerCleanup(
+  processWorkerCleanup,
+);

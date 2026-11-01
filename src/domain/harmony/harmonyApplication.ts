@@ -9,8 +9,7 @@ import {
   hasCompleteInventoryCoverage,
   type ParsedInventorySet,
 } from "../artifactInventoryEvidence.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
 import {
@@ -21,6 +20,7 @@ import {
   projectionCoverage,
   projectionEvidenceIdSchema,
   unavailableComponentSchema,
+  type ProjectedInventoryEntry,
 } from "../mobileApplicationGraphProjection.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { err, ok, type Result } from "../result.js";
@@ -44,7 +44,9 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
     signing: z.array(projectedComponentSchema),
   }),
   unavailable_components: z.array(unavailableComponentSchema),
-  app_pack_children: z.array(projectedComponentSchema),
+  app_pack_children: z.array(
+    z.union([projectedComponentSchema, unavailableComponentSchema]),
+  ),
   runtime_families: z.array(
     z.enum(["ark", "native", "javascript", "react-native", "flutter", "unity"]),
   ),
@@ -79,10 +81,22 @@ export const projectHarmonyInventory = (
   const { entries, limitations: unresolved } =
     projectedInventoryEntries(inventory);
   const all = projectedFileComponents(entries);
-  const unavailable = entries.flatMap(({ unavailable }) =>
+  const fileEntries = entries.filter(
+    ({ kind }) => kind === "file" || kind === "slice",
+  );
+  const unavailable = fileEntries.flatMap(({ unavailable }) =>
     unavailable === undefined ? [] : [unavailable],
   );
-  const classified = classify(all);
+  const children: HarmonyApplicationProjectionResult["app_pack_children"] = [];
+  if (rootFormat === "app-pack") {
+    for (const entry of fileEntries) {
+      if (!/\.(?:hap|hsp)$/iu.test(entry.path)) continue;
+      const child = entry.component ?? entry.unavailable;
+      if (child !== undefined) children.push(child);
+    }
+  }
+  const manifests = classifyManifests(fileEntries);
+  const classified = classify(all, manifests.components);
   const bridgeProjection = bridgeCandidates(
     classified.bytecode,
     classified.native_libraries,
@@ -95,7 +109,7 @@ export const projectHarmonyInventory = (
       : []),
     ...(unavailable.length > 0
       ? [
-          "Some inventoried occurrences have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component and runtime absence is unknown.",
+          "Some inventoried files or slices have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component and runtime absence is unknown.",
         ]
       : []),
     "Manifest, module, resource, and signing semantics require a dedicated HarmonyOS provider; this projection reports exact inventory paths and hashes only.",
@@ -122,13 +136,10 @@ export const projectHarmonyInventory = (
     source_evidence_ids: evidence
       .map(({ evidence_id: id }) => id)
       .sort(compareUnicodeCodePoints),
-    packaging_model: packagingModel(classified.manifests),
+    packaging_model: manifests.packagingModel,
     components: classified,
     unavailable_components: unavailable,
-    app_pack_children:
-      rootFormat === "app-pack"
-        ? all.filter(({ path }) => /\.(?:hap|hsp)$/iu.test(path))
-        : [],
+    app_pack_children: children,
     runtime_families: runtimeFamilies(all, classified),
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
@@ -170,24 +181,29 @@ const harmonyRootFormat = (
   return ok(root);
 };
 
-const packagingModel = (
-  manifests: readonly Component[],
-): HarmonyApplicationProjectionResult["packaging_model"] => {
-  const stage = manifests.some(({ path }) =>
-    /(?:^|\/)module\.json$/iu.test(path),
-  );
-  const fa = manifests.some(({ path }) => /(?:^|\/)config\.json$/iu.test(path));
-  if (stage) return "stage";
-  if (fa) return "fa";
-  return "unknown";
+/**
+ * ZIP manifest names are case-sensitive. Classify each file path once for
+ * both consumers; its model hint survives an unavailable content identity.
+ */
+const classifyManifests = (entries: readonly ProjectedInventoryEntry[]) => {
+  const components: Component[] = [];
+  let packagingModel: HarmonyApplicationProjectionResult["packaging_model"] =
+    "unknown";
+  for (const { path, component } of entries) {
+    const name = /(?:^|\/)(module\.json|config\.json|pack\.info)$/u.exec(
+      path,
+    )?.[1];
+    if (name === undefined || isResourcePath(path)) continue;
+    if (component !== undefined) components.push(component);
+    if (name === "module.json") packagingModel = "stage";
+    else if (name === "config.json" && packagingModel === "unknown")
+      packagingModel = "fa";
+  }
+  return { components, packagingModel };
 };
 
-const classify = (all: readonly Component[]) => ({
-  manifests: all.filter(
-    ({ path }) =>
-      /(?:^|\/)(?:module\.json|config\.json|pack\.info)$/iu.test(path) &&
-      !isResourcePath(path),
-  ),
+const classify = (all: readonly Component[], manifests: Component[]) => ({
+  manifests,
   bytecode: all.filter(({ path }) => /\.(?:abc|pa)$/iu.test(path)),
   resources: all.filter(({ path }) => isResourcePath(path)),
   native_libraries: all.filter(
@@ -199,7 +215,9 @@ const classify = (all: readonly Component[]) => ({
       format === "javascript-bundle" || /\.(?:m?js|cjs)$/iu.test(path),
   ),
   signing: all.filter(({ path }) =>
-    /^META-INF\/[^/]+\.(?:p7b|sig|cer|crt|pem|provision)$/iu.test(path),
+    /^META-INF\/[^/]+\.(?:p7b|sig|cer|crt|pem|provision|rsa|dsa|ec)$/iu.test(
+      path,
+    ),
   ),
 });
 

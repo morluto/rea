@@ -33,11 +33,23 @@ const binaryLayoutObjectSchema = z.strictObject({
     bytes: index,
   }),
   format: z.literal("elf"),
-  architecture: z.strictObject({
-    machine: z.literal("EM_X86_64"),
-    bits: z.literal(64),
-    byte_order: z.literal("little"),
-  }),
+  architecture: z.union([
+    z.strictObject({
+      machine: z.literal("EM_X86_64"),
+      bits: z.literal(64),
+      byte_order: z.literal("little"),
+    }),
+    z.strictObject({
+      machine: z.enum(["EM_386", "EM_ARM"]),
+      bits: z.literal(32),
+      byte_order: z.literal("little"),
+    }),
+    z.strictObject({
+      machine: z.literal("EM_MIPS"),
+      bits: z.literal(32),
+      byte_order: z.enum(["little", "big"]),
+    }),
+  ]),
   image_type: z.enum(["ET_EXEC", "ET_DYN", "ET_REL"]),
   entry_point: z.strictObject({
     reported_value: unsignedHex,
@@ -384,7 +396,9 @@ const validateRelocationReferences = (
       (table?.type === "SHT_SYMTAB" || table?.type === "SHT_DYNSYM");
     const positiveReferenceExists =
       tableExists &&
-      BigInt(table.entry_size) >= 24n &&
+      // Elf32_Sym is 16 bytes; Elf64_Sym is 24.
+      BigInt(table.entry_size) >=
+        (value.architecture.bits === 32 ? 16n : 24n) &&
       BigInt(relocation.symbol_index) <
         BigInt(table.size) / BigInt(table.entry_size) &&
       symbols.has(

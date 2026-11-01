@@ -77,7 +77,10 @@ it.skipIf(process.platform === "win32")(
           path: "container",
           kind: "directory",
           tree_state: "unreadable",
-          limitations: [expect.stringContaining(readFailure.message)],
+          limitations: [
+            expect.stringContaining("This directory could not be read"),
+          ],
+          local_diagnostics: [expect.stringContaining(readFailure.message)],
         }),
         expect.objectContaining({
           path: "container/hidden",

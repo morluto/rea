@@ -1,3 +1,4 @@
+import { KunaDocumentError } from "./KunaDocumentError.js";
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 import { accessSync, constants, statSync } from "node:fs";
 
@@ -39,10 +40,8 @@ import {
   inspectKunaInstallation,
 } from "./KunaInstallation.js";
 import { KunaProjectCache } from "./KunaProjectCache.js";
-import {
-  KUNA_PROVIDER_IDENTITY,
-  kunaCapabilities,
-} from "./KunaProviderCapabilities.js";
+import { kunaCapabilities } from "./KunaProviderCapabilities.js";
+import { KUNA_PROVIDER_IDENTITY } from "./KunaProviderMetadata.js";
 import { KUNA_COMMAND_REMEDIATION, KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import { KunaRunSlots } from "./KunaRunSlots.js";
 import { KunaSessionClient } from "./KunaSessionClient.js";
@@ -141,7 +140,8 @@ export class KunaProvider implements AnalysisProviderCandidate {
     const { command } = configuration.value;
     try {
       accessSync(command, constants.X_OK);
-      if (!statSync(command).isFile()) throw new Error("not a regular file");
+      if (!statSync(command).isFile())
+        throw new KunaDocumentError("command_not_file");
     } catch (cause: unknown) {
       return {
         status: "unavailable",
@@ -268,6 +268,8 @@ export class KunaProvider implements AnalysisProviderCandidate {
         {
           kuna_version: value.version,
           kuna_sha256: value.sha256,
+          kuna_command: value.configuration.command,
+          kuna_executable: value.executable,
           verified_release: value.verified,
           jobs: value.configuration.jobs,
           export: "decompile-project",

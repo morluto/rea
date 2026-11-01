@@ -1,8 +1,12 @@
 import { z } from "zod";
 import { bundleResourceBoundResultSchema } from "./bundleResourceRoot.js";
 
-import { jsonValueSchema } from "../jsonValue.js";
+import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { AnalysisOutputError } from "../analysisErrorCore.js";
+import {
+  artifactInventoryCoverageSchema,
+  type ArtifactInventoryCoverage,
+} from "../artifactGraph.js";
 
 const RESOURCE_KEY_FIELDS = new Set([
   "image",
@@ -14,6 +18,7 @@ const RESOURCE_KEY_FIELDS = new Set([
   "asset_name",
   "UIImageName",
   "NSImageName",
+  "NSResourceName",
 ]);
 
 /** Recognized direct scalar resource fields; nested dictionaries are not inferred. */
@@ -46,7 +51,7 @@ const recordSchema = z.strictObject({
   kind: z.enum(["catalog", "rendition"]),
   asset_name: z.string().nullable(),
   rendition_name: z.string().nullable(),
-  metadata: z.record(z.string(), jsonValueSchema),
+  metadata: jsonObjectSchema,
 });
 
 const resourceKeyMatchSchema = z.strictObject({
@@ -66,11 +71,26 @@ const resourceKeyMatchSchema = z.strictObject({
   ),
 });
 
+const analysisCoverageSchema = z.strictObject({
+  status: z.enum(["complete", "partial", "unknown"]),
+  reason: z.string().nullable(),
+});
+export type AppleAssetAnalysisCoverage = z.infer<typeof analysisCoverageSchema>;
+
 /** Normalized result returned by asset catalog inspection. */
 export const appleAssetCatalogResultSchema = bundleResourceBoundResultSchema(
   z.string().regex(/^[a-f0-9]{64}$/u),
   {
     catalogs: z.array(catalogSchema),
+    inventory_coverage: artifactInventoryCoverageSchema,
+    catalog_coverage: analysisCoverageSchema.default({
+      status: "unknown",
+      reason: "catalog_coverage_not_reported",
+    }),
+    resource_key_coverage: analysisCoverageSchema.default({
+      status: "unknown",
+      reason: "resource_key_coverage_not_reported",
+    }),
     total_records: z.int().nonnegative(),
     offset: z.int().nonnegative(),
     limit: z.int().positive(),
@@ -96,7 +116,7 @@ export const parseAppleAssetCatalogRecords = (
       "assetutil output must be a JSON array",
     );
   return value.map((record, index) => {
-    const parsed = z.record(z.string(), jsonValueSchema).safeParse(record);
+    const parsed = jsonObjectSchema.safeParse(record);
     if (!parsed.success)
       throw new AnalysisOutputError(
         "inspect_asset_catalog",
@@ -109,6 +129,9 @@ export const parseAppleAssetCatalogRecords = (
 
 /** Project catalog records and apply stable global pagination. */
 export const projectAppleAssetCatalogPage = (input: {
+  readonly inventoryCoverage?: ArtifactInventoryCoverage;
+  readonly catalogCoverage?: AppleAssetAnalysisCoverage;
+  readonly resourceKeyCoverage?: AppleAssetAnalysisCoverage;
   readonly targetSha256: string | null;
   readonly resourceRoot?: import("./bundleResourceRoot.js").BundleResourceRoot;
   readonly catalogs: readonly {
@@ -178,6 +201,18 @@ export const projectAppleAssetCatalogPage = (input: {
     };
   });
   return appleAssetCatalogResultSchema.parse({
+    inventory_coverage: input.inventoryCoverage ?? {
+      scope: "container-entries",
+      status: "unknown",
+    },
+    catalog_coverage: input.catalogCoverage ?? {
+      status: "unknown",
+      reason: "catalog_coverage_not_reported",
+    },
+    resource_key_coverage: input.resourceKeyCoverage ?? {
+      status: "unknown",
+      reason: "resource_key_coverage_not_reported",
+    },
     target_sha256: input.targetSha256,
     ...(input.resourceRoot === undefined
       ? {}

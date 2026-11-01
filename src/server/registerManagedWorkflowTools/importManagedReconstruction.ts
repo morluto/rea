@@ -7,12 +7,10 @@ import {
 } from "../../application/managed/ManagedReconstructionService.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { managedWorkflowContract } from "./contract.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import type { ManagedWorkflowToolRegistration } from "./types.js";
 
-const reconstructionContract = managedWorkflowContract(
-  "import_managed_reconstruction",
-);
+const reconstructionContract = toolContract("import_managed_reconstruction");
 
 /** Register the managed reconstruction import workflow tool. */
 export const registerImportManagedReconstruction = (
@@ -29,7 +27,11 @@ export const registerImportManagedReconstruction = (
         reconstructionContract.name,
         context.mcpReq.signal,
         async () => {
-          const resolved = resolveManagedReconstructionEvidenceInput(input);
+          const resolved = resolveManagedReconstructionEvidenceInput(
+            input,
+            options.session.evidenceForAnalysis.bind(options.session),
+            { signal: context.mcpReq.signal },
+          );
           if (!resolved.ok)
             return server.delivery.toCallToolResult(
               resolved,

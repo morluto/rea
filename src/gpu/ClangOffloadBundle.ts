@@ -13,14 +13,21 @@ import {
   type GpuSource,
 } from "./GpuSource.js";
 import { gpuObject } from "./GpuObject.js";
-import { isAmdGpuBundleId, readAmdGpuBundleTarget } from "./AmdGpuTarget.js";
+import {
+  isAmdGpuBundleId,
+  readAmdGpuBundleTarget,
+  type AmdGpuTargetIdentity,
+} from "./AmdGpuTarget.js";
 export const CLANG_BUNDLE_MAGIC = Buffer.from("__CLANG_OFFLOAD_BUNDLE__");
 export const CCOB_MAGIC = Buffer.from("CCOB");
 export const readClangBundleDirectory = async (
   source: GpuSource,
   base: number,
   signal?: AbortSignal,
-): Promise<{ objects: GpuObject[]; end: number }> => {
+): Promise<{
+  declarations: { object: GpuObject; amdTarget: AmdGpuTargetIdentity | null }[];
+  end: number;
+}> => {
   const header = await source.read(base, 32),
     count = gpuCount(header.readBigUInt64LE(24));
   if (!header.subarray(0, 24).equals(CLANG_BUNDLE_MAGIC))
@@ -31,7 +38,13 @@ export const readClangBundleDirectory = async (
       65536,
       "HIP bundle entry count exceeds the inventory budget",
     );
-  const objects: GpuObject[] = [];
+  // One wrapper/identity per admitted entry (at most 65536). Processor text is
+  // no longer than its admitted name; cumulative name bytes remain
+  // within the 16 MiB directory bound before identities are allocated.
+  const declarations: {
+    object: GpuObject;
+    amdTarget: AmdGpuTargetIdentity | null;
+  }[] = [];
   let position = base + 32;
   for (let index = 0; index < count; index++) {
     if (index % 256 === 0) {
@@ -71,18 +84,19 @@ export const readClangBundleDirectory = async (
       metadata: { offset: position, size: 24 + nameSize },
     });
     row.bundle_id = name;
-    row.target = readAmdGpuBundleTarget(name);
-    objects.push(row);
+    const amdTarget = readAmdGpuBundleTarget(name);
+    row.target = amdTarget?.key ?? null;
+    declarations.push({ object: row, amdTarget });
     position += 24 + nameSize;
   }
   let end = position;
-  for (const row of objects) {
+  for (const { object: row } of declarations) {
     if (row.encoded_size === 0) continue;
     if (row.location.offset < position)
       rejectGpu("HIP entry overlaps its bundle directory");
     end = Math.max(end, row.location.offset + row.encoded_size);
   }
-  return { objects, end };
+  return { declarations, end };
 };
 export const readCcobHeader = (bytes: Buffer, remaining: number) => {
   if (bytes.length < 20) rejectGpu("CCOB header is truncated");
@@ -118,8 +132,8 @@ export const readCcobHeader = (bytes: Buffer, remaining: number) => {
   return { version, method, width, total, decoded, hash };
 };
 
-/** Legacy v1 has no size field; LLVM finds the next CCOB magic as its boundary. */
-export const readLegacyCcobTotal = async (
+/** After failed/unsupported v1 decoding only: a marker is an uncertain recovery candidate. */
+export const findLegacyCcobRecoveryTotal = async (
   source: GpuSource,
   base: number,
 ): Promise<number> => {

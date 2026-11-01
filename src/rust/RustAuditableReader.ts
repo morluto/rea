@@ -11,9 +11,9 @@ import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 
 /** Selected-file admission limit shared with the stable artifact reader. */
 export const RUST_BINARY_INPUT_BYTES = 256 * 1024 * 1024;
-/** Compressed `.dep-v0` section limit. */
+/** Compressed zlib stream limit. */
 export const RUST_SECTION_BYTES = 1024 * 1024;
-/** Inflated JSON may grow by at most this multiple of the section size. */
+/** Inflated JSON may grow by at most this multiple of the compressed stream. */
 export const RUST_INFLATE_RATIO = 64;
 /** Absolute inflated JSON limit, applied together with the ratio. */
 export const RUST_UNCOMPRESSED_BYTES = 8 * 1024 * 1024;
@@ -90,7 +90,10 @@ export const readAuditableSection = (
       "malformed",
       "Dependency section is empty",
     );
-  if (bytes.length > RUST_SECTION_BYTES)
+  if (
+    bytes.length > RUST_SECTION_BYTES &&
+    options.peFileAlignment === undefined
+  )
     throw new RustAuditableResourceFailure(
       {
         resource: "memory",
@@ -105,7 +108,7 @@ export const readAuditableSection = (
   return {
     section_name: sectionName,
     file_offset: fileOffset,
-    section_bytes: inflated.compressedBytes,
+    section_bytes: bytes.length,
     compressed_bytes: inflated.compressedBytes,
     uncompressed_bytes: inflated.bytes.length,
     format_version: document.format ?? null,
@@ -124,40 +127,64 @@ export const readAuditableSection = (
 const inflateSection = (
   bytes: Buffer,
   peFileAlignment: number | undefined,
-): { readonly bytes: Buffer; readonly compressedBytes: number } => {
-  const maximum = Math.min(
+): {
+  readonly bytes: Buffer;
+  readonly compressedBytes: number;
+} => {
+  // Keep inflate allocation bounded before consumed input is known. PE storage
+  // can include zero alignment bytes, so the ratio is checked after decoding.
+  const allocationMaximum = Math.min(
     RUST_UNCOMPRESSED_BYTES,
     bytes.length * RUST_INFLATE_RATIO,
   );
+  let result: ReturnType<typeof nodeCodecResult>;
   try {
-    const result = nodeCodecResult(
+    result = nodeCodecResult(
       inflateSync(bytes, {
         info: true,
-        maxOutputLength: maximum,
+        maxOutputLength: allocationMaximum,
       }),
     );
-    const compressedBytes = result.consumedBytes;
-    if (peFileAlignment !== undefined && peFileAlignment > 0) {
-      const padding = bytes.subarray(compressedBytes);
-      const alignedRawSize =
-        Math.ceil(compressedBytes / peFileAlignment) * peFileAlignment;
-      if (bytes.length !== alignedRawSize || padding.some((byte) => byte !== 0))
-        throw new RustAuditableFormatFailure(
-          "malformed",
-          "Dependency section has bytes after the zlib stream",
-        );
-      return { bytes: result.buffer, compressedBytes };
-    }
-    if (compressedBytes !== bytes.length)
+  } catch (cause) {
+    throw inflateFailure(cause, allocationMaximum);
+  }
+  const compressedBytes = result.consumedBytes;
+  if (compressedBytes > RUST_SECTION_BYTES)
+    throw new RustAuditableResourceFailure(
+      {
+        resource: "memory",
+        reported_limits: { maximum_bytes: RUST_SECTION_BYTES },
+      },
+      "Dependency section exceeds the 1 MiB compressed limit",
+    );
+  if (peFileAlignment !== undefined && peFileAlignment > 0) {
+    const padding = bytes.subarray(compressedBytes);
+    const alignedRawSize =
+      Math.ceil(compressedBytes / peFileAlignment) * peFileAlignment;
+    if (bytes.length !== alignedRawSize || padding.some((byte) => byte !== 0))
       throw new RustAuditableFormatFailure(
         "malformed",
         "Dependency section has bytes after the zlib stream",
       );
-    return { bytes: result.buffer, compressedBytes };
-  } catch (cause) {
-    if (cause instanceof RustAuditableFormatFailure) throw cause;
-    throw inflateFailure(cause, maximum);
+  } else if (compressedBytes !== bytes.length) {
+    throw new RustAuditableFormatFailure(
+      "malformed",
+      "Dependency section has bytes after the zlib stream",
+    );
   }
+  const compressedMaximum = Math.min(
+    RUST_UNCOMPRESSED_BYTES,
+    compressedBytes * RUST_INFLATE_RATIO,
+  );
+  if (result.buffer.length > compressedMaximum)
+    throw new RustAuditableResourceFailure(
+      {
+        resource: "memory",
+        reported_limits: { maximum_bytes: compressedMaximum },
+      },
+      "Inflated dependency JSON exceeds the size limit",
+    );
+  return { bytes: result.buffer, compressedBytes };
 };
 
 const inflateFailure = (cause: unknown, maximum: number): Error => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  machoImageSlices,
   traceDylibLoading,
   type DylibTreeEntry,
   type DylibTreeView,
@@ -59,6 +60,74 @@ const parsed = (...slices: MachoSlice[]): MachoImageFacts => ({
 
 const executable = (overrides: Partial<MachoSlice> = {}): MachoImageFacts =>
   parsed(slice({ file_type: "execute", ...overrides }));
+
+it("uses hidden ARM64 slices as selectable images while preserving their marker", async () => {
+  const declared = slice({
+    architecture: "arm",
+    cpu_type: 12,
+    cpu_subtype: 9,
+    file_type: "execute",
+  });
+  const hidden = slice({
+    architecture: "arm64",
+    hidden: true,
+    file_type: "execute",
+    slice_offset: 8192,
+  });
+  const facts: MachoImageFacts = {
+    status: "parsed",
+    slices: [declared],
+    hiddenSlices: [hidden],
+  };
+  const trace = await traceDylibLoading(memoryView({ [MAIN]: facts }), {
+    roots: [MAIN],
+    architecture: "arm64",
+  });
+  expect(machoImageSlices(facts)).toEqual([declared, hidden]);
+  expect(trace.roots).toEqual([{ image: MAIN, architecture: "arm64" }]);
+  expect(trace.coverage.roots_without_architecture).toEqual([]);
+  expect(trace.images[0]?.slices).toContainEqual(
+    expect.objectContaining({ architecture: "arm64", hidden: true }),
+  );
+});
+
+it.each([
+  { architecture: "arm64e", expected: ["arm64e", "arm64e.x1"] },
+  { architecture: "arm64", expected: ["arm64", "arm64v8"] },
+  { architecture: "x86_64", expected: [] },
+  {
+    architecture: undefined,
+    expected: ["arm64", "arm64v8", "arm64e", "arm64e.x1"],
+  },
+] as const)(
+  "preserves exact root labels with family filter $architecture",
+  async ({ architecture, expected }) => {
+    const facts = parsed(
+      ...(
+        [
+          [0, "arm64"],
+          [1, "arm64v8"],
+          [2, "arm64e"],
+          [12, "arm64e.x1"],
+        ] as const
+      ).map(([subtype, name]) =>
+        slice({
+          architecture: name,
+          cpu_subtype: subtype,
+          file_type: "execute",
+        }),
+      ),
+    );
+    const trace = await traceDylibLoading(memoryView({ [MAIN]: facts }), {
+      roots: [MAIN],
+      ...(architecture === undefined ? {} : { architecture }),
+    });
+    expect(trace.roots.map((root) => root.architecture)).toEqual(expected);
+    expect(trace.coverage.roots_without_architecture).toEqual(
+      expected.length === 0 ? [MAIN] : [],
+    );
+  },
+);
 
 /** In-memory tree: files are images (or "data"), symlinks map to targets. */
 const memoryView = (
@@ -865,6 +934,71 @@ describe("loader-relative dylib resolution", () => {
     });
   });
 });
+
+it.each([
+  {
+    rootName: "arm64v8",
+    rootSubtype: 1,
+    dylibName: "arm64",
+    dylibSubtype: 0,
+    outcome: "resolved",
+  },
+  {
+    rootName: "arm64",
+    rootSubtype: 0,
+    dylibName: "arm64v8",
+    dylibSubtype: 1,
+    outcome: "resolved",
+  },
+  {
+    rootName: "arm64e.x1",
+    rootSubtype: 12,
+    dylibName: "arm64e",
+    dylibSubtype: 2,
+    outcome: "architecture-missing",
+  },
+  {
+    rootName: "arm64e",
+    rootSubtype: 2,
+    dylibName: "arm64e.x1",
+    dylibSubtype: 12,
+    outcome: "architecture-missing",
+  },
+  {
+    rootName: "arm64e.x1",
+    rootSubtype: 12,
+    dylibName: "arm64e.x1",
+    dylibSubtype: 12,
+    outcome: "resolved",
+  },
+] as const)(
+  "preserves compatibility from $rootName to $dylibName",
+  async ({ rootName, rootSubtype, dylibName, dylibSubtype, outcome }) => {
+    const library = "Contents/MacOS/libfamily.dylib";
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          architecture: rootName,
+          cpu_subtype: rootSubtype,
+          dependencies: [dependency("@executable_path/libfamily.dylib")],
+        }),
+        [library]: parsed(
+          slice({ architecture: dylibName, cpu_subtype: dylibSubtype }),
+        ),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(trace.edges).toHaveLength(1);
+    expect(trace.edges[0]).toMatchObject({
+      architecture: rootName,
+      candidates: [expect.objectContaining({ outcome })],
+      resolution:
+        outcome === "resolved"
+          ? { status: "resolved", image: library }
+          : { status: "unresolved", image: null },
+    });
+  },
+);
 
 describe("dyld slice compatibility and coverage", () => {
   it("keeps an unmodeled ARM32 subtype uncertain when matching slices exist", async () => {

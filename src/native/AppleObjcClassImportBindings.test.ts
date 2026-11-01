@@ -19,6 +19,7 @@ const createInput = (
     legacyRebaseStreams: 0,
     legacyBindStreams: 0,
     unreadRebaseBytes: 0,
+    hasUnresolvedLegacyBytes: () => false,
     decode: (address) =>
       address === 0x1000n
         ? {

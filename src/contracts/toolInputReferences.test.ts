@@ -419,7 +419,7 @@ describe("root input presentation", () => {
   });
 });
 
-describe("advertised Boolean literals", () => {
+const registerBooleanLiteralCompatibilityTests = (): void => {
   it("keeps canonical boolean-literal inputs accepted after advertisement", () => {
     const canonical = {
       type: "object",
@@ -487,6 +487,100 @@ describe("advertised Boolean literals", () => {
       choice: {},
     });
   });
+};
+
+describe("advertised client-compatible literals", () => {
+  it.each([{ const: "" }, { enum: ["", "named"] }])(
+    "widens unsupported empty-string literals without changing canonical validation: %j",
+    (literal) => {
+      const canonical = {
+        type: "object",
+        properties: {
+          value: {
+            type: "string",
+            ...literal,
+            default: "",
+            description: "The literal value.",
+          },
+        },
+      };
+      const advertised = presentInputJsonSchema(canonical, () => undefined);
+      expect(
+        new Ajv2020({ strict: false }).compile(canonical)({ value: "" }),
+      ).toBe(true);
+      expect(
+        new Ajv2020({ strict: false }).compile(advertised)({ value: "" }),
+      ).toBe(true);
+      expect(advertised).toHaveProperty(["properties", "value"], {
+        type: "string",
+        default: "",
+        description: "The literal value.",
+      });
+    },
+  );
+
+  it("widens overlapping empty-string oneOf branches while preserving nonempty alternatives", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        value: {
+          oneOf: [
+            { type: "string", const: "" },
+            { type: "string", minLength: 1 },
+          ],
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const original = new Ajv2020({ strict: false }).compile(canonical);
+    const presented = new Ajv2020({ strict: false }).compile(advertised);
+    for (const value of ["", "named"]) {
+      expect(original({ value })).toBe(true);
+      expect(presented({ value })).toBe(true);
+    }
+    expect(advertised).toHaveProperty(["properties", "value", "anyOf"]);
+    expect(advertised).not.toHaveProperty(["properties", "value", "oneOf"]);
+  });
+
+  it("keeps only defaults shared by every root input group", () => {
+    const schema = z.union([
+      z.strictObject({
+        left: z.string(),
+        shared: z.boolean().default(false),
+        only_left: z.string().default("left"),
+        selection: z.string().default("left"),
+      }),
+      z.strictObject({
+        right: z.string(),
+        shared: z.boolean().default(false),
+        selection: z.string().default("right"),
+      }),
+    ]);
+    const advertised = presentInputJsonSchema(
+      z.toJSONSchema(schema, { io: "input" }),
+      () => undefined,
+    );
+    expect(advertised).toHaveProperty(
+      ["properties", "shared", "default"],
+      false,
+    );
+    expect(advertised).not.toHaveProperty([
+      "properties",
+      "only_left",
+      "default",
+    ]);
+    expect(advertised).toHaveProperty(["properties", "selection"], {
+      type: "string",
+    });
+    const input = { right: "selected" };
+    const validate = new Ajv2020({ strict: false, useDefaults: true }).compile(
+      advertised,
+    );
+    expect(validate(input)).toBe(true);
+    expect(schema.safeParse(input).success).toBe(true);
+    expect(input).not.toHaveProperty("only_left");
+  });
+  registerBooleanLiteralCompatibilityTests();
 });
 
 describe("advertised Boolean schema composition", () => {

@@ -8,6 +8,7 @@ interface ManagedPeFixtureOptions {
   readonly cliFlags?: number;
   readonly corruptMetadataSignature?: boolean;
   readonly customAttributeTypeRaw?: number;
+  readonly customAttributeValue?: Buffer;
   readonly extendsRaw?: number;
   readonly exportedTypes?: readonly {
     readonly namespace: string;
@@ -100,6 +101,18 @@ class StringHeap {
   }
 }
 
+const compressedUnsigned = (value: number): Buffer =>
+  value <= 0x7f
+    ? Buffer.from([value])
+    : value <= 0x3fff
+      ? Buffer.from([0x80 | (value >> 8), value & 0xff])
+      : Buffer.from([
+          0xc0 | (value >> 24),
+          (value >> 16) & 0xff,
+          (value >> 8) & 0xff,
+          value & 0xff,
+        ]);
+
 class BlobHeap {
   readonly #chunks: Buffer[] = [Buffer.from([0])];
   #size = 1;
@@ -111,17 +124,7 @@ class BlobHeap {
   add(value: Buffer): number {
     if (value.length === 0) return 0;
     const index = this.#size;
-    const prefix =
-      value.length <= 0x7f
-        ? Buffer.from([value.length])
-        : value.length <= 0x3fff
-          ? Buffer.from([0x80 | (value.length >> 8), value.length & 0xff])
-          : Buffer.from([
-              0xc0 | (value.length >> 24),
-              (value.length >> 16) & 0xff,
-              (value.length >> 8) & 0xff,
-              value.length & 0xff,
-            ]);
+    const prefix = compressedUnsigned(value.length);
     this.#chunks.push(prefix, value);
     this.#size += value.length + prefix.length;
     return index;
@@ -428,9 +431,12 @@ const exportedTypeRow = (
 
 const fixedStringAttributeBlob = (value: string): Buffer => {
   const bytes = Buffer.from(textEncoder.encode(value));
-  if (bytes.length > 0x7f)
-    throw new RangeError("Managed PE fixture target framework is too long");
-  return Buffer.concat([Buffer.from([1, 0, bytes.length]), bytes, u16(0)]);
+  return Buffer.concat([
+    Buffer.from([1, 0]),
+    compressedUnsigned(bytes.length),
+    bytes,
+    u16(0),
+  ]);
 };
 
 /**
@@ -1061,11 +1067,12 @@ const buildManagedFixtureMetadata = (
   );
   const referenceBlobs = referenceBlobIndexes(blobs, options);
   const attributeBlob = blobs.add(
-    fixedStringAttributeBlob(
-      options.targetFramework === null
-        ? ".NETCoreApp,Version=v8.0"
-        : (options.targetFramework ?? ".NETCoreApp,Version=v8.0"),
-    ),
+    options.customAttributeValue ??
+      fixedStringAttributeBlob(
+        options.targetFramework === null
+          ? ".NETCoreApp,Version=v8.0"
+          : (options.targetFramework ?? ".NETCoreApp,Version=v8.0"),
+      ),
   );
   const stringSize = indexSize(strings.size);
   const blobSize = indexSize(blobs.size);

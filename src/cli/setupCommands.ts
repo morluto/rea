@@ -9,6 +9,10 @@ import {
 } from "../application/SetupTypes.js";
 import { isUninstallFailure } from "../application/UninstallFailure.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import {
+  mcpToolFamiliesSchema,
+  toolFamiliesConstraint,
+} from "../config/mcpToolFamilies.js";
 import { isUpdateFailure } from "../application/UpdateFailure.js";
 import {
   confirmInteractiveSetup,
@@ -24,12 +28,7 @@ import type { CliInstance } from "./types.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
 
 const supportedClientIds = SUPPORTED_CLIENT_DEFINITIONS.map(({ name }) => name);
-const supportedClientSchema = z
-  .string()
-  .refine(
-    (candidate) => supportedClientIds.some((name) => name === candidate),
-    "Unsupported agent integration",
-  );
+const supportedClientSchema = z.enum(supportedClientIds);
 const skillClientSchema = z.union([z.literal("shared"), supportedClientSchema]);
 
 /** Register setup, doctor, uninstall, and update CLI commands. */
@@ -68,6 +67,18 @@ const registerSetupCommand = (
         .array(skillClientSchema)
         .default([])
         .describe("Existing client skill destination to update; repeatable"),
+      toolFamilies: z
+        .string()
+        .optional()
+        .refine(
+          (value) =>
+            value === undefined ||
+            mcpToolFamiliesSchema.safeParse(value).success,
+          { message: toolFamiliesConstraint },
+        )
+        .describe(
+          "Comma-separated tool families this registration advertises; omit to preserve the saved selection, or advertise every tool if none is saved. To restore every tool, remove REA_MCP_TOOL_FAMILIES from the client's registration and restart the client.",
+        ),
       allDetected: z
         .boolean()
         .default(false)
@@ -198,6 +209,7 @@ interface SetupCommandOptions {
   readonly installHopper: boolean;
   readonly client: readonly string[];
   readonly skillClient: readonly string[];
+  readonly toolFamilies?: string | undefined;
   readonly allDetected: boolean;
   readonly skill?: boolean | undefined;
   readonly dryRun: boolean;
@@ -270,6 +282,9 @@ const setupRunOptions = (
     ...(hasExplicitScope
       ? { installSkill: options.skill ?? agentIntegrationSelected }
       : {}),
+    ...(options.toolFamilies === undefined
+      ? {}
+      : { toolFamilies: options.toolFamilies }),
     ...(interactive ? { onProgress: renderSetupProgress } : {}),
     ...(hasSelectedClients && !options.allDetected
       ? {

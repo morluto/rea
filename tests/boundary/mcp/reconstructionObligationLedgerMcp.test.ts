@@ -1,3 +1,6 @@
+import { reconstructionProofApplicabilityCases } from "../../fixtures/reconstructionProofApplicability.js";
+import { reconstructionObligationLedgerSchema } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
+import type { ReconstructionObligationManifest } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
@@ -5,7 +8,10 @@ import { describe, expect, it } from "vitest";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
-import { createEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSchema,
+} from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import {
   createResidualUnknown,
@@ -24,6 +30,7 @@ import { observed } from "../../fixtures/analysisExecution.js";
 type LedgerRequest = (
   evidenceBundle: unknown,
   reviewedObligations?: readonly unknown[],
+  manifest?: ReconstructionObligationManifest,
 ) => ReturnType<Client["callTool"]>;
 
 const withLedgerClient = async (
@@ -40,15 +47,20 @@ const withLedgerClient = async (
   try {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
-    await run((evidenceBundle, reviewedObligations = []) =>
-      client.callTool({
-        name: "build_reconstruction_obligation_ledger",
-        arguments: {
-          evidence_bundle: evidenceBundle,
-          reviewed_obligations: reviewedObligations,
-          manifest: { bindings: [], contradictions: [] },
-        },
-      }),
+    await run(
+      (
+        evidenceBundle,
+        reviewedObligations = [],
+        manifest = { bindings: [], contradictions: [] },
+      ) =>
+        client.callTool({
+          name: "build_reconstruction_obligation_ledger",
+          arguments: {
+            evidence_bundle: evidenceBundle,
+            reviewed_obligations: reviewedObligations,
+            manifest,
+          },
+        }),
     );
   } finally {
     await client.close();
@@ -374,4 +386,42 @@ describe("reconstruction obligation ledger MCP parity", () => {
       await session.close();
     }
   });
+});
+
+describe("reconstruction proof applicability through MCP", () => {
+  for (const {
+    name,
+    input,
+    status,
+    reason,
+    codes,
+  } of reconstructionProofApplicabilityCases())
+    it(name, async () => {
+      await withLedgerClient(async (request) => {
+        const response = await request(
+          input.evidence_bundle,
+          input.reviewed_obligations,
+          input.manifest,
+        );
+        expect(response.isError).not.toBe(true);
+        const ledger = reconstructionObligationLedgerSchema.parse(
+          evidenceSchema.parse(response.structuredContent).normalized_result,
+        );
+        expect(ledger.status).toBe(status);
+        const obligation = ledger.obligations[0]!;
+        expect(obligation.status).toBe(
+          status === "ready" ? "verified" : "implemented",
+        );
+        expect(obligation.diagnostics.map(({ code }) => code).sort()).toEqual(
+          [...codes].sort(),
+        );
+        if (reason === null) expect(obligation.diagnostics).toEqual([]);
+        else
+          expect(
+            obligation.diagnostics.some(({ detail }) =>
+              detail.includes(reason),
+            ),
+          ).toBe(true);
+      });
+    });
 });

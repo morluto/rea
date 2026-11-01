@@ -4,8 +4,8 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
-import { StringDecoder } from "node:string_decoder";
 import { getHeapStatistics } from "node:v8";
+import { readBoundedControlLines } from "../process/BoundedControlLines.js";
 import { withArtifactFileHandle } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -46,50 +46,16 @@ const send = async (input: WebBundleWorkerMessage): Promise<void> => {
   });
 };
 
-async function* boundedControlLines(): AsyncGenerator<string> {
-  const decoder = new StringDecoder("utf8");
-  let pending = "";
-  for await (const chunk of process.stdin) {
-    const decoded = decoder.write(chunk);
-    let start = 0;
-    for (;;) {
-      const newline = decoded.indexOf("\n", start);
-      if (newline < 0) {
-        pending += decoded.slice(start);
-        if (Buffer.byteLength(pending) > LIMITS.protocolBytes)
-          throw new RangeError(
-            "Web bundle worker request exceeds its byte budget",
-          );
-        break;
-      }
-      const line = `${pending}${decoded.slice(start, newline)}`.replace(
-        /\r$/u,
-        "",
-      );
-      pending = "";
-      if (Buffer.byteLength(line) > LIMITS.protocolBytes)
-        throw new RangeError(
-          "Web bundle worker request exceeds its byte budget",
-        );
-      yield line;
-      start = newline + 1;
-    }
-  }
-  pending += decoder.end();
-  if (pending !== "") {
-    if (Buffer.byteLength(pending) > LIMITS.protocolBytes)
-      throw new RangeError("Web bundle worker request exceeds its byte budget");
-    yield pending;
-  }
-}
-
 /** Serve sequential script jobs from the private root owned by the worker runtime. */
 export const serveWebBundleAnalysisWorker = async (
   analyze: WebBundleScriptAnalyzer,
 ): Promise<void> => {
   const root = process.cwd();
   const resources = new ArtifactResourceScope();
-  const requests = boundedControlLines();
+  const requests = readBoundedControlLines(
+    process.stdin.iterator({ destroyOnReturn: true }),
+    LIMITS.protocolBytes,
+  );
   await send({
     kind: "ready",
     heap_limit_bytes:
@@ -101,11 +67,11 @@ export const serveWebBundleAnalysisWorker = async (
     for (;;) {
       const next = await requests.next();
       if (next.done) break;
-      if (Buffer.byteLength(next.value) > LIMITS.protocolBytes)
+      if (!next.value.ok)
         throw new RangeError(
           "Web bundle worker request exceeds its byte budget",
         );
-      const raw: unknown = JSON.parse(next.value);
+      const raw: unknown = JSON.parse(next.value.value);
       const request = webBundleWorkerRequestSchema.parse(raw);
       const continueServing = await analyzeJob(
         root,

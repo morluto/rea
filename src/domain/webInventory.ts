@@ -64,24 +64,6 @@ export const stableWebResources = (
   );
 };
 
-/** Reconcile one script with resource-tree observations without fuzzy matching. */
-export const reconcileWebScript = (
-  script: WebInventoryScriptInput,
-  resources: readonly StableWebResource[],
-): WebResourceReconciliation => {
-  const candidates = resources.filter(
-    (resource) => resource.url === script.url,
-  );
-  if (candidates.length === 1)
-    return { status: "exact", resource_key: candidates[0]?.resource_key ?? "" };
-  if (candidates.length > 1)
-    return {
-      status: "ambiguous",
-      candidate_resource_keys: uniqueResourceKeys(candidates),
-    };
-  return { status: "unmatched", reason: "no_exact_sanitized_url" };
-};
-
 /** Index one capture's observations without merging duplicate raw URLs. */
 export const createCapturedWebScriptReconciler = (
   rawResources: readonly (WebInventoryResourceInput & {
@@ -140,8 +122,3 @@ export const stableWebScriptKey = (script: WebInventoryScriptInput): string =>
     },
     "Web inventory",
   )}`;
-
-const uniqueResourceKeys = (
-  resources: readonly StableWebResource[],
-): string[] =>
-  [...new Set(resources.map(({ resource_key }) => resource_key))].sort();

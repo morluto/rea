@@ -300,7 +300,7 @@ it("records the actual static task graph with explicit source identity and no am
   const context = await recordStaticTaskContext({ outputDirectory: directory });
   const head = await execute("git", ["rev-parse", "HEAD"]);
   expect(context.sourceSha).toBe(head.stdout.trim());
-  expect(context.taskHashes["lint:built"]).toMatch(/^[a-f0-9]{16}$/u);
+  expect(context.taskHashes.lint).toMatch(/^[a-f0-9]{16}$/u);
   expect(context.taskHashes.typecheck).toMatch(/^[a-f0-9]{16}$/u);
   expect(context.taskHashes["format:check"]).toMatch(/^[a-f0-9]{16}$/u);
   expect(context.taskHashes).not.toHaveProperty("jscpd");
@@ -311,7 +311,7 @@ it("records the actual static task graph with explicit source identity and no am
   });
   expect(deep.taskHashes.jscpd).toMatch(/^[a-f0-9]{16}$/u);
   expect(deep.taskHashes.knip).toMatch(/^[a-f0-9]{16}$/u);
-  expect(deep.taskHashes).not.toHaveProperty("lint:built");
+  expect(deep.taskHashes).not.toHaveProperty("lint");
   await expect(
     recordStaticTaskContext({
       outputDirectory: directory,

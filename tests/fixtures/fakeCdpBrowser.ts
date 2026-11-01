@@ -268,6 +268,8 @@ const serveSourceMap = (
   response: ServerResponse,
   options: FakeOptions,
 ): boolean => {
+  if (options.sourceMapReply?.(request.url ?? "", response) === true)
+    return true;
   if (
     options.hangSourceMap === true &&
     request.url?.startsWith("/app.js.map") === true

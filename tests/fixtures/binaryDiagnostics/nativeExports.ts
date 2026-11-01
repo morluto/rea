@@ -108,6 +108,29 @@ export const peExportImage = (options: {
   return bytes;
 };
 
+/** Compact PE whose name-table aliases all select one shared 4096-byte name. */
+export const peRepeatedExportNamesImage = (
+  targetRva: number,
+  count = 4100,
+): Buffer => {
+  const names = 0x500;
+  const ordinals = names + count * 4;
+  const text = ordinals + count * 2;
+  const bytes = Buffer.alloc(text + 4097);
+  peExportImage({ functions: [{ rva: targetRva }] }).copy(bytes);
+  const section = 152 + 240;
+  bytes.writeUInt32LE(bytes.length - SECTION_OFFSET, section + 8);
+  bytes.writeUInt32LE(bytes.length - SECTION_OFFSET, section + 16);
+  const rva = (offset: number): number => offset - SECTION_OFFSET + SECTION_RVA;
+  bytes.writeUInt32LE(count, SECTION_OFFSET + 24);
+  bytes.writeUInt32LE(rva(names), SECTION_OFFSET + 32);
+  bytes.writeUInt32LE(rva(ordinals), SECTION_OFFSET + 36);
+  for (let index = 0; index < count; index++)
+    bytes.writeUInt32LE(rva(text), names + index * 4);
+  bytes.fill(0x6e, text, text + 4096);
+  return bytes;
+};
+
 /** One `.dynsym` entry; `version` is its raw `.gnu.version` half-word. */
 export interface ElfFixtureSymbol {
   readonly name: string;
@@ -248,7 +271,8 @@ export const elfExportImage = (options: {
   readonly versionsOutsideFile?: boolean;
   /** Declare a zero-byte `.dynsym`, without its null entry. */
   readonly emptyDynamicSymbols?: boolean;
-  readonly sectionHeaders?: boolean;
+  readonly sectionHeaders?: boolean | "null-only";
+  readonly dynamicSegment?: boolean;
   readonly dynamicSymbols?: boolean;
 }): Buffer => {
   const bits = options.bits ?? 64;
@@ -317,6 +341,8 @@ export const elfExportImage = (options: {
   u16(wide ? 52 : 40, wide ? 64 : 52);
   u16(wide ? 54 : 42, wide ? 56 : 32);
   u16(wide ? 58 : 46, sectionWidth);
+  if (options.dynamicSegment === true)
+    writeElfDynamicSegment(bytes, bits, little);
   if (options.sectionHeaders === false) return bytes;
 
   symbols.forEach((symbol, index) => {
@@ -381,8 +407,65 @@ export const elfExportImage = (options: {
     word(at + (wide ? 56 : 36), BigInt(entsize));
   });
   word(wide ? 40 : 32, BigInt(sectionAt));
-  u16(wide ? 60 : 48, sections.length);
-  u16(wide ? 62 : 50, sections.length - 1);
+  const nullOnly = options.sectionHeaders === "null-only";
+  u16(wide ? 60 : 48, nullOnly ? 1 : sections.length);
+  u16(wide ? 62 : 50, nullOnly ? 0 : sections.length - 1);
+  return bytes;
+};
+
+/** Small source table whose headers replay one shared maximum-length auxiliary chain. */
+export const elfAliasedVersionImage = (
+  kind: "requirements" | "definitions",
+  nameLength = 1,
+): Buffer => {
+  const name = "V".repeat(nameLength);
+  const original = elfExportImage({
+    symbols: [{ name: "versioned_export", version: 2 }],
+    versionDefinitions: ["BASE", name],
+  });
+  const sectionAt = Number(original.readBigUInt64LE(40));
+  const namesAt = Number(original.readBigUInt64LE(sectionAt + 2 * 64 + 24));
+  const nameOffset =
+    original.indexOf(Buffer.from(name + "\0"), namesAt) - namesAt;
+  if (nameOffset < 0) throw new Error("Version fixture name not found");
+  const headers = 10_000,
+    auxiliaries = 65_535;
+  const headerBytes = kind === "requirements" ? 16 : 20;
+  const auxBytes = kind === "requirements" ? 16 : 8;
+  const start = Math.ceil(original.length / 16) * 16;
+  const tableBytes = headers * headerBytes + auxiliaries * auxBytes;
+  const bytes = Buffer.alloc(start + tableBytes);
+  original.copy(bytes);
+  const section = sectionAt + (kind === "requirements" ? 5 : 4) * 64;
+  bytes.writeBigUInt64LE(BigInt(start), section + 24);
+  bytes.writeBigUInt64LE(BigInt(tableBytes), section + 32);
+  bytes.writeUInt32LE(headers, section + 44);
+  // The other version table is absent, so a refusal cannot recover through it.
+  const other = sectionAt + (kind === "requirements" ? 4 : 5) * 64;
+  bytes.writeUInt32LE(0, other + 4);
+  for (let index = 0; index < headers; index++) {
+    const at = start + index * headerBytes;
+    bytes.writeUInt16LE(1, at);
+    bytes.writeUInt16LE(auxiliaries, at + (kind === "requirements" ? 2 : 6));
+    if (kind === "definitions") bytes.writeUInt16LE(2, at + 4);
+    bytes.writeUInt32LE(
+      headers * headerBytes - index * headerBytes,
+      at + (kind === "requirements" ? 8 : 12),
+    );
+    bytes.writeUInt32LE(
+      index + 1 < headers ? headerBytes : 0,
+      at + (kind === "requirements" ? 12 : 16),
+    );
+  }
+  for (let index = 0; index < auxiliaries; index++) {
+    const at = start + headers * headerBytes + index * auxBytes;
+    if (kind === "requirements") bytes.writeUInt16LE(2, at + 6);
+    bytes.writeUInt32LE(nameOffset, at + (kind === "requirements" ? 8 : 0));
+    bytes.writeUInt32LE(
+      index + 1 < auxiliaries ? auxBytes : 0,
+      at + (kind === "requirements" ? 12 : 4),
+    );
+  }
   return bytes;
 };
 
@@ -463,3 +546,19 @@ const elfSectionRows = (
       ] satisfies ElfSectionRow[])),
   [60, 3, layout.shstrtabAt, layout.shstrtab, 0, 0, 0],
 ];
+
+/** Two program headers: an empty load segment followed by a dynamic segment. */
+const writeElfDynamicSegment = (
+  bytes: Buffer,
+  bits: 32 | 64,
+  little: boolean,
+): void => {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const wide = bits === 64;
+  const programAt = wide ? 64 : 52;
+  if (wide) view.setBigUint64(32, BigInt(programAt), little);
+  else view.setUint32(28, programAt, little);
+  view.setUint16(wide ? 56 : 44, 2, little);
+  view.setUint32(programAt, 1, little);
+  view.setUint32(programAt + (wide ? 56 : 32), 2, little);
+};

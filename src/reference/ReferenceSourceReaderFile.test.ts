@@ -26,7 +26,9 @@ it("retains all bytes across short reads through the declared size", async () =>
     expectedSize: BigInt(bytes.length),
   });
   if (result.status === "failed") throw result.entry;
-  expect(Buffer.concat(result.chunks, result.total)).toEqual(bytes);
+  expect(
+    Buffer.compare(Buffer.concat(result.chunks, result.total), bytes),
+  ).toBe(0);
 });
 
 it("reports growth instead of continuing to consume a changed file", async () => {

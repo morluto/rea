@@ -126,14 +126,22 @@ it.each(["late", "initial", "destroyed", "final-malformed", "out-of-scope"])(
     expect(
       inspected.value.frames.some(({ frame_id }) => frame_id === "child"),
     ).toBe(kind !== "out-of-scope");
-    expect(inspected.value.scripts.items).toContainEqual(
-      expect.objectContaining({
-        file_path: join(root, "app.js"),
-        // Main snapshots historical frame identity at script ingestion, so
-        // later context teardown does not erase this observed association.
-        frame_id: kind === "out-of-scope" ? null : "child",
-      }),
-    );
+    if (kind === "out-of-scope") {
+      expect(inspected.value.scripts.items).toEqual([]);
+      expect(
+        browser.commands.some(
+          ({ method }) => method === "Debugger.getScriptSource",
+        ),
+      ).toBe(false);
+    } else
+      expect(inspected.value.scripts.items).toContainEqual(
+        expect.objectContaining({
+          file_path: join(root, "app.js"),
+          // Later context teardown does not erase the observed association.
+          frame_id: "child",
+          frame_scope: "authorized",
+        }),
+      );
     if (kind === "final-malformed") {
       expect(inspected.value.completeness.attach_limited_sections).toEqual(
         expect.arrayContaining(["frames", "scripts", "workers"]),
@@ -339,9 +347,108 @@ it.each([
   ).toEqual(["first", "second"]);
   if (kind !== "detached" && kind !== "same-document")
     expect(
-      result.value.scripts.items.find(({ cdp_hash }) => cdp_hash === "foreign")
-        ?.frame_id,
-    ).toBeNull();
+      result.value.scripts.items.find(({ cdp_hash }) => cdp_hash === "foreign"),
+    ).toMatchObject({
+      frame_id: kind === "unvalidated-context" ? "not-authorized" : "first",
+      frame_scope: "unknown",
+    });
+});
+
+it("excludes srcdoc scripts before source reads while retaining declared labels and unknown frame scope", async () => {
+  const root = await electronFixture();
+  const mainUrl = pathToFileURL(join(root, "index.html")).href;
+  const label = pathToFileURL(join(root, "app.js")).href;
+  const browser = await startFakeCdpBrowser({
+    electronFileUrl: mainUrl,
+    eventsBeforeReply: ["Debugger.enable"],
+    commandResult: ({ method, params }) =>
+      method === "Page.getFrameTree"
+        ? {
+            frameTree: {
+              frame: { id: "frame-main", url: mainUrl },
+              childFrames: [
+                {
+                  frame: {
+                    id: "srcdoc",
+                    parentId: "frame-main",
+                    url: "about:srcdoc",
+                  },
+                },
+              ],
+            },
+          }
+        : method === "Debugger.getScriptSource"
+          ? { scriptSource: `void ${String(params.scriptId)};` }
+          : undefined,
+    commandEvents: ({ method, sessionId }) =>
+      method === "Runtime.enable"
+        ? []
+        : method === "Debugger.enable"
+          ? [
+              ["declared", "frame-main", true],
+              ["reported", "frame-main", false],
+              ["excluded", "srcdoc", true],
+              ["unknown", "unproven-frame", true],
+            ].map(([scriptId, frameId, hasSourceURL], index) => ({
+              method: "Debugger.scriptParsed",
+              sessionId,
+              params: {
+                scriptId,
+                url: label,
+                executionContextId: index + 1,
+                executionContextAuxData: { frameId },
+                hasSourceURL,
+                hash: scriptId,
+              },
+            }))
+          : undefined,
+  });
+  browsers.push(browser);
+  const result = await new CdpElectronProvider().inspectPage(
+    inspectElectronPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      target_id: "electron-page",
+      observation_ms: 0,
+      include_script_sources: true,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  const byHash = new Map(
+    result.value.scripts.items.map((script) => [script.cdp_hash, script]),
+  );
+  expect(byHash.has("excluded")).toBe(false);
+  expect(byHash.get("declared")).toMatchObject({
+    frame_id: "frame-main",
+    frame_scope: "authorized",
+    has_source_url: true,
+    reported_url: label,
+    frame_claims: { script_event_frame_id: "frame-main" },
+    file_path: join(root, "app.js"),
+    source: { included: true },
+  });
+  expect(byHash.get("reported")).toMatchObject({
+    has_source_url: false,
+    frame_scope: "authorized",
+  });
+  expect(byHash.get("unknown")).toMatchObject({
+    frame_id: "unproven-frame",
+    frame_scope: "unknown",
+    has_source_url: true,
+  });
+  expect(
+    browser.commands
+      .filter(({ method }) => method === "Debugger.getScriptSource")
+      .map(({ params }) => params.scriptId)
+      .sort(),
+  ).toEqual(["declared", "reported", "unknown"]);
+  expect(result.value.completeness.excluded).toContainEqual({
+    section: "scripts",
+    reason: "out_of_target_scope",
+    count: 1,
+  });
+  expect(result.value.completeness.attach_limited_sections).toContain(
+    "scripts",
+  );
 });
 
 describe("CdpElectronProvider target access", () => {
@@ -701,36 +808,43 @@ describe("CdpElectronProvider malformed source replies", () => {
   );
 });
 
+const inspectInventoryReply = async (
+  method: string,
+  reply: (fileUrl: string) => Readonly<Record<string, unknown>>,
+) => {
+  const root = await electronFixture();
+  const fileUrl = pathToFileURL(join(root, "index.html")).href;
+  const browser = await startFakeCdpBrowser({
+    electronFileUrl: fileUrl,
+    commandResult: (command) =>
+      command.method === method ? reply(fileUrl) : undefined,
+  });
+  browsers.push(browser);
+  const result = await new CdpElectronProvider().inspectPage(
+    inspectElectronPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      target_id: "electron-page",
+      observation_ms: 0,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+
 describe("CdpElectronProvider malformed inventory replies", () => {
-  const inspectWith = async (
-    method: string,
-    reply: (fileUrl: string) => Readonly<Record<string, unknown>>,
-  ) => {
-    const root = await electronFixture();
-    const fileUrl = pathToFileURL(join(root, "index.html")).href;
-    const browser = await startFakeCdpBrowser({
-      electronFileUrl: fileUrl,
-      commandResult: (command) =>
-        command.method === method ? reply(fileUrl) : undefined,
-    });
-    browsers.push(browser);
-    const result = await new CdpElectronProvider().inspectPage(
-      inspectElectronPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        target_id: "electron-page",
-        observation_ms: 0,
+  it("keeps documents unknown when the DOM string table is missing", async () => {
+    const inspected = await inspectInventoryReply(
+      "DOMSnapshot.captureSnapshot",
+      () => ({
+        documents: [{ documentURL: 0, nodes: { nodeType: [] } }],
       }),
     );
-    if (!result.ok) throw result.error;
-    return result.value;
-  };
 
-  it("keeps documents unknown when the DOM string table is missing", async () => {
-    const inspected = await inspectWith("DOMSnapshot.captureSnapshot", () => ({
-      documents: [{ documentURL: 0, nodes: { nodeType: [] } }],
-    }));
-
-    expect(inspected.dom).toEqual({ total_nodes: 0, nodes: [] });
+    expect(inspected.dom).toEqual({
+      total_nodes: 0,
+      node_value_length_unit: "utf8-bytes",
+      nodes: [],
+    });
     expect(inspected.completeness.unavailable_sections).toContain("dom");
     expect(inspected.completeness.excluded).toContainEqual({
       section: "dom",
@@ -741,6 +855,88 @@ describe("CdpElectronProvider malformed inventory replies", () => {
       "dom",
     );
   });
+
+  it.each([
+    ["missing type", { type: undefined }],
+    ["non-string type", { type: 7 }],
+    ["empty type", { type: "" }],
+    ["missing target identity", { targetId: undefined }],
+    ["non-string target identity", { targetId: 7 }],
+    ["empty target identity", { targetId: "" }],
+    ["missing URL", { url: undefined }],
+    ["non-string URL", { url: 7 }],
+    ["missing attached state", { attached: undefined }],
+    ["non-boolean attached state", { attached: "false" }],
+    ["non-string opener relationship", { openerId: 7 }],
+    ["empty opener relationship", { openerId: "" }],
+    ["non-string frame relationship", { parentFrameId: 7 }],
+    ["empty frame relationship", { parentFrameId: "" }],
+  ] as const)(
+    "retains valid workers while reporting %s before target policy",
+    async (_kind, malformed) => {
+      const inspected = await inspectInventoryReply(
+        "Target.getTargets",
+        (fileUrl) => ({
+          targetInfos: [
+            {
+              targetId: "selected-worker",
+              type: "worker",
+              url: fileUrl,
+              attached: false,
+              openerId: "electron-page",
+            },
+            {
+              targetId: "malformed-worker",
+              type: "worker",
+              url: fileUrl,
+              attached: false,
+              openerId: "foreign-page",
+              ...malformed,
+            },
+            {
+              targetId: "foreign-worker",
+              type: "shared_worker",
+              url: fileUrl,
+              attached: true,
+              openerId: "foreign-page",
+            },
+            {
+              targetId: "unattributed-worker",
+              type: "service_worker",
+              url: fileUrl,
+              attached: false,
+            },
+            // Non-worker rows do not need worker identity or relationship fields.
+            { type: "page", targetId: 7, openerId: null },
+          ],
+        }),
+      );
+      expect(inspected.workers).toEqual([
+        expect.objectContaining({
+          target_id: "selected-worker",
+          type: "worker",
+          attached: false,
+          opener_target_id: "electron-page",
+          parent_frame_id: null,
+        }),
+      ]);
+      const workerExclusions = inspected.completeness.excluded.filter(
+        ({ section }) => section === "workers",
+      );
+      expect(workerExclusions).toHaveLength(3);
+      expect(workerExclusions).toEqual(
+        expect.arrayContaining([
+          { section: "workers", reason: "invalid_protocol_value", count: 1 },
+          { section: "workers", reason: "out_of_target_scope", count: 1 },
+          { section: "workers", reason: "unattributed_target", count: 1 },
+        ]),
+      );
+      expect(inspected.completeness.unavailable_sections).toContain("workers");
+      expect(inspected.completeness.policy_filtered_sections).toContain(
+        "workers",
+      );
+    },
+  );
 
   it.each([
     ["dom", "DOMSnapshot.captureSnapshot", () => ({ strings: [] })],
@@ -763,7 +959,7 @@ describe("CdpElectronProvider malformed inventory replies", () => {
   ] as const)(
     "keeps a malformed %s inventory incomplete (%s)",
     async (section, method, reply) => {
-      const inspected = await inspectWith(method, reply);
+      const inspected = await inspectInventoryReply(method, reply);
       expect(inspected.completeness.status).not.toBe("complete_within_window");
       expect(inspected.completeness.excluded).toContainEqual(
         expect.objectContaining({
@@ -1001,7 +1197,9 @@ it.each(
       expect(result.value.scripts.items).toContainEqual(
         expect.objectContaining({
           cdp_hash: id,
-          frame_id: parent === "valid" ? id : null,
+          frame_id: id,
+          frame_scope: parent === "valid" ? "authorized" : "unknown",
+          frame_claims: { execution_context_frame_id: id },
         }),
       );
     if (parent !== "valid") {
@@ -1132,7 +1330,8 @@ it.each(
     expect(result.value.scripts.items).toContainEqual(
       expect.objectContaining({
         cdp_hash: "local",
-        frame_id: phase === "invalidated" ? null : "local",
+        frame_id: "local",
+        frame_scope: phase === "invalidated" ? "unknown" : "authorized",
       }),
     );
     expect(result.value.completeness.policy_filtered_sections).toContain(
@@ -1369,17 +1568,23 @@ it.each([
         expect.objectContaining({ cdp_hash: "before", frame_id: "child" }),
         expect.objectContaining({
           cdp_hash: "after-replay",
-          frame_id: expectedOwner ? "child" : null,
+          frame_id: "child",
+          frame_scope: expectedOwner ? "authorized" : "unknown",
         }),
         expect.objectContaining({
           cdp_hash: "descendant",
-          frame_id: expectedOwner ? "grandchild" : null,
+          frame_id: "grandchild",
+          frame_scope: expectedOwner ? "authorized" : "unknown",
         }),
       ]),
     );
     if (kind === "post-detach")
       expect(result.value.scripts.items).toContainEqual(
-        expect.objectContaining({ cdp_hash: "after-detach", frame_id: null }),
+        expect.objectContaining({
+          cdp_hash: "after-detach",
+          frame_id: "child",
+          frame_scope: "unknown",
+        }),
       );
     expect(
       result.value.completeness.attach_limited_sections.includes("scripts"),

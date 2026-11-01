@@ -51,8 +51,10 @@ cliTest(
         });
         if (name === "inspect_managed_artifact") {
           expect(mcpEvidence.normalized_result).toMatchObject({
+            metadata: { stream_names: expect.arrayContaining(["#-"]) },
             attributes: [
               expect.objectContaining({
+                parent_token: "0x20000001",
                 constructor_token: "0x06000001",
                 type_name: "Fixture.B",
               }),
@@ -60,24 +62,33 @@ cliTest(
           });
         } else {
           expect(mcpEvidence.normalized_result).toMatchObject({
+            types: [
+              expect.objectContaining({ full_name: "<Module>" }),
+              expect.objectContaining({ full_name: "Fixture.A" }),
+              expect.objectContaining({ full_name: "Fixture.B" }),
+            ],
             fields: [
               expect.objectContaining({
                 token: "0x04000001",
                 declaring_type: "Fixture.B",
+                declaring_type_token: "0x02000003",
               }),
               expect.objectContaining({
                 token: "0x04000002",
                 declaring_type: "Fixture.A",
+                declaring_type_token: "0x02000002",
               }),
             ],
             methods: [
               expect.objectContaining({
                 token: "0x06000001",
                 declaring_type: "Fixture.B",
+                declaring_type_token: "0x02000003",
               }),
               expect.objectContaining({
                 token: "0x06000002",
                 declaring_type: "Fixture.A",
+                declaring_type_token: "0x02000002",
               }),
             ],
           });

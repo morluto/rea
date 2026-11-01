@@ -7,12 +7,12 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
+import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import {
   captureFrames,
   inspectCdpElectronPage,
 } from "./CdpElectronInspection.js";
-import type { CdpEvent } from "./CdpConnection.js";
-import type { CdpConnection } from "./CdpConnection.js";
+import type { CdpEvent, CdpConnection } from "./CdpConnection.js";
 import {
   ingestElectronScriptEvent,
   type ElectronScriptDraft,
@@ -209,7 +209,11 @@ it.each([
       expect(fired).toBe(true);
       if (stage !== "final")
         expect(result.scripts.items).toContainEqual(
-          expect.objectContaining({ frame_id: null, cdp_hash: "new-document" }),
+          expect.objectContaining({
+            frame_id: "child",
+            frame_scope: "unknown",
+            cdp_hash: "new-document",
+          }),
         );
       expect(result.completeness.attach_limited_sections).toContain("frames");
     }
@@ -224,6 +228,52 @@ afterEach(async () => {
   );
 });
 
+/** Raw lifecycle messages exercised by the final file-validation race. */
+const documentIdentityEvent = (
+  kind: string,
+  mainUrl: string,
+  childUrl: string,
+): { readonly event: CdpEvent; readonly isMain: boolean } => {
+  const isMain =
+    kind.startsWith("late-main") ||
+    kind === "duplicate-main" ||
+    kind === "duplicate-initial";
+  if (kind === "attached-child-with-id-alias")
+    return {
+      isMain,
+      event: {
+        method: "Page.frameAttached",
+        params: { frameId: "child", parentFrameId: "main", id: "main" },
+      },
+    };
+  const id = isMain ? "main" : "child";
+  const malformedAlias = kind === "malformed-child-id-alias";
+  return {
+    isMain,
+    event: {
+      method: "Page.frameNavigated",
+      params: {
+        frame: {
+          id: malformedAlias ? null : id,
+          ...(malformedAlias ? { frameId: "child" } : {}),
+          ...(isMain ? {} : { parentId: "main" }),
+          url: isMain ? mainUrl : childUrl,
+          ...(kind === "unknown-child"
+            ? {}
+            : {
+                loaderId:
+                  kind.startsWith("late-main") ||
+                  kind === "replacement-child" ||
+                  malformedAlias
+                    ? "replacement-loader"
+                    : `loader-${id}`,
+              }),
+        },
+      },
+    },
+  };
+};
+
 it.each([
   "late-main",
   "late-main-progress",
@@ -232,6 +282,8 @@ it.each([
   "duplicate-child",
   "replacement-child",
   "unknown-child",
+  "malformed-child-id-alias",
+  "attached-child-with-id-alias",
 ])(
   "preserves document identity through final file validation: %s",
   async (kind) => {
@@ -253,30 +305,8 @@ it.each([
     let reads = 0,
       fired = false;
     const inject = () => {
-      const isMain =
-        kind.startsWith("late-main") ||
-        kind === "duplicate-main" ||
-        kind === "duplicate-initial";
-      listener({
-        method: "Page.frameNavigated",
-        params: {
-          frame: {
-            id: isMain ? "main" : "child",
-            ...(isMain ? {} : { parentId: "main" }),
-            url: isMain ? mainUrl : childUrl,
-            ...(kind === "unknown-child"
-              ? {}
-              : {
-                  loaderId:
-                    kind.startsWith("late-main") || kind === "replacement-child"
-                      ? "replacement-loader"
-                      : isMain
-                        ? "loader-main"
-                        : "loader-child",
-                }),
-          },
-        },
-      });
+      const { event, isMain } = documentIdentityEvent(kind, mainUrl, childUrl);
+      listener(event);
       if (!isMain) {
         listener({
           method: "Runtime.executionContextCreated",
@@ -361,7 +391,7 @@ it.each([
     else {
       const captured = await result;
       expect(fired).toBe(true);
-      if (kind.startsWith("duplicate"))
+      if (kind.startsWith("duplicate") || kind === "malformed-child-id-alias")
         expect(captured.completeness.attach_limited_sections).not.toContain(
           "frames",
         );
@@ -369,7 +399,11 @@ it.each([
         expect(captured.scripts.items).toContainEqual(
           expect.objectContaining({
             cdp_hash: "observed",
-            frame_id: kind === "duplicate-child" ? "child" : null,
+            frame_id: "child",
+            frame_scope:
+              kind === "duplicate-child" || kind === "malformed-child-id-alias"
+                ? "authorized"
+                : "unknown",
           }),
         );
     }
@@ -463,13 +497,15 @@ describe("Electron frame capture", () => {
     const scriptPath = join(root, "app.js");
     await writeFile(scriptPath, "export const app = true;");
     const scripts: ElectronScriptDraft[] = [];
-    const executionContextFrames = new Map<string, string>();
+    const executionContextFrames = new Map<string, CdpContextFrameClaim>();
+    const retention = { bytes: 2 };
     const completeness = new CdpCaptureCompleteness();
     const ingest = (method: string, params: unknown): void =>
       ingestElectronScriptEvent({
         event: { method, params },
         scripts,
         executionContextFrames,
+        retention,
         completeness,
       });
     const context = (frameId: string) => ({
@@ -518,11 +554,11 @@ describe("Electron frame capture", () => {
         include_script_sources: false,
       }),
       scripts,
-      frameForScript: (script) =>
+      frameScopeForScript: (script) =>
         script.frameId !== null &&
         new Set(["frame-old", "frame-new"]).has(script.frameId)
-          ? script.frameId
-          : null,
+          ? { state: "authorized", frameId: script.frameId }
+          : { state: "unknown", frameId: script.frameId },
       completeness,
       asarHeaderAdmission: DEFAULT_ASAR_HEADER_ADMISSION,
     });
@@ -543,7 +579,7 @@ describe("Electron frame capture", () => {
       ),
     ).toEqual({
       unknown: null,
-      outside: null,
+      outside: "frame-outside",
     });
     expect(completeness.snapshot().excluded).toContainEqual({
       section: "scripts",
@@ -579,6 +615,8 @@ it("admits a prefix and fitting suffix around an oversized Electron source", asy
       isModule: false,
       language: "JavaScript",
       frameId: null,
+      hasSourceUrl: null,
+      frameClaims: {},
     };
   });
   const completeness = new CdpCaptureCompleteness();
@@ -602,7 +640,7 @@ it("admits a prefix and fitting suffix around an oversized Electron source", asy
       include_script_sources: true,
     }),
     scripts,
-    frameForScript: () => null,
+    frameScopeForScript: () => ({ state: "unknown", frameId: null }),
     completeness,
     asarHeaderAdmission: DEFAULT_ASAR_HEADER_ADMISSION,
   });
@@ -788,7 +826,8 @@ it.each([
         expect(captured.scripts.items).toContainEqual(
           expect.objectContaining({
             cdp_hash: `after-${id}`,
-            frame_id: changed ? null : id,
+            frame_id: id,
+            frame_scope: changed ? "unknown" : "authorized",
           }),
         );
       }

@@ -1,9 +1,14 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFile, writeFile } from "node:fs/promises";
 import { expect, it as nativeTest, onTestFinished } from "vitest";
-import { SQLITE_NATIVE_LIMITS_AVAILABLE } from "../../fixtures/sqlite/database.js";
+import {
+  createSqliteApplicationCollationFixture,
+  createSqliteLongNameFixture,
+  SQLITE_NATIVE_LIMITS_AVAILABLE,
+} from "../../fixtures/sqlite/database.js";
 import { inspectSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseInspection.js";
 import { SqliteInspectionFailure } from "../../../src/sqlite/SqliteDatabaseLimits.js";
+import { jsonByteLength } from "../../../src/domain/jsonSerialization.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
@@ -234,6 +239,50 @@ it("counts schema names once when enforcing the complete reply budget", async ()
     16 * 1024 * 1024,
   );
 });
+
+it.each(["UTF-16le", "UTF-16be"] as const)(
+  "budgets %s catalog names by returned JSON rather than internal hex identity",
+  async (encoding) => {
+    const workspace = await createTestWorkspace("rea-sqlite-catalog-names-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const { path, names } = createSqliteLongNameFixture(
+      workspace.root,
+      encoding,
+    );
+    for (const schema_scope of ["inventory", "database"] as const) {
+      const inspection = inspectSqliteDatabaseSnapshot(path, {
+        path,
+        schema_scope,
+      });
+      expect(inspection.database_encoding).toBe(encoding);
+      expect(inspection.schema).toMatchObject({
+        scope: schema_scope,
+        completeness: "complete",
+      });
+      expect(inspection.schema.tables).toHaveLength(names.length);
+      expect(inspection.schema.tables.map((table) => table.name)).toEqual(
+        expect.arrayContaining(names),
+      );
+      for (const table of inspection.schema.tables) {
+        expect(table.columns_completeness).toBe(
+          schema_scope === "inventory" ? "not_requested" : "complete",
+        );
+        if (schema_scope === "database") {
+          expect(table.sql).toBe(`CREATE TABLE "${table.name}"(value TEXT)`);
+          expect(table.columns).toMatchObject([
+            { name: "value", declared_type: "TEXT" },
+          ]);
+        } else {
+          expect(table.sql).toBeUndefined();
+          expect(table.columns).toEqual([]);
+        }
+      }
+      expect(jsonByteLength({ ok: true, inspection })).toBeLessThan(
+        16 * 1024 * 1024,
+      );
+    }
+  },
+);
 
 it("keeps unrelated catalog names outside the selected-table reply budget", async () => {
   const path = await createDatabase(
@@ -681,3 +730,45 @@ it("classifies SQLite's result-column capacity refusal without blaming the datab
     }),
   );
 });
+
+it.each(["inventory", "selected_table", "database"] as const)(
+  "keeps unavailable row sources separate from generated expressions in %s scope",
+  async (schema_scope) => {
+    const workspace = await createTestWorkspace("rea-sqlite-collation-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const path = createSqliteApplicationCollationFixture(workspace.root);
+    const before = await readFile(path);
+    const schema = inspectSqliteDatabaseSnapshot(path, {
+      path,
+      schema_scope: "database",
+    });
+    expect(schema.rows).toBeNull();
+    expect(schema.schema.tables[0]).toMatchObject({
+      name: "items",
+      without_rowid: true,
+      sql: expect.stringContaining("COLLATE APPLICATION_COLLATION"),
+      columns: [
+        expect.objectContaining({ name: "name", hidden: 0 }),
+        expect.objectContaining({ name: "value", hidden: 0 }),
+        expect.objectContaining({ name: "generated_value", hidden: 2 }),
+      ],
+    });
+    for (const columns of [undefined, ["value"], ["generated_value"]])
+      expect(() =>
+        inspectSqliteDatabaseSnapshot(path, {
+          path,
+          table: "items",
+          schema_scope,
+          ...(columns === undefined ? {} : { columns }),
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          reason: "row-evaluation",
+          message: expect.stringMatching(
+            /rows of table "items".*(?:no query solution|no such collation sequence)/,
+          ),
+        }),
+      );
+    expect(Buffer.compare(await readFile(path), before)).toBe(0);
+  },
+);

@@ -2,6 +2,13 @@ import { expect, it, vi } from "vitest";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { NodeCaptureAdapter } from "./NodeCaptureAdapter.js";
 
+it.each(["har", "qlog"] as const)(
+  "keeps SAZ-specific limitations out of %s captures",
+  (format) => {
+    expect(new NodeCaptureAdapter(format).limitations).toEqual([]);
+  },
+);
+
 vi.mock("./CaptureRelease.js", async (original) => ({
   ...(await original<typeof import("./CaptureRelease.js")>()),
   NODE_CAPTURE_HEAP_ENFORCED: false,

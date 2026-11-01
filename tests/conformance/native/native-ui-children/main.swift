@@ -1,5 +1,20 @@
 import Foundation
 
+let numericValue = captureAccessibilityValue(NSNumber(value: 0.25))
+precondition((numericValue.value as? NSNumber)?.doubleValue == 0.25 && numericValue.gap == nil)
+let booleanValue = captureAccessibilityValue(NSNumber(value: true))
+precondition((booleanValue.value as? Bool) == true && booleanValue.gap == nil)
+let stringValue = captureAccessibilityValue("selected")
+precondition((stringValue.value as? String) == "selected" && stringValue.gap == nil)
+let absentValue = captureAccessibilityValue(nil)
+precondition(absentValue.value is NSNull && absentValue.gap == nil)
+for unrepresentable in [NSNumber(value: Double.infinity), NSNumber(value: -0.0), NSNumber(value: UInt64.max), NSDecimalNumber(string: "0.1234567890123456789012345")] {
+  let result = captureAccessibilityValue(unrepresentable)
+  precondition(result.value is NSNull && result.gap != nil)
+}
+let compoundValue = captureAccessibilityValue(["nested": "value"])
+precondition(compoundValue.value is NSNull && compoundValue.gap != nil)
+
 let zero = captureChildCount(status: 0, success: 0, value: 0)
 precondition(zero.value == 0, "A successful empty child list must remain a known zero")
 precondition(zero.error == nil, "A successful child count must not report an error")

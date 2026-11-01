@@ -1,3 +1,4 @@
+import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { resolveSourceToBundleReference } from "../../../src/application/javascript/SourceToBundleReference.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -14,6 +15,78 @@ import {
 } from "../../../src/domain/javascript/javascriptSourceMapPaths.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+
+it.each([
+  { current: "export const value = 1;", status: "unchanged" },
+  { current: "export const value = 2;", status: "modified" },
+])(
+  "counts a file's asset, module, and exports as one $status occurrence",
+  async ({ current: source, status }) => {
+    const root = await createTestTempDirectory("rea-source-representations-");
+    const previous = join(root, "previous");
+    const current = join(root, "current");
+    await Promise.all([mkdir(previous), mkdir(current)]);
+    await Promise.all([
+      writeFile(join(previous, "index.js"), "export const value = 1;"),
+      writeFile(join(current, "index.js"), source),
+    ]);
+    const { comparison } = await compareTrees(previous, current);
+    expect(comparison.items).toEqual([
+      expect.objectContaining({
+        source_path: "index.js",
+        status,
+        candidates: [
+          expect.objectContaining({
+            current_file_occurrence: expect.objectContaining({
+              path: "index.js",
+            }),
+            representation_node_ids: expect.any(Array),
+          }),
+        ],
+      }),
+    ]);
+    expect(
+      comparison.items[0]?.candidates[0]?.representation_node_ids?.length,
+    ).toBeGreaterThan(1);
+    for (const id of comparison.items[0]?.candidates[0]
+      ?.representation_node_ids ?? [])
+      expect(comparison.unmapped_current_node_ids).not.toContain(id);
+  },
+);
+
+it("retains two physical occurrences when equal bytes share an asset node", async () => {
+  const root = await createTestTempDirectory("rea-source-occurrences-");
+  const previous = join(root, "previous");
+  const current = join(root, "current");
+  await Promise.all([mkdir(previous), mkdir(current)]);
+  const source = "export const value = 1;";
+  await Promise.all([
+    writeFile(join(previous, "index.js"), source),
+    writeFile(join(current, "index.js"), source),
+    writeFile(join(current, "copy.js"), source),
+  ]);
+  const { comparison } = await compareTrees(previous, current);
+  expect(comparison.items).toEqual([
+    expect.objectContaining({
+      source_path: "index.js",
+      status: "duplicated",
+      candidates: expect.arrayContaining([
+        expect.objectContaining({
+          current_file_occurrence: expect.objectContaining({
+            path: "index.js",
+          }),
+        }),
+        expect.objectContaining({
+          current_file_occurrence: expect.objectContaining({ path: "copy.js" }),
+        }),
+      ]),
+    }),
+  ]);
+  expect(comparison.items[0]?.candidates).toHaveLength(2);
+  for (const candidate of comparison.items[0]?.candidates ?? [])
+    for (const id of candidate.representation_node_ids ?? [])
+      expect(comparison.unmapped_current_node_ids).not.toContain(id);
+});
 
 it("keeps literal hash characters in historical/current filesystem paths", async () => {
   const root = await createTestTempDirectory("rea-source-path-");
@@ -98,8 +171,16 @@ it("matches source-map originals named relative to the map", async () => {
 
 it.each([
   { root: "../src/", expected: "https://example.test/src/index.js" },
-  { root: "", expected: "https://example.test/index.js" },
+  // webpack 5 and tsc emit an empty root for map-relative sources.
+  { root: "", expected: "https://example.test/maps/index.js" },
   { root: null, expected: "https://example.test/maps/index.js" },
+  { root: "/", expected: "https://example.test/index.js" },
+  { root: "./", expected: "https://example.test/maps/index.js" },
+  { root: " ", expected: "https://example.test/index.js" },
+  {
+    root: "https://cdn.example/src",
+    expected: "https://cdn.example/src/index.js",
+  },
 ])("resolves sourceRoot $root according to ECMA-426", ({ root, expected }) => {
   expect(
     resolveJavaScriptSourceMapUrl(
@@ -121,7 +202,14 @@ it.each([
     mapPath: "maps/app.js.map",
     sourceRoot: "",
     source: "index.js",
-    expected: "index.js",
+    expected: "maps/index.js",
+    decoy: "index.js",
+  },
+  {
+    mapPath: "pkg/dist/cjs/main.js.map",
+    sourceRoot: "",
+    source: "../../src/a.js",
+    expected: "pkg/src/a.js",
   },
   {
     mapPath: "maps/app.js.map",
@@ -711,7 +799,9 @@ it("rejects static application Evidence whose subject path disagrees with its re
 
   const parsed = parseApplicationGraphEvidence(inconsistent);
   expect(parsed.ok).toBe(false);
-  if (!parsed.ok)
+  if (!parsed.ok) {
+    expect(parsed.error).not.toBeInstanceOf(EvidenceIntegrityError);
+    if (parsed.error instanceof EvidenceIntegrityError) throw parsed.error;
     expect(parsed.error.issues).toContainEqual(
       expect.objectContaining({
         path: ["subject"],
@@ -719,6 +809,7 @@ it("rejects static application Evidence whose subject path disagrees with its re
         message: expect.stringContaining("subject must match"),
       }),
     );
+  }
 });
 
 const compareTrees = async (previous: string, current: string) => {

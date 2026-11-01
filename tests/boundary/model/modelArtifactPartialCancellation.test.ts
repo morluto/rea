@@ -131,7 +131,7 @@ it.each([undefined, 64])(
   },
 );
 
-it("retains completed GGUF tensor declarations before later tensor bytes cancel", async () => {
+it("retains GGUF tensor declarations and layout limitations before later tensor bytes cancel", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-model-tensor-partial-"));
   const path = join(root, "model.gguf");
   const tensorCount = 4000;
@@ -139,10 +139,10 @@ it("retains completed GGUF tensor declarations before later tensor bytes cancel"
     metadata: [],
     tensors: Array.from({ length: tensorCount }, (_, index) => ({
       name: `tensor-${String(index).padStart(4, "0")}`,
-      type: 0,
-      shape: [1n],
+      type: index === 0 ? 9 : 0,
+      shape: index === 0 ? [320n] : [1n],
       offset: 0n,
-      bytes: 4,
+      bytes: index === 0 ? 400 : 4,
     })),
   });
   await writeFile(path, fixture.bytes);
@@ -210,12 +210,18 @@ it("retains completed GGUF tensor declarations before later tensor bytes cancel"
     expect(partial.tensor_declarations.length).toBeGreaterThan(0);
     expect(partial.tensor_declarations[0]).toMatchObject({
       index: 0,
+      type: "Q8_1",
+      byte_length: null,
+      byte_length_state: "unknown",
       file_offset: null,
       storage_validation: "not-established",
     });
     expect(partial.tensors).toEqual([]);
     expect(partial.coverage.tensors).toBe("partial");
     expect(evidence.normalized_result).toMatchObject({ alignment: 32 });
+    expect(evidence.limitations).toContainEqual(
+      expect.stringContaining("Q8_1 has released 40-byte and 36-byte layouts"),
+    );
     expect(partial.artifact).toMatchObject({
       path,
       header_sha256: null,
@@ -244,7 +250,7 @@ it.each([
             JSON.stringify({
               __metadata__: { author: "test" },
               weight: {
-                dtype: "F32",
+                dtype: "FUTURE_F32",
                 shape: [524288],
                 data_offsets: [0, 2 * 1024 * 1024],
               },
@@ -330,6 +336,14 @@ it.each([
           file_identity: "unverified",
         },
       });
+      if (format === "safetensors")
+        expect(
+          parseEvidence(result.error.partialObservation).limitations,
+        ).toContainEqual(
+          expect.stringContaining(
+            "Unknown tensor types prevent storage-size validation: FUTURE_F32",
+          ),
+        );
     } finally {
       readSpy.mockRestore();
       await provider.close();

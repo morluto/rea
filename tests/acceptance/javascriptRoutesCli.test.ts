@@ -13,6 +13,16 @@ const routeViewFromEvidence = (evidence: unknown) =>
     parseEvidence(evidence).normalized_result,
   );
 
+const expectAccountRoutes = (items: unknown[]) => {
+  expect(items).toHaveLength(2);
+  expect(items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/account" }),
+      expect.objectContaining({ path: "/account/:id" }),
+    ]),
+  );
+};
+
 const interceptedSource = "export default function Photo(){return null;}";
 const independentPaths = [
   "/checks/independent",
@@ -31,6 +41,10 @@ const fixture = async () => {
   await writeFile(
     join(path, "routes.js"),
     `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);router.push({pathname:'/reports/static-object',query:{href:'/query-data',path:'/download/file',component:'preview'}});router.addRoute('admin',{path:'settings',component:View});const aliasQuery={path:'/download/alias',component:'preview',href:'/alias-query-data',module:'app/fake/page.tsx'};const target={pathname:'/reports/aliased',query:aliasQuery};router.push(target);const independent={path:'/checks/independent',component:View};router.push({pathname:'/reports/aliased',query:independent ? {ok:1}:{ok:2}});createBrowserRouter([{path:'/reports/stale-computed',[computedKey]:'/unrelated',children:[{path:'settings'}]}]);const registry={route:{path:'/checks/projected',component:View},query:{path:'/download/projected-query',component:Preview}};const {query:payload}=registry;router.push({pathname:'/reports/aliased',query:payload});const pattern='/checks/optional/:id?';createBrowserRouter([{path:pattern}]);const restRegistry={query:{path:'/download/rest-query',component:Preview},route:{path:'/checks/rest',component:View}};const {route,...restPayload}=restRegistry;router.push({pathname:'/reports/aliased',query:restPayload});const fallback={path:'/checks/inactive-default',component:View};const {query:actualQuery=fallback}={query:{ok:1}};router.push({pathname:'/reports/aliased',query:actualQuery});const cache=[];cache.push('/checks/array-data');text.replace('/checks/string-data','');const inactiveBranch={path:'/checks/inactive-branch',component:View};router.push({pathname:'/reports/aliased',query:true?{}:inactiveBranch});const overwritten={path:'/checks/overwritten',component:View};router.push({pathname:'/reports/aliased',query:{item:overwritten,item:0}});const memberRegistry={query:{path:'/download/member-query',component:Preview},route:{path:'/checks/member',component:View}};router.push({pathname:'/reports/aliased',query:memberRegistry.query});const protoPayload={path:'/download/proto-query',component:Preview};router.push({pathname:'/reports/aliased',query:{['__proto__']:protoPayload,__proto__:null}});const replacedRegistry={query:independent};replacedRegistry.query={ok:1};router.push({pathname:'/reports/aliased',query:replacedRegistry.query});let replacedDirect=independent;replacedDirect={ok:1};router.push({pathname:'/reports/aliased',query:replacedDirect});const uncertainPayload={path:'/download/uncertain-query',component:Preview};const uncertainRegistry={query:uncertainPayload};const otherRegistry={query:{ok:1}};const uncertainAlias=flag?uncertainRegistry:otherRegistry;uncertainAlias.query={ok:1};router.push({pathname:'/reports/aliased',query:uncertainRegistry.query});const possiblePayload={path:'/download/possible-query',component:Preview};const possibleRegistry={query:possiblePayload,...unknown};router.push({pathname:'/reports/aliased',query:possibleRegistry.query});const cyclicRegistry={get a(){return this.a.b}};router.push({pathname:'/reports/aliased',query:cyclicRegistry.a});const finiteRegistry={get a(){return this},get b(){return this.a.a},path:'/download/finite-query',component:Preview};router.push({pathname:'/reports/aliased',query:finiteRegistry.a.b});const configurationRegistry={children:[{path:'/checks/config-sibling',component:View}],routes:[]};createBrowserRouter(configurationRegistry.routes);const helper='app/reports/helper/page-helpers.js';const extra='/reports/help';}]);`,
+  );
+  await writeFile(
+    join(path, "package.json"),
+    JSON.stringify({ dependencies: { next: "16.4.2" } }),
   );
   const intercepted = join(path, "app/feed/(.)photo");
   await mkdir(intercepted, { recursive: true });
@@ -70,7 +84,10 @@ cliTest(
       evidence_bundle: { path: string };
     };
     const view = routeViewFromEvidence(envelope.summary);
-    expect(view.items).toHaveLength(2);
+    expect(view.items).toEqual([
+      expect.objectContaining({ path: "/reports" }),
+      expect.objectContaining({ path: "/reports/aliased" }),
+    ]);
     expect(view.coverage).toMatchObject({ total: 6, next_offset: 2 });
     expect(view.sources[0]!.sha256).toMatch(/^[a-f0-9]{64}$/u);
     await rm(path, { recursive: true });
@@ -106,7 +123,13 @@ cliTest(
       ],
     });
     expect(repeated.exitCode, repeated.stdout + repeated.stderr).toBe(0);
-    expect(routeViewFromEvidence(repeated.json).items).toHaveLength(2);
+    const nextPage = routeViewFromEvidence(repeated.json);
+    expect(nextPage.parent_evidence_id).toBe(view.parent_evidence_id);
+    expect(nextPage.coverage).toMatchObject({ total: 6, next_offset: 4 });
+    expect(nextPage.items).toEqual([
+      expect.objectContaining({ path: "/reports/help" }),
+      expect.objectContaining({ path: "/reports/history" }),
+    ]);
   },
 );
 cliTest(
@@ -178,7 +201,7 @@ it.each(["full", "compact"] as const)(
     });
     expect(response.isError).not.toBe(true);
     const selected = routeViewFromEvidence(response.structuredContent);
-    expect(selected.items).toHaveLength(2);
+    expectAccountRoutes(selected.items);
     await rm(path, { recursive: true });
     const occurrences = await call("inspect_analysis_view", {
       source: {

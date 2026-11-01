@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { commandEvidenceDetailSchema } from "./commandObservation.js";
+import { localPathStringSchema } from "./localPath.js";
 
 /** Omitted one-shot objdump/rizin wall clock. Preflight shares it; the command gets it again. */
 export const DEFAULT_REVERSE_COMMAND_TIMEOUT_MS = 120_000;
@@ -33,7 +34,7 @@ export const OBJDUMP_ARTIFACT_OPERATIONS = [
 
 const objdumpArtifactInputSchema = z
   .object({
-    path: z.string().min(1),
+    path: localPathStringSchema,
     operation: z.enum(OBJDUMP_ARTIFACT_OPERATIONS).exclude(["disassemble"]),
     follow_debug_links: z.boolean().default(false),
     ...commandTimeoutMsField,
@@ -74,7 +75,7 @@ export const objdumpInputSchema = z.discriminatedUnion("operation", [
 /** Caller-selected Rizin command against one local artifact. */
 export const rizinInputSchema = z
   .object({
-    path: z.string().min(1),
+    path: localPathStringSchema,
     command: z
       .string()
       .min(1)

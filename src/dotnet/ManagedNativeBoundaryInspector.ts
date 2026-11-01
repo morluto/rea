@@ -19,7 +19,12 @@ import {
   type ManagedCliHeader,
   type ManagedPeLayout,
 } from "./ManagedPeReader.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
+import {
+  appendManagedParseIssues,
+  ManagedReaderFailure,
+  managedMetadataFailureStatus,
+  type ManagedMetadataHeaderFacts,
+} from "./ManagedReaderFailure.js";
 import {
   buildNativeBoundaryInspection,
   cliNative,
@@ -45,9 +50,11 @@ const emptyInspection = (
   {
     cli = null,
     issues = [],
+    metadataHeader = null,
   }: {
     readonly cli?: ManagedCliHeader | null;
     readonly issues?: readonly ManagedParseIssue[];
+    readonly metadataHeader?: ManagedMetadataHeaderFacts | null;
   } = {},
 ): ManagedNativeBoundaryInspection => {
   return managedNativeBoundaryInspectionSchema.parse(
@@ -60,12 +67,14 @@ const emptyInspection = (
       },
       module: null,
       metadata: {
-        status: issues.some((issue) => issue.code === "resource-limit")
+        status: issues.some(
+          (issue) => managedMetadataFailureStatus(issue) === "partial",
+        )
           ? "partial"
           : classification === "malformed"
             ? "malformed"
             : "absent",
-        version: null,
+        version: metadataHeader?.version ?? null,
         table_row_counts: {},
       },
       identity_scope: {
@@ -144,11 +153,12 @@ export const inspectManagedNativeBoundariesBytes = (
     return emptyInspection(target, bytes, "malformed", {
       cli: pe.cli,
       issues: [cause.issue],
+      metadataHeader: cause.metadataHeader,
     });
   }
   try {
     const heapExtent = Math.max(layout.strings.size, layout.blob?.size ?? 0);
-    issues.push(...inventory.issues);
+    appendManagedParseIssues(issues, inventory.issues);
     const moduleRefs = parseModuleRefs(bytes, layout, heapExtent, issues);
     const members = new Map([
       ...parseFields(bytes, layout, heapExtent, issues),
@@ -187,6 +197,7 @@ export const inspectManagedNativeBoundariesBytes = (
     return emptyInspection(target, bytes, "malformed", {
       cli: pe.cli,
       issues: [...issues, cause.issue],
+      metadataHeader: cause.metadataHeader,
     });
   }
 };
