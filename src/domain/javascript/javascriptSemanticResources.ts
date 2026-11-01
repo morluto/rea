@@ -67,8 +67,9 @@ export const collectJavaScriptSemanticResources = (
   const acquisitions = collectAcquisitions(program, context).filter(
     (candidate) =>
       !socketPortInFirstArgument(candidate) ||
-      tlsOptionsReplaceFirstArgument(candidate, context) ||
-      !rejectsSocketPortLiteral(candidate, context),
+      (!tlsOptionsRejectCall(candidate) &&
+        (tlsOptionsReplaceFirstArgument(candidate, context) ||
+          !rejectsSocketPortLiteral(candidate, context))),
   );
   return [
     ...acquisitions.map(immutableAcquisition),
@@ -392,6 +393,19 @@ const rejectsSocketPortLiteral = (
 const socketPortInFirstArgument = (
   candidate: Pick<AcquisitionReference, "specifier">,
 ): boolean => candidate.specifier === "net" || candidate.specifier === "tls";
+
+/**
+ * `tls.connect` validates an options `path` as a string before it merges the
+ * object, so a readable non-string `path` throws regardless of the first
+ * argument or any `port`. `net.connect` accepts the same object, so this
+ * rejection applies to `tls` only.
+ */
+const tlsOptionsRejectCall = (candidate: ResourceCandidate): boolean => {
+  if (candidate.specifier !== "tls") return false;
+  const options = candidate.node.arguments[1];
+  if (options === undefined || !t.isObjectExpression(options)) return false;
+  return socketOptionsIntent(options) === "invalid";
+};
 
 /**
  * `tls.connect` merges a later options object over its first argument, so
