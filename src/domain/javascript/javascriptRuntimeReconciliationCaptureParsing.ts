@@ -126,7 +126,7 @@ export type ParsedRuntimeCapture =
 
 /** Parse only supported passive web/Electron inspection Evidence. */
 export const parseRuntimeCaptures = (
-  observations: readonly Evidence[],
+  observations: readonly unknown[],
   path: readonly (string | number)[] = ["runtime_observations"],
 ): ParsedRuntimeCapture[] =>
   observations
@@ -140,8 +140,9 @@ export const parseRuntimeCaptures = (
       ),
     );
 
-const parseRuntimeCapture = (
-  input: Evidence,
+/** Authenticate one source before interpreting its runtime capture. */
+export const parseRuntimeCapture = (
+  input: unknown,
   evidencePath: readonly (string | number)[],
 ): ParsedRuntimeCapture => {
   const evidence = authenticateRuntimeEvidence(input, evidencePath);
@@ -293,7 +294,7 @@ const assertV8RuntimeParameters = (
     z
       .object({
         inspector_endpoint: browserEndpointSchema,
-        target_id: z.string().trim().min(1),
+        target_id: z.string().min(1),
         runtime_kind: javascriptRuntimeKindSchema.optional(),
       })
       .passthrough(),
@@ -456,7 +457,7 @@ const assertRuntimeParameters = (
   path: readonly (string | number)[],
 ): void => {
   const common = {
-    target_id: z.string().trim().min(1),
+    target_id: z.string().min(1),
     include_script_sources: z.boolean(),
   };
   if (expected.kind === "browser") {

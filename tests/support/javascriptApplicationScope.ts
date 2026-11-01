@@ -1,10 +1,10 @@
 import { withArtifactResourceScope } from "../fixtures/artifactInventory.js";
-import type { ExecutionOptions } from "../../src/application/AnalysisProvider.js";
 import {
   analyzeJavaScriptApplication as analyzeOwned,
   type JavaScriptApplicationOptions,
 } from "../../src/application/javascript/JavaScriptApplicationService.js";
 import { reconstructJavaScriptArtifact as reconstructOwned } from "../../src/application/javascript/JavaScriptArtifactReconstruction.js";
+import { analyzeJavaScriptApplicationInputSchema } from "../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import type { ProgressReporter } from "../../src/application/ProgressReporter.js";
 import { readJavaScriptArtifactFiles as readOwned } from "../../src/artifacts/javascript/JavaScriptArtifactFiles.js";
 import type { ArtifactReader } from "../../src/artifacts/ArtifactReader.js";
@@ -34,5 +34,10 @@ export const reconstructJavaScriptArtifact = (
   progress?: ProgressReporter,
 ) =>
   withArtifactResourceScope((scope) =>
-    reconstructOwned(rawInput, scope, signal, progress),
+    reconstructOwned(
+      analyzeJavaScriptApplicationInputSchema.parse(rawInput),
+      scope,
+      signal,
+      progress,
+    ),
   );

@@ -6,6 +6,7 @@ import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFi
 import {
   NativeFixtureRunner,
   nativeMachoTarget,
+  nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
@@ -15,6 +16,7 @@ import { AnalysisCleanupLease } from "../../../../src/artifacts/AnalysisCleanupL
 import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { inspectPlistSchema } from "../../../../src/domain/native/nativeInspection.js";
 
 const fixture = async () => {
   const root = await createTestTempDirectory("rea-native-plist-lifetime-");
@@ -151,11 +153,12 @@ it.for(["path-input", "target"] as const)(
       read.mockRestore();
       await release?.();
     });
-    const client = new NativeMacOSProvider(
-      {},
-      new NativeFixtureRunner({ file: "ASCII text", plutil: '"value"' }),
-      "darwin",
-    ).createClient(
+    const runner = new NativeFixtureRunner({
+      file: "ASCII text",
+      plutil: '"value"',
+    });
+    const commands = vi.spyOn(runner, "run");
+    const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
       selection === "target"
         ? { kind: "artifact", format: "plist", path, sha256: "0".repeat(64) }
         : nativeMachoTarget(join(root, "target")),
@@ -174,11 +177,9 @@ it.for(["path-input", "target"] as const)(
       operation: "inspect_plist",
     });
     expect(result.error.cleanupResources).toContain(path);
-    expect(result.error.capturedOutput?.stdout).toBe('"value"');
+    expect(result.error.capturedOutput).toBeUndefined();
     const projected = projectAnalysisError(result.error);
-    expect(JSON.stringify(projected).match(/captured_output/gu)).toHaveLength(
-      1,
-    );
+    expect(JSON.stringify(projected)).not.toContain("captured_output");
     expect(result.error.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
     const failure = result.error.cause as ArtifactFileCleanupFailure;
     expect(failure.fileCleanupFailure.outcome).toEqual({
@@ -194,9 +195,8 @@ it.for(["path-input", "target"] as const)(
     expect(attempts).toBe(3);
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(resolvedAnalysisError(result.error).cause).toBe(primary);
-    expect(resolvedAnalysisError(result.error).capturedOutput?.stdout).toBe(
-      '"value"',
-    );
+    expect(resolvedAnalysisError(result.error).capturedOutput).toBeUndefined();
+    expect(commands.mock.calls.map(([tool]) => tool)).toEqual(["file"]);
     if (!first.ok) expect(first.error.cleanupIncomplete).toBe(false);
   },
 );
@@ -334,41 +334,184 @@ it("preserves an opaque cancellation observed during successful prefix close", a
   expect((await client.close()).ok).toBe(true);
 });
 
-it("joins an admitted prefix read when client close starts concurrently", async () => {
-  const { client, path, prototype } = await fixture();
-  let enter!: () => void;
-  let resume!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
-  const original = prototype.read;
-  const read = vi
-    .spyOn(prototype, "read")
-    .mockImplementationOnce(async function (
+it.for([
+  ["prefix", "source"],
+  ["source", "source"],
+  ["prefix", "json"],
+  ["prefix", "xml"],
+] as const)(
+  "joins an admitted %s read and final %s command when client close starts concurrently",
+  async ([phase, route]) => {
+    const { client, path, prototype, runner } = await fixture();
+    if (route !== "source") await writeFile(path, "{ name = value; }");
+    let enter!: () => void;
+    let resume!: () => void;
+    let enterValidation!: () => void;
+    let resumeValidation!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const validationEntered = new Promise<void>((resolve) => {
+      enterValidation = resolve;
+    });
+    const validationGate = new Promise<void>((resolve) => {
+      resumeValidation = resolve;
+    });
+    const original = prototype.read;
+    let reads = 0;
+    const read = vi.spyOn(prototype, "read").mockImplementation(async function (
       this: FileHandle,
       ...args: Parameters<FileHandle["read"]>
     ) {
-      enter();
-      await gate;
+      reads += 1;
+      if (reads === (phase === "prefix" ? 1 : 2)) {
+        enter();
+        await gate;
+      }
       return Reflect.apply(original, this, args);
     });
-  onTestFinished(() => {
+    let validationStarted = false;
+    const run = runner.run.bind(runner);
+    const commands = vi
+      .spyOn(runner, "run")
+      .mockImplementation(async (tool, args, options) => {
+        if (tool === "plutil" && (route !== "xml" || args[1] === "xml1")) {
+          validationStarted = true;
+          enterValidation();
+          await validationGate;
+        }
+        const result = await run(tool, args, options);
+        if (route !== "xml" || tool !== "plutil" || !result.ok) return result;
+        const stdout =
+          args[1] === "xml1" ? "<plist><string>value</string></plist>" : "";
+        return ok({
+          ...result.value,
+          stdout,
+          stdoutBytes: Buffer.byteLength(stdout),
+          exitCode: args[1] === "json" ? 1 : 0,
+        });
+      });
+    onTestFinished(() => {
+      resume();
+      resumeValidation();
+      read.mockRestore();
+      commands.mockRestore();
+    });
+    const inspecting = client.execute("inspect_plist", {
+      path,
+      native_command_timeout_ms: 1500,
+    });
+    await entered;
+    let finished = false;
+    const closing = client.close().then((result) => {
+      finished = true;
+      return result;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(finished).toBe(false);
+    expect(await client.execute("inspect_plist", { path })).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCapabilityUnavailableError" },
+    });
     resume();
+    await Promise.race([validationEntered, inspecting]);
+    expect(validationStarted).toBe(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(finished).toBe(false);
+    resumeValidation();
+    const inspected = await inspecting;
+    if (!inspected.ok) throw inspected.error;
+    expect((await closing).ok).toBe(true);
+    const result = inspectPlistSchema.parse(inspected.value.result);
+    expect(result.value).toBe("value");
+    expect(result.source_path).toBe(path);
+    const expectedCommands = [
+      ["file", ["-b", path]],
+      [
+        "plutil",
+        route === "source"
+          ? ["-lint", "--", path]
+          : ["-convert", "json", "-o", "-", "--", path],
+      ],
+      ...(route === "xml"
+        ? [["plutil", ["-convert", "xml1", "-o", "-", "--", path]]]
+        : []),
+    ];
+    expect(commands.mock.calls.map(([tool, args]) => [tool, args])).toEqual(
+      expectedCommands,
+    );
+    expect(result.provenance.map(({ tool }) => tool)).toEqual(
+      expectedCommands.map(([tool]) => tool),
+    );
+    expect(commands.mock.calls.at(-1)?.[2]).toEqual({
+      timeoutMs: 1500,
+      acceptNonZero: true,
+    });
+  },
+);
+
+it("preserves a failed app plist read and its cleanup when the executable changes", async () => {
+  const root = await createTestTempDirectory("rea-app-plist-primary-");
+  const path = join(root, "Info.plist");
+  const executable = join(root, "program");
+  await writeFile(path, "<plist><string>value</string></plist>");
+  await writeFile(executable, "original executable");
+  const target = {
+    ...(await nativeMachoTargetForFile(executable)),
+    bundleInfoPlist: path,
+  };
+  const probe = await open(path, "r");
+  const inode = (await probe.stat()).ino;
+  const prototype = Object.getPrototypeOf(probe) as FileHandle;
+  await probe.close();
+  const primary = Object.assign(new Error("controlled plist read failure"), {
+    code: "EIO",
+  });
+  const cleanup = new Error("controlled plist close failure");
+  const original = prototype.read;
+  let release: (() => Promise<void>) | undefined;
+  let closeAttempts = 0;
+  const read = vi.spyOn(prototype, "read").mockImplementation(async function (
+    this: FileHandle,
+    ...args: Parameters<FileHandle["read"]>
+  ) {
+    if ((await this.stat()).ino !== inode)
+      return Reflect.apply(original, this, args);
+    await writeFile(executable, "changed executable");
+    release = this.close.bind(this);
+    this.close = async () => {
+      closeAttempts += 1;
+      if (closeAttempts === 1) throw cleanup;
+      await release!();
+    };
+    throw primary;
+  });
+  const client = new NativeMacOSProvider(
+    {},
+    new NativeFixtureRunner({ file: "ASCII text" }),
+    "darwin",
+  ).createClient(target);
+  onTestFinished(async () => {
     read.mockRestore();
+    await release?.();
+    await client.close();
   });
-  const inspecting = client.execute("inspect_plist", { path });
-  await entered;
-  let finished = false;
-  const closing = client.close().then((result) => {
-    finished = true;
-    return result;
+  const result = await client.execute("inspect_plist", {});
+  if (result.ok) throw new Error("Expected retained plist failure");
+  expect(result.error.cleanupResources).toEqual([path]);
+  expect(result.error.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
+  const failure = result.error.cause as ArtifactFileCleanupFailure;
+  expect(failure.fileCleanupFailure.outcome).toEqual({
+    kind: "failed",
+    cause: primary,
   });
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(finished).toBe(false);
-  resume();
-  expect((await inspecting).ok).toBe(true);
-  expect((await closing).ok).toBe(true);
+  expect(failure.fileCleanupFailure.cleanupCause).toBe(cleanup);
+  expect(closeAttempts).toBe(1);
+  expect((await client.close()).ok).toBe(true);
+  expect(closeAttempts).toBe(2);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(resolvedAnalysisError(result.error).cause).toBe(primary);
 });

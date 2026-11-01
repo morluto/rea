@@ -67,7 +67,7 @@ const emitMainWebMcpTools = (
         description: "Search orders; authorization=Bearer tool-secret",
         frameId: "frame-main",
         backendNodeId: 42,
-        inputSchema: options.webMcpInputSchema ?? {
+        inputSchema: {
           type: "object",
           properties: inputSchemaProperties,
           required: ["orderId"],
@@ -276,7 +276,7 @@ const emitSessionTimeline = (
       loaderId: "loader-redirect",
       request: { url: redirectUrl, method: "GET" },
       initiator: { type: "other" },
-      redirectResponse: { status: 302 },
+      redirectResponse: { url: allowed, status: 302 },
       timestamp: 13,
     });
     event(socket, "Network.requestWillBeSent", command.sessionId, {

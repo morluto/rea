@@ -53,9 +53,9 @@ it.each([
 ])(
   "indexes the legacy block-function write on its outer owner: %s",
   (source) => {
-    expect(
-      onlyCallable(analyze(source), "read").returnSites[0]?.value.status,
-    ).not.toBe("literal");
+    const returnSite = onlyCallable(analyze(source), "read").returnSites[0];
+    expect(returnSite).toBeDefined();
+    expect(returnSite?.value.status).not.toBe("literal");
   },
 );
 
@@ -122,6 +122,38 @@ it("keeps ordinary arguments local while arrows retain the outer binding", () =>
     ),
   ).toBe(false);
 });
+
+it.each([
+  ["object", "{ handler }", "{ handler: state }"],
+  ["array", "[handler]", "[state]"],
+])(
+  "retains mutations through catch-shadowed %s var aliases",
+  (_shape, pattern, value) => {
+    for (const shadowed of [true, false]) {
+      const ir = analyze(`
+        exports.read = function read() {
+          const state = { value: 1 };
+          try { throw 0; } catch (${shadowed ? "handler" : "error"}) {
+            var ${pattern} = ${value};
+            handler.value = 2;
+          }
+          return state.value;
+        };
+      `);
+      expect(ir.coverage.status).toBe("complete");
+      expect(onlyCallable(ir, "read").returnSites[0]?.value).toEqual({
+        status: "unknown",
+        reason: "Own property value is unknown-coverage.",
+      });
+      if (shadowed)
+        expect(
+          ir.bindings.find(
+            ({ name, kind }) => name === "handler" && kind === "variable",
+          )?.value.status,
+        ).toBe("unknown");
+    }
+  },
+);
 
 it("does not resolve Promise sources through a future initializer", () => {
   const early = analyze(
@@ -214,5 +246,6 @@ it("owns a class declaration's self reference separately from its outer variable
 
 it("does not initialize a class self name during computed-key evaluation", () => {
   const ir = analyze(`class Service { [Service()]() {} }`, "fixture.mjs");
+  expect(ir.callSites[0]).toBeDefined();
   expect(ir.callSites[0]?.resolution).not.toBe("exact");
 });

@@ -134,13 +134,19 @@ const readCompactUnsignedBytes = (
 const parseAtoms = (
   payload: Buffer,
   maxAtoms: number,
-  encoding: "latin1" | "utf8",
+  format: "Atom" | "AtU8",
 ): ErlangBeam["atoms"] => {
   if (payload.length < 4) fail("BEAM atom table is truncated.");
-  // OTP 28+ writes a negated count and compact-encoded name lengths.
-  const declared = payload.readInt32BE(0);
-  const compact = declared < 0;
-  const count = Math.abs(declared);
+  // Only AtU8 supports OTP 28+'s negated count and compact name lengths.
+  // Historical Atom uses an unsigned count and single-byte lengths.
+  const encoding = format === "AtU8" ? "utf8" : "latin1";
+  const declared =
+    format === "AtU8" ? payload.readInt32BE(0) : payload.readUInt32BE(0);
+  const compact = format === "AtU8" && declared < 0;
+  const count = compact ? -declared : declared;
+  // Every entry needs at least one length byte, regardless of the layout.
+  // Reject an impossible table before treating its count as a budget refusal.
+  if (count > payload.length - 4) fail("BEAM atom table is truncated.");
   if (count > maxAtoms)
     throw new BeamCapacityFailure(
       "atoms",
@@ -264,12 +270,14 @@ export const parseErlangBeam = (
     utf8AtomChunk !== undefined &&
     (utf8AtomChunk.payload.length > 0 || legacyAtomChunk === undefined);
   const atomChunk = useUtf8Atoms ? utf8AtomChunk : legacyAtomChunk;
+  const atomFormat =
+    atomChunk === undefined ? null : useUtf8Atoms ? "AtU8" : "Atom";
   const atomEncoding =
-    atomChunk === undefined ? null : useUtf8Atoms ? "utf8" : "latin1";
+    atomFormat === null ? null : atomFormat === "AtU8" ? "utf8" : "latin1";
   const atoms =
-    atomChunk === undefined || atomEncoding === null
+    atomChunk === undefined || atomFormat === null
       ? null
-      : parseAtoms(atomChunk.payload, input.max_atoms, atomEncoding);
+      : parseAtoms(atomChunk.payload, input.max_atoms, atomFormat);
   const declaredRows = (name: string): number => {
     const payload = payloads.get(name)?.payload;
     return payload !== undefined && payload.length >= 4 ? u32(payload, 0) : 0;

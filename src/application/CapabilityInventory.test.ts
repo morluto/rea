@@ -1,3 +1,5 @@
+import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
+import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import { describe, expect, it } from "vitest";
 
@@ -9,6 +11,7 @@ import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import {
   expandToolAvailability,
   toolAvailabilityInventory,
+  toolAvailabilitySummaryInventory,
   type ToolAvailability,
 } from "../contracts/toolOutputSchemaPrimitives.js";
 
@@ -98,6 +101,77 @@ const entry = (
   return found;
 };
 
+it("reports the active resource session's dispatch policy without limiting independent tools", () => {
+  const resourceStatus = {
+    ...status({ open: true }),
+    session_kind: "bundle_resources",
+    capabilities: [
+      {
+        provider: { id: "bundle-resources", name: "Resources", version: "1" },
+        shared_limitations: [],
+        groups: [
+          {
+            operations: [
+              "inspect_plist",
+              "decode_interface_builder",
+              "inspect_asset_catalog",
+              "inspect_keyed_archive",
+            ],
+            effects: [],
+            limitations: [],
+            available: true,
+            reason: null,
+            availability_code: null,
+          },
+        ],
+      },
+    ],
+  };
+  const entries = buildCapabilityInventory(resourceStatus, enabledPolicy);
+  for (const name of [
+    "inspect_artifact",
+    "extract_artifact",
+    "trace_dylib_resolution",
+    "get_navigation_context",
+  ])
+    expect(entries.find((item) => item.name === name)).toMatchObject({
+      available: false,
+      reason: "target_unsupported",
+      remediation: expect.stringContaining("open_binary"),
+    });
+  for (const name of [
+    "inspect_plist",
+    "decode_interface_builder",
+    "inspect_asset_catalog",
+    "inspect_keyed_archive",
+    "inspect_pe_imports",
+    "inspect_desktop_application",
+    "close_binary",
+  ])
+    expect(entries.find((item) => item.name === name)).toMatchObject({
+      available: true,
+    });
+  expect(
+    entries.find((item) => item.name === "inspect_apk_signature"),
+  ).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
+  const sqlite = sqliteDatabaseCapability(process.versions.node);
+  expect(
+    entries.find((item) => item.name === "inspect_sqlite_database"),
+  ).toMatchObject(
+    sqlite.available
+      ? { available: true }
+      : {
+          available: false,
+          reason: "provider_unavailable",
+          remediation: sqlite.reason,
+        },
+  );
+});
+
 describe("ADB and Apktool host availability", () => {
   it("uses only their selected owner probes", () => {
     const ready = {
@@ -110,6 +184,7 @@ describe("ADB and Apktool host availability", () => {
       status: "unavailable" as const,
       code: "not_configured" as const,
       reason: "REA_ADB_PATH is invalid",
+      remediation: "Set REA_ADB_PATH to an absolute adb executable path.",
       diagnostics: {},
     };
     const readyInventory = buildCapabilityInventory(status(), {
@@ -131,6 +206,7 @@ describe("ADB and Apktool host availability", () => {
         status: "unavailable",
         code: "unsupported_version",
         reason: "Apktool 2.6.3 is older than 2.7.0",
+        remediation: "Repair the fixture provider.",
         diagnostics: {},
       },
     });
@@ -153,6 +229,7 @@ describe("capability failure reasons", () => {
         status: "unavailable",
         code: "runtime_unavailable",
         reason: "The JADX native self-test failed.",
+        remediation: "Repair the fixture provider.",
         diagnostics: {},
       },
     });
@@ -651,24 +728,6 @@ describe("binary_overview capability requirements", () => {
     });
   });
 
-  it("admits a provider without optional segment enumeration", () => {
-    const capabilities = [
-      "current_document",
-      "list_procedures",
-      "list_strings",
-    ].map((operation) => ({ operation, available: true, reason: null }));
-    expect(
-      entry(
-        "binary_overview",
-        status({ open: true, kind: "executable", capabilities }),
-      ),
-    ).toMatchObject({
-      available: true,
-      reason: "available",
-      remediation: null,
-    });
-  });
-
   it("keeps binary overview available when a declared segment facet is unavailable", () => {
     const capabilities = [
       {
@@ -719,6 +778,23 @@ describe("trace_feature requirements", () => {
       available: true,
       reason: null,
     }));
+
+  it("remains available when owner lookup is unavailable", () => {
+    expect(
+      entry(
+        "trace_feature",
+        status({
+          open: true,
+          kind: "executable",
+          capabilities: capabilities([
+            "search_strings",
+            "search_procedures",
+            "xrefs",
+          ]),
+        }),
+      ),
+    ).toMatchObject({ available: true, reason: "available" });
+  });
 
   it("needs the search operations the workflow actually calls", () => {
     expect(
@@ -884,4 +960,71 @@ it("keeps independent native sessions discoverable without an unrelated binary t
   expect(entries.find((entry) => entry.name === "inspect_macho")).toMatchObject(
     { available: false, reason: "target_required" },
   );
+});
+
+it.each(["darwin", "linux", "win32"] as const)(
+  "reports the persistent debugger start host restriction on %s",
+  (platform) => {
+    const entries = buildCapabilityInventory(status(), {
+      ...enabledPolicy,
+      hostUnsupported: {
+        persistentDebugger: !persistentDebuggerHostSupported(platform),
+      },
+    });
+    for (const name of ["start_gdb_session", "start_rizin_debug_session"])
+      expect(entries.find((entry) => entry.name === name)).toMatchObject(
+        platform === "linux"
+          ? { available: true, reason: "available" }
+          : {
+              available: false,
+              reason: "unsupported_host",
+              remediation: expect.stringContaining("Linux"),
+            },
+      );
+    for (const name of ["gdb_session_status", "close_rizin_debug_session"])
+      expect(entries.find((entry) => entry.name === name)).toMatchObject({
+        available: true,
+      });
+  },
+);
+
+describe("summary tool availability", () => {
+  it("summarizes every tool's current availability without static catalog flags", () => {
+    const full = buildCapabilityInventory(status(), enabledPolicy);
+    const withOverride = full.map((entry, index) =>
+      index === 1
+        ? {
+            ...entry,
+            available: false as const,
+            reason: "client_capability_missing" as const,
+            remediation: "Use an MCP client with roots support.",
+            client_requirements: {
+              required: ["roots" as const],
+              optional: [],
+              missing_required: ["roots" as const],
+              missing_optional: [],
+            },
+          }
+        : entry,
+    );
+    const complete = compactToolAvailability(withOverride);
+    const summary = compactToolAvailability(withOverride, "summary");
+
+    expect(toolAvailabilitySummaryInventory.parse(summary)).toEqual(summary);
+    expect(toolAvailabilityInventory.safeParse(summary).success).toBe(false);
+    expect(summary.groups.length).toBeLessThan(complete.groups.length);
+    expect(JSON.stringify(summary).length).toBeLessThan(
+      JSON.stringify(complete).length / 2,
+    );
+    for (const group of summary.groups)
+      for (const field of ["surface", "effects", "annotations"])
+        expect(Object.hasOwn(group, field)).toBe(false);
+    const byName = (left: { name: string }, right: { name: string }) =>
+      left.name.localeCompare(right.name);
+    expect(expandToolAvailability(summary).toSorted(byName)).toEqual(
+      withOverride
+        .map(({ surface: _s, effects: _e, annotations: _a, ...entry }) => entry)
+        .toSorted(byName),
+    );
+  });
 });

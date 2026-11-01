@@ -1,3 +1,5 @@
+import { AnalysisWorkScope } from "./AnalysisWorkScope.js";
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { REA_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import { workflowAnalysisProfile } from "./WorkflowAnalysisProfile.js";
@@ -5,8 +7,8 @@ import type {
   AnalysisOperation,
   AnalysisOperationPort,
 } from "./AnalysisProvider.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ok, type Result } from "../domain/result.js";
+import { ok } from "../domain/result.js";
+import type { EnhancedResult } from "./EnhancedToolTypes.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { WorkflowSnapshotRecordInput } from "./binary/BinarySessionRecords.js";
 import {
@@ -22,9 +24,16 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { UnknownRegistryPort } from "./investigation/InvestigationRecordPort.js";
 import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
+import { EvidenceLedger } from "./investigation/EvidenceLedger.js";
+import {
+  recordEvidenceSources,
+  withEvidenceSources,
+  type AnalysisResultWithSources,
+} from "./investigation/recordEvidenceSources.js";
 import { workflowUnknownInput } from "./investigation/WorkflowUnknown.js";
 import {
   renderSourceLimitations,
+  sourceLimitationGroupKey,
   sourceLimitationKey,
   type SourceLimitation,
 } from "./SourceLimitations.js";
@@ -61,32 +70,50 @@ export const composedLimitationBudget = (
 ): ComposedLimitationBudget | undefined =>
   operation === "decompile_all" ? DECOMPILE_ALL_LIMITATIONS : undefined;
 
+/** What one composed call answered, or admitted before a failure stopped it. */
+export interface ComposedWorkflowObservation {
+  readonly result: JsonValue;
+  readonly limitations: readonly string[];
+  readonly cachePolicy?: "live";
+  readonly evidenceLinks?: readonly string[];
+}
+
+/** A composed outcome; only a stopped failure carries its admitted observation. */
+export type ComposedWorkflowResult =
+  AnalysisResultWithSources<ComposedWorkflowObservation> & {
+    readonly partial?: ComposedWorkflowObservation;
+  };
+
 /** Retain the limits of exactly the observations used by one composed call. */
 export const executeComposedWorkflow = async (
   analysis: AnalysisOperationPort,
-  execute: (
-    observed: AnalysisOperationPort,
-  ) => Promise<Result<JsonValue, AnalysisError>>,
+  execute: (observed: AnalysisOperationPort) => EnhancedResult,
   budget?: ComposedLimitationBudget,
-): Promise<
-  Result<
-    {
-      readonly result: JsonValue;
-      readonly limitations: readonly string[];
-      readonly cachePolicy?: "live";
-    },
-    AnalysisError
-  >
-> => {
+): Promise<ComposedWorkflowResult> => {
   const limitations = new Map<string, SourceLimitation>();
+  const evidenceLinks = new Set<string>();
+  const sourceLedger = new EvidenceLedger();
   const perItemGroups = new Set<string>();
   let perItemBytes = 0;
   let omittedObservations = 0;
   let cachePolicy: "live" | undefined;
-  const result = await execute({
+  const workScope = new AnalysisWorkScope();
+  const observed: AnalysisOperationPort = {
     resourceScope: analysis.resourceScope,
     execute: async (operation, parameters, options) => {
-      const execution = await analysis.execute(operation, parameters, options);
+      const execution = await analysis.execute(operation, parameters, {
+        ...options,
+        workScope,
+      });
+      if (execution.ok && execution.value.evidenceId !== undefined)
+        evidenceLinks.add(execution.value.evidenceId);
+      if (execution.ok && execution.value.sourceEvidence !== undefined) {
+        const recorded = recordEvidenceSources(
+          (source) => sourceLedger.record(source),
+          execution.value.sourceEvidence,
+        );
+        if (!recorded.ok) return recorded;
+      }
       if (execution.ok && execution.value.cachePolicy === "live")
         cachePolicy = "live";
       if (execution.ok)
@@ -105,12 +132,7 @@ export const executeComposedWorkflow = async (
               omittedObservations += 1;
               continue;
             }
-            const group = JSON.stringify([
-              fact.provider.id,
-              fact.provider.name,
-              fact.provider.version,
-              limitation,
-            ]);
+            const group = sourceLimitationGroupKey(fact);
             if (!perItemGroups.has(group)) {
               if (
                 perItemGroups.size >= budget.maxDistinct ||
@@ -127,10 +149,16 @@ export const executeComposedWorkflow = async (
         }
       return execution;
     },
-  });
-  if (!result.ok) return result;
-  return ok({
-    result: result.value,
+  };
+  const result = await Promise.resolve()
+    .then(() => execute(observed))
+    .finally(() => workScope.clear());
+  const sources = sourceLedger.recordsForAnalysis();
+  if (!result.ok && !("partialResult" in result))
+    return withEvidenceSources(result, sources);
+  for (const source of sources) evidenceLinks.add(source.evidence_id);
+  const observation = (value: JsonValue): ComposedWorkflowObservation => ({
+    result: value,
     limitations: [
       ...renderSourceLimitations([...limitations.values()]),
       ...(omittedObservations === 0
@@ -140,7 +168,20 @@ export const executeComposedWorkflow = async (
           ]),
     ],
     ...(cachePolicy === undefined ? {} : { cachePolicy }),
+    ...(evidenceLinks.size === 0
+      ? {}
+      : { evidenceLinks: [...evidenceLinks].sort(compareUnicodeCodePoints) }),
   });
+  return withEvidenceSources(
+    result.ok
+      ? ok(observation(result.value))
+      : {
+          ok: false as const,
+          error: result.error,
+          partial: observation(result.partialResult),
+        },
+    sources,
+  );
 };
 
 /** Build the shared Evidence record for a successful composed binary workflow. */
@@ -151,6 +192,7 @@ export const createWorkflowEvidence = (input: {
   readonly result: JsonValue;
   readonly upstreamProfile: AnalysisProfileCommitment | undefined;
   readonly upstreamLimitations: readonly string[];
+  readonly upstreamEvidenceLinks?: readonly string[];
 }): Evidence =>
   createEvidence(input.target, REA_WORKFLOW_PROVIDER, {
     operation: input.operation,
@@ -165,6 +207,9 @@ export const createWorkflowEvidence = (input: {
           ),
         }),
     confidence: "derived",
+    ...(input.upstreamEvidenceLinks === undefined
+      ? {}
+      : { evidenceLinks: input.upstreamEvidenceLinks }),
     limitations: [
       "Derived by an REA composed workflow.",
       ...input.upstreamLimitations,
@@ -173,6 +218,27 @@ export const createWorkflowEvidence = (input: {
       ? { locations: batchProcedureLocations(input.result) }
       : {}),
   });
+
+/** Retain a stopped workflow's admitted observation as partial workflow Evidence on its failure. */
+export const retainPartialWorkflowEvidence = (
+  outcome: ComposedWorkflowResult,
+  context: Pick<
+    Parameters<typeof createWorkflowEvidence>[0],
+    "target" | "operation" | "parameters" | "upstreamProfile"
+  >,
+): void => {
+  if (outcome.ok || outcome.partial === undefined) return;
+  const evidence = createWorkflowEvidence({
+    ...context,
+    result: outcome.partial.result,
+    upstreamLimitations: outcome.partial.limitations,
+    ...(outcome.partial.evidenceLinks === undefined
+      ? {}
+      : { upstreamEvidenceLinks: outcome.partial.evidenceLinks }),
+  });
+  // A partial observation the failing read already reported stays its own.
+  outcome.error.retainPartialObservation(evidence);
+};
 
 const batchProcedureLocations = (result: JsonValue): EvidenceLocation[] => {
   if (

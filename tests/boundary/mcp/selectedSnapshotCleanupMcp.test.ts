@@ -175,8 +175,8 @@ it("retains a selected snapshot descriptor through MCP cleanup discovery and sam
     expect(replayEvidence.evidence_id).not.toBe(originalEvidence.evidence_id);
     expect(starts).toBe(priorStarts);
     expect(calls).toEqual(priorCalls);
-    expect(await readFile(snapshotPath)).toEqual(snapshotBytes);
-    expect(await readFile(first)).toEqual(targetBytes);
+    expect(Buffer.compare(await readFile(snapshotPath), snapshotBytes)).toBe(0);
+    expect(Buffer.compare(await readFile(first), targetBytes)).toBe(0);
   } finally {
     restoreClose();
     try {

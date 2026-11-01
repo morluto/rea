@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { nativeSymbolMetadataSchema } from "./nativeSymbol.js";
-import { analysisStringSchema } from "../hopperValues.js";
+import { analysisStringSchema } from "./nativeString.js";
+import { ok, type Result } from "../result.js";
+import { AnalysisOutputError } from "../analysisErrorCore.js";
+import type { JsonValue } from "../jsonValue.js";
+import { invalidNativeOutput } from "./nativeProviderOutput.js";
 
 /** Canonical named native observations; same-address alternatives stay separate. */
 export const addressedValueSchema = z.object({
@@ -22,6 +26,13 @@ export const addressedValueSchema = z.object({
       byte_length: z.number().int().min(0),
     })
     .exactOptional(),
+  matched_aliases: z
+    .array(z.string())
+    .min(1)
+    .exactOptional()
+    .describe(
+      "Procedure search only: the procedure's secondary names that matched. value stays its primary name.",
+    ),
 });
 
 /** Canonical row arrays shared by complete delivery and retained source validation. */
@@ -49,3 +60,29 @@ export const isNativeInventoryOperation = (
   operation: string,
 ): operation is NativeInventoryOperation =>
   NATIVE_INVENTORY_OPERATIONS.some((supported) => supported === operation);
+
+export interface AddressedName {
+  readonly address: string;
+  readonly name: string;
+  readonly objc_class_label?: "hopper_legacy_class_object";
+}
+
+/** An analyzed bookmark retains a missing provider label as null. */
+export const analysisBookmarkSchema = z.strictObject({
+  address: z.string(),
+  name: z.string().nullable(),
+});
+/** Count only complete canonical inventories, using the advertised row contracts. */
+export const parseNativeInventoryCount = (
+  value: JsonValue,
+  operation: "list_procedures" | "list_strings",
+): Result<number, AnalysisOutputError> => {
+  const schema =
+    operation === "list_procedures"
+      ? nativeInventoryRowsSchemas.names
+      : nativeInventoryRowsSchemas.strings;
+  const parsed = schema.safeParse(value);
+  return parsed.success
+    ? ok(parsed.data.length)
+    : invalidNativeOutput(operation, "inventory rows", parsed.error);
+};

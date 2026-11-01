@@ -184,6 +184,11 @@ retains the completed Evidence and the resource owner for cleanup retry. MCP
 records that Evidence before delivering the error, which carries its retained
 evidence ID for later retrieval or export.
 
+If a worker fails and cleanup remains incomplete, the error retains the original
+cancellation, timeout, diagnostic overflow or memory failure. Successful cleanup
+retry restores that failure's classification; it does not make the inspection
+successful.
+
 Changed input identities, special files, malformed databases, unsupported
 formats and resource failures are reported as errors with the selected path and
 meaningful reason. Worker resource refusals expose the caller-selected file in

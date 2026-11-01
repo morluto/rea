@@ -382,7 +382,7 @@ describe("CDP frame capture", () => {
   });
 });
 
-describe("CDP accessibility capture", () => {
+describe("CDP accessibility inventory and identity", () => {
   it("keeps an explicit empty accessibility inventory complete", () => {
     const completeness = new CdpCaptureCompleteness();
     const capture = captureAccessibility([{ nodes: [] }], {
@@ -467,6 +467,51 @@ describe("CDP accessibility capture", () => {
     });
   });
 
+  it("shares admitted identities between projection and child coverage", () => {
+    const completeness = new CdpCaptureCompleteness();
+    const capture = captureAccessibility(
+      [
+        {
+          nodes: [
+            {
+              nodeId: "parent",
+              ignored: false,
+              parentId: "",
+              childIds: ["", 3, "child", "missing"],
+            },
+            { nodeId: "child", ignored: false, parentId: "parent" },
+          ],
+        },
+      ],
+      { includeText: true, completeness },
+    );
+
+    expect(
+      capture.nodes.map(({ node_id, parent_id }) => ({ node_id, parent_id })),
+    ).toEqual([
+      { node_id: "parent", parent_id: null },
+      { node_id: "child", parent_id: "parent" },
+    ]);
+    expect(capture.hasUnobservedChildren).toBe(true);
+    expect(completeness.snapshot().excluded).toEqual([
+      { section: "accessibility", reason: "invalid_protocol_value", count: 2 },
+    ]);
+    const observed = captureAccessibility(
+      [
+        {
+          nodes: [
+            { nodeId: "parent", ignored: false, childIds: ["", null, "child"] },
+            { nodeId: "child", ignored: false },
+          ],
+        },
+      ],
+      { includeText: true },
+    );
+    expect(observed.hasUnobservedChildren).toBe(false);
+  });
+});
+
+describe("CDP accessibility text capture", () => {
   it("retains full approved accessibility text", () => {
     const capture = captureAccessibility(
       [

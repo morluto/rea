@@ -3,6 +3,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -11,7 +12,7 @@ import { compareProcessEvidenceFiles } from "../../../src/application/process/Pr
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { processTraceCaptureFixture } from "../../../src/domain/process/processCapture.fixture.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -25,7 +26,7 @@ const captureEvidence = (side: "left" | "right") =>
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { side },
-    result: jsonValueSchema.parse(capture),
+    result: capture,
     confidence: "observed",
     authority: "controlled-replay",
     locations: [{ kind: "artifact-path", path: `/fixture/${side}` }],
@@ -44,7 +45,10 @@ const comparisonClient = async (
   );
   expect(session.recordEvidence(left).ok).toBe(true);
   expect(session.recordEvidence(right).ok).toBe(true);
-  const server = createServer({ kind: "session", session });
+  const server = createServer(
+    { kind: "session", session },
+    { environment: { ...process.env, ...INLINE_EVIDENCE_MCP_ENVIRONMENT } },
+  );
   const client = new Client({ name: "trace-parity", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

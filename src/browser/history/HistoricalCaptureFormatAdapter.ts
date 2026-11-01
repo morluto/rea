@@ -15,6 +15,8 @@ export interface HistoricalCaptureFormatAdapter {
     readonly name: string;
     readonly version: string;
   };
+  /** Capture mutable configuration synchronously for one admitted operation. */
+  snapshotConfiguration?(): HistoricalCaptureFormatAdapter;
   /** `memoryLimitBytes` requests an enforced commit limit for the decoder process tree. */
   command(
     requestPath: string,

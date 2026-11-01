@@ -431,3 +431,69 @@ describe("Webpack externals through the loader's completion paths", () => {
     ]);
   });
 });
+
+describe("Webpack identity through erased TypeScript syntax", () => {
+  it.each([
+    [
+      "the module table",
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "interface RuntimeShape { m(): void } n(100);",
+      ),
+    ],
+    [
+      "the fresh module object",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "return m[t](o,o.exports,n)",
+        "interface ModuleShape { o(): void } return m[t](o,o.exports,n)",
+      ),
+    ],
+    [
+      "the module table through a type query",
+      bootstrap(EXTERNAL, CONSUMER, "type RuntimeShape = typeof m; n(100);"),
+    ],
+    [
+      "the fresh module object through a type query",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "return m[t](o,o.exports,n)",
+        "type ModuleShape = typeof o; return m[t](o,o.exports,n)",
+      ),
+    ],
+    [
+      "the loader beside an uncalled installer",
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "n.m=m;n.i=e=>{for(var k in e)n.m[k]=e[k]};interface RuntimeShape { n(): void } n(100);",
+      ),
+    ],
+    [
+      "the loader through a type query beside an uncalled installer",
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "n.m=m;n.i=e=>{for(var k in e)n.m[k]=e[k]};type RuntimeShape = typeof n; n(100);",
+      ),
+    ],
+  ])("does not let erased TypeScript syntax escape %s", (_name, source) => {
+    const electron = electronOf(source);
+    expect(electron.browser_windows).toMatchObject([
+      { preload_path: "./preload.js" },
+    ]);
+    expect(electron.ipc).toMatchObject([
+      { channel: "get-connections", side: "main" },
+    ]);
+  });
+
+  it.each([
+    "const shape = { [m]: true }; n(100);",
+    "const kind = typeof m; n(100);",
+    "m.extra; n(100);",
+  ])(
+    "keeps an actual table reference outside the loader unproven: %s",
+    (entry) => {
+      expectUnresolved(bootstrap(EXTERNAL, CONSUMER, entry));
+    },
+  );
+});

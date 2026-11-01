@@ -1,26 +1,17 @@
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { PeCertificatesPort } from "./PeCertificatesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectPeCertificatesInputSchema,
   peCertificatesSchema,
   type PeCertificates,
 } from "../../domain/native/peCertificates.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import {
-  decodePeMachine,
-  peOptionalHeaderMagic,
-  type PeArchitecture,
-} from "../../domain/peMachine.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { peSubjectArchitecture } from "../../domain/peMachine.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_pe_certificates";
 
@@ -36,35 +27,23 @@ export class PeCertificatesService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
-    const input = inspectPeCertificatesInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
-    const result = await this.provider.inspect(input.data, options);
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectPeCertificatesInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = peCertificatesSchema.safeParse(result.value);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
+      report.data.artifact.path !== input.value.path ||
       !validReport(
         report.data,
-        input.data.max_entries,
-        input.data.max_file_bytes,
+        input.value.max_entries,
+        input.value.max_file_bytes,
       )
     )
       return err(
@@ -74,7 +53,7 @@ export class PeCertificatesService {
         ),
       );
     const value = report.data;
-    const architecture = subjectArchitecture(value);
+    const architecture = peSubjectArchitecture(value.machine, value.format);
     const locations = [
       { kind: "artifact-path" as const, path: value.artifact.path },
       ...(value.table === null
@@ -98,7 +77,7 @@ export class PeCertificatesService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: input.value,
           result: value,
           confidence: "observed",
           limitations: value.limitations,
@@ -110,17 +89,6 @@ export class PeCertificatesService {
   }
 }
 
-const subjectArchitecture = (
-  report: PeCertificates,
-): PeArchitecture | undefined => {
-  const machine = decodePeMachine(report.machine);
-  if (machine === undefined || machine.nativeOsOverride) return undefined;
-  const magic = report.format === "pe32-plus" ? 0x20b : 0x10b;
-  return magic === peOptionalHeaderMagic(machine.architecture)
-    ? machine.architecture
-    : undefined;
-};
-
 const validReport = (
   report: PeCertificates,
   maxEntries: number,
@@ -131,16 +99,43 @@ const validReport = (
   if (
     report.artifact.bytes > maxBytes ||
     report.coverage.examined_entries > maxEntries ||
+    report.coverage.examined_entries !== report.entries.length ||
     report.coverage.certificates !==
       report.entries.reduce(
         (count, entry) => count + (entry.pkcs7?.certificates.length ?? 0),
         0,
-      ) ||
-    report.entries.length > maxEntries
+      )
   )
     return false;
-  if (report.table !== null && !inside(report.table.location)) return false;
+  if (
+    report.coverage.status === "complete" &&
+    report.entries.some((entry) =>
+      entry.pkcs7?.signers.some((signer) =>
+        Array.isArray(signer.unsigned_attribute_oids),
+      ),
+    )
+  )
+    return false;
+  if (report.table === null) return report.entries.length === 0;
+  if (
+    !inside(report.table.location) ||
+    !inside(report.table.data_directory_location)
+  )
+    return false;
+  const table = report.table;
+  const contains = (
+    outer: { offset: number; bytes: number },
+    inner: { offset: number; bytes: number },
+  ) =>
+    inner.offset >= outer.offset &&
+    inner.offset - outer.offset <= outer.bytes - inner.bytes;
   return report.entries.every(
-    (entry) => inside(entry.location) && inside(entry.payload.location),
+    (entry) =>
+      contains(table.location, entry.location) &&
+      contains(entry.location, entry.payload.location) &&
+      (entry.pkcs7?.certificates.every((certificate) =>
+        contains(entry.payload.location, certificate.location),
+      ) ??
+        true),
   );
 };

@@ -68,9 +68,12 @@ it.skipIf(process.platform === "win32")(
             output,
             dirname(output),
           ]);
-          expect(await readFile(join(output, "a", "b", "payload.txt"))).toEqual(
-            bytes,
-          );
+          expect(
+            Buffer.compare(
+              await readFile(join(output, "a", "b", "payload.txt")),
+              bytes,
+            ),
+          ).toBe(0);
         }
       } finally {
         observation.refuseSync = undefined;

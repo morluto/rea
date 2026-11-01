@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { PRODUCT_IDENTITY } from "../identity.js";
+import { jsonRecordSchema } from "../domain/jsonRecord.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -14,29 +16,48 @@ import {
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
-import { equivalentClientRegistrationCommands } from "./ClientRegistrationIdentity.js";
+import {
+  classifyClientRegistrationCommand,
+  equivalentClientRegistrationCommands,
+  type ClientRegistrationCommandIdentity,
+} from "./ClientRegistrationIdentity.js";
+import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 
 const tomlTimeoutSchema = z.union([
   z.number().positive(),
   z.bigint().positive(),
 ]);
 
-/** Common launcher facts, without assigning a shared meaning to client policy. */
-const registrationSchema = z
+const launcherSchema = z
   .object({
     command: z.string().min(1),
     args: z.array(z.string()).default([]),
-    startup_timeout_sec: tomlTimeoutSchema.optional(),
-    tool_timeout_sec: tomlTimeoutSchema.optional(),
-    startupTimeoutMs: z.number().positive().optional(),
-    toolTimeoutMs: z.number().positive().optional(),
-    type: z.string().optional(),
-    transport: z.string().optional(),
-    serverName: z.string().optional(),
-    disabled: z.boolean().optional(),
-    enabled: z.boolean().optional(),
   })
   .passthrough();
+const opencodeLauncherSchema = z
+  .object({
+    type: z.literal("local"),
+    command: z.array(z.string()).min(1),
+  })
+  .passthrough();
+const normalizeOpencodeLauncher = (
+  entry: z.output<typeof opencodeLauncherSchema>,
+): z.output<typeof launcherSchema> => {
+  const [command = "", ...args] = entry.command;
+  return { ...entry, command, args };
+};
+
+const registrationSchema = launcherSchema.extend({
+  startup_timeout_sec: tomlTimeoutSchema.optional(),
+  tool_timeout_sec: tomlTimeoutSchema.optional(),
+  startupTimeoutMs: z.number().positive().optional(),
+  toolTimeoutMs: z.number().positive().optional(),
+  type: z.string().optional(),
+  transport: z.string().optional(),
+  serverName: z.string().optional(),
+  disabled: z.boolean().optional(),
+  enabled: z.boolean().optional(),
+});
 
 export type ClientRegistration = z.output<typeof registrationSchema>;
 
@@ -76,6 +97,43 @@ const registrationError = (error: z.ZodError): ConfigurationError =>
     })),
   });
 
+/** Launcher identity remains usable when unrelated readiness settings are invalid. */
+export const parseClientRegistrationLauncher = (
+  value: unknown,
+  client: SetupClient,
+): Result<{ command: string; args: string[] }, ConfigurationError> => {
+  const parsed =
+    client.format === "opencode"
+      ? opencodeLauncherSchema
+          .transform(normalizeOpencodeLauncher)
+          .safeParse(value)
+      : launcherSchema.safeParse(value);
+  return parsed.success
+    ? ok({ command: parsed.data.command, args: parsed.data.args })
+    : err(registrationError(parsed.error));
+};
+
+/** Launcher ownership is independent of readiness and caller-owned policy. */
+export const clientRegistrationOwnership = (
+  value: unknown,
+  client: SetupClient,
+): ClientRegistrationCommandIdentity => {
+  const parsed = parseClientRegistrationLauncher(value, client);
+  return parsed.ok
+    ? classifyClientRegistrationCommand(
+        [parsed.value.command, ...parsed.value.args],
+        CURRENT_ENTRYPOINT_PATH,
+      )
+    : "unknown";
+};
+
+/** Explain the same ownership admission decision in setup and doctor. */
+export const clientRegistrationOwnershipRemediation = (
+  ownership: Exclude<ClientRegistrationCommandIdentity, "owned">,
+  paths: readonly string[],
+): string =>
+  `The existing "${PRODUCT_IDENTITY.mcpServerKey}" registration read from ${paths.join(", ")} has ${ownership} ownership and was not changed. Review its launcher and manually rename or remove that registration before rerunning setup. A different installation path does not prove REA ownership.`;
+
 /** Policy belongs to the client dialect, and is validated before refresh writes. */
 const validateClientPolicy = (
   value: unknown,
@@ -109,17 +167,14 @@ export const parseClientRegistration = (
       : err(registrationError(parsed.error));
   }
   if (client.format === "opencode") {
-    const entry = z
-      .object({
-        type: z.literal("local"),
-        command: z.array(z.string()).min(1),
-        environment: z.record(z.string(), z.string()).optional(),
+    const entry = opencodeLauncherSchema
+      .extend({
+        environment: jsonRecordSchema(z.string()).optional(),
       })
-      .passthrough()
+      .transform(normalizeOpencodeLauncher)
       .safeParse(value);
     if (!entry.success) return err(registrationError(entry.error));
-    const [command = "", ...args] = entry.data.command;
-    value = { ...entry.data, command, args };
+    value = entry.data;
   }
   const parsed = registrationSchema.safeParse(value);
   if (!parsed.success) return err(registrationError(parsed.error));
@@ -169,6 +224,18 @@ const managedConnectionKeys = new Set([
   "httpUrl",
 ]);
 
+/** Whether a rea setup repair for this target preserves the row's
+ * `enable: false` instead of dropping it. Shared registration doubles as
+ * ZCode's fallback, so the activation fact belongs to every reader; a repair
+ * preserves it instead of silently re-enabling a row it does not own. A
+ * client's own native storage has a single reader, so an explicitly selected
+ * setup may still repair it. Doctor's remediation reads this same rule so a
+ * preserved disable never points at an ineffective setup run. */
+export const setupPreservesDisabledActivation = (
+  client: Pick<SetupClient, "sharedRegistration">,
+  format: string | undefined,
+): boolean => client.sharedRegistration === true || format === "zcode_fallback";
+
 /** Patch a source fragment, retaining client-owned settings rather than rebuilding it. */
 export const refreshClientRegistration = (
   client: SetupClient,
@@ -182,7 +249,7 @@ export const refreshClientRegistration = (
   const existing = source.success ? source.data : {};
   const policy = validateClientPolicy(existing, client);
   if (!policy.ok) return policy;
-  const prior = parseClientRegistration(existing, client);
+  const prior = parseClientRegistrationLauncher(existing, client);
   const priorCommand = prior.ok
     ? [prior.value.command, ...prior.value.args]
     : undefined;
@@ -199,11 +266,15 @@ export const refreshClientRegistration = (
       ),
     ),
   };
+  if (
+    setupPreservesDisabledActivation(client, dialect) &&
+    existing.enable === false
+  )
+    registration.enable = false;
   if (client.name === "codex" || client.name === "grok_build")
     registration.startup_timeout_sec =
-      (client.name === "codex"
-        ? positiveTimeout(existing.startup_timeout_sec)
-        : undefined) ?? MCP_STARTUP_POLICY.codexStartupTimeoutSeconds;
+      positiveTimeout(existing.startup_timeout_sec) ??
+      MCP_STARTUP_POLICY.codexStartupTimeoutSeconds;
   if (client.name === "codex")
     registration.tool_timeout_sec =
       positiveTimeout(existing.tool_timeout_sec) ??

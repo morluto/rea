@@ -1,3 +1,4 @@
+import { analysisSettingLimit } from "../../../src/domain/analysisSettingDefinitions.js";
 import { expect, it } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
@@ -51,5 +52,28 @@ it.each([
       remediation: { action: fixedAllowanceRemediation(allowance, "parser") },
       details: { reported_limits: { maximum_decoded_bytes: 64 } },
     });
+  },
+);
+
+it.each(["operation attribution", "explicit redaction"])(
+  "preserves structured adjustable limits through %s",
+  (boundary) => {
+    const original = refusal().bindLimit(
+      analysisSettingLimit("regex.matching_deadline_ms", 123, "runtime"),
+    );
+    const copied =
+      boundary === "operation attribution"
+        ? analysisClientFailureForOperation(
+            original,
+            "hopper",
+            "search_strings",
+          )
+        : redactExplicitFailure(original, ["explicit-secret"]);
+    expect(copied).not.toBe(original);
+    expect(copied.limit).toEqual(original.limit);
+    expect(projectAnalysisError(copied)).toMatchObject({
+      details: { limit: original.limit },
+    });
+    expect(original.message).toContain("fixture allowance");
   },
 );

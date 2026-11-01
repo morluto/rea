@@ -1,3 +1,4 @@
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
 import { artifactCapabilities } from "../artifacts/ArtifactProviderMetadata.js";
@@ -6,10 +7,8 @@ import {
   MANAGED_STATIC_PROVIDER,
 } from "../domain/investigationProviders.js";
 import { managedStaticCapabilities } from "../dotnet/ManagedStaticProviderMetadata.js";
-import {
-  NATIVE_MACOS_PROVIDER_IDENTITY,
-  nativeMacOSCapabilities,
-} from "../native/NativeMacOSProviderMetadata.js";
+import { nativeMacOSCapabilities } from "../native/NativeMacOSProviderMetadata.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../native/NativeMacosProviderIdentity.js";
 
 type AuxiliaryProviderDeclaration = ConstructorParameters<
   typeof LazyAnalysisProvider
@@ -19,6 +18,7 @@ type AuxiliaryProviderDeclaration = ConstructorParameters<
 export const auxiliaryAnalysisProviderDeclarations = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = process.platform,
+  settings?: AnalysisSettingsReader,
 ): readonly AuxiliaryProviderDeclaration[] => {
   const environment = snapshotEnvironment(selectedEnvironment, platform);
   return [
@@ -28,7 +28,7 @@ export const auxiliaryAnalysisProviderDeclarations = (
       load: async () => {
         const { ArtifactProvider } =
           await import("../artifacts/ArtifactProvider.js");
-        return new ArtifactProvider(environment, platform);
+        return new ArtifactProvider(environment, platform, settings);
       },
     },
     {

@@ -1,10 +1,14 @@
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceRetryFailure } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactResourceRetryFailure,
+  ArtifactResourceScope,
+} from "../artifacts/ArtifactResourceScope.js";
 import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { OwnedCommandFailure } from "./OwnedCommand.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -514,14 +518,19 @@ it.each([false, true])(
       });
       if (!failedClose) throw primary;
       if (scope === undefined) throw new Error("Expected retained file scope");
-      return withArtifactRegularFile(path, scope, _signal, async (file) => {
-        const close = file.close.bind(file);
-        file.close = async () => {
-          if (!mayClose) throw new Error("injected descriptor close failure");
-          await close();
-        };
-        throw primary;
-      });
+      return withArtifactRegularFile(
+        path,
+        scope,
+        _signal,
+        async ({ handle: file }) => {
+          const close = file.close.bind(file);
+          file.close = async () => {
+            if (!mayClose) throw new Error("injected descriptor close failure");
+            await close();
+          };
+          throw primary;
+        },
+      );
     };
     const resources = new ArtifactAnalysisResources(
       "fixture",
@@ -830,7 +839,9 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
     { message: "busy", details: {} },
   );
   let calls = 0;
-  try {
+  const caller = new AbortController();
+  let pending: ReturnType<typeof resources.run> | undefined;
+  await withVerifierCleanup(async () => {
     const first = await resources.run(async () =>
       ok(await resources.read("fixture", 1)),
     );
@@ -838,13 +849,12 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
       ok: false,
       error: { cleanupIncomplete: true },
     });
-    const caller = new AbortController();
     const reason = { request: "cancel while old descriptor closes" };
-    const pending = resources.run(async () => {
+    pending = resources.run(async () => {
       calls++;
       return ok("Must not run");
     }, caller.signal);
-    await started;
+    await awaitAcknowledgement(started, pending, "descriptor cleanup");
     caller.abort(reason);
     releaseCleanup();
     const result = await pending;
@@ -852,10 +862,14 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
     expect(result.error.cause).toBe(reason);
     expect(calls).toBe(0);
     if (!first.ok) expect(first.error.cleanupIncomplete).toBe(false);
-  } finally {
-    releaseCleanup();
-    await resources.close();
-  }
+  }, [
+    () => caller.abort(),
+    releaseCleanup,
+    async () => {
+      await pending;
+    },
+    () => resources.close(),
+  ]);
 });
 
 it.each([false, true])(
@@ -1017,7 +1031,7 @@ it("retains producer output when a completed read is cancelled during failed clo
       path,
       scope,
       caller.signal,
-      async (file) => {
+      async ({ handle: file }) => {
         const close = file.close.bind(file);
         file.close = async () => {
           caller.abort(reason);

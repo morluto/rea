@@ -17,8 +17,22 @@ import { createArtifactClassificationProbe } from "../ArtifactClassificationProb
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
+import { dfuseFile } from "../../domain/firmware/dfuse.fixture.js";
+import {
+  RP2040_FAMILY,
+  patternBytes,
+  uf2File,
+  uf2Image,
+} from "../../domain/firmware/uf2.fixture.js";
 
 import { classifyArtifactBytesAtPath } from "../../../tests/fixtures/artifactClassification.js";
+import {
+  ESP32C3_APP_SEGMENTS,
+  esp8266Image,
+  espImage,
+} from "../../../tests/fixtures/espImage.js";
+import { devicetreeFixture } from "../../firmware/devicetree/Devicetree.fixture.js";
+import { fitFixture } from "../fit/FitImage.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);
@@ -44,7 +58,7 @@ it("joins only observed PE signature bytes across stream chunks", () => {
   ).toBe("pe");
 });
 
-it("keeps an ambiguous DOS MZ inventory candidate unknown", () => {
+it("classifies original DOS header padding as an executable", () => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ", 0, "ascii");
   bytes.writeUInt16LE(128, 2);
@@ -54,8 +68,8 @@ it("keeps an ambiguous DOS MZ inventory candidate unknown", () => {
   bytes.writeUInt16LE(28, 24);
   bytes.write("ABCD", 60, "ascii");
   expect(classifyArtifactBytesAtPath("legacy.exe", bytes)).toEqual({
-    kind: "unknown",
-    format: "unknown",
+    kind: "executable",
+    format: "dos-mz",
   });
 });
 
@@ -74,17 +88,57 @@ const entry = (path: string, kind: ArtifactEntry["kind"]): ArtifactEntry => ({
 });
 
 it.each([false, true])(
-  "preserves only a declared ASAR companion fact (unpacked=%s)",
+  "preserves ASAR file storage (unpacked=%s)",
   (unpacked) => {
     const occurrence = createOccurrence(
       { ...entry("main.js", "file"), unpacked },
       "main.js",
       null,
+      { sourceFormat: "asar" },
     );
-    if (unpacked) expect(occurrence.unpacked).toBe(true);
-    else expect(occurrence).not.toHaveProperty("unpacked");
+    expect(occurrence.unpacked).toBe(unpacked);
   },
 );
+
+it.each(["directory", "symlink"] as const)(
+  "preserves positive ASAR declarations for %s entries",
+  (kind) => {
+    for (const unpacked of [false, true]) {
+      const occurrence = createOccurrence(
+        { ...entry("member", kind), unpacked },
+        "member",
+        null,
+        { sourceFormat: "asar" },
+      );
+      if (unpacked) expect(occurrence.unpacked).toBe(true);
+      else expect(occurrence).not.toHaveProperty("unpacked");
+    }
+  },
+);
+
+it.each(["directory", "zip", "node-sea"] as const)(
+  "omits false storage declarations for %s readers",
+  (sourceFormat) => {
+    const occurrence = createOccurrence(
+      entry("main.js", "file"),
+      "main.js",
+      null,
+      {
+        sourceFormat,
+      },
+    );
+    expect(occurrence).not.toHaveProperty("unpacked");
+  },
+);
+
+it("preserves a positive storage declaration without reader format", () => {
+  const occurrence = createOccurrence(
+    { ...entry("main.js", "file"), unpacked: true },
+    "main.js",
+    null,
+  );
+  expect(occurrence.unpacked).toBe(true);
+});
 
 describe("occurrence parent ownership", () => {
   it("selects the nearest unique nested parent", () => {
@@ -103,8 +157,12 @@ describe("occurrence parent ownership", () => {
   });
 
   it("leaves a child unparented when duplicate directories make ownership ambiguous", () => {
-    const first = createOccurrence(entry("a", "directory"), "a", null, 0);
-    const second = createOccurrence(entry("a", "directory"), "a", null, 1);
+    const first = createOccurrence(entry("a", "directory"), "a", null, {
+      duplicateOrdinal: 0,
+    });
+    const second = createOccurrence(entry("a", "directory"), "a", null, {
+      duplicateOrdinal: 1,
+    });
     const file = createOccurrence(entry("a/file", "file"), "a/file", null);
     const occurrences = [first, second, file];
 
@@ -149,7 +207,7 @@ describe("source-map artifact relationships", () => {
           entry("app/main.js", "file"),
           "app/main.js",
           directory.occurrence_id,
-          index,
+          { duplicateOrdinal: index },
         );
         target.artifact_id = identity === "unread" ? null : contentId("2");
         return target;
@@ -406,6 +464,105 @@ it("keeps byte content format separate from path-specific package role", () => {
     format: "apk",
     contentFormat: "zip",
   });
+});
+
+it("classifies nested HEX and S-record content as containers by bytes", () => {
+  expect(
+    classifyArtifactBytesAtPath(
+      "firmware/update.txt",
+      Buffer.from(":0300300002337A1E\n:00000001FF\n"),
+    ),
+  ).toEqual({ kind: "container", format: "intel-hex" });
+  expect(
+    classifyArtifactBytesAtPath(
+      "firmware/app.s19",
+      Buffer.from("S00600004844521B\n"),
+    ),
+  ).toEqual({ kind: "container", format: "srec" });
+  expect(
+    classifyArtifactBytesAtPath(
+      "firmware/bad.hex",
+      Buffer.from(":0300300002337A1F\n"),
+    ),
+  ).toEqual({ kind: "resource", format: "file" });
+});
+
+it("classifies nested ESP images as containers by bytes", () => {
+  const image = espImage({ segments: ESP32C3_APP_SEGMENTS });
+  expect(classifyArtifactBytesAtPath("ota/update.dat", image)).toEqual({
+    kind: "container",
+    format: "esp-image",
+  });
+  // An unsupported ESP8266 image is a plain file, not a container.
+  expect(classifyArtifactBytesAtPath("esp8266.bin", esp8266Image())).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+});
+
+it("classifies nested UF2 by block magics and DfuSe by prefix and suffix", () => {
+  const uf2 = uf2File(uf2Image(RP2040_FAMILY, 0x1000_0000, patternBytes(300)));
+  expect(classifyArtifactBytesAtPath("firmware/update.bin", uf2)).toEqual({
+    kind: "container",
+    format: "uf2",
+  });
+  expect(
+    classifyArtifactBytesAtPath("firmware/short.uf2", uf2.subarray(0, 511)),
+  ).toEqual({ kind: "resource", format: "file" });
+  const dfu = dfuseFile({
+    targets: [{ alternateSetting: 0, elements: [{ address: 0, data: [1] }] }],
+  });
+  // The prefix alone is not DfuSe; the suffix is observed at the stream end.
+  expect(classifyArtifactBytesAtPath("firmware/update.dfu", dfu)).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+  const probe = createArtifactClassificationProbe();
+  for (let offset = 0; offset < dfu.length; offset += 5)
+    probe.write(dfu.subarray(offset, offset + 5));
+  expect(
+    classifyArtifactContent(
+      "firmware/update.bin",
+      probe.finish(dfu.length),
+      dfu.length,
+    ),
+  ).toMatchObject({ kind: "container", format: "dfuse" });
+  // Bytes the probe never saw may follow, so it reports no suffix at all.
+  const partial = probe.finish(dfu.length + 1);
+  expect(partial.suffix).toBeUndefined();
+  expect(
+    classifyArtifactContent("firmware/update.bin", partial, dfu.length + 1),
+  ).toMatchObject({ format: "file" });
+});
+
+it("classifies a FIT by a /images node within the first 4 KiB", () => {
+  const images = [{ name: "kernel", data: Buffer.from("kernel") }];
+  const late = devicetreeFixture({
+    name: "",
+    properties: { padding: Buffer.alloc(4096) },
+    children: [{ name: "images" }],
+  });
+  const configurationsFirst = devicetreeFixture({
+    name: "",
+    children: [{ name: "configurations" }, { name: "images" }],
+  });
+  for (const [path, bytes] of [
+    ["firmware/boot.itb", fitFixture({ images })],
+    ["firmware/boot", configurationsFirst],
+  ] as const)
+    expect(classifyArtifactBytesAtPath(path, bytes)).toEqual({
+      kind: "container",
+      format: "fit",
+    });
+  for (const bytes of [
+    devicetreeFixture(),
+    fitFixture({ images, version: 15 }),
+    late,
+  ])
+    expect(classifyArtifactBytesAtPath("firmware/board.dtb", bytes)).toEqual({
+      kind: "resource",
+      format: "file",
+    });
 });
 
 describe("FAT prefix observation coverage", () => {

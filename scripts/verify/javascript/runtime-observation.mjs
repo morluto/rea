@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 
-import { readFile, realpath } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { parseArgs } from "node:util";
+
+import { readStableArtifact } from "../../../dist/artifacts/readStableArtifact.js";
+import { ArtifactReaderFailure } from "../../../dist/artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactFileCleanupFailure,
+  artifactFileCompletion,
+  artifactFilePrimaryFacts,
+} from "../../../dist/artifacts/ArtifactFileOperation.js";
 
 import { reconcileJavaScriptRuntimeEvidence } from "../../../dist/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { analyzeJavaScriptApplicationWithOwnedScope } from "../../lib/javascript-application-analysis.mjs";
@@ -36,14 +45,8 @@ const requestedLayers = [
   ...options.cache.map((path) => ({ role: "cache", path })),
   ...options.assets.map((path) => ({ role: "assets", path })),
 ];
-const canonicalLayers = await Promise.all(
-  requestedLayers.map(async (layer) => ({
-    ...layer,
-    path: await realpath(layer.path),
-  })),
-);
 const staticLayers = [];
-for (const layer of canonicalLayers) {
+for (const layer of requestedLayers) {
   const analyzed = await analyzeJavaScriptApplicationWithOwnedScope({
     input_path: layer.path,
     format: "auto",
@@ -58,21 +61,23 @@ for (const encoded of options.mapping) {
   const mapping = parseMapping(encoded, staticLayers.length);
   staticLayers[mapping.layer].runtime_mappings.push(mapping.value);
 }
-const runtimeObservations = (
-  await Promise.all(options["runtime-evidence"].map(readEvidenceFile))
-).flat();
+const runtimeObservations = [];
+for (const path of options["runtime-evidence"]) {
+  const observations = await readEvidenceFile(path);
+  for (const observation of observations) runtimeObservations.push(observation);
+}
 const reconciled = reconcileJavaScriptRuntimeEvidence({
   static_layers: staticLayers,
   runtime_observations: runtimeObservations,
 });
 if (!reconciled.ok) throw reconciled.error;
-const result = reconciled.value.normalized_result;
+const result = reconciled.value.evidence.normalized_result;
 
 process.stdout.write(
   `${JSON.stringify({
     verifier_run: await completeVerifierRun(verifierRun),
     reconciliation_id: result.reconciliation_id,
-    evidence_id: reconciled.value.evidence_id,
+    evidence_id: reconciled.value.evidence.evidence_id,
     graph_id: result.graph.graph_id,
     layers: result.static_layers.map((layer) => ({
       role: layer.role,
@@ -101,10 +106,47 @@ process.stdout.write(
 );
 
 async function readEvidenceFile(path) {
-  const bytes = await readFile(await realpath(path));
-  if (bytes.byteLength > 64 * 1024 * 1024)
-    throw new Error(`Runtime Evidence exceeds 64 MiB: ${path}`);
-  const value = JSON.parse(bytes.toString("utf8"));
+  const scope = new ArtifactResourceScope();
+  let outcome;
+  try {
+    outcome = {
+      ok: true,
+      value: await readStableArtifact(
+        await realpath(path),
+        64 * 1024 * 1024,
+        undefined,
+        undefined,
+        scope,
+      ),
+    };
+  } catch (cause) {
+    outcome = { ok: false, cause };
+  }
+  try {
+    await scope.close();
+  } catch (cleanupCause) {
+    if (!outcome.ok)
+      throw new AggregateError(
+        [outcome.cause, cleanupCause],
+        "Verifier cleanup failed",
+        { cause: outcome.cause },
+      );
+    throw cleanupCause;
+  }
+  if (!outcome.ok && outcome.cause instanceof ArtifactFileCleanupFailure) {
+    const completion = artifactFileCompletion(outcome.cause);
+    outcome =
+      completion === undefined
+        ? { ok: false, cause: artifactFilePrimaryFacts(outcome.cause).cause }
+        : { ok: true, value: completion.value };
+  }
+  if (!outcome.ok) {
+    const cause = outcome.cause;
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
+      throw new Error(`Runtime Evidence exceeds 64 MiB: ${path}`, { cause });
+    throw cause;
+  }
+  const value = JSON.parse(outcome.value.bytes.toString("utf8"));
   return Array.isArray(value) ? value : [value];
 }
 

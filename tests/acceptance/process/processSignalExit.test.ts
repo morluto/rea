@@ -5,16 +5,20 @@ import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
-import { runCliJson } from "../../fixtures/cliJsonProcess.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { itWithCaptureCapability as captureTest } from "../../boundary/process/processCaptureCapability.js";
+import {
+  CAPTURE_SKIP_REASON,
+  itWithCaptureCapability as captureTest,
+} from "../../boundary/process/processCaptureCapability.js";
 
 const hang = ["-e", "setTimeout(() => {}, 5000)"];
+const cliCaptureTest = cliTest.skipIf(CAPTURE_SKIP_REASON);
 
-captureTest(
+cliCaptureTest(
   "records no normal exit code for a target a scenario signal terminated",
-  async () => {
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-process-signal-exit-");
     for (const [name, additions, expected] of [
       [
@@ -50,14 +54,14 @@ captureTest(
           ...additions,
         }),
       );
-      const document = await runCliJson([
-        "capture-process",
-        scenarioPath,
-        "--format",
-        "json",
-      ]);
+      const result = await cli.run({
+        arguments: ["capture-process", scenarioPath, "--format", "json"],
+        environment: process.env,
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.signal, result.stderr).toBeNull();
       const capture = parseProcessCapture(
-        parseEvidence(document).normalized_result,
+        parseEvidence(result.json).normalized_result,
       );
       expect(capture.exit, name).toMatchObject(expected);
     }

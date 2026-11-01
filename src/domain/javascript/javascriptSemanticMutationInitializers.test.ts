@@ -19,6 +19,7 @@ it.each([
   ["accessor value", true, true],
   ["public key", false, true],
   ["accessor key", false, true],
+  ["method key", false, true],
 ] as const)(
   "orders %s reads with static=%s only when evaluated at class definition",
   (kind, isStatic, ordered) => {
@@ -31,7 +32,9 @@ it.each([
       ? t.classPrivateProperty(t.privateName(t.identifier("field")), value)
       : kind.startsWith("accessor")
         ? t.classAccessorProperty(key, value, null, null, inKey)
-        : t.classProperty(key, value, null, null, inKey);
+        : kind.startsWith("method")
+          ? t.classMethod("method", key, [], t.blockStatement([]), inKey)
+          : t.classProperty(key, value, null, null, inKey);
     field.static = isStatic;
     const program = t.program([
       t.variableDeclaration("let", [
@@ -68,6 +71,29 @@ it.each([
     ).toBe(ordered);
   },
 );
+
+it("orders computed method key reads evaluated during object literal definition", () => {
+  const initializer = t.numericLiteral(1);
+  const read = t.identifier("child");
+  const method = t.objectMethod("method", read, [], t.blockStatement([]), true);
+  const program = t.program([
+    t.variableDeclaration("let", [
+      t.variableDeclarator(t.identifier("child"), initializer),
+    ]),
+    t.variableDeclaration("const", [
+      t.variableDeclarator(t.identifier("obj"), t.objectExpression([method])),
+    ]),
+  ]);
+  const parents = new WeakMap<t.Node, t.Node>();
+  traverseJavaScriptAst(program, {
+    enter: (node, parent) => {
+      if (parent !== null) parents.set(node, parent);
+    },
+  });
+  expect(semanticTopLevelEffectFollowsCapture(initializer, read, parents)).toBe(
+    true,
+  );
+});
 
 describe("parameter references copied into function body bindings", () => {
   it.each([

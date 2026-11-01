@@ -83,7 +83,8 @@ empty dependency set. Retained views describe the captured artifact digest;
 they do not assert that the current file or running application is unchanged.
 
 ELF section names are resolved through the section-header string table.
-Zlib-compressed name tables are decoded within the native structural budget.
+Zlib- and Zstandard-compressed name tables are decoded within the native structural
+budget. Zstandard decoding also uses a 128 MiB window limit.
 If a name table uses unsupported compression, the result reports that
 limitation and leaves `.dep-v0` presence unknown rather than reporting the
 section absent.

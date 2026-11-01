@@ -1,4 +1,5 @@
 import { constants as fsConstants } from "node:fs";
+import * as filesystem from "node:fs/promises";
 import {
   chmod,
   copyFile,
@@ -18,10 +19,16 @@ import { SkillFilePublication } from "../../../src/application/SkillFilePublicat
 import {
   canonicalSkillNeedsInstall,
   installCanonicalSkill,
+  MANAGED_SKILL_FILES,
   skillDestinations,
   type SkillInstallFileOperations,
 } from "../../../src/application/SetupSkill.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...original, link: vi.fn(original.link) };
+});
 
 const skillPublicationOperations: SkillInstallFileOperations = {
   mkdir: async (path) => {
@@ -86,14 +93,16 @@ describe("skill publication ownership", () => {
         expect.objectContaining({ path: manifest }),
       ]);
       const expected = change === "mode" ? published : userBytes;
-      expect(await readFile(manifest)).toEqual(expected);
+      if (expected === undefined)
+        throw new Error("Expected published skill bytes");
+      expect(Buffer.compare(await readFile(manifest), expected)).toBe(0);
       if (existing)
         expect(await readFile(`${manifest}.rea.backup`, "utf8")).toBe(
           "original instructions\n",
         );
       else expect(result.error.recoveryBackupPaths).toEqual([]);
       expect(await result.error.retryCleanup()).toEqual([]);
-      expect(await readFile(manifest)).toEqual(expected);
+      expect(Buffer.compare(await readFile(manifest), expected)).toBe(0);
     },
   );
 
@@ -112,13 +121,78 @@ describe("skill publication ownership", () => {
       },
     });
     if (result.ok) throw new Error("Expected destination conflict");
+    expect(result.error.reason).toContain(
+      "Skill destination appeared or changed during installation",
+    );
+    expect(result.error.remediation).toContain(
+      "Stop concurrent setup activity",
+    );
+    expect(result.error.remediation).not.toContain("Check permissions");
     expect(result.error.rollbackFailures).toEqual([]);
     expect(await readFile(manifest, "utf8")).toBe("concurrent user file\n");
-    expect(await readdir(dirname(manifest))).toEqual([
+    expect((await readdir(dirname(manifest))).sort()).toEqual([
       "SKILL.md",
       "references",
     ]);
   });
+
+  it("reports a destination changed before readback without overwriting it", async () => {
+    const home = await createTestTempDirectory("rea-skill-readback-conflict-");
+    const manifest = join(skillDestinations(home, [])[0]!.path, "SKILL.md");
+    const result = await installCanonicalSkill(home, [], {}, process.platform, {
+      ...skillPublicationOperations,
+      prepare: async (...args) => {
+        const publication = await SkillFilePublication.prepare(...args);
+        if (publication.path === manifest) {
+          const publish = publication.publish.bind(publication);
+          vi.spyOn(publication, "publish").mockImplementation(async () => {
+            await publish();
+            await writeFile(manifest, "concurrent edit\n");
+          });
+        }
+        return publication;
+      },
+    });
+    if (result.ok) throw new Error("Expected destination conflict");
+    expect(result.error.stage).toBe("readback");
+    expect(result.error.remediation).toContain(
+      "Stop concurrent setup activity",
+    );
+    expect(await readFile(manifest, "utf8")).toBe("concurrent edit\n");
+    expect(result.error.rollbackFailures).toContainEqual(
+      expect.objectContaining({ path: manifest }),
+    );
+  });
+});
+
+it("preserves a destination created immediately before exclusive publication", async () => {
+  const home = await createTestTempDirectory("rea-skill-link-conflict-");
+  const manifest = join(skillDestinations(home, [])[0]!.path, "SKILL.md");
+  const originalLink = (
+    await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")
+  ).link;
+  const link = vi
+    .mocked(filesystem.link)
+    .mockImplementation(async (from, to) => {
+      if (to === manifest)
+        await writeFile(manifest, "concurrent user file\n", { flag: "wx" });
+      await originalLink(from, to);
+    });
+  try {
+    const result = await installCanonicalSkill(home, [], {}, process.platform);
+    if (result.ok) throw new Error("Expected destination conflict");
+    expect(link).toHaveBeenCalled();
+    expect(result.error.reason).toContain(
+      "Skill destination appeared or changed",
+    );
+    expect(result.error.remediation).toContain(
+      "Stop concurrent setup activity",
+    );
+    expect(result.error.rollbackFailures).toEqual([]);
+    expect(await readFile(manifest, "utf8")).toBe("concurrent user file\n");
+  } finally {
+    link.mockRestore();
+  }
 });
 
 describe("skill publication recovery", () => {
@@ -155,8 +229,10 @@ describe("skill publication recovery", () => {
       if (result.ok) throw new Error("Expected readback failure");
       expect(result.error.stage).toBe("readback");
       expect(result.error.reason).toBe("readback unavailable");
-      expect(await readFile(manifest)).toEqual(bytes);
-      expect(await readFile(`${manifest}.rea.backup`)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(manifest), bytes)).toBe(0);
+      expect(
+        Buffer.compare(await readFile(`${manifest}.rea.backup`), bytes),
+      ).toBe(0);
       if (process.platform !== "win32")
         expect((await stat(manifest)).mode & 0o777).toBe(0o640);
       expect(
@@ -164,7 +240,9 @@ describe("skill publication recovery", () => {
           reason.includes("First-install skill recovery"),
         ),
       ).toBe(true);
-      expect(result.error.rollbackFailures).toHaveLength(6);
+      expect(result.error.rollbackFailures).toHaveLength(
+        MANAGED_SKILL_FILES.length - 1,
+      );
     },
   );
 
@@ -185,7 +263,9 @@ describe("skill publication recovery", () => {
       },
     });
     if (result.ok) throw new Error("Expected readback failure");
-    expect(result.error.rollbackFailures).toHaveLength(7);
+    expect(result.error.rollbackFailures).toHaveLength(
+      MANAGED_SKILL_FILES.length,
+    );
     expect(
       result.error.rollbackFailures.every(({ reason }) =>
         reason.includes("manual removal"),

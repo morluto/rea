@@ -1,3 +1,4 @@
+import type { FileSnapshotPartialObservation } from "../../domain/fileSnapshotObservation.js";
 import {
   decodeCaptureProtobuf,
   prepareCaptureProtobuf,
@@ -24,12 +25,16 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
 import type { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
 } from "../../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLeaseGroup } from "../../artifacts/AnalysisCleanupLease.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../../artifacts/AnalysisCleanupLease.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -48,7 +53,11 @@ import {
   type InspectWebNetworkCaptureInput,
   type WebNetworkCapture,
 } from "../../domain/webNetworkCapture.js";
-import { runOwnedCommand } from "../../process/OwnedCommand.js";
+import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import {
+  OwnedCommandFailure,
+  runOwnedCommand,
+} from "../../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 
@@ -120,16 +129,22 @@ export class HistoricalCaptureDecoder {
     input: InspectWebNetworkCaptureInput,
     options?: ExecutionOptions,
   ): Promise<Result<WebNetworkCapture, AnalysisError>> {
+    const selectedEnvironment = snapshotEnvironment(this.environment);
     let runtime: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
+    const runtimeResources = new ArtifactResourceScope();
+    let processLease: AnalysisCleanupLease | undefined;
+    let sourceObservation: FileSnapshotPartialObservation | undefined;
     let result: Result<WebNetworkCapture, AnalysisError>;
     let phase: "capture-read" | "decoder" = "capture-read";
     let encodedReplyBytes = 0;
     let reportedHeap = this.#heap;
     let replyFinalization: ArtifactReaderFailure | undefined;
     try {
-      const adapter = this.adapters.find(
+      const selectedAdapter = this.adapters.find(
         (candidate) => candidate.format === input.format,
       );
+      const adapter =
+        selectedAdapter?.snapshotConfiguration?.() ?? selectedAdapter;
       reportedHeap = this.#reportedHeap(adapter);
       if (adapter === undefined)
         throw new AnalysisCapabilityUnavailableError(
@@ -144,6 +159,12 @@ export class HistoricalCaptureDecoder {
         undefined,
         this.#resources,
       );
+      sourceObservation = {
+        kind: "file-snapshot-hash",
+        path: input.capture_path,
+        sha256: snapshot.sha256,
+        bytes: snapshot.bytes.length,
+      };
       phase = "decoder";
       runtime = await this.createRuntime();
       const snapshotPath = join(runtime.path, "capture.snapshot");
@@ -165,7 +186,7 @@ export class HistoricalCaptureDecoder {
       );
       const command = await adapter.command(requestPath, runtime.path);
       const environment: NodeJS.ProcessEnv = {
-        ...this.environment,
+        ...selectedEnvironment,
         UV_THREADPOOL_SIZE: "1",
       };
       delete environment.NODE_OPTIONS;
@@ -196,8 +217,9 @@ export class HistoricalCaptureDecoder {
       const decodedReply = await readHistoricalCaptureReply(
         replyPath,
         input.capture_path,
-        this.#resources,
+        runtimeResources,
         options?.signal,
+        input.sensitive_values,
       );
       const reply = decodedReply.value;
       encodedReplyBytes = decodedReply.bytes;
@@ -370,6 +392,29 @@ export class HistoricalCaptureDecoder {
         }
       }
     } catch (cause: unknown) {
+      if (
+        cause instanceof OwnedCommandFailure &&
+        cause.cleanupOwner !== undefined
+      ) {
+        const supervisor = cause.cleanupOwner;
+        processLease = new AnalysisCleanupLease(async () => {
+          const stopped = await supervisor.stop();
+          if (stopped.status === "incomplete")
+            throw new ProviderCleanupError(
+              input.format,
+              cause.resources,
+              {
+                reason: stopped.reason,
+              },
+              { operation: OPERATION, cause: stopped },
+            );
+        }, cause.resources);
+        runtimeResources.retain({
+          kind: "lease",
+          resource: runtime?.path ?? input.capture_path,
+          lease: processLease,
+        });
+      }
       const error = historicalCaptureFailure(
         input,
         cause,
@@ -392,24 +437,67 @@ export class HistoricalCaptureDecoder {
           reply_finalization_error: projectAnalysisError(cancellation),
         });
       }
-      result = err(
-        redactExplicitFailure(
-          withCaptureReaderCleanup(error, replyFinalization ?? cause),
-          input.sensitive_values,
-        ),
+      const failure = withCaptureReaderCleanup(
+        error,
+        replyFinalization ?? cause,
       );
+      if (processLease !== undefined)
+        new AnalysisCleanupLeaseGroup(failure, [processLease]);
+      if (phase === "capture-read") {
+        const snapshot = completedStableArtifactObservation(
+          cause,
+          input.capture_path,
+        );
+        if (snapshot !== undefined) failure.retainPartialObservation(snapshot);
+      }
+      if (
+        failure.partialObservation === undefined &&
+        sourceObservation !== undefined
+      )
+        failure.retainPartialObservation(sourceObservation);
+      result = err(redactExplicitFailure(failure, input.sensitive_values));
     }
     const completedCapture = result.ok ? result.value : undefined;
     let cleanupFailure:
       | Extract<ArtifactCleanupAttempt, { readonly kind: "failed" }>
       | undefined;
     if (runtime !== undefined) {
-      const cleanup = await this.#resources.release({
-        kind: "private-runtime-root",
-        resource: runtime.path,
-        root: runtime,
-      });
-      if (cleanup.kind === "failed") cleanupFailure = cleanup;
+      const root = runtime;
+      const lease = new AnalysisCleanupLease(
+        async () => {
+          await runtimeResources.close();
+          await root.close();
+        },
+        {
+          get cleanupResources() {
+            return [
+              ...new Set([root.path, ...runtimeResources.cleanupResources]),
+            ];
+          },
+        },
+      );
+      const owner = { kind: "lease" as const, resource: root.path, lease };
+      if (runtimeResources.hasPending) {
+        // Failed child cleanup is retried by the service owner, after active peers settle.
+        this.#resources.retain(owner);
+        cleanupFailure = {
+          kind: "failed",
+          owner,
+          lease,
+          cause: new ProviderCleanupError(
+            input.format,
+            lease.cleanupResources ?? [root.path],
+            {
+              reason:
+                "Capture decoder resources must be released before runtime removal.",
+            },
+            { operation: OPERATION },
+          ),
+        };
+      } else {
+        const cleanup = await this.#resources.release(owner);
+        if (cleanup.kind === "failed") cleanupFailure = cleanup;
+      }
     }
     if (result.ok && options?.signal?.aborted)
       result = err(
@@ -443,11 +531,10 @@ export class HistoricalCaptureDecoder {
       if (completedCapture !== undefined)
         failure.retainPartialObservation(completedCapture);
       new AnalysisCleanupLeaseGroup(cleanupError, [cleanupFailure.lease]);
-      const redacted = redactExplicitFailure(failure, input.sensitive_values);
       if (!result.ok)
-        redacted.bindCleanupDependencies([result.error, cleanupError]);
-      new AnalysisCleanupLeaseGroup(redacted, [cleanupFailure.lease]);
-      return err(redacted);
+        failure.bindCleanupDependencies([result.error, cleanupError]);
+      new AnalysisCleanupLeaseGroup(failure, [cleanupFailure.lease]);
+      return err(redactExplicitFailure(failure, input.sensitive_values));
     }
     if (!result.ok && completedCapture !== undefined)
       result.error.retainPartialObservation(completedCapture);

@@ -148,6 +148,11 @@ const addCookies = async (
       run.state.complete = false;
       continue;
     }
+    // CDP Cookie.partitionKeyOpaque means the partition exists but is not
+    // serializable. A missing partitionKey means unpartitioned, so hashing
+    // that absence would align an unresolved partition with a different cookie.
+    // https://chromedevtools.github.io/devtools-protocol/tot/Network/#type-Cookie
+    const partitionOpaque = cookie.partitionKeyOpaque === true;
     addFingerprint(run.state, {
       scope: "cookie",
       identity: {
@@ -155,9 +160,10 @@ const addCookies = async (
         path,
         name,
         partition_key: cookie.partitionKey ?? null,
+        ...(partitionOpaque ? { partition_opaque: true } : {}),
       },
       value,
-      complete: cookie.partitionKeyOpaque !== true,
+      complete: !partitionOpaque,
     });
   }
 };
@@ -190,11 +196,28 @@ const addIndexedDb = async (
     const stores = recordsValue(database.objectStores);
     if (stores.length !== database.objectStores.length)
       run.state.complete = false;
+    const version =
+      typeof database.version === "number" &&
+      Number.isSafeInteger(database.version) &&
+      database.version >= 0
+        ? database.version
+        : undefined;
+    if (version === undefined) {
+      const limitation =
+        "An IndexedDB schema fingerprint is incomplete because its database version is unavailable, invalid, or outside exact integer precision.";
+      if (!run.limitations.includes(limitation))
+        run.limitations.push(limitation);
+    }
     addFingerprint(run.state, {
       scope: "indexed_db_schema",
       identity: databaseName,
-      value: stores.map(indexedDbStoreSchema),
+      value: {
+        version: version ?? null,
+        object_stores: stores.map(indexedDbStoreSchema),
+      },
+      projectionVersion: 2,
       complete:
+        version !== undefined &&
         stores.length === database.objectStores.length &&
         indexedDbSchemaComplete(stores),
     });
@@ -296,6 +319,7 @@ const addIndexedDbRecords = async (
       run.state.complete = false;
       return;
     }
+    const examinedCount = result.objectStoreDataEntries.length;
     const entries = recordsValue(result.objectStoreDataEntries);
     if (entries.length !== result.objectStoreDataEntries.length)
       run.state.complete = false;
@@ -318,13 +342,13 @@ const addIndexedDbRecords = async (
     }
     if (result.hasMore !== true) return;
     if (
-      entries.length === 0 ||
-      skipCount > Number.MAX_SAFE_INTEGER - entries.length
+      examinedCount === 0 ||
+      skipCount > Number.MAX_SAFE_INTEGER - examinedCount
     ) {
       run.state.complete = false;
       return;
     }
-    skipCount += entries.length;
+    skipCount += examinedCount;
   }
 };
 
@@ -356,20 +380,21 @@ const addCaches = async (
         run.state.complete = false;
         break;
       }
+      const examinedCount = result.cacheDataEntries.length;
       const entries = recordsValue(result.cacheDataEntries);
       if (entries.length !== result.cacheDataEntries.length)
         run.state.complete = false;
       for (const entry of entries) await addCacheEntry(run, cache, entry);
       returnCount = result.returnCount;
-      if (skipCount + entries.length >= returnCount) break;
+      if (skipCount + examinedCount >= returnCount) break;
       if (
-        entries.length === 0 ||
-        skipCount > Number.MAX_SAFE_INTEGER - entries.length
+        examinedCount === 0 ||
+        skipCount > Number.MAX_SAFE_INTEGER - examinedCount
       ) {
         run.state.complete = false;
         break;
       }
-      skipCount += entries.length;
+      skipCount += examinedCount;
     }
   }
 };
@@ -427,12 +452,16 @@ const addFingerprint = (
     readonly identity: unknown;
     readonly value: unknown;
     readonly complete: boolean;
+    readonly projectionVersion?: 2;
   },
 ): void => {
   state.items.push({
     scope: input.scope,
     identity_sha256: digest(input.identity),
     value_sha256: input.value === undefined ? null : digest(input.value),
+    ...(input.projectionVersion === undefined
+      ? {}
+      : { projection_version: input.projectionVersion }),
     complete:
       input.complete &&
       stableValueComplete(input.identity) &&

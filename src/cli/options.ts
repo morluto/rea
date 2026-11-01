@@ -9,8 +9,8 @@ import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
 } from "../domain/rawBinary.js";
-import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
+import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import type { Logger } from "pino";
 
 /** Parse decimal integer tokens before Number coercion can erase their syntax. */
@@ -33,23 +33,27 @@ export const snapshotSelectionOption = z
   .optional()
   .describe("Load and update a local analysis snapshot");
 
-/** Explicit interpretation for headerless native executable formats. */
+/**
+ * Explicit interpretation for headerless native executable formats. Flash
+ * dumps take their offsets on the artifact commands instead.
+ */
 export const formatSelectionOption = executableFormatHintSchema
+  .exclude(["esp-flash-image"])
   .optional()
   .describe(
-    "Explicit headerless interpretation (dos-com or raw-binary); omission preserves header-based detection",
+    "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
   );
 
 export const architectureSelectionOption = binaryArchitectureSchema
   .optional()
   .describe(
-    "Caller-supplied CPU family; required with --target-format raw-binary",
+    "Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol",
   );
 
 export const entryPointSelectionOption = rawBinaryEntryPointSchema
   .optional()
   .describe(
-    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary",
+    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary, optional with gamecube-dol (must equal the DOL header entry)",
   );
 
 /** Shared CLI flags that bind a native target interpretation. */

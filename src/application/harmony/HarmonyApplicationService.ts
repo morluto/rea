@@ -1,3 +1,5 @@
+import type { EvidenceLookup } from "../EvidenceInputResolver.js";
+import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { projectHarmonyInventory } from "../../domain/harmony/harmonyApplication.js";
 import type { Result } from "../../domain/result.js";
@@ -12,9 +14,13 @@ const OPERATION = "project_harmony_application_graph" as const;
 /** Project authenticated HarmonyOS package inventory Evidence into application evidence. */
 export const projectHarmonyApplicationEvidence = (
   rawInput: unknown,
+  lookup?: EvidenceLookup,
+  execution?: Pick<ExecutionOptions, "signal">,
 ): Result<InventoryProjectionEvidenceResult, AnalysisError> => {
   return projectInventoryEvidence({
     rawInput,
+    ...(lookup === undefined ? {} : { lookup }),
+    ...(execution === undefined ? {} : { execution }),
     project: projectHarmonyInventory,
     operation: OPERATION,
     predicateType: "rea.harmony-application-graph",

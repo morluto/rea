@@ -1,6 +1,7 @@
-import type {
-  StateEntity,
-  StateType,
+import {
+  markedDeleted,
+  type StateEntity,
+  type StateType,
 } from "../../domain/analysisView/environmentStateRules.js";
 import { nextSequence } from "../../domain/analysisView/environmentStateWriteValues.js";
 import {
@@ -100,6 +101,7 @@ export const initialStateBytes = (state: EnvironmentState): number =>
  */
 export class EnvironmentStateStore {
   #entities: ReadonlyMap<string, StateEntity> = new Map();
+  #storedDeleted: ReadonlyMap<string, StateEntity> = new Map();
   #collections: ReadonlyMap<string, readonly StateEntity[]> = new Map();
   #typeCollections: ReadonlyMap<string, readonly string[]> = new Map();
   #documents: ReadonlyMap<string, HeldDocument> = new Map();
@@ -117,12 +119,18 @@ export class EnvironmentStateStore {
   readonly #sequences = new Map<string, number>();
   /** The entities the state held when it was last reset or loaded, whose values no sequence reuses either. */
   #started: readonly StateEntity[] = [];
+  /** The types a served create has added an entity to since the last reset or load. */
+  readonly #createdTypes = new Set<string>();
   /** Baseline and post-start spellings kept known after their entities are deleted. */
   readonly #knownCollections = new Map<string, Set<string>>();
   /** Logical UTF-8 key bytes plus a 64-byte allowance per collection and potential sequence-key record. */
   #collectionHistoryBytes = 0;
   /** The collections of the Evidence's own state, which stay known after any load. */
   #evidenceCollections: ReadonlyMap<string, readonly string[]> = new Map();
+  /** Entities served deletes kept for an application that still answers a deleted record by id, oldest first. */
+  readonly #deleted = new Map<string, StateEntity>();
+  /** Their UTF-8 bytes, kept within what `data/add` loads by dropping the oldest. */
+  #deletedBytes = 0;
 
   constructor(readonly state: EnvironmentState) {
     this.#types = new Map(
@@ -210,8 +218,11 @@ export class EnvironmentStateStore {
     this.#writes = 0;
     this.#sequences.clear();
     this.#started = this.#content.entities;
+    this.#createdTypes.clear();
     this.#knownCollections.clear();
     this.#collectionHistoryBytes = 0;
+    this.#deleted.clear();
+    this.#deletedBytes = 0;
     for (const [type, collections] of this.#typeCollections)
       for (const collection of collections)
         this.#rememberCollection(type, collection);
@@ -227,13 +238,20 @@ export class EnvironmentStateStore {
   }
 
   /** The entities of a type the state held when it was last reset or loaded. */
+  /** Whether a served create has added an entity of the type since the last reset or load. */
+  createdInto(type: string): boolean {
+    return this.#createdTypes.has(type);
+  }
+
   startedWith(type: string): readonly StateEntity[] {
     return this.#started.filter((entity) => entity.type === type);
   }
 
   /** Every held entity of a type, in state order. */
   ofType(type: string): readonly StateEntity[] {
-    return this.#content.entities.filter((entity) => entity.type === type);
+    return this.#content.entities.filter(
+      (entity) => entity.type === type && !markedDeleted(entity.fields),
+    );
   }
 
   /** Add an entity at `index` of its collection's order, unless the state would outgrow what `data/add` loads. */
@@ -241,9 +259,16 @@ export class EnvironmentStateStore {
     entity: StateEntity,
     index: number,
   ): Result<void, AnalysisResourceConstraintError> {
-    const entities = this.#content.entities;
+    const key = compositeKey([entity.type, entity.collection, entity.id]);
+    const replaced = this.#storedDeleted.get(key);
+    const entities =
+      replaced === undefined
+        ? this.#content.entities
+        : this.#content.entities.filter((held) => held !== replaced);
     const bytes = this.#grown(
-      jsonByteLength(entity) + (entities.length > 0 ? 1 : 0),
+      jsonByteLength(entity) -
+        (replaced === undefined ? 0 : jsonByteLength(replaced)) +
+        (replaced === undefined && entities.length > 0 ? 1 : 0),
     );
     if (!bytes.ok) return bytes;
     const known = this.#knownCollections.get(entity.type);
@@ -294,21 +319,48 @@ export class EnvironmentStateStore {
       this.#rememberCollection(entity.type, entity.collection);
       this.#collectionHistoryBytes += newCollectionBytes;
     }
+    this.#createdTypes.add(entity.type);
     return ok(undefined);
   }
 
   /** Replace a held entity's values in place, unless the state would outgrow what `data/add` loads. */
   update(entity: StateEntity): Result<void, AnalysisResourceConstraintError> {
-    const key = compositeKey([entity.type, entity.collection, entity.id]);
-    const held = this.#entities.get(key);
-    if (held === undefined) return ok(undefined);
-    const bytes = this.#grown(jsonByteLength(entity) - jsonByteLength(held));
+    return this.updateAll([entity]);
+  }
+
+  /**
+   * Replace held entities in one step, unless the state would outgrow what `data/add` loads; a refusal changes nothing.
+   * `order` puts held entities, the replacements among them, in that order in the places they hold.
+   */
+  updateAll(
+    entities: readonly StateEntity[],
+    order: readonly StateEntity[] = [],
+  ): Result<void, AnalysisResourceConstraintError> {
+    const replaced = new Map<StateEntity, StateEntity>();
+    for (const entity of entities) {
+      const held = this.#entities.get(
+        compositeKey([entity.type, entity.collection, entity.id]),
+      );
+      if (held !== undefined) replaced.set(held, entity);
+    }
+    if (replaced.size === 0) return ok(undefined);
+    // Sized from the replacements installed, so an entity named twice counts once.
+    let delta = 0;
+    for (const [held, entity] of replaced)
+      delta += jsonByteLength(entity) - jsonByteLength(held);
+    const bytes = this.#grown(delta);
     if (!bytes.ok) return bytes;
+    const key = (entity: StateEntity) =>
+      compositeKey([entity.type, entity.collection, entity.id]);
+    const placed = new Set(order.map(key));
+    let next = 0;
     this.#install(
       {
         ...this.#content,
         entities: this.#content.entities.map((candidate) =>
-          candidate === held ? entity : candidate,
+          placed.has(key(candidate))
+            ? order[next++]!
+            : (replaced.get(candidate) ?? candidate),
         ),
       },
       bytes.value,
@@ -316,18 +368,58 @@ export class EnvironmentStateStore {
     return ok(undefined);
   }
 
-  remove(entity: StateEntity): void {
-    const held = this.#entities.get(
-      compositeKey([entity.type, entity.collection, entity.id]),
+  remove(entity: StateEntity, keep = false): void {
+    this.removeAll([entity], keep);
+  }
+
+  /** Remove held entities in one step; with `keep`, a later item read can still find each as deleted. */
+  removeAll(entities: readonly StateEntity[], keep = false): void {
+    const held = new Set(
+      entities.flatMap((entity) => {
+        const found = this.#entities.get(
+          compositeKey([entity.type, entity.collection, entity.id]),
+        );
+        return found === undefined ? [] : [found];
+      }),
     );
-    if (held === undefined) return;
-    const entities = this.#content.entities.filter(
-      (candidate) => candidate !== held,
+    if (held.size === 0) return;
+    const kept = this.#content.entities.filter(
+      (candidate) => !held.has(candidate),
     );
-    this.#install(
-      { ...this.#content, entities },
-      this.#bytes - jsonByteLength(held) - (entities.length > 0 ? 1 : 0),
-    );
+    let bytes = this.#bytes;
+    for (const entity of held) bytes -= jsonByteLength(entity);
+    // Each removed entity takes its separator, except the last one an emptied list had none for.
+    bytes -= held.size - (kept.length === 0 ? 1 : 0);
+    this.#install({ ...this.#content, entities: kept }, bytes);
+    if (keep) for (const entity of held) this.#keepDeleted(entity);
+  }
+
+  /** An entity a served delete removed and kept, unless the state holds one under its key again. */
+  deleted(
+    type: string,
+    collection: string,
+    id: string,
+  ): StateEntity | undefined {
+    const key = compositeKey([type, collection, id]);
+    return this.#entities.has(key)
+      ? undefined
+      : (this.#storedDeleted.get(key) ?? this.#deleted.get(key));
+  }
+
+  #keepDeleted(entity: StateEntity): void {
+    const key = compositeKey([entity.type, entity.collection, entity.id]);
+    const earlier = this.#deleted.get(key);
+    if (earlier !== undefined) {
+      this.#deleted.delete(key);
+      this.#deletedBytes -= jsonByteLength(earlier);
+    }
+    this.#deleted.set(key, entity);
+    this.#deletedBytes += jsonByteLength(entity);
+    for (const [oldest, dropped] of this.#deleted) {
+      if (this.#deletedBytes <= STATE_INTAKE_LIMIT_BYTES) break;
+      this.#deleted.delete(oldest);
+      this.#deletedBytes -= jsonByteLength(dropped);
+    }
   }
 
   /** Set a held document's value, unless the state would outgrow what `data/add` loads; a value that is not the Evidence's cites no record. */
@@ -431,9 +523,20 @@ export class EnvironmentStateStore {
   /** Build current-state indexes without copying baseline collections into generated history. */
   #install(content: StateContent, bytes: number): void {
     const entities = new Map<string, StateEntity>();
+    const storedDeleted = new Map<string, StateEntity>();
     const collections = new Map<string, StateEntity[]>();
     const typeCollections = new Map<string, string[]>();
     for (const entity of content.entities) {
+      if (markedDeleted(entity.fields)) {
+        storedDeleted.set(
+          compositeKey([entity.type, entity.collection, entity.id]),
+          entity,
+        );
+        const named = typeCollections.get(entity.type) ?? [];
+        if (!named.includes(entity.collection)) named.push(entity.collection);
+        typeCollections.set(entity.type, named);
+        continue;
+      }
       entities.set(
         compositeKey([entity.type, entity.collection, entity.id]),
         entity,
@@ -448,9 +551,11 @@ export class EnvironmentStateStore {
       const named = typeCollections.get(entity.type);
       if (named === undefined)
         typeCollections.set(entity.type, [entity.collection]);
-      else named.push(entity.collection);
+      else if (!named.includes(entity.collection))
+        named.push(entity.collection);
     }
     this.#entities = entities;
+    this.#storedDeleted = storedDeleted;
     this.#collections = collections;
     this.#typeCollections = typeCollections;
     this.#documents = new Map(

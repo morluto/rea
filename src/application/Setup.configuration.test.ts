@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
-import { setupRegistrationCommand } from "./SetupHost.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { discoverSetupState } from "./SetupPlan.js";
 import type { MsixPackageView } from "./MsixPackageStorage.js";
@@ -216,7 +216,12 @@ describe("optional Hopper installation failures", () => {
       host,
     );
     expect(result.code).toBe("download_failed");
-    expect(result.remediation).toMatch(/^Download failed\. ./);
+    expect(result.remediation).toContain("Download failed.");
+    expect(result.remediation).toContain("could not be updated");
+    expect(result.clients.cursor).toMatchObject({
+      status: "failed",
+      reason: "write",
+    });
     expect(host.configurations).toBe(1);
   });
 
@@ -234,8 +239,56 @@ describe("optional Hopper installation failures", () => {
       host,
     );
     expect(result.code).toBe("skill_install_failed");
-    expect(result.remediation).toMatch(/^Download failed\. ./);
+    expect(result.remediation).toContain("Download failed.");
+    expect(result.remediation).toContain("injected skill write failure");
     expect(host.skillInstalls).toBe(1);
+  });
+
+  it("returns the failed Hopper request facts beside its code, including after a later failure", async () => {
+    const download = {
+      request: "package",
+      url: "https://www.hopperapp.com:443/downloader/public/Hopper-demo.dmg",
+      kind: "http_status",
+      httpStatus: 503,
+    } as const;
+    const ready = new FakeSetupHost();
+    ready.hopperInstallSucceeds = false;
+    ready.hopperInstallFailure = {
+      status: "failed",
+      code: "download_failed",
+      remediation: "Package returned HTTP 503.",
+      download,
+    };
+    expect(await runSetup(options(true, true), ready)).toMatchObject({
+      status: "needs_human",
+      code: "download_failed",
+      remediation: "Package returned HTTP 503.",
+      download,
+    });
+
+    const skillFailure = new FakeSetupHost();
+    skillFailure.hopperInstallSucceeds = false;
+    skillFailure.hopperInstallFailure = ready.hopperInstallFailure;
+    skillFailure.skill = "failed";
+    skillFailure.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+    expect(
+      await runSetup(
+        {
+          ...options(true, true),
+          clientIds: ["cursor"],
+          skillClientIds: ["cursor"],
+        },
+        skillFailure,
+      ),
+    ).toMatchObject({ code: "skill_install_failed", download });
+  });
+
+  it("omits request facts when the Hopper failure observed none", async () => {
+    const host = new FakeSetupHost();
+    host.hopperInstallSucceeds = false;
+    expect(await runSetup(options(true, true), host)).not.toHaveProperty(
+      "download",
+    );
   });
 });
 
@@ -414,13 +467,23 @@ describe("setup workflow action selection", () => {
 
     expect(result.status).toBe("ready");
     expect(host.configuredCommands).toEqual([
-      setupRegistrationCommand("win32", undefined, CURRENT_ENTRYPOINT_PATH),
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: CURRENT_ENTRYPOINT_PATH,
+      }),
     ]);
     expect(
-      setupRegistrationCommand("win32", undefined, CURRENT_ENTRYPOINT_PATH),
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: CURRENT_ENTRYPOINT_PATH,
+      }),
     ).toEqual([process.execPath, CURRENT_ENTRYPOINT_PATH, "mcp"]);
-    expect(setupRegistrationCommand("win32", undefined, undefined)).toEqual([]);
-    expect(setupRegistrationCommand("win32", "npx", undefined)).not.toEqual([]);
+    expect(
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: undefined,
+      }),
+    ).toEqual([]);
   });
 });
 
@@ -586,5 +649,62 @@ describe("MSIX Claude Desktop setup", () => {
     );
     expect(skillOnly.status).toBe("ready");
     expect(host.skillInstalls).toBe(1);
+  });
+});
+
+describe("setup tool family scope", () => {
+  it("writes the requested scope into the registration environment", async () => {
+    const host = new FakeSetupHost();
+    host.doctorHealthy = true;
+    host.skill = "unchanged";
+    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+
+    const plan = await runSetup(
+      {
+        ...options(false),
+        clientIds: ["cursor"],
+        toolFamilies: "session,application",
+      },
+      host,
+    );
+    expect(plan.plannedActions[0]?.detail).toContain(
+      "REA_MCP_TOOL_FAMILIES=session,application",
+    );
+
+    const applied = await runSetup(
+      {
+        ...options(true),
+        clientIds: ["cursor"],
+        toolFamilies: "session,application",
+      },
+      host,
+    );
+    expect(applied.status).toBe("ready");
+    expect(host.configuredProviderEnvironments).toContainEqual({
+      REA_MCP_TOOL_FAMILIES: "session,application",
+    });
+  });
+
+  it("still offers Hopper on an unconfigured machine when a scope is set", async () => {
+    const host = new FakeSetupHost("darwin");
+    host.version = "14.5";
+    host.skill = "unchanged";
+    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+
+    const result = await runSetup(
+      {
+        ...options(false),
+        clientIds: ["cursor"],
+        toolFamilies: "session",
+        proposeHopper: true,
+      },
+      host,
+    );
+
+    // The advertised family scope is a registration setting, not provider
+    // discovery; it must not suppress the Hopper installation offer.
+    expect(result.plannedActions.map(({ kind }) => kind)).toContain(
+      "install_hopper",
+    );
   });
 });

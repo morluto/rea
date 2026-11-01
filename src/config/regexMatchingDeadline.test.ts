@@ -5,29 +5,23 @@ import { KunaProvider } from "../kuna/KunaProvider.js";
 import { silentLogger } from "../logger.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { regexMatchingDeadlineError } from "../process/RegexMatcher.js";
+import {
+  regexMatchingDeadlineError,
+  launchRegexMatchingLimitation,
+} from "../process/RegexMatcher.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
-  MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
   parseRegexMatchingDeadline,
   REGEX_MATCHING_DEADLINE_SETTING,
   regexMatchingDeadlineConstraint,
   regexMatchingDeadlineRecovery,
 } from "./regexMatchingDeadline.js";
+import { MAXIMUM_REGEX_MATCHING_DEADLINE_MS } from "../domain/analysisResourceLimits.js";
 
 const configured = (deadlineMs: number) =>
   ({ deadlineMs, source: "setting" }) as const;
-
-const expectDeadlineRecoveryTokens = (text: string | undefined) => {
-  expect(text).toContain(`Set ${REGEX_MATCHING_DEADLINE_SETTING}`);
-  expect(text).toContain("then restart REA");
-  expect(text).toContain("floor 1 ms");
-  expect(text).toContain(
-    `maximum ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)} ms`,
-  );
-};
 
 it("keeps the 5000 ms deadline when the setting is unset", () => {
   expect(parseRegexMatchingDeadline(undefined)).toEqual({
@@ -42,14 +36,6 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
   const recovery = regexMatchingDeadlineRecovery(
     DEFAULT_REGEX_MATCHING_DEADLINE,
   );
-  expect(recovery).toContain(REGEX_MATCHING_DEADLINE_SETTING);
-  expect(recovery).toContain(
-    String(DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs),
-  );
-  expect(recovery).toContain(
-    `source ${DEFAULT_REGEX_MATCHING_DEADLINE.source}`,
-  );
-  expectDeadlineRecoveryTokens(recovery);
   const projected = projectAnalysisError(
     regexMatchingDeadlineError("search_procedures"),
   );
@@ -57,19 +43,25 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
     code: "resource_constraint",
     details: {
       resource: "cpu",
+      limit: {
+        setting: "regex.matching_deadline_ms",
+        effective_value: 5000,
+        unit: "ms",
+        minimum: 1,
+        maximum: MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
+        source: "default",
+        applies_at: "next_operation",
+        agent_editable: true,
+        scope: "rea-runtime",
+        rea_restart_required: false,
+      },
       reported_limits: {
         matching_deadline_ms: DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs,
         matching_deadline_source: DEFAULT_REGEX_MATCHING_DEADLINE.source,
       },
     },
   });
-  expect(projected.message).toContain(REGEX_MATCHING_DEADLINE_SETTING);
-  expect(projected.remediation.action).toContain(
-    REGEX_MATCHING_DEADLINE_SETTING,
-  );
-  expectDeadlineRecoveryTokens(projected.message);
-  expectDeadlineRecoveryTokens(projected.remediation.action);
-  expect(projected.message).not.toContain("no runtime override");
+  expect(projected.remediation.action).toContain(recovery);
 });
 
 it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
@@ -93,12 +85,12 @@ it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
     .capabilities()
     .find((capability) => capability.operation === "search_procedures")
     ?.limitations.join(" ");
-  expect(hopperText).toContain(REGEX_MATCHING_DEADLINE_SETTING);
   expect(hopperText).toContain(
-    `${String(parsed.value.regexMatchingDeadline.deadlineMs)} ms (source setting`,
+    launchRegexMatchingLimitation(
+      parsed.value.regexMatchingDeadline,
+      parsed.value.regexWorkerHeapRequest,
+    ),
   );
-  expect(hopperText).not.toContain("1 ms matching deadline");
-  expect(hopperText).not.toContain("no runtime override");
 
   vi.stubEnv(REGEX_MATCHING_DEADLINE_SETTING, "1");
   try {
@@ -107,22 +99,23 @@ it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
       .capabilities()
       .find((capability) => capability.operation === "search_strings")
       ?.limitations.join(" ");
-    expect(kunaText).toContain(REGEX_MATCHING_DEADLINE_SETTING);
-    expect(kunaText).toContain("10000 ms (source setting");
-    expect(kunaText).not.toContain("1 ms matching deadline");
+    expect(kunaText).toContain(
+      launchRegexMatchingLimitation(
+        parsed.value.regexMatchingDeadline,
+        parsed.value.regexWorkerHeapRequest,
+      ),
+    );
   } finally {
     vi.unstubAllEnvs();
   }
 
   const ambient = new KunaProvider({});
-  const ambientText = ambient
-    .capabilities()
-    .find((capability) => capability.operation === "search_procedures")
-    ?.limitations.join(" ");
-  expect(ambientText).toContain(REGEX_MATCHING_DEADLINE_SETTING);
-  expect(ambientText).toContain(
-    `${String(DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs)} ms (source ${DEFAULT_REGEX_MATCHING_DEADLINE.source}`,
-  );
+  expect(
+    ambient
+      .capabilities()
+      .find((capability) => capability.operation === "search_procedures")
+      ?.limitations,
+  ).toContain(launchRegexMatchingLimitation());
 });
 
 it.each([

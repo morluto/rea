@@ -175,3 +175,37 @@ it("uses resolved group and alias paths and preserves declared variadic inputs",
     values: ["one", "two", "three"],
   });
 });
+
+it("preserves counted aliases and negated booleans while checking the positional tail", async () => {
+  let runs = 0;
+  const cli = Cli.create("strict-counted-flags", { sync: false });
+  cli.command("capture", {
+    args: z.object({ path: z.string() }),
+    options: z.object({
+      enabled: z.boolean().default(true),
+      verbosity: z.number().default(0).meta({ count: true }),
+    }),
+    alias: { verbosity: "v" },
+    run: ({ args, options }) => {
+      runs++;
+      return { args, options };
+    },
+  });
+  installAdmission(cli);
+  const valid = await serve(cli, ["capture", "one", "--no-enabled", "-vvv"]);
+  expect(valid.exitCode).toBe(0);
+  expect(JSON.parse(valid.stdout)).toMatchObject({
+    args: { path: "one" },
+    options: { enabled: false, verbosity: 3 },
+  });
+  const surplus = await serve(cli, [
+    "capture",
+    "one",
+    "--no-enabled",
+    "-vvv",
+    "extra",
+  ]);
+  expect(surplus.exitCode).toBe(1);
+  expect(surplus.stdout).toContain("Unexpected positional arguments");
+  expect(runs).toBe(1);
+});

@@ -94,6 +94,38 @@ export const BOOK_ROWS: readonly TimedCaptureRow[] = [
   ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
 ];
 
+/** A bulk delete of both books sending `body` and answering `response`, which the reads after it confirm. */
+export const bothBooksDeleted = (
+  response: JsonValue,
+  body: JsonValue = { ids: [1, 2] },
+): TimedCaptureRow[] => [
+  ...BOOK_INIT_ROWS,
+  ["DELETE", "/api/books", response, 200, body],
+  ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
+  ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+  ["GET", "/api/books", []],
+];
+
+/** Both books as a bulk rename recorded at exchange 3 left them. */
+const BOTH_RENAMED = [FIRST_BOOK, SECOND_BOOK].map((entity) =>
+  renamedBook(entity, "Renamed Book", 3),
+);
+
+/** A bulk rename of both books answering both, which the reads after it confirm. */
+export const BOTH_BOOKS_RENAMED_ROWS: readonly TimedCaptureRow[] = [
+  ...BOOK_INIT_ROWS,
+  [
+    "PATCH",
+    "/api/books",
+    BOTH_RENAMED,
+    200,
+    { ids: [1, 2], name: "Renamed Book" },
+  ],
+  ["GET", "/api/books/1", BOTH_RENAMED[0]!],
+  ["GET", "/api/books/2", BOTH_RENAMED[1]!],
+  ["GET", "/api/books", BOTH_RENAMED],
+];
+
 /** A book whose item reads carry a `detail` member, which the application leaves out of books that have none. */
 export const detailedBook = (entity: Book): Book => ({
   ...entity,
@@ -124,6 +156,26 @@ export const PROJECTED_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/books/1", FIRST_BOOK],
   ["GET", "/api/books/2", SECOND_BOOK],
   ["GET", "/api/books/2?fields=name", { name: "Second Book" }],
+];
+
+/** A book as a list asked to expand its shelf shows it. */
+export const expandedBook = (entity: Book): Book => ({
+  ...entity,
+  shelf: { id: 7, name: "Main Hall" },
+});
+
+/** The list read plainly and with its shelves expanded, then a create the plain list shows. */
+export const EXPANDED_LIST_ROWS: readonly TimedCaptureRow[] = [
+  ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+  [
+    "GET",
+    "/api/books?expand=shelf",
+    [FIRST_BOOK, SECOND_BOOK].map(expandedBook),
+  ],
+  ["GET", "/api/books/1", FIRST_BOOK],
+  ["GET", "/api/books/2", SECOND_BOOK],
+  ["POST", "/api/books", THIRD_BOOK_AT_4, 201, { name: "Third Book" }],
+  ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK, THIRD_BOOK_AT_4]],
 ];
 
 /** A book numbered as an asset, in digit groups. */
@@ -231,7 +283,7 @@ export const UNCHAPTERED_ROWS: readonly TimedCaptureRow[] = renamingRows(
 );
 
 /** A book whose sent handle the application stores as its code and embeds in its link. */
-export const handledBook = (entity: Book, handle: string): Book => ({
+const handledBook = (entity: Book, handle: string): Book => ({
   ...entity,
   code: handle,
   link: `https://books.example.test/b/${handle}`,
@@ -296,7 +348,7 @@ const shelved = (entry: Book, shelf: string): Book => ({ ...entry, shelf });
 const SHELVED_FIRST = shelved(FIRST_BOOK, "a");
 const SHELVED_SECOND = shelved(SECOND_BOOK, "b");
 /** The book the create at exchange 7 of QUERY_ROWS made, on shelf a. */
-export const SHELVED_THIRD = shelved(book(3, "Third Book", bookClock(7)), "a");
+const SHELVED_THIRD = shelved(book(3, "Third Book", bookClock(7)), "a");
 
 /**
  * One list tool recorded whole, filtered by shelf, searched, sorted and with a flag that changes nothing; item reads;
@@ -321,7 +373,7 @@ export const QUERY_ROWS: readonly TimedCaptureRow[] = [
 ];
 
 /** A clock spelled with a `+00:00` offset where the books application's item reads spell `Z`. */
-export const offsetClock = (clock: JsonValue | undefined): string =>
+const offsetClock = (clock: JsonValue | undefined): string =>
   String(clock).replace(/Z$/u, "+00:00");
 
 /** A book as a list that spells its clocks with an offset shows it. */
@@ -403,6 +455,7 @@ export const environmentStateViewOf = (
 ): EnvironmentStateView => {
   const result = projectAnalysisView(
     {
+      predicateType: capture.predicate_type,
       evidenceId: capture.evidence_id,
       operation: capture.operation,
       normalizedResult: capture.normalized_result,

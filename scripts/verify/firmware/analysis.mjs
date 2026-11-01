@@ -11,7 +11,10 @@ import { firmwareResultSchemas } from "../../../dist/domain/firmware/firmwareAna
 import { parseEvidence } from "../../../dist/domain/evidence.js";
 import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
 import { hashVerifierFile } from "../../lib/verifier-file-resources.mjs";
-import { closeVerifierResources } from "../../lib/verifier-cleanup.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../lib/verifier-cleanup.mjs";
 
 const execFileAsync = promisify(execFile);
 const { join, resolve, dirname } = nodePath;
@@ -377,8 +380,7 @@ async function stageGhidra(mcpFiles) {
 // Entry point
 // ---------------------------------------------------------------------------
 
-let primaryError;
-try {
+await withVerifierCleanup(async () => {
   assert.equal(
     (await hashVerifierFile(firmwarePath, fileResources)).sha256,
     oracle.sha256,
@@ -396,20 +398,12 @@ try {
     oracle.sha256,
     "Original firmware bytes must remain unchanged",
   );
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [
-      async () => {
-        await closeVerifierResources([
-          () => mcpClient.close(),
-          () => fileResources.close(),
-        ]);
-        await fs.rm(workDir, { recursive: true, force: true });
-      },
-    ],
-    primaryError,
-  );
-}
+}, [
+  async () => {
+    await closeVerifierResources([
+      () => mcpClient.close(),
+      () => fileResources.close(),
+    ]);
+    await fs.rm(workDir, { recursive: true, force: true });
+  },
+]);

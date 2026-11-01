@@ -14,7 +14,7 @@ import { ProviderAdapterError } from "../../../../src/domain/providerAdapterErro
 import { buildBinary, type PlistValue } from "plist";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import { MAX_NATIVE_PLIST_BYTES } from "../../../../src/native/parsers/plist.js";
-import { MAX_BINARY_PLIST_NESTING_DEPTH } from "../../../../src/artifacts/apple/PropertyListDecodeBudget.js";
+import { MAX_JSON_DEPTH } from "../../../../src/domain/jsonValue.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import {
   NativeFixtureRunner,
@@ -96,11 +96,11 @@ it.each([
   },
   {
     budget: "nesting",
-    value: nested(MAX_BINARY_PLIST_NESTING_DEPTH + 1),
+    value: nested(MAX_JSON_DEPTH - 1),
     reason: "binary plist nesting exceeds the native plist decode budget",
-    limits: { maximum_nesting_depth: MAX_BINARY_PLIST_NESTING_DEPTH },
+    limits: { maximum_nesting_depth: MAX_JSON_DEPTH - 2 },
     allowance:
-      "The 128-level native binary plist nesting allowance (no runtime override)",
+      "The 998-level native plist nesting allowance (no runtime override)",
   },
 ])(
   "names the fixed binary plist $budget allowance instead of host memory",

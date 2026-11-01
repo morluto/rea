@@ -156,6 +156,25 @@ describe("Ghidra language override configuration", () => {
     });
   });
 
+  it.each([
+    "ARM:LEBE:32:v8LEInstruction",
+    "ARM:LEBE:32:v7LEInstruction",
+    "M16C/60:LE:16:default",
+    "M16C/80:LE:16:default",
+  ])("accepts the stock Ghidra language ID %s", (languageId) => {
+    const parsed = parseConfig({ REA_GHIDRA_LANGUAGE_ID: languageId });
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.ghidraLanguageOverride).toEqual({ languageId });
+  });
+
+  it.each(["ARM:BELE:32:v8", "/x86:LE:32:default", "x86:LE:32:default "])(
+    "still refuses the malformed language ID %j",
+    (languageId) => {
+      const parsed = parseConfig({ REA_GHIDRA_LANGUAGE_ID: languageId });
+      expect(parsed.ok).toBe(false);
+    },
+  );
+
   it("requires a language for a compiler spec, as analyzeHeadless does", () => {
     const parsed = parseConfig({ REA_GHIDRA_COMPILER_SPEC_ID: "borlandcpp" });
     if (parsed.ok) throw new Error("Expected a configuration error");
@@ -400,6 +419,8 @@ describe("Ghidra language override profile", () => {
     });
     expect(parameters).not.toHaveProperty("language_selection");
     expect(ghidraProfileLanguageOverride(parameters)).toBeUndefined();
+    expect(automatic.value.profile?.digest).toEqual(expect.any(String));
+    expect(configured.value.profile?.digest).toEqual(expect.any(String));
     expect(automatic.value.profile?.digest).not.toBe(
       configured.value.profile?.digest,
     );

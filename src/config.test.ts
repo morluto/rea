@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   defaultHopperLauncherPath,
-  nativeAnalysisConfigurationError,
+  inspectNativeAnalysisConfiguration,
   parseConfig,
 } from "./config/parseConfig.js";
 import {
@@ -56,6 +56,24 @@ it("accepts ordinary custom environment strings and omitted values", () => {
 });
 
 describe("runtime configuration", () => {
+  it("preserves a selected MCP input allowance for deferred startup and refuses disabling values", () => {
+    expect(parseConfig({ REA_MCP_MAX_INPUT_ELEMENTS: "8192" })).toMatchObject({
+      ok: true,
+      value: { mcpMaxInputElements: 8192 },
+    });
+    const invalid = parseConfig({ REA_MCP_MAX_INPUT_ELEMENTS: "Infinity" });
+    expect(invalid.ok).toBe(false);
+    if (invalid.ok)
+      throw new Error(
+        "Infinite MCP input allowance must not be accepted from the environment",
+      );
+    expect(invalid.error.settings).toEqual([
+      {
+        setting: "REA_MCP_MAX_INPUT_ELEMENTS",
+        constraint: expect.stringContaining("positive decimal safe integer"),
+      },
+    ]);
+  });
   it("allows target-free startup and applies runtime defaults", () => {
     const empty = parseConfig({});
     expect(empty.ok).toBe(true);
@@ -100,16 +118,16 @@ describe("runtime configuration", () => {
   });
 
   it("shares native admission with doctor and ignores the JEB-only timeout", () => {
-    expect(nativeAnalysisConfigurationError({})).toBeUndefined();
+    expect(inspectNativeAnalysisConfiguration({})).toEqual({ issues: [] });
     expect(
-      nativeAnalysisConfigurationError({ REA_JEB_MCP_TIMEOUT_MS: "abc" }),
-    ).toBeUndefined();
+      inspectNativeAnalysisConfiguration({ REA_JEB_MCP_TIMEOUT_MS: "abc" }),
+    ).toEqual({ issues: [] });
     expect(parseConfig({ REA_JEB_MCP_TIMEOUT_MS: "abc" }).ok).toBe(true);
-    const rejected = nativeAnalysisConfigurationError({
+    const rejected = inspectNativeAnalysisConfiguration({
       REA_ANALYSIS_PROVIDER: "Hopper",
       REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc",
     });
-    expect(rejected?.settings.map(({ setting }) => setting)).toEqual([
+    expect(rejected.issues.map(({ setting }) => setting)).toEqual([
       "REA_ANALYSIS_PROVIDER",
       "REA_GHIDRA_STARTUP_TIMEOUT_MS",
     ]);
@@ -119,6 +137,33 @@ describe("runtime configuration", () => {
         REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc",
       }).ok,
     ).toBe(false);
+  });
+
+  it("preserves the timeout's schema cause when aggregate admission stops at NUL", () => {
+    const inspected = inspectNativeAnalysisConfiguration({
+      CALLER_SETTING: "private\0value",
+      REA_HOPPER_STARTUP_TIMEOUT_MS: "0",
+    });
+    expect(inspected.issues).toEqual([
+      {
+        setting: "CALLER_SETTING",
+        constraint:
+          "Environment variable names and values must not contain NUL bytes",
+      },
+    ]);
+    const timeout = inspected.configuredHopperStartupTimeout;
+    if (timeout === undefined || timeout.ok)
+      throw new Error("Expected the configured timeout's independent refusal");
+    expect(timeout.error.cause).toMatchObject({
+      name: "ZodError",
+      issues: [{ message: "must be a positive decimal integer" }],
+    });
+    expect(timeout.error.settings).toEqual([
+      {
+        setting: "REA_HOPPER_STARTUP_TIMEOUT_MS",
+        constraint: "must be a positive decimal integer",
+      },
+    ]);
   });
 
   it("parses absolute BYO Ghidra and optional Java paths", () => {
@@ -314,6 +359,12 @@ describe("configuration failure diagnostics", () => {
   it.each(["1", "90000", "2147483647"])(
     "accepts Swift compile deadline %s without changing Hopper's deadline",
     (value) => {
+      expect(
+        parseEnvironmentValues({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
+      ).toMatchObject({
+        ok: true,
+        value: { REA_SWIFTC_COMPILE_TIMEOUT_MS: Number(value) },
+      });
       expect(
         parseConfig({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
       ).toMatchObject({

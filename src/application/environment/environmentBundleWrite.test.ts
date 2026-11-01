@@ -66,8 +66,11 @@ it("retains the admitted tarball descriptor and refuses a pathname replacement d
       error: { _tag: "AnalysisArtifactChangedError", path: tarball },
     });
     expect(
-      await readFile(join(directory, "envs/grafana-example/rea-agents.tgz")),
-    ).toEqual(originalBytes);
+      Buffer.compare(
+        await readFile(join(directory, "envs/grafana-example/rea-agents.tgz")),
+        originalBytes,
+      ),
+    ).toBe(0);
   } finally {
     writer.mockRestore();
   }
@@ -158,8 +161,11 @@ it("uses confirmed publication after the output owner's descriptor cleanup compl
     });
     expect(result).toMatchObject({ ok: true, value: { status: "exported" } });
     expect(
-      await readFile(join(directory, "envs/grafana-example/evidence.json")),
-    ).toEqual(inputs.value.evidence.bytes);
+      Buffer.compare(
+        await readFile(join(directory, "envs/grafana-example/evidence.json")),
+        inputs.value.evidence.bytes,
+      ),
+    ).toBe(0);
   } finally {
     commit.mockRestore();
   }

@@ -1,21 +1,17 @@
 import { machoTargetSelectionSchema } from "../domain/apple/machoTargetSelection.js";
 import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
 import { createHash } from "node:crypto";
-import { PassThrough } from "node:stream";
-import { writeFile } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
 
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
-  return {
-    ...actual,
-    createReadStream: vi.fn(actual.createReadStream),
-  };
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, open: vi.fn(actual.open) };
 });
-
-import { createReadStream } from "node:fs";
 
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -28,6 +24,14 @@ let inspectionResources = createInspectionResources();
 afterEach(async () => {
   await inspectionResources.close();
   inspectionResources = createInspectionResources();
+  vi.mocked(open).mockReset();
+  vi.mocked(open).mockImplementation(
+    (
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      )
+    ).open,
+  );
 });
 
 it("routes physical universal Mach-O containers through Hopper's FAT loader", () => {
@@ -214,51 +218,30 @@ it("commits a thin header selection only for derived Hopper loader arguments", a
   );
 });
 
-it("keeps a read failure primary when cancellation arrives with the stream error", async () => {
-  const path = "/fixture/arm64.macho";
-  const target = {
-    path,
-    sha256: "a".repeat(64),
-    kind: "executable" as const,
-    format: "mach-o" as const,
-    architecture: "arm64" as const,
-    availableArchitectures: ["arm64" as const],
-  };
+it("keeps a read failure primary when cancellation arrives during descriptor cleanup", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-profile-read-");
+  const path = join(directory, "arm64.macho");
+  await writeFile(path, Buffer.from([0xfe, 0xed, 0xfa, 0xcf]));
   const controller = new AbortController();
   const reason = { request: "cancel-after-read-error" };
   const physicalFailure = new Error("fixture read failure");
-  const stream = new PassThrough();
-  vi.mocked(createReadStream).mockReturnValueOnce(
-    stream as unknown as ReturnType<typeof createReadStream>,
-  );
-  stream.once("error", () => controller.abort(reason));
-
-  const resolving = resolveHopperAnalysisProfile(target, {
-    launcherPath: "/fixture/hopper",
-    loaderArgsOverride: [],
-    provider: { id: "hopper", name: "Hopper", version: null },
-    resourceScope: inspectionResources.owner,
-    signal: controller.signal,
+  const actualFs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  vi.mocked(open).mockImplementationOnce(async (...args) => {
+    const handle = await actualFs.open(...args);
+    vi.spyOn(handle, "read").mockRejectedValueOnce(physicalFailure);
+    const close = handle.close.bind(handle);
+    vi.spyOn(handle, "close").mockImplementation(async () => {
+      controller.abort(reason);
+      await close();
+    });
+    return handle;
   });
-  stream.destroy(physicalFailure);
-
-  const result = await resolving;
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("A failed header read was accepted");
-  expect(result.error._tag).toBe("BinaryTargetError");
-  expect(result.error.cause).toBe(physicalFailure);
-});
-
-it("retains the exact caller reason when the owned header stream is aborted", async () => {
-  const controller = new AbortController();
-  const reason = { request: "cancel-header-read" };
-  const stream = new PassThrough();
-  vi.mocked(createReadStream).mockReturnValueOnce(
-    stream as unknown as ReturnType<typeof createReadStream>,
-  );
-  const resolving = resolveHopperAnalysisProfile(
+  const result = await resolveHopperAnalysisProfile(
     {
-      path: "/fixture/arm64.macho",
+      path,
       sha256: "a".repeat(64),
       kind: "executable",
       format: "mach-o",
@@ -266,20 +249,60 @@ it("retains the exact caller reason when the owned header stream is aborted", as
       availableArchitectures: ["arm64"],
     },
     {
-      launcherPath: "/fixture/hopper",
+      launcherPath: path,
       loaderArgsOverride: [],
       provider: { id: "hopper", name: "Hopper", version: null },
       resourceScope: inspectionResources.owner,
       signal: controller.signal,
     },
   );
-  controller.abort(reason);
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "BinaryTargetError", cause: physicalFailure },
+  });
+});
 
-  const result = await resolving;
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("An aborted header read was accepted");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
-  expect(result.error.cause).toBe(reason);
+it("retains the exact caller reason when cancellation arrives during the owned header read", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-profile-abort-");
+  const path = join(directory, "arm64.macho");
+  await writeFile(path, Buffer.from([0xfe, 0xed, 0xfa, 0xcf]));
+  const controller = new AbortController();
+  const reason = { request: "cancel-header-read" };
+  const actualFs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  vi.mocked(open).mockImplementationOnce(async (...args) => {
+    const handle = await actualFs.open(...args);
+    const read = handle.read.bind(handle);
+    vi.spyOn(handle, "read").mockImplementationOnce(async (...readArgs) => {
+      const result = await read(...readArgs);
+      controller.abort(reason);
+      return result;
+    });
+    return handle;
+  });
+  const result = await resolveHopperAnalysisProfile(
+    {
+      path,
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "mach-o",
+      architecture: "arm64",
+      availableArchitectures: ["arm64"],
+    },
+    {
+      launcherPath: path,
+      loaderArgsOverride: [],
+      provider: { id: "hopper", name: "Hopper", version: null },
+      resourceScope: inspectionResources.owner,
+      signal: controller.signal,
+    },
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", cause: reason },
+  });
 });
 
 it("keeps failed Mach-O preflight cleanup attached to the supplied profile owner", async () => {
@@ -295,10 +318,6 @@ it("keeps failed Mach-O preflight cleanup attached to the supplied profile owner
     await vi.importActual<typeof import("node:fs/promises")>(
       "node:fs/promises",
     );
-  const actualNodeFs =
-    await vi.importActual<typeof import("node:fs")>("node:fs");
-  vi.mocked(createReadStream).mockReset();
-  vi.mocked(createReadStream).mockImplementation(actualNodeFs.createReadStream);
   const closeFailure = new Error("profile preflight close failure");
   let allowClose = false;
   const imageFileSystem = {
@@ -354,10 +373,7 @@ it("preserves launcher fingerprint filesystem failures instead of an absent prof
     new Error("EACCES: fixture launcher read denied"),
     { code: "EACCES" },
   );
-  const stream = new PassThrough();
-  vi.mocked(createReadStream).mockReturnValueOnce(
-    stream as unknown as ReturnType<typeof createReadStream>,
-  );
+  vi.mocked(open).mockRejectedValueOnce(failure);
   const resolving = resolveHopperAnalysisProfile(
     {
       path: "/fixture/input",
@@ -374,7 +390,6 @@ it("preserves launcher fingerprint filesystem failures instead of an absent prof
       resourceScope: inspectionResources.owner,
     },
   );
-  stream.destroy(failure);
   const result = await resolving;
   expect(result).toMatchObject({
     ok: false,
@@ -385,3 +400,238 @@ it("preserves launcher fingerprint filesystem failures instead of an absent prof
     },
   });
 });
+
+it.skipIf(process.platform === "win32").each(["header", "launcher"] as const)(
+  "rejects a real FIFO at the %s profile boundary without a writer",
+  async (kind) => {
+    const directory = await createTestTempDirectory("rea-hopper-profile-fifo-");
+    const path = join(directory, "hopper.fifo");
+    execFileSync("mkfifo", [path]);
+    const result = await resolveHopperAnalysisProfile(
+      {
+        path,
+        sha256: "a".repeat(64),
+        kind: "executable",
+        format: kind === "header" ? "mach-o" : "elf",
+        architecture: "x86_64",
+        availableArchitectures: ["x86_64"],
+      },
+      {
+        launcherPath: path,
+        loaderArgsOverride: [],
+        provider: { id: "hopper", name: "Hopper", version: null },
+        resourceScope: inspectionResources.owner,
+      },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: kind === "header" ? "BinaryTargetError" : "ProviderAdapterError",
+        cause: { name: "NonRegularFileReadError", path },
+      },
+    });
+  },
+);
+
+it.each([
+  ["header", false],
+  ["header", true],
+  ["launcher", false],
+  ["launcher", true],
+] as const)(
+  "retains the %s descriptor through failed close, late cancellation and retry (read failed: %s)",
+  async (kind, readFails) => {
+    const directory = await createTestTempDirectory(
+      "rea-hopper-profile-close-",
+    );
+    const path = join(directory, "selected-file");
+    await writeFile(path, Buffer.from([0xfe, 0xed, 0xfa, 0xcf]));
+    const actualFs =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    const controller = new AbortController();
+    const closeFailure = new Error("profile descriptor close failed");
+    const physicalFailure = new Error("profile descriptor read failed");
+    const reason = { request: "cancel-during-final-close" };
+    let allowClose = false;
+    let closeAttempts = 0;
+    vi.mocked(open).mockImplementationOnce(async (...args) => {
+      const handle = await actualFs.open(...args);
+      if (readFails)
+        vi.spyOn(handle, "read").mockRejectedValueOnce(physicalFailure);
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        closeAttempts += 1;
+        if (!allowClose) {
+          controller.abort(reason);
+          throw closeFailure;
+        }
+        await close();
+      });
+      return handle;
+    });
+    const target = {
+      path,
+      sha256: "a".repeat(64),
+      kind: "executable" as const,
+      format: kind === "header" ? ("mach-o" as const) : ("elf" as const),
+      architecture: "x86_64" as const,
+      availableArchitectures: ["x86_64" as const],
+    };
+    const options = {
+      launcherPath: path,
+      loaderArgsOverride: ["--fixture"],
+      provider: { id: "hopper", name: "Hopper", version: null },
+      resourceScope: inspectionResources.owner,
+    };
+    const first = await resolveHopperAnalysisProfile(target, {
+      ...options,
+      signal: controller.signal,
+    });
+    expect(first.ok).toBe(false);
+    if (first.ok) throw new Error("Failed close was accepted");
+    expect(first.error.cleanupIncomplete).toBe(true);
+    expect(first.error.cleanupResources).toEqual([path]);
+    expect(first.error.cause).toBe(readFails ? physicalFailure : reason);
+    const cleanup = first.error.secondaryFailures[0];
+    expect(cleanup?.cause).toBeInstanceOf(RegularFileCleanupFailure);
+    expect(cleanup?.cause).toMatchObject({
+      path,
+      cleanupCause: closeFailure,
+      outcome: { kind: readFails ? "failed" : "completed" },
+    });
+    if (!readFails)
+      expect(first.error.diagnostics).toMatchObject({
+        completed_profile_read:
+          kind === "header"
+            ? 0xfeedfacf
+            : {
+                sha256: createHash("sha256")
+                  .update(Buffer.from([0xfe, 0xed, 0xfa, 0xcf]))
+                  .digest("hex"),
+                bytes: 4,
+              },
+      });
+    expect(first.error._tag).toBe(
+      readFails
+        ? kind === "header"
+          ? "BinaryTargetError"
+          : "ProviderAdapterError"
+        : "AnalysisCancelledError",
+    );
+    const retry = await resolveHopperAnalysisProfile(target, options);
+    expect(retry.ok).toBe(false);
+    if (retry.ok) throw new Error("Failed cleanup retry was accepted");
+    expect(retry.error.cleanupIncomplete).toBe(true);
+    expect(retry.error.cleanupResources).toEqual([path]);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(closeAttempts).toBe(2);
+    allowClose = true;
+    await inspectionResources.close();
+    expect(closeAttempts).toBe(3);
+    expect(first.error.cleanupIncomplete).toBe(false);
+    expect(retry.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+it.each(["header", "launcher"] as const)(
+  "retains completed %s facts when cancellation arrives during successful final close",
+  async (kind) => {
+    const directory = await createTestTempDirectory(
+      "rea-hopper-profile-late-abort-",
+    );
+    const path = join(directory, "selected-file");
+    const bytes = Buffer.from([0xfe, 0xed, 0xfa, 0xcf]);
+    await writeFile(path, bytes);
+    const controller = new AbortController();
+    const reason = { request: "cancel-on-final-close" };
+    const actualFs =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    vi.mocked(open).mockImplementationOnce(async (...args) => {
+      const handle = await actualFs.open(...args);
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        await close();
+        controller.abort(reason);
+      });
+      return handle;
+    });
+    const result = await resolveHopperAnalysisProfile(
+      {
+        path,
+        sha256: "a".repeat(64),
+        kind: "executable",
+        format: kind === "header" ? "mach-o" : "elf",
+        architecture: "x86_64",
+        availableArchitectures: ["x86_64"],
+      },
+      {
+        launcherPath: path,
+        loaderArgsOverride: ["--fixture"],
+        provider: { id: "hopper", name: "Hopper", version: null },
+        resourceScope: inspectionResources.owner,
+        signal: controller.signal,
+      },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+        cleanupIncomplete: false,
+        diagnostics: {
+          completed_profile_read:
+            kind === "header"
+              ? 0xfeedfacf
+              : {
+                  sha256: createHash("sha256").update(bytes).digest("hex"),
+                  bytes: 4,
+                },
+        },
+      },
+    });
+  },
+);
+
+it.each([
+  [0xcafebabe, "fat32"],
+  [0xbebafeca, "fat32"],
+  [0xcafebabf, "fat64"],
+  [0xbfbafeca, "fat64"],
+] as const)(
+  "retains FAT width from a four-byte profile prefix %i",
+  async (magic, container) => {
+    const directory = await createTestTempDirectory(
+      "rea-hopper-prefix-profile-",
+    );
+    const bytes = Buffer.alloc(4);
+    bytes.writeUInt32BE(magic);
+    const path = join(directory, "container.macho");
+    await writeFile(path, bytes);
+    const result = await resolveHopperAnalysisProfile(
+      {
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        kind: "executable",
+        format: "mach-o-universal",
+        architecture: "arm64",
+        availableArchitectures: ["arm64"],
+        universalSlice: { offset: 4096, size: 64 },
+      },
+      {
+        launcherPath: path,
+        loaderArgsOverride: ["-l", "Mach-O"],
+        provider: { id: "hopper", name: "Hopper Disassembler", version: null },
+        resourceScope: inspectionResources.owner,
+      },
+    );
+    if (!result.ok) throw new Error(result.error.message);
+    expect(result.value.profile?.parameters).toMatchObject({
+      macho_container: container,
+      loader: { source: "configured_override", arguments: ["-l", "Mach-O"] },
+    });
+  },
+);

@@ -98,11 +98,17 @@ export const run = async (
   const fullOutputCatalog =
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined ||
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "full";
+  // The recorded catalog holds the complete inventory and its full-catalog
+  // identity, so only an unscoped registration can be served from it. A
+  // scoped one composes the canonical scope itself instead of advertising
+  // tools whose identity the runtime cannot verify.
+  const scopedToolFamilies = environment.REA_MCP_TOOL_FAMILIES !== undefined;
   if (
     RECORDED_MCP_CATALOG_SHA256 !== undefined &&
     dependencies.transport !== "http" &&
     config.value.hopperTargetPath === undefined &&
     fullOutputCatalog &&
+    !scopedToolFamilies &&
     dependencies.createServer === undefined &&
     dependencies.loadOptionalProviders === undefined
   ) {
@@ -169,6 +175,9 @@ export const runMcpHttpEntrypoint = async (
   const endpoint = parseMcpHttpEndpoint(snapshotEnvironment(process.env), {
     ...(parsed.host === undefined ? {} : { host: parsed.host }),
     ...(parsed.port === undefined ? {} : { port: parsed.port }),
+    ...(parsed.allowedHosts === undefined
+      ? {}
+      : { allowedHosts: [...parsed.allowedHosts] }),
   });
   if (!endpoint.ok) {
     io.writeStderr(`${projectAnalysisError(endpoint.error).message}\n`);

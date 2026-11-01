@@ -7,6 +7,7 @@ import {
   resolveHermesClientHome,
 } from "./HermesClientHome.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import { resolveWindowsClaudeDesktopLocation } from "./ClaudeDesktopConfigLocation.js";
 import {
   type MsixPackageView,
@@ -34,10 +35,18 @@ export interface SetupClient {
   /** Same-scope fallback ZCode stops loading after its first native server. */
   readonly zcodeFallbackPath?: string;
   readonly markerPath?: string;
+  /**
+   * Registration storage shared with other products. Its presence never proves
+   * this product is installed; only a recognizable REA-owned row in it proves
+   * ownership of a registration REA wrote.
+   */
+  readonly sharedRegistration?: boolean;
   /** MSIX package storage that decides which configuration the client reads. */
   readonly msixPackage?: MsixPackageView;
   /** A running client can rewrite its configuration from memory. */
   readonly quitBeforeSetup?: boolean;
+  /** Product-specific applicability evidence when configuration storage is shared. */
+  readonly discoveryPaths?: readonly string[];
   readonly format?:
     | "json"
     | "claude_code"
@@ -100,6 +109,8 @@ type ClientDefinition = ClientDefinitionBase &
 interface ClientDefinitionBase {
   readonly name: string;
   readonly displayName: string;
+  readonly discoveryPaths?: (context: ClientPathContext) => readonly string[];
+  readonly sharedRegistration?: true;
   readonly format: NonNullable<SetupClient["format"]>;
   readonly quitBeforeSetup?: boolean;
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
@@ -119,11 +130,26 @@ const vscodeUserDirectory = ({
   platform,
   env,
 }: ClientPathContext): string => {
-  if (platform === "win32")
-    return join(windowsAppDataRoots(home, env).roaming, "Code", "User");
-  if (platform === "darwin")
-    return join(home, "Library", "Application Support", "Code", "User");
-  return join(xdgConfigHome({ home, platform, env }), "Code", "User");
+  // Match VS Code's user-data selection before appending the User scope.
+  // Empty overrides are unset; portable storage takes precedence over appdata.
+  const userData = env.VSCODE_PORTABLE
+    ? join(env.VSCODE_PORTABLE, "user-data")
+    : env.VSCODE_APPDATA
+      ? join(env.VSCODE_APPDATA, "Code")
+      : platform === "win32"
+        ? join(windowsAppDataRoots(home, env).roaming, "Code")
+        : platform === "darwin"
+          ? join(home, "Library", "Application Support", "Code")
+          : join(xdgConfigHome({ home, platform, env }), "Code");
+  // The catalog can describe Windows clients on another host; retain its
+  // drive-absolute paths instead of resolving them against that host cwd.
+  const absoluteUserData =
+    platform === "win32" && win32.isAbsolute(userData) && !isAbsolute(userData)
+      ? userData
+      : isAbsolute(userData)
+        ? resolve(userData)
+        : resolve(env.VSCODE_CWD || process.cwd(), userData);
+  return join(absoluteUserData, "User");
 };
 
 const traeUserDirectory = ({
@@ -170,8 +196,9 @@ const kimiDirectory = ({ home, env }: ClientPathContext): string =>
 const qoderDirectory = ({ home, env }: ClientPathContext): string =>
   env.QODER_CONFIG_DIR || join(home, ".qoder");
 
-const factoryDirectory = ({ home }: ClientPathContext): string =>
-  join(home, ".factory");
+/** Droid's override selects the home containing .factory, including personal skills. */
+const factoryDirectory = ({ home, env }: ClientPathContext): string =>
+  join(env.FACTORY_HOME_OVERRIDE || home, ".factory");
 
 /** Match Qwen Code's home override, including tilde and cwd-relative paths. */
 const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
@@ -482,6 +509,15 @@ const devinDirectory = ({ home, platform, env }: ClientPathContext): string =>
     ? join(windowsAppDataRoots(home, env).roaming, "devin")
     : join(env.XDG_CONFIG_HOME || join(home, ".config"), "devin");
 
+/**
+ * FreeBuff's own profile directory (its `state.json` root, fixed under
+ * `.config` on every platform). The shared `~/.agents` folder is not
+ * FreeBuff-specific: REA's own skill installs create it, so it cannot
+ * prove FreeBuff is installed.
+ */
+const freebuffProfileDirectory = ({ home }: ClientPathContext): string =>
+  join(home, ".config", "freebuff-desktop");
+
 /** Stable product metadata used to derive setup discovery and documentation. */
 export const SUPPORTED_CLIENT_DEFINITIONS = [
   {
@@ -505,7 +541,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "codex",
     displayName: "Codex",
     configPath: (context: ClientPathContext) =>
-      join(codexDirectory(context), "config.toml"),
+      appendCallerPath(codexDirectory(context), "config.toml"),
     markerPath: codexDirectory,
     format: "toml",
   },
@@ -649,9 +685,9 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "hermes",
     displayName: "Hermes",
     skillPath: (context: ClientPathContext) =>
-      join(hermesDirectory(context), "skills"),
+      appendCallerPath(hermesDirectory(context), "skills"),
     configPath: (context: ClientPathContext) =>
-      join(hermesDirectory(context), "config.yaml"),
+      appendCallerPath(hermesDirectory(context), "config.yaml"),
     markerPath: hermesDirectory,
     format: "hermes",
   },
@@ -683,6 +719,9 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     configPath: [".zcode", "cli", "config.json"],
     markerPath: [".zcode", "cli"],
     skillPath: [".zcode", "skills"],
+    discoveryPaths: ({ home }: ClientPathContext) => [
+      join(home, ".zcode", "cli"),
+    ],
     format: "zcode",
   },
   {
@@ -697,6 +736,23 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "dsh",
   },
   {
+    name: "freebuff",
+    displayName: "FreeBuff",
+    // FreeBuff discovers personal skills in the shared user agents directory.
+    skillPath: ({ home }: ClientPathContext) => join(home, ".agents", "skills"),
+    // FreeBuff loads MCP servers from the shared user agents directory.
+    configPath: ({ home }: ClientPathContext) =>
+      join(home, ".agents", "mcp.json"),
+    markerPath: freebuffProfileDirectory,
+    discoveryPaths: (context: ClientPathContext) => [
+      freebuffProfileDirectory(context),
+    ],
+    // The same file doubles as ZCode's user-scope fallback, so its presence
+    // proves neither product is installed; see clientOwnershipEvidencePaths.
+    sharedRegistration: true,
+    format: "json",
+  },
+  {
     name: "grok_bot",
     displayName: "Grok Bot",
     configPath: grokBotDirectory,
@@ -706,21 +762,66 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
 ] as const satisfies readonly ClientDefinition[];
 
 /**
- * Paths whose presence means doctor and setup should inspect the client.
- * Layered sources count: OpenCode still loads its XDG files when a custom
- * directory override does not exist.
+ * Paths whose presence means the product itself is applicable, so doctor and
+ * setup should inspect the client. Layered sources count: OpenCode still loads
+ * its XDG files when a custom directory override does not exist. Shared
+ * registration storage never establishes applicability; see
+ * {@link clientOwnershipEvidencePaths}.
  */
 export const clientEvidencePaths = (
-  client: Pick<SetupClient, "configPath" | "configPaths" | "markerPath">,
+  client: Pick<
+    SetupClient,
+    "configPath" | "configPaths" | "markerPath" | "discoveryPaths"
+  >,
 ): readonly string[] => [
   ...new Set(
-    [
-      client.configPath,
-      ...(client.configPaths ?? []),
-      client.markerPath,
-    ].filter((path): path is string => path !== undefined && path.length > 0),
+    (
+      client.discoveryPaths ?? [
+        client.configPath,
+        ...(client.configPaths ?? []),
+        client.markerPath,
+      ]
+    ).filter((path): path is string => path !== undefined && path.length > 0),
   ),
 ];
+
+/**
+ * Paths where a recognizable REA-owned row proves ownership of a registration
+ * REA wrote, never that the product is installed: shared storage is created by
+ * other products and by REA's own skill installs. A client whose registration
+ * is product-local declares no shared storage, so this stays empty for it.
+ */
+export const clientOwnershipEvidencePaths = (
+  client: Pick<
+    SetupClient,
+    "configPath" | "configPaths" | "sharedRegistration"
+  >,
+): readonly string[] =>
+  client.sharedRegistration === true
+    ? [client.configPath, ...(client.configPaths ?? [])].filter(
+        (path): path is string => path !== undefined && path.length > 0,
+      )
+    : [];
+
+/**
+ * Registration storage this client shares with another product: its own shared
+ * configuration plus any same-scope fallback another client also loads. Only
+ * this storage may be retained when product applicability is unproven, because
+ * failing closed on it would block REA removals for files REA does not own.
+ * Product-local configuration is REA's own boundary and stays fail-closed.
+ */
+export const clientSharedRegistrationPaths = (
+  client: Pick<
+    SetupClient,
+    "configPath" | "configPaths" | "sharedRegistration" | "zcodeFallbackPath"
+  >,
+): ReadonlySet<string> =>
+  new Set([
+    ...clientOwnershipEvidencePaths(client),
+    ...(client.zcodeFallbackPath === undefined
+      ? []
+      : [client.zcodeFallbackPath]),
+  ]);
 
 const resolvePath = (
   path: ClientPath,
@@ -786,6 +887,12 @@ export const supportedClients = (
         ...(definition.quitBeforeSetup === true
           ? { quitBeforeSetup: true }
           : {}),
+        ...(definition.discoveryPaths === undefined
+          ? {}
+          : { discoveryPaths: definition.discoveryPaths(context) }),
+        ...(definition.sharedRegistration === true
+          ? { sharedRegistration: true }
+          : {}),
         format: definition.format,
       };
     } catch (cause: unknown) {
@@ -839,6 +946,7 @@ export const clientSkillDirectories = (
       : clientIds.length === 0
         ? ["shared"]
         : clientIds;
+  const sharedDirectory = appendCallerPath(home, ".agents/skills", platform);
   const destinations = new Map<string, { client: string; directory: string }>();
   for (const client of selected) {
     const definition = definitions.find(({ name }) => name === client);
@@ -854,7 +962,7 @@ export const clientSkillDirectories = (
     try {
       const resolved =
         definition?.skillPath === undefined
-          ? ok(join(home, ".agents", "skills"))
+          ? ok(sharedDirectory)
           : resolvePath(definition.skillPath, {
               home,
               platform,
@@ -878,8 +986,7 @@ export const clientSkillDirectories = (
     }
     if (!destinations.has(directory))
       destinations.set(directory, {
-        client:
-          directory === join(home, ".agents", "skills") ? "shared" : client,
+        client: directory === sharedDirectory ? "shared" : client,
         directory,
       });
   }

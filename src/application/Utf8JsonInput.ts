@@ -81,6 +81,7 @@ export const parseUtf8Json = (
     return {
       ok: false,
       error: "JSON input is not valid UTF-8",
+      userMessage: "JSON input is not valid UTF-8",
       cause,
     };
   }

@@ -4,8 +4,7 @@ import { javaScriptFileOccurrenceSchema } from "./javascriptArtifactFiles.js";
 import { evidenceSchema } from "../evidence.js";
 import { JAVASCRIPT_APPLICATION_NODE_KINDS } from "./javascriptApplicationGraphSchemas.js";
 import { historicalSourceGraphSchema } from "../referenceSourceGraph.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const nodeIdSchema = prefixedDigestSchema("jag_node");

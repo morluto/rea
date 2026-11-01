@@ -41,6 +41,10 @@ cannot be established from that URL alone; choose the context explicitly when
 known. `import_map` is optional and reads local JSON only. Its exact bytes and
 base URL are retained; selecting it does not prove the map was installed in the
 captured page. HTTP(S) importer contexts without URL userinfo are supported initially.
+An unusable reported URL leaves the importer context unavailable; supply
+`importer_url` explicitly when its value is known. An explicitly supplied malformed
+URL is reported against that input field. URLs using unsupported schemes remain
+capability limitations.
 
 ## Interpret the evidence
 
@@ -65,6 +69,9 @@ The selected source is loaded from `files/` under the manifest's current
 directory. Relocation retains the manifest's originally reported paths and the
 actual current source path separately. Unsafe paths, symlink source directories,
 nonregular files, wrong digests/sizes and malformed UTF-8 fail explicitly.
+Malformed source bytes or unsafe source paths declared by the manifest are
+artifact failures. Malformed caller-selected manifest or import-map files identify
+the supplied input field.
 
 ## Engine and lifecycle
 

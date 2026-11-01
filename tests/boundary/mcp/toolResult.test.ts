@@ -14,9 +14,10 @@ import {
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
 import { err } from "../../../src/domain/result.js";
+import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { HopperProcessError } from "../../../src/domain/hopperErrors.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import {
   accountFullyObservedProcessCapture,
@@ -30,7 +31,7 @@ import type {
   IncompleteProcessCaptureObservations,
   ProcessCaptureCleanupReport,
 } from "../../../src/domain/process/processCapture.js";
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 const UNTRUSTED_TARGET_CONTENT = {
   provenance: { untrusted_content: true, source: "analysis_target" },
 };
@@ -354,7 +355,24 @@ describe("tool result projection", () => {
       },
     });
   });
-  it("projects bounded private-display coordinates without raw stderr", () => {
+  it("keeps an absent post-authentication dialog out of publisher verification", () => {
+    const result = delivery.toCallToolResult(
+      err(new HopperProcessError(81)),
+      contract,
+    );
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "provider_unavailable",
+        details: { failure_code: "demo_dialog_absent", exit_code: 81 },
+        category: "unavailable",
+      },
+    });
+    expect(
+      (result.structuredContent as { error: { details: unknown } }).error
+        .details,
+    ).not.toHaveProperty("launch_rejection");
+  });
+  it("projects private-display diagnostic fields and stderr byte count", () => {
     const result = delivery.toCallToolResult(
       err(
         new HopperProcessError(80, {
@@ -387,6 +405,7 @@ describe("tool result projection", () => {
             mount_read_only: true,
             wsl: true,
             strategy: "user-mount-namespace",
+            xvfb_stderr_bytes: 512,
           },
         },
       },
@@ -482,34 +501,39 @@ describe("untrusted provenance on failed tool results", () => {
   });
 
   it("marks a recorded partial-observation error and its retention fallback", () => {
-    const recorded = delivery.toRecordedPartialErrorToolResult(
-      failure(),
-      "evidence-1",
-      { ok: true, value: "added" },
-      true,
+    const evidence = createEvidence(
+      undefined,
+      { id: "fixture", name: "Partial observation fixture", version: "1" },
+      { operation: "fixture", parameters: {}, result: { observed: true } },
     );
+    const original = failure().retainPartialObservation(evidence);
+    const recorded = delivery.toPartialErrorToolResult(original, true, () => ({
+      ok: true,
+      value: "added",
+    }));
     expect(recorded.structuredContent).toMatchObject({
       error: {
         details: {
           partial_observation: {
             kind: "retained-evidence",
-            evidence_id: "evidence-1",
+            evidence_id: evidence.evidence_id,
           },
         },
       },
     });
     expect(recorded._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
-    const unrecorded = delivery.toRecordedPartialErrorToolResult(
-      failure(),
-      "evidence-1",
-      err(failure()),
-      true,
+    const unrecorded = delivery.toPartialErrorToolResult(original, true, () =>
+      err(new EvidenceIntegrityError("fixture rejects partial")),
     );
+    expect(unrecorded.structuredContent).toMatchObject({
+      error: { details: { partial_observation: evidence } },
+    });
     expect(unrecorded._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+    expect(original.partialObservation).toBe(evidence);
   });
 
   it("marks the response-budget error that replaces an oversized target-content result", () => {
-    const small = new ToolResultDelivery(4096);
+    const small = createToolResultDelivery(4096);
     const result = small.toCallToolResult(
       { ok: true, value: { text: "x".repeat(8192) } },
       toolContract("procedure_pseudo_code"),

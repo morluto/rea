@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { open } from "node:fs/promises";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -35,7 +36,7 @@ export const readGhidraProfileArtifact = <Value>(
   signal: AbortSignal | undefined,
   interpret: (bytes: Buffer) => Value,
 ): Promise<Value> =>
-  withArtifactRegularFile(path, resources, signal, async (file) => {
+  withArtifactRegularFile(path, resources, signal, async ({ handle: file }) => {
     const bytes = await readStableFileBytes(file, path, maximumBytes, {
       symlinks: "reject",
       ...(signal === undefined ? {} : { signal }),
@@ -100,7 +101,18 @@ export const ghidraFileFailure = (
     return primary;
   });
   const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
-  const reason = primary instanceof Error ? primary.message : String(primary);
+  const admission =
+    primary instanceof GhidraAdmissionError ? primary : undefined;
+  const reason =
+    admission?.code ??
+    (primary instanceof Error ? primary.message : String(primary));
+  const systemCode =
+    admission === undefined &&
+    primary instanceof Error &&
+    "code" in primary &&
+    typeof primary.code === "string"
+      ? primary.code
+      : undefined;
   const cleanup =
     cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
   if (origin === "owned-or-classified" && primary instanceof AnalysisError) {
@@ -134,12 +146,10 @@ export const ghidraFileFailure = (
           cause,
           cleanup,
           diagnostics: {
+            ...admission?.detail,
             ...diagnostics,
-            ...(primary instanceof Error &&
-            "code" in primary &&
-            typeof primary.code === "string"
-              ? { system_code: primary.code }
-              : {}),
+            ...(admission === undefined ? {} : { code: admission.code }),
+            ...(systemCode === undefined ? {} : { system_code: systemCode }),
             ...(primary instanceof Error &&
             "syscall" in primary &&
             typeof primary.syscall === "string"

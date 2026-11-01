@@ -248,7 +248,7 @@ const readStableFileEntry = async (
         parentBefore.message,
         safeSize(expected.size),
       );
-    const handle = await openRegularFile(absolute, {
+    const { handle } = await openRegularFile(absolute, {
       symlinks: "reject",
       signal,
     });

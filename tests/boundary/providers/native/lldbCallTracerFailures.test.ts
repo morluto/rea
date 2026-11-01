@@ -8,8 +8,8 @@ import {
   stat,
   type FileHandle,
 } from "node:fs/promises";
-import { dirname } from "node:path";
-import { join } from "node:path";
+import { ChildProcess } from "node:child_process";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
@@ -20,6 +20,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisTimeoutError,
 } from "../../../../src/domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { EvidenceIntegrityError } from "../../../../src/domain/evidenceErrors.js";
 import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
@@ -42,6 +43,7 @@ import { ProviderStartupDeadline } from "../../../../src/process/ProviderDeadlin
 import {
   NativeFixtureRunner,
   nativeMachoTarget,
+  nativeResolvedToolFixture,
 } from "../../../fixtures/nativeCommands.js";
 
 const EVENT = {
@@ -71,7 +73,7 @@ const request: Parameters<NativeCallTracer["trace"]>[0] = {
   }),
 };
 
-const fakeTool = { path: "/usr/bin/lldb", sha256: "b".repeat(64) };
+const fakeTool = nativeResolvedToolFixture("/usr/bin/lldb", "b".repeat(64));
 const successfulTracerOutput = {
   status: "traced",
   version: "lldb-fixture",
@@ -250,7 +252,11 @@ describe("LLDB completed trace retention through finalization", () => {
           phase === "runtime cleanup failure" ? "cleanup-failure" : "cancelled",
       },
       target: { launch_identity: successfulTracerOutput.target_identity },
-      debugger: { ...fakeTool, version: successfulTracerOutput.version },
+      debugger: {
+        path: fakeTool.invocationPath,
+        sha256: fakeTool.sha256,
+        version: successfulTracerOutput.version,
+      },
       process: {
         outcome: "exited",
         exit_status: 0,
@@ -276,6 +282,256 @@ describe("LLDB completed trace retention through finalization", () => {
       "Captured output byte counts are observed lower bounds because LLDB did not report final stream counters.",
     );
   });
+});
+
+const expectCompletedCleanupFacts = (
+  partial: ReturnType<typeof nativeCallPartialObservationSchema.parse>,
+  completed: typeof successfulTracerOutput,
+) => {
+  expect(partial.debugger).toEqual({
+    path: fakeTool.invocationPath,
+    sha256: fakeTool.sha256,
+    version: completed.version,
+  });
+  expect(partial.target.launch_identity).toEqual(completed.target_identity);
+  expect(partial.events).toEqual(completed.events);
+  expect(partial.breakpoints).toEqual([
+    {
+      ...completed.breakpoints[0],
+      request: { kind: "function", name: "main", module: null },
+    },
+  ]);
+  expect(partial.limitations).not.toContain(
+    "The LLDB run did not produce a complete native call observation result.",
+  );
+  expect(partial.limitations).not.toContain(
+    "Captured output byte counts are observed lower bounds because LLDB did not report final stream counters.",
+  );
+};
+
+describe("LLDB completed trace retention after process cleanup", () => {
+  it.each([
+    "clean",
+    "group-cleanup",
+    "target-uncertain",
+    "target-uncertain-limit",
+    "group-capture-failure",
+  ] as const)("retains validated completed facts with %s", async (phase) => {
+    let runtime: string | undefined;
+    let launches = 0;
+    let releaseGroup = false;
+    const targetUncertain = phase.startsWith("target-");
+    const groupFailure = phase.startsWith("group-");
+    const captureFailure = phase === "group-capture-failure";
+    // This handle is never spawned. The production supervisor owns only the
+    // synthetic launcher's injected cleanup receipt, not an OS process.
+    const child = new ChildProcess();
+    const cleanup = vi.fn(async () =>
+      releaseGroup
+        ? { cleaned: true as const, signaled: false }
+        : { cleaned: false as const, reason: "fixture group cleanup failed" },
+    );
+    const supervisor = new ProviderProcessSupervisor({
+      process: child,
+      ownsProcessLifetime: true,
+      cleanup,
+    });
+    child.emit("exit", 0, null);
+    child.emit("close", 0, null);
+    const completed = {
+      ...successfulTracerOutput,
+      ...(phase === "target-uncertain-limit"
+        ? { outcome: "duration-elapsed", terminated: false, killed: true }
+        : {}),
+      target_output: {
+        stdout_bytes: 4096,
+        stderr_bytes: 2,
+        stdout_truncated: true,
+        stderr_truncated: false,
+        stdout_complete: true,
+        stderr_complete: true,
+      },
+    };
+    const tracer = new LldbCallTracer(
+      {},
+      async (_executable, arguments_) => {
+        launches += 1;
+        const { config } = await configFromArguments(arguments_);
+        runtime = dirname(config.result_path);
+        // A shorter journal must not replace the validated completed result.
+        await writeFile(config.observation_path, "");
+        if (!captureFailure) await writeFile(config.stdout_capture_path, "abc");
+        await writeFile(config.stderr_capture_path, "ok");
+        await writeFile(config.result_path, JSON.stringify(completed));
+        return {
+          kind: "exited",
+          targetLaunched: targetUncertain,
+          exitCode: 0,
+          output: "",
+          targetIdentity: undefined,
+          cleanupFailure: groupFailure
+            ? "fixture group cleanup failed"
+            : undefined,
+          ...(groupFailure ? { cleanupOwner: supervisor } : {}),
+        };
+      },
+      async () => ok(fakeTool),
+    );
+    try {
+      const result = await tracer.trace(request);
+      if (runtime === undefined) throw new Error("fixture did not launch");
+      const stdout = {
+        text: "abc",
+        bytes: 4096,
+        truncated: true,
+        complete: false,
+      };
+      const stderr = {
+        text: "ok",
+        bytes: 2,
+        truncated: false,
+        complete: true,
+      };
+      if (phase === "clean") {
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw result.error;
+        expect(result.value.run).toEqual(completed);
+        expect(result.value.stdout).toEqual(stdout);
+        expect(result.value.stderr).toEqual(stderr);
+        await expect(access(runtime)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        return;
+      }
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected cleanup failure");
+      expect(result.error).toBeInstanceOf(ProviderCleanupError);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toContain(runtime);
+      await access(runtime);
+      const retry = await tracer.trace(request);
+      expect(retry.ok).toBe(false);
+      expect(launches).toBe(1);
+      expect((await tracer.close()).ok).toBe(false);
+      const partial = nativeCallPartialObservationSchema.parse(
+        result.error.partialObservation,
+      );
+      expect(partial.coverage.reason).toBe("cleanup-failure");
+      expect(partial.process).toEqual({
+        pid: completed.pid,
+        outcome: completed.outcome,
+        exit_status: completed.exit_status,
+        exit_description: completed.exit_description,
+        // Producer termination does not establish independent host cleanup.
+        terminated: !targetUncertain,
+        elapsed_ms: completed.elapsed_ms,
+        stdout: captureFailure ? null : stdout,
+        stderr,
+        other_stops: completed.other_stops,
+      });
+      expectCompletedCleanupFacts(partial, completed);
+      if (phase === "target-uncertain-limit") {
+        expect(partial.limitations.join(" ")).not.toContain("was killed");
+        expect(partial.limitations.join(" ")).toContain(
+          "termination was requested but could not be confirmed",
+        );
+      }
+      if (captureFailure) {
+        expect(result.error.secondaryFailures).toHaveLength(1);
+        expect(result.error.secondaryFailures[0]?.cause).toMatchObject({
+          code: "ENOENT",
+        });
+        expect(partial.limitations).toContain(
+          "One or more target output captures were unavailable.",
+        );
+      }
+      if (groupFailure) {
+        releaseGroup = true;
+        expect((await tracer.close()).ok).toBe(true);
+        expect(cleanup).toHaveBeenCalled();
+        expect(result.error.cleanupIncomplete).toBe(false);
+        await expect(access(runtime)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      }
+    } finally {
+      releaseGroup = true;
+      await tracer.close();
+      supervisor.dispose();
+      // No target was launched; only the synthetic unknown-target fixture
+      // needs test-owned removal after proving production retains ownership.
+      if (runtime !== undefined)
+        await rm(runtime, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("LLDB cleanup without a validated completed trace", () => {
+  it.each(["missing", "invalid"] as const)(
+    "keeps journal-only fallback when the completed result is %s",
+    async (resultKind) => {
+      let runtime: string | undefined;
+      const tracer = new LldbCallTracer(
+        {},
+        async (_executable, arguments_) => {
+          const { config } = await configFromArguments(arguments_);
+          runtime = dirname(config.result_path);
+          await writeFile(
+            config.observation_path,
+            `${JSON.stringify({ kind: "event", event: EVENT })}\n`,
+          );
+          await writeFile(config.stdout_capture_path, "abc");
+          await writeFile(config.stderr_capture_path, "");
+          if (resultKind === "invalid")
+            await writeFile(
+              config.result_path,
+              JSON.stringify({ status: "traced", outcome: "exited" }),
+            );
+          return {
+            kind: "exited",
+            targetLaunched: true,
+            exitCode: 0,
+            output: "",
+            targetIdentity: undefined,
+            cleanupFailure: undefined,
+          };
+        },
+        async () => ok(fakeTool),
+      );
+      try {
+        const result = await tracer.trace(request);
+        if (result.ok) throw new Error("expected cleanup failure");
+        expect(result.error).toBeInstanceOf(ProviderCleanupError);
+        expect(result.error.cleanupIncomplete).toBe(true);
+        const partial = nativeCallPartialObservationSchema.parse(
+          result.error.partialObservation,
+        );
+        expect(partial.coverage.reason).toBe("cleanup-failure");
+        expect(partial.events).toEqual([EVENT]);
+        expect(partial.process.stdout).toEqual({
+          text: "abc",
+          bytes: 3,
+          truncated: true,
+          complete: false,
+        });
+        expect(partial.process.outcome).toBeUndefined();
+        expect(partial.process.exit_status).toBeUndefined();
+        expect(partial.process.terminated).toBeUndefined();
+        expect(partial.process.elapsed_ms).toBeUndefined();
+        expect(partial.target.launch_identity).toBeUndefined();
+        expect(partial.breakpoints).toBeUndefined();
+        expect(partial.debugger.version).toBeNull();
+        expect(partial.limitations).toContain(
+          "Captured output byte counts are observed lower bounds because LLDB did not report final stream counters.",
+        );
+        expect((await tracer.close()).ok).toBe(false);
+      } finally {
+        // The launcher never created a target; remove only its synthetic files.
+        if (runtime !== undefined)
+          await rm(runtime, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("LLDB failure retention through the production tracer", () => {
@@ -478,7 +734,7 @@ describe("LLDB primary outcome during owned process cleanup", () => {
           return observedStop;
         });
       const tracer = new LldbCallTracer({}, undefined, async () =>
-        ok({ path: fakeLldb, sha256: "c".repeat(64) }),
+        ok(nativeResolvedToolFixture(fakeLldb, "c".repeat(64))),
       );
 
       try {
@@ -571,7 +827,7 @@ describe("LLDB process exit while output is still open", () => {
           return stopReceipt;
         });
       const tracer = new LldbCallTracer({}, undefined, async () =>
-        ok({ path: fakeLldb, sha256: "d".repeat(64) }),
+        ok(nativeResolvedToolFixture(fakeLldb, "d".repeat(64))),
       );
 
       try {
@@ -603,6 +859,232 @@ describe("LLDB process exit while output is still open", () => {
       }
     },
   );
+});
+
+/**
+ * A fake LLDB that publishes its bridge result and exits 0, as `lldb --batch`
+ * does after rea_trace, while an inherited child keeps its output open.
+ */
+const publishedResultLldb = async (result: string) => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "rea-lldb-published-"));
+  const fakeLldb = join(fixtureRoot, "fake-lldb");
+  await writeFile(
+    fakeLldb,
+    `#!${process.execPath}\nconst fs = require("node:fs");\nconst { spawn } = require("node:child_process");\nconst command = process.argv.at(-1);\nif (!command?.startsWith("rea_trace ")) process.exit(91);\nconst config = JSON.parse(fs.readFileSync(command.slice("rea_trace ".length), "utf8"));\nconst child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: ["ignore", "inherit", "inherit"] });\nchild.once("error", () => process.exit(92));\nchild.once("spawn", () => { fs.writeFileSync(config.result_path, ${JSON.stringify(result)}); process.exit(0); });\n`,
+    { mode: 0o700 },
+  );
+  return { fixtureRoot, fakeLldb };
+};
+
+const publishedResults = {
+  "no target created": JSON.stringify({
+    status: "target-error",
+    error: "fixture target creation failure",
+    target_process_created: false,
+  }),
+  "target exit observed": JSON.stringify({
+    status: "launch-error",
+    error: "fixture launch failure after exit",
+    target_process_created: true,
+    target_process_exit_observed: true,
+  }),
+  "target created": JSON.stringify({
+    status: "target-integrity-error",
+    error: "fixture post-launch integrity failure",
+    target_process_created: true,
+  }),
+  "truncated result": `{"status":"target-error","error":null,"target_process_created":false`,
+} as const;
+const provesTargetGone = (published: keyof typeof publishedResults) =>
+  published === "no target created" || published === "target exit observed";
+
+/** Interrupt once, after the LLDB leader exited while inherited output is open. */
+const interruptAfterLeaderExit = (interrupt: () => void) => {
+  let interrupted = false;
+  const originalWait = ProviderProcessSupervisor.prototype.waitForOutputClose;
+  const spy = vi
+    .spyOn(ProviderProcessSupervisor.prototype, "waitForOutputClose")
+    .mockImplementation(async function (
+      this: ProviderProcessSupervisor,
+      timeoutMs?: number,
+      signal?: AbortSignal,
+    ): Promise<boolean> {
+      const closed = await originalWait.call(this, timeoutMs, signal);
+      if (!closed && !interrupted && this.observedExit()?.code === 0) {
+        interrupted = true;
+        interrupt();
+      }
+      return closed;
+    });
+  return {
+    get interrupted() {
+      return interrupted;
+    },
+    restore: () => spy.mockRestore(),
+  };
+};
+
+describe("LLDB target proof published before interruption", () => {
+  for (const interruption of [
+    "caller cancellation",
+    "deadline timeout",
+  ] as const)
+    for (const published of Object.keys(publishedResults) as Array<
+      keyof typeof publishedResults
+    >)
+      it.skipIf(process.platform === "win32")(
+        `keeps the bridge's ${published} fact when ${interruption} arrives after LLDB exit and before result readback`,
+        async () => {
+          const { fixtureRoot, fakeLldb } = await publishedResultLldb(
+            publishedResults[published],
+          );
+          const controller = new AbortController();
+          const leader = interruptAfterLeaderExit(() => {
+            if (interruption === "caller cancellation")
+              controller.abort(new Error("abort before result readback"));
+          });
+          const deadlineSpy =
+            interruption === "deadline timeout"
+              ? vi
+                  .spyOn(
+                    ProviderStartupDeadline.prototype,
+                    "interruption",
+                    "get",
+                  )
+                  .mockImplementation(() =>
+                    leader.interrupted ? "timeout" : undefined,
+                  )
+              : undefined;
+          const tracer = new LldbCallTracer({}, undefined, async () =>
+            ok(nativeResolvedToolFixture(fakeLldb, "c".repeat(64))),
+          );
+          let retainedRoot: string | undefined;
+          try {
+            const result = await tracer.trace(request, controller.signal);
+
+            expect(leader.interrupted).toBe(true);
+            expect(result.ok).toBe(false);
+            if (result.ok) throw new Error("Expected an interrupted trace");
+            expect(result.error).toBeInstanceOf(
+              interruption === "caller cancellation"
+                ? AnalysisCancelledError
+                : AnalysisTimeoutError,
+            );
+            expect(result.error.partialObservation).toMatchObject({
+              coverage: {
+                reason:
+                  interruption === "caller cancellation"
+                    ? "cancelled"
+                    : "timeout",
+              },
+            });
+            if (provesTargetGone(published)) {
+              expect(result.error.cleanupIncomplete).toBe(false);
+              expect(result.error.cleanupResources).toEqual([]);
+              expect((await tracer.close()).ok).toBe(true);
+              return;
+            }
+            // Without an explicit producer proof, a missing PID stays ambiguous.
+            expect(result.error.cleanupIncomplete).toBe(true);
+            expect(result.error.cleanupResources).toContain(
+              "native-target:unknown",
+            );
+            expect(result.error.cleanupResources).not.toContain(
+              "lldb-process-group",
+            );
+            retainedRoot = result.error.cleanupResources.find((resource) =>
+              resource.includes("rea-lldb-"),
+            );
+            const close = await tracer.close();
+            expect(close.ok).toBe(false);
+            if (!close.ok)
+              expect(close.error.cleanupResources).toContain(
+                "native-target:unknown",
+              );
+          } finally {
+            leader.restore();
+            deadlineSpy?.mockRestore();
+            if (retainedRoot !== undefined)
+              await rm(retainedRoot, { recursive: true, force: true });
+            await rm(fixtureRoot, { recursive: true, force: true });
+          }
+        },
+      );
+});
+
+describe("LLDB target proof read by cleanup retry", () => {
+  for (const published of ["no target created", "target created"] as const)
+    it.skipIf(process.platform === "win32")(
+      `reads the published ${published} fact when cleanup retry releases interrupted LLDB`,
+      async () => {
+        const { fixtureRoot, fakeLldb } = await publishedResultLldb(
+          publishedResults[published],
+        );
+        const controller = new AbortController();
+        const leader = interruptAfterLeaderExit(() =>
+          controller.abort(new Error("abort before result readback")),
+        );
+        const originalStop = ProviderProcessSupervisor.prototype.stop;
+        let stops = 0;
+        const stopSpy = vi
+          .spyOn(ProviderProcessSupervisor.prototype, "stop")
+          .mockImplementation(async function (
+            this: ProviderProcessSupervisor,
+            options?: ProviderProcessStopOptions,
+          ): Promise<ProviderProcessStopResult> {
+            stops += 1;
+            return stops === 1
+              ? { status: "incomplete", reason: "fixture held LLDB cleanup" }
+              : originalStop.call(this, options);
+          });
+        const tracer = new LldbCallTracer({}, undefined, async () =>
+          ok(nativeResolvedToolFixture(fakeLldb, "c".repeat(64))),
+        );
+        let retainedRoot: string | undefined;
+        try {
+          const result = await tracer.trace(request, controller.signal);
+
+          expect(result.ok).toBe(false);
+          if (result.ok) throw new Error("Expected a cancelled trace");
+          expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+          expect(result.error.cleanupIncomplete).toBe(true);
+          expect(result.error.cleanupResources).toEqual(
+            expect.arrayContaining([
+              "lldb-process-group",
+              "native-target:unknown",
+            ]),
+          );
+          retainedRoot = result.error.cleanupResources.find((resource) =>
+            resource.includes("rea-lldb-"),
+          );
+          expect(retainedRoot).toBeDefined();
+
+          // The first pass could not read the result while LLDB was unstopped.
+          const close = await tracer.close();
+          expect(stops).toBe(2);
+          if (published === "no target created") {
+            expect(close.ok).toBe(true);
+            expect(result.error.cleanupIncomplete).toBe(false);
+            await expect(access(retainedRoot ?? "")).rejects.toThrow();
+            return;
+          }
+          expect(close.ok).toBe(false);
+          if (close.ok) return;
+          expect(close.error.cleanupResources).toContain(
+            "native-target:unknown",
+          );
+          expect(close.error.cleanupResources).not.toContain(
+            "lldb-process-group",
+          );
+        } finally {
+          leader.restore();
+          stopSpy.mockRestore();
+          if (retainedRoot !== undefined)
+            await rm(retainedRoot, { recursive: true, force: true });
+          await rm(fixtureRoot, { recursive: true, force: true });
+        }
+      },
+    );
 });
 
 const completedOutputCloseFixture = async () => {
@@ -684,7 +1166,7 @@ describe("LLDB process exit at output-close loop completion", () => {
             return closed;
           });
         const tracer = new LldbCallTracer({}, undefined, async () =>
-          ok({ path: fixture.fakeLldb, sha256: "e".repeat(64) }),
+          ok(nativeResolvedToolFixture(fixture.fakeLldb, "e".repeat(64))),
         );
         try {
           const result = await tracer.trace(request, controller.signal);
@@ -778,7 +1260,7 @@ describe("LLDB process exit at output-close loop completion", () => {
           return stopReceipt;
         });
       const tracer = new LldbCallTracer({}, undefined, async () =>
-        ok({ path: fakeLldb, sha256: "f".repeat(64) }),
+        ok(nativeResolvedToolFixture(fakeLldb, "f".repeat(64))),
       );
 
       try {

@@ -3,6 +3,7 @@ import type { JsonValue } from "../jsonValue.js";
 import {
   at as valueAt,
   isObject,
+  requestJson,
   pathSegmentMatches,
   pointerTo,
   same,
@@ -19,7 +20,6 @@ import {
   callOf,
   fail,
   refuse,
-  requestObject,
   UNKNOWN,
   type EffectContext,
   type EffectResult,
@@ -105,7 +105,10 @@ export const applyDocument = (
   if (initial !== undefined && !namesDocument(step.record.path, initial.path))
     return UNKNOWN;
   const value = context.state.document(tool);
-  const body = requestObject(context, step.record);
+  const parsed = step.pinned
+    ? requestJson(context.io.requestBody(step.record.ordinal))
+    : undefined;
+  const body = isObject(parsed) ? parsed : undefined;
   const pointer =
     value === undefined || body === undefined
       ? undefined

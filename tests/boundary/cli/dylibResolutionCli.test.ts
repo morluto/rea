@@ -643,21 +643,33 @@ cliTest(
 );
 
 cliTest(
-  "reports each same-named slice's own embedded dyld environment",
+  "preserves exact architecture labels and each same-named slice's dyld environment",
   async ({ cli }) => {
-    // arm64e and arm64e.x1 slices both report the architecture name arm64e.
+    // Capability variants can share arm64e's display name, while .x1 stays exact.
     // A plain x86_64 slice keeps the bundle openable on x64 hosts.
     for (const [settings, expected] of [
-      [[null, "DYLD_PRINT_RPATHS=1"], ["DYLD_PRINT_RPATHS=1"]],
+      [[null, null, "DYLD_PRINT_RPATHS=1"], ["DYLD_PRINT_RPATHS=1"]],
       [
-        ["DYLD_PRINT_LIBRARIES=1", "DYLD_PRINT_RPATHS=1"],
-        ["DYLD_PRINT_LIBRARIES=1", "DYLD_PRINT_RPATHS=1"],
+        [
+          "DYLD_PRINT_LIBRARIES=1",
+          "DYLD_PRINT_RPATHS=1",
+          "DYLD_PRINT_BINDINGS=1",
+        ],
+        [
+          "DYLD_PRINT_LIBRARIES=1",
+          "DYLD_PRINT_RPATHS=1",
+          "DYLD_PRINT_BINDINGS=1",
+        ],
       ],
     ] as const) {
       const app = await fixtureApp();
       await writeFiles(app, {
         "Contents/MacOS/App": fatImage([
-          ...[CPU.arm64e, CPU.arm64eX1].map((cpu, index) => {
+          ...[
+            CPU.arm64e,
+            CPU.arm64eX1,
+            { type: CPU.arm64.type, subtype: 0x81000002 },
+          ].map((cpu, index) => {
             const setting = settings[index];
             return {
               cpu,
@@ -689,7 +701,11 @@ cliTest(
       const trace = dylibResolutionResultSchema.parse(
         parseEvidence(result.json).normalized_result,
       );
-      expect(trace.roots).toHaveLength(2);
+      expect(trace.roots.map(({ architecture }) => architecture)).toEqual([
+        "arm64e",
+        "arm64e.x1",
+        "arm64e",
+      ]);
       const environments = trace.findings
         .filter(({ kind }) => kind === "dyld-environment-present")
         .map(({ explanation }) =>

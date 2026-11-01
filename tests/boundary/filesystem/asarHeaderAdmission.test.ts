@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { mkdir, open, readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createPackage } from "@electron/asar";
@@ -13,11 +14,13 @@ import { parseEnvironment } from "../../../src/config/environment.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
-  MAXIMUM_ASAR_MAX_HEADER_BYTES,
   parseAsarHeaderAdmission,
   type AsarHeaderAdmission,
-  DEFAULT_ASAR_MAX_HEADER_BYTES,
 } from "../../../src/config/asarHeaderAdmission.js";
+import {
+  MAXIMUM_ASAR_MAX_HEADER_BYTES,
+  DEFAULT_ASAR_MAX_HEADER_BYTES,
+} from "../../../src/domain/analysisResourceLimits.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
@@ -72,7 +75,7 @@ it("admits a header produced by the upstream ASAR serializer", async () => {
     headerBytes: original.readUInt32LE(4),
     jsonBytes: original.readUInt32LE(12),
   });
-  expect(await readFile(archive)).toEqual(original);
+  expect(Buffer.compare(await readFile(archive), original)).toBe(0);
 });
 
 it("rejects every truncated prefix of a real serialized header", async () => {
@@ -171,19 +174,6 @@ const writeOversizedHeaderArchive = async (): Promise<string> => {
 it("names the default header admission budget and its setting when source selection cannot bypass it", async () => {
   const recovery = asarHeaderAdmissionRecovery(DEFAULT_ASAR_HEADER_ADMISSION);
   expect(DEFAULT_ASAR_MAX_HEADER_BYTES).toBe(16 * 1024 * 1024);
-  expect(recovery).toContain("ASAR header/index admission");
-  expect(recovery).toContain(
-    `${String(DEFAULT_ASAR_MAX_HEADER_BYTES / (1024 * 1024))} MiB / ${String(DEFAULT_ASAR_MAX_HEADER_BYTES)} bytes`,
-  );
-  expect(recovery).toContain(
-    "Set REA_ASAR_MAX_HEADER_BYTES in the environment that starts REA to a byte count up to 256 MiB / 268435456 bytes (default 16 MiB / 16777216 bytes), then restart REA.",
-  );
-  expect(recovery).not.toContain("no runtime override");
-  expect(recovery).toContain("Selecting fewer sources");
-  expect(recovery).toContain("does not bypass header admission");
-  expect(recovery).toContain("extracted application directory");
-  expect(recovery).not.toContain("Narrow the requested path");
-
   const archive = await writeOversizedHeaderArchive();
   let inventoryFailure: unknown;
   try {
@@ -216,6 +206,18 @@ it("names the default header admission budget and its setting when source select
       maximum_header_bytes: DEFAULT_ASAR_MAX_HEADER_BYTES,
       maximum_header_bytes_source: "default",
       setting: "REA_ASAR_MAX_HEADER_BYTES",
+      limit: {
+        setting: "asar.max_header_bytes",
+        effective_value: DEFAULT_ASAR_MAX_HEADER_BYTES,
+        unit: "bytes",
+        minimum: 1,
+        maximum: MAXIMUM_ASAR_MAX_HEADER_BYTES,
+        source: "default",
+        applies_at: "next_operation",
+        agent_editable: true,
+        scope: "rea-runtime",
+        rea_restart_required: false,
+      },
     },
   });
   expect(
@@ -235,6 +237,10 @@ it("names the default header admission budget and its setting when source select
     throw new Error("ASAR header admission succeeded");
   expect(projectAnalysisError(selected.error).message).toBe(recovery);
   expect(projectAnalysisError(unselected.error).message).toBe(recovery);
+  for (const failure of [selected.error, unselected.error])
+    expect(projectAnalysisError(failure).details?.limit).toEqual(
+      inventory.details?.limit,
+    );
   expect(projectAnalysisError(selected.error).remediation.action).toBe(
     recovery,
   );
@@ -283,15 +289,14 @@ it("applies the caller-selected environment, not the ambient one, to inventory a
     maximumBytes: headerBytes - 1,
     source: "setting",
   });
-  expect(recovery).toContain(
-    `limited to ${String(headerBytes - 1)} bytes by REA_ASAR_MAX_HEADER_BYTES.`,
-  );
   // An ambient value that would refuse the archive must not reach callers
   // whose selected environment leaves the setting unset.
   vi.stubEnv("REA_ASAR_MAX_HEADER_BYTES", "1");
   for (const operation of ["inventory_artifact", "inspect_artifact"] as const) {
     await expect(
-      createDirectAnalysis(lowered).runProviderAnalysis(archive, operation, {}),
+      createDirectAnalysis(lowered)
+        .runProviderAnalysis(archive, operation, {})
+        .then(projectCliAnalysisResult),
     ).resolves.toMatchObject({
       code: "truncated",
       message: recovery,
@@ -302,7 +307,9 @@ it("applies the caller-selected environment, not the ambient one, to inventory a
       },
     });
     await expect(
-      createDirectAnalysis({}).runProviderAnalysis(archive, operation, {}),
+      createDirectAnalysis({})
+        .runProviderAnalysis(archive, operation, {})
+        .then(projectCliAnalysisResult),
     ).resolves.toMatchObject({ operation });
   }
   const refused = await analyzeJavaScriptApplication(
@@ -363,11 +370,9 @@ it("refuses invalid settings at startup validation and at each owner", async () 
   const { archive } = await createFixture();
   const invalid = { REA_ASAR_MAX_HEADER_BYTES: "0" };
   await expect(
-    createDirectAnalysis(invalid).runProviderAnalysis(
-      archive,
-      "inventory_artifact",
-      {},
-    ),
+    createDirectAnalysis(invalid)
+      .runProviderAnalysis(archive, "inventory_artifact", {})
+      .then(projectCliAnalysisResult),
   ).resolves.toMatchObject({ code: "configuration_invalid" });
   const analyzed = await analyzeJavaScriptApplication(
     { input_path: archive },

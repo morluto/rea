@@ -186,7 +186,7 @@ cliTest(
       message: expect.stringContaining("9007199254740992"),
     });
     const after = await readFile(path);
-    expect(after).toEqual(bytes);
+    expect(Buffer.compare(after, bytes)).toBe(0);
     expect(createHash("sha256").update(after).digest("hex")).toBe(originalHash);
   },
 );

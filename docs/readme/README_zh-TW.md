@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · **繁體中文** · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
 
 # REA：逆向一切
 
@@ -20,7 +20,7 @@
 
 **[網站](https://rea.tools/zh-TW/) · [指南](https://rea.tools/zh-TW/guides/) · [案例](https://rea.tools/zh-TW/showcase/)**
 
-[快速開始](#快速開始) · [REA 的工作原理](#rea-的工作原理) · [可以分析什麼](#可以分析什麼) · [案例](#案例) · [常見問題](#常見問題) · [GNU objdump 與 Rizin 工具](../reverse-engineering-tools.md) · [文件](#文件)
+[快速開始](#快速開始) · [REA 的工作原理](#rea-的工作原理) · [可以分析什麼](#可以分析什麼) · [案例](#案例) · [建立 RL 環境](#build-rl-environments) · [常見問題](#常見問題) · [文件](#文件)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@
 
 REA 將 AI 代理連接到分析工具，用於檢查原生二進位檔案、JavaScript 和 Electron 應用、.NET 程式集以及網站。你也可以在終端中使用同樣的工具。分析在本機執行，結果包含支撐各項結論的證據和相關限制。
 
-設定流程會向 AI 代理註冊 REA，並安裝對應的工作流程指引。原生分析可以使用已有的 Hopper、Ghidra 或 IDA；設定流程也可以在你核准後安裝 Hopper。靜態 JavaScript 分析不需要原生分析引擎。
+設定流程會向 AI 代理註冊 REA，並安裝對應的工作流程指引。原生分析可以使用已有的 Hopper、Ghidra、IDA 或 Kuna；設定流程也可以在你核准後安裝 Hopper。靜態 JavaScript 分析不需要原生分析引擎。
 
 > **[訪問 REA 網站](https://rea.tools/zh-TW/)**，查看設定說明、圖解指南和真實案例。
 
@@ -149,7 +149,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 
 | 目標                  | REA 返回的內容                                                               | 要求與指南                                                                                                         |
 | --------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 原生二進位檔案        | 偽程式碼、組合語言、字串、符號、呼叫和引用                                   | Hopper、Ghidra 或 IDA；[原生分析](../native-investigation.md)                                                      |
+| 原生二進位檔案        | 偽程式碼、組合語言、字串、符號、呼叫和引用                                   | Hopper、Ghidra、IDA 或 Kuna；[原生分析](../native-investigation.md)                                                |
 | 離線 ELF 佈局         | 節、段、原始符號/重定位資訊及靜態防護機制候選項                              | Linux x64 上由呼叫方提供的 pwntools；[二進位診斷](../binary-diagnostics.md)                                        |
 | Go 二進位檔案         | 內嵌編譯器版本、模組、替換項和建置設定                                       | 內建靜態 ELF/PE/thin Mach-O 檢查；無需安裝 Go                                                                      |
 | WASM 工件             | 驗證、節、精確的匯入/匯出 WAT 形式及解碼後的 WAT                             | 呼叫方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                  |
@@ -157,7 +157,10 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | Rust binaries         | Embedded cargo-auditable dependency list                                     | [Rust binaries](../rust-binaries.md)                                                                               |
 | Erlang BEAM           | IFF chunks, atoms, exports, and tables                                       | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                  |
 | PE certificates       | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                            |
+| PE imports            | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash   | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                      |
 | ELF notes             | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields              | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                       |
+| Apple IPS crashes     | .ips metadata, threads, images, registers and crash classes                  | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                      |
+| Linux kernel modules  | .modinfo keys, __versions CRCs, this_module presence, and signature trailer  | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                             |
 | 已記錄的 Linux 崩潰   | 原始 note 記錄、每個已記錄執行緒的暫存器/訊號及可選的對映候選項              | Linux x64 上由呼叫方提供的 pwntools；可選的 GDB/pwndbg；[已記錄崩潰](../recorded-crashes.md)                       |
 | 桌面安裝目錄          | 執行階段候選、支持檔案、元件標記與後續操作                                   | 有界的目錄與檔頭檢查；[桌面應用](../desktop-applications.md)                                                       |
 | JavaScript / Electron | 模組、匯入、source map、路由、IPC 和原生附加元件關係                         | Node.js 和 npm；[應用分析](../javascript-application-workflows.md); Linux: procps `ps`                             |
@@ -184,6 +187,8 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | APK 簽章              | v1/v2/v3/v3.1 簽署者、憑證指紋、金鑰輪換和摘要自洽性                         | 內建靜態檢查; `inspect_apk_signature`                                                                              |
 
 靜態 JavaScript 和 .NET 檢查讀取提供的檔案，不執行應用。執行階段擷取會以你的使用者權限執行目標或與之互動；各執行階段指南說明瞭具體影響。
+
+若要離線檢查原生二進位檔，REA 也支援由呼叫端自行提供的 GNU objdump 和 Rizin。[逆向工程工具指南](../reverse-engineering-tools.md)說明了分析提供者的設定、CLI 指令及 Evidence 的限制。REA 不會安裝或更新這兩個分析提供者。
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -220,7 +225,50 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 [閱讀案例](https://rea.tools/zh-TW/showcase/th04/) ·
 [重建專案儲存庫](https://github.com/N0zoM1z0/th04)
 
+### 用 REA 建立 RL 環境
+
+錄製 Web 應用程式工作階段，將 API 轉為工具，並匯出 AI 代理可使用的環境。用 AgentEnv 執行，再加入任務與獎勵檢查，用於 RL 訓練或評測。
+
+[建立環境指南](https://rea.tools/guides/rl-environments/) ·
+[在 X 上觀看示範](https://x.com/reatools/status/2112574822584918075?s=20)
+
 如果你用 REA 分析了有趣的目標，我們很想瞭解。歡迎通過 [issue](https://github.com/morluto/rea/issues) 或 [pull request](https://github.com/morluto/rea/pulls) 分享案例，說明目標、你的問題、REA 如何提供幫助，以及你的發現。
+
+<a id="build-rl-environments"></a>
+
+## 建立 RL 環境
+
+為 AI 代理建立本機練習環境，讓它練習尋找 issue、建立資料夾等任務，無需執行原應用程式。這個環境可用於強化學習（RL），也可用於測試代理完成任務的能力。
+
+REA 將錄製的 API 請求與回應轉為代理可呼叫的工具。環境使用錄製的資料，只有錄製證據確認了某項修改的效果，才會支援該修改。
+
+在代理中設定好 REA 後，將下方範例的網址與資料夾任務替換為你自己的：
+
+```text
+使用 REA 為我的測試 Web 應用程式建立 RL 環境，網址是
+http://127.0.0.1:3000。
+涵蓋列出、建立、重新命名與刪除資料夾。可以建立和刪除測試資料夾，
+但不要修改既有資料。
+將環境儲存到名為 my-env 的資料夾。檢查哪些操作可用，並告訴我如何執行。
+```
+
+<details>
+<summary>改用命令列</summary>
+
+如果你已經將應用程式在瀏覽器中的請求與回應錄製成檔案，可以使用這些命令。執行產生的環境還需要 AgentEnv 與 Docker。
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA 匯出可直接執行的環境，並附帶基本測試，檢查環境能否啟動與回應。將它接入 RL 框架，即可設定任務目標、加入獎勵檢查並執行訓練。
+
+[建立環境指南](https://rea.tools/guides/rl-environments/) ·
+[環境參考文件](../agent-environments.md) ·
+[在 X 上觀看示範](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## 常見問題
 
@@ -232,9 +280,9 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 </details>
 
 <details>
-<summary><strong>需要 Hopper、Ghidra 或 IDA 嗎？</strong></summary>
+<summary><strong>需要 Hopper、Ghidra、IDA 或 Kuna 嗎？</strong></summary>
 
-深入的原生分析需要其中一個引擎。靜態 JavaScript 和 .NET 檢查不需要原生分析引擎。設定流程可以在你核准後安裝 Hopper；Ghidra 和 IDA 則使用已有安裝。見[提供者設定](../installation.md#hopper)。
+深入的原生分析需要其中一個引擎。靜態 JavaScript 和 .NET 檢查不需要原生分析引擎。設定流程可以在你核准後安裝 Hopper；Ghidra、IDA 和 Kuna 則使用已有安裝。見[提供者設定](../installation.md#hopper)。
 
 </details>
 
@@ -302,7 +350,7 @@ npx rea-agents@latest setup
 
 ## Star 歷史
 
-🎉 **GitHub Star 達到 300,000 個，感謝大家！**
+🎉 **GitHub Star 達到 400,000 個，感謝大家！**
 
 感謝每一位使用 REA、報告錯誤、提出功能需求、測試建置和貢獻修復的朋友。
 

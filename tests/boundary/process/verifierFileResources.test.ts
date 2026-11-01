@@ -11,6 +11,92 @@ import type { validateVerifierJadxConfiguration } from "../../../scripts/lib/jad
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeJadxJarInventory } from "../../fixtures/android/jadxJar.js";
 
+it("retains an undefined verifier failure alongside real descriptor cleanup and retries its exact owner", async () => {
+  const directory = await createTestTempDirectory("rea-verifier-undefined-");
+  const path = join(directory, "retained.bin");
+  const peerPath = join(directory, "released.bin");
+  await writeFile(path, "retained verifier input");
+  await writeFile(peerPath, "independent verifier input");
+  const script = String.raw`
+    import assert from 'node:assert/strict';
+    import { open } from 'node:fs/promises';
+    import { withVerifierResourceOwner } from ${JSON.stringify(new URL("../../../scripts/lib/verifier-file-resources.mjs", import.meta.url).href)};
+    import { ArtifactResourceRetryFailure } from ${JSON.stringify(new URL("../../../dist/artifacts/ArtifactResourceScope.js", import.meta.url).href)};
+    const [path, peerPath] = process.argv.slice(1);
+    const retained = await open(path, 'r');
+    const closeRetained = retained.close.bind(retained);
+    let peer;
+    let closePeer;
+    let denied = true;
+    let retainedAttempts = 0;
+    let peerAttempts = 0;
+    const cleanupFailure = new Error('controlled retained descriptor close denial');
+    try {
+      peer = await open(peerPath, 'r');
+      closePeer = peer.close.bind(peer);
+      retained.close = async () => {
+        retainedAttempts++;
+        if (denied) throw cleanupFailure;
+        await closeRetained();
+      };
+      peer.close = async () => {
+        peerAttempts++;
+        await closePeer();
+      };
+      const descriptor = retained.fd;
+      const outcome = await withVerifierResourceOwner(async (owner) => {
+        owner.retain(retained, path);
+        owner.retain(peer, peerPath);
+        assert.equal(await retained.readFile('utf8'), 'retained verifier input');
+        assert.equal(await peer.readFile('utf8'), 'independent verifier input');
+        throw undefined;
+      }).then(
+        value => ({ status: 'fulfilled', value }),
+        reason => ({ status: 'rejected', reason }),
+      );
+      assert.equal(outcome.status, 'rejected');
+      const error = outcome.reason;
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.errors.length, 2, 'Undefined primary and descriptor cleanup must both survive');
+      assert.equal(error.errors[0], undefined);
+      assert.ok(Object.hasOwn(error, 'cause'));
+      assert.equal(error.cause, undefined);
+      const cleanup = error.errors[1];
+      assert.ok(cleanup instanceof ArtifactResourceRetryFailure);
+      assert.deepEqual(cleanup.cleanup.resources, [path]);
+      assert.ok(cleanup.cause instanceof AggregateError);
+      assert.deepEqual(cleanup.cause.errors, [cleanupFailure]);
+      assert.equal(retained.fd, descriptor);
+      assert.ok(descriptor >= 0);
+      assert.equal(peer.fd, -1);
+      assert.equal(retainedAttempts, 1);
+      assert.equal(peerAttempts, 1);
+      assert.equal(cleanup.cleanupLeases.length, 1);
+      denied = false;
+      for (const lease of cleanup.cleanupLeases) await lease.release();
+      assert.equal(retained.fd, -1);
+      assert.equal(retainedAttempts, 2);
+      assert.equal(peerAttempts, 1);
+      console.log(JSON.stringify({ primaryRetained: true, descriptorRetried: true, peerClosedOnce: true }));
+    } finally {
+      denied = false;
+      await closeRetained();
+      await closePeer?.();
+    }
+  `;
+  const result = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", script, path, peerPath],
+    { encoding: "utf8", timeout: 10_000 },
+  );
+  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  expect(JSON.parse(result.stdout.trim())).toEqual({
+    primaryRetained: true,
+    descriptorRetried: true,
+    peerClosedOnce: true,
+  });
+});
+
 it("retains and retries the exact descriptor after a verifier hash close failure", async () => {
   const directory = await createTestTempDirectory("rea-verifier-file-");
   const path = join(directory, "input.bin");

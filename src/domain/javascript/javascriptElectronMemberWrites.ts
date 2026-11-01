@@ -6,7 +6,7 @@ import {
   semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
 
 /** Match Electron's supported module entry points. */
 export const ELECTRON_MODULE =
@@ -60,6 +60,7 @@ export interface JavaScriptIntrinsicInvocation {
  */
 export function* collectJavaScriptIdentityWritesSteps(
   program: t.Program,
+  erasedSyntaxNodes: WeakSet<t.Node>,
   origin: (
     root: t.Node,
     kind: "binding" | "member" | "opaque-call",
@@ -93,7 +94,7 @@ export function* collectJavaScriptIdentityWritesSteps(
     "setPrototypeOf",
   ]);
   const keyedMutators = new Set(["set", "deleteProperty", "defineProperty"]);
-  yield* traverseJavaScriptAstSteps(program, {
+  yield* traverseJavaScriptValueAstSteps(program, erasedSyntaxNodes, {
     enter: (node) => {
       if (
         t.isCallExpression(node) ||

@@ -64,6 +64,9 @@
         "package-lock.json",
         "scripts/generate-package-metadata.mjs",
         "scripts/lib/generated-file.mjs",
+        "scripts/lib/verifier-source-loader.mjs",
+        "src/domain/skillManifest.ts",
+        "src/domain/result.ts",
         ".agents/skills/reverse-engineer-anything/SKILL.md",
         "src/generatedPackageMetadata.ts"
       ]
@@ -81,33 +84,9 @@
         "docs/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         ".github/actions/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "website/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
-        "experiments/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "!docs/.vitepress/cache/**",
         "!docs/.vitepress/dist/**",
         "!website/_site/**",
-        "!experiments/analysis-efficiency/results/**",
-        "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}"
-      ]
-    },
-    "lint:built": {
-      "dependsOn": ["compile"],
-      "outputs": [".cache/static-checks/oxlint.json"],
-      "inputs": [
-        ".gitignore",
-        ".oxlintrc.json",
-        "package.json",
-        "package-lock.json",
-        "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
-        "src/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
-        "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
-        "docs/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
-        ".github/actions/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
-        "website/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
-        "experiments/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
-        "!docs/.vitepress/cache/**",
-        "!docs/.vitepress/dist/**",
-        "!website/_site/**",
-        "!experiments/analysis-efficiency/results/**",
         "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}"
       ]
     },
@@ -213,6 +192,7 @@
         "package-lock.json",
         "scripts/generate-skill-metadata.mjs",
         "scripts/lib/generated-file.mjs",
+        "scripts/lib/verifier-source-loader.mjs",
         ".agents/skills/reverse-engineer-anything/**"
       ],
       "outputs": ["skills/**"]

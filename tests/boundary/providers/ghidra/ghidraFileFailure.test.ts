@@ -32,16 +32,21 @@ const retainFailedDescriptor = async (path: string, primary: unknown) => {
   let handle: FileHandle | undefined;
   const failure: unknown = await resources
     .run(() =>
-      withArtifactRegularFile(path, resources, undefined, async (file) => {
-        handle = file;
-        const close = file.close.bind(file);
-        file.close = async () => {
-          if (!allowClose)
-            throw new Error("controlled descriptor close refusal");
-          await close();
-        };
-        throw new OwnedRegularFileOperationFailure(primary);
-      }),
+      withArtifactRegularFile(
+        path,
+        resources,
+        undefined,
+        async ({ handle: file }) => {
+          handle = file;
+          const close = file.close.bind(file);
+          file.close = async () => {
+            if (!allowClose)
+              throw new Error("controlled descriptor close refusal");
+            await close();
+          };
+          throw new OwnedRegularFileOperationFailure(primary);
+        },
+      ),
     )
     .catch((cause: unknown) => cause);
   if (!(failure instanceof ArtifactFileCleanupFailure)) {

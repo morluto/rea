@@ -1,4 +1,8 @@
-import { decodedSegment } from "../../domain/analysisView/environmentStateRules.js";
+import {
+  ownMember,
+  decodedSegment,
+  same,
+} from "../../domain/analysisView/environmentStateRules.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -20,9 +24,12 @@ import {
   translatePath,
 } from "./environmentCompareIds.js";
 import {
+  bulkIds,
   collectionScope,
   literalPositions,
+  bodyTools,
   matchProbeRequest,
+  probeArguments,
   parameterScopes,
   type ProbeToolCall,
 } from "./environmentCompareMatch.js";
@@ -53,11 +60,7 @@ import {
   environmentToolAnswer,
   type EnvironmentToolAnswer,
 } from "./environmentToolAnswer.js";
-import {
-  environmentToolArguments,
-  type EnvironmentToolDefinition,
-} from "./environmentTools.js";
-import { same } from "../../domain/analysisView/environmentStateRules.js";
+import type { EnvironmentToolDefinition } from "./environmentTools.js";
 
 /** One probe capture file: its label for the report and its parsed JSON. */
 export interface CompareProbeInput {
@@ -235,10 +238,10 @@ const answersCall = (
     !selectsRecordedLine(call.tool, exchange, args)
   )
     return false;
-  const body = environmentToolArguments(call.tool).body;
+  const body = probeArguments(call.tool, run.bodies).body;
   // A tool with no body parameter matches; one that takes a body matches only the body this call sent, including none.
   if (body === undefined) return true;
-  return same(run.recordedBodies.get(exchange.ordinal), args[body]);
+  return same(run.recordedBodies.get(exchange.ordinal), ownMember(args, body));
 };
 
 /** A served tool's input check: the first problem with a call's arguments, or undefined. */
@@ -265,6 +268,8 @@ interface ProbeRun {
   readonly store: EnvironmentStateStore | undefined;
   /** The tools the environment offers, by name, with their input checks. */
   readonly served: ReadonlyMap<string, InputCheck>;
+  /** The served tools that take a body their method does not, as a bulk delete names its entities. */
+  readonly bodies: ReadonlySet<string>;
   readonly map: IdMap;
   readonly normalised: Normalised;
 }
@@ -317,22 +322,20 @@ const compareStep = (
   // Matched in the environment's terms, so a tool whose path holds a seeded id literally still matches. Scopes and
   // literals come from the live path: translating a parent id first would name a different collection than learning did.
   const liveSegments = request.path.slice(1).split("/");
-  const fitted = matchProbeRequest(manifest, request);
+  const fitted = matchProbeRequest(manifest, request, run.bodies);
   const scopes =
     fitted === undefined
       ? undefined
       : parameterScopes(fitted.tool, liveSegments);
   const literals =
     fitted === undefined ? undefined : literalPositions(fitted.tool);
-  const call = matchProbeRequest(manifest, {
-    ...request,
-    path: translatePath(
-      request.path,
-      run.map,
-      (index) => scopes?.get(index),
-      (index) => literals?.has(index) === true,
-    ),
-  });
+  const path = translatePath(
+    request.path,
+    run.map,
+    (index) => scopes?.get(index),
+    (index) => literals?.has(index) === true,
+  );
+  const call = matchProbeRequest(manifest, { ...request, path }, run.bodies);
   if (call === undefined)
     return report(call, {
       env_status: null,
@@ -346,7 +349,7 @@ const compareStep = (
     });
   const held = heldIds(run.store);
   const unknownPath = call.pathArguments.some((name) => {
-    const value = call.args[name];
+    const value = ownMember(call.args, name);
     if (typeof value !== "string") return false;
     const id = decodedSegment(value);
     return !run.map.hasEnv(id) && !held.has(id);
@@ -358,7 +361,8 @@ const compareStep = (
         { category: "refused", pointer: "", env: message.slice(0, 200) },
       ],
     });
-  const args = environmentArguments(call, run.map);
+  const bulk = bulkIds(run, call, liveSegments);
+  const args = environmentArguments(call, run.map, bulk);
   const problem = check(args);
   if (problem !== undefined)
     return refusedWith(`Invalid arguments: ${problem}`);
@@ -479,6 +483,7 @@ export const compareEnvironment = (input: {
       inputCheck(definition),
     ]),
   );
+  const bodies = bodyTools(catalog.value.tools);
   const recorded = parseCaptureEvidence(
     operation,
     input.captureValue,
@@ -526,6 +531,7 @@ export const compareEnvironment = (input: {
       answer: environmentToolAnswer(source, store),
       store,
       served,
+      bodies,
       map: new IdMap(),
       normalised: emptyNormalised(),
     };

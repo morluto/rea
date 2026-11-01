@@ -121,7 +121,14 @@ it("classifies failures by their admitted document request and retires completed
                   method: "GET",
                 },
                 timestamp: 100,
-                ...(redirect ? { redirectResponse: { status: 302 } } : {}),
+                ...(redirect
+                  ? {
+                      redirectResponse: {
+                        url: `${browser.allowedOrigin}/prior`,
+                        status: 302,
+                      },
+                    }
+                  : {}),
               },
             });
           const fail = (id: string, type: string) =>

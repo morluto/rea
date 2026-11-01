@@ -1,14 +1,16 @@
 import {
-  readFatContainerHeader,
-  validateFatSlice,
-} from "../domain/apple/machoContainer.js";
+  readUniversalMachoImage,
+  readUniversalMachoSlice,
+} from "../domain/apple/machoImageSelection.js";
 import { binaryMetadataArchitecture } from "../domain/binaryMetadataArchitecture.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  createFileMappingIndex,
   mappedFileOffset,
   isZeroFilledSpan,
   type BinaryContainer,
+  type FileMappingIndex,
 } from "../native/metadata/BinaryContainer.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import {
@@ -31,8 +33,14 @@ const selectImage = (
   bytes: Buffer,
   architecture: string | undefined,
 ): Buffer => {
-  const fat = readFatContainerHeader(bytes, bytes.length);
-  if (fat.state === "not-fat") {
+  const container = readUniversalMachoImage(bytes);
+  if (!container.ok)
+    throw new Il2cppBinaryFormatFailure(
+      "malformed-container",
+      container.error.message,
+    );
+  const fat = container.value;
+  if (fat === null) {
     if (architecture !== undefined)
       throw new Il2cppBinaryFormatFailure(
         "slice-not-found",
@@ -40,11 +48,6 @@ const selectImage = (
       );
     return bytes;
   }
-  if (fat.state !== "parsed")
-    throw new Il2cppBinaryFormatFailure(
-      "malformed-container",
-      fat.state === "malformed" ? fat.reason : "universal header is truncated",
-    );
   const available = fat.slices.map(
     (slice) => MACHO_CPU.get(slice.cpuType) ?? `macho-cpu-${slice.cpuType}`,
   );
@@ -65,15 +68,20 @@ const selectImage = (
       "slice-not-found",
       `universal Mach-O holds ${available.join(", ")}, not ${architecture}`,
     );
-  const issue = validateFatSlice(slice, bytes.length, fat.tableEnd);
-  if (issue !== null)
-    throw new Il2cppBinaryFormatFailure("malformed-container", issue);
-  return bytes.subarray(slice.offset, slice.offset + slice.size);
+  const selected = readUniversalMachoSlice(bytes, fat, slice);
+  if (!selected.ok)
+    throw new Il2cppBinaryFormatFailure(
+      "malformed-container",
+      selected.error.message,
+    );
+  return selected.value;
 };
 
 export interface NativeImage {
   readonly bytes: Buffer;
   readonly container: BinaryContainer;
+  /** One image's immutable load mappings, shared by stored and loader-aware reads. */
+  readonly fileMappings: FileMappingIndex;
   readonly imageBase: bigint;
   readonly unresolvedPointerSlots: ReadonlyMap<bigint, number>;
   readonly zeroFillPointers: ReadonlyMap<bigint, bigint>;
@@ -104,14 +112,6 @@ export function* openImageSteps(
       );
     throw cause;
   }
-  if (
-    architecture !== undefined &&
-    (container.format !== "macho" || container.architecture !== architecture)
-  )
-    throw new Il2cppBinaryFormatFailure(
-      "malformed-container",
-      "Selected FAT declaration disagrees with the slice header architecture.",
-    );
   if (container.bits !== 64 || container.byte_order !== "little")
     throw new Il2cppBinaryFormatFailure(
       "unsupported-container",
@@ -190,6 +190,10 @@ export function* openImageSteps(
   return {
     bytes: image,
     container,
+    fileMappings: createFileMappingIndex(
+      container.mappings,
+      container.zero_fills,
+    ),
     imageBase,
     unresolvedPointerSlots: relocated?.unresolved ?? new Map<bigint, number>(),
     zeroFillPointers: relocated?.zeroFillPointers ?? new Map<bigint, bigint>(),
@@ -200,12 +204,7 @@ export function* openImageSteps(
 /** Stored bytes only; loader interpretation belongs to readSlot. */
 const readStoredWord = (image: NativeImage, address: bigint): bigint | null => {
   try {
-    const offset = mappedFileOffset(
-      image.container.mappings,
-      address,
-      8,
-      image.container.zero_fills,
-    );
+    const offset = image.fileMappings.offset(address, 8);
     return image.bytes.readBigUInt64LE(offset);
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
@@ -226,28 +225,19 @@ export const readUInt32 = (
   const virtual = image.zeroFillPointers.get(address);
   if (virtual !== undefined) return Number(virtual & 0xffffffffn);
   try {
-    return image.bytes.readUInt32LE(
-      mappedFileOffset(
-        image.container.mappings,
-        address,
-        4,
-        image.container.zero_fills,
-      ),
-    );
+    return image.bytes.readUInt32LE(image.fileMappings.offset(address, 4));
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;
   }
 };
 
+/** Exact lowercase hexadecimal form of an address in reports and issues. */
+export const hexAddress = (value: bigint) => `0x${value.toString(16)}`;
+
 export const isMapped = (image: NativeImage, address: bigint, size: number) => {
   try {
-    mappedFileOffset(
-      image.container.mappings,
-      address,
-      size,
-      image.container.zero_fills,
-    );
+    image.fileMappings.offset(address, size);
     return true;
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return false;
@@ -299,12 +289,7 @@ export const hasPointerArrayCoverage = (
       if (fileEnd === cursor) {
         if (!isZeroFilled(image, cursor, size)) return false;
       } else {
-        mappedFileOffset(
-          image.container.mappings,
-          cursor,
-          size,
-          image.container.zero_fills,
-        );
+        image.fileMappings.offset(cursor, size);
       }
     } catch (cause) {
       if (cause instanceof BinaryFormatFailure) return false;
@@ -318,12 +303,7 @@ export const hasPointerArrayCoverage = (
 /** Both executable coverage and the unique full loader mapping must agree. */
 export const isExecutable = (image: NativeImage, address: bigint): boolean => {
   try {
-    const offset = mappedFileOffset(
-      image.container.mappings,
-      address,
-      1,
-      image.container.zero_fills,
-    );
+    const offset = image.fileMappings.offset(address, 1);
     return (
       offset ===
       mappedFileOffset(image.container.executable_mappings ?? [], address, 1)
@@ -356,8 +336,12 @@ export const readSlot = (
     const virtual = image.zeroFillPointers.get(address);
     let raw: bigint | null;
     if (virtual !== undefined) raw = virtual;
-    else if (isZeroFilled(image, address, 8)) raw = 0n;
-    else raw = readStoredWord(image, address);
+    else {
+      // A successful indexed read already excludes zero-fill aliases. Only a
+      // non-file-backed slot needs the zero-fill ownership walk.
+      raw = readStoredWord(image, address);
+      if (raw === null && isZeroFilled(image, address, 8)) raw = 0n;
+    }
     if (raw === null) return null;
     if (image.machoPointerFixups !== undefined) {
       const resolution = image.machoPointerFixups.decode(address, raw);

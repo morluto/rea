@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import * as t from "@babel/types";
 import {
   analyzeJavaScriptSemantics,
   indexJavaScriptBindingsWithReceiversSteps,
@@ -7,7 +8,10 @@ import { onlyCallable } from "./javascriptSemanticAnalysis.fixture.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
 
 import {
   joinSemanticPropertyPaths,
@@ -170,4 +174,174 @@ it("keeps a preceding global self-property replacement unresolved", () => {
   expect(
     facts.references.filter(({ kind }) => kind === "worker"),
   ).toMatchObject([{ specifier: null }]);
+});
+
+it.each([
+  [
+    "load",
+    "inspect(load); load.d = replacement; inspect(load);",
+    ["after", "before"],
+  ],
+  [
+    "load",
+    "inspect(load); function later() { load.d = replacement; }",
+    ["unknown"],
+  ],
+  ["load", "inspect(load); if (flag) { load.d = replacement; }", ["unknown"]],
+  [
+    "load",
+    "inspect(load); while (flag) { load.d = replacement; }",
+    ["unknown"],
+  ],
+  [
+    "load",
+    "while (flag) { inspect(load); load.d = replacement; }",
+    ["unknown"],
+  ],
+  ["load, value = (load.d = replacement)", "inspect(load);", ["unknown"]],
+] as const)(
+  "preserves parameter member provenance and activation ordering: (%s) %s",
+  (parameters, body, timing) => {
+    const parsed = parseJavaScriptSource(
+      `function factory(${parameters}) { ${body} }`,
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    const sites: t.CallExpression[] = [];
+    traverseJavaScriptAst(parsed.program, {
+      enter: (node) => {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "inspect" })
+        )
+          sites.push(node);
+      },
+    });
+    const originalTiming: string[] = [];
+    const activationTiming: string[] = [];
+    for (const site of sites) {
+      const reference = site.arguments[0];
+      if (!t.isIdentifier(reference))
+        throw new Error("Expected parameter reference");
+      const binding = index.bindingForReferenceAt(reference);
+      expect(binding?.memberWrites).toEqual([
+        expect.objectContaining({
+          path: ["d"],
+          node: expect.objectContaining({ type: "AssignmentExpression" }),
+        }),
+      ]);
+      for (const [facts, output] of [
+        [index.effectsForReferenceAt(site, reference, ["d"]), originalTiming],
+        [
+          index.effectsForReferenceWithinActivationAt(site, reference, ["d"]),
+          activationTiming,
+        ],
+      ] as const) {
+        const writes = facts.effects.filter(
+          ({ kind }) => kind === "member-write",
+        );
+        expect(writes).toHaveLength(1);
+        output.push(writes[0]!.timing);
+      }
+    }
+    expect(originalTiming).toEqual(timing.map(() => "unknown"));
+    expect(activationTiming).toEqual(timing);
+  },
+);
+
+it("preserves exact member writes through an externally supplied caught value", () => {
+  const parsed = parseJavaScriptSource(`
+    try { throw external; } catch (caught) { caught.d = replacement; }
+  `);
+  if (parsed === null) throw new Error("Expected parsed source");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const caught = [...index.bindings.bindingsById.values()].find(
+    ({ name }) => name === "caught",
+  );
+  expect(caught?.memberWrites).toEqual([
+    expect.objectContaining({
+      path: ["d"],
+      node: expect.objectContaining({ type: "AssignmentExpression" }),
+    }),
+  ]);
+});
+
+const indexedMemberEffects = (source: string) => {
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected parsed source");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  return [...index.bindings.bindingsById.values()];
+};
+
+it("records a write reached through two alias routes once", () => {
+  // `c.y = 1` reaches `a.x` through `b` and through the later `c = a.x`.
+  const a = indexedMemberEffects(`
+    function f(a) {
+      var b = a.x;
+      var c = b;
+      c.y = 1;
+      c = a.x;
+      c.y = 2;
+    }
+  `).find(({ name }) => name === "a");
+  expect(
+    a?.memberWrites.map(({ path, node, receiverIdentity }) => [
+      path,
+      t.isAssignmentExpression(node) && t.isNumericLiteral(node.right)
+        ? node.right.value
+        : undefined,
+      receiverIdentity,
+    ]),
+  ).toEqual([
+    [["x", "y"], 1, "possible"],
+    [["x", "y"], 2, "definite"],
+  ]);
+});
+
+it("keeps one record per stored fact for loop-carried register aliases", () => {
+  const identities = new WeakMap<object, number>();
+  let identityCount = 0;
+  const identity = (value: object | undefined) => {
+    if (value === undefined) return undefined;
+    if (!identities.has(value)) identities.set(value, identityCount++);
+    return identities.get(value);
+  };
+  const bindings = indexedMemberEffects(`
+    function dispatch(a) {
+      var b, c;
+      for (b = a.target; b; ) {
+        c = b;
+        c.seen = 1;
+        if ((c = b.owner)) { b = c; continue; }
+        b = b.parentNode;
+      }
+    }
+  `);
+  const records = bindings.flatMap(({ memberWrites, escapedPaths }) => [
+    memberWrites,
+    escapedPaths,
+  ]);
+  expect(records.some((effects) => effects.length > 1)).toBe(true);
+  for (const effects of records) {
+    const facts = effects.map((effect) =>
+      JSON.stringify([
+        effect.path,
+        identity(effect.node),
+        identity(effect.receiverAt),
+        effect.receiverIdentity,
+        effect.receiverInitializers?.map((source) => identity(source)),
+        effect.assignedSources?.map((source) => identity(source)),
+      ]),
+    );
+    expect(new Set(facts).size).toBe(facts.length);
+  }
 });
