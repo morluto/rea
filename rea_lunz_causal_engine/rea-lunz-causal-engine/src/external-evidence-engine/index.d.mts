@@ -1,0 +1,15 @@
+export type ExternalPackage = { name: string; version?: string };
+export type ExternalTargetFact = { id: string; kind: string; value: string; evidence_id?: string };
+export type ExternalEvidenceInput = { query: string; packages?: ExternalPackage[]; targetFacts?: ExternalTargetFact[]; maxSources?: number };
+export type ExternalEvidenceValidation = { valid: boolean; status: string; errors: string[]; warnings: string[]; accepted_evidence_ids: string[]; rejected_evidence_ids: string[]; validated_claim_count: number; rejected_edge_count: number; contradiction_count: number; independent_source_domains: number; [key: string]: unknown };
+export type ExternalEvidenceResult = { schema_version: string; status: 'validated' | 'provisional' | 'conflicted' | 'rejected' | 'insufficient_evidence'; query: string; graph: Record<string, unknown>; validation: ExternalEvidenceValidation; quality_report: Record<string, unknown>; source_count: number; accepted_source_count: number; warnings: string[]; cache: { entries: number; ttl_ms: number } };
+export type CodeFidelityReport = { schema_version: string; report_id: string; generated_at: string; target: string; overall_fidelity_score: number; grade: string; part_count: number; not_observable_count: number; simulated_or_inferred_count: number; likely_unfaithful_count: number; complete_original_source_count: number; visibility_coverage: number; simulated_parts: Record<string, unknown>[]; suspected_fidelity_gaps: Record<string, unknown>[]; parts: Record<string, unknown>[]; limitations: string[]; markdown: string; [key: string]: unknown };
+export type ExternalEvidenceEngineOptions = { fetchImpl?: typeof fetch; now?: () => Date; timeoutMs?: number; maxBytes?: number; cacheTtlMs?: number; allowedDomains?: string[]; resolveLocalEvidence?: (evidenceId: string) => unknown | Promise<unknown> };
+export function createExternalEvidenceEngine(configuration?: ExternalEvidenceEngineOptions): { research(input: ExternalEvidenceInput, runtime?: { signal?: AbortSignal }): Promise<ExternalEvidenceResult>; validate(graph: unknown): ExternalEvidenceValidation; allowedDomains: string[]; cacheSize(): number; clearCache(): void; provenanceSourceCount(): number; provenanceGraphCount(): number };
+export function validateEvidenceGraph(graph: unknown, options?: { allowedDomains?: string[]; knownSources?: Map<string, string>; requireRegisteredSources?: boolean }): ExternalEvidenceValidation;
+export function generateCodeFidelityReport(input: { target?: string; observations?: Array<Record<string, unknown>> }): CodeFidelityReport;
+export function renderCodeFidelityMarkdown(report: Record<string, unknown>): string;
+export function isAllowedUrl(value: string, allowedDomains?: string[]): boolean;
+export const DEFAULT_ALLOWED_DOMAINS: readonly string[];
+export function safeQueryTerms(value: string): string;
+export function sha256(value: unknown): string;
