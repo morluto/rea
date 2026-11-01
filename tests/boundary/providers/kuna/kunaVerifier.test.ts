@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -9,6 +10,164 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 
 const it = test.skipIf(process.platform === "win32");
+
+const createCallerMatrix = async (root: string) => {
+  const targets = join(root, "targets");
+  const binaries: string[] = [];
+  for (const [flavor, name, multiplier] of [
+    ["left", "audit_left", 3],
+    ["right", "audit_right", 7],
+    ["unmatched", "audit_other", 11],
+  ] as const) {
+    const directory = join(targets, flavor);
+    await mkdir(directory, { recursive: true });
+    const source = join(root, `${flavor}.c`);
+    const binary = join(directory, "program");
+    await writeFile(
+      source,
+      `__attribute__((noinline,used)) int ${name}(int x) { return x * ${multiplier} + 1; }\nint main(void) { return ${name}(2); }\n`,
+    );
+    const compiled = spawnSync(
+      process.env.REA_CC ?? "cc",
+      ["-O1", "-o", binary, source],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    expect(compiled.error).toBeUndefined();
+    expect(compiled.status, compiled.stderr).toBe(0);
+    const stripped = `${binary}.stripped`;
+    await copyFile(binary, stripped);
+    const strip = spawnSync(process.env.REA_STRIP ?? "strip", [stripped], {
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    expect(strip.error).toBeUndefined();
+    expect(strip.status, strip.stderr).toBe(0);
+    binaries.push(binary, stripped);
+  }
+  return { targets, binaries };
+};
+
+const expectedCallerSelection = (targets: string) => ({
+  directory: targets,
+  functions_argument: "audit_left,audit_right",
+  requested_functions: ["audit_left", "audit_right"],
+  symbol_scan_complete: true,
+  examined: [
+    {
+      binary: "left/program",
+      status: "selected",
+      matched_functions: ["audit_left"],
+    },
+    {
+      binary: "right/program",
+      status: "selected",
+      matched_functions: ["audit_right"],
+    },
+    {
+      binary: "unmatched/program",
+      status: "no_matching_text_symbols",
+      matched_functions: [],
+    },
+  ],
+});
+
+it("accepts requested functions distributed across caller targets", async () => {
+  const root = await createTestTempDirectory(
+    "rea-kuna-verifier-matrix-boundary-",
+  );
+  const { targets } = await createCallerMatrix(root);
+  const kuna = await writeFakeKuna(root);
+  const result = spawnSync(
+    process.execPath,
+    [
+      "scripts/verify-real-kuna.mjs",
+      "--targets",
+      targets,
+      "--functions",
+      "audit_left,audit_right",
+    ],
+    {
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        PATH: process.env.PATH,
+        HOME: root,
+        REA_KUNA_COMMAND: kuna,
+        REA_CC: join(root, "compiler-must-not-run"),
+      },
+    },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("compiler-must-not-run");
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    status: "failed",
+    cleanup: "complete",
+    caller_target_selection: expectedCallerSelection(targets),
+  });
+});
+
+test.skipIf(
+  process.platform === "win32" || process.env.REA_KUNA_COMMAND === undefined,
+)(
+  "reports the complete selection of a passing real-provider matrix",
+  async () => {
+    const root = await createTestTempDirectory("rea-kuna-verifier-matrix-");
+    const { targets, binaries } = await createCallerMatrix(root);
+    const hashes = async () =>
+      Promise.all(
+        binaries.map(async (path) =>
+          createHash("sha256")
+            .update(await readFile(path))
+            .digest("hex"),
+        ),
+      );
+    const before = await hashes();
+    const reportPath = join(root, "report.json");
+    const result = spawnSync(
+      process.execPath,
+      [
+        "scripts/verify-real-kuna.mjs",
+        "--targets",
+        targets,
+        "--functions",
+        "audit_left,audit_right",
+        "--report",
+        reportPath,
+      ],
+      {
+        encoding: "utf8",
+        timeout: 100_000,
+        maxBuffer: 10 * 1024 * 1024,
+        env: process.env,
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    expect(JSON.parse(result.stdout)).toEqual(report);
+    expect(report).toMatchObject({
+      status: "passed",
+      cleanup: "complete",
+      verifier_run: {
+        process_lineage: { status: "verified", descendants: [] },
+      },
+      caller_target_selection: expectedCallerSelection(targets),
+    });
+    expect(
+      report.results.map(({ binary }: { binary: string }) => binary),
+    ).toEqual([
+      "fixture/rea-kuna-fixture",
+      "fixture/rea-kuna-fixture.stripped",
+      "left/program",
+      "left/program.stripped",
+      "right/program",
+      "right/program.stripped",
+    ]);
+    expect(await hashes()).toEqual(before);
+  },
+  120_000,
+);
 
 it("accepts empty caller inventories but requires source-owned fixture literals", async () => {
   const root = await createTestTempDirectory("rea-kuna-verifier-empty-");
