@@ -132,6 +132,12 @@ describe("request step redirect observation bounds", () => {
     });
     expect(responses).toHaveLength(0);
     expect(observation!.delivered()).toBe(false);
+    // Few characters but many expanded entries is bounded separately.
+    answer(session, 302, {
+      location: "/destination",
+      "x-many": "v\n".repeat(5_000),
+    });
+    expect(responses).toHaveLength(0);
     answer(session, 302, { location: "/destination" });
     expect(responses).toHaveLength(1);
     expect(responses[0]!.headers()).toBe(responses[0]!.headers());

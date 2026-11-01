@@ -38,16 +38,37 @@ const FETCH_REDIRECT_STATUSES: ReadonlySet<number> = new Set([
  */
 const MAX_REDIRECT_HEADER_CHARACTERS = 256 * 1024;
 
-const rawHeaderCharacters = (headers: Readonly<Record<string, string>>) => {
-  let total = 0;
-  for (const name in headers)
-    total += name.length + (headers[name]?.length ?? 0);
-  return total;
+/** A redirect answer carries a few dozen header fields; bound the expanded entries separately from their size. */
+const MAX_REDIRECT_HEADER_ENTRIES = 4096;
+
+/** Whether the raw report is small enough to expand, counted without copying any value. */
+const withinHeaderBounds = (
+  headers: Readonly<Record<string, string>>,
+): boolean => {
+  let characters = 0;
+  let entries = 0;
+  for (const name in headers) {
+    const value = headers[name] ?? "";
+    characters += name.length + value.length;
+    entries += 1;
+    for (
+      let at = value.indexOf("\n");
+      at !== -1;
+      at = value.indexOf("\n", at + 1)
+    )
+      entries += 1;
+    if (
+      characters > MAX_REDIRECT_HEADER_CHARACTERS ||
+      entries > MAX_REDIRECT_HEADER_ENTRIES
+    )
+      return false;
+  }
+  return true;
 };
 
 const isRedirect = (answer: RedirectAnswer): boolean =>
   FETCH_REDIRECT_STATUSES.has(answer.status) &&
-  rawHeaderCharacters(answer.headers) <= MAX_REDIRECT_HEADER_CHARACTERS &&
+  withinHeaderBounds(answer.headers) &&
   Object.keys(answer.headers).some((name) => name.toLowerCase() === "location");
 
 /**
