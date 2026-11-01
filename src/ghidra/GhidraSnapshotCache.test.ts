@@ -308,6 +308,11 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
+      parameter: "native_api_parameter_lists",
+      current: "signature-or-recovered-basis-varargs-v1",
+      legacy: undefined,
+    },
+    {
       parameter: "instruction_status",
       current: "unlisted-address-without-decode-v1",
       legacy: undefined,

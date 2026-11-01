@@ -46,6 +46,20 @@ const inferredParameterTypeSchema = z.strictObject({
   ordinal: z.int().min(0),
 });
 
+/** Provider basis of a reported parameter list, and whether it admits variadic arguments. */
+export const nativeParameterListSchema = z.strictObject({
+  basis: z
+    .enum(["signature", "recovered"])
+    .describe(
+      "signature: the provider fixed these parameters from the function's stored, non-default signature (see signature_source); that signature has no other fixed parameters. recovered: the decompiler inferred them from observed uses and may omit parameters.",
+    ),
+  variadic: z
+    .boolean()
+    .describe(
+      "Whether the prototype accepts variable arguments after the listed parameters.",
+    ),
+});
+
 const jumpTableDataSourceSchema = z
   .object({
     address: z.string().min(1),
@@ -95,6 +109,11 @@ export const availableNativeApiBoundarySchema = z
     calling_convention: z.string().min(1),
     return_type: inferredReturnTypeSchema,
     parameters: z.array(inferredParameterTypeSchema),
+    parameter_list: nativeParameterListSchema
+      .exactOptional()
+      .describe(
+        "Absent when the provider did not report it, as in older Evidence; parameter completeness and variadic arguments then remain unknown.",
+      ),
     jump_tables: z.array(inferredJumpTableSchema),
     pseudocode: z
       .object({
@@ -131,6 +150,16 @@ export const nativeApiBoundarySchema = z.discriminatedUnion("available", [
 
 /** One validated provider-neutral native API boundary observation. */
 export type NativeApiBoundary = z.infer<typeof nativeApiBoundarySchema>;
+
+/**
+ * True only when the provider fixed an empty, non-variadic parameter list from
+ * a signature. A recovered, variadic or unreported list leaves arity unknown.
+ */
+export const takesNoParameters = (boundary: NativeApiBoundary | null) =>
+  boundary?.available === true &&
+  boundary.parameters.length === 0 &&
+  boundary.parameter_list?.basis === "signature" &&
+  !boundary.parameter_list.variadic;
 
 const nativeApiInspectionSubstepSchema = z
   .object({

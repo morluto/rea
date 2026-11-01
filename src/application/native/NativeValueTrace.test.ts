@@ -19,6 +19,7 @@ import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import { ok, err } from "../../domain/result.js";
 import {
   nativeFlowDossier,
+  type ParameterListFact,
   pcodeOperation as node,
   pcodeScalar as scalar,
   staticValueGraph,
@@ -1325,5 +1326,179 @@ describe("native value traversal limits and policies", () => {
       ],
     });
     expect(limited.analyzed).toEqual(["0x1000"]);
+  });
+});
+
+/** 0x1000 passes `argumentCount` arguments to 0x2000, which returns a value. */
+const singleCallGraph = (
+  callee: {
+    readonly parameters?: {
+      ordinal: number;
+      name: string;
+      data_type: string;
+    }[];
+    readonly parameterList: ParameterListFact;
+  },
+  argumentCount = 0,
+) =>
+  staticValueGraph(
+    {
+      "0x1000": {
+        operations: [
+          {
+            ...node("call", "0x1004", "CALL"),
+            inputs: Array.from({ length: argumentCount + 1 }, () => scalar),
+          },
+        ],
+      },
+      "0x2000": {
+        operations: [node("return", "0x2008", "RETURN")],
+        ...callee,
+      },
+    },
+    { "0x1004": [{ destination: "0x2000", status: "direct" }] },
+  );
+const parameterFacts = (count: number) =>
+  Array.from({ length: count }, (_, ordinal) => ({
+    ordinal,
+    name: `param_${String(ordinal + 1)}`,
+    data_type: "/int",
+  }));
+const missingBindings = {
+  procedure: "0x1000",
+  address: null,
+  reason: "Parameter bindings for 0x2000 are unavailable or omitted",
+};
+const edgeKinds = (trace: { edges: readonly { kind: string }[] }) =>
+  trace.edges.map(({ kind }) => kind);
+
+describe("native value parameter-list facts", () => {
+  it("binds no parameters to a callee whose signature fixes none", async () => {
+    const trace = await traced(
+      singleCallGraph({
+        parameterList: { basis: "signature", variadic: false },
+      }).port,
+      { procedure: "0x1000" },
+    );
+    expect(trace).toMatchObject({
+      traversal: { status: "complete" },
+      truncated: false,
+      unknowns: [],
+    });
+    expect(edgeKinds(trace)).toEqual(["call", "return-binding"]);
+  });
+
+  it.each([
+    {
+      label: "a decompiler-recovered empty list",
+      parameterList: { basis: "recovered", variadic: false },
+    },
+    {
+      label: "a variadic signature without fixed parameters",
+      parameterList: { basis: "signature", variadic: true },
+    },
+    {
+      label: "a variadic recovered list",
+      parameterList: { basis: "recovered", variadic: true },
+    },
+    {
+      label: "parameter-list facts omitted by older Evidence",
+      parameterList: "unreported",
+    },
+  ] as const)(
+    "keeps missing bindings unknown for $label",
+    async ({ parameterList }) => {
+      const trace = await traced(singleCallGraph({ parameterList }).port, {
+        procedure: "0x1000",
+      });
+      expect(trace).toMatchObject({
+        traversal: { status: "complete" },
+        unknowns: [missingBindings],
+      });
+      expect(edgeKinds(trace)).toEqual(["call", "return-binding"]);
+    },
+  );
+
+  it("keeps missing bindings unknown when the zero-parameter callee is not analyzed", async () => {
+    const graph = singleCallGraph({
+      parameterList: { basis: "signature", variadic: false },
+    });
+    expect(
+      await traced(graph.port, { procedure: "0x1000", max_depth: 0 }),
+    ).toMatchObject({
+      traversal: { status: "truncated", reasons: ["max_depth"] },
+      unknowns: [
+        {
+          procedure: "0x1000",
+          address: "0x1004",
+          reason: "Call depth budget reached",
+        },
+        missingBindings,
+      ],
+    });
+    expect(graph.analyzed).toEqual(["0x1000"]);
+  });
+
+  it("keeps missing bindings unknown when the provider has no API boundary", async () => {
+    const graph = singleCallGraph({
+      parameterList: { basis: "signature", variadic: false },
+    });
+    const port: AnalysisOperationPort = {
+      execute: async (operation, parameters, options) => {
+        const execution = await graph.port.execute(
+          operation,
+          parameters,
+          options,
+        );
+        if (!execution.ok || parameters.procedure !== "0x2000")
+          return execution;
+        const dossier = functionDossierSchema.parse(execution.value.result);
+        dossier.native_api = null;
+        return ok({
+          ...execution.value,
+          result: jsonValueSchema.parse(dossier),
+        });
+      },
+    };
+    expect(await traced(port, { procedure: "0x1000" })).toMatchObject({
+      unknowns: [missingBindings],
+    });
+  });
+
+  it("binds every argument of a fixed signature and names one the call omits", async () => {
+    const callee = {
+      parameters: parameterFacts(2),
+      parameterList: { basis: "signature", variadic: false },
+    } as const;
+    const complete = await traced(singleCallGraph(callee, 2).port, {
+      procedure: "0x1000",
+    });
+    expect(complete).toMatchObject({ unknowns: [] });
+    expect(
+      complete.edges
+        .filter(({ kind }) => kind === "argument-binding")
+        .map(({ target, input_index }) => ({ target, input_index })),
+    ).toEqual([
+      { target: "0x2000/parameter:0", input_index: 1 },
+      { target: "0x2000/parameter:1", input_index: 2 },
+    ]);
+
+    const partial = await traced(singleCallGraph(callee, 1).port, {
+      procedure: "0x1000",
+    });
+    expect(partial).toMatchObject({
+      unknowns: [
+        {
+          procedure: "0x1000",
+          address: null,
+          reason: "Argument 1 for 0x2000 was not recovered",
+        },
+      ],
+    });
+    expect(edgeKinds(partial)).toEqual([
+      "call",
+      "argument-binding",
+      "return-binding",
+    ]);
   });
 });

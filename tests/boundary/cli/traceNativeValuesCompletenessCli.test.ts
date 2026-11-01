@@ -11,6 +11,9 @@ import {
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
 import {
+  pcodeOperation,
+  pcodeScalar,
+  staticValueGraph,
   valueTraceDiamond,
   valueTraceProvider,
 } from "../../../src/application/native/NativeValueTrace.fixture.js";
@@ -34,8 +37,11 @@ const effects = {
 };
 
 /** One-shot CLI analysis over the shared trace with a simulated provider. */
-const traceCli = async () => {
-  const graph = valueTraceDiamond({ sessionSubject: true });
+const traceCli = async (
+  graph: Pick<ReturnType<typeof staticValueGraph>, "port"> = valueTraceDiamond({
+    sessionSubject: true,
+  }),
+) => {
   const directory = await createTestTempDirectory("rea-value-trace-cli-");
   const path = join(directory, "fixture.hop");
   await writeFile(path, "synthetic analysis database");
@@ -133,5 +139,50 @@ it("reports the CLI last page and its observed node budget separately", async ()
     procedure: "0x3000",
     address: null,
     reason: "Node budget reached",
+  });
+});
+
+it("reports CLI missing bindings only for callees without a fixed empty parameter list", async () => {
+  // 0x1000 calls 0x2000, whose signature fixes no parameters, and 0x3000,
+  // whose empty list was recovered from uses; neither call passes arguments.
+  const zeroArgumentCall = (id: string, address: string) => ({
+    ...pcodeOperation(id, address, "CALL"),
+    inputs: [pcodeScalar],
+  });
+  const trace = await traceCli(
+    staticValueGraph(
+      {
+        "0x1000": {
+          operations: [
+            zeroArgumentCall("call-fixed", "0x1004"),
+            zeroArgumentCall("call-recovered", "0x1008"),
+          ],
+        },
+        "0x2000": {
+          operations: [pcodeOperation("return", "0x2004", "RETURN")],
+          parameterList: { basis: "signature", variadic: false },
+        },
+        "0x3000": {
+          operations: [pcodeOperation("return", "0x3004", "RETURN")],
+          parameterList: { basis: "recovered", variadic: false },
+        },
+      },
+      {
+        "0x1004": [{ destination: "0x2000", status: "direct" }],
+        "0x1008": [{ destination: "0x3000", status: "direct" }],
+      },
+      { sessionSubject: true },
+    ),
+  );
+  expect(await trace(["--json"])).toMatchObject({
+    traversal: { status: "complete" },
+    truncated: false,
+    unknowns: [
+      {
+        procedure: "0x1000",
+        address: null,
+        reason: "Parameter bindings for 0x3000 are unavailable or omitted",
+      },
+    ],
   });
 });

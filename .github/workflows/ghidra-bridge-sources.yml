@@ -95,3 +95,30 @@ jobs:
           decode cortex ARM:LE:32:Cortex mrs/4/msp bx/2/lr
           decode v8m ARM:LE:32:v8-m mrs/4/msplim bx/2/lr
           decode xtensa Xtensa:LE:32:default entry/3/a1 retw.n/2
+      # Authored void, variadic and one-parameter signatures fix Ghidra's
+      # HighFunction inputs; default signatures are recovered from uses. Only
+      # the signatures are authored. The source-owned x86-64 bytes are never
+      # executed.
+      - name: Distinguish fixed from recovered HighFunction parameter lists
+        shell: bash
+        run: |
+          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          export JAVA_HOME="${!java_home_variable}"
+          probe_root="${RUNNER_TEMP}/rea-parameter-list"
+          mkdir -p "${probe_root}/project"
+          {
+            printf '\270\001\000\000\000\303\314\314' # 0x1000: mov eax, 1; ret (default)
+            printf '\270\001\000\000\000\303\314\314' # 0x1008: int f(void)
+            printf '\270\001\000\000\000\303\314\314' # 0x1010: int f(...)
+            printf '\270\001\000\000\000\303\314\314' # 0x1018: int f(int x)
+            printf '\215\004\017\303\314\314\314\314' # 0x1020: lea eax, [rdi + rcx]; ret (default)
+          } > "${probe_root}/parameter-list.bin"
+          test "$(wc -c < "${probe_root}/parameter-list.bin")" -eq 40
+          timeout 180s "${GHIDRA_INSTALL_DIR}/support/analyzeHeadless" "${probe_root}/project" ParameterList \
+            -import "${probe_root}/parameter-list.bin" -loader BinaryLoader -loader-baseAddr 0x1000 \
+            -processor x86:LE:64:default -noanalysis -readOnly -deleteProject \
+            -scriptPath "${GITHUB_WORKSPACE}/tests/conformance/ghidra;${GITHUB_WORKSPACE}/bridge/ghidra" \
+            -postScript ReaParameterListProbe.java "${GITHUB_WORKSPACE}/bridge/ghidra" \
+            > "${probe_root}/output.log" 2>&1 || { cat "${probe_root}/output.log"; exit 1; }
+          cat "${probe_root}/output.log"
+          grep -F 'REA_PARAMETER_LIST_OK default=recovered void=signature varargs=variadic one=signature used=recovered' "${probe_root}/output.log"
