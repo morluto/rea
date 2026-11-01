@@ -25,18 +25,18 @@ declaration. It never infers an ABI from the family name. Other keys, including
 Provider selection returns the specific unsupported constraint rather than
 guessing a compatible profile:
 
-| Declaration                                                                        | Outcome                                                                     |
-| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Little-endian ELF32 `ET_EXEC`, known `e_flags`, `ABI=0` (windowed)                 | admitted, `Xtensa:LE:32:default` + `default`                                |
-| ELF64                                                                              | refused; Ghidra 12.1.4 ships 32-bit Xtensa languages only                   |
-| Big-endian                                                                         | refused; big-endian cores need separate verification                        |
-| `ET_REL`, `ET_DYN`, other `e_type`                                                 | refused; the reason names relocatable, shared, or the numeric `e_type`      |
-| `e_flags` bits outside `EF_XTENSA_MACH` (0xf), `XT_INSN` (0x100), `XT_LIT` (0x200) | refused with the offending bits named                                       |
-| Non-zero `EF_XTENSA_MACH`                                                          | refused; binutils defines only `E_XTENSA_MACH` (0) and rejects other values |
-| `ABI=1` (call0), as ESP8266 builds declare                                         | refused; call0 needs its own calling-convention selection and verification  |
-| Another `ABI=` value                                                               | refused with the declared value                                             |
-| No `.xtensa.info`, or no `ABI=` key                                                | refused; the windowed ABI is not inferred                                   |
-| Unreadable or malformed `.xtensa.info`                                             | refused with the reason, for example no section table or a malformed note   |
+| Declaration                                                                        | Outcome                                                                                         |
+| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Little-endian ELF32 `ET_EXEC`, known `e_flags`, `ABI=0` (windowed)                 | admitted, `Xtensa:LE:32:default` + `default`                                                    |
+| ELF64                                                                              | refused; Ghidra 12.1.4 ships 32-bit Xtensa languages only                                       |
+| Big-endian                                                                         | refused; big-endian cores need separate verification                                            |
+| `ET_REL`, `ET_DYN`, other `e_type`                                                 | refused; the reason names relocatable, shared, or the numeric `e_type`                          |
+| `e_flags` bits outside `EF_XTENSA_MACH` (0xf), `XT_INSN` (0x100), `XT_LIT` (0x200) | refused with the offending bits named                                                           |
+| Non-zero `EF_XTENSA_MACH`                                                          | refused; binutils defines only `E_XTENSA_MACH` (0) and rejects other values                     |
+| `ABI=1` (call0), as ESP8266 builds declare                                         | refused; call0 needs its own calling-convention selection and verification                      |
+| Another `ABI=` value                                                               | refused with the declared value                                                                 |
+| No `.xtensa.info`, or no `ABI=` key                                                | refused; the windowed ABI is not inferred                                                       |
+| Unreadable or malformed `.xtensa.info`                                             | refused with the reason, for example no section table, a compressed section or a malformed note |
 
 ESP-IDF builds for ESP32, ESP32-S2 and ESP32-S3 declare `e_flags` 0x300 and
 `ABI=0`. The header does not identify the core configuration, so this lane cannot

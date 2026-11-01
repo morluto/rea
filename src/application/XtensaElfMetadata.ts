@@ -14,6 +14,8 @@ import {
 } from "../native/metadata/NativeSectionDirectory.js";
 
 const SHT_NOTE = 7;
+/** Compressed storage holds a compression header and payload, not notes. */
+const SHF_COMPRESSED = 0x800n;
 
 const unavailable = (reason: string): XtensaAbiDeclaration => ({
   status: "unavailable",
@@ -85,6 +87,10 @@ export const readXtensaElfAbi = async (
     return unavailable("More than one section is named .xtensa.info.");
   if (info.type !== SHT_NOTE)
     return unavailable(".xtensa.info is not an SHT_NOTE section.");
+  if ((info.flags & SHF_COMPRESSED) !== 0n)
+    return unavailable(
+      ".xtensa.info is compressed (SHF_COMPRESSED); REA reads its note only from uncompressed section bytes.",
+    );
   // A validated SHT_NOTE extent lies inside the file, so its size is exact.
   if (info.size > BigInt(XTENSA_INFO_MAX_BYTES))
     return {

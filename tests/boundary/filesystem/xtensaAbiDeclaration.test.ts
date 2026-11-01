@@ -142,6 +142,17 @@ describe("Xtensa ELF target resolution", () => {
       "not an SHT_NOTE section",
     ],
     [
+      "a compressed .xtensa.info",
+      (() => {
+        // SHF_COMPRESSED in sh_flags: these bytes would be a compression
+        // header and payload, although they still read as a windowed note.
+        const bytes = xtensaElf();
+        bytes.writeUInt32LE(0x800, NOTE_SECTION + 8);
+        return bytes;
+      })(),
+      ".xtensa.info is compressed",
+    ],
+    [
       "an unreadable section name",
       (() => {
         const bytes = xtensaElf();
