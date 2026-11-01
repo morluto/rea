@@ -25,6 +25,13 @@ import {
 import { selectViewRows } from "./selectViewRows.js";
 
 const OPERATION = "trace_feature" as const;
+
+/** Every view states that retained rows are not complete discovery. */
+export const NATIVE_TRACE_COVERAGE_UNKNOWN =
+  "Counts and pages describe the provider-reported matches and references retained by this trace, not complete discovery. A missing row does not establish an absent reference.";
+/** Every view of a capped trace carries the provider's reference cap. */
+export const NATIVE_TRACE_CAP_UNKNOWN =
+  "truncated is true: the provider reported a reference cap, so references beyond it were not observed.";
 const ownerSchema = z.enum(["found", "not-found", "unavailable"]);
 const page = {
   kind: z.literal("native-trace"),
@@ -32,59 +39,81 @@ const page = {
   limit: z.int().positive().default(64),
 };
 
+const referencesRequestSchema = z.strictObject({
+  ...page,
+  collection: z.literal("references"),
+  where: z
+    .strictObject({
+      target_addresses: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exact match addresses as recorded; no address normalization. Omitted selects all; [] selects none.",
+        ),
+      owners: z
+        .array(ownerSchema)
+        .optional()
+        .describe(
+          "Containing-procedure outcome: found, not-found (outside segments or no procedure) or unavailable (the provider could not resolve ownership).",
+        ),
+    })
+    .default({}),
+});
+const matchesRequestSchema = z.strictObject({
+  ...page,
+  collection: z.literal("matches"),
+  where: z
+    .strictObject({
+      types: z.array(z.enum(["string", "procedure"])).optional(),
+    })
+    .default({}),
+});
+const unknownsRequestSchema = z.strictObject({
+  ...page,
+  collection: z.literal("residual_unknowns"),
+});
+
 /** Page one retained collection of a completed literal feature trace. */
 export const nativeTraceViewRequestSchema = z.discriminatedUnion("collection", [
-  z.strictObject({
-    ...page,
-    collection: z.literal("references"),
-    where: z
-      .strictObject({
-        target_addresses: z
-          .array(z.string())
-          .optional()
-          .describe(
-            "Exact match addresses as recorded; no address normalization. Omitted selects all; [] selects none.",
-          ),
-        owners: z
-          .array(ownerSchema)
-          .optional()
-          .describe(
-            "Containing-procedure outcome: found, not-found (outside segments or no procedure) or unavailable (the provider could not resolve ownership).",
-          ),
-      })
-      .default({}),
-  }),
-  z.strictObject({
-    ...page,
-    collection: z.literal("matches"),
-    where: z
-      .strictObject({
-        types: z.array(z.enum(["string", "procedure"])).optional(),
-      })
-      .default({}),
-  }),
-  z.strictObject({ ...page, collection: z.literal("residual_unknowns") }),
+  referencesRequestSchema,
+  matchesRequestSchema,
+  unknownsRequestSchema,
 ]);
 type NativeTraceViewRequest = z.output<typeof nativeTraceViewRequestSchema>;
 
 const sourceIndex = z.int().nonnegative();
-/** source_index addresses the complete retained array, so duplicates stay distinct. */
-export const nativeTraceViewItemsSchema = z.union([
-  z.array(
-    z.strictObject({
-      source_index: sourceIndex,
-      owner: ownerSchema,
-      reference: literalFeatureReferenceSchema,
-    }),
-  ),
-  z.array(
-    z.strictObject({
-      source_index: sourceIndex,
-      match: literalFeatureMatchSchema,
-    }),
-  ),
-  z.array(z.strictObject({ source_index: sourceIndex, unknown: z.string() })),
-]);
+/**
+ * Each collection's request bound to its own rows, so a reply cannot pair one
+ * collection with another's rows. source_index addresses the complete retained
+ * array, so duplicates stay distinct.
+ */
+export const nativeTraceViewCollections = {
+  references: {
+    request: referencesRequestSchema,
+    rows: z.array(
+      z.strictObject({
+        source_index: sourceIndex,
+        owner: ownerSchema,
+        reference: literalFeatureReferenceSchema,
+      }),
+    ),
+  },
+  matches: {
+    request: matchesRequestSchema,
+    rows: z.array(
+      z.strictObject({
+        source_index: sourceIndex,
+        match: literalFeatureMatchSchema,
+      }),
+    ),
+  },
+  residual_unknowns: {
+    request: unknownsRequestSchema,
+    rows: z.array(
+      z.strictObject({ source_index: sourceIndex, unknown: z.string() }),
+    ),
+  },
+} as const;
 
 const counts = z.int().nonnegative();
 /** Trace identity, provider outcome and counts repeated with every page. */
@@ -156,12 +185,8 @@ export const projectNativeTraceView = (
     // Residual unknowns can number one per reference; page them instead of
     // repeating every text in each view.
     unknowns: [
-      "Counts and pages describe the provider-reported matches and references retained by this trace, not complete discovery. A missing row does not establish an absent reference.",
-      ...(trace.truncated
-        ? [
-            "truncated is true: the provider reported a reference cap, so references beyond it were not observed.",
-          ]
-        : []),
+      NATIVE_TRACE_COVERAGE_UNKNOWN,
+      ...(trace.truncated ? [NATIVE_TRACE_CAP_UNKNOWN] : []),
       ...(trace.residual_unknowns.length > 0
         ? [
             `${String(trace.residual_unknowns.length)} residual unknowns remain in the parent trace; page them with collection residual_unknowns.`,
@@ -196,44 +221,61 @@ export const projectNativeTraceView = (
       coverage: completeWithinViewCoverage(1, 1),
     });
   }
-  const rows = (() => {
-    if (view.collection === "residual_unknowns")
-      return selectViewRows(
-        trace.residual_unknowns,
-        view,
-        () => true,
-        (unknown, source_index) => ({ source_index, unknown }),
-      );
-    if (view.collection === "matches") {
-      const types = selected(view.where.types);
-      return selectViewRows(
-        trace.matches,
-        view,
-        (match) => types === undefined || types.has(match.type),
-        (match, source_index) => ({ source_index, match }),
-      );
-    }
-    const targets = selected(view.where.target_addresses);
-    const owners = selected(view.where.owners);
-    return selectViewRows(
-      trace.references,
-      view,
-      (reference) =>
-        (targets === undefined || targets.has(reference.target_address)) &&
-        (owners === undefined || owners.has(literalReferenceOwner(reference))),
-      (reference, source_index) => ({
-        source_index,
-        owner: literalReferenceOwner(reference),
-        reference,
-      }),
-    );
-  })();
-  return ok({
+  const pageOf = <View extends NativeTraceViewRequest, Row>(
+    selection: View,
+    rows: { readonly rows: Row[]; readonly total: number },
+  ) => ({
     ...shared,
     ...context,
     kind: "native-trace" as const,
-    view,
+    view: selection,
     items: rows.rows,
-    coverage: pageViewCoverage(view.offset, rows.rows.length, rows.total),
+    coverage: pageViewCoverage(selection.offset, rows.rows.length, rows.total),
   });
+  if (view.collection === "residual_unknowns")
+    return ok(
+      pageOf(
+        view,
+        selectViewRows(
+          trace.residual_unknowns,
+          view,
+          () => true,
+          (unknown, source_index) => ({ source_index, unknown }),
+        ),
+      ),
+    );
+  if (view.collection === "matches") {
+    const types = selected(view.where.types);
+    return ok(
+      pageOf(
+        view,
+        selectViewRows(
+          trace.matches,
+          view,
+          (match) => types === undefined || types.has(match.type),
+          (match, source_index) => ({ source_index, match }),
+        ),
+      ),
+    );
+  }
+  const targets = selected(view.where.target_addresses);
+  const owners = selected(view.where.owners);
+  return ok(
+    pageOf(
+      view,
+      selectViewRows(
+        trace.references,
+        view,
+        (reference) =>
+          (targets === undefined || targets.has(reference.target_address)) &&
+          (owners === undefined ||
+            owners.has(literalReferenceOwner(reference))),
+        (reference, source_index) => ({
+          source_index,
+          owner: literalReferenceOwner(reference),
+          reference,
+        }),
+      ),
+    ),
+  );
 };

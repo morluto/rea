@@ -17,6 +17,10 @@ import {
 import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import {
+  NATIVE_TRACE_CAP_UNKNOWN,
+  NATIVE_TRACE_COVERAGE_UNKNOWN,
+} from "../../../src/domain/analysisView/nativeTraceView.js";
 import { ghidraFunctionIdentity } from "../../../src/domain/ghidraValues.fixture.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -41,6 +45,8 @@ const NOT_IN_PROCEDURE = new Set(["0x22"]);
 
 const connect = async (
   options: {
+    /** The provider reports a reference cap for the first string match. */
+    readonly capped?: boolean;
     readonly profile?: "full" | "compact";
     readonly budget?: number;
   } = {},
@@ -65,7 +71,11 @@ const connect = async (
           );
         case "xrefs":
           return ok(
-            createAnalysisExecution([...(SOURCES[address] ?? [])], PROVIDER),
+            createAnalysisExecution([...(SOURCES[address] ?? [])], PROVIDER, {
+              ...(options.capped === true && address === "0x10"
+                ? { referencesTruncated: true }
+                : {}),
+            }),
           );
         case "resolve_containing_procedure":
           if (UNAVAILABLE.has(address))
@@ -385,4 +395,82 @@ it("refuses summary delivery before analysis when the server retains no Evidence
     ),
   ).toMatchObject({ error: { code: "capability_unavailable" } });
   expect(calls).toEqual([]);
+});
+
+it("keeps a provider reference cap on every view of the trace", async () => {
+  const { client, call } = await connect({ capped: true });
+  const summary = await call("trace_feature", {
+    query: "license",
+    detail: "summary",
+  });
+  const parentId = z
+    .object({ parent_evidence_id: z.string() })
+    .parse(summary.evidence.normalized_result).parent_evidence_id;
+  const source = { kind: "retained-evidence", evidence_id: parentId };
+  const views = [
+    summary.evidence.normalized_result,
+    ...(await Promise.all(
+      [
+        { kind: "summary" },
+        { kind: "native-trace", collection: "references", limit: 1 },
+        {
+          kind: "native-trace",
+          collection: "references",
+          where: { owners: ["unavailable"] },
+        },
+        { kind: "native-trace", collection: "matches", offset: 99 },
+        { kind: "native-trace", collection: "residual_unknowns" },
+      ].map(
+        async (view) =>
+          (await call("inspect_analysis_view", { source, view })).evidence
+            .normalized_result,
+      ),
+    )),
+  ];
+  for (const view of views) {
+    const parsed = z
+      .object({
+        unknowns: z.array(z.string()),
+        truncated: z.boolean().optional(),
+        summary: z.object({ truncated: z.boolean() }).optional(),
+      })
+      .parse(view);
+    expect(parsed.truncated ?? parsed.summary?.truncated).toBe(true);
+    expect(parsed.unknowns).toEqual(
+      expect.arrayContaining([
+        NATIVE_TRACE_COVERAGE_UNKNOWN,
+        NATIVE_TRACE_CAP_UNKNOWN,
+      ]),
+    );
+  }
+
+  // The advertised page contract binds each collection to its own rows.
+  const page = await call("inspect_analysis_view", {
+    source,
+    view: { kind: "native-trace", collection: "references", limit: 1 },
+  });
+  const matches = await call("inspect_analysis_view", {
+    source,
+    view: { kind: "native-trace", collection: "matches", limit: 1 },
+  });
+  const mixed = {
+    ...jsonObjectSchema.parse(page.evidence.normalized_result),
+    items: (matches.evidence.normalized_result as { items: unknown }).items,
+  };
+  expect(analysisViewResultSchema.safeParse(mixed).success).toBe(false);
+  const inspectTool = (await client.listTools()).tools.find(
+    ({ name }) => name === "inspect_analysis_view",
+  )!;
+  const advertised: Record<string, unknown> = inspectTool.outputSchema!;
+  const ajv = schemaValidation.assertions;
+  expect(ajv.validate(advertised, page.result.structuredContent)).toBe(true);
+  expect(
+    ajv.validate(advertised, {
+      ...jsonObjectSchema.parse(page.result.structuredContent),
+      normalized_result: mixed,
+    }),
+  ).toBe(false);
+  expect(
+    analysisViewResultSchema.safeParse(page.evidence.normalized_result).success,
+  ).toBe(true);
 });
