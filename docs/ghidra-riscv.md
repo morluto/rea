@@ -283,8 +283,10 @@ reservation an uninitialized overlay instead:
 - The file bytes and their offsets do not change. A new default-space block maps
   the code's file range, and the overlay maps no file bytes, so each file offset
   keeps one address.
-- The loader's symbols, functions and entry points move with the code. Ghidra
-  pins absolute ELF symbols such as `_text_start`; they keep their addresses.
+- The loader's symbols and functions move with the code, and so do the
+  references into it: its entry points and the loader's section-header
+  reference. Ghidra pins absolute ELF symbols such as `_text_start`; they keep
+  their addresses.
 - Labels in the reservation, such as `_flash_rodata_dummy_start`, move into its
   overlay. They mark no entry points, because the reservation holds no code.
 - Flash code therefore has its ELF address, for example `0x42002ab6` rather than

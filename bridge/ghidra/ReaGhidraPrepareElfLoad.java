@@ -11,6 +11,8 @@ import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.mem.MemoryBlockSourceInfo;
 import ghidra.program.model.symbol.Namespace;
+import ghidra.program.model.symbol.Reference;
+import ghidra.program.model.symbol.ReferenceManager;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolTable;
@@ -125,15 +127,10 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
         String reservationName = reservation.getName();
         String overlayName = code.getStart().getAddressSpace().getName();
         AddressSet old = range(code);
-        List<Address> codeEntries = entryPoints(code);
         List<Label> labels = new ArrayList<>();
-        List<Address> pinnedEntries = new ArrayList<>();
         for (Symbol symbol : symbols.getSymbols(range(reservation), SymbolType.LABEL, true)) {
             // Ghidra pins absolute ELF symbols: they keep their default-space address.
-            if (symbol.isPinned()) {
-                if (symbol.isExternalEntryPoint()) pinnedEntries.add(symbol.getAddress());
-                continue;
-            }
+            if (symbol.isPinned()) continue;
             labels.add(new Label(
                 symbol.getName(),
                 symbol.getAddress().getOffset(),
@@ -145,6 +142,7 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
         boolean reservationWrite = reservation.isWrite();
         String reservationComment = reservation.getComment();
         String reservationSource = reservation.getSourceName();
+        // Removing a block keeps the references into its range, entry points included.
         memory.removeBlock(reservation, monitor);
         MemoryBlock canonical = memory.createInitializedBlock(
             codeName + ".rea", space.getAddress(code.getStart().getOffset()), file, fileOffset, size, false
@@ -155,10 +153,29 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
         canonical.setSourceName(code.getSourceName());
         ((ProgramDB) currentProgram).moveAddressRange(code.getStart(), canonical.getStart(), size, monitor);
         // The move takes symbols, functions and the references from the range, not the references
-        // into it. Entry points are such references.
-        for (Address entry : codeEntries) symbols.removeExternalEntryPoint(entry);
+        // into it, such as entry points and the loader's section-header reference: retarget them.
+        ReferenceManager references = currentProgram.getReferenceManager();
+        List<Reference> into = new ArrayList<>();
+        for (Address target : references.getReferenceDestinationIterator(old, true)) {
+            for (Reference reference : references.getReferencesTo(target)) into.add(reference);
+        }
+        for (Reference reference : into) {
+            Address target = space.getAddress(reference.getToAddress().getOffset());
+            if (reference.isEntryPointReference()) {
+                symbols.removeExternalEntryPoint(reference.getToAddress());
+                symbols.addExternalEntryPoint(target);
+            }
+            else if (reference.isMemoryReference() && !reference.isOffsetReference() &&
+                !reference.isShiftedReference()) {
+                references.delete(reference);
+                references.setPrimary(references.addMemoryReference(reference.getFromAddress(), target,
+                    reference.getReferenceType(), reference.getSource(), reference.getOperandIndex()),
+                    reference.isPrimary());
+            }
+        }
+        // Any other kind of reference stays behind, as would a symbol the move missed: refuse both.
         boolean symbolsLeft = symbols.getPrimarySymbolIterator(old, true).hasNext();
-        if (symbolsLeft || currentProgram.getReferenceManager().getReferenceDestinationIterator(old, true).hasNext()) {
+        if (symbolsLeft || references.getReferenceDestinationIterator(old, true).hasNext()) {
             refuse("Ghidra left " + (symbolsLeft ? "symbols" : "references") + " in overlay space " + overlayName +
                 " after moving the committed " + committed);
             return null;
@@ -177,8 +194,6 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
         if (reservationSource != null) displaced.setSourceName(reservationSource);
         currentProgram.renameOverlaySpace(overlayName, reservationName);
         canonical.setName(codeName);
-        for (Address entry : codeEntries) symbols.addExternalEntryPoint(space.getAddress(entry.getOffset()));
-        for (Address entry : pinnedEntries) symbols.addExternalEntryPoint(entry);
         AddressSpace overlay = displaced.getStart().getAddressSpace();
         // The reservation holds no code, so its labels mark no entry points.
         for (Label label : labels) {
