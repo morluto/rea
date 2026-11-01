@@ -181,7 +181,8 @@ export const summarizeEvidenceBundle = (
 /** Default page size for complete record selection; each record may be large. */
 export const EVIDENCE_RECORD_SELECTION_LIMIT = 8;
 
-const RECORD_SELECTION_LIMITATIONS = [
+/** Labels every record selection as historical and as distinct from an importable bundle. */
+export const EVIDENCE_RECORD_SELECTION_LIMITATIONS = [
   "Selected records are retained historical observations; they do not establish current live provider or database state.",
   "A record selection is not an Evidence bundle: it omits manifests and residual unknowns and cannot be imported. Use export_evidence_bundle for a portable bundle.",
 ] as const;
@@ -239,6 +240,6 @@ export const selectEvidenceRecords = (
     next_offset: end < matching ? end : null,
     records,
     missing_evidence_links: uniqueSorted(missing),
-    limitations: [...RECORD_SELECTION_LIMITATIONS],
+    limitations: [...EVIDENCE_RECORD_SELECTION_LIMITATIONS],
   };
 };

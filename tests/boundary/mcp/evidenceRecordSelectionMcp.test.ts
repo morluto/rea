@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { MCP_TRANSPORT_EVIDENCE_RECORDS } from "../../../src/domain/analysisErrorPresentation.js";
 import {
   EVIDENCE_RECORD_SELECTION_LIMIT,
+  EVIDENCE_RECORD_SELECTION_LIMITATIONS,
   evidenceRecordSelectionSchema,
 } from "../../../src/domain/evidenceRecordSummary.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
@@ -121,9 +123,10 @@ it.each(["full", "compact"] as const)(
     expect(parseEvidence(exact.selection.records[0]).evidence_id).toBe(
       annotatedA.evidence_id,
     );
-    expect(exact.selection.limitations.join(" ")).toContain(
-      "do not establish current live",
-    );
+    // Historical and non-bundle labels come from their owning constant.
+    expect(exact.selection.limitations).toEqual([
+      ...EVIDENCE_RECORD_SELECTION_LIMITATIONS,
+    ]);
 
     const { tools } = await client.listTools();
     const tool = tools.find(({ name }) => name === "get_evidence_bundle")!;
@@ -260,8 +263,20 @@ it("guides an oversized record page toward a smaller selection", async () => {
   });
   const failed = parseMcpToolError(await reply({ detail: "records" })).error;
   expect(failed.code).toBe("resource_constraint");
-  expect(failed.remediation?.action).toContain(
-    "detail: records, a smaller limit",
+  // Guidance comes from its owning value; the limit facts are checked separately.
+  expect(failed.remediation?.action).toContain(MCP_TRANSPORT_EVIDENCE_RECORDS);
+  const limits = z
+    .object({
+      details: z.object({
+        reported_limits: z.object({
+          result_budget_bytes: z.number(),
+          response_bytes_at_least: z.number(),
+        }),
+      }),
+    })
+    .parse(failed).details.reported_limits;
+  expect(limits.response_bytes_at_least).toBeGreaterThan(
+    limits.result_budget_bytes,
   );
   // An exact selection that excludes the large record still fits.
   expect(
