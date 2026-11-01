@@ -38,6 +38,7 @@ import {
   amdString,
   readAmdMetadata,
 } from "./AmdGpuMetadata.js";
+import { appendAll } from "../domain/arrayAppend.js";
 const sectionBytes = (
   source: GpuSource,
   section: NativeSection,
@@ -351,7 +352,7 @@ const cudaKernels = async (
         kernel.parameter_bytes = decoded.parameter_bytes;
         kernel.parameter_count = decoded.parameter_count;
         kernel.parameters = decoded.parameters;
-        kernel.limitations.push(...decoded.limitations);
+        appendAll(kernel.limitations, decoded.limitations);
       } else {
         complete = false;
         kernel.limitations.push(

@@ -32,6 +32,7 @@ import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
 } from "./javascriptSemanticAliasSelections.js";
+import { appendAll } from "../arrayAppend.js";
 
 export interface SemanticCapturedSelection {
   readonly at: t.Node;
@@ -143,8 +144,9 @@ const hasFreshProjectedReceiver = (
       state.valueResourceLimits.add("alias-selections");
       return false;
     }
-    pending.push(
-      ...sources.map((source) => ({
+    appendAll(
+      pending,
+      sources.map((source) => ({
         node: source.node,
         path: [...source.path, ...remaining],
       })),

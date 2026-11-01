@@ -11,6 +11,7 @@ import {
   type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
 import { retryRegularFileCleanupFailures } from "./RegularFileRead.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 /** Completion and exact staging owner retained when publication cleanup fails. */
 export class ClientConfigurationPublicationFailure<
@@ -72,7 +73,7 @@ export const retryClientConfigurationCleanup = async (
     let nested: unknown;
     if (current instanceof RegularFileCleanupFailure) {
       const retried = await retryRegularFileCleanupFailures(current, resources);
-      failures.push(...retried.failures);
+      appendAll(failures, retried.failures);
       for (const lease of retried.cleanupLeases) cleanupLeases.add(lease);
       if (retried.cleanup !== undefined) observations.push(retried.cleanup);
       primary = retried.primary;

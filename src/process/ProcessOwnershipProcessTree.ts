@@ -1,4 +1,5 @@
 import type { ProcessTableEntry } from "./ProcessOwnership.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 /** Exclude process-table entries that the operating system has already reaped. */
 export const liveProcesses = (
@@ -24,7 +25,7 @@ export const descendantsOf = (
     if (visited.has(process.pid)) continue;
     visited.add(process.pid);
     descendants.push(process);
-    pending.push(...(childrenByParent.get(process.pid) ?? []));
+    appendAll(pending, childrenByParent.get(process.pid) ?? []);
   }
   return descendants;
 };

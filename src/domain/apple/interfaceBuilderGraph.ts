@@ -20,6 +20,7 @@ import {
   nativeInvestigationNodeSchema,
   nativeInvestigationTraceLimitsSchema,
 } from "../native/nativeInvestigationGraph.js";
+import { appendAll } from "../arrayAppend.js";
 
 /** One compiled Interface Builder document projected from ibtool output. */
 export const interfaceBuilderDocumentSchema = z.strictObject({
@@ -495,8 +496,9 @@ export const buildInterfaceBuilderAnalysis = (input: {
           : hierarchyTruncated
             ? "partial"
             : "complete";
-    numberLimitations.push(
-      ...(numbers?.limitations() ?? []).map(
+    appendAll(
+      numberLimitations,
+      (numbers?.limitations() ?? []).map(
         (note) => `${document.relativePath}: ${note}`,
       ),
     );

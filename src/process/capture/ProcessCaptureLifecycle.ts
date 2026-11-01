@@ -87,6 +87,7 @@ import type {
   TerminalFrame,
 } from "../../domain/process/processCapture.js";
 import { partialProcessCaptureObservationSchema } from "../../domain/process/processCapture.js";
+import { appendAll } from "../../domain/arrayAppend.js";
 interface TerminalExitOptions {
   readonly terminal: Pick<IPty, "onExit" | "kill">;
   readonly scenario: ProcessScenario;
@@ -1111,7 +1112,7 @@ const releaseCapturedProcessGroup = async (
   }> = [];
   try {
     const cleaned = await host.cleanupProcessGroup(ownership);
-    unverified.push(...(cleaned.unverified ?? []));
+    appendAll(unverified, cleaned.unverified ?? []);
     if (!cleaned.cleaned)
       outcome = { state: "unverified", reason: cleaned.reason };
   } catch (cause: unknown) {

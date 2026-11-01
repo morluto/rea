@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { appendAll } from "./arrayAppend.js";
 
 /**
  * An array schema's own constraints, such as a minimum length, without its
@@ -22,8 +23,9 @@ export function* parseElementSteps<Element extends z.ZodType>(
     const result = element.safeParse(value);
     if (result.success) parsed.push(result.data);
     else
-      issues.push(
-        ...result.error.issues.map((issue) => ({
+      appendAll(
+        issues,
+        result.error.issues.map((issue) => ({
           ...issue,
           path: [...path, index, ...issue.path],
         })),

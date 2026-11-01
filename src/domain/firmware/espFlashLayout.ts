@@ -19,6 +19,7 @@ import {
   type EspBootSelection,
   type EspOtaRecord,
 } from "./espOtaData.js";
+import { appendAll } from "../arrayAppend.js";
 
 /** Where the file's first byte sits in flash, and who said so. */
 export interface EspFlashOrigin {
@@ -224,9 +225,9 @@ export const planEspFlashLayout = (input: EspFlashPlanInput): EspFlashPlan => {
     // what the file lacks instead of a missing path.
     if (placed.fileOffset >= 0) regions.push(placed);
   }
-  limitations.push(...overlaps(regions));
+  appendAll(limitations, overlaps(regions));
   const boot = espBootPartitions(input.table.partitions);
-  limitations.push(...boot.limitations);
+  appendAll(limitations, boot.limitations);
   return {
     input,
     regions,

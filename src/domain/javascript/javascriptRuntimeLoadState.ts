@@ -12,6 +12,7 @@ import {
   mappedRuntimePaths,
   staticNodeRuntimeScope,
 } from "./javascriptRuntimeStaticCandidates.js";
+import { appendAll } from "../arrayAppend.js";
 
 export interface StaticLoadStateProjection {
   readonly states: readonly JavaScriptStaticLoadState[];
@@ -39,7 +40,7 @@ export const classifyStaticLoadStates = (
         reconciliationComplete: options.reconciliationComplete,
       },
     );
-    states.push(...projection.states);
+    appendAll(states, projection.states);
   }
   return { states, omittedStates: 0 };
 };

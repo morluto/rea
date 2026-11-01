@@ -32,6 +32,7 @@ import type {
   ProcessRunTokenObservation,
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 const responseSchema = z.strictObject({
   results: z.array(
@@ -561,7 +562,8 @@ export const createDarwinProcessRunTokenReader = (
         compilerArguments.push("-module-cache-path", moduleCachePath);
         compilerEnvironment.CLANG_MODULE_CACHE_PATH = moduleCachePath;
       }
-      compilerArguments.push(...sourceFiles, "-o", output);
+      appendAll(compilerArguments, sourceFiles);
+      compilerArguments.push("-o", output);
       try {
         await execFileOutput(compiler.executable, compilerArguments, {
           timeout: compilerTimeoutMs,

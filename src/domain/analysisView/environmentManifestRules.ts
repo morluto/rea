@@ -5,6 +5,7 @@ import {
   type SpellingSummary,
 } from "./environmentManifestSpelling.js";
 import type { RouteRule } from "./webNetworkRouteTemplates.js";
+import { appendAll } from "../arrayAppend.js";
 
 /** Opt-in template rules applied after the four exact format rules. */
 export const TEMPLATE_RULES = [
@@ -275,10 +276,17 @@ const mergeSiblings = (
   ];
 };
 
+/** Segment count of the longest group; groups are as many as the observed tools. */
+const longestParts = (groups: readonly ToolGroup[]): number => {
+  let longest = 0;
+  for (const group of groups) longest = Math.max(longest, group.parts.length);
+  return longest;
+};
+
 /** Merge groups that differ in exactly one identifier-like segment at index two or later. */
 const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
   let current = [...groups];
-  const longest = Math.max(0, ...current.map((group) => group.parts.length));
+  const longest = longestParts(current);
   for (let position = 2; position < longest; position += 1) {
     const buckets = new Map<string, ToolGroup[]>();
     const output: ToolGroup[] = [];
@@ -300,7 +308,7 @@ const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
       else bucket.push(group);
     }
     for (const bucket of buckets.values())
-      output.push(...mergeSiblings(bucket, position));
+      appendAll(output, mergeSiblings(bucket, position));
     current = output;
   }
   return current;
@@ -372,7 +380,7 @@ const mergePairBucket = (
 /** Merge groups that differ in two adjacent literals after a plural literal, such as `/repos/{owner}/{repo}/…`. */
 const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
   let current = [...groups];
-  const longest = Math.max(0, ...current.map((group) => group.parts.length));
+  const longest = longestParts(current);
   for (let position = 2; position + 1 < longest; position += 1) {
     const buckets = new Map<string, ToolGroup[]>();
     const output: ToolGroup[] = [];
@@ -394,7 +402,7 @@ const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
       else bucket.push(group);
     }
     for (const bucket of buckets.values())
-      output.push(...mergePairBucket(bucket, position));
+      appendAll(output, mergePairBucket(bucket, position));
     current = output;
   }
   return current;
@@ -489,7 +497,7 @@ const sharedShape = (bucket: readonly ToolGroup[]): ToolGroup => {
 /** Template literals at positions another tool templates by an opt-in rule after the same preceding parts, at any method or length. */
 const mergePrefixVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
   let current = [...groups];
-  const longest = Math.max(0, ...current.map((group) => group.parts.length));
+  const longest = longestParts(current);
   for (let position = 0; position < longest; position += 1) {
     const shared = sharedPositions(current, position);
     if (shared.size === 0) continue;

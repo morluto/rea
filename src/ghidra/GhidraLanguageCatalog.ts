@@ -9,6 +9,7 @@ import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 /** One language definition and the compiler specs it declares. */
 export interface GhidraLanguageDefinition {
@@ -125,12 +126,13 @@ export const readGhidraLanguageCatalog = (
       }
       for (const entry of entries.sort()) {
         if (!entry.endsWith(".ldefs")) continue;
-        definitions.push(
-          ...(await readLanguageDefinitionFile(
+        appendAll(
+          definitions,
+          await readLanguageDefinitionFile(
             join(directory, entry),
             resources,
             signal,
-          )),
+          ),
         );
       }
     }

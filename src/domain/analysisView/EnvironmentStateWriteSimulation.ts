@@ -914,9 +914,9 @@ export class EnvironmentStateWriteSimulation {
     readonly view: StateView;
   }): void {
     const ordinal = failed.record.ordinal;
-    const since = Math.min(
-      ...failed.keys.map((key) => this.#lastCheck.get(key) ?? -1),
-    );
+    let since = Infinity;
+    for (const key of failed.keys)
+      since = Math.min(since, this.#lastCheck.get(key) ?? -1);
     const blame = this.#blame.of({ ...failed, since });
     for (const name of blame.confirmed)
       this.#drafts.get(name)!.confirmed.push(ordinal);

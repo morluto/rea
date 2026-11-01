@@ -19,6 +19,7 @@ import {
   scenarioCommandTimeoutMs,
   withScenarioCommandDeadline,
 } from "./ScenarioCommandDeadline.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 const breakpointResponse = z.object({ breakpointId: z.string() });
 const scriptIdentifierResponse = z.object({ identifier: z.string() });
@@ -281,8 +282,9 @@ export class PlaywrightScenarioStorage {
   ): void {
     for (const { origin, entries } of blocks) {
       const seed = this.#seeds.get(origin) ?? { local: [], session: [] };
-      seed[kind].push(
-        ...entries.map(({ name, value }): [string, string] => [
+      appendAll(
+        seed[kind],
+        entries.map(({ name, value }): [string, string] => [
           name,
           secrets.value(value),
         ]),
@@ -553,7 +555,7 @@ export class PlaywrightScenarioStorage {
         if (origin !== undefined && origin !== "") return origin;
         break;
       }
-      pending.push(...(current.childFrames ?? []));
+      appendAll(pending, current.childFrames ?? []);
     }
     throw new Error(
       "The browser did not establish the private storage seed frame's security origin.",

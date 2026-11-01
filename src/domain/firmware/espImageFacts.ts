@@ -26,6 +26,7 @@ import {
   u32,
   type EspSignedContentDigests,
 } from "./espImageStructures.js";
+import { appendAll } from "../arrayAppend.js";
 
 const SIGNATURE_SLOTS = 3;
 
@@ -177,7 +178,7 @@ export const deriveEspImage = (observed: EspImageObservations): EspImage => {
   const segments = observed.segments.map((segment) =>
     segmentFacts(observed, segment, chip),
   );
-  limitations.push(...segmentLimitations(chipId, chip, segments));
+  appendAll(limitations, segmentLimitations(chipId, chip, segments));
   const truncated = truncation(observed, segments, limitations);
   const checksum = checksumFacts(observed, truncated, limitations);
   const appendedSha256 = digestFacts(observed, limitations);

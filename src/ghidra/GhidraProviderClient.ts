@@ -125,6 +125,7 @@ import {
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import { ghidraDolLanguage, ghidraDolSectionFile } from "./GhidraDolProfile.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 /** Production seam for exercising provider projection without a real process. */
 export type GhidraProviderClientFactory = (
@@ -153,6 +154,15 @@ interface GhidraExecutionMetadata {
   readonly locations?: readonly EvidenceLocation[];
   readonly relationshipCoverage?: RelationshipCoverage;
 }
+
+/** Replace a session limitation list with the outcome its handshake reported. */
+const replaceLimitations = (
+  target: string[],
+  reported: readonly string[],
+): void => {
+  target.length = 0;
+  appendAll(target, reported);
+};
 
 /** Build one AnalysisClient for an admitted Ghidra target and profile. */
 export const createGhidraProviderClient = (input: {
@@ -552,10 +562,9 @@ export const createGhidraProviderClient = (input: {
     info: GhidraSessionInfo,
   ): Promise<AnalysisError | undefined> => {
     if (target.format === "pe") {
-      pdbLimitations.splice(
-        0,
-        pdbLimitations.length,
-        ...ghidraPePdbLimitations(target, info.pdb),
+      replaceLimitations(
+        pdbLimitations,
+        ghidraPePdbLimitations(target, info.pdb),
       );
     }
     if (project !== undefined) {
@@ -595,34 +604,30 @@ export const createGhidraProviderClient = (input: {
               diagnostics: { reason: callingConventionReason },
             }));
       if (extensionFailure === undefined && info.analysis_seeds !== undefined)
-        seedLimitations.splice(
-          0,
-          seedLimitations.length,
-          ...ghidraSeedLimitations(seeds, info.analysis_seeds),
+        replaceLimitations(
+          seedLimitations,
+          ghidraSeedLimitations(seeds, info.analysis_seeds),
         );
       if (extensionFailure === undefined)
-        softFloatLimitations.splice(
-          0,
-          softFloatLimitations.length,
-          ...ghidraMipsSoftFloatLimitations(
+        replaceLimitations(
+          softFloatLimitations,
+          ghidraMipsSoftFloatLimitations(
             softFloat,
             info.mips_soft_float_storage,
           ),
         );
       if (extensionFailure === undefined)
-        riscvCallingConventionLimitations.splice(
-          0,
-          riscvCallingConventionLimitations.length,
-          ...ghidraRiscvCallingConventionLimitations(
+        replaceLimitations(
+          riscvCallingConventionLimitations,
+          ghidraRiscvCallingConventionLimitations(
             riscvCallingConvention,
             info.riscv_calling_convention,
           ),
         );
       if (extensionFailure === undefined)
-        disabledAnalyzerLimitations.splice(
-          0,
-          disabledAnalyzerLimitations.length,
-          ...ghidraDisabledAnalyzerLimitations(info.disabled_analyzers),
+        replaceLimitations(
+          disabledAnalyzerLimitations,
+          ghidraDisabledAnalyzerLimitations(info.disabled_analyzers),
         );
     }
     if (extensionFailure === undefined) return undefined;

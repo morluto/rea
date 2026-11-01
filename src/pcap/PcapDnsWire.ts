@@ -1,5 +1,6 @@
 import { isIPv4, isIPv6 } from "node:net";
 import { err, ok, type Result } from "../domain/result.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 interface DnsWireFailure {
   readonly kind: "invalid_dns_wire";
@@ -39,7 +40,7 @@ const fields = (source: unknown): Map<string, unknown[]> => {
           continue;
         const values = result.get(key) ?? [];
         if (key === "dns.id_raw") values.push(field);
-        else if (Array.isArray(field)) values.push(...field);
+        else if (Array.isArray(field)) appendAll(values, field);
         else values.push(field);
         result.set(key, values);
       }

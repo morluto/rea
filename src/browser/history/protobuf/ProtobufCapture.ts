@@ -37,6 +37,7 @@ import {
   type PreparedProtobufBody,
 } from "./ProtobufFraming.js";
 import type { ProtobufDecoding } from "../../../domain/protobufWire.js";
+import { appendAll } from "../../../domain/arrayAppend.js";
 
 const object = (
   value: JsonValue | undefined,
@@ -361,7 +362,7 @@ export const prepareCaptureProtobuf = async (
     selected_records: input.record_ordinals.length,
     inspected_records: 0,
   };
-  capture.limitations.push(...PROTOBUF_LIMITATIONS);
+  appendAll(capture.limitations, PROTOBUF_LIMITATIONS);
   let incomplete = false;
   const records: { record: WebNetworkCaptureRecord; bodies: PreparedBody[] }[] =
     [];

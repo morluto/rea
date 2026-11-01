@@ -16,6 +16,7 @@ import {
   nativeCallClassificationSchema,
   type NativeCallReference,
 } from "../../domain/native/nativeCallReference.js";
+import { appendAll } from "../../domain/arrayAppend.js";
 
 /** Detailed or partial observations and the untyped fallback share one owner. */
 export const NATIVE_CALL_ROUTE_SOURCES = {
@@ -140,8 +141,9 @@ export const readNativeCallRoutes = async (
     outcome,
   });
   if (execution.ok) {
-    limitations.push(
-      ...limitationsFrom(
+    appendAll(
+      limitations,
+      limitationsFrom(
         NATIVE_CALL_ROUTE_SOURCES.references,
         execution.value.provider,
         execution.value.limitations,
@@ -168,14 +170,15 @@ export const readNativeCallRoutes = async (
     // Missing detailed reference flags do not invalidate observed targetless
     // calls. Keep their producing provider even if another provider supplies
     // the fallback callee inventory.
-    unknowns.push(
-      ...parsed.data.unresolved_calls.map((call) => ({
+    appendAll(
+      unknowns,
+      parsed.data.unresolved_calls.map((call) => ({
         ...call,
         provider: execution.value.provider,
       })),
     );
     const references = parsed.data.references;
-    routes.push(...observedCallRoutes(references, execution.value.provider));
+    appendAll(routes, observedCallRoutes(references, execution.value.provider));
     if (
       references.every(({ kind }) => kind.available) &&
       (parsed.data.reference_kinds_available || references.length > 0)
@@ -189,8 +192,9 @@ export const readNativeCallRoutes = async (
     options,
   );
   if (!callees.ok) return finish(err(callees.error));
-  limitations.push(
-    ...limitationsFrom(
+  appendAll(
+    limitations,
+    limitationsFrom(
       NATIVE_CALL_ROUTE_SOURCES.callees,
       callees.value.provider,
       callees.value.limitations,

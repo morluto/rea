@@ -16,6 +16,7 @@ import {
   processTraceIdentifierSchema,
   type ProcessTraceSpecification,
 } from "./processTraceSpecification.js";
+import { appendAll } from "../arrayAppend.js";
 
 const matchedEventSchema = z.strictObject({
   event_id: processTraceIdentifierSchema,
@@ -458,8 +459,9 @@ const evaluatePartialOrder = (
   const suffixFailure = boundaryFailure(trace, "suffix", language.suffix);
   if (suffixFailure !== null) return suffixFailure;
   const satisfied = ordering.satisfied;
-  satisfied.push(
-    ...language.unordered_groups.map(
+  appendAll(
+    satisfied,
+    language.unordered_groups.map(
       ({ events }) => `unordered:${events.join(":")}`,
     ),
   );

@@ -3,6 +3,7 @@ import { parseWabtInterface } from "./WabtInterface.js";
 import { watString, watStringEnd } from "./WabtString.js";
 import { watCommentEnd } from "./WabtComment.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 interface WabtNameMetadataFailure {
   readonly _tag: "WabtNameMetadataFailure";
@@ -137,8 +138,9 @@ export const parseWabtWat = (text: string) => {
             const names = moduleNames(payload.bytes);
             // Framing needs every observed display, even when optional
             // metadata coverage is incomplete in this or an earlier section.
-            debugModuleNames.push(
-              ...(names.ok ? names.value : names.error.partial),
+            appendAll(
+              debugModuleNames,
+              names.ok ? names.value : names.error.partial,
             );
             if (!names.ok) {
               debugNameMetadata = "uninterpretable";

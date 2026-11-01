@@ -24,6 +24,7 @@ import {
 import { androidSnapshotCopy } from "./AndroidTargetSnapshot.js";
 import type { JadxSession } from "./JadxSession.js";
 import type { JadxMcpTransport } from "./JadxMcpTransport.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 interface FailureContext {
   readonly cause: unknown;
@@ -280,7 +281,7 @@ const snapshotCloseFailures = (
     cause.outcome.kind === "failed" &&
     cause.outcome.cause instanceof RegularFileCleanupFailure
   )
-    failures.push(...snapshotCloseFailures(cause.outcome.cause));
+    appendAll(failures, snapshotCloseFailures(cause.outcome.cause));
   return failures;
 };
 

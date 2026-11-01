@@ -36,6 +36,7 @@ import type {
   ReferenceSourceResult,
   TraversalState,
 } from "./ReferenceSourceReaderTypes.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 const recordDirectoryFailure = (
   state: TraversalState,
@@ -230,7 +231,7 @@ const scheduleObservedDirectories = (
   directories: PendingDirectory[],
 ): void => {
   directories.reverse();
-  state.pending.push(...directories);
+  appendAll(state.pending, directories);
 };
 
 const directoryReadFailure = (cause: unknown): FilesystemFailureDetail => {

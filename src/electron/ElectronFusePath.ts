@@ -233,6 +233,7 @@ const resolveInside = async (
         : target;
       if (relativeTarget === null) return { kind: "escapes" };
       if (absoluteTarget) resolved.length = 0;
+      // oxlint-disable-next-line rea/no-bulk-append-spread -- readlink text is bounded by the host's PATH_MAX.
       pending.unshift(...symlinkTargetSegments(relativeTarget));
       continue;
     }

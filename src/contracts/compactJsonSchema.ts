@@ -8,6 +8,7 @@ import {
   schemaMaps,
   schemaLiteralValues,
 } from "./jsonSchemaKeywords.js";
+import { appendAll } from "../domain/arrayAppend.js";
 
 // Shared compact JSON Schema projection primitives; canonical validation stays separate.
 
@@ -407,7 +408,7 @@ const reducedItemSchema = (
   for (const { schema, scope } of alternatives) {
     const detected = detectedTypes(schema, references, scope);
     if (detected === undefined || detected.length === 0) return {};
-    types.push(...detected);
+    appendAll(types, detected);
   }
   const unique = [...new Set(types)];
   if (!unique.includes("array"))
@@ -417,7 +418,7 @@ const reducedItemSchema = (
   for (const { schema, scope } of alternatives) {
     const items = arrayItemAlternatives(schema, references, scope);
     if (items === undefined) return { type: "array", items: {} };
-    nested.push(...items);
+    appendAll(nested, items);
   }
   return {
     type: "array",

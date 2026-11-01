@@ -14,6 +14,7 @@ import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
 } from "../ArtifactReader.js";
+import { appendAll } from "../../domain/arrayAppend.js";
 
 /** Exact trailer written by Bun's standalone module graph serializer. */
 export const BUN_TRAILER = Buffer.from("\n---- Bun! ----\n");
@@ -502,8 +503,9 @@ const machOClaims = async (
     if (!read.ok) break;
     const { command: cmd, offset, size } = read.value;
     if (cmd === LC_SEGMENT_64 || cmd === LC_SEGMENT)
-      claims.push(
-        ...segmentClaims(
+      appendAll(
+        claims,
+        segmentClaims(
           commands.subarray(offset, offset + size),
           littleEndian,
           cmd === LC_SEGMENT_64,
@@ -577,14 +579,9 @@ const fatClaims = async (
   for (const slice of parsed.slices) {
     abortIfNeeded(signal);
     if (parsed.rangeIssues[slice.index] !== null) continue;
-    claims.push(
-      ...(await machOClaims(
-        handle,
-        fileSize,
-        slice.offset,
-        slice.size,
-        signal,
-      )),
+    appendAll(
+      claims,
+      await machOClaims(handle, fileSize, slice.offset, slice.size, signal),
     );
   }
   return claims;

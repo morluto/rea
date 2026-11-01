@@ -50,6 +50,7 @@ export const resolveTreePath = async (
       hops += 1;
       if (hops > MAX_SYMLINK_HOPS) return { kind: "absent" };
       if (entry.target.startsWith("/")) return { kind: "escapes" };
+      // oxlint-disable-next-line rea/no-bulk-append-spread -- the tree view reads link text with readlink, which the host bounds by PATH_MAX.
       pending.unshift(...segmentsOf(entry.target));
       continue;
     }

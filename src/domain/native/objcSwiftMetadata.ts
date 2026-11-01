@@ -21,6 +21,7 @@ import {
   compareUnicodeCodePoints,
   compositeKey,
 } from "../unicodeCodePointOrder.js";
+import { appendAll } from "../arrayAppend.js";
 
 /** Targets admitted to the Apple byte reader; the reader validates slice support. */
 export const APPLE_DISPATCH_TARGET_APPLICABILITY: TargetApplicability = {
@@ -600,7 +601,7 @@ export const inspectNativeDispatchMetadata = (
         : Symbol();
       const evidence = symbolEvidence(entry, sourceAddress);
       const previous = implementations.get(key);
-      if (previous !== undefined) previous.evidence.push(...evidence);
+      if (previous !== undefined) appendAll(previous.evidence, evidence);
       else
         implementations.set(key, {
           class_name: className,
