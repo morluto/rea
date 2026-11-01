@@ -82,6 +82,7 @@ const target = (
   xtensa: XtensaElfMetadata = {
     ...HEADER,
     abi: { status: "declared", abi: "windowed" },
+    literals: { status: "declared", literals: "pc-relative" },
     ...change,
   },
 ): BinaryTarget => ({
@@ -166,6 +167,7 @@ const registerPinCases = () => {
         type: 2,
         flags: 0x300,
         abi: "windowed",
+        literals: "pc-relative",
       },
       xtensa_support_lane: "elf32-le-exec-windowed-generic-v1",
     });
@@ -260,6 +262,25 @@ const registerRefusalCases = () => {
       { abi: { status: "unavailable", reason: "A note is truncated." } },
       "A note is truncated.",
     ],
+    [
+      { literals: { status: "declared", literals: "absolute" } },
+      "USE_ABSOLUTE_LITERALS=1",
+    ],
+    [
+      { literals: { status: "unrecognized", value: "2" } },
+      "USE_ABSOLUTE_LITERALS=2",
+    ],
+    [{ literals: { status: "absent" } }, "declares no USE_ABSOLUTE_LITERALS"],
+    [
+      {
+        literals: {
+          status: "unavailable",
+          reason:
+            "The Xtensa_Info note declares USE_ABSOLUTE_LITERALS more than once.",
+        },
+      },
+      "USE_ABSOLUTE_LITERALS more than once",
+    ],
   ] satisfies [Partial<XtensaElfMetadata>, string][])(
     "refuses an unverified Xtensa interpretation %j",
     async (change, reason) => {
@@ -281,14 +302,22 @@ const registerRefusalCases = () => {
     },
   );
 
-  it("refuses a target whose ABI declaration was never inspected", () => {
-    const uninspected = target({}, HEADER);
-    expect(ghidraPinnedLanguage(uninspected)).toBeUndefined();
-    expect(ghidra().inspectTargetSupport(uninspected)).toMatchObject({
-      status: "unsupported",
-      reason: expect.stringContaining("was not inspected"),
-    });
-  });
+  it.each([
+    ["ABI", HEADER],
+    ["literal", { ...HEADER, abi: { status: "declared", abi: "windowed" } }],
+  ] satisfies [string, XtensaElfMetadata][])(
+    "refuses a target whose %s declaration was never inspected",
+    (declaration, metadata) => {
+      const uninspected = target({}, metadata);
+      expect(ghidraPinnedLanguage(uninspected)).toBeUndefined();
+      expect(ghidra().inspectTargetSupport(uninspected)).toMatchObject({
+        status: "unsupported",
+        reason: expect.stringContaining(
+          `${declaration} declaration in .xtensa.info was not inspected`,
+        ),
+      });
+    },
+  );
 
   it("does not widen Windows P0", () => {
     const windows = new GhidraProvider(

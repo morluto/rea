@@ -138,22 +138,49 @@ export interface MipsGnuAttributes {
   readonly msa: number | null;
 }
 
-/** Raw ELF facts; Xtensa `e_flags` carry no ABI, which `.xtensa.info` declares. */
-export interface XtensaElfMetadata extends ElfFamilyMetadata {
-  /** Undefined until `.xtensa.info` is inspected. */
-  readonly abi?: XtensaAbiDeclaration;
+/**
+ * Raw ELF facts; Xtensa `e_flags` carry no ABI or literal addressing, which
+ * `.xtensa.info` declares. Both declarations are undefined until that section
+ * is inspected.
+ */
+export interface XtensaElfMetadata
+  extends ElfFamilyMetadata, Partial<XtensaInfoDeclarations> {}
+
+/**
+ * What the `.xtensa.info` note that GNU as and ld write declares. A note REA
+ * cannot read leaves both unknown.
+ */
+export interface XtensaInfoDeclarations {
+  readonly abi: XtensaAbiDeclaration;
+  readonly literals: XtensaLiteralDeclaration;
 }
 
 /**
- * The `ABI=` declaration in the `.xtensa.info` note that GNU as and ld write.
- * Values outside binutils' windowed (0) and call0 (1) are kept as written.
+ * The `ABI=` declaration. Values outside binutils' windowed (0) and call0 (1)
+ * are kept as written.
  */
 export type XtensaAbiDeclaration =
   | { readonly status: "declared"; readonly abi: "windowed" | "call0" }
+  | XtensaInfoUndeclared;
+
+/**
+ * The `USE_ABSOLUTE_LITERALS=` declaration: binutils writes 0 for PC-relative
+ * L32R literals and 1 for a configuration whose L32R literals are addressed
+ * from `LITBASE` (the Extended L32R option). Other values are kept as written.
+ */
+export type XtensaLiteralDeclaration =
+  | {
+      readonly status: "declared";
+      readonly literals: "pc-relative" | "absolute";
+    }
+  | XtensaInfoUndeclared;
+
+/** A `.xtensa.info` key without a value binutils defines. */
+export type XtensaInfoUndeclared =
   | { readonly status: "unrecognized"; readonly value: string }
-  /** Examined: no `.xtensa.info` section, or a note without an `ABI=` key. */
+  /** Examined: no `.xtensa.info` section, or a note without the key. */
   | { readonly status: "absent" }
-  /** The declaration is unreadable or malformed; the ABI remains unknown. */
+  /** The declaration is unreadable or malformed; its value remains unknown. */
   | {
       readonly status: "unavailable";
       readonly reason: string;

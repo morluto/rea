@@ -19,7 +19,7 @@ export const XTENSA_C_FIXTURE_VALUES: {
 export function xtensaFixtureBytes(): Buffer;
 export function mutateXtensaFixture(
   bytes: Buffer,
-  change: { flags?: number; type?: number; abi?: string },
+  change: { flags?: number; type?: number; abi?: string; literals?: string },
 ): Buffer;
 export function writeXtensaFixture(
   directory: string,

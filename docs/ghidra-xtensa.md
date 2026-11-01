@@ -18,25 +18,30 @@ see the [raw-binary admission boundary](raw-binary.md).
 Xtensa `e_flags` carry no ABI. GNU as and ld declare it in the `.xtensa.info`
 section: one `Xtensa_Info` note whose descriptor reads
 `USE_ABSOLUTE_LITERALS=0\nABI=0\n`, where `ABI=0` is the windowed ABI and `ABI=1`
-is call0. REA reads that note during target resolution and records the
-declaration. It never infers an ABI from the family name. Other keys, including
-`USE_ABSOLUTE_LITERALS`, are not interpreted; ESP-IDF builds declare 0.
+is call0. `USE_ABSOLUTE_LITERALS=1` declares a configuration whose L32R literals
+are addressed from `LITBASE` (the Extended L32R option), while Ghidra 12.1.4
+decodes every L32R as PC-relative. REA reads both keys during target resolution
+and records the declarations. It never infers an ABI or literal addressing from
+the family name. Other keys are not interpreted. ESP-IDF builds declare
+`USE_ABSOLUTE_LITERALS=0`.
 
 Provider selection returns the specific unsupported constraint rather than
 guessing a compatible profile:
 
-| Declaration                                                                        | Outcome                                                                                         |
-| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Little-endian ELF32 `ET_EXEC`, known `e_flags`, `ABI=0` (windowed)                 | admitted, `Xtensa:LE:32:default` + `default`                                                    |
-| ELF64                                                                              | refused; Ghidra 12.1.4 ships 32-bit Xtensa languages only                                       |
-| Big-endian                                                                         | refused; big-endian cores need separate verification                                            |
-| `ET_REL`, `ET_DYN`, other `e_type`                                                 | refused; the reason names relocatable, shared, or the numeric `e_type`                          |
-| `e_flags` bits outside `EF_XTENSA_MACH` (0xf), `XT_INSN` (0x100), `XT_LIT` (0x200) | refused with the offending bits named                                                           |
-| Non-zero `EF_XTENSA_MACH`                                                          | refused; binutils defines only `E_XTENSA_MACH` (0) and rejects other values                     |
-| `ABI=1` (call0), as ESP8266 builds declare                                         | refused; call0 needs its own calling-convention selection and verification                      |
-| Another `ABI=` value                                                               | refused with the declared value                                                                 |
-| No `.xtensa.info`, or no `ABI=` key                                                | refused; the windowed ABI is not inferred                                                       |
-| Unreadable or malformed `.xtensa.info`                                             | refused with the reason, for example no section table, a compressed section or a malformed note |
+| Declaration                                                                                   | Outcome                                                                                         |
+| --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Little-endian ELF32 `ET_EXEC`, known `e_flags`, `ABI=0` (windowed), `USE_ABSOLUTE_LITERALS=0` | admitted, `Xtensa:LE:32:default` + `default`                                                    |
+| ELF64                                                                                         | refused; Ghidra 12.1.4 ships 32-bit Xtensa languages only                                       |
+| Big-endian                                                                                    | refused; big-endian cores need separate verification                                            |
+| `ET_REL`, `ET_DYN`, other `e_type`                                                            | refused; the reason names relocatable, shared, or the numeric `e_type`                          |
+| `e_flags` bits outside `EF_XTENSA_MACH` (0xf), `XT_INSN` (0x100), `XT_LIT` (0x200)            | refused with the offending bits named                                                           |
+| Non-zero `EF_XTENSA_MACH`                                                                     | refused; binutils defines only `E_XTENSA_MACH` (0) and rejects other values                     |
+| `ABI=1` (call0), as ESP8266 builds declare                                                    | refused; call0 needs its own calling-convention selection and verification                      |
+| Another `ABI=` value                                                                          | refused with the declared value                                                                 |
+| `USE_ABSOLUTE_LITERALS=1` (L32R literals addressed from `LITBASE`)                            | refused; Ghidra 12.1.4 decodes L32R as PC-relative                                              |
+| Another `USE_ABSOLUTE_LITERALS=` value                                                        | refused with the declared value                                                                 |
+| No `.xtensa.info`, or no `ABI=` or `USE_ABSOLUTE_LITERALS=` key                               | refused; neither the windowed ABI nor PC-relative literals are inferred                         |
+| Unreadable or malformed `.xtensa.info`                                                        | refused with the reason, for example no section table, a compressed section or a malformed note |
 
 ESP-IDF builds for ESP32, ESP32-S2 and ESP32-S3 declare `e_flags` 0x300 and
 `ABI=0`. The header does not identify the core configuration, so this lane cannot
@@ -129,14 +134,15 @@ Run `npm run verify:ghidra:xtensa` with Ghidra 12.1.4, JDK 21+ and GNU or LLVM
 from annotated instruction bytes, so it needs no Xtensa compiler, and never
 executes target code. It checks:
 
-- the header, symbols and `.xtensa.info` ABI against `readelf`;
+- the header, symbols and `.xtensa.info` declarations against `readelf`;
 - the pinned language and compiler specification in every result;
 - `entry`, `l32r`, `call8` and `retw.n` decoding, the `call8` target and the
   `l32r` literal reference;
 - decompiled code that passes the literal through `call8` and returns the
   callee's result;
 - CLI/MCP parity with output-schema validation, and snapshot save and reopen;
-- header-mutated refusals (unknown flag bits, machine field, `ET_DYN`, call0);
+- header-mutated refusals (unknown flag bits, machine field, `ET_DYN`, call0,
+  absolute literals);
 - unchanged source bytes and owned cleanup.
 
 With `REA_XTENSA_CC` set to an Espressif compiler such as

@@ -43,10 +43,13 @@ export function parseXtensaReadelf(text, names) {
   const descriptor = Buffer.from(note.replaceAll(/\s+/gu, ""), "hex")
     .toString("latin1")
     .replace(/\0+$/u, "");
-  const abiLine = descriptor
-    .split("\n")
-    .find((line) => line.startsWith("ABI="));
+  const lines = descriptor.split("\n");
+  const abiLine = lines.find((line) => line.startsWith("ABI="));
   assert.ok(abiLine, "Xtensa_Info note declares no ABI");
+  const literalsLine = lines.find((line) =>
+    line.startsWith("USE_ABSOLUTE_LITERALS="),
+  );
+  assert.ok(literalsLine, "Xtensa_Info note declares no USE_ABSOLUTE_LITERALS");
   return {
     xtensa: {
       elfClass: 32,
@@ -56,6 +59,13 @@ export function parseXtensaReadelf(text, names) {
       abi: {
         status: "declared",
         abi: abiLine === "ABI=0" ? "windowed" : "call0",
+      },
+      literals: {
+        status: "declared",
+        literals:
+          literalsLine === "USE_ABSOLUTE_LITERALS=0"
+            ? "pc-relative"
+            : "absolute",
       },
     },
     symbols,

@@ -1,4 +1,9 @@
-import type { XtensaAbiDeclaration } from "./binaryTargetTypes.js";
+import type {
+  XtensaAbiDeclaration,
+  XtensaInfoDeclarations,
+  XtensaInfoUndeclared,
+  XtensaLiteralDeclaration,
+} from "./binaryTargetTypes.js";
 import { isElfNotePadding, readElfNoteRecord } from "./native/elfNoteLayout.js";
 
 /** Bound the section read before its declared size can drive allocation; binutils writes 56 bytes. */
@@ -12,22 +17,57 @@ const XTINFO_ALIGNMENT = 4;
 /** A value as binutils prints it with `%d`. */
 const DECLARED_INTEGER = /^-?\d{1,10}$/u;
 
-const unavailable = (reason: string): XtensaAbiDeclaration => ({
+/** `XTHAL_ABI_WINDOWED` (0) and `XTHAL_ABI_CALL0` (1). */
+const ABI_VALUES = new Map<string, XtensaAbiDeclaration>([
+  ["0", { status: "declared", abi: "windowed" }],
+  ["1", { status: "declared", abi: "call0" }],
+]);
+
+/** `XSHAL_USE_ABSOLUTE_LITERALS`: 1 when L32R literals are addressed from `LITBASE`. */
+const LITERAL_VALUES = new Map<string, XtensaLiteralDeclaration>([
+  ["0", { status: "declared", literals: "pc-relative" }],
+  ["1", { status: "declared", literals: "absolute" }],
+]);
+
+const unavailable = (reason: string): XtensaInfoUndeclared => ({
   status: "unavailable",
   reason,
 });
 
+/** An absent or unreadable note declares none of its keys. */
+export const undeclaredXtensaInfo = (
+  outcome: XtensaInfoUndeclared,
+): XtensaInfoDeclarations => ({ abi: outcome, literals: outcome });
+
+/** The one value the descriptor gives `key`, as binutils defines it. */
+const declaration = <Declared>(
+  lines: readonly string[],
+  key: string,
+  values: ReadonlyMap<string, Declared>,
+): Declared | XtensaInfoUndeclared => {
+  const [value, ...repeated] = lines
+    .filter((line) => line.startsWith(`${key}=`))
+    .map((line) => line.slice(key.length + 1));
+  if (value === undefined) return { status: "absent" };
+  if (repeated.length > 0)
+    return unavailable(`The Xtensa_Info note declares ${key} more than once.`);
+  const declared = values.get(value);
+  if (declared !== undefined) return declared;
+  return DECLARED_INTEGER.test(value)
+    ? { status: "unrecognized", value }
+    : unavailable(`The Xtensa_Info note declares a malformed ${key} value.`);
+};
+
 /**
  * Interpret the contents of a `.xtensa.info` section. GNU as and ld write one
- * `Xtensa_Info` note whose descriptor is `USE_ABSOLUTE_LITERALS=%d\nABI=%d\n`;
- * binutils defines ABI 0 as windowed (`XTHAL_ABI_WINDOWED`) and 1 as call0
- * (`XTHAL_ABI_CALL0`). Other keys are not interpreted. Notes are located by the
- * shared ELF note rules that `inspect_elf_notes` also applies.
+ * `Xtensa_Info` note whose descriptor is `USE_ABSOLUTE_LITERALS=%d\nABI=%d\n`.
+ * Other keys are not interpreted. Notes are located by the shared ELF note
+ * rules that `inspect_elf_notes` also applies.
  */
-export const parseXtensaInfoAbi = (
+export const parseXtensaInfo = (
   contents: Buffer,
   littleEndian: boolean,
-): XtensaAbiDeclaration => {
+): XtensaInfoDeclarations => {
   let descriptor: Buffer | undefined;
   let at = 0;
   while (at + 12 <= contents.length) {
@@ -38,13 +78,15 @@ export const parseXtensaInfoAbi = (
       XTINFO_ALIGNMENT,
     );
     if (!record.ok)
-      return unavailable(`.xtensa.info is malformed: ${record.error.message}`);
+      return undeclaredXtensaInfo(
+        unavailable(`.xtensa.info is malformed: ${record.error.message}`),
+      );
     const { namesz, descsz, type } = record.value;
     const name = contents.subarray(at + 12, at + 12 + namesz);
     if (type === XTINFO_TYPE && name.equals(XTINFO_NAME)) {
       if (descriptor !== undefined)
-        return unavailable(
-          ".xtensa.info holds more than one Xtensa_Info note.",
+        return undeclaredXtensaInfo(
+          unavailable(".xtensa.info holds more than one Xtensa_Info note."),
         );
       descriptor = contents.subarray(
         record.value.descriptor,
@@ -54,28 +96,28 @@ export const parseXtensaInfoAbi = (
     at = record.value.next;
   }
   if (!isElfNotePadding(contents.subarray(at)))
-    return unavailable(".xtensa.info has trailing non-zero bytes.");
+    return undeclaredXtensaInfo(
+      unavailable(".xtensa.info has trailing non-zero bytes."),
+    );
   if (descriptor === undefined)
-    return unavailable(".xtensa.info holds no Xtensa_Info note.");
+    return undeclaredXtensaInfo(
+      unavailable(".xtensa.info holds no Xtensa_Info note."),
+    );
   const end = descriptor.indexOf(0);
   // binutils pads the text's terminator with NULs to a word boundary; other
   // bytes after it could contradict the declaration read before it.
   if (end >= 0 && !descriptor.subarray(end).every((byte) => byte === 0))
-    return unavailable(
-      "The Xtensa_Info note holds non-zero bytes after its terminating NUL.",
+    return undeclaredXtensaInfo(
+      unavailable(
+        "The Xtensa_Info note holds non-zero bytes after its terminating NUL.",
+      ),
     );
-  const [value, ...repeated] = descriptor
+  const lines = descriptor
     .subarray(0, end < 0 ? descriptor.length : end)
     .toString("latin1")
-    .split("\n")
-    .filter((line) => line.startsWith("ABI="))
-    .map((line) => line.slice("ABI=".length));
-  if (value === undefined) return { status: "absent" };
-  if (repeated.length > 0)
-    return unavailable("The Xtensa_Info note declares ABI more than once.");
-  if (value === "0") return { status: "declared", abi: "windowed" };
-  if (value === "1") return { status: "declared", abi: "call0" };
-  return DECLARED_INTEGER.test(value)
-    ? { status: "unrecognized", value }
-    : unavailable("The Xtensa_Info note declares a malformed ABI value.");
+    .split("\n");
+  return {
+    abi: declaration(lines, "ABI", ABI_VALUES),
+    literals: declaration(lines, "USE_ABSOLUTE_LITERALS", LITERAL_VALUES),
+  };
 };

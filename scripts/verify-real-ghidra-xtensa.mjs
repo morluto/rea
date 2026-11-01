@@ -158,6 +158,7 @@ try {
       type: 2,
       flags: 0x300,
       abi: "windowed",
+      literals: "pc-relative",
     });
   };
   const assertEvidence = (evidence, sha256) => {
@@ -264,6 +265,7 @@ try {
     [{ flags: 0x301 }, "machine 1"],
     [{ type: 3 }, "shared and position-independent"],
     [{ abi: "1" }, "call0 ABI"],
+    [{ literals: "1" }, "USE_ABSOLUTE_LITERALS=1"],
   ]) {
     // Header-mutated copies test admission; they are not new producer claims.
     const rejectedPath = join(workspace, `refused-${refusals.length}.elf`);
@@ -368,7 +370,7 @@ try {
     language: XTENSA_LANGUAGE,
     procedures: procedures.length,
     checks: [
-      "readelf header, symbols and Xtensa_Info ABI",
+      "readelf header, symbols and Xtensa_Info declarations",
       "pinned language and compiler identity",
       "entry, l32r, call8 and retw.n decoding",
       "decompiled call8 argument is the l32r literal; caller returns the callee result",

@@ -1,7 +1,8 @@
 import type { FileHandle } from "node:fs/promises";
-import type { XtensaAbiDeclaration } from "../domain/binaryTargetTypes.js";
+import type { XtensaInfoDeclarations } from "../domain/binaryTargetTypes.js";
 import {
-  parseXtensaInfoAbi,
+  parseXtensaInfo,
+  undeclaredXtensaInfo,
   XTENSA_INFO_MAX_BYTES,
 } from "../domain/xtensaInfo.js";
 import {
@@ -17,22 +18,21 @@ const SHT_NOTE = 7;
 /** Compressed storage holds a compression header and payload, not notes. */
 const SHF_COMPRESSED = 0x800n;
 
-const unavailable = (reason: string): XtensaAbiDeclaration => ({
-  status: "unavailable",
-  reason,
-});
+const unavailable = (reason: string): XtensaInfoDeclarations =>
+  undeclaredXtensaInfo({ status: "unavailable", reason });
 
 /**
- * Read the ABI that `.xtensa.info` declares from the caller's already-open file.
+ * Read what `.xtensa.info` declares from the caller's already-open file.
  * GNU ld finds that section by name, so names come from the section directory
- * that owns them. A source REA could not examine leaves the ABI unknown.
- * The caller supplies its cancellation check so its tagged error is preserved.
+ * that owns them. A source REA could not examine leaves the declarations
+ * unknown. The caller supplies its cancellation check so its tagged error is
+ * preserved.
  */
-export const readXtensaElfAbi = async (
+export const readXtensaElfInfo = async (
   handle: FileHandle,
   fileSize: number,
   checkCancelled: () => void,
-): Promise<XtensaAbiDeclaration> => {
+): Promise<XtensaInfoDeclarations> => {
   const read = async (
     offset: number,
     size: number,
@@ -82,7 +82,7 @@ export const readXtensaElfAbi = async (
   const [info, ...repeated] = directory.sections.filter(
     (section) => section.name === ".xtensa.info",
   );
-  if (info === undefined) return { status: "absent" };
+  if (info === undefined) return undeclaredXtensaInfo({ status: "absent" });
   if (repeated.length > 0)
     return unavailable("More than one section is named .xtensa.info.");
   if (info.type !== SHT_NOTE)
@@ -93,7 +93,7 @@ export const readXtensaElfAbi = async (
     );
   // A validated SHT_NOTE extent lies inside the file, so its size is exact.
   if (info.size > BigInt(XTENSA_INFO_MAX_BYTES))
-    return {
+    return undeclaredXtensaInfo({
       status: "unavailable",
       reason: `.xtensa.info declares ${String(info.size)} bytes, above REA's fixed ${XTENSA_INFO_MAX_BYTES}-byte inspection bound. This release has no runtime override, and runtime analysis settings do not raise this bound.`,
       limit: {
@@ -102,8 +102,8 @@ export const readXtensaElfAbi = async (
         declared_bytes: Number(info.size),
         runtime_override: false,
       },
-    };
+    });
   const contents = await read(Number(info.offset), Number(info.size));
   if (contents === undefined) return truncated;
-  return parseXtensaInfoAbi(contents, directory.little);
+  return parseXtensaInfo(contents, directory.little);
 };

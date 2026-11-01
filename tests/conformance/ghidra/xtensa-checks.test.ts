@@ -116,6 +116,7 @@ describe("Xtensa lane oracle and assertions", () => {
         type: 2,
         flags: 0x300,
         abi: { status: "declared", abi: "windowed" },
+        literals: { status: "declared", literals: "pc-relative" },
       },
       symbols: {
         rea_xtensa_literal: "0x40080000",
@@ -166,6 +167,7 @@ describe("Xtensa lane oracle and assertions", () => {
         type: 2,
         flags: 0x300,
         abi: { status: "declared", abi: "windowed" },
+        literals: { status: "declared", literals: "pc-relative" },
       },
     });
     expect(ghidraXtensaUnsupportedReason(target.value)).toBeNull();
@@ -175,6 +177,7 @@ describe("Xtensa lane oracle and assertions", () => {
         [{ flags: 0x301 }, "machine 1"],
         [{ type: 3 }, "shared and position-independent"],
         [{ abi: "1" }, "call0 ABI"],
+        [{ literals: "1" }, "USE_ABSOLUTE_LITERALS=1"],
       ] as const
     ).entries()) {
       const path = join(directory, `mutated-${index}.elf`);

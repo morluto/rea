@@ -155,13 +155,13 @@ export function xtensaFixtureBytes() {
   return bytes;
 }
 
-/** File offset of the `ABI=` digit inside `.xtensa.info`. */
-const abiDigitOffset = () =>
+/** File offset of a declared key's one-digit value inside `.xtensa.info`. */
+const infoDigitOffset = (key) =>
   TEXT_OFFSET +
   XTENSA_FIXTURE_TEXT.length +
   24 +
-  INFO_DESCRIPTOR.indexOf("ABI=") +
-  "ABI=".length;
+  INFO_DESCRIPTOR.indexOf(`${key}=`) +
+  `${key}=`.length;
 
 /** Header-mutated copies test admission; they are not new producer claims. */
 export function mutateXtensaFixture(bytes, change) {
@@ -169,7 +169,13 @@ export function mutateXtensaFixture(bytes, change) {
   if (change.flags !== undefined) copy.writeUInt32LE(change.flags, 36);
   if (change.type !== undefined) copy.writeUInt16LE(change.type, 16);
   if (change.abi !== undefined)
-    copy.write(change.abi, abiDigitOffset(), "latin1");
+    copy.write(change.abi, infoDigitOffset("ABI"), "latin1");
+  if (change.literals !== undefined)
+    copy.write(
+      change.literals,
+      infoDigitOffset("USE_ABSOLUTE_LITERALS"),
+      "latin1",
+    );
   return copy;
 }
 
