@@ -315,11 +315,21 @@ const openPeResourceTree = (
   }
 };
 
-/** Targets of the `name` entries under each `typeId` type directory. */
+/** Walk state: whether a `typeId` branch could not be examined for `name`. */
+interface NamedResourceWalk {
+  unresolved: boolean;
+}
+
+/**
+ * Targets of the `name` entries under each `typeId` type directory. A type
+ * branch whose names directory, or a name entry whose string, cannot be read
+ * is recorded in `walk` rather than treated as absent.
+ */
 async function* namedResourceTargets(
   tree: PeResourceTree,
   typeId: number,
   name: string,
+  walk: NamedResourceWalk,
 ) {
   const types = await tree.directory(0);
   if (types === undefined) return;
@@ -331,7 +341,10 @@ async function* namedResourceTargets(
     if (type.identity.kind !== "id" || type.identity.id !== typeId) continue;
     if (type.target.kind !== "directory") continue;
     const names = await tree.directory(type.target.offset);
-    if (names === undefined) continue;
+    if (names === undefined) {
+      walk.unresolved = true;
+      continue;
+    }
     for (
       let entry = 0;
       entry < names.length;
@@ -343,16 +356,17 @@ async function* namedResourceTargets(
       if (identity.kind !== "name") continue;
       const nameAt = identity.offset;
       const length = await tree.relative(nameAt, PE_RESOURCE_NAME_PREFIX_BYTES);
-      if (
-        length === undefined ||
-        readPeResourceNameFacts(length).utf16Units !== name.length
-      )
+      if (length === undefined) {
+        walk.unresolved = true;
         continue;
+      }
+      if (readPeResourceNameFacts(length).utf16Units !== name.length) continue;
       const candidate = await tree.relative(
         nameAt + PE_RESOURCE_NAME_PREFIX_BYTES,
         expected.length,
       );
-      if (candidate?.equals(expected)) yield target;
+      if (candidate === undefined) walk.unresolved = true;
+      else if (candidate.equals(expected)) yield target;
     }
   }
 }
@@ -373,7 +387,9 @@ export const hasPeResourceName = async (
 ): Promise<boolean> => {
   const tree = openPeResourceTree(headers, fileSize, read, maxEntries);
   if (tree === undefined) return false;
-  const first = await namedResourceTargets(tree, typeId, name).next();
+  const first = await namedResourceTargets(tree, typeId, name, {
+    unresolved: false,
+  }).next();
   return first.done !== true;
 };
 
@@ -381,7 +397,8 @@ export const hasPeResourceName = async (
  * Payload ranges of the `typeId` resource named `name`, from the same bounded
  * walk as `hasPeResourceName`. The image is not read whole. A tree that never
  * reaches the name reports no ranges. Once the name is found, a language
- * directory, data entry, or payload that cannot be resolved is a format failure.
+ * directory, data entry, or payload that cannot be resolved is a format
+ * failure, as is any `typeId` branch the walk could not examine.
  */
 export const locatePeResourcePayloads = async (
   headers: Buffer,
@@ -394,7 +411,8 @@ export const locatePeResourcePayloads = async (
   const tree = openPeResourceTree(headers, fileSize, read, maxEntries);
   if (tree === undefined) return [];
   const found: PeResourcePayloadRange[] = [];
-  for await (const target of namedResourceTargets(tree, typeId, name)) {
+  const walk: NamedResourceWalk = { unresolved: false };
+  for await (const target of namedResourceTargets(tree, typeId, name, walk)) {
     const languages =
       target.kind === "directory"
         ? await tree.directory(target.offset)
@@ -423,5 +441,9 @@ export const locatePeResourcePayloads = async (
     if (found.length === before)
       return peFailure(`PE ${name} resource has no data entry.`);
   }
+  if (walk.unresolved && found.length > 0)
+    return peFailure(
+      `PE ${name} resource sits beside a resource type branch that cannot be read.`,
+    );
   return found;
 };

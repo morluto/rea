@@ -625,6 +625,26 @@ it("reports a named resource that cannot resolve to a payload as malformed", asy
   });
 });
 
+it("fails closed when a duplicate resource type branch cannot be read beside the named resource", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+    { type: 11, name: "OTHER", language: 1, payload: Buffer.from("b") },
+  ]);
+  // Root type entries follow the 16-byte root directory header at 0x400.
+  const duplicate = 0x400 + 16 + 8;
+  fixture.bytes.writeUInt32LE(10, duplicate);
+  fixture.bytes.writeUInt32LE(0xffff_fff0, duplicate + 4);
+  await expect(payloadsOf(fixture.bytes)).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringContaining("cannot be read"),
+  });
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    reason: "format",
+  });
+  expect(await probeSeaName(fixture.bytes)).toBe(true);
+  expect(await payloadsOf(fixture.bytes, "ABSENT")).toEqual([]);
+});
+
 it("rejects a language directory beside a readable language payload", async () => {
   const fixture = peResourceFixture(false, [
     { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
