@@ -16,6 +16,7 @@ import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js"
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
   MCP_TRANSPORT_EVIDENCE_EXPORT,
+  MCP_TRANSPORT_EVIDENCE_RECORDS,
 } from "../domain/analysisErrorPresentation.js";
 import {
   nodeStringCeilingRecovery,
@@ -61,10 +62,10 @@ export const mcpResponseOverflowProjection = (input: {
 };
 
 /**
- * A summary projection has already used `detail: "summary"`.
- * Export still writes the retained bundle outside one MCP frame.
+ * The bundle projection a get_evidence_bundle result already selected.
+ * Each projection owns a different next step when it exceeds one MCP frame.
  */
-const evidenceBundleSummary = (value: JsonValue): boolean => {
+const evidenceBundleProjection = (value: JsonValue): JsonValue | undefined => {
   const payload =
     typeof value === "object" &&
     value !== null &&
@@ -72,12 +73,21 @@ const evidenceBundleSummary = (value: JsonValue): boolean => {
     "result" in value
       ? value.result
       : value;
-  return (
-    typeof payload === "object" &&
+  return typeof payload === "object" &&
     payload !== null &&
-    !Array.isArray(payload) &&
-    payload.kind === "evidence-bundle-summary"
-  );
+    !Array.isArray(payload)
+    ? payload.kind
+    : undefined;
+};
+
+const evidenceBundleOverflowStep = (value: JsonValue): string => {
+  const projection = evidenceBundleProjection(value);
+  // A summary already used detail: summary; export writes outside one frame.
+  if (projection === "evidence-bundle-summary")
+    return MCP_TRANSPORT_EVIDENCE_EXPORT;
+  return projection === "evidence-record-selection"
+    ? MCP_TRANSPORT_EVIDENCE_RECORDS
+    : MCP_TRANSPORT_EVIDENCE_DISCOVERY;
 };
 
 /** Immutable encoding and recovery policy shared by one MCP server. */
@@ -229,9 +239,7 @@ export class ToolResultDelivery {
             : contract.name === "list_unknowns"
               ? "Call list_unknowns on this same connection with the same filters and offset, using a smaller limit, then follow next_offset. If a single unknown cannot fit, export the session with export_evidence_bundle to recover it."
               : contract.name === "get_evidence_bundle"
-                ? evidenceBundleSummary(value)
-                  ? MCP_TRANSPORT_EVIDENCE_EXPORT
-                  : MCP_TRANSPORT_EVIDENCE_DISCOVERY
+                ? evidenceBundleOverflowStep(value)
                 : "Use complete CLI JSON output to consume the analysis.";
     const projected = mcpResponseOverflowProjection({
       completed: true,

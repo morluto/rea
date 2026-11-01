@@ -331,7 +331,26 @@ a provider. `retention: "complete-record"` describes stored Evidence, while
 `native_dossier.value_flow` independently reports truncation, unavailable or
 unknown metadata. Missing omission counts remain null. Summary output carries
 every matching record; actual transport admission still applies. Omitted
-`detail` preserves complete canonical bundle delivery; filters require summary.
+`detail` preserves complete canonical bundle delivery; filters require summary
+or records.
+
+To read a discovered record without transferring the whole bundle, call
+`get_evidence_bundle` with `detail: "records"` and the same exact `filters`.
+The result (`kind: "evidence-record-selection"`) pages the matching complete
+records in canonical bundle (Evidence ID) order with `offset` (default 0) and
+`limit` (default 8), and reports `matching_records`, `total_retained_records`
+and `next_offset`. Each record is the retained Evidence itself, with an
+unchanged ID, subject digest, provider, profile and readback, so it works for
+any operation, including records that `inspect_analysis_view` does not support
+such as annotations. `missing_evidence_links` lists direct `evidence_links` of
+the returned records that this session or bundle does not retain; links are not
+traversed. A selection is not an Evidence bundle: it omits manifests and
+residual unknowns, cannot be imported, and describes historical observations
+rather than current provider or database state. `offset` and `limit` require
+`detail: "records"`. If one page exceeds the response budget, select fewer
+records or one `evidence_id`; a single record larger than one response still
+needs `export_evidence_bundle`, or `inspect_analysis_view` pages where its parent
+supports views.
 
 Residual-unknown mutations reject missing Evidence or unknown references and
 unproven verified resolutions with nonretryable `invalid_request` diagnostics.
@@ -369,6 +388,7 @@ fit.
 
 For a portable exported bundle, the CLI shares this projection:
 `rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"}}' --format json`.
+`"detail":"records"` with an `evidence_id` filter returns that complete record.
 The CLI validates and materializes that local bundle under its existing memory
 budget; summary delivery does not make arbitrary large files cheap to import.
 

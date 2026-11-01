@@ -431,7 +431,10 @@ output also streams without a single MCP frame.
 When the retained parent ID is unknown, use `get_evidence_bundle` with
 `detail: "summary"` and exact filters for operation, target SHA-256,
 analysis-profile digest or canonical procedure address. Select its returned
-Evidence ID for the next view instead of requesting the complete bundle.
+Evidence ID for the next view instead of requesting the complete bundle. When
+that record has no supported view (for example an annotation), read it with
+`detail: "records"` and an `evidence_id` filter; `missing_evidence_links`
+names linked sources this session does not retain.
 `retention: "complete-record"` means the whole record is stored; native
 value-flow truncation and unknown metadata remain separate. For an exported
 portable bundle, use `rea inspect-evidence-bundle` with JSON containing `path`,

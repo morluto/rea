@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { uniqueSorted } from "./canonicalOrdering.js";
 import { digestSchema, prefixedDigestSchema } from "./digests.js";
 import { evidenceSchema, type Evidence } from "./evidence.js";
 import type { EvidenceBundle } from "./evidenceBundle.js";
@@ -107,15 +108,24 @@ const nativeSummary = (
   };
 };
 
-/** Discover retained Evidence without reading or copying its complete payloads. */
-export const summarizeEvidenceBundle = (
-  bundle: EvidenceBundle,
-  filters: EvidenceRecordFilters = {},
-): EvidenceBundleSummary => {
-  const selectedFilters: Record<string, string> = {};
+/** Caller-selected filters with omitted fields removed, echoed by every selection. */
+const selectedFilters = (
+  filters: EvidenceRecordFilters,
+): Record<string, string> => {
+  const selected: Record<string, string> = {};
   for (const [field, value] of Object.entries(filters))
-    if (value !== undefined) selectedFilters[field] = value;
-  const records: EvidenceBundleSummary["records"] = [];
+    if (value !== undefined) selected[field] = value;
+  return selected;
+};
+
+/** One owner for exact filter semantics, in canonical bundle (Evidence ID) order. */
+function* matchingEvidenceRecords(
+  bundle: EvidenceBundle,
+  filters: EvidenceRecordFilters,
+): Generator<{
+  readonly evidence: Evidence;
+  readonly native: z.infer<typeof nativeSummarySchema>;
+}> {
   for (const evidence of bundle.records) {
     if (
       (filters.evidence_id !== undefined &&
@@ -135,6 +145,17 @@ export const summarizeEvidenceBundle = (
         filters.procedure_address !== native.procedure_address)
     )
       continue;
+    yield { evidence, native };
+  }
+}
+
+/** Discover retained Evidence without reading or copying its complete payloads. */
+export const summarizeEvidenceBundle = (
+  bundle: EvidenceBundle,
+  filters: EvidenceRecordFilters = {},
+): EvidenceBundleSummary => {
+  const records: EvidenceBundleSummary["records"] = [];
+  for (const { evidence, native } of matchingEvidenceRecords(bundle, filters))
     records.push({
       evidence_id: evidence.evidence_id,
       subject: evidence.subject,
@@ -147,13 +168,77 @@ export const summarizeEvidenceBundle = (
       limitation_count: evidence.limitations.length,
       native_dossier: native,
     });
-  }
   return {
     kind: "evidence-bundle-summary",
-    filters: selectedFilters,
+    filters: selectedFilters(filters),
     total_retained_records: bundle.records.length,
     matching_records: records.length,
     unknown_revisions: bundle.unknowns.length,
     records,
+  };
+};
+
+/** Default page size for complete record selection; each record may be large. */
+export const EVIDENCE_RECORD_SELECTION_LIMIT = 8;
+
+const RECORD_SELECTION_LIMITATIONS = [
+  "Selected records are retained historical observations; they do not establish current live provider or database state.",
+  "A record selection is not an Evidence bundle: it omits manifests and residual unknowns and cannot be imported. Use export_evidence_bundle for a portable bundle.",
+] as const;
+
+/** Complete selected records with their retained identities and direct-link closure. */
+export const evidenceRecordSelectionSchema = z.strictObject({
+  kind: z.literal("evidence-record-selection"),
+  filters: z.record(z.string(), z.string()),
+  total_retained_records: countSchema,
+  matching_records: countSchema,
+  offset: countSchema,
+  limit: z.int().positive(),
+  next_offset: countSchema.nullable(),
+  records: z.array(evidenceSchema),
+  missing_evidence_links: z
+    .array(prefixedDigestSchema("ev"))
+    .describe(
+      "Direct evidence_links of the returned records that this session or bundle does not retain; links are not traversed.",
+    ),
+  limitations: z.array(z.string()),
+});
+export type EvidenceRecordSelection = z.infer<
+  typeof evidenceRecordSelectionSchema
+>;
+
+/** Select one page of complete authenticated records without copying the rest of the ledger. */
+export const selectEvidenceRecords = (
+  bundle: EvidenceBundle,
+  filters: EvidenceRecordFilters = {},
+  page: {
+    readonly offset?: number | undefined;
+    readonly limit?: number | undefined;
+  } = {},
+): EvidenceRecordSelection => {
+  const offset = page.offset ?? 0;
+  const limit = page.limit ?? EVIDENCE_RECORD_SELECTION_LIMIT;
+  const records: Evidence[] = [];
+  let matching = 0;
+  for (const { evidence } of matchingEvidenceRecords(bundle, filters)) {
+    if (matching >= offset && records.length < limit) records.push(evidence);
+    matching += 1;
+  }
+  const retained = new Set(bundle.records.map(({ evidence_id: id }) => id));
+  const missing = records.flatMap(({ evidence_links: links }) =>
+    links.filter((link) => !retained.has(link)),
+  );
+  const end = offset + records.length;
+  return {
+    kind: "evidence-record-selection",
+    filters: selectedFilters(filters),
+    total_retained_records: bundle.records.length,
+    matching_records: matching,
+    offset,
+    limit,
+    next_offset: end < matching ? end : null,
+    records,
+    missing_evidence_links: uniqueSorted(missing),
+    limitations: [...RECORD_SELECTION_LIMITATIONS],
   };
 };
