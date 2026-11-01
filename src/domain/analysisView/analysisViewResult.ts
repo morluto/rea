@@ -377,6 +377,7 @@ export const nativeObservationSummaryViewResultSchemas = {
   procedure_address: nativeObservationSummaryFor("procedure_address"),
   procedure_callees: nativeObservationSummaryFor("procedure_callees"),
   procedure_callers: nativeObservationSummaryFor("procedure_callers"),
+  xrefs: nativeObservationSummaryFor("xrefs"),
   resolve_containing_procedure: nativeObservationSummaryFor(
     "resolve_containing_procedure",
   ),
@@ -388,6 +389,7 @@ const nativeObservationSummaryViewResultSchema = z.discriminatedUnion(
     nativeObservationSummaryViewResultSchemas.procedure_address,
     nativeObservationSummaryViewResultSchemas.procedure_callees,
     nativeObservationSummaryViewResultSchemas.procedure_callers,
+    nativeObservationSummaryViewResultSchemas.xrefs,
     nativeObservationSummaryViewResultSchemas.resolve_containing_procedure,
     nativeObservationSummaryViewResultSchemas.get_call_graph,
   ],
@@ -407,6 +409,7 @@ const nativeObservationPageViewResultSchema = z.discriminatedUnion(
     nativeObservationPageFor("procedure_address"),
     nativeObservationPageFor("procedure_callees"),
     nativeObservationPageFor("procedure_callers"),
+    nativeObservationPageFor("xrefs"),
     nativeObservationPageFor("resolve_containing_procedure"),
     nativeObservationPageFor("get_call_graph"),
   ],
