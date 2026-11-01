@@ -3,7 +3,7 @@
 Tracks #3867 under #4027. The canonical effect record omitted existing internal
 worker launches and source staging. `CapabilityInventory` and SDK registration
 already consume that owner directly; no adapter override is required. The
-[worker](../../src/javascript/analysis/JavaScriptAnalysisWorker.ts) creates a
+[worker](https://github.com/morluto/rea/blob/65f1c447344a423fa2785847dbcea1e9a9e2454a/src/javascript/analysis/JavaScriptAnalysisWorker.ts) creates a
 private runtime root, stages `.source` files and launches an owned REA worker.
 These are source-derived facts; the analyzed application code is not executed.
 
