@@ -222,10 +222,10 @@ child output. Child output remains in the capture Evidence on stdout.
 `executable` is resolved through the scenario's `PATH` with the lookup that
 `execute_rizin_command` uses (see
 [reverse-engineering-tools.md](reverse-engineering-tools.md)). Capture
-verifies the file it launches, so it needs the resolved path: where native
-searches disagree, as at a stale network file handle in an earlier `PATH`
-entry, the scenario is rejected with the candidates checked instead of
-launched by name.
+verifies the file it launches, so it needs the resolved path. Where the lookup
+stops because a native search can stop there, as at a stale network file
+handle or a symbolic link loop in an earlier `PATH` entry, the scenario is
+rejected with the candidates checked instead of launched by name.
 
 `executable` is required. `arguments`, `working_directory`, `environment`,
 `filesystem_observation_paths`, terminal settings, timed `events`, timeouts,

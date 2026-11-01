@@ -142,8 +142,9 @@ REA reports a version only for the file it runs. The lookup moves past what ever
 `PATH` search moves past: a missing file, a non-directory, a denied directory
 and a file without execute permission. On Linux and macOS it also skips an
 entry too long for the native path buffer. At any other error, such as a
-symbolic link loop, a stale network file handle or an I/O error, the searches
-of glibc, musl, Android and libuv do not agree, so the lookup stops there. The
+symbolic link loop, a stale network file handle or an I/O error, at least one
+of the searches of glibc, musl, Android and libuv stops, so the lookup stops
+there. The
 command then runs by name, with the version unknown, and the host's own search
 decides what runs. A found file that does not start, with `ENOENT`, is one a
 native search moves past, as when a script's interpreter is missing. The
