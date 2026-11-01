@@ -26,6 +26,12 @@ export const binarySessionInputSchema = z.strictObject({
     .describe(
       "summary (default) keeps open state, the binding, current-route capabilities, each provider candidate's availability and target-support status, code and reason, and every tool's availability, reason and remediation; omitted_fields lists what it leaves out. complete adds provider diagnostics, candidate capabilities and static tool surface, effect and annotation flags.",
     ),
+  refresh_candidates: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Inspect current provider candidates for the active target without replacing or restarting the selected provider. Later transitions and analysis calls wait for inspection finalization. Omitted or false reports the retained selection observations.",
+    ),
   expected_package_version: z.string().min(1).optional(),
   expected_catalog_digest: z
     .string()

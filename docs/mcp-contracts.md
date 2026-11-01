@@ -795,9 +795,14 @@ limitations.
 `binary_session.analysis_provider_candidates` reports deep-engine discovery.
 `analysis_provider_candidates_observed` is `target_selection` when those facts
 were retained from the active target's selection, `status_request` when the
-target-free request sought candidate observations, and `not_applicable` for resource-only
-sessions. Selection-time readiness may have changed since the target was opened;
-candidate statuses can still be unknown when an inspection cannot complete.
+status request sought candidate observations, and `not_applicable` for resource-only
+sessions. Selection-time readiness may have changed since the target was opened.
+Set `refresh_candidates: true` to inspect candidate readiness and target support
+again without replacing the active binding or engine. That does not resolve a
+new analysis profile or start a provider client. Later transitions and analysis
+calls wait for the inspection to finish, including cleanup. Current-route capabilities
+remain those of the bound session. Candidate statuses can still be unknown when
+an inspection cannot complete.
 an explicit `open_binary` performs a new selection. A changed route can retire
 the previous engine and its ephemeral edits. Each candidate's capability sets, returned with complete detail,
 describe that possible provider;

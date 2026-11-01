@@ -88,7 +88,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "binary_session",
-    'Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis. analysis_provider_candidates_observed distinguishes this status request from retained target-selection observations; selection-time readiness may have changed. An explicit open_binary reselects and may retire the previous engine and its ephemeral edits. The default summary lists omitted_fields; detail: "complete" adds provider diagnostics, candidate capabilities and static tool flags.',
+    'Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis. analysis_provider_candidates_observed distinguishes this status request from retained target-selection observations; selection-time readiness may have changed. Set refresh_candidates true to inspect current candidates without changing the active binding or engine. An explicit open_binary reselects and may retire the previous engine and its ephemeral edits. The default summary lists omitted_fields; detail: "complete" adds provider diagnostics, candidate capabilities and static tool flags.',
     binarySessionInputSchema,
   ),
   session(

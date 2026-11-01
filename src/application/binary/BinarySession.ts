@@ -1231,8 +1231,20 @@ export class BinarySession
     options: {
       readonly signal?: AbortSignal;
       readonly detail?: BinarySessionDetail;
+      readonly refreshCandidates?: boolean;
     } = {},
   ): Promise<JsonValue> {
+    return options.refreshCandidates === true
+      ? this.#serialize(() => this.#status(options), { abortPrompts: false })
+      : this.#status(options);
+  }
+
+  /** Keep an explicit candidate refresh ordered with target transitions. */
+  #status(options: {
+    readonly signal?: AbortSignal;
+    readonly detail?: BinarySessionDetail;
+    readonly refreshCandidates?: boolean;
+  }): Promise<JsonValue> {
     const resourceRun = this.#activeBundleResources;
     const run =
       this.#active ??
@@ -1561,9 +1573,11 @@ export class BinarySession
 
   #serialize<T>(
     operation: (admittedThrough: number) => Promise<T>,
+    options: { readonly abortPrompts?: boolean } = {},
   ): Promise<T> {
-    for (const controller of this.#promptCompletionControllers)
-      controller.abort();
+    if (options.abortPrompts !== false)
+      for (const controller of this.#promptCompletionControllers)
+        controller.abort();
     this.#transitionPending += 1;
     // Later calls wait for this transition and must not be included in its drain.
     const admittedThrough = this.#transitionGeneration++;

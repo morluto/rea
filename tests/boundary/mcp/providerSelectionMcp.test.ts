@@ -822,6 +822,28 @@ it("labels unbound provider observations as selection-time after a repair", asyn
   expect(stale.analysis_provider_candidates[0]?.availability.status).toBe(
     "unavailable",
   );
+  const inspected = toolContract("binary_session").outputSchema.parse(
+    (
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: { refresh_candidates: true },
+      })
+    ).structuredContent,
+  ).result;
+  expect(inspected.analysis_provider_binding).toBeNull();
+  expect(inspected.analysis_provider_candidates_observed).toBe(
+    "status_request",
+  );
+  expect(inspected.analysis_provider_candidates[0]?.availability.status).toBe(
+    "available",
+  );
+  const retained = toolContract("binary_session").outputSchema.parse(
+    (await mcp.callTool({ name: "binary_session", arguments: {} }))
+      .structuredContent,
+  ).result;
+  expect(retained.analysis_provider_candidates[0]?.availability.status).toBe(
+    "unavailable",
+  );
   expect(
     (
       await mcp.callTool({
@@ -838,6 +860,333 @@ it("labels unbound provider observations as selection-time after a repair", asyn
     "target_selection",
   );
   expect(refreshed.analysis_provider_binding?.provider.id).toBe("alpha");
+});
+
+it("preserves the bound client when a candidate refresh is cancelled during finalization", async () => {
+  directory = await createTestTempDirectory("rea-candidate-refresh-cancel-");
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const starts: string[] = [];
+  const base = candidate("alpha", starts);
+  let hold = false;
+  let enter!: () => void;
+  let finish!: () => void;
+  let finalized!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const done = new Promise<void>((resolve) => {
+    finalized = resolve;
+  });
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...base,
+        inspectAvailability: async ({
+          signal,
+        }: AnalysisProviderInspectionOptions = {}) => {
+          const result = await base.inspectAvailability();
+          if (!hold) return result;
+          enter();
+          await gate;
+          finalized();
+          if (signal?.aborted)
+            throw new AnalysisCancelledError("binary_session", {
+              cause: signal.reason,
+            });
+          return result;
+        },
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "candidate-refresh-cancel", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  try {
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "alpha" },
+        })
+      ).isError,
+    ).toBeFalsy();
+    expect(
+      (await mcp.callTool({ name: "address_name", arguments: {} })).isError,
+    ).toBeFalsy();
+    expect(starts).toEqual(["alpha"]);
+    hold = true;
+    const controller = new AbortController();
+    const refreshing = mcp.callTool(
+      { name: "binary_session", arguments: { refresh_candidates: true } },
+      { signal: controller.signal },
+    );
+    await entered;
+    controller.abort();
+    await expect(refreshing).rejects.toThrow();
+    finish();
+    await done;
+    hold = false;
+    expect(
+      structured(await mcp.callTool({ name: "binary_session", arguments: {} }))
+        .result,
+    ).toMatchObject({
+      analysis_provider_binding: { provider: { id: "alpha" } },
+      analysis_provider_candidates_observed: "target_selection",
+    });
+    expect(
+      (await mcp.callTool({ name: "address_name", arguments: {} })).isError,
+    ).toBeFalsy();
+    expect(starts).toEqual(["alpha"]);
+  } finally {
+    hold = false;
+    finish();
+  }
+});
+
+it("orders a provider switch after an in-flight candidate refresh", async () => {
+  directory = await createTestTempDirectory("rea-candidate-refresh-switch-");
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const starts: string[] = [];
+  const alpha = candidate("alpha", starts);
+  let hold = false;
+  let enter!: () => void;
+  let finish!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...alpha,
+        inspectAvailability: async () => {
+          if (hold) {
+            hold = false;
+            enter();
+            await gate;
+          }
+          return alpha.inspectAvailability();
+        },
+      },
+      candidate("beta", starts),
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "refresh-switch-race", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  try {
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "alpha" },
+        })
+      ).isError,
+    ).toBeFalsy();
+    hold = true;
+    const refreshing = mcp.callTool({
+      name: "binary_session",
+      arguments: { refresh_candidates: true },
+    });
+    await entered;
+    let switched = false;
+    const switching = mcp
+      .callTool({
+        name: "open_binary",
+        arguments: { path: target, provider_id: "beta" },
+      })
+      .then((result) => {
+        switched = true;
+        return result;
+      });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(switched).toBe(false);
+    finish();
+    const result = await refreshing;
+    expect(result.isError).toBeFalsy();
+    expect(structured(result).result).toMatchObject({
+      analysis_provider_binding: { provider: { id: "alpha" } },
+    });
+    expect((await switching).isError).toBeFalsy();
+    expect(
+      structured(await mcp.callTool({ name: "binary_session", arguments: {} }))
+        .result,
+    ).toMatchObject({
+      analysis_provider_binding: { provider: { id: "beta" } },
+    });
+  } finally {
+    finish();
+  }
+});
+
+it("does not cancel an already admitted prompt lookup for a candidate refresh", async () => {
+  directory = await createTestTempDirectory("rea-refresh-prompt-");
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const base = candidate("alpha", []);
+  let enter!: () => void;
+  let finish!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...base,
+        createClient: (selected, profile, context) => {
+          const client = base.createClient(selected, profile, context);
+          return {
+            ...client,
+            executeIfReady: async (operation, args, options) => {
+              enter();
+              await gate;
+              if (options?.signal?.aborted)
+                throw new Error("Prompt lookup was cancelled");
+              return client.execute(operation, args, options);
+            },
+          };
+        },
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "refresh-prompt", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  try {
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "alpha" },
+        })
+      ).isError,
+    ).toBeFalsy();
+    expect(
+      (await mcp.callTool({ name: "address_name", arguments: {} })).isError,
+    ).toBeFalsy();
+    const lookup = session.executeIfProviderReady("address_name", {});
+    await entered;
+    expect(
+      (
+        await mcp.callTool({
+          name: "binary_session",
+          arguments: { refresh_candidates: true },
+        })
+      ).isError,
+    ).toBeFalsy();
+    finish();
+    expect((await lookup)?.ok).toBe(true);
+  } finally {
+    finish();
+  }
+});
+
+it("retains failed candidate-refresh cleanup while preserving the selected binding", async () => {
+  directory = await createTestTempDirectory("rea-candidate-refresh-cleanup-");
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const starts: string[] = [];
+  const beta = candidate("beta", starts);
+  let fail = false;
+  let release = false;
+  const failure = new ProviderCleanupError("beta", ["beta-refresh-owner"], {
+    reason: "controlled cleanup failure",
+  });
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      candidate("alpha", starts),
+      {
+        ...beta,
+        inspectAvailability: () => {
+          if (fail) throw failure;
+          return beta.inspectAvailability();
+        },
+        closeOwnedResources: async () => {
+          if (!fail) return ok(null);
+          if (!release) return err(failure);
+          failure.resolveCleanup();
+          return ok(null);
+        },
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "candidate-refresh-cleanup", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  try {
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "alpha" },
+        })
+      ).isError,
+    ).toBeFalsy();
+    fail = true;
+    const failed = parseMcpToolError(
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: { refresh_candidates: true },
+      }),
+    );
+    expect(failed.error).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { resources: ["beta-refresh-owner"] },
+    });
+    const status = structured(
+      await mcp.callTool({ name: "binary_session", arguments: {} }),
+    );
+    expect(status.result).toMatchObject({
+      cleanup_pending: true,
+      analysis_provider_binding: { provider: { id: "alpha" } },
+    });
+    release = true;
+    expect(
+      (await mcp.callTool({ name: "close_binary", arguments: {} })).isError,
+    ).toBeFalsy();
+    expect(failure.cleanupIncomplete).toBe(false);
+  } finally {
+    release = true;
+    await session.close();
+  }
 });
 
 it("retains attributed mixed profile cleanup through registered MCP calls and partial retry", async () => {
