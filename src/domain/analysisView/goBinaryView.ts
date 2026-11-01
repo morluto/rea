@@ -1,14 +1,14 @@
-import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
-import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
 import { z } from "zod";
 import {
   goBinarySchema,
   goBuildInfoSchema,
   goModuleMetadataSchema,
   goModuleSchema,
+  type GoBinary,
 } from "../go/goBinary.js";
 import { err, ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { requireMetadataReportSubject } from "./metadataReportSubject.js";
 import {
   ownedView,
   type AdmittedView,
@@ -104,6 +104,41 @@ export const goBinarySummarySchema = z.strictObject({
 
 const parseReport = createAnalysisViewResultReader(goBinarySchema);
 
+const GO_BINARY_RUNTIME_UNKNOWN =
+  "Embedded build records do not establish complete runtime dependencies or target behavior.";
+
+/** Unknowns owned by the Go build-information view. Other projections reuse them. */
+export const goBinaryUnknowns = (
+  report: GoBinary,
+): {
+  readonly values: readonly string[];
+  readonly required: readonly string[];
+} => {
+  const info = report.build_info;
+  return {
+    required: [GO_BINARY_RUNTIME_UNKNOWN],
+    values: [
+      GO_BINARY_RUNTIME_UNKNOWN,
+      ...(info === null
+        ? [
+            "Build information is unavailable; language and dependencies remain unknown.",
+          ]
+        : [
+            ...(info.module.complete
+              ? []
+              : [
+                  "Some module records were not parsed; consult the complete parent Evidence for original lines and bytes.",
+                ]),
+            ...(info.module.main === null
+              ? [
+                  "No main module was decoded; embedded dependency coverage remains unknown.",
+                ]
+              : []),
+          ]),
+    ],
+  };
+};
+
 /** Query the existing metadata owner's facts; never reopen or reinterpret a file. */
 export const projectGoBinaryView = (
   parent: AnalysisViewParent,
@@ -118,53 +153,22 @@ export const projectGoBinaryView = (
         {
           path: ["view"],
           reason: "invalid_value",
-          message: "Go build Evidence supports summary and go views.",
+          message:
+            "Go build Evidence supports summary, go and cyclonedx views.",
         },
       ]),
     );
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
-  if (
-    subject == null ||
-    subject.digest.sha256 !== report.artifact.sha256 ||
-    subject.format !== metadataReportSubjectFormat(report) ||
-    subject.architecture !==
-      (binaryMetadataArchitecture(report.architecture) ?? null)
-  )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Go parent subject must identify the report's exact artifact.",
-        },
-      ]),
-    );
+  const subject = requireMetadataReportSubject(
+    parent,
+    report,
+    "Go parent subject must identify the report's exact artifact.",
+  );
+  if (!subject.ok) return subject;
   const info = report.build_info;
-  const runtimeUnknown =
-    "Embedded build records do not establish complete runtime dependencies or target behavior.";
-  const unknowns = [
-    runtimeUnknown,
-    ...(info === null
-      ? [
-          "Build information is unavailable; language and dependencies remain unknown.",
-        ]
-      : [
-          ...(info.module.complete
-            ? []
-            : [
-                "Some module records were not parsed; consult the complete parent Evidence for original lines and bytes.",
-              ]),
-          ...(info.module.main === null
-            ? [
-                "No main module was decoded; embedded dependency coverage remains unknown.",
-              ]
-            : []),
-        ]),
-  ];
+  const unknowns = goBinaryUnknowns(report);
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_go_binary" as const,
@@ -180,9 +184,12 @@ export const projectGoBinaryView = (
       parent.evidenceId,
       "limitations",
     ),
-    unknowns: boundedViewMessages(unknowns, parent.evidenceId, "unknowns", [
-      runtimeUnknown,
-    ]),
+    unknowns: boundedViewMessages(
+      unknowns.values,
+      parent.evidenceId,
+      "unknowns",
+      unknowns.required,
+    ),
   };
   if (view.kind === "summary")
     return ok({
