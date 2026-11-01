@@ -56,7 +56,8 @@ export interface ExecutableLookupBounds {
  * `no-working-directory`, since its absolute path cannot be named. So
  * `workingDirectory` must name the process's working directory whenever it
  * can fail. A file-system call cannot itself be cancelled, so an interrupted
- * lookup stops waiting for it and lets it settle unobserved.
+ * lookup stops waiting for it, and a later lookup of the same path waits for
+ * that call instead of starting another.
  */
 export const lookupExecutable = async (
   command: string,
@@ -108,7 +109,9 @@ export const lookupExecutable = async (
         candidate = appendCallerPath(entry === "" ? "." : entry, command);
         unnamed = { cause };
       }
-      const metadata = await interruption.race(stat(candidate));
+      const metadata = await interruption.race(
+        shared(stat, candidate, () => stat(candidate)),
+      );
       if (metadata.status === "interrupted") return { ...metadata, candidate };
       if (metadata.status === "rejected") {
         const code = systemErrorCode(metadata.cause);
@@ -128,7 +131,7 @@ export const lookupExecutable = async (
         continue;
       }
       const executable = await interruption.race(
-        access(candidate, fsConstants.X_OK),
+        shared(access, candidate, () => access(candidate, fsConstants.X_OK)),
       );
       if (executable.status === "interrupted")
         return { ...executable, candidate };
@@ -146,6 +149,31 @@ export const lookupExecutable = async (
   } finally {
     interruption.release();
   }
+};
+
+/**
+ * File-system calls still running, by function and path. A stalled mount
+ * holds a call, and a libuv worker with it, until the mount answers; sharing
+ * the call bounds that work by the paths checked, not by the retries.
+ */
+const running = new WeakMap<object, Map<string, Promise<unknown>>>();
+
+const shared = <Value>(
+  call: object,
+  path: string,
+  start: () => Promise<Value>,
+): Promise<Value> => {
+  const calls = running.get(call) ?? new Map<string, Promise<unknown>>();
+  running.set(call, calls);
+  const pending = calls.get(path) as Promise<Value> | undefined;
+  if (pending !== undefined) return pending;
+  const started = start();
+  calls.set(path, started);
+  const settled = (): void => {
+    if (calls.get(path) === started) calls.delete(path);
+  };
+  void started.then(settled, settled);
+  return started;
 };
 
 type Raced<Value> =

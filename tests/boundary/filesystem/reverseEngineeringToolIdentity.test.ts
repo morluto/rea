@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import type { Stats } from "node:fs";
 import {
   access,
   chmod,
+  mkdir,
   readFile,
   rm,
   stat,
@@ -23,6 +25,7 @@ import { RIZIN_VERSION_PROBE } from "../../../src/rizin/RizinCommand.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   type ExecFileOutputOptions,
   rizinExecutableFixture,
@@ -575,6 +578,165 @@ posix.each(["cancellation", "deadline"] as const)(
       await Promise.allSettled(pending);
       await service.close();
     }
+  },
+);
+
+posix(
+  "shares a stalled PATH check with later lookups instead of starting another",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    const release = gate();
+    const finished = gate();
+    const checks: string[] = [];
+    // One stat function for every lookup, as in production.
+    const stalling = async (target: string): Promise<Stats> => {
+      checks.push(target);
+      try {
+        if (target === executable) await release.opened;
+        return await stat(target);
+      } finally {
+        if (target === executable) finished.open();
+      }
+    };
+    const run = versionProbeRunner(() => "rizin 0.9.1 @ linux-x86-64");
+    const service = new TestReverseEngineeringService({
+      run,
+      lookup: (command, directory, searchPath, bounds) =>
+        lookupExecutable(command, directory, searchPath, {
+          ...bounds,
+          stat: stalling,
+        }),
+      environment: { REA_RIZIN_COMMAND: "rizin", PATH: dirname(executable) },
+    });
+    const checksOfExecutable = (): number =>
+      checks.filter((target) => target === executable).length;
+    try {
+      for (const attempt of [1, 2, 3]) {
+        const result = await within(
+          service.executeRizinCommand({
+            path,
+            command: "iI",
+            command_timeout_ms: 50,
+          }),
+          `stalled lookup ${String(attempt)}`,
+        );
+        expect(result.ok ? "ok" : result.error._tag).toBe(
+          "AnalysisTimeoutError",
+        );
+      }
+      // Three timed-out calls wait for one check of the stalled path.
+      expect(checksOfExecutable()).toBe(1);
+      expect(run).not.toHaveBeenCalled();
+      release.open();
+      await finished.opened;
+      await new Promise((resolve) => setImmediate(resolve));
+      const result = await within(
+        service.executeRizinCommand({ path, command: "iI" }),
+        "lookup after the mount answers",
+      );
+      if (!result.ok) throw result.error;
+      expect(checksOfExecutable()).toBe(2);
+      expect(result.value.provider.version).toBe("0.9.1");
+    } finally {
+      release.open();
+      await service.close();
+    }
+  },
+);
+
+posix(
+  "runs the command as selected when the file the lookup found does not start, as a spawned search would",
+  async () => {
+    const directory = await createTestTempDirectory("rea-rizin-unstarted-");
+    const broken = join(directory, "broken");
+    const working = join(directory, "working");
+    await mkdir(broken);
+    await mkdir(working);
+    // The interpreter is missing, so the host fails to start the script with ENOENT.
+    await writeFile(join(broken, "rizin"), "#!/nonexistent/rea-sh\n", {
+      mode: 0o755,
+    });
+    await writeFile(
+      join(working, "rizin"),
+      '#!/bin/sh\nif [ "$1" = -v ]; then echo "rizin 0.9.1 @ test-host"; else echo "working rizin"; fi\n',
+      { mode: 0o755 },
+    );
+    const path = join(directory, "sample.bin");
+    await writeFile(path, "sample");
+    const service = new TestReverseEngineeringService({
+      environment: {
+        REA_RIZIN_COMMAND: "rizin",
+        PATH: [broken, working].join(delimiter),
+      },
+    });
+    try {
+      const result = await service.executeRizinCommand({
+        path,
+        command: "iI",
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.raw_result).toMatchObject({
+        stdout: "working rizin\n",
+      });
+      // REA did not identify the file the host chose.
+      expect(result.value.provider.version).toBeNull();
+      expect(result.value.parameters).toMatchObject({
+        provider_executable: "rizin",
+        provider_identity: "assumed",
+      });
+      expect(result.value.parameters).not.toHaveProperty(
+        "provider_executable_path",
+      );
+      expect(result.value.limitations).toContainEqual(
+        expect.stringContaining(
+          `${join(broken, "rizin")}, which the lookup found, did not start (ENOENT)`,
+        ),
+      );
+    } finally {
+      await service.close();
+    }
+  },
+);
+
+posix(
+  "keeps the resolved path of a relative selection the host refuses to inspect when its launch fails",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    const run = vi.fn(
+      async (
+        _command: string,
+        _args: readonly string[],
+        _options?: ExecFileOutputOptions,
+      ): Promise<never> => {
+        throw Object.assign(new Error("spawn EACCES"), { code: "EACCES" });
+      },
+    );
+    const service = new TestReverseEngineeringService({
+      run,
+      // The relative selection resolves in the fixture's directory, where
+      // the host refuses to inspect it.
+      lookup: (command, _directory, searchPath, bounds) =>
+        lookupExecutable(command, () => dirname(executable), searchPath, {
+          ...bounds,
+          stat: async (target) => {
+            if (target === executable)
+              throw Object.assign(new Error("permission denied"), {
+                code: "EACCES",
+              });
+            return stat(target);
+          },
+        }),
+      environment: { REA_RIZIN_COMMAND: "./rizin" },
+    });
+    const result = await service.executeRizinCommand({ path, command: "iI" });
+    if (result.ok) throw new Error("Expected the launch to fail");
+    expect(result.error.diagnostics).toMatchObject({
+      provider_executable: "./rizin",
+      provider_executable_path: executable,
+      provider_identity: "assumed",
+    });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0]?.[0]).toBe(executable);
   },
 );
 

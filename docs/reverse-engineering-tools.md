@@ -138,6 +138,24 @@ that is cancelled or reaches the deadline keeps the path it was checking, as
 also keeps the selected `provider_executable` and, for a call with a target, its
 `artifact_path` and `artifact_sha256`.
 
+REA reports a version only for the file it runs. The lookup moves past what every native
+`PATH` search moves past: a missing file, a non-directory, a denied directory
+and a file without execute permission. On Linux and macOS it also skips an
+entry too long for the native path buffer. At any other error, such as a
+symbolic link loop, a stale network file handle or an I/O error, the searches
+of glibc, musl, Android and libuv do not agree, so the lookup stops there. The
+command then runs by name, with the version unknown, and the host's own search
+decides what runs. A found file that does not start, with `ENOENT`, is one a
+native search moves past, as when a script's interpreter is missing. The
+command then also runs as selected, with the version unknown, and a limitation
+names that file. When the host refuses to inspect an explicitly selected path
+(`EACCES` or `EPERM`), the command runs that path with the version unknown, and
+Evidence or the launch failure keeps it as `provider_executable_path`. A lookup
+that stops waiting for a stalled file-system call leaves that call running; a
+later lookup of the same path waits for it instead of starting another. A hash
+also ends at the deadline or on cancellation while the file's open is still
+pending.
+
 Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override. A typed failure's `captured_output` marks a stream that held invalid UTF-8 with `stdout_invalid_utf8` or `stderr_invalid_utf8`.
 
 ## Cutter bridge

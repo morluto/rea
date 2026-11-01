@@ -3,7 +3,7 @@ import type { Stats } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
@@ -585,6 +585,45 @@ it("shares one preflight deadline across stat and digest", async () => {
   ).rejects.toMatchObject({ code: "ETIMEDOUT" });
   expect(performance.now() - started).toBeLessThan(280);
 });
+
+it.each(["deadline", "cancellation"] as const)(
+  "ends a digest on its %s while the file's open is still pending",
+  async (interruption) => {
+    const controller = new AbortController();
+    const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
+    // A stream whose open never returns, as on a stalled mount.
+    let stream: Readable | undefined;
+    const open = () => {
+      stream = new Readable({ construct() {}, read() {} });
+      return stream as unknown as ReturnType<
+        typeof import("node:fs").createReadStream
+      >;
+    };
+    const digest = digestFile(
+      "/tmp/rea-stalled-open",
+      controller.signal,
+      stat,
+      interruption === "deadline" ? 50 : 10_000,
+      open,
+    ).catch((cause: unknown) => cause);
+    if (interruption === "cancellation")
+      setTimeout(() => controller.abort("stop the digest"), 20);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const failure = await Promise.race([
+      digest,
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve("still waiting"), 1_000);
+      }),
+    ]);
+    clearTimeout(timer);
+    expect(failure).toMatchObject(
+      interruption === "deadline"
+        ? { code: "ETIMEDOUT" }
+        : { _tag: "AnalysisCancelledError", cause: "stop the digest" },
+    );
+    expect(stream?.destroyed).toBe(true);
+  },
+);
 
 it("retains an explicit null reason when digest admission is already cancelled", async () => {
   const controller = new AbortController();

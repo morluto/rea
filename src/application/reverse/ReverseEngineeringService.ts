@@ -944,6 +944,16 @@ export class ReverseEngineeringService {
             }),
       );
     }
+    // The command runs the path the host refused to inspect, so a launch
+    // failure keeps where access must be granted.
+    if (lookup.status === "denied")
+      return ok(
+        unidentified(
+          `the executable could not be inspected (${lookup.code})`,
+          lookup.path,
+          { provider_executable_path: lookup.path },
+        ),
+      );
     // The command launch reports an executable that cannot be selected.
     if (lookup.status !== "found")
       return ok(
@@ -1004,6 +1014,14 @@ export class ReverseEngineeringService {
     // A probe that ends the call keeps the path and digest it ran from.
     if (!outcome.ok) return err(outcome.error.retainDiagnostics(parameters));
     const completed = outcome.value;
+    // A spawned PATH search moves past a file that fails to start with
+    // ENOENT, so the command runs as selected and the host decides what runs.
+    if (completed.status === "not-started")
+      return ok(
+        unidentified(
+          `${lookup.path}, which the lookup found, did not start (ENOENT), as when a script's interpreter is missing; the command runs \`${profile.executable}\` as selected, so the host decides what runs`,
+        ),
+      );
     if (completed.status !== "read" && completed.status !== "unrecognized")
       return ok(
         unidentified(
@@ -1140,6 +1158,8 @@ export class ReverseEngineeringService {
             cleanupOwner,
           ),
         );
+      // The file did not start, as when a script's interpreter is missing.
+      if (code === "ENOENT") return ok({ status: "not-started" });
       // Both runners report the call's deadline as ETIMEDOUT, even when the
       // stop signal also ended the process.
       return ok({
@@ -1188,7 +1208,9 @@ type VersionProbeOutcome =
   | {
       readonly status: "failed" | "timed-out" | "undecodable";
       readonly diagnostics: Readonly<Record<string, JsonValue>>;
-    };
+    }
+  /** The host could not start the file, with ENOENT. */
+  | { readonly status: "not-started" };
 
 /** Why a probe that read no usable banner leaves the version unknown. */
 /** Observations read before the command cannot bind the tool that ran. */
@@ -1200,7 +1222,10 @@ export const VERSION_PROBE_FAILURE_REASONS = {
   "timed-out": "reached the command deadline",
   undecodable: "printed output that is not valid UTF-8",
 } as const satisfies Record<
-  Exclude<VersionProbeOutcome["status"], "read" | "unrecognized">,
+  Exclude<
+    VersionProbeOutcome["status"],
+    "read" | "unrecognized" | "not-started"
+  >,
   string
 >;
 
@@ -1476,9 +1501,18 @@ export const digestFile = async (
   return new Promise<string>((resolveDigest, rejectDigest) => {
     const hash = createHash("sha256");
     const stream = open(path);
+    // A stream destroyed while its open is pending reports the error only
+    // after that open returns, which a stalled mount can delay indefinitely.
+    // The deadline and cancellation therefore end the wait themselves; the
+    // stream closes its file once the open returns.
+    const stop = (cause: Error): void => {
+      cleanup();
+      stream.destroy(cause);
+      rejectDigest(cause);
+    };
     const timer = setTimeout(
       () =>
-        stream.destroy(
+        stop(
           Object.assign(new Error("Artifact digest timed out"), {
             code: "ETIMEDOUT",
           }),
@@ -1486,7 +1520,7 @@ export const digestFile = async (
       remainingMs,
     );
     const abort = (): void => {
-      stream.destroy(
+      stop(
         new AnalysisCancelledError("artifact_digest", {
           cause: signal?.reason,
         }),
