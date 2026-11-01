@@ -82,6 +82,8 @@ Die Einrichtung unterstützt Claude Code, Codex, Cursor, Gemini CLI, Grok Build 
 
 MCP verwendet standardmäßig kompakte Eingabeschemas. Für vollständige Feldhinweise und Details zur verschachtelten Validierung setze `REA_MCP_INPUT_SCHEMA_PROFILE=full` in der MCP-Registrierung. Beide Profile behalten alle Tools und dieselbe kanonische Servervalidierung; siehe MCP-Vertragsleitfaden.
 
+Standardmäßig werden vollständige Ausgabeschemas angekündigt (`full`). Wenn dein Client die Größe des gesamten `tools/list`-Frames begrenzt, setze `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`, um jedes angekündigte Ausgabeschema zu begrenzen, oder `off`, um Ausgabeschemas ganz wegzulassen. Beide Einstellungen behalten die kanonische serverseitige Validierung und vollständige strukturierte Ergebnisse bei. Siehe „Output schemas“ im MCP-Vertragsleitfaden.
+
 ### Deinen Agenten fragen
 
 ```text

@@ -82,6 +82,8 @@ A configuração oferece suporte ao Claude Code, Codex, Cursor, Gemini CLI, Grok
 
 O MCP usa esquemas de entrada compactos por padrão. Para obter todas as orientações de campos e validação aninhada, defina `REA_MCP_INPUT_SCHEMA_PROFILE=full` no registro MCP. Ambos os perfis mantêm todas as ferramentas e a mesma validação canônica do servidor; veja o guia dos contratos MCP.
 
+Por padrão, são anunciados esquemas de saída completos (`full`). Se o cliente limitar o tamanho do quadro `tools/list` completo, defina `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` para limitar cada esquema de saída anunciado, ou `off` para omitir completamente os esquemas de saída. Ambas as configurações preservam a validação canônica no servidor e os resultados estruturados completos. Veja “Output schemas” no guia de contratos MCP.
+
 ### Peça ao seu agente
 
 ```text

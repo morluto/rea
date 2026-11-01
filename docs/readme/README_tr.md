@@ -82,6 +82,8 @@ Kurulum Claude Code, Codex, Cursor, Gemini CLI, Grok Build ve [diğer ajanları]
 
 MCP varsayılan olarak kompakt girdi şemaları kullanır. Tam alan açıklamaları ve iç içe doğrulama ayrıntıları için MCP kaydında `REA_MCP_INPUT_SCHEMA_PROFILE=full` ayarlayın. Her iki profil tüm araçları ve aynı kanonik sunucu doğrulamasını korur; MCP sözleşme rehberine bakın.
 
+Varsayılan olarak tam çıktı şemaları yayımlanır (`full`). İstemciniz `tools/list` çerçevesinin toplam boyutunu sınırlıyorsa, yayımlanan her çıktı şemasını sınırlamak için `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`, çıktı şemalarını tamamen atlamak için ise `off` ayarını kullanın. Her iki ayar da sunucu tarafındaki kanonik doğrulamayı ve tam yapılandırılmış sonuçları korur. MCP sözleşmeleri kılavuzundaki “Output schemas” bölümüne bakın.
+
 ### Ajanınıza sorun
 
 ```text

@@ -82,6 +82,8 @@ Setup prend en charge Claude Code, Codex, Cursor, Gemini CLI, Grok Build et [d'a
 
 MCP utilise par défaut des schémas d’entrée compacts. Pour les descriptions complètes des champs et de la validation imbriquée, définissez `REA_MCP_INPUT_SCHEMA_PROFILE=full` dans l’enregistrement MCP. Les deux profils conservent tous les outils et la même validation canonique du serveur ; voir le guide des contrats MCP.
 
+Les schémas de sortie complets sont annoncés par défaut (`full`). Si votre client limite la taille de la trame `tools/list` complète, définissez `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` pour limiter chaque schéma de sortie annoncé, ou `off` pour omettre entièrement les schémas de sortie. Ces deux réglages conservent la validation canonique côté serveur et les résultats structurés complets. Consultez « Output schemas » dans le guide des contrats MCP.
+
 ### Interroger votre agent
 
 ```text
