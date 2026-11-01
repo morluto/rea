@@ -34,9 +34,12 @@ const generic = <Code extends string>(code: Code) =>
     .object({ code: z.literal(code), ...common, details: genericDetails })
     .strict();
 
+/** The canonical invalid-input projection, also used for facet-local refusals. */
+export const analysisInputErrorProjectionSchema = generic("invalid_request");
+
 /** Stable discriminated schema shared by every CLI and MCP error surface. */
 export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
-  generic("invalid_request"),
+  analysisInputErrorProjectionSchema,
   generic("access_denied"),
   generic("artifact_changed"),
   generic("unreadable_output"),

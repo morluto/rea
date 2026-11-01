@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   requireMcpLifecycleResult,
   requireMcpOutput,
+  requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -203,6 +204,34 @@ try {
     nativeInstructionSchema.safeParse({ ...unlisted, status: "undecodable" })
       .success,
   );
+  const contextDefinition = tools.find(
+    (tool) => tool.name === "inspect_address_context",
+  );
+  assert.ok(contextDefinition?.outputSchema);
+  const documents = await call("list_documents");
+  assert.equal(documents.length, 1);
+  const document = documents[0];
+  for (const input of [
+    { address: fixture.entry, document: `${document}-not-a-program` },
+    { address: "not-an-address", document },
+  ]) {
+    const direct = requireMcpToolError(
+      await client.callTool({ name: "address_name", arguments: input }),
+    );
+    const response = await client.callTool(
+      { name: "inspect_address_context", arguments: input },
+      { timeout: 240000, toolDefinition: contextDefinition },
+    );
+    const context = requireMcpLifecycleResult(
+      response,
+      "inspect_address_context",
+    );
+    assert.equal(context.name.state, "unavailable");
+    assert.equal(context.name.error.code, "invalid_request");
+    assert.deepEqual(context.name.error.details.issues, direct.details.issues);
+    assert.equal(context.name.reason, direct.message);
+    assert.equal(context.name.remediation, direct.remediation.action);
+  }
   assert.equal(
     (await call("resolve_native_call_targets", { address: unlistedAddress }))
       .status,
@@ -427,6 +456,7 @@ try {
       cli_mcp_parity: true,
       address_context_comment_recovery: true,
     },
+    context_input_errors_preserved: true,
     original_unchanged: true,
     address_truncation_rejected: true,
     limitations: image.limitations,

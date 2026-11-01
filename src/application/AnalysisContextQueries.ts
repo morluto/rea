@@ -7,8 +7,13 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
+import {
+  projectAnalysisError,
+  type AnalysisErrorProjection,
+} from "../domain/analysisErrorProjection.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -24,6 +29,7 @@ type Facet =
       readonly state: "unavailable";
       readonly reason: string;
       readonly remediation: string;
+      readonly error?: AnalysisErrorProjection;
     };
 
 /** Recovery for a comment inside an observed containing function. */
@@ -190,16 +196,28 @@ const unavailableFacet = (
   error: AnalysisError | undefined,
   operation: AnalysisOperation,
   capabilityRecovery?: string,
-): Facet => ({
-  state: "unavailable",
-  reason: error?.message ?? `${operation} returned no result`,
-  remediation:
-    error instanceof AnalysisCapabilityUnavailableError && !error.retryable
-      ? (error.remediationAction ??
-        capabilityRecovery ??
-        ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY)
-      : `Call ${operation} directly to inspect provider availability and diagnostics.`,
-});
+): Facet => {
+  if (error instanceof AnalysisInputError) {
+    const projected = projectAnalysisError(error);
+    if (projected.code === "invalid_request")
+      return {
+        state: "unavailable",
+        reason: projected.message,
+        remediation: projected.remediation.action,
+        error: projected,
+      };
+  }
+  return {
+    state: "unavailable",
+    reason: error?.message ?? `${operation} returned no result`,
+    remediation:
+      error instanceof AnalysisCapabilityUnavailableError && !error.retryable
+        ? (error.remediationAction ??
+          capabilityRecovery ??
+          ADDRESS_CONTEXT_UNAVAILABLE_RECOVERY)
+        : `Call ${operation} directly to inspect provider availability and diagnostics.`,
+  };
+};
 
 const isRequestLevelFailure = (error: AnalysisError): boolean =>
   error._tag === "AnalysisCancelledError" ||
