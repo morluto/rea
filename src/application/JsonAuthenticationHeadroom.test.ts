@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   estimateJsonStorage,
+  estimateJsonArrayScalarEntry,
   requireAuthenticationHeadroom,
 } from "./JsonAuthenticationHeadroom.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
@@ -19,6 +20,56 @@ it("stops a bounded representation scan before visiting an over-budget tail", ()
   expect(measured.valueBytes).toBeGreaterThan(512);
 });
 describe("JSON authentication headroom", () => {
+  it("measures source IDs without first constructing their array", () => {
+    const values = ["ev_123", null, 'escaped\"\n😀'];
+    const empty = estimateJsonStorage({ evidence_links: [] });
+    const incremental = values.reduce((total, value, index) => {
+      const entry = estimateJsonArrayScalarEntry(value, index > 0);
+      return {
+        valueBytes: total.valueBytes + entry.valueBytes,
+        serializedUtf16Bytes:
+          total.serializedUtf16Bytes + entry.serializedUtf16Bytes,
+      };
+    }, empty);
+    expect(incremental).toEqual(
+      estimateJsonStorage({ evidence_links: values }),
+    );
+  });
+  it("accounts for a measured representation that has not yet been allocated", () => {
+    const value = { result: "small" };
+    const base = estimateJsonStorage(value);
+    const additional = { valueBytes: 8192, serializedUtf16Bytes: 2048 };
+    const total =
+      (base.valueBytes +
+        base.serializedUtf16Bytes +
+        additional.valueBytes +
+        additional.serializedUtf16Bytes) *
+      2;
+    const request = {
+      operation: "address_name",
+      path: "recovery",
+      description: "Cannot authenticate",
+      additional,
+    };
+    expect(
+      requireAuthenticationHeadroom(value, {
+        ...request,
+        availableBytes: total - 1,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        resource: "memory",
+        reportedLimits: { authentication_bytes: total },
+      },
+    });
+    expect(
+      requireAuthenticationHeadroom(value, {
+        ...request,
+        availableBytes: total,
+      }),
+    ).toEqual({ ok: true, value: undefined });
+  });
   it("does not queue every row while deciding whether a wide report can fit", () => {
     let pending = 0;
     let peak = 0;

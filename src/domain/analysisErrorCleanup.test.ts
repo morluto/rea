@@ -9,6 +9,7 @@ import {
 import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import {
   projectAnalysisError,
+  projectAnalysisErrorForCleanupHistory,
   projectAnalysisErrorWithoutCapturedOutput,
 } from "./analysisErrorProjection.js";
 import {
@@ -195,10 +196,7 @@ it.each([
   const projected = projectAnalysisError(composed);
   expect(projected).toMatchObject(original);
   expect(projected.details?.cleanup_history).toMatchObject({
-    primary_error:
-      primary.capturedOutput === undefined
-        ? original
-        : projectAnalysisErrorWithoutCapturedOutput(primary),
+    primary_error: projectAnalysisErrorForCleanupHistory(primary),
     cleanup_error: { code: "cleanup_incomplete" },
   });
   expect(projected.details).not.toHaveProperty("cleanup", "incomplete");
@@ -250,6 +248,33 @@ it.each(["inner", "outer"] as const)(
     );
   },
 );
+
+it("preserves recovery and secondary failures owned by an intermediate cleanup", () => {
+  const primary = new AnalysisInputError("inspect");
+  const inner = analysisErrorWithCleanupFailure(
+    primary,
+    new ProviderCleanupError("fixture", ["input"], {}),
+  );
+  inner.retainSourcePublication({
+    kind: "omitted",
+    reason: "primary-authentication-failed",
+    source_closure: "not-established",
+  });
+  inner.retainSecondaryFailure(new AnalysisInputError("source"));
+  const outer = analysisErrorWithCleanupFailure(
+    inner,
+    new ProviderCleanupError("fixture", ["workspace"], {}),
+  );
+  expect(projectAnalysisError(outer)).toMatchObject({
+    details: {
+      completed_observation_omitted: {
+        reason: "primary-authentication-failed",
+        source_closure: "not-established",
+      },
+      secondary_failures: [{ code: "invalid_request" }],
+    },
+  });
+});
 
 it("does not infer cleanup success when a composition has no live owner binding", () => {
   const primary = new AnalysisInputError("inspect");

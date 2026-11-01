@@ -17,6 +17,7 @@ import {
 } from "../domain/analysisErrorProjection.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { analysisBookmarkSchema } from "../domain/native/nativeInventory.js";
 import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
@@ -121,18 +122,30 @@ export function* omitContextEvidenceForDelivery(
   const candidates = names.flatMap((name) => {
     const facet = context[name];
     if (facet.state !== "unavailable" || facet.error === undefined) return [];
-    const compact = omitUnretainedEvidenceFromError(facet.error, limit);
-    if (compact === undefined) return [];
-    const partial = facet.error.details?.partial_observation;
-    const size = estimateJsonStorage(partial, {
-      maximumValueBytes: budgetBytes,
-      includeSerialized: false,
-    }).valueBytes;
-    return [{ name, facet, compact, size }];
+    return (["partial_observation", "completed_observation"] as const).flatMap(
+      (field) => {
+        const compact = omitUnretainedEvidenceFromError(
+          facet.error!,
+          limit,
+          field,
+        );
+        if (compact === undefined) return [];
+        const value = facet.error!.details?.[field];
+        const size = estimateJsonStorage(value, {
+          maximumValueBytes: budgetBytes,
+          includeSerialized: false,
+        }).valueBytes;
+        return [{ name, field, size }];
+      },
+    );
   });
   candidates.sort((left, right) => right.size - left.size);
   let current = context;
-  for (const { name, facet, compact } of candidates) {
+  for (const { name, field } of candidates) {
+    const facet = current[name];
+    if (facet.state !== "unavailable" || facet.error === undefined) continue;
+    const compact = omitUnretainedEvidenceFromError(facet.error, limit, field);
+    if (compact === undefined) continue;
     current = {
       ...current,
       [name]: {
@@ -240,12 +253,15 @@ const unavailableFacet = (
 ): Facet => {
   if (
     error instanceof AnalysisInputError ||
-    error instanceof AnalysisResourceConstraintError
+    error instanceof AnalysisResourceConstraintError ||
+    (error instanceof EvidenceIntegrityError &&
+      error.sourcePublicationRecovery !== undefined)
   ) {
     const projected = projectAnalysisError(error);
     if (
       projected.code === "invalid_request" ||
-      projected.code === "resource_constraint"
+      projected.code === "resource_constraint" ||
+      projected.code === "evidence_integrity_mismatch"
     )
       return {
         state: "unavailable",
@@ -264,7 +280,11 @@ const unavailableFacet = (
 const isRequestLevelFailure = (error: AnalysisError): boolean =>
   error._tag === "AnalysisCancelledError" ||
   error._tag === "AnalysisTimeoutError" ||
-  error._tag === "NoBinaryOpenError";
+  error._tag === "NoBinaryOpenError" ||
+  (error.sourcePublicationRecovery !== undefined &&
+    !(error instanceof AnalysisInputError) &&
+    !(error instanceof AnalysisResourceConstraintError) &&
+    !(error instanceof EvidenceIntegrityError));
 
 /** Wait for all facets and retain every unresolved cleanup owner. */
 const contextFailure = (
@@ -311,7 +331,8 @@ const contextFailure = (
       ).bindCleanupDependencies([previous, failure]);
     } else if (
       !(failure instanceof AnalysisCancelledError) &&
-      isRequestLevelFailure(failure)
+      (isRequestLevelFailure(failure) ||
+        failure.sourcePublicationRecovery !== undefined)
     ) {
       combined.retainSecondaryFailure(failure);
     }

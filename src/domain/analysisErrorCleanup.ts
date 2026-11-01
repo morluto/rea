@@ -1,7 +1,7 @@
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import {
   projectAnalysisError,
-  projectAnalysisErrorWithoutCapturedOutput,
+  projectAnalysisErrorForCleanupHistory,
 } from "./analysisErrorProjection.js";
 import type { AnalysisError } from "./analysisErrorBase.js";
 import { analysisErrorRemediationAction } from "./analysisErrorPresentation.js";
@@ -42,10 +42,7 @@ export const analysisErrorWithCleanupFailure = (
         ],
       },
       diagnostics: {
-        primary_error:
-          primary.capturedOutput === undefined
-            ? projectAnalysisError(primary)
-            : projectAnalysisErrorWithoutCapturedOutput(primary),
+        primary_error: projectAnalysisErrorForCleanupHistory(primary),
         cleanup_error: projected,
       },
     },

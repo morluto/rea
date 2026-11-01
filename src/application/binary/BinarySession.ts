@@ -47,6 +47,7 @@ import {
 } from "./SessionProviderPolicy.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { recordEvidenceSources } from "../investigation/recordEvidenceSources.js";
+import { recoverProviderSourceFailure } from "../investigation/sourcePublicationRecovery.js";
 import { BinarySessionRecords } from "./BinarySessionRecords.js";
 import { binarySessionStatus } from "./BinarySessionStatus.js";
 import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
@@ -1450,7 +1451,24 @@ export class BinarySession
         (source) => this.recordEvidence(source),
         execution.value.sourceEvidence,
       );
-      if (!sourcesRecorded.ok) return sourcesRecorded;
+      if (!sourcesRecorded.ok) {
+        recoverProviderSourceFailure({
+          error: sourcesRecorded.error,
+          operation: name,
+          parameters: arguments_,
+          execution: {
+            ...execution.value,
+            sourceEvidence: execution.value.sourceEvidence,
+            subject:
+              execution.value.subject === undefined
+                ? active.target
+                : execution.value.subject,
+          },
+          admit: this.admitRecoveryObservation.bind(this),
+          hasEvidence: this.hasEvidence.bind(this),
+        });
+        return sourcesRecorded;
+      }
     }
     if (
       execution.ok &&

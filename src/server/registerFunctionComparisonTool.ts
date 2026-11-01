@@ -58,6 +58,7 @@ export const registerFunctionComparisonTool = (
           const retained = recordEvidenceSources(
             session.recordEvidence.bind(session),
             sources,
+            { evidence, hasEvidence: session.hasEvidence.bind(session) },
           );
           if (!retained.ok)
             return server.delivery.toCallToolResult(retained, contract);

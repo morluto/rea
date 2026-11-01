@@ -39,6 +39,10 @@ export const admitInvestigationAuthentication = (
   input: unknown,
   operation: string,
   policy: InvestigationRetentionPolicy,
+  additional?: {
+    readonly valueBytes: number;
+    readonly serializedUtf16Bytes: number;
+  },
 ): Result<void, AnalysisError> => {
   const issue = jsonValueValidationIssue(input);
   if (issue !== undefined)
@@ -52,6 +56,7 @@ export const admitInvestigationAuthentication = (
     path: "investigation",
     description:
       "Insufficient live heap headroom to authenticate investigation records",
+    ...(additional === undefined ? {} : { additional }),
     ...(policy.availableAuthenticationBytes === undefined
       ? {}
       : { availableBytes: policy.availableAuthenticationBytes() }),

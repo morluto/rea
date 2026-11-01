@@ -95,6 +95,7 @@ import {
   analysisErrorProjectionSchema,
   analysisInputErrorProjectionSchema,
   analysisResourceErrorProjectionSchema,
+  evidenceIntegrityErrorProjectionSchema,
 } from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
@@ -118,6 +119,7 @@ import { electronFuseReportSchema } from "../domain/electron/electronFuses.js";
 const contextFacetErrorSchema = z.discriminatedUnion("code", [
   analysisInputErrorProjectionSchema,
   analysisResourceErrorProjectionSchema,
+  evidenceIntegrityErrorProjectionSchema,
 ]);
 const contextFacetSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("available"), value: jsonValueSchema }),

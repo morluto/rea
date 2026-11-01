@@ -196,21 +196,37 @@ export class ToolResultDelivery {
       "error-text",
       targetContent,
     );
-    if (!encoded.ok) {
-      const compact = omitUnretainedEvidenceFromError(projected, encoded);
-      if (compact !== undefined) {
-        const compactContent = { error: compact };
+    let candidateProjection = projected;
+    while (!encoded.ok) {
+      const limit = encoded;
+      const sourceOmitted = omitUnretainedEvidenceFromError(
+        candidateProjection,
+        limit,
+      );
+      const primaryOmitted = omitUnretainedEvidenceFromError(
+        candidateProjection,
+        limit,
+        "completed_observation",
+      );
+      for (const candidate of [sourceOmitted, primaryOmitted]) {
+        if (candidate === undefined) continue;
+        const content = { error: candidate };
         const compactEncoded = encodeToolResult(
-          compactContent,
+          content,
           this.resultBudgetBytes,
           "error-text",
           targetContent,
         );
         if (compactEncoded.ok) {
-          structuredContent = compactContent;
+          structuredContent = content;
           encoded = compactEncoded;
+          break;
         }
       }
+      if (encoded.ok) break;
+      const next = sourceOmitted ?? primaryOmitted;
+      if (next === undefined) break;
+      candidateProjection = next;
     }
     // The transport retains an oversized projected error before replacing it
     // with a recoverable delivery constraint, using this same budget.

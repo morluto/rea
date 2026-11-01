@@ -1,4 +1,7 @@
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  sourcePublicationRecoveryOf,
+  type AnalysisError,
+} from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -18,18 +21,45 @@ export const projectDirectAnalysisFailure = (
 ): ReturnType<typeof projectAnalysisError> => {
   const projection = projectAnalysisError(error);
   const observation = tryParseEvidence(projection.details?.partial_observation);
-  return observation === undefined
-    ? projection
-    : {
-        ...projection,
-        details: {
-          ...projection.details,
-          partial_observation: withEvidenceCallerInputPath(
-            observation,
+  const completed = sourcePublicationRecoveryOf(error)?.completed;
+  const completedWithPath =
+    completed?.kind === "unretained-evidence" ||
+    completed?.kind === "inline-evidence"
+      ? {
+          ...completed,
+          evidence: withEvidenceCallerInputPath(
+            completed.evidence,
             callerInputPath,
           ),
-        },
-      };
+        }
+      : completed?.kind === "unretained-observation"
+        ? {
+            ...completed,
+            observation: {
+              ...completed.observation,
+              caller_input_path: callerInputPath,
+            },
+          }
+        : undefined;
+  if (observation === undefined && completedWithPath === undefined)
+    return projection;
+  return {
+    ...projection,
+    details: {
+      ...projection.details,
+      ...(observation === undefined
+        ? {}
+        : {
+            partial_observation: withEvidenceCallerInputPath(
+              observation,
+              callerInputPath,
+            ),
+          }),
+      ...(completedWithPath === undefined
+        ? {}
+        : { completed_observation: completedWithPath }),
+    },
+  };
 };
 
 /** Await one-shot cleanup and retain either the outcome or both failures. */
