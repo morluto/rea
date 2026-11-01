@@ -66,7 +66,7 @@ Proses penyiapan mendaftarkan REA ke agen Anda dan memasang instruksi alur kerja
 
 ## Mulai Cepat
 
-Di Linux, peluncuran Ghidra, JADX dan alat firmware serta analisis statis JavaScript/Electron memerlukan `ps` yang kompatibel dengan procps pada `PATH` REA untuk memeriksa kepemilikan proses. Lihat prasyarat Linux.
+Di Linux, peluncuran Ghidra, JADX dan alat firmware serta analisis statis JavaScript/Electron memerlukan `ps` yang kompatibel dengan procps pada `PATH` REA untuk memeriksa kepemilikan proses. Langkah pemulihannya tersedia di [prasyarat kepemilikan proses Linux](../installation.md#linux-owned-process-prerequisite).
 
 ### Siapkan agen Anda
 
@@ -78,9 +78,13 @@ npx rea-agents setup
 
 Pilih agen yang ingin digunakan, tinjau perubahan yang diusulkan, lalu setujui perubahan tersebut. Proses penyiapan menambahkan server MCP REA dan instruksi alur kerja yang sesuai, serta membuat cadangan konfigurasi yang sudah ada. Setelah itu, mulai ulang agen Anda.
 
+Penyiapan mencatat runtime yang dipilih dan skrip utama REA secara langsung. Jika REA diperoleh melalui package runner, pertahankan entri cache-nya agar tetap tersedia. Jalankan pengambilan paket dari direktori tepercaya di luar proyek target. Lihat [panduan instalasi dan pemulihan](../installation.md) untuk rinciannya.
+
 Penyiapan mendukung Claude Code, Codex, Cursor, Gemini CLI, Grok Build, dan [agen lainnya](../installation.md#supported-agents). Lihat [instalasi dan penyiapan](../installation.md) untuk konfigurasi penyedia dan pendaftaran MCP secara manual.
 
-MCP menggunakan skema input ringkas secara default. Untuk petunjuk bidang lengkap dan validasi bertingkat, atur `REA_MCP_INPUT_SCHEMA_PROFILE=full` pada pendaftaran MCP. Kedua profil mempertahankan semua alat dan validasi server kanonis yang sama; lihat panduan kontrak MCP.
+MCP menggunakan skema input ringkas secara default untuk mengurangi penggunaan konteks. Untuk petunjuk bidang lengkap dan validasi bertingkat, atur `REA_MCP_INPUT_SCHEMA_PROFILE=full` pada pendaftaran MCP. Kedua profil mempertahankan semua alat dan validasi server kanonis yang sama; lihat [profil skema input ringkas](../mcp-contracts.md#compact-input-schema-profile).
+
+Skema output lengkap diiklankan secara default. Jika klien Anda membatasi ukuran keseluruhan frame `tools/list`, atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` untuk membatasi ukuran setiap skema output yang diiklankan, atau `off` untuk menghilangkan skema output dari daftar tersebut. Kedua pengaturan tetap mempertahankan validasi kanonis di sisi server dan hasil terstruktur yang lengkap. Lihat [skema output](../mcp-contracts.md#output-schemas).
 
 ### Minta agen Anda
 
