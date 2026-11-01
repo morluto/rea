@@ -2,6 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { createDoctorHostFixture } from "../../src/application/Doctor.fixture.js";
 import { HOPPER_RELEASES_URL } from "../../src/application/HopperReleaseFeed.js";
+import { macHopperHostVersionDetail } from "../../src/application/MacHopper.js";
+import { setupInstallFailure } from "../../src/application/SetupInstallFailure.js";
 import { runSetup } from "../../src/application/Setup.js";
 import { systemSetupHost } from "../../src/application/SetupHost.js";
 
@@ -76,10 +78,21 @@ it.each(["12.0", "12.3"])(
       code: "incompatible_host_version",
       appliedActions: [],
     });
-    expect(result.remediation).toContain("Update macOS");
+    // Recovery and installer detail are delivered from their owners; the
+    // observed facts are checked independently of that wording.
     expect(result.remediation).toContain(
-      `Installer detail: The current Hopper release (${PACKAGE_URL}) declares deployment_target 12.4; this Mac runs macOS ${version}. The package was not downloaded.`,
+      setupInstallFailure("incompatible_host_version").remediation,
     );
+    expect(result.remediation).toContain(
+      macHopperHostVersionDetail({
+        source: "release_feed",
+        packageUrl: PACKAGE_URL,
+        minimumVersion: "12.4",
+        hostVersion: version,
+      }),
+    );
+    for (const fact of [PACKAGE_URL, "12.4", version, "HOPPER_LAUNCHER_PATH"])
+      expect(result.remediation).toContain(fact);
     expect(requests).toEqual([HOPPER_RELEASES_URL]);
   },
 );

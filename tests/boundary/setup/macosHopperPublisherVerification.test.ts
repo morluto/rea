@@ -129,9 +129,11 @@ describe("macOS Hopper publisher verification", () => {
 
   it("refuses a minimum macOS version that is not text", async () => {
     const app = await infoPlistBundle(minimumEntry("<real>12.4</real>"));
-    await expect(host().minimumSystemVersion(app)).rejects.toThrow(
-      "does not declare LSMinimumSystemVersion as text",
-    );
+    const failure = host().minimumSystemVersion(app);
+    await expect(failure).rejects.toBeInstanceOf(TypeError);
+    // The refusal names the key and the exact plist it read.
+    await expect(failure).rejects.toThrow("LSMinimumSystemVersion");
+    await expect(failure).rejects.toThrow(join(app, "Contents", "Info.plist"));
   });
 
   it("discloses the exact code requirement the installer enforces", () => {

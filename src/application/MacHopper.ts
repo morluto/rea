@@ -181,7 +181,12 @@ export const installMacHopper = async (
         return {
           status: "failed",
           reason: "incompatible_host_version",
-          diagnostic: `The current Hopper release (${release.filename}) declares deployment_target ${releaseMinimum}; this Mac runs macOS ${hostVersion}. The package was not downloaded.`,
+          diagnostic: macHopperHostVersionDetail({
+            source: "release_feed",
+            packageUrl: release.filename,
+            minimumVersion: releaseMinimum,
+            hostVersion,
+          }),
         };
       installStage = "download";
       const archive = await host.download(release.filename);
@@ -212,23 +217,30 @@ export const installMacHopper = async (
         return { status: "failed", reason: "bundle" };
       if (verification === "unverified_publisher")
         return { status: "failed", reason: "publisher_verification_failed" };
+      // An app that declares no minimum is accepted, as macOS does.
       const appMinimum = await host.minimumSystemVersion(source);
-      const appCompatible =
-        appMinimum === undefined
-          ? true
-          : macosVersionMeetsMinimum(hostVersion, appMinimum);
-      if (appCompatible === false)
-        return {
-          status: "failed",
-          reason: "incompatible_host_version",
-          diagnostic: `The signed Hopper application declares LSMinimumSystemVersion ${appMinimum}; this Mac runs macOS ${hostVersion}. Nothing was copied.`,
-        };
-      if (appCompatible === undefined)
-        return {
-          status: "failed",
-          reason: "bundle",
-          diagnostic: `The signed Hopper application declares LSMinimumSystemVersion ${JSON.stringify(appMinimum)}, which REA cannot compare with macOS ${hostVersion}. Nothing was copied.`,
-        };
+      if (appMinimum !== undefined) {
+        const compatible = macosVersionMeetsMinimum(hostVersion, appMinimum);
+        if (compatible === false)
+          return {
+            status: "failed",
+            reason: "incompatible_host_version",
+            diagnostic: macHopperHostVersionDetail({
+              source: "signed_app",
+              minimumVersion: appMinimum,
+              hostVersion,
+            }),
+          };
+        if (compatible === undefined)
+          return {
+            status: "failed",
+            reason: "bundle",
+            diagnostic: macHopperIncomparableMinimumDetail(
+              appMinimum,
+              hostVersion,
+            ),
+          };
+      }
       installStage = "copy";
       const installation = await host.installBundle(
         source,
@@ -542,6 +554,24 @@ export const systemMacHopperInstallHost = (
     destination: () => macHopperUserApplicationPath(homeDirectory),
   };
 };
+
+/** Installer detail naming the declared minimum this Mac's version does not meet. */
+export const macHopperHostVersionDetail = (
+  refusal: (
+    | { readonly source: "release_feed"; readonly packageUrl: string }
+    | { readonly source: "signed_app" }
+  ) & { readonly minimumVersion: string; readonly hostVersion: string },
+): string =>
+  refusal.source === "release_feed"
+    ? `The current Hopper release (${refusal.packageUrl}) declares deployment_target ${refusal.minimumVersion}; this Mac runs macOS ${refusal.hostVersion}. The package was not downloaded.`
+    : `The signed Hopper application declares LSMinimumSystemVersion ${refusal.minimumVersion}; this Mac runs macOS ${refusal.hostVersion}. Nothing was copied.`;
+
+/** Installer detail for a signed-app minimum REA cannot compare with this Mac's version. */
+export const macHopperIncomparableMinimumDetail = (
+  declared: string,
+  hostVersion: string,
+): string =>
+  `The signed Hopper application declares LSMinimumSystemVersion ${JSON.stringify(declared)}, which REA cannot compare with macOS ${hostVersion}. Nothing was copied.`;
 
 const minimumSystemVersionSchema = z.looseObject({
   LSMinimumSystemVersion: z.string().optional(),

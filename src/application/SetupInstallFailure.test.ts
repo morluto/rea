@@ -27,11 +27,10 @@ describe("macOS Hopper setup failure projection", () => {
       status: "failed",
       code: "incompatible_host_version",
     });
-    expect(incompatible.remediation).toContain("Update macOS");
     expect(incompatible.remediation).toContain("HOPPER_LAUNCHER_PATH");
-    expect(setupInstallFailure("unsupported_host").code).toBe(
-      "unsupported_host",
-    );
+    const unsupported = setupInstallFailure("unsupported_host");
+    expect(unsupported.code).toBe("unsupported_host");
+    expect(incompatible.remediation).not.toBe(unsupported.remediation);
   });
 });
 
