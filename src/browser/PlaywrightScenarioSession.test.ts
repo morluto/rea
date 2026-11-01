@@ -107,6 +107,10 @@ vi.mock("./PlaywrightScenarioEvents.js", () => ({
 
     setStep() {}
 
+    capturesNetwork() {
+      return false;
+    }
+
     nextSequence() {
       return 1;
     }

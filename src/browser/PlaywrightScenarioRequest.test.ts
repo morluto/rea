@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import type { Page, Route } from "playwright-core";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
@@ -476,6 +477,56 @@ describe("request step confinement", () => {
       ),
     ).rejects.toThrow("the page moved");
     expect(calls).toHaveLength(1);
+  });
+
+  it("hands a redirect the browser reported to network capture instead of disclosing a gap", async () => {
+    const parsed = scenario([requestStep({})]);
+    const action = parsed.actions[0]!;
+    const session = Object.assign(new EventEmitter(), {
+      send: async () => ({}),
+      detach: vi.fn(async () => {}),
+    });
+    const base = fakePage({});
+    const emitter = new EventEmitter();
+    const page = Object.assign(emitter, base, {
+      on: emitter.on.bind(emitter),
+      off: emitter.off.bind(emitter),
+      context: () => ({ newCDPSession: async () => session }),
+    }) as unknown as Page;
+    const url = `${ORIGIN}/api/folders`;
+    vi.stubGlobal("fetch", async () => {
+      session.emit("Network.requestWillBeSent", {
+        requestId: "7.1",
+        request: { url, method: "POST" },
+      });
+      emitter.emit("request", {
+        url: () => url,
+        method: () => "POST",
+        postData: () => null,
+      });
+      session.emit("Network.responseReceivedExtraInfo", {
+        requestId: "7.1",
+        statusCode: 302,
+        headers: { Location: "/destination" },
+      });
+      return { type: "opaqueredirect", status: 0 };
+    });
+    const onOpaqueRedirect = vi.fn();
+    const onRedirectResponse = vi.fn();
+    await expect(
+      performPlaywrightScenarioAction({
+        page,
+        action,
+        secrets: resolved(parsed),
+        startOrigin: ORIGIN,
+        onOpaqueRedirect,
+        onRedirectResponse,
+      }),
+    ).rejects.toThrow("The capture records the redirect");
+    expect(onRedirectResponse).toHaveBeenCalledOnce();
+    expect(onRedirectResponse.mock.calls[0]![0].status()).toBe(302);
+    expect(onOpaqueRedirect).not.toHaveBeenCalled();
+    expect(session.detach).toHaveBeenCalledOnce();
   });
 
   it("sends nothing when its time runs out while header values are read, or the step is cancelled", async () => {

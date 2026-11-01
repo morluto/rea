@@ -228,6 +228,9 @@ export class PlaywrightScenarioNetwork {
         this.omitOmittedTransactionContent(request, "response");
       return;
     }
+    // A request has one response; a recovered redirect answer and the browser's
+    // own report of it must not be recorded twice.
+    if (transaction.response !== undefined) return;
     if (
       !this.admitMetadata(
         transaction,

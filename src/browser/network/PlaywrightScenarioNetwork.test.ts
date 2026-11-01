@@ -448,6 +448,17 @@ it.each(["finished", "failed", "unfinished"])(
   },
 );
 
+it("records one response per request when the same answer is reported twice", async () => {
+  const { collector, events } = harness(selection, undefined, "fixture");
+  const request = new RequestFixture("body");
+  collector.request(request);
+  collector.response(new ResponseFixture(request, "first"));
+  collector.response(new ResponseFixture(request, "second"));
+  collector.finished(request);
+  await collector.finish();
+  expect(events.filter((event) => event.kind === "response")).toHaveLength(1);
+});
+
 it("redacts declared secrets in browser-produced form and JSON encodings", async () => {
   for (const secret of ["私密", 'space " and \n']) {
     const { collector, events } = harness(selection, undefined, secret);
