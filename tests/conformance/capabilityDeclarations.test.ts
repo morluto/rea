@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { providerCatalog } from "../../scripts/lib/catalog-builders.mjs";
-import { CAPABILITY_DECLARATIONS } from "../../src/composition/capabilityDeclarations.js";
+import { ADB_PROVIDER_IDENTITY } from "../../src/adb/AdbProviderIdentity.js";
+import {
+  CAPABILITY_DECLARATIONS,
+  type CapabilityDeclaration,
+} from "../../src/composition/capabilityDeclarations.js";
 import { TOOL_CONTRACTS } from "../../src/contracts/toolContracts.js";
+import { TOOL_CONTRACT_GROUPS } from "../../src/contracts/toolFamilies.js";
 import { QLOG_CAPTURE_PROVIDER_IDENTITY } from "../../src/browser/history/CaptureProviderIdentities.js";
 import { HARMONY_APPLICATION_PROVIDER } from "../../src/domain/investigationProviders.js";
 import {
@@ -22,8 +27,67 @@ const catalog = (
 ) =>
   providerCatalog({
     toolContracts: { TOOL_CONTRACTS },
+    toolFamilies: { TOOL_CONTRACT_GROUPS },
     capabilityDeclarations: { CAPABILITY_DECLARATIONS: declarations },
   });
+
+describe("whole canonical contract groups", () => {
+  it("includes a new canonical ADB operation without editing actual provider metadata", () => {
+    const before = catalog(CAPABILITY_DECLARATIONS);
+    const adb = before.find(({ id }) => id === ADB_PROVIDER_IDENTITY.id);
+    expect(adb).toBeDefined();
+    if (adb === undefined) throw new Error("Missing actual ADB provider");
+    // Simulate the next real contract being added to its existing source group.
+    // The production declaration is deliberately unchanged, so a copied list
+    // would miss this valid operation even if every other provider used groups.
+    const added = { name: "new_valid_adb_operation" };
+    const after = providerCatalog({
+      capabilityDeclarations: { CAPABILITY_DECLARATIONS },
+      toolContracts: { TOOL_CONTRACTS: [...TOOL_CONTRACTS, added] },
+      toolFamilies: {
+        TOOL_CONTRACT_GROUPS: {
+          ...TOOL_CONTRACT_GROUPS,
+          ADB_TOOL_CONTRACTS: [
+            ...TOOL_CONTRACT_GROUPS.ADB_TOOL_CONTRACTS,
+            added,
+          ],
+        },
+      },
+    });
+    expect(after.find(({ id }) => id === adb.id)).toEqual({
+      ...adb,
+      capabilities: [...adb.capabilities, added.name].sort(),
+    });
+    expect(after.filter(({ id }) => id !== adb.id)).toEqual(
+      before.filter(({ id }) => id !== adb.id),
+    );
+  });
+
+  it("includes every canonical operation selected by real whole-group bindings", () => {
+    const providers = new Map(
+      catalog(CAPABILITY_DECLARATIONS).map((provider) => [
+        provider.id,
+        provider,
+      ]),
+    );
+    const declarations: readonly CapabilityDeclaration[] = Object.values(
+      CAPABILITY_DECLARATIONS,
+    );
+    let examined = 0;
+    for (const declaration of declarations)
+      for (const { identity, operations } of declaration.providers) {
+        if (!("group" in operations)) continue;
+        const expected = TOOL_CONTRACT_GROUPS[operations.group].map(
+          ({ name }) => name,
+        );
+        expect(providers.get(identity.id)?.capabilities).toEqual(
+          expect.arrayContaining(expected),
+        );
+        examined += 1;
+      }
+    expect(examined).toBeGreaterThan(0);
+  });
+});
 
 describe("static capability provider declarations", () => {
   it("reports the actual trace, Harmony and qlog provenance without changing their public operations", () => {
@@ -115,6 +179,23 @@ describe("static capability provider declarations", () => {
       }),
     ).toThrow(
       "Provider authored-fixture declares an unknown analyst operation: not_an_advertised_operation",
+    );
+  });
+
+  it("refuses an unknown canonical contract group", () => {
+    expect(() =>
+      catalog({
+        fixture: {
+          providers: [
+            {
+              identity: fixtureIdentity,
+              operations: { group: "not_a_contract_group" },
+            },
+          ],
+        },
+      }),
+    ).toThrow(
+      "Provider authored-fixture declares an unknown contract group: not_a_contract_group",
     );
   });
 });

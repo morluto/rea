@@ -45,7 +45,17 @@ export const providerCatalog = (sources) => {
           `Provider ${identity.id} has conflicting source identities`,
         );
       }
-      for (const operation of operations) {
+      let selectedOperations = operations;
+      if (!Array.isArray(operations)) {
+        const contracts =
+          sources.toolFamilies.TOOL_CONTRACT_GROUPS[operations.group];
+        if (contracts === undefined)
+          throw new TypeError(
+            `Provider ${identity.id} declares an unknown contract group: ${operations.group}`,
+          );
+        selectedOperations = contracts.map(({ name }) => name);
+      }
+      for (const operation of selectedOperations) {
         if (!contractNames.has(operation))
           throw new TypeError(
             `Provider ${identity.id} declares an unknown analyst operation: ${operation}`,

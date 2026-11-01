@@ -4,12 +4,17 @@ interface ProviderBinding {
     readonly name: string;
     readonly version: string | null;
   };
-  readonly operations: readonly string[];
+  readonly operations: readonly string[] | { readonly group: string };
 }
 
 interface ProviderCatalogSources {
   readonly toolContracts: {
     readonly TOOL_CONTRACTS: readonly { readonly name: string }[];
+  };
+  readonly toolFamilies: {
+    readonly TOOL_CONTRACT_GROUPS: Readonly<
+      Record<string, readonly { readonly name: string }[]>
+    >;
   };
   readonly capabilityDeclarations: {
     readonly CAPABILITY_DECLARATIONS: Readonly<

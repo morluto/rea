@@ -7,11 +7,15 @@ are source facts, while host availability is an observation.
 
 ## Source declarations and runtime bindings
 
-`src/composition/capabilityDeclarations.ts` contains the static provider identities
-and canonical operation names. Its imports are pure metadata leaves; it must not
-import factories, validators, engines or generated catalogs. Catalog generation
-joins these names to the canonical contracts and rejects unknown operations and
-conflicting identities. New provider provenance must come from the implementation
+`src/composition/capabilityDeclarations.ts` contains static provider identities,
+named contract-group references and precise operation subsets. Complete groups
+refer to `TOOL_CONTRACT_GROUPS` in the existing contract owner; family definitions
+and provider catalogs read the same arrays, so a new group operation is included
+without updating a copied provider list. Metadata imports only the group ID type
+and pure metadata leaves; it must not load factories, schemas, engines or
+generated catalogs. Catalog generation resolves groups and subsets against the
+canonical contracts and rejects unknown groups/operations and conflicting
+identities. New provider provenance must come from the implementation
 that actually produces the Evidence, including format-specific capture adapters
 and derived workflows.
 
@@ -89,8 +93,10 @@ selects a handler or schema.
 The constructor boundary guard covers the centralized Frida, Cutter, GDB and
 Rizin constructors without rejecting legitimate type-only injected interfaces.
 Other settled pure/provider boundaries continue checking type imports too. The
-shared parser records import kind once, including inline type bindings and
-static dynamic imports. Tests belong with their semantic owner and must be
+shared parser records module-edge erasure once. Whole-declaration type imports
+are erased; inline type bindings retain their runtime module edge under
+`verbatimModuleSyntax`. Static dynamic imports remain runtime edges too.
+Tests belong with their semantic owner and must be
 found exactly once; provider roots need the corresponding adapter discovery lane.
 
 This is an internal composition contract. External plugin distribution, automatic

@@ -1,6 +1,7 @@
 // oxlint-disable max-lines -- Keep the exhaustive static provenance bindings together; this table has no execution or host-availability logic.
 import type { ProviderIdentity } from "../application/AnalysisProvider.js";
 import type { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import type { ToolContractGroupId } from "../contracts/toolFamilies.js";
 import { ADB_PROVIDER_IDENTITY } from "../adb/AdbProviderIdentity.js";
 import { JADX_PROVIDER_IDENTITY } from "../android/JadxRelease.js";
 import { APK_SIGNATURE_PROVIDER_IDENTITY } from "../apkSignature/ApkSignatureRelease.js";
@@ -93,17 +94,20 @@ import { WABT_PROVIDER_IDENTITY } from "../wasm/WabtRelease.js";
 
 type CanonicalOperationName = (typeof TOOL_CONTRACTS)[number]["name"];
 
+/** Whole source groups grow with their canonical contracts; provider subsets stay explicit. */
+export type CapabilityOperationSelection =
+  | readonly CanonicalOperationName[]
+  | { readonly group: ToolContractGroupId };
+
 /** Static provenance bindings; host availability belongs to runtime inspection. */
 export interface CapabilityDeclaration {
   readonly providers: readonly {
     readonly identity: ProviderIdentity;
-    readonly operations: readonly CanonicalOperationName[];
+    readonly operations: CapabilityOperationSelection;
   }[];
 }
 
-const providerBinding = <
-  const Operations extends readonly CanonicalOperationName[],
->(
+const providerBinding = <const Operations extends CapabilityOperationSelection>(
   identity: ProviderIdentity,
   operations: Operations,
 ) => ({ identity, operations });
@@ -112,49 +116,21 @@ const providerBinding = <
 export const CAPABILITY_DECLARATIONS = {
   adbDevice: {
     providers: [
-      providerBinding(ADB_PROVIDER_IDENTITY, [
-        "capture_adb_screen",
-        "collect_adb_bugreport",
-        "inspect_adb_client",
-        "inspect_adb_device",
-        "inspect_adb_display",
-        "inspect_adb_package",
-        "inspect_adb_window",
-        "install_adb_package",
-        "list_adb_devices",
-        "list_adb_directory",
-        "list_adb_features",
-        "list_adb_packages",
-        "list_adb_processes",
-        "list_adb_services",
-        "pull_adb_file",
-        "pull_adb_package",
-        "push_adb_file",
-        "read_adb_logcat",
-        "read_adb_setting",
-        "resolve_adb_packages",
-        "start_adb_activity",
-        "start_adb_app",
-        "stop_adb_app",
-        "uninstall_adb_package",
-      ]),
+      providerBinding(ADB_PROVIDER_IDENTITY, { group: "ADB_TOOL_CONTRACTS" }),
     ],
   },
   analysisView: {
     providers: [
-      providerBinding(ANALYSIS_VIEW_PROVIDER, ["inspect_analysis_view"]),
+      providerBinding(ANALYSIS_VIEW_PROVIDER, {
+        group: "ANALYSIS_VIEW_TOOL_CONTRACTS",
+      }),
     ],
   },
   android: {
     providers: [
-      providerBinding(JADX_PROVIDER_IDENTITY, [
-        "inspect_android_class",
-        "inspect_android_jni_bindings",
-        "inspect_android_method",
-        "inspect_android_package",
-        "search_android_classes",
-        "trace_android_references",
-      ]),
+      providerBinding(JADX_PROVIDER_IDENTITY, {
+        group: "ANDROID_TOOL_CONTRACTS",
+      }),
     ],
   },
   androidApplicationGraph: {
@@ -166,17 +142,16 @@ export const CAPABILITY_DECLARATIONS = {
   },
   apkSignature: {
     providers: [
-      providerBinding(APK_SIGNATURE_PROVIDER_IDENTITY, [
-        "inspect_apk_signature",
-      ]),
+      providerBinding(APK_SIGNATURE_PROVIDER_IDENTITY, {
+        group: "APK_SIGNATURE_TOOL_CONTRACTS",
+      }),
     ],
   },
   apktool: {
     providers: [
-      providerBinding(APKTOOL_PROVIDER_IDENTITY, [
-        "decode_android_resources",
-        "inspect_apktool_client",
-      ]),
+      providerBinding(APKTOOL_PROVIDER_IDENTITY, {
+        group: "APKTOOL_TOOL_CONTRACTS",
+      }),
     ],
   },
   appleApplicationGraph: {
@@ -207,14 +182,9 @@ export const CAPABILITY_DECLARATIONS = {
   },
   artifactGraph: {
     providers: [
-      providerBinding(ARTIFACT_GRAPH_PROVIDER, [
-        "decode_interface_builder",
-        "extract_artifact",
-        "inspect_artifact",
-        "inspect_asset_catalog",
-        "inspect_keyed_archive",
-        "trace_dylib_resolution",
-      ]),
+      providerBinding(ARTIFACT_GRAPH_PROVIDER, {
+        group: "ARTIFACT_TOOL_CONTRACTS",
+      }),
     ],
   },
   artifactResources: { providers: [] },
@@ -225,23 +195,16 @@ export const CAPABILITY_DECLARATIONS = {
   },
   browserObservation: {
     providers: [
-      providerBinding(CDP_BROWSER_PROVIDER_IDENTITY, [
-        "analyze_web_bundle",
-        "capture_web_screenshot",
-        "compare_web_captures",
-        "compare_web_screenshots",
-        "discover_webmcp_tools",
-        "inspect_web_event_listeners",
-        "inspect_web_page",
-        "list_browser_targets",
-      ]),
+      providerBinding(CDP_BROWSER_PROVIDER_IDENTITY, {
+        group: "BROWSER_TOOL_CONTRACTS",
+      }),
     ],
   },
   browserScenarioCapture: {
     providers: [
-      providerBinding(PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY, [
-        "capture_browser_scenario",
-      ]),
+      providerBinding(PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY, {
+        group: "BROWSER_SCENARIO_TOOL_CONTRACTS",
+      }),
     ],
   },
   byteEntropy: {
@@ -251,15 +214,16 @@ export const CAPABILITY_DECLARATIONS = {
   },
   cutter: {
     providers: [
-      providerBinding(CUTTER_PROVIDER_IDENTITY, [
-        "cutter_command",
-        "list_cutter_sessions",
-      ]),
+      providerBinding(CUTTER_PROVIDER_IDENTITY, {
+        group: "CUTTER_TOOL_CONTRACTS",
+      }),
     ],
   },
   desktopApplication: {
     providers: [
-      providerBinding(ARTIFACT_GRAPH_PROVIDER, ["inspect_desktop_application"]),
+      providerBinding(ARTIFACT_GRAPH_PROVIDER, {
+        group: "DESKTOP_APPLICATION_TOOL_CONTRACTS",
+      }),
     ],
   },
   devicetree: {
@@ -292,12 +256,16 @@ export const CAPABILITY_DECLARATIONS = {
   },
   erlangBeam: {
     providers: [
-      providerBinding(ERLANG_BEAM_PROVIDER_IDENTITY, ["inspect_erlang_beam"]),
+      providerBinding(ERLANG_BEAM_PROVIDER_IDENTITY, {
+        group: "ERLANG_BEAM_TOOL_CONTRACTS",
+      }),
     ],
   },
   evmInterface: {
     providers: [
-      providerBinding(EVMOLE_PROVIDER_IDENTITY, ["inspect_evm_interface"]),
+      providerBinding(EVMOLE_PROVIDER_IDENTITY, {
+        group: "EVM_TOOL_CONTRACTS",
+      }),
     ],
   },
   firmwareAnalysis: {
@@ -308,35 +276,21 @@ export const CAPABILITY_DECLARATIONS = {
   },
   flutter: {
     providers: [
-      providerBinding(FLUTTER_PROVIDER_IDENTITY, [
-        "identify_flutter_build",
-        "inspect_dart_aot",
-      ]),
+      providerBinding(FLUTTER_PROVIDER_IDENTITY, {
+        group: "FLUTTER_TOOL_CONTRACTS",
+      }),
     ],
   },
   fridaInstrumentation: {
     providers: [
-      providerBinding(FRIDA_PROVIDER_IDENTITY, [
-        "close_frida_session",
-        "frida_session_status",
-        "instrument_with_frida",
-        "list_frida_devices",
-        "list_frida_processes",
-        "load_frida_script",
-        "resume_frida_session",
-        "start_frida_session",
-        "unload_frida_script",
-      ]),
+      providerBinding(FRIDA_PROVIDER_IDENTITY, {
+        group: "FRIDA_TOOL_CONTRACTS",
+      }),
     ],
   },
   gdbSessions: {
     providers: [
-      providerBinding(GDB_PROVIDER_IDENTITY, [
-        "close_gdb_session",
-        "gdb_console",
-        "gdb_session_status",
-        "start_gdb_session",
-      ]),
+      providerBinding(GDB_PROVIDER_IDENTITY, { group: "GDB_TOOL_CONTRACTS" }),
     ],
   },
   ghidra: {
@@ -344,14 +298,16 @@ export const CAPABILITY_DECLARATIONS = {
   },
   goBinary: {
     providers: [
-      providerBinding(GO_BINARY_PROVIDER_IDENTITY, ["inspect_go_binary"]),
+      providerBinding(GO_BINARY_PROVIDER_IDENTITY, {
+        group: "GO_TOOL_CONTRACTS",
+      }),
     ],
   },
   gpuCodeObjects: {
     providers: [
-      providerBinding(GPU_CODE_OBJECTS_PROVIDER_IDENTITY, [
-        "inspect_gpu_code_objects",
-      ]),
+      providerBinding(GPU_CODE_OBJECTS_PROVIDER_IDENTITY, {
+        group: "GPU_TOOL_CONTRACTS",
+      }),
     ],
   },
   harmonyApplicationGraph: {
@@ -369,9 +325,9 @@ export const CAPABILITY_DECLARATIONS = {
   },
   il2cppMetadata: {
     providers: [
-      providerBinding(IL2CPP_METADATA_PROVIDER_IDENTITY, [
-        "inspect_il2cpp_metadata",
-      ]),
+      providerBinding(IL2CPP_METADATA_PROVIDER_IDENTITY, {
+        group: "IL2CPP_TOOL_CONTRACTS",
+      }),
     ],
   },
   javascriptApplication: {
@@ -383,15 +339,16 @@ export const CAPABILITY_DECLARATIONS = {
   },
   javascriptRecovery: {
     providers: [
-      providerBinding(WAKARU_PROVIDER_IDENTITY, ["recover_javascript_sources"]),
+      providerBinding(WAKARU_PROVIDER_IDENTITY, {
+        group: "JAVASCRIPT_RECOVERY_TOOL_CONTRACTS",
+      }),
     ],
   },
   javascriptRuntimeObservation: {
     providers: [
-      providerBinding(V8_INSPECTOR_PROVIDER_IDENTITY, [
-        "list_javascript_runtime_targets",
-        "observe_javascript_runtime",
-      ]),
+      providerBinding(V8_INSPECTOR_PROVIDER_IDENTITY, {
+        group: "JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS",
+      }),
     ],
   },
   javascriptRuntimeReconciliation: {
@@ -403,12 +360,7 @@ export const CAPABILITY_DECLARATIONS = {
   },
   jeb: {
     providers: [
-      providerBinding(JEB_PROVIDER_IDENTITY, [
-        "decompile_jeb_item",
-        "inspect_jeb_client",
-        "list_jeb_units",
-        "open_jeb_project",
-      ]),
+      providerBinding(JEB_PROVIDER_IDENTITY, { group: "JEB_TOOL_CONTRACTS" }),
     ],
   },
   kernelModule: {
@@ -421,28 +373,23 @@ export const CAPABILITY_DECLARATIONS = {
   },
   managedStatic: {
     providers: [
-      providerBinding(MANAGED_STATIC_PROVIDER, [
-        "inspect_managed_artifact",
-        "inspect_managed_members",
-        "inspect_managed_native_boundaries",
-      ]),
+      providerBinding(MANAGED_STATIC_PROVIDER, {
+        group: "MANAGED_TOOL_CONTRACTS",
+      }),
     ],
   },
   managedWorkflow: {
     providers: [
-      providerBinding(MANAGED_WORKFLOW_PROVIDER, [
-        "compare_managed_members",
-        "import_managed_reconstruction",
-        "project_managed_application_graph",
-        "verify_managed_native_boundaries",
-      ]),
+      providerBinding(MANAGED_WORKFLOW_PROVIDER, {
+        group: "MANAGED_WORKFLOW_TOOL_CONTRACTS",
+      }),
     ],
   },
   modelArtifact: {
     providers: [
-      providerBinding(MODEL_ARTIFACT_PROVIDER_IDENTITY, [
-        "inspect_model_artifact",
-      ]),
+      providerBinding(MODEL_ARTIFACT_PROVIDER_IDENTITY, {
+        group: "MODEL_TOOL_CONTRACTS",
+      }),
     ],
   },
   nativeExports: {
@@ -452,32 +399,21 @@ export const CAPABILITY_DECLARATIONS = {
   },
   nativeMacOS: {
     providers: [
-      providerBinding(NATIVE_MACOS_PROVIDER_IDENTITY, [
-        "capture_native_ui_scenario",
-        "demangle_swift",
-        "inspect_macho",
-        "inspect_plist",
-        "inspect_signature",
-        "list_architectures",
-        "observe_native_calls",
-        "observe_native_ui",
-      ]),
+      providerBinding(NATIVE_MACOS_PROVIDER_IDENTITY, {
+        group: "NATIVE_TOOL_CONTRACTS",
+      }),
     ],
   },
   packetCapture: {
     providers: [
-      providerBinding(TSHARK_PROVIDER_IDENTITY, [
-        "inspect_packet_capture",
-        "inspect_packet_fields",
-      ]),
+      providerBinding(TSHARK_PROVIDER_IDENTITY, {
+        group: "CAPTURE_TOOL_CONTRACTS",
+      }),
     ],
   },
   pcap: {
     providers: [
-      providerBinding(PCAP_PROVIDER_IDENTITY, [
-        "inspect_pcap_capture",
-        "inspect_pcap_client",
-      ]),
+      providerBinding(PCAP_PROVIDER_IDENTITY, { group: "PCAP_TOOL_CONTRACTS" }),
     ],
   },
   peCertificates: {
@@ -500,7 +436,9 @@ export const CAPABILITY_DECLARATIONS = {
   },
   pythonPyc: {
     providers: [
-      providerBinding(PYTHON_PYC_PROVIDER_IDENTITY, ["inspect_python_pyc"]),
+      providerBinding(PYTHON_PYC_PROVIDER_IDENTITY, {
+        group: "PYTHON_PYC_TOOL_CONTRACTS",
+      }),
     ],
   },
   recordedCrash: {
@@ -516,30 +454,30 @@ export const CAPABILITY_DECLARATIONS = {
   },
   rizinDebugSessions: {
     providers: [
-      providerBinding(RIZIN_DEBUGGER_PROVIDER_IDENTITY, [
-        "close_rizin_debug_session",
-        "rizin_debug_command",
-        "rizin_debug_session_status",
-        "start_rizin_debug_session",
-      ]),
+      providerBinding(RIZIN_DEBUGGER_PROVIDER_IDENTITY, {
+        group: "RIZIN_DEBUG_TOOL_CONTRACTS",
+      }),
     ],
   },
   rustBinary: {
     providers: [
-      providerBinding(RUST_BINARY_PROVIDER_IDENTITY, ["inspect_rust_binary"]),
+      providerBinding(RUST_BINARY_PROVIDER_IDENTITY, {
+        group: "RUST_TOOL_CONTRACTS",
+      }),
     ],
   },
   signalRecording: {
     providers: [
-      providerBinding(SIGROK_PROVIDER_IDENTITY, [
-        "decode_signal_recording",
-        "inspect_signal_decoders",
-      ]),
+      providerBinding(SIGROK_PROVIDER_IDENTITY, {
+        group: "SIGNAL_TOOL_CONTRACTS",
+      }),
     ],
   },
   sqliteDatabase: {
     providers: [
-      providerBinding(SQLITE_PROVIDER_IDENTITY, ["inspect_sqlite_database"]),
+      providerBinding(SQLITE_PROVIDER_IDENTITY, {
+        group: "SQLITE_TOOL_CONTRACTS",
+      }),
     ],
   },
   wasmArtifact: {
@@ -554,26 +492,25 @@ export const CAPABILITY_DECLARATIONS = {
   },
   webNetworkCapture: {
     providers: [
-      providerBinding(SAZ_CAPTURE_PROVIDER_IDENTITY, [
-        "inspect_web_network_capture",
-      ]),
-      providerBinding(HAR_CAPTURE_PROVIDER_IDENTITY, [
-        "inspect_web_network_capture",
-      ]),
-      providerBinding(MITMPROXY_CAPTURE_PROVIDER_IDENTITY, [
-        "inspect_web_network_capture",
-      ]),
-      providerBinding(QLOG_CAPTURE_PROVIDER_IDENTITY, [
-        "inspect_web_network_capture",
-      ]),
+      providerBinding(SAZ_CAPTURE_PROVIDER_IDENTITY, {
+        group: "WEB_NETWORK_CAPTURE_TOOL_CONTRACTS",
+      }),
+      providerBinding(HAR_CAPTURE_PROVIDER_IDENTITY, {
+        group: "WEB_NETWORK_CAPTURE_TOOL_CONTRACTS",
+      }),
+      providerBinding(MITMPROXY_CAPTURE_PROVIDER_IDENTITY, {
+        group: "WEB_NETWORK_CAPTURE_TOOL_CONTRACTS",
+      }),
+      providerBinding(QLOG_CAPTURE_PROVIDER_IDENTITY, {
+        group: "WEB_NETWORK_CAPTURE_TOOL_CONTRACTS",
+      }),
     ],
   },
   webRuntime: {
     providers: [
-      providerBinding(CDP_BROWSER_PROVIDER_IDENTITY, [
-        "observe_web_execution",
-        "observe_web_session",
-      ]),
+      providerBinding(CDP_BROWSER_PROVIDER_IDENTITY, {
+        group: "WEB_RUNTIME_TOOL_CONTRACTS",
+      }),
     ],
   },
   webScriptExport: {
