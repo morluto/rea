@@ -105,6 +105,8 @@
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
     ".codex-plugin/mcp.json",
+    ".cursor-plugin/plugin.json",
+    ".cursor-plugin/mcp.json",
     "scripts/plugin-mcp-launcher.mjs",
     "npm-shrinkwrap.json"
   ],

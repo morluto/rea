@@ -1645,12 +1645,13 @@ Ghidra/JDK installation; neither is inferred from startup alone.
 
 ## Agent plugins and marketplaces
 
-REA's npm package is the shared Claude Code and Codex plugin artifact. It
-contains `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and the
-canonical generated `skills/` tree. Both manifests select `./skills` and run a plain Node bootstrap pinned to
+REA's npm package is the shared Claude Code, Codex and Cursor plugin artifact. It
+contains `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`,
+`.cursor-plugin/plugin.json`, and the canonical generated `skills/` tree. All three manifests select `./skills` and run a plain Node bootstrap pinned to
 that exact package version. The client must have a supported standalone `node`
 on its PATH. Claude expands its documented `CLAUDE_PLUGIN_ROOT` in the script
-argument; Codex resolves `cwd: "."` from the installed plugin root before
+argument; Cursor expands `CURSOR_PLUGIN_ROOT` in its separate
+`.cursor-plugin/mcp.json` declaration. Codex resolves `cwd: "."` from the installed plugin root before
 launching the relative script. The bootstrap verifies the package version and runs its bundled runtime in
 the same process, preserving stdio and REA's provider/worker cleanup. It does
 not start another package runner or download a different runtime. The existing release skill
@@ -1690,7 +1691,16 @@ codex plugin marketplace add morluto/rea
 codex plugin add rea@rea
 ```
 
-Each release updates both manifest versions and their pinned server version
+Cursor uses the same built plugin directory, shared icon and generated skill.
+Build a source checkout before loading it in Cursor; cloning the Git repository
+alone does not supply `dist/` or `skills/`. Cursor marketplace publication is a
+separate maintainer step; its Git index is not assumed to build source repositories.
+Follow [Cursor's plugin installation and submission documentation](https://cursor.com/docs/reference/plugins)
+for client loading and publication. No extra `rea setup` command is needed to add
+the skill when the plugin is installed. For a setup-owned integration instead,
+use `rea setup --client cursor` without enabling the plugin.
+
+Each release updates all three manifest versions and their pinned server version
 together, which is when installed copies refresh the bundled skill and move to
 the new server. A plugin does not run `rea setup`, so provider
 configuration still follows the sections above. Use the plugin or a
