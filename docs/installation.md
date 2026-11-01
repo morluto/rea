@@ -1721,6 +1721,10 @@ The setup cancellation signal also covers discovery, approval and final plugin
 checks. An interrupt stops later command launches, registrations, skill copies
 and plugin publication. An admitted host transaction settles before setup
 reports cancellation, and retained cleanup is still awaited.
+Cancellation diagnostics retain settled setup effects, including registration
+rollback and backup paths, so repair instructions survive an interrupt.
+Cursor readiness uses the same required MCP bootstrap files as the launcher;
+an incomplete local runtime is preserved and reported for repair.
 
 Restart Cursor or use Developer: Reload Window, then check Customize and MCP
 settings. This is a local import, not an account-synced marketplace install.

@@ -4,6 +4,7 @@ import { expect } from "vitest";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { MCP_BOOTSTRAP_FILES } from "../../../scripts/lib/cli-runtime-files.mjs";
 
 cliTest(
   "public Cursor setup downloads a local plugin only after opt-in and approval",
@@ -29,10 +30,10 @@ const args = process.argv.slice(2);
 if (args[0] !== 'install' || !args.includes(${JSON.stringify(PRODUCT_IDENTITY.registrationPackageSpecifier)})) throw new Error('unexpected npm invocation');
 const prefix = args[args.indexOf('--prefix') + 1];
 const root = join(prefix, 'node_modules', 'rea-agents');
-for (const path of ['.claude-plugin', 'scripts', 'dist/mcp', 'skills/reverse-engineer-anything', 'assets']) await mkdir(join(root, path), { recursive: true });
+for (const path of ['.claude-plugin', 'scripts/lib', 'dist/mcp', 'dist/cli-runtime', 'skills/reverse-engineer-anything', 'assets']) await mkdir(join(root, path), { recursive: true });
 await writeFile(join(root, '.claude-plugin', 'plugin.json'), JSON.stringify(${JSON.stringify(manifest)}));
 await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'rea-agents', version: ${JSON.stringify(PRODUCT_IDENTITY.packageVersion)} }));
-for (const path of ['scripts/plugin-mcp-launcher.mjs', 'scripts/rea.mjs', 'dist/mcp/main.js', 'dist/cli.js', 'skills/reverse-engineer-anything/SKILL.md', 'assets/rea-plugin.png']) await writeFile(join(root, path), 'fixture package');
+for (const path of ['scripts/plugin-mcp-launcher.mjs', 'scripts/rea.mjs', ...${JSON.stringify(MCP_BOOTSTRAP_FILES)}, 'dist/cli.js', 'skills/reverse-engineer-anything/SKILL.md', 'assets/rea-plugin.png']) await writeFile(join(root, path), 'fixture package');
 let count = 0;
 try { count = JSON.parse(await readFile(${JSON.stringify(downloads)}, 'utf8')); } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
 await writeFile(${JSON.stringify(downloads)}, JSON.stringify(count + 1));

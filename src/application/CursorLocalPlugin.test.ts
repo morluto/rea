@@ -4,6 +4,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  unlink,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -22,6 +23,7 @@ import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
 import { withPluginSetup } from "./SetupPluginHost.js";
 import { CursorLocalPlugin } from "./CursorLocalPlugin.js";
+import { MCP_BOOTSTRAP_FILES } from "../../scripts/lib/cli-runtime-files.mjs";
 
 const writeDownloadedPackage = async (
   prefix: string,
@@ -31,8 +33,10 @@ const writeDownloadedPackage = async (
   for (const directory of [
     ".claude-plugin",
     "scripts",
+    "scripts/lib",
     "dist",
     "dist/mcp",
+    "dist/cli-runtime",
     "skills/reverse-engineer-anything",
     "assets",
   ])
@@ -51,7 +55,7 @@ const writeDownloadedPackage = async (
   for (const path of [
     "scripts/plugin-mcp-launcher.mjs",
     "dist/cli.js",
-    "dist/mcp/main.js",
+    ...MCP_BOOTSTRAP_FILES,
     "scripts/rea.mjs",
     "skills/reverse-engineer-anything/SKILL.md",
     "assets/rea-plugin.png",
@@ -260,6 +264,20 @@ it("installs the pinned Cursor local plugin and leaves its runtime stable on rer
   expect(await readdir(f.local)).toEqual(["rea"]);
   await expect(access(f.config)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+it.each(MCP_BOOTSTRAP_FILES)(
+  "preserves and refuses a local plugin missing bootstrap file %s",
+  async (path) => {
+    const f = await fixture();
+    expect((await runSetup(f.setupOptions, f.host())).status).toBe("ready");
+    await unlink(join(f.target, "node_modules", "rea-agents", path));
+    const result = await runSetup(f.setupOptions, f.host());
+    expect(result.status).toBe("needs_human");
+    expect(f.downloads).toHaveLength(1);
+    expect(f.base.configurations + f.base.skillInstalls).toBe(0);
+    expect(await readdir(f.local)).toEqual(["rea"]);
+  },
+);
 
 it.each(["foreign", "changed-during-download", "edited"] as const)(
   "preserves an existing %s Cursor plugin",

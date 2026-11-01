@@ -10,6 +10,7 @@ import { readSkillFile } from "./SetupSkill.js";
 import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
 import type { PluginInspection } from "./SetupPluginClient.js";
 import { throwIfSetupCancelled } from "./SetupCancellation.js";
+import { MCP_BOOTSTRAP_FILES } from "../../scripts/lib/cli-runtime-files.mjs";
 import {
   SetupPluginCommands,
   pluginCommandFailure,
@@ -126,7 +127,7 @@ export class CursorLocalPlugin extends SetupPluginCommands {
     for (const path of [
       "scripts/plugin-mcp-launcher.mjs",
       "dist/cli.js",
-      "dist/mcp/main.js",
+      ...MCP_BOOTSTRAP_FILES,
       "scripts/rea.mjs",
       `skills/${PRODUCT_IDENTITY.skillName}/SKILL.md`,
       "assets/rea-plugin.png",
