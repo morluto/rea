@@ -10,9 +10,9 @@ import { GhidraProvider } from "./GhidraProvider.js";
 // status, load-image relocation-symbol and procedure search revisions that
 // prevent reuse of snapshots with earlier results.
 const RAW_DIGESTS = {
-  "6502": "7850ec8d885a9b5e1e6791637b57dfcea2d4359d55754ceeaf858fc43b22293d",
+  "6502": "fe1f7c8df86312021188d9a8a037cad5a479033e5886adf3b29ed1c5d2d4e5a6",
   "x86-disabled-analyzer":
-    "55fb2b19e10d32bea95a88a097029ab2ad705b4b81dc74844662191799dbb161",
+    "8bb0a0ab463fb8bf46036cbcd1f128cf684e0181f30865baea6cfb44661fd282",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
