@@ -1454,6 +1454,112 @@ describe("Ghidra file-offset outcome projection", () => {
   );
 });
 
+describe("Ghidra byte-search cursor projection", () => {
+  const CURSOR_MISMATCH = "byte_search_cursor_mismatch";
+  const MESSAGE =
+    "Byte search cursor does not match this search. It is bound to the target, analysis profile (including a selected Ghidra project), pattern, mask, bounds, and document, and does not identify which of those differs.";
+
+  it("reports a cursor binding mismatch without schema repair", async () => {
+    const ghidra = provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () =>
+        Promise.resolve(
+          err(
+            new GhidraSessionError(
+              "remote",
+              MESSAGE,
+              { remote_code: CURSOR_MISMATCH },
+              { remoteCode: CURSOR_MISMATCH },
+            ),
+          ),
+        ),
+      close: () => Promise.resolve(ok(null)),
+    }));
+    const client = await createElfClient(ghidra);
+    const result = await client.execute("search_bytes", {
+      pattern: "00",
+      cursor: "other-context",
+    });
+    if (result.ok) throw new Error("Expected a cursor binding refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      retryable: false,
+      message: MESSAGE,
+      remediation: {
+        action: expect.stringContaining("without the cursor"),
+      },
+      details: {
+        operation: "search_bytes",
+        issues: [
+          {
+            path: ["cursor"],
+            reason: "invalid_value",
+            message: MESSAGE,
+            observed: {
+              differing_component: "unknown",
+              bound_to: [
+                "target",
+                "analysis_profile",
+                "pattern",
+                "mask",
+                "bounds",
+                "document",
+              ],
+            },
+          },
+        ],
+        diagnostics: { remote_code: CURSOR_MISMATCH },
+      },
+    });
+    expect(projected).not.toHaveProperty("recovery");
+    expect(projected.message).toContain("analysis profile");
+    expect(projected.message).toContain("project");
+    expect(projected.message).not.toContain("Analysis input is invalid");
+    expect(projected.remediation.action).toContain("pattern");
+    expect(projected.remediation.action).not.toContain("schema");
+    expect(projected.remediation.action).not.toContain("tools/list");
+    const bridge = await readFile(
+      new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
+      "utf8",
+    );
+    expect(bridge).toContain(`"${CURSOR_MISMATCH}"`);
+    expect(bridge).toContain(MESSAGE);
+    await client.close();
+  });
+
+  it("keeps schema recovery for an ordinary search_bytes refusal", async () => {
+    const ghidra = provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () =>
+        Promise.resolve(
+          err(
+            new GhidraSessionError(
+              "remote",
+              "Fixture bridge rejected the request",
+              { remote_code: "invalid_request" },
+              { remoteCode: "invalid_request" },
+            ),
+          ),
+        ),
+      close: () => Promise.resolve(ok(null)),
+    }));
+    const client = await createElfClient(ghidra);
+    const result = await client.execute("search_bytes", { pattern: "00" });
+    if (result.ok) throw new Error("Expected an input refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      message: "Analysis input is invalid. Check the arguments and try again.",
+      recovery: { kind: "inspect_input_contract", operation: "search_bytes" },
+      details: {
+        issues: [{ path: [], message: "Fixture bridge rejected the request" }],
+      },
+    });
+    await client.close();
+  });
+});
+
 describe("Ghidra decompiler failure projection", () => {
   it("reports a procedure decompiler failure without blaming the environment", async () => {
     const code = "decompile_failed";
