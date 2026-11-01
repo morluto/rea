@@ -106,6 +106,8 @@ const harness = (
   signal?: AbortSignal,
   secretValue = "私密",
   limitsInput: unknown = {},
+  /** Event kinds the fixture's retained-event owner refuses, as a budget would. */
+  refusedKinds: ReadonlySet<string> = new Set(),
 ) => {
   const scenario = browserScenarioSchema.parse({
     browser: { mode: "launch", executable_path: "/fixture/chrome" },
@@ -129,6 +131,8 @@ const harness = (
     ...(signal === undefined ? {} : { signal }),
     emit: (event) => {
       const sequence = events.length + 1;
+      if (refusedKinds.has(event.kind))
+        return { status: "omitted", sequence, reason: "max-events" };
       events.push(
         browserScenarioEventSchema.parse({ ...event, sequence, step_index: 0 }),
       );
@@ -140,6 +144,7 @@ const harness = (
       sequence: events.length + 1,
     }),
     omitNetwork: (transactionId, kind, reason) => {
+      networkOmissionCalls.push(`${transactionId}:${kind}`);
       let omission = networkOmissions.get(transactionId);
       if (omission === undefined) {
         omission = { kinds: new Set(), reasons: new Set() };
@@ -152,6 +157,7 @@ const harness = (
       omittedEventCounts.set(kind, (omittedEventCounts.get(kind) ?? 0) + 1);
     },
   });
+  const networkOmissionCalls: string[] = [];
   const networkOmissions = new Map<
     string,
     { kinds: Set<string>; reasons: Set<string> }
@@ -162,6 +168,7 @@ const harness = (
     limits: scenario.capture.limits,
     secrets,
     networkOmissions,
+    networkOmissionCalls,
     omittedEventCounts,
   };
 };
@@ -457,6 +464,26 @@ it("records one response per request when the same answer is reported twice", as
   collector.finished(request);
   await collector.finish();
   expect(events.filter((event) => event.kind === "response")).toHaveLength(1);
+});
+
+it("counts a repeated response once when the first report was refused by a budget", async () => {
+  const { collector, networkOmissionCalls, events } = harness(
+    selection,
+    undefined,
+    "fixture",
+    {},
+    new Set(["response"]),
+  );
+  const request = new RequestFixture("body");
+  collector.request(request);
+  collector.response(new ResponseFixture(request, "first"));
+  collector.response(new ResponseFixture(request, "second"));
+  collector.finished(request);
+  await collector.finish();
+  expect(events.filter((event) => event.kind === "response")).toHaveLength(0);
+  expect(
+    networkOmissionCalls.filter((c) => c.endsWith(":response")),
+  ).toHaveLength(1);
 });
 
 it("redacts declared secrets in browser-produced form and JSON encodings", async () => {

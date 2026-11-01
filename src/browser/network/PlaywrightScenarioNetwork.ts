@@ -86,6 +86,8 @@ interface Transaction {
   terminal?: "finished" | "failed";
   responseScheduled: boolean;
   requestObserved: boolean;
+  /** A response was reported for this request, whether or not it was retained. */
+  responseObserved: boolean;
 }
 
 interface QueuedContentRead {
@@ -229,8 +231,10 @@ export class PlaywrightScenarioNetwork {
       return;
     }
     // A request has one response; a recovered redirect answer and the browser's
-    // own report of it must not be recorded twice.
-    if (transaction.response !== undefined) return;
+    // own report of it must not be recorded twice, even when the first is
+    // refused by a budget and leaves nothing retained.
+    if (transaction.responseObserved) return;
+    transaction.responseObserved = true;
     if (
       !this.admitMetadata(
         transaction,
@@ -464,6 +468,7 @@ export class PlaywrightScenarioNetwork {
             : undefined,
       responseScheduled: false,
       requestObserved: false,
+      responseObserved: false,
     };
     this.transactions.set(request, transaction);
     return transaction;

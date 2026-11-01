@@ -158,6 +158,37 @@ describe("request step redirect observation bounds", () => {
     await observation!.stop();
   });
 
+  it("declines malformed protocol events instead of throwing", async () => {
+    const { page, emitter, session, responses } = setup();
+    const observation = await observe(page, responses);
+    emitter.emit("request", fakeRequest());
+    for (const bad of [
+      undefined,
+      null,
+      7,
+      {},
+      { requestId: "1.1" },
+      { requestId: "1.1", request: 3 },
+    ])
+      expect(() =>
+        session.emit("Network.requestWillBeSent", bad),
+      ).not.toThrow();
+    dispatch(session);
+    for (const bad of [
+      undefined,
+      { requestId: "1.1" },
+      { requestId: "1.1", statusCode: "302", headers: { location: "/x" } },
+      { requestId: "1.1", statusCode: 302, headers: { location: 5 } },
+      { requestId: "1.1", statusCode: 302, headers: null },
+    ])
+      expect(() =>
+        session.emit("Network.responseReceivedExtraInfo", bad),
+      ).not.toThrow();
+    expect(responses).toHaveLength(0);
+    expect(observation!.delivered()).toBe(false);
+    await observation!.stop();
+  });
+
   it("withdraws its claim when a second identical dispatch follows an early answer", async () => {
     const { page, emitter, session, responses } = setup();
     const observation = await observe(page, responses);

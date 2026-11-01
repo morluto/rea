@@ -1,5 +1,9 @@
 import type { CDPSession, Page, Request } from "playwright-core";
 
+import {
+  readCdpRequestWillBeSent,
+  readCdpResponseReceivedExtraInfo,
+} from "./CdpNetworkEventFacts.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
 import type { ScenarioNetworkResponse } from "./network/PlaywrightScenarioNetwork.js";
 
@@ -165,14 +169,12 @@ export const observeScenarioRedirect = async (input: {
     else if (request !== sent) ambiguous = true;
     deliver();
   };
-  const onWillBeSent = (event: {
-    readonly requestId: string;
-    readonly request: { readonly url: string; readonly method: string };
-    readonly redirectResponse?: unknown;
-  }): void => {
+  const onWillBeSent = (reported: unknown): void => {
+    const event = readCdpRequestWillBeSent(reported);
     if (
-      event.redirectResponse === undefined &&
-      event.request.url === url &&
+      event.requestId !== null &&
+      event.redirect.kind === "missing" &&
+      event.request?.url === url &&
       event.request.method === method
     ) {
       // The same transport identity names the redirect target afterwards, so
@@ -187,12 +189,15 @@ export const observeScenarioRedirect = async (input: {
       dispatched.add(event.requestId);
     }
   };
-  const onExtraInfo = (event: {
-    readonly requestId: string;
-    readonly statusCode: number;
-    readonly headers: Readonly<Record<string, string>>;
-  }): void => {
-    if (!dispatched.has(event.requestId)) return;
+  const onExtraInfo = (reported: unknown): void => {
+    const event = readCdpResponseReceivedExtraInfo(reported);
+    if (
+      event.requestId === null ||
+      event.statusCode === undefined ||
+      event.headers === undefined ||
+      !dispatched.has(event.requestId)
+    )
+      return;
     const candidate = { status: event.statusCode, headers: event.headers };
     if (!isRedirect(candidate)) return;
     answer = candidate;
