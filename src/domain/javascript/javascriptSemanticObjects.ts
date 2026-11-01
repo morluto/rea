@@ -157,7 +157,7 @@ const collectDestructuring = (
   const sourceValue =
     initializer == null
       ? undefined
-      : evaluateSemanticExpression(initializer, state, initializer);
+      : evaluateSemanticExpression(initializer, state, initializer, "query");
   const pending: {
     readonly pattern: t.Node;
     readonly path: readonly string[];

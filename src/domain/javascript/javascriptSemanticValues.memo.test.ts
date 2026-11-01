@@ -1,3 +1,4 @@
+import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js";
 import { expect, it, vi } from "vitest";
 
 import {
@@ -496,3 +497,80 @@ it("releases query union ownership when state-owned values are invalidated", () 
     spy.mockRestore();
   }
 });
+
+it.each([false, true])(
+  "keeps destructuring-only source copies out of state-owned capture caches (prewarmed: %s)",
+  (prewarmed) => {
+    const fields = 128;
+    const reads = 16;
+    const source = `const config={${Array.from({ length: fields }, (_, i) => `p${i}:${i}`).join(",")}};let selected;${"({p0:selected}=config);".repeat(reads)}`;
+    const parsed = parseJavaScriptSource(source, "presence-cache.js");
+    if (parsed === null) throw new Error("Expected parsed source");
+    const steps = indexJavaScriptBindingsSteps(parsed.program);
+    let next = steps.next();
+    while (next.done !== true) next = steps.next();
+    const state = next.value;
+    const config = [...state.bindingsById.values()].find(
+      (binding) => binding.name === "config",
+    );
+    if (config === undefined) throw new Error("Missing source binding");
+    if (prewarmed) collectJavaScriptSemanticObjects(parsed.program, state, []);
+    const owners = new WeakSet<object>();
+    const captures = new WeakSet<object>();
+    let retainedObjectAccesses = 0;
+    const weakGet = WeakMap.prototype.get;
+    const weakSet = WeakMap.prototype.set;
+    const mapGet = Map.prototype.get;
+    const mapSet = Map.prototype.set;
+    const observeWeak = (owner: object, key: unknown, value: unknown) => {
+      if (key === state && value instanceof WeakMap) owners.add(value);
+      if (owners.has(owner) && value instanceof Map) captures.add(value);
+    };
+    const observeValue = (owner: object, key: unknown, value: unknown) => {
+      if (
+        captures.has(owner) &&
+        key === config.bindingId &&
+        value !== null &&
+        typeof value === "object" &&
+        "status" in value &&
+        value.status === "object"
+      )
+        retainedObjectAccesses += 1;
+    };
+    WeakMap.prototype.get = function (key) {
+      const value = weakGet.call(this, key);
+      observeWeak(this, key, value);
+      return value;
+    };
+    WeakMap.prototype.set = function (key, value) {
+      observeWeak(this, key, value);
+      return weakSet.call(this, key, value);
+    };
+    Map.prototype.get = function (key) {
+      const value = mapGet.call(this, key);
+      observeValue(this, key, value);
+      return value;
+    };
+    Map.prototype.set = function (key, value) {
+      observeValue(this, key, value);
+      return mapSet.call(this, key, value);
+    };
+    try {
+      const operations = collectJavaScriptSemanticObjects(
+        parsed.program,
+        state,
+        [],
+      ).filter((operation) => operation.kind === "destructure");
+      expect(operations).toHaveLength(reads);
+      expect(
+        operations.every((operation) => operation.sourcePresence === "present"),
+      ).toBe(true);
+      expect(retainedObjectAccesses).toBe(0);
+    } finally {
+      WeakMap.prototype.get = weakGet;
+      WeakMap.prototype.set = weakSet;
+      Map.prototype.get = mapGet;
+      Map.prototype.set = mapSet;
+    }
+  },
+);
