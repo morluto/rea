@@ -46,6 +46,18 @@ fingerprint and the same known architecture. Extents are never guessed from the
 next entry, and relocations are not normalized. A larger mapped read can serve
 several observed bodies; only needed ranges need to be captured.
 
+For a matched function, its `evidence_links` include the selected byte reads
+that covered its body. Request the `function-matches` view with
+`collection: "byte-sources"` to page the selected `read_bytes` source IDs,
+sides and limitations; intersect those IDs with the function's links. This
+distinguishes, for example, Ghidra initialized-memory bytes from file bytes.
+Identical overlapping reads retain the selected covering source, not every
+corroborating read. Pages preserve the original source limitations and may end
+early when the response budget is reached. If one source is too large for a
+page, the error identifies its Evidence and the next offset; retrieve that
+source or export the bundle, then resume at that offset. Older matching Evidence
+may not record this source selection.
+
 This first slice reuses existing range observations. Stripped builds can require
 many lightweight range queries when those facts are not retained yet. Matching
 does not hide that acquisition cost or silently start those queries. Full

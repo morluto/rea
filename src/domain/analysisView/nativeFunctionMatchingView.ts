@@ -3,6 +3,8 @@ import {
   nativeFunctionMatchingSchema,
   nativeFunctionMatchSchema,
   nativeFunctionMatchMemberSchema,
+  nativeFunctionByteSourceSchema,
+  nativeFunctionByteSourceGuidance,
   nativeMatchStateSchema,
   type NativeFunctionMatching,
 } from "../native/functionMatching.js";
@@ -23,6 +25,8 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import type { JsonValue } from "../jsonValue.js";
+import { jsonValueByteLength } from "../jsonValueByteLength.js";
+import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 
 const matchRow = nativeFunctionMatchSchema.extend({
   left_count: z.number().int().nonnegative(),
@@ -56,9 +60,18 @@ export const nativeFunctionMatchingViewRequestSchema = z.discriminatedUnion(
       names: z.array(z.string()).optional(),
       fields: z.array(functionRow.keyof()).optional(),
     }),
+    z.strictObject({
+      kind: z.literal("function-matches"),
+      collection: z.literal("byte-sources"),
+      sides: z.array(z.enum(["left", "right"])).optional(),
+      evidence_ids: z.array(z.string()).optional(),
+      offset: z.number().int().nonnegative().default(0),
+      limit: z.number().int().positive().default(64),
+    }),
   ],
 );
 export const nativeFunctionMatchingViewItemsSchema = z.union([
+  z.array(nativeFunctionByteSourceSchema),
   z.array(
     matchRow.partial().required({
       match_id: true,
@@ -93,8 +106,14 @@ interface Checked {
 }
 const checked = new WeakMap<object, Checked>();
 const readReport = createAnalysisViewResultReader(nativeFunctionMatchingSchema);
+// Leave room for the Evidence envelope and duplicated MCP text/structured output.
+const BYTE_SOURCE_PAGE_BYTES = 1024 * 1024;
+const BYTE_SOURCE_PROJECTION_BYTES =
+  BYTE_SOURCE_PAGE_BYTES -
+  (jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1);
 
 type Request = z.output<typeof nativeFunctionMatchingViewRequestSchema>;
+type MatchRequest = Exclude<Request, { collection: "byte-sources" }>;
 const checkedReport = (
   parent: AnalysisViewParent,
 ): Result<Checked, AnalysisError> => {
@@ -134,6 +153,7 @@ const sharedContext = (
     [...parent.limitations, ...report.limitations],
     parent.evidenceId,
     "limitations",
+    report.byte_sources_count ? [nativeFunctionByteSourceGuidance] : [],
   ),
   unknowns: [
     "Unpaired observations and page exhaustion do not establish binary-wide function absence or behavioral equivalence.",
@@ -141,7 +161,7 @@ const sharedContext = (
 });
 const selected = (values: readonly string[] | undefined) =>
   values === undefined ? undefined : new Set(values);
-const filterRows = (entry: Checked, view: Request): readonly number[] => {
+const filterRows = (entry: Checked, view: MatchRequest): readonly number[] => {
   const key = JSON.stringify([
     view.collection,
     view.states,
@@ -188,7 +208,7 @@ const filterRows = (entry: Checked, view: Request): readonly number[] => {
 };
 const selectedItems = (
   entry: Checked,
-  view: Request,
+  view: MatchRequest,
   rows: readonly number[],
 ) => {
   const indices = rows.slice(view.offset, view.offset + view.limit);
@@ -283,6 +303,7 @@ export const projectNativeFunctionMatchingView = (
   const {
     matches: _matches,
     limitations: _limitations,
+    byte_sources: _byteSources,
     ...context
   } = entry.report;
   const shared = sharedContext(parent, entry.report);
@@ -294,6 +315,102 @@ export const projectNativeFunctionMatchingView = (
       summary: context,
       coverage: completeWithinViewCoverage(1, 1),
     });
+  if (view.collection === "byte-sources") {
+    if (entry.report.byte_sources === undefined)
+      return err(
+        analysisViewInputError([
+          {
+            path: ["view"],
+            reason: "invalid_value",
+            message:
+              "This historical report did not record byte-source qualifications; inspect its linked Evidence.",
+          },
+        ]),
+      );
+    const sides = selected(view.sides),
+      ids = selected(view.evidence_ids);
+    const items: z.output<typeof nativeFunctionByteSourceSchema>[] = [];
+    const fixed = {
+      kind: "function-matches" as const,
+      view,
+      ...shared,
+      ...context,
+    };
+    let bytes = jsonValueByteLength(
+      {
+        ...fixed,
+        items: [],
+        byte_limited: true,
+        coverage: pageViewCoverage(
+          Number.MAX_SAFE_INTEGER,
+          Number.MAX_SAFE_INTEGER,
+          Number.MAX_SAFE_INTEGER,
+        ),
+      } as JsonValue,
+      BYTE_SOURCE_PROJECTION_BYTES,
+    );
+    const tooLarge = (source?: { evidence_id: string; next_offset: number }) =>
+      err(
+        new AnalysisResourceConstraintError(
+          "inspect_analysis_view",
+          "transport",
+          "The selected byte-source view exceeds the projection allowance.",
+          {
+            parent_evidence_id: parent.evidenceId,
+            limit_bytes: BYTE_SOURCE_PAGE_BYTES,
+            ...(source === undefined
+              ? {}
+              : {
+                  source_evidence_id: source.evidence_id,
+                  next_offset: source.next_offset,
+                }),
+          },
+          {
+            retryable: false,
+            remediationAction:
+              source === undefined
+                ? "Narrow the selection or export the complete Evidence bundle."
+                : "Retrieve the selected source Evidence by ID or export the complete Evidence bundle; use next_offset to continue after the oversized source.",
+          },
+        ),
+      );
+    if (bytes > BYTE_SOURCE_PROJECTION_BYTES) return tooLarge();
+    let total = 0,
+      byteLimited = false;
+    for (const row of entry.report.byte_sources) {
+      if (
+        (sides !== undefined && !sides.has(row.side)) ||
+        (ids !== undefined && !ids.has(row.evidence_id))
+      )
+        continue;
+      if (total >= view.offset && items.length < view.limit && !byteLimited) {
+        const item = row;
+        const size =
+          jsonValueByteLength(
+            item,
+            Math.max(0, BYTE_SOURCE_PROJECTION_BYTES - bytes),
+          ) + 1;
+        if (bytes + size > BYTE_SOURCE_PROJECTION_BYTES) {
+          if (items.length === 0)
+            return tooLarge({
+              evidence_id: row.evidence_id,
+              next_offset: total + 1,
+            });
+          byteLimited = true;
+        } else {
+          items.push(item);
+          bytes += size;
+        }
+      }
+      total++;
+    }
+    return ok({
+      ...fixed,
+      items,
+      byte_limited: byteLimited,
+      coverage: pageViewCoverage(view.offset, items.length, total),
+    });
+  }
   const rows = filterRows(entry, view),
     items = selectedItems(entry, view, rows);
   return ok({
