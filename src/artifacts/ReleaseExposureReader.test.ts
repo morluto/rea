@@ -944,6 +944,39 @@ describe("ReleaseExposureReader mixed maps and sibling paths", () => {
     expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
   });
 
+  it("does not expand sections past the decoder depth budget", async () => {
+    const root = await createTestTempDirectory("rea-release-deep-map-");
+    const path = join(root, "app.js.map");
+    const leaf = JSON.parse(embeddedSourceMap().toString("utf8")) as unknown;
+    let deep: unknown = leaf;
+    for (let depth = 0; depth < 70; depth += 1)
+      deep = {
+        version: 3,
+        sections: [{ offset: { line: 0, column: 0 }, map: deep }],
+      };
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 3,
+        sections: [
+          { offset: { line: 0, column: 0 }, map: deep },
+          { offset: { line: 1, column: 0 }, map: leaf },
+        ],
+      }),
+    );
+    const scanned = await inspect(path);
+    expect(scanned.source_maps).toMatchObject({
+      embedded: 1,
+      embedded_paths: [path],
+      unparsed: 1,
+    });
+    await writeFile(path, JSON.stringify(deep));
+    expect((await inspect(path)).source_maps).toMatchObject({
+      embedded: 0,
+      unparsed: 1,
+    });
+  });
+
   it.skipIf(process.platform === "win32")(
     "preserves symlink/.. traversal for linker maps and named companions",
     async () => {

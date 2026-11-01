@@ -86,9 +86,11 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import {
-  inspectSourceMapEnvelope,
+  classifySourceMapSection,
+  classifySourceMapSections,
   sourceMapJsonText,
 } from "../domain/sourceMapEnvelope.js";
+import { WEB_SOURCE_MAP_LIMITS } from "../domain/webSourceLocation.js";
 import {
   inspectSourceMap,
   inspectSourceMapValue,
@@ -922,6 +924,43 @@ const mayHaveSourceMapPrefix = (prefix: Buffer): boolean => {
   return text.length === 0 || text.startsWith("{");
 };
 
+/**
+ * Leaf maps reachable within the decoder's section depth and record budgets.
+ * Deeper or excess sections are dropped rather than expanded, so a map the
+ * decoder refused for its limits cannot allocate past them here.
+ */
+const boundedSourceMapLeaves = (root: unknown): Record<string, unknown>[] => {
+  const leaves: Record<string, unknown>[] = [];
+  if (
+    typeof root !== "object" ||
+    root === null ||
+    Array.isArray(root) ||
+    (root as { version?: unknown }).version !== 3
+  )
+    return leaves;
+  const pending: { map: unknown; depth: number }[] = [{ map: root, depth: 0 }];
+  let records = 0;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) break;
+    const sections = classifySourceMapSections(current.map);
+    if (sections.kind === "invalid") continue;
+    if (sections.kind === "regular") {
+      leaves.push(current.map as Record<string, unknown>);
+      continue;
+    }
+    if (current.depth >= WEB_SOURCE_MAP_LIMITS.sectionDepth) continue;
+    records += sections.sections.length;
+    if (records > WEB_SOURCE_MAP_LIMITS.decodedRecords) break;
+    for (let index = sections.sections.length - 1; index >= 0; index -= 1) {
+      const section = classifySourceMapSection(sections.sections[index]);
+      if (section.kind === "embedded")
+        pending.push({ map: section.map, depth: current.depth + 1 });
+    }
+  }
+  return leaves;
+};
+
 const readSourceMap = (
   state: ScanState,
   map: Pick<MemberView, "logical" | "location">,
@@ -951,17 +990,11 @@ const readSourceMap = (
       } catch {
         parsed = undefined;
       }
-      const envelope =
-        parsed === undefined ? undefined : inspectSourceMapEnvelope(parsed);
-      const leaves =
-        envelope === undefined || envelope.status === "invalid"
-          ? []
-          : envelope.leaves;
       const budget = { records: 0 };
       let embedded = false;
-      for (const leaf of leaves) {
+      for (const leaf of boundedSourceMapLeaves(parsed)) {
         try {
-          const inspected = inspectSourceMapValue(leaf.map, { budget });
+          const inspected = inspectSourceMapValue(leaf, { budget });
           embedded ||= inspected.declarations.some(
             (declaration) =>
               declaration.content !== null && declaration.content.length > 0,
