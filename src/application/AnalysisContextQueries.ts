@@ -13,6 +13,7 @@ import {
 import {
   omitUnretainedEvidenceFromError,
   projectAnalysisError,
+  unretainedEvidenceCandidates,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -122,29 +123,24 @@ export function* omitContextEvidenceForDelivery(
   const candidates = names.flatMap((name) => {
     const facet = context[name];
     if (facet.state !== "unavailable" || facet.error === undefined) return [];
-    return (["partial_observation", "completed_observation"] as const).flatMap(
-      (field) => {
-        const compact = omitUnretainedEvidenceFromError(
-          facet.error!,
-          limit,
-          field,
-        );
-        if (compact === undefined) return [];
-        const value = facet.error!.details?.[field];
-        const size = estimateJsonStorage(value, {
-          maximumValueBytes: budgetBytes,
-          includeSerialized: false,
-        }).valueBytes;
-        return [{ name, field, size }];
-      },
-    );
+    return [...unretainedEvidenceCandidates(facet.error)].map((candidate) => {
+      const size = estimateJsonStorage(candidate.value, {
+        maximumValueBytes: budgetBytes,
+        includeSerialized: false,
+      }).valueBytes;
+      return { name, candidate, size };
+    });
   });
   candidates.sort((left, right) => right.size - left.size);
   let current = context;
-  for (const { name, field } of candidates) {
+  for (const { name, candidate } of candidates) {
     const facet = current[name];
     if (facet.state !== "unavailable" || facet.error === undefined) continue;
-    const compact = omitUnretainedEvidenceFromError(facet.error, limit, field);
+    const compact = omitUnretainedEvidenceFromError(
+      facet.error,
+      limit,
+      candidate,
+    );
     if (compact === undefined) continue;
     current = {
       ...current,

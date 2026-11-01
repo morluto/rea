@@ -284,3 +284,108 @@ it.each([false, true])(
   },
   120000,
 );
+
+it("keeps a smaller sibling recovery when a later completed observation exceeds delivery", async () => {
+  const provider = { id: "fixture", name: "Fixture", version: "1" };
+  const source = createEvidence(
+    undefined,
+    provider,
+    {
+      operation: "health",
+      parameters: {},
+      result: "source",
+    },
+    { immutable: true },
+  );
+  const target = join(
+    await createTestTempDirectory("rea-mixed-recoveries-"),
+    "fixture.com",
+  );
+  await writeFile(target, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
+  const session = new BinarySession(
+    createTestProviderRouter(() => ({
+      execute: async (operation) => {
+        if (operation === "health")
+          return ok(createAnalysisExecution(null, provider));
+        if (operation === "address_name")
+          return ok(
+            createAnalysisExecution("small", provider, {
+              sourceEvidence: [source],
+            }),
+          );
+        if (operation === "inline_comment")
+          return ok(
+            createAnalysisExecution(
+              "p".repeat(STDIO_DEFAULT_MAX_BUFFER_SIZE + 65536),
+              provider,
+              { sourceEvidence: [source] },
+            ),
+          );
+        if (operation === "comment")
+          return err(
+            new ProviderCleanupError(provider.id, ["fixture-owner"], {}),
+          );
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            provider.id,
+            operation,
+            "not provided",
+          ),
+        );
+      },
+      close: async () => ok(null),
+    })),
+    new InvestigationRecords({ maximumRepresentationBytes: 0 }),
+  );
+  const server = createServer({ kind: "session", session });
+  const client = new Client({
+    name: "multiple-recovery-context",
+    version: "1",
+  });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(st);
+    await client.connect(ct);
+    expect(
+      (
+        await client.callTool({
+          name: "open_binary",
+          arguments: { path: target, format: "dos-com" },
+        })
+      ).isError,
+    ).not.toBe(true);
+    const result = await client.callTool(
+      {
+        name: "inspect_address_context",
+        arguments: { address: "0x100", document: "fixture" },
+      },
+      { timeout: 120000 },
+    );
+    expect(parseMcpToolError(result).error).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        resources: ["fixture-owner"],
+        secondary_failures: [
+          {
+            details: {
+              partial_observation: { kind: "unretained-evidence" },
+              completed_observation: {
+                evidence: { normalized_result: "small" },
+              },
+            },
+          },
+          {
+            details: {
+              partial_observation: { kind: "unretained-evidence" },
+              completed_observation_omitted: { reason: "mcp-response-limit" },
+            },
+          },
+        ],
+      },
+    });
+  } finally {
+    await client.close();
+    await server.close();
+    await session.close();
+  }
+}, 120000);

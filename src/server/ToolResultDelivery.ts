@@ -8,11 +8,13 @@ import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
   omitUnretainedEvidenceFromError,
   projectAnalysisError,
+  unretainedEvidenceCandidates,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
+import { estimateJsonStorage } from "../application/JsonAuthenticationHeadroom.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
@@ -199,18 +201,25 @@ export class ToolResultDelivery {
     let candidateProjection = projected;
     while (!encoded.ok) {
       const limit = encoded;
-      const sourceOmitted = omitUnretainedEvidenceFromError(
-        candidateProjection,
-        limit,
-      );
-      const primaryOmitted = omitUnretainedEvidenceFromError(
-        candidateProjection,
-        limit,
-        "completed_observation",
-      );
-      for (const candidate of [sourceOmitted, primaryOmitted]) {
-        if (candidate === undefined) continue;
-        const content = { error: candidate };
+      const candidates = [...unretainedEvidenceCandidates(candidateProjection)]
+        .map((candidate) => ({
+          candidate,
+          size: estimateJsonStorage(candidate.value, {
+            maximumValueBytes: this.resultBudgetBytes,
+            includeSerialized: false,
+          }).valueBytes,
+        }))
+        .sort((left, right) => right.size - left.size);
+      let next: AnalysisErrorProjection | undefined;
+      for (const { candidate } of candidates) {
+        const compact = omitUnretainedEvidenceFromError(
+          candidateProjection,
+          limit,
+          candidate,
+        );
+        if (compact === undefined) continue;
+        next ??= compact;
+        const content = { error: compact };
         const compactEncoded = encodeToolResult(
           content,
           this.resultBudgetBytes,
@@ -224,7 +233,6 @@ export class ToolResultDelivery {
         }
       }
       if (encoded.ok) break;
-      const next = sourceOmitted ?? primaryOmitted;
       if (next === undefined) break;
       candidateProjection = next;
     }

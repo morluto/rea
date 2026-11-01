@@ -1,11 +1,17 @@
 import { expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { createTestProviderRouter } from "../fixtures/binarySession.js";
+import { dirname, basename, join } from "node:path";
+import {
+  createBinarySessionTargets,
+  createTestProviderRouter,
+} from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../src/application/investigation/InvestigationRecords.js";
-import { runDirectAnalysis } from "../../src/application/DirectAnalysis.js";
+import {
+  runDirectAnalysis,
+  runProviderAnalysis,
+} from "../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
 import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../src/domain/analysisObservation.js";
@@ -13,6 +19,67 @@ import { createEvidence } from "../../src/domain/evidence.js";
 import { parseConfig } from "../../src/config/parseConfig.js";
 import { err, ok } from "../../src/domain/result.js";
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
+import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
+
+it.each(["inspect_macho", "inspect_managed_members"] as const)(
+  "recovers %s Evidence and caller input identity after source admission fails",
+  async (tool) => {
+    const [target] = await createBinarySessionTargets();
+    const path = `${dirname(target)}/./${basename(target)}`;
+    const provider = { id: "fixture", name: "Fixture", version: "1" };
+    const source = createEvidence(undefined, provider, {
+      operation: "health",
+      parameters: {},
+      result: "large".repeat(20000),
+    });
+    const calls: Readonly<Record<string, unknown>>[] = [];
+    const run = async (maximumRepresentationBytes: number) => {
+      const session = new BinarySession(
+        createTestProviderRouter(() => ({
+          execute: async (operation, parameters) => {
+            if (operation !== "health") calls.push(parameters);
+            return ok(
+              createAnalysisExecution(
+                operation === "health" ? null : "completed",
+                provider,
+                operation === "health" ? {} : { sourceEvidence: [source] },
+              ),
+            );
+          },
+          close: async () => ok(null),
+        })),
+        new InvestigationRecords({ maximumRepresentationBytes }),
+      );
+      const create = () => session;
+      const dependencies: DirectAnalysisDependencies = {
+        readConfiguration: () => parseConfig({}),
+        createBinarySession: create,
+        createNativeDispatchBinarySession: create,
+        createArtifactBinarySession: create,
+        createNativeBinarySession: create,
+        createManagedBinarySession: create,
+      };
+      return runProviderAnalysis(dependencies, path, tool, {});
+    };
+    const success = await run(500000);
+    if (!success.ok) throw new Error(JSON.stringify(success.error));
+    const refused = await run(20000);
+    if (refused.ok) throw new Error("Expected source admission failure");
+    expect(refused.error).toMatchObject({
+      details: {
+        completed_observation: {
+          evidence: {
+            evidence_id: success.value.evidence_id,
+            parameters: { input_path: path },
+            caller_input_path: path,
+          },
+        },
+      },
+    });
+    expect(calls).toEqual([{}, {}]);
+  },
+);
 
 it("delivers a preexisting completed record inline after one-shot cleanup", async () => {
   const provider = { id: "fixture", name: "Fixture", version: "1" };
@@ -205,12 +272,14 @@ it.each([false, true])(
       createManagedBinarySession: create,
     };
     const controller = new AbortController();
+    const reason = { during: "final close" };
+    const recordEvidence = vi.spyOn(session, "recordEvidence");
     const nativeClose = session.close.bind(session);
     const failure = new ProviderCleanupError("fixture", ["fixture-owner"], {});
     const close = vi
       .spyOn(session, "close")
       .mockImplementationOnce(async () => {
-        controller.abort({ during: "final close" });
+        controller.abort(reason);
         return closeFails ? err(failure) : nativeClose();
       });
     try {
@@ -250,6 +319,25 @@ it.each([false, true])(
                 execution_failure: "resource_constraint",
               }
             : {}),
+        },
+      });
+      const sourceFailure = recordEvidence.mock.results
+        .map(({ value }) => value)
+        .find((value) => value !== undefined && !value.ok);
+      expect(sourceFailure).toBeDefined();
+      expect(
+        primaryAnalysisError(sourceFailure!.error).secondaryFailures,
+      ).toContainEqual(expect.objectContaining({ cause: reason }));
+      expect(
+        primaryAnalysisError(sourceFailure!.error).secondaryFailures.some(
+          (failure) =>
+            failure instanceof AnalysisCancelledError &&
+            failure.cause === reason,
+        ),
+      ).toBe(true);
+      expect(result.error).toMatchObject({
+        details: {
+          secondary_failures: [expect.objectContaining({ code: "cancelled" })],
         },
       });
       expect(session.activeTarget() !== undefined).toBe(closeFails);

@@ -94,17 +94,93 @@ export const projectAnalysisErrorForCleanupHistory = (
     secondary: false,
   });
 
-/** Omit only explicitly unretained Evidence when a complete reply cannot fit. */
+export interface UnretainedEvidenceCandidate {
+  readonly field: "partial_observation" | "completed_observation";
+  readonly secondaryPath: readonly number[];
+  readonly value: JsonValue;
+}
+
+/** Enumerate recoveries owned by this projection, including secondary failures. */
+export function* unretainedEvidenceCandidates(
+  projected: AnalysisErrorProjection,
+  secondaryPath: readonly number[] = [],
+): Generator<UnretainedEvidenceCandidate> {
+  for (const field of [
+    "partial_observation",
+    "completed_observation",
+  ] as const) {
+    const value = projected.details?.[field];
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value) &&
+      (value.kind === "unretained-evidence" ||
+        value.kind === "unretained-observation" ||
+        value.kind === "inline-evidence")
+    )
+      yield { field, secondaryPath, value };
+  }
+  const secondary = projected.details?.secondary_failures;
+  if (!Array.isArray(secondary)) return;
+  for (const [index, failure] of secondary.entries()) {
+    if (
+      typeof failure !== "object" ||
+      failure === null ||
+      Array.isArray(failure)
+    )
+      continue;
+    const remediation = failure.remediation;
+    if (
+      typeof remediation !== "object" ||
+      remediation === null ||
+      Array.isArray(remediation) ||
+      typeof remediation.action !== "string"
+    )
+      continue;
+    yield* unretainedEvidenceCandidates(
+      failure as unknown as AnalysisErrorProjection,
+      [...secondaryPath, index],
+    );
+  }
+}
+
+/** Omit one explicitly unretained recovery when a complete reply cannot fit. */
 export const omitUnretainedEvidenceFromError = (
   projected: AnalysisErrorProjection,
   limit: {
     readonly constraint: "receive-buffer" | "string-length";
     readonly bytesAtLeast: number;
   },
-  field:
-    | "partial_observation"
-    | "completed_observation" = "partial_observation",
+  candidate: UnretainedEvidenceCandidate,
 ): AnalysisErrorProjection | undefined => {
+  const { field, secondaryPath } = candidate;
+  if (secondaryPath.length > 0) {
+    const [index, ...rest] = secondaryPath;
+    const secondary = projected.details?.secondary_failures;
+    if (!Array.isArray(secondary) || index === undefined) return undefined;
+    const failure = secondary[index];
+    if (
+      typeof failure !== "object" ||
+      failure === null ||
+      Array.isArray(failure)
+    )
+      return undefined;
+    const omitted = omitUnretainedEvidenceFromError(
+      failure as unknown as AnalysisErrorProjection,
+      limit,
+      { ...candidate, secondaryPath: rest },
+    );
+    if (omitted === undefined) return undefined;
+    return {
+      ...projected,
+      details: {
+        ...projected.details,
+        secondary_failures: secondary.map((item, i) =>
+          i === index ? omitted : item,
+        ),
+      },
+    };
+  }
   const partial = projected.details?.[field];
   if (
     typeof partial !== "object" ||
@@ -114,40 +190,6 @@ export const omitUnretainedEvidenceFromError = (
       partial.kind !== "unretained-observation" &&
       partial.kind !== "inline-evidence")
   ) {
-    const secondary = projected.details?.secondary_failures;
-    if (!Array.isArray(secondary)) return undefined;
-    for (const [index, failure] of secondary.entries()) {
-      if (
-        typeof failure !== "object" ||
-        failure === null ||
-        Array.isArray(failure)
-      )
-        continue;
-      const remediation = failure.remediation;
-      if (
-        typeof remediation !== "object" ||
-        remediation === null ||
-        Array.isArray(remediation) ||
-        typeof remediation.action !== "string"
-      )
-        continue;
-      // This array is produced by projectError from typed secondary errors.
-      const omitted = omitUnretainedEvidenceFromError(
-        failure as unknown as AnalysisErrorProjection,
-        limit,
-        field,
-      );
-      if (omitted === undefined) continue;
-      return {
-        ...projected,
-        details: {
-          ...projected.details,
-          secondary_failures: secondary.map((item, i) =>
-            i === index ? omitted : item,
-          ),
-        },
-      };
-    }
     return undefined;
   }
   const { [field]: _partial, ...details } = projected.details!;
