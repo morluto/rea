@@ -256,6 +256,49 @@ describe("MCP runtime HTTP transport errors", () => {
     expect(output[0]).not.toContain("Choose another --port");
   });
 
+  it("reports host lookup recovery instead of port advice", async () => {
+    const output: string[] = [];
+    const refused = new StreamableHttpListenError(
+      Object.assign(new Error("synthetic EAI_NONAME"), {
+        code: "EAI_NONAME",
+      }),
+    );
+    expect(
+      await run(
+        dependencies({
+          serve: () => Promise.reject(refused),
+          output,
+          shutdown: [],
+          exitCodes: [],
+        }),
+      ),
+    ).toBe(1);
+    expect(output).toEqual([`${refused.remediationAction}\n`]);
+    expect(output[0]).toContain("--host or MCP_HOST");
+    expect(output[0]).not.toContain("Choose another --port");
+  });
+
+  it("preserves port-in-use recovery for an occupied listener port", async () => {
+    const output: string[] = [];
+    const refused = new StreamableHttpListenError(
+      Object.assign(new Error("synthetic EADDRINUSE"), {
+        code: "EADDRINUSE",
+      }),
+    );
+    expect(
+      await run(
+        dependencies({
+          serve: () => Promise.reject(refused),
+          output,
+          shutdown: [],
+          exitCodes: [],
+        }),
+      ),
+    ).toBe(1);
+    expect(output).toEqual([`${refused.remediationAction}\n`]);
+    expect(output[0]).toContain("--port or MCP_PORT");
+  });
+
   it("reports an HTTP listener that cannot bind without its cause", async () => {
     const output: string[] = [];
     expect(
