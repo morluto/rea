@@ -17,6 +17,7 @@ import type { ValidatedEnhancedCall } from "../application/EnhancedToolTypes.js"
 import {
   composedLimitationBudget,
   executeComposedWorkflow,
+  retainComposedWorkflowSources,
   createWorkflowEvidence,
   workflowSnapshotRecord,
   recordWorkflowUnknowns,
@@ -35,6 +36,7 @@ import { executeFunctionAnalysisEvidence } from "../application/FunctionAnalysis
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { retainAnalysisResultSources } from "../application/investigation/recordEvidenceSources.js";
+import type { RecoveryAdmission } from "../application/investigation/InvestigationRetention.js";
 import {
   requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
@@ -55,11 +57,12 @@ export interface EnhancedToolRegistration {
       ) => AnalysisProfileCommitment | undefined)
     | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+  readonly admitRecovery?: RecoveryAdmission;
+  readonly hasEvidence?: (id: string) => boolean;
   readonly evidenceById?: EvidenceLookup | undefined;
   readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
   readonly allowsSnapshotReplay:
-    | ((operation: ValidatedEnhancedCall["name"]) => boolean)
-    | undefined;
+    ((operation: ValidatedEnhancedCall["name"]) => boolean) | undefined;
   readonly recordWorkflowSnapshot:
     | ((
         input: Parameters<BinarySessionPort["recordWorkflowSnapshot"]>[0],
@@ -278,10 +281,17 @@ const executeEnhancedTool = async (
           composedLimitationBudget(name),
         ),
       );
-      result = retainAnalysisResultSources(
-        name,
+      result = retainComposedWorkflowSources(
         registration.recordEvidence,
         result,
+        {
+          target: registration.activeTarget?.(),
+          operation: name,
+          parameters,
+          upstreamProfile: registration.analysisProfile?.(name),
+        },
+        registration.hasEvidence,
+        registration.admitRecovery,
       );
       await reportOperationEnd(progress, name, result.ok);
       if (result.ok) {

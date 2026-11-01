@@ -126,7 +126,7 @@ export abstract class BinarySessionRecords {
     return recorded;
   }
 
-  protected admitRecoveryObservation(
+  admitRecoveryObservation(
     input: unknown,
     operation: string,
     additional: {

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   recordWorkflowUnknowns,
   createWorkflowEvidence,
   executeComposedWorkflow,
+  retainComposedWorkflowSources,
   workflowSnapshotRecord,
 } from "./WorkflowEvidence.js";
 import { InvestigationRecords } from "./investigation/InvestigationRecords.js";
@@ -13,13 +15,96 @@ import {
   createAnalysisExecution,
   type AnalysisOperationPort,
 } from "./AnalysisProvider.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { estimateJsonStorage } from "./JsonAuthenticationHeadroom.js";
 import { nativeApiBoundarySchema } from "../domain/native/nativeApiBoundary.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import { ANALYSIS_SNAPSHOT_PROFILE } from "../domain/analysisSnapshot.fixture.js";
 import { createEvidence } from "../domain/evidence.js";
+
+it.each([0, 1, 100])(
+  "admits enough recovery representation for %i completed batch items",
+  (count) => {
+    const provider = { id: "fixture", name: "Fixture", version: "1" };
+    const source = createEvidence(undefined, provider, {
+      operation: "health",
+      parameters: {},
+      result: "source",
+    });
+    const items = Array.from({ length: count }, (_, index) => ({
+      address: `input-${index}`,
+      procedure: {
+        status: "resolved",
+        address: `0x${(index + 1).toString(16)}`,
+        name: null,
+      },
+      status: "ok",
+      pseudocode: 'escaped " and Unicode α'.repeat((index % 3) + 1),
+    }));
+    const completed = {
+      ...ok({
+        result: { items, total: count, succeeded: count, failed: 0 },
+        limitations: [],
+        evidenceLinks: [source.evidence_id],
+      }),
+      sourceEvidence: [source],
+    };
+    let admitted: ReturnType<typeof estimateJsonStorage> | undefined;
+    const outcome = retainComposedWorkflowSources(
+      () =>
+        err(
+          new AnalysisResourceConstraintError(
+            "record_evidence",
+            "capacity",
+            "full",
+            null,
+          ),
+        ),
+      completed,
+      {
+        target: {
+          path: "/tmp/example",
+          sha256: "a".repeat(64),
+          kind: "executable",
+          format: "mach-o",
+          architecture: "arm64",
+          availableArchitectures: ["arm64"],
+        },
+        operation: "batch_decompile",
+        parameters: { addresses: items.map((item) => item.address) },
+        upstreamProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      },
+      () => false,
+      (input, _operation, additional) => {
+        const base = estimateJsonStorage(input);
+        admitted = {
+          valueBytes: base.valueBytes + additional.valueBytes,
+          serializedUtf16Bytes:
+            base.serializedUtf16Bytes + additional.serializedUtf16Bytes,
+        };
+        return ok(undefined);
+      },
+    );
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok || admitted === undefined)
+      throw new Error("Expected admitted recovery");
+    const error = projectAnalysisError(outcome.error);
+    const completedEvidence = z
+      .object({ completed_observation: z.object({ evidence: z.unknown() }) })
+      .parse(error.details).completed_observation.evidence;
+    const actual = estimateJsonStorage(completedEvidence);
+    expect(admitted.valueBytes).toBeGreaterThanOrEqual(actual.valueBytes);
+    expect(admitted.serializedUtf16Bytes).toBeGreaterThanOrEqual(
+      actual.serializedUtf16Bytes,
+    );
+  },
+);
 
 it("links shared provider source Evidence once without copying its payload into the workflow", async () => {
   const source = createEvidence(

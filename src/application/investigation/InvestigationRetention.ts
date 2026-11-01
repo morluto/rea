@@ -16,6 +16,16 @@ export interface InvestigationRetentionPolicy {
   readonly availableAuthenticationBytes?: () => number;
 }
 
+/** Owner admission used before materializing a completed recovery record. */
+export type RecoveryAdmission = (
+  input: unknown,
+  operation: string,
+  additional: {
+    readonly valueBytes: number;
+    readonly serializedUtf16Bytes: number;
+  },
+) => Result<void, AnalysisError>;
+
 /**
  * Reserve one retained representation, two authentication/canonical working
  * copies and one detached export/control representation from current V8 room.

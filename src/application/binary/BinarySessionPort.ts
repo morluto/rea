@@ -1,5 +1,6 @@
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
+import type { RecoveryAdmission } from "../investigation/InvestigationRetention.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
 import type { ExecutableFormatHint } from "../../domain/dosCom.js";
 import type {
@@ -33,6 +34,7 @@ export type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.j
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
 export interface BinarySessionPort
   extends AnalysisOperationPort, InvestigationRecordPort {
+  readonly admitRecoveryObservation: RecoveryAdmission;
   /** Execute only against a positively ready, already-created provider client. */
   executeIfProviderReady(
     operation: AnalysisOperation,
