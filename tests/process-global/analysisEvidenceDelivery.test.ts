@@ -57,8 +57,18 @@ it("keeps the writer heap check for mutable source Evidence", async () => {
       parameters: { payload_bytes: 1_000 },
       result: { payload: "x".repeat(1_000) },
     },
+    { immutable: true },
   );
-  const mutable = JSON.parse(JSON.stringify(evidence)) as typeof evidence;
+  const source = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "source-fixture",
+      parameters: { payload_bytes: 1_000 },
+      result: { payload: "y".repeat(1_000) },
+    },
+  );
+  const mutableSource = JSON.parse(JSON.stringify(source)) as typeof source;
 
   const output = await publishCliAnalysisEvidence(ok(evidence), {
     providerId: "fixture",
@@ -66,7 +76,7 @@ it("keeps the writer heap check for mutable source Evidence", async () => {
     signal: new AbortController().signal,
     detail: "complete",
     evidenceOutput: destination,
-    sourceEvidence: [mutable],
+    sourceEvidence: [mutableSource],
   });
 
   expect(output).toMatchObject({ code: "resource_constraint" });
