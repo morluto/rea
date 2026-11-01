@@ -1027,9 +1027,13 @@ export class ReverseEngineeringService {
         stopSignal: "SIGTERM",
         maxBuffer: MAX_COMBINED_OUTPUT_BYTES,
       });
-      // Replacement characters could read as a version, so undecodable output
-      // identifies nothing.
-      if (output.stdoutInvalidUtf8 === true)
+      // Replacement characters could read as a version, and a banner accepted
+      // beside undecodable stderr would drop the probe's diagnostics, so output
+      // that is not valid UTF-8 on either stream identifies nothing.
+      if (
+        output.stdoutInvalidUtf8 === true ||
+        output.stderrInvalidUtf8 === true
+      )
         return ok({
           status: "undecodable",
           diagnostics: versionProbeDiagnostics(0, output),

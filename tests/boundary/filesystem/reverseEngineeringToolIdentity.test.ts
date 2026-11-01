@@ -724,6 +724,45 @@ posix(
 );
 
 posix(
+  "leaves the version unknown when only the probe's stderr is not valid UTF-8",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    const run = vi.fn(
+      async (
+        _command: string,
+        args: readonly string[],
+        _options?: ExecFileOutputOptions,
+      ) =>
+        args[0] === "-v"
+          ? {
+              stdout: "rizin 0.9.1 @ linux-x86-64",
+              stderr: "warning \ufffd",
+              stderrInvalidUtf8: true,
+            }
+          : { stdout: "command output", stderr: "" },
+    );
+    const service = new TestReverseEngineeringService({
+      run,
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: executable },
+    });
+    const result = await service.executeRizinCommand({ path, command: "iI" });
+    if (!result.ok) throw result.error;
+    expect(result.value.provider.version).toBeNull();
+    expect(result.value.parameters).not.toHaveProperty(
+      "provider_version_banner",
+    );
+    expect(result.value.parameters.provider_version_probe).toMatchObject({
+      exit_code: 0,
+      stdout: "rizin 0.9.1 @ linux-x86-64",
+      stderr: "warning \ufffd",
+      stdout_invalid_utf8: false,
+      stderr_invalid_utf8: true,
+    });
+  },
+);
+
+posix(
   "reports no exit status for a probe whose output was not fully collected",
   async () => {
     const { executable, path } = await rizinExecutableFixture();
