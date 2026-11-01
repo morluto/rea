@@ -174,7 +174,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
           exit: (code) => {
             exiting = true;
             void (async () => {
-              let status = code;
+              let status = typeof code === "number" ? code : 0;
               try {
                 await closeCliResources();
               } catch (cleanup) {
@@ -184,7 +184,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
                 if (status === 0) status = 1;
               }
               try {
-                await resultOutput?.finishSdkOutput(code);
+                await resultOutput?.finishSdkOutput(status);
               } catch (cause) {
                 if (!stdoutClosed)
                   process.stderr.write(`${cleanupFailureText(cause)}\n`);
