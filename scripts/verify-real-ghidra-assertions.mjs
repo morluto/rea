@@ -335,6 +335,15 @@ export function assertStrippedFixture(observed) {
     throw new Error(
       "Stripped Ghidra fixture did not preserve stripped semantics",
     );
+  // Without .symtab, Ghidra's ELF loader names the header entry itself.
+  if (
+    observed.target.format === "elf" &&
+    findValue(observed.procedures, "entry")?.symbol?.loader_role_label !==
+      "synthesized"
+  )
+    throw new Error(
+      `Stripped ELF entry label lost its loader-synthesized origin: ${JSON.stringify(findValue(observed.procedures, "entry"))}`,
+    );
   assertStrings(observed.strings);
   assertSegments(observed.segments, observed.session.target.image_base);
 }

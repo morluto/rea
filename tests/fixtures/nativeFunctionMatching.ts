@@ -30,13 +30,17 @@ export const nativeMatchingInventory = (
 /** Explicit imported-origin fixture for tests that select exact-symbol correspondence. */
 export const nativeMatchingNamedInventory = (
   side: "1" | "2",
-  entries: readonly { address: string; value: string }[],
+  entries: readonly {
+    address: string;
+    value: string;
+    loader_role_label?: NativeSymbolMetadata["loader_role_label"];
+  }[],
   evidenceLinks: readonly string[] = [],
 ) =>
   createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
     operation: "list_procedures",
     parameters: {},
-    result: entries.map((entry) => ({
+    result: entries.map(({ loader_role_label, ...entry }) => ({
       ...entry,
       symbol: {
         primary: true,
@@ -44,6 +48,7 @@ export const nativeMatchingNamedInventory = (
         external: false,
         type: "function",
         source: "imported",
+        ...(loader_role_label === undefined ? {} : { loader_role_label }),
       } satisfies NativeSymbolMetadata,
     })),
     evidenceLinks: [...evidenceLinks],

@@ -95,3 +95,29 @@ jobs:
           decode cortex ARM:LE:32:Cortex mrs/4/msp bx/2/lr
           decode v8m ARM:LE:32:v8-m mrs/4/msplim bx/2/lr
           decode xtensa Xtensa:LE:32:default entry/3/a1 retw.n/2
+      # Ghidra's real ELF loader imports each source-owned executable; only the
+      # DWARF fixture runs auto-analysis. The bridge must classify the header
+      # `entry` label from the artifact's symbol tables and Ghidra's DWARF
+      # import record. The bytes are never executed.
+      - name: Classify real ELF loader entry labels through the bridge
+        shell: bash
+        run: |
+          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          export JAVA_HOME="${!java_home_variable}"
+          probe_root="$(node tests/conformance/ghidra/elf-role-label-fixture.mjs)"
+          test -d "${probe_root}"
+          for fixture in stripped:synthesized symbolized:artifact-symbol minidebug:unexamined \
+            truncated:unexamined oversized:unexamined dwarf:unexamined:dwarf-imported; do
+            IFS=: read -r name label dwarf <<< "${fixture}"
+            analysis=(-noanalysis)
+            probe=(0x400080 "${label}")
+            if [ -n "${dwarf}" ]; then analysis=(); probe+=("${dwarf}"); fi
+            mkdir -p "${probe_root}/${name}-project"
+            timeout 300s "${GHIDRA_INSTALL_DIR}/support/analyzeHeadless" "${probe_root}/${name}-project" ElfRole \
+              -import "${probe_root}/${name}.elf" "${analysis[@]}" -readOnly -deleteProject \
+              -scriptPath "${GITHUB_WORKSPACE}/tests/conformance/ghidra;${GITHUB_WORKSPACE}/bridge/ghidra" \
+              -postScript ReaElfRoleLabelProbe.java "${GITHUB_WORKSPACE}/bridge/ghidra" "${probe[@]}" \
+              > "${probe_root}/${name}.log" 2>&1 || { cat "${probe_root}/${name}.log"; exit 1; }
+            cat "${probe_root}/${name}.log"
+            grep -F "REA_ELF_ROLE_LABEL_OK ${label}" "${probe_root}/${name}.log"
+          done

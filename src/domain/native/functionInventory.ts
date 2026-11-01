@@ -201,25 +201,28 @@ const reportedSymbol = (
 ): {
   readonly value: string | null;
   readonly origin: "known" | "unknown" | "conflicting";
+  readonly loaderSynthesized: boolean;
 } => {
   const names = [
     ...(row.symbol === undefined ? [] : [row]),
     ...(known?.values.filter((symbol) => symbol.value === row.value) ?? []),
   ];
-  const generated = names.some(
-    (symbol) => nativeSymbolOrigin(symbol.symbol) === "generated",
+  const origins = new Set(
+    names.map((symbol) => nativeSymbolOrigin(symbol.symbol)),
   );
-  const named = names.some(
-    (symbol) => nativeSymbolOrigin(symbol.symbol) === "named",
-  );
+  const generated = origins.has("generated"),
+    named = origins.has("named");
   return {
     value: row.value.length === 0 || generated || !named ? null : row.value,
     origin:
       generated && named
         ? "conflicting"
-        : names.some((symbol) => symbol.symbol !== undefined)
+        : generated || named
           ? "known"
           : "unknown",
+    loaderSynthesized: names.some(
+      (symbol) => symbol.symbol?.loader_role_label === "synthesized",
+    ),
   };
 };
 const functionFact = async (
@@ -256,6 +259,10 @@ const functionFact = async (
       detail?.conflict
         ? "Conflicting procedure observations; body and dossier remain unknown."
         : "No complete unambiguous bytes for the observed function body.",
+    );
+  if (symbol.loaderSynthesized)
+    limitations.push(
+      "Provider loader-synthesized role label; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
     );
   if (symbol.origin === "unknown")
     limitations.push(

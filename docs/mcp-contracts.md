@@ -1813,10 +1813,11 @@ older or imported Evidence without a commitment leave coordinate identity
 unknown. Unparseable coordinates also remain unknown.
 
 Across different artifacts, endpoints use nonempty procedure names whose observed
-symbol facts establish a named origin. Dynamic/default symbols and unknown origin
-remain unknown. Ghidra emits the same source/dynamic symbol facts for inventories
-and procedure identities; Hopper, IDA and older imported dossiers without verified
-origin facts cannot establish correspondence from display labels. No name-spelling
+symbol facts establish a named origin. Dynamic/default symbols, loader-synthesized
+role labels and unknown origin remain unknown. Ghidra emits the same
+source/dynamic/loader-role symbol facts for inventories and procedure
+identities; Hopper, IDA and older imported dossiers without verified origin
+facts cannot establish correspondence from display labels. No name-spelling
 rule classifies `EntryPoint` or a `FUN_` prefix as generated. A name observed at
 multiple procedure entries retains its label constraint but cannot establish equal
 endpoints. Same-container records without a common coordinate context likewise

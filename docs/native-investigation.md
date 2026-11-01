@@ -1397,7 +1397,8 @@ reject reserved `file-offset:` selectors before name lookup; source-file offset
 selection belongs to the Ghidra import mapping.
 
 Native function names carry observed symbol metadata where available. Ghidra uses
-its function symbol's source and dynamic flags; Hopper and IDA leave origin
+its function symbol's source and dynamic flags, qualified by `loader_role_label`
+for its ELF loader's own entry labels; Hopper and IDA leave origin
 unknown because this adapter has no verified origin API. Comparison and matching
 cannot use unknown labels as cross-artifact identity, even when their spelling
 looks meaningful. Original labels remain in Evidence. This qualification does not
