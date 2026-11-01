@@ -9,6 +9,7 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { STARTUP_OWNER_CLOSED } from "../process/SharedStartupAttempt.js";
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
+import { posix, win32 } from "node:path";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { RetainedResourceScope } from "./AnalysisProvider.js";
 import {
@@ -410,7 +411,7 @@ const collectDoctorIdentity = async (
       },
       installations: {
         paths: installationPaths,
-        state: installationState(installationPaths),
+        state: installationState(installationPaths, host.platform),
       },
       skill: {
         installed_version: installedSkillIdentity?.version ?? null,
@@ -507,10 +508,26 @@ const registrationCheck = (
   remediation: registration.remediation,
 });
 
+/**
+ * Count installations by directory. `where rea` lists every launcher shim the
+ * package manager wrote for one command (`rea`, `rea.cmd`), so listed paths
+ * overstate how many installations shadow each other. Windows paths compare
+ * case-insensitively because PATH entries for one directory may differ in case.
+ */
 const installationState = (
   paths: readonly string[],
-): DoctorIdentity["installations"]["state"] =>
-  paths.length === 0 ? "unknown" : paths.length === 1 ? "single" : "multiple";
+  platform: NodeJS.Platform,
+): DoctorIdentity["installations"]["state"] => {
+  if (paths.length === 0) return "unknown";
+  const directories = new Set(
+    paths.map((path) =>
+      platform === "win32"
+        ? win32.dirname(path).toLowerCase()
+        : posix.dirname(path),
+    ),
+  );
+  return directories.size === 1 ? "single" : "multiple";
+};
 
 /** Optional outer-adapter diagnostics composed without reversing dependencies. */
 export interface SystemDoctorHostOptions {
