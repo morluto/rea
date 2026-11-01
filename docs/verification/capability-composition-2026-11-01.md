@@ -178,6 +178,61 @@ remain outside Git under
 Static-pair audit receipt SHA-256:
 `801707569577c7cec848334cf72bfab26a7ff4a95c2a87872d71d78eef7765a3`.
 
+## Review corrections and final qualification
+
+Two actionable review findings were fixed at their producing owners:
+
+- `980991573`: import-edge facts now distinguish fully erased declarations from
+  inline type bindings, which still load their module under
+  `verbatimModuleSyntax`. Compiler-backed parser/boundary regressions passed;
+  the old parser fails the new expectations. A separate three-file probe through
+  the actually selected compiler emitted both inline runtime edges and erased
+  whole-declaration/type-query edges, without compiling the repository.
+- `de6a61636`: the existing contract owner exposes 47 named canonical groups.
+  Thirty-seven full provider bindings reference those shared arrays, while
+  33 deliberate provider-subset/engine selections remain precise. The actual
+  ADB metadata now includes a new valid canonical ADB operation without an edit
+  to the provider declaration; reverting to the copied production lists fails
+  the regression. Unknown groups, unknown names and identity conflicts fail
+  catalog generation.
+
+Final full typecheck, module boundaries, test discovery and changed-file typed
+lint passed. Post-review source regressions passed 228 cases and SDK/MCP
+regressions passed 34; the two strengthened boundary/metadata files passed
+31 cases separately. These overlap earlier groups. Product catalog SHA-256
+remains exactly `e942c72047db651939dd47a31042e6818caaca7470092d63645801954a72b523`;
+both SDK catalogs remain byte-identical to the original baseline. Static metadata
+retains its pure loading boundary; canonical group IDs are imported only as types.
+
+The final implementation freeze is `de6a61636f3f84862cb4263c9ea219b7d2d4de36`,
+with 2,713 runtime files, SHA-256
+`be1d60c7dcca57eeb7ad09d682efd172c7f1679215e796a291b29eb52e29bda1`.
+Earlier model/engine measurements remain attributed to their executed revisions;
+they are not relabeled as runs on this later freeze.
+
+A new actual mixed-routing task on this final freeze passed all 58 calls:
+32.970 s elapsed, 32.180282 s process-family CPU, 1,042,538,496 B kernel peak.
+Independent five-domain source facts, complete producer records and all five
+full derived results/requests/IDs matched baseline and the prior qualified
+implementation. Same-process and true fresh-process restore preserved the full
+Unknown 1→2 mutation history and byte-identical 18,978,040 B checkpoint
+(20 Evidence records, 2 Unknown revisions, 1 head), SHA-256
+`0316bd6271c6d401a18c10d552b2005d39c98f3bbbc5945ae4823875af13fd5f`.
+Owned cleanup, runtime/production-source/input hashes and no OOM were verified.
+Append-only final-routing receipt SHA-256:
+`9c410c2c31bf38d7edc569deb95b93b7f9a2cf68a7b9a7f84d3ec924f0ad75cb`.
+This bounded requalification adds no model invocation or repeated native
+analysis query; earlier token measurements remain unchanged.
+
+CodeQL's six reported alert IDs (215, 490, 491, 493, 494, 495) all have open
+instances on exact-base main `6e9ee97`. All 24 SARIF paths were reviewed and
+independently checked: the new factory-default `process.env` sources retain the
+existing command/directory selection and explicit local authority. The shared
+filesystem/process sink files are byte-identical to base; Cutter's sink line
+shift only removes its old identity constant. No source suppression or global
+alert dismissal is included. The PR records the exact-base instance evidence
+and the owner's authorized exception for this unrelated existing-alert check.
+
 ## Qualification limits
 
 NewPipe coverage is static inventory/graph, not real JADX decompilation: JADX,
