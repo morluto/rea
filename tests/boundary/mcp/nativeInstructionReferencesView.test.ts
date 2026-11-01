@@ -214,7 +214,9 @@ it.each(["full", "compact"] as const)(
             collection: "incoming_references",
             offset: 0,
           });
-          source = continuation.arguments.source as typeof source;
+          if (continuation.arguments.source.kind !== "retained-evidence")
+            throw new Error("Expected retained parent in continuation");
+          source = continuation.arguments.source;
           const before = reads;
           await checkContinuation(
             client,
