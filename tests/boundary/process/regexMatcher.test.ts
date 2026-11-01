@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { regexMatchingDeadlineRecovery } from "../../../src/config/regexMatchingDeadline.js";
 import {
@@ -408,10 +408,12 @@ it("leaves the heap unknown when --title overwrites the command line", () => {
 it("arms the worker timer with an overridden matching deadline", async () => {
   const delays: number[] = [];
   const original = global.setTimeout;
-  global.setTimeout = ((handler, timeout, ...args) => {
-    if (typeof timeout === "number") delays.push(timeout);
-    return original(handler, timeout, ...args);
-  }) as typeof setTimeout;
+  const timerSpy = vi
+    .spyOn(global, "setTimeout")
+    .mockImplementation((handler, timeout, ...args) => {
+      if (typeof timeout === "number") delays.push(timeout);
+      return original(handler, timeout, ...args);
+    });
   try {
     expect(
       await matchRegexValues({
@@ -425,7 +427,7 @@ it("arms the worker timer with an overridden matching deadline", async () => {
     expect(delays).toContain(10_000);
     expect(delays).not.toContain(5_000);
   } finally {
-    global.setTimeout = original;
+    timerSpy.mockRestore();
   }
 });
 
