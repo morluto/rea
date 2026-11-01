@@ -561,6 +561,14 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   const sha = (value: string) =>
     createHash("sha256").update(value).digest("hex");
   let revision = 1;
+  const alphaProfile = createAnalysisProfile(
+    { id: "alpha", name: "alpha provider", version: "1" },
+    { revision: 1 },
+  );
+  const betaProfile = createAnalysisProfile(
+    { id: "beta", name: "beta provider", version: "1" },
+    { fixture: "beta" },
+  );
   const alpha = candidate("alpha", []);
   const session = composeBinarySession(
     new AnalysisProviderRegistry([
@@ -611,7 +619,13 @@ it("reports confirmed snapshot binding differences and keeps the active session"
       analysisErrorRemediationAction(new AnalysisSnapshotMismatchError("")),
     );
     expect((await call("binary_session", {})).structuredContent).toMatchObject({
-      result: { open: true, path: first },
+      result: {
+        open: true,
+        path: first,
+        analysis_provider_binding: {
+          analysis_profile: { digest: alphaProfile.digest },
+        },
+      },
     });
     return error.details?.binding_mismatch;
   };
@@ -625,8 +639,8 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   expect(otherProvider).toMatchObject({
     provider: { snapshot: { id: "alpha" }, selected: { id: "beta" } },
     profile_digest: {
-      snapshot: expect.any(String),
-      selected: expect.any(String),
+      snapshot: alphaProfile.digest,
+      selected: betaProfile.digest,
     },
   });
   expect(otherProvider).not.toHaveProperty("target");
