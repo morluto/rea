@@ -80,7 +80,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ...FUNCTION_WORKFLOW_TOOL_CONTRACTS,
   enhanced(
     "trace_feature",
-    "Trace the complete literal query, preserving spaces, through every matching string and procedure and their xrefs. Preserve an explicit unavailable owner for a non-retryable containment capability refusal. Returns observations and residual unknowns without inferring reference kinds; truncated only reports an observed reference cap.",
+    "Search provider string and procedure inventories for the complete literal query, preserving spaces, then query xrefs at each matched start address. References to interior string bytes are not searched. An empty result or truncated: false does not prove there are no references. Preserve an explicit unavailable owner for a non-retryable containment capability refusal; reference kinds remain unknown.",
     enhancedInputSchemas.trace_feature,
   ),
   enhanced(

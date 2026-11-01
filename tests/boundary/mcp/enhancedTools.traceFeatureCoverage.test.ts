@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
+import { TRACE_FEATURE_REFERENCE_LIMITATION } from "../../../src/application/WorkflowEvidence.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
@@ -137,7 +138,10 @@ const trace = async (analysis: AnalysisOperationPort) => {
     arguments: { query: "hello" },
   });
   expect(result.isError).not.toBe(true);
-  return result.structuredContent as { normalized_result: unknown };
+  return result.structuredContent as {
+    normalized_result: unknown;
+    limitations: string[];
+  };
 };
 
 it("preserves references and explicitly unknown owners without claiming truncation", async () => {
@@ -330,6 +334,16 @@ it("retains incomplete cleanup when cancellation arrives during owner lookup", a
 });
 
 describe("trace_feature reference coverage", () => {
+  it("reports the address-only scope when a match has no references", async () => {
+    const output = await trace(provider({ emptyXrefsOf: "0x10" }));
+
+    expect(output.normalized_result).toEqual(expectedTrace([], [], ["0x10"]));
+    expect(output.limitations).toContain(TRACE_FEATURE_REFERENCE_LIMITATION);
+    expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(/start address/);
+    expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(/interior string bytes/);
+    expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(/truncated: false/);
+  });
+
   it("marks the trace truncated for the target whose references the provider capped", async () => {
     const output = await trace(
       provider({ coverage: { "0x10": true, "0x11": false } }),
