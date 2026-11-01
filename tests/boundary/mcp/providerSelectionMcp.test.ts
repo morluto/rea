@@ -21,6 +21,7 @@ import {
 } from "../../../src/application/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
+import { undeclaredOperationGuidance } from "../../../src/application/binary/BinarySessionExecution.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { AnalysisSnapshotMismatchError } from "../../../src/domain/evidenceErrors.js";
@@ -203,12 +204,14 @@ describe("provider selection over MCP", () => {
         code: "capability_unavailable",
         details: { provider_id: "beta", operation: "read_bytes" },
         remediation: {
-          action: expect.stringMatching(
-            /binary_session.*complete.*open_binary.*provider_id.*may discard provider session edits.*Evidence does not restore/u,
-          ),
+          action: undeclaredOperationGuidance("read_bytes"),
         },
       },
     });
+    const remediation = undeclaredOperationGuidance("read_bytes");
+    expect(remediation).toMatch(
+      /binary_session.*complete.*open_binary.*provider_id/u,
+    );
     expect(starts).toEqual(["beta"]);
 
     const status = structured(

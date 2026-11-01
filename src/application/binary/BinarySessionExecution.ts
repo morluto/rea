@@ -54,6 +54,10 @@ interface PrepareSessionExecutionInput {
   ) => AnalysisExecution | undefined;
 }
 
+/** Recovery for an operation absent from the selected binary route. */
+export const undeclaredOperationGuidance = (operation: string): string =>
+  `The selected provider does not declare ${operation}. In MCP, inspect binary_session with detail: "complete" for candidate capabilities, then explicitly call open_binary with the same target and a chosen provider_id. In CLI, use rea providers and rea capabilities, then select a provider with --provider. Switching may discard provider session edits; retained Evidence does not restore them. Candidate availability does not guarantee support for this target.`;
+
 /** Resolve capability, profile, and snapshot state before invoking a provider. */
 export const prepareSessionExecution = (
   input: PrepareSessionExecutionInput,
@@ -78,7 +82,7 @@ export const prepareSessionExecution = (
         capability?.reason ?? "operation is not declared by this provider",
         capability === undefined
           ? {
-              userMessage: `The selected provider does not declare ${operation}. In MCP, inspect binary_session with detail: "complete" for candidate capabilities, then explicitly call open_binary with the same target and a chosen provider_id. In CLI, use rea providers and rea capabilities, then select a provider with --provider. Switching may discard provider session edits; retained Evidence does not restore them. Candidate availability does not guarantee support for this target.`,
+              userMessage: undeclaredOperationGuidance(operation),
             }
           : undefined,
       ),
