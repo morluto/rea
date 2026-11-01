@@ -235,3 +235,49 @@ it.each([
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
   expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
 });
+
+/**
+ * A readable `path` member decides before `port` is validated, and only a
+ * non-empty string selects a Unix socket:
+ *
+ *   net.connect({ path: false, port: -1 })  -> THREW ERR_SOCKET_BAD_PORT
+ *   net.connect({ path: null, port: -1 })   -> THREW ERR_SOCKET_BAD_PORT
+ *   net.connect({ path: 0, port: -1 })      -> THREW ERR_SOCKET_BAD_PORT
+ *   net.connect({ path: 1, port: 443 })     -> THREW ERR_INVALID_ARG_TYPE
+ *   net.connect({ path: {}, port: 443 })    -> THREW ERR_INVALID_ARG_TYPE
+ *   net.connect({ path: false, port: 443 }) -> Socket created
+ */
+it.each([
+  [
+    "a falsy boolean path beside a bad port",
+    `net.connect({ path: false, port: -1 })`,
+  ],
+  ["a null path beside a bad port", `net.connect({ path: null, port: -1 })`],
+  ["a zero path beside a bad port", `net.connect({ path: 0, port: -1 })`],
+  ["a non-string path", `net.connect({ path: 1, port: 443 })`],
+  ["a boolean true path", `net.connect({ path: true, port: 443 })`],
+  ["an object path", `net.connect({ path: {}, port: 443 })`],
+  ["an array path", `net.connect({ path: [], port: 443 })`],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "a falsy boolean path beside a usable port",
+    `net.connect({ path: false, port: 443 })`,
+    "connect",
+  ],
+  [
+    "a null path beside a usable port",
+    `net.connect({ path: null, port: 443 })`,
+    "connect",
+  ],
+  [
+    "a zero path beside a usable port",
+    `net.connect({ path: 0, port: 443 })`,
+    "connect",
+  ],
+] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
+  expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
+});
