@@ -6,7 +6,10 @@ import {
   scanBinaryPlistScalars,
   type BinaryPlistScalarMetadata,
 } from "./PlistScalars.js";
-import type { PlistDecodePreflight } from "./PropertyListDecodeBudget.js";
+import {
+  preflightPropertyListDecode,
+  type PlistDecodePreflight,
+} from "./PropertyListDecodeBudget.js";
 
 /** Build one array of source scalar references; upstream never constructs a dictionary. */
 const scalarArrayInput = (
@@ -127,4 +130,36 @@ export const decodeBinaryPlistValue = (
     });
   }
   return root.value;
+};
+
+const collectPlistText = (value: unknown, texts: string[]): void => {
+  if (typeof value === "string") texts.push(value);
+  else if (value instanceof Uint8Array)
+    texts.push(
+      Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString(
+        "utf8",
+      ),
+    );
+  else if (Array.isArray(value))
+    for (const item of value) collectPlistText(item, texts);
+  else if (value !== null && typeof value === "object")
+    for (const [key, item] of Object.entries(value)) {
+      texts.push(key);
+      collectPlistText(item, texts);
+    }
+};
+
+/**
+ * Decode a binary plist's strings, dictionary keys and data payloads to text.
+ * Its strings are stored per object as ASCII or UTF-16BE, so the raw bytes do
+ * not show them all. Throws on a plist that cannot be decoded within `maxBytes`.
+ */
+export const decodeBinaryPlistText = (
+  bytes: Buffer,
+  maxBytes: number,
+): string => {
+  const plan = preflightPropertyListDecode(bytes, maxBytes);
+  const texts: string[] = [];
+  collectPlistText(decodeBinaryPlistValue(bytes, plan), texts);
+  return texts.join("\n");
 };

@@ -12,6 +12,7 @@ import { pe } from "../domain/binaryTarget.fixture.js";
 import { dotnetBundleFixture } from "./dotnet/DotnetBundle.fixture.js";
 import { cArchiveExecutable } from "./pyinstaller/CArchive.fixture.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
+import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { windowsNativeArtifactFixture } from "../../tests/fixtures/windowsNativeArtifact.js";
@@ -1309,7 +1310,49 @@ describe("ReleaseExposureReader text encodings", () => {
     expect(members).toEqual({ scanned: 0, skipped: 3 });
   });
 
-  it("keeps a binary plist's ASCII strings in the scan", async () => {
+  /** One dictionary whose value objects are the given encoded objects. */
+  const binaryPlist = (key: string, value: Buffer): Buffer => {
+    const objects = [
+      Buffer.from([0xd1, 1, 2]),
+      Buffer.concat([Buffer.from([0x50 | key.length]), Buffer.from(key)]),
+      value,
+    ];
+    const table =
+      8 + objects.reduce((length, object) => length + object.length, 0);
+    const bytes = Buffer.alloc(table + objects.length + 32);
+    let cursor = 8;
+    const offsets = objects.map((object) => {
+      const offset = cursor;
+      object.copy(bytes, cursor);
+      cursor += object.length;
+      return offset;
+    });
+    return binaryPlistObjectTable(bytes, offsets, table);
+  };
+  /** Length-prefixed object body; every test value here exceeds the short form. */
+  const plistObject = (type: number, length: number, body: Buffer): Buffer =>
+    Buffer.concat([Buffer.from([(type << 4) | 0x0f, 0x10, length]), body]);
+
+  it.each([
+    ["ASCII", plistObject(5, marker.length, Buffer.from(marker))],
+    [
+      "UTF-16BE",
+      plistObject(
+        6,
+        `clé: ${marker}`.length,
+        utf16(`clé: ${marker}`, "be").subarray(2),
+      ),
+    ],
+    ["data", plistObject(4, marker.length, Buffer.from(marker))],
+  ])("scans a binary plist's %s value", async (_encoding, value) => {
+    const root = await createTestTempDirectory("rea-release-exposure-text-");
+    await writeFile(join(root, "Info.plist"), binaryPlist("key", value));
+    const { texts, members } = await visited(root);
+    expect(texts.join("")).toContain(marker);
+    expect(members).toEqual({ scanned: 1, skipped: 0 });
+  });
+
+  it("keeps an undecodable binary plist's bytes in the scan, unassessed", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-text-");
     const bytes = Buffer.concat([
       Buffer.from("bplist00"),
@@ -1319,7 +1362,7 @@ describe("ReleaseExposureReader text encodings", () => {
     await writeFile(join(root, "Info.plist"), bytes);
     const { texts, members } = await visited(root);
     expect(texts.join("")).toContain(marker);
-    expect(members).toEqual({ scanned: 1, skipped: 0 });
+    expect(members).toEqual({ scanned: 0, skipped: 1 });
   });
 
   it("reads an inline map from a UTF-16 script", async () => {

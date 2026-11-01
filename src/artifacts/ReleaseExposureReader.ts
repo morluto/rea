@@ -23,6 +23,7 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
 } from "./ArtifactFileOperation.js";
+import { decodeBinaryPlistText } from "./apple/BinaryPlistMaterializer.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
@@ -127,6 +128,8 @@ const OPEN_CONTAINER_LIMIT = 8;
 const EMBEDDED_PROBE_LIMIT = 8;
 const PDB_READ_LIMIT = 4;
 const LIMITATION_CAP = 8;
+/** Decoded representation bound for one binary plist text member. */
+const RELEASE_EXPOSURE_PLIST_DECODE_BYTES = 16 * 1024 * 1024;
 const PE_MEMBER_NAME = /\.(?:dll|exe|sys)$/iu;
 const JAVASCRIPT_MEMBER_NAME = /\.(?:[cm]?[jt]s|[jt]sx)$/iu;
 
@@ -1051,7 +1054,7 @@ const examineTextMember = async (
     scanText(state, member, loaded.bytes.length, text);
     if (isJavaScriptMember(member)) {
       if (text === null) state.skippedMaps += 1;
-      else examineInlineMaps(state, member, text);
+      else examineInlineMaps(state, member, text.text);
     }
   } else {
     state.skippedText += 1;
@@ -1189,26 +1192,48 @@ const noteUnreachedMapTargets = (state: ScanState): void => {
     if (!state.examinedMaps.has(target)) state.skippedMaps += 1;
 };
 
+/** Text decoded from a member; `complete` is false when part of it went unread. */
+interface MemberText {
+  readonly text: string;
+  readonly complete: boolean;
+}
+
+/**
+ * A binary plist that cannot be decoded keeps its raw bytes in the scan, for the
+ * ASCII strings they show, but its other strings were not examined.
+ */
+const decodeBinaryPlistMember = (bytes: Buffer): MemberText => {
+  try {
+    return {
+      text: decodeBinaryPlistText(bytes, RELEASE_EXPOSURE_PLIST_DECODE_BYTES),
+      complete: true,
+    };
+  } catch {
+    return { text: bytes.toString("utf8"), complete: false };
+  }
+};
+
 /**
  * The text a member's bytes encode, or null when they cannot be read as text.
  * A member's kind says nothing about its encoding: NULs that no byte order mark
  * explains are not UTF-8, so a scan of them would match nothing and still count
- * as complete. A binary plist is the exception, because its ASCII strings are
- * stored in the raw bytes.
+ * as complete. A binary plist has its own object encoding, so its owner decodes it.
  */
-const decodeMemberText = (bytes: Buffer): string | null => {
+const decodeMemberText = (bytes: Buffer): MemberText | null => {
   const encoding = byteOrderMarkEncoding(bytes);
   if (encoding === "utf-32") return null;
-  if (encoding !== null) return new TextDecoder(encoding).decode(bytes);
-  if (hasBinaryNul(bytes) && !hasBinaryPlistSignature(bytes)) return null;
-  return bytes.toString("utf8");
+  if (encoding !== null)
+    return { text: new TextDecoder(encoding).decode(bytes), complete: true };
+  if (hasBinaryPlistSignature(bytes)) return decodeBinaryPlistMember(bytes);
+  if (hasBinaryNul(bytes)) return null;
+  return { text: bytes.toString("utf8"), complete: true };
 };
 
 const scanText = (
   state: ScanState,
   member: MemberView,
   byteLength: number,
-  text: string | null,
+  text: MemberText | null,
 ): void => {
   if (
     byteLength > MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES ||
@@ -1219,8 +1244,9 @@ const scanText = (
     return;
   }
   state.textBytes += byteLength;
-  state.scannedText += 1;
-  state.visitText(text, member.location);
+  if (text.complete) state.scannedText += 1;
+  else state.skippedText += 1;
+  state.visitText(text.text, member.location);
 };
 
 /**
