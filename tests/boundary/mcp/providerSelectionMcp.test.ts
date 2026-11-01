@@ -1,6 +1,6 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createHash } from "node:crypto";
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -11,6 +11,7 @@ import { z } from "zod";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   createAnalysisExecution,
@@ -44,12 +45,8 @@ import {
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
-let directory: string | undefined;
 afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
 });
 
 it("delivers provider-owned diagnostic keys without narrowing their JSON facts", async () => {
@@ -105,7 +102,7 @@ it("delivers provider-owned diagnostic keys without narrowing their JSON facts",
 
 describe("provider selection over MCP", () => {
   it("keeps open_binary and binary_session binding semantics exact", async () => {
-    directory = await createTestTempDirectory("rea-provider-mcp-");
+    const directory = await createTestTempDirectory("rea-provider-mcp-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
     const starts: string[] = [];
@@ -241,7 +238,7 @@ describe("provider selection over MCP", () => {
 });
 
 it("offers admitted providers and retains unconfigured rejections", async () => {
-  directory = await createTestTempDirectory("rea-provider-mcp-mixed-");
+  const directory = await createTestTempDirectory("rea-provider-mcp-mixed-");
   const target = join(directory, "fixture.hop");
   await writeFile(target, "fixture");
   const starts: string[] = [];
@@ -443,7 +440,7 @@ const connectDetailFixture = async (starts: string[]) => {
 
 describe("binary_session detail over MCP", () => {
   it("defaults to a summary that keeps every decision fact and names what complete detail adds", async () => {
-    directory = await createTestTempDirectory("rea-session-detail-mcp-");
+    const directory = await createTestTempDirectory("rea-session-detail-mcp-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
     const starts: string[] = [];
@@ -784,7 +781,7 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
     : z.record(z.string(), z.unknown()).parse(result.structuredContent);
 
 it("labels unbound provider observations as selection-time after a repair", async () => {
-  directory = await createTestTempDirectory("rea-candidate-observation-");
+  const directory = await createTestTempDirectory("rea-candidate-observation-");
   const target = join(directory, "fixture.hop");
   await writeFile(target, "fixture");
   let available = false;
@@ -875,7 +872,9 @@ it("labels unbound provider observations as selection-time after a repair", asyn
 });
 
 it("preserves the bound client when a candidate refresh is cancelled during finalization", async () => {
-  directory = await createTestTempDirectory("rea-candidate-refresh-cancel-");
+  const directory = await createTestTempDirectory(
+    "rea-candidate-refresh-cancel-",
+  );
   const target = join(directory, "fixture.hop");
   await writeFile(target, "fixture");
   const starts: string[] = [];
@@ -924,6 +923,7 @@ it("preserves the bound client when a candidate refresh is cancelled during fina
   resources.push(mcp, server, { close: () => session.close() });
   await server.connect(serverTransport);
   await mcp.connect(clientTransport);
+  let refreshing: ReturnType<typeof mcp.callTool> | undefined;
   try {
     expect(
       (
@@ -939,11 +939,11 @@ it("preserves the bound client when a candidate refresh is cancelled during fina
     expect(starts).toEqual(["alpha"]);
     hold = true;
     const controller = new AbortController();
-    const refreshing = mcp.callTool(
+    refreshing = mcp.callTool(
       { name: "binary_session", arguments: { refresh_candidates: true } },
       { signal: controller.signal },
     );
-    await entered;
+    await awaitAcknowledgement(entered, refreshing, "candidate refresh");
     controller.abort();
     await expect(refreshing).rejects.toThrow();
     finish();
@@ -963,11 +963,14 @@ it("preserves the bound client when a candidate refresh is cancelled during fina
   } finally {
     hold = false;
     finish();
+    await Promise.allSettled(refreshing === undefined ? [] : [refreshing]);
   }
 });
 
 it("orders a provider switch after an in-flight candidate refresh", async () => {
-  directory = await createTestTempDirectory("rea-candidate-refresh-switch-");
+  const directory = await createTestTempDirectory(
+    "rea-candidate-refresh-switch-",
+  );
   const target = join(directory, "fixture.hop");
   await writeFile(target, "fixture");
   const starts: string[] = [];
@@ -1007,6 +1010,8 @@ it("orders a provider switch after an in-flight candidate refresh", async () => 
   resources.push(mcp, server, { close: () => session.close() });
   await server.connect(serverTransport);
   await mcp.connect(clientTransport);
+  let refreshing: ReturnType<typeof mcp.callTool> | undefined;
+  let switching: ReturnType<typeof mcp.callTool> | undefined;
   try {
     expect(
       (
@@ -1017,13 +1022,13 @@ it("orders a provider switch after an in-flight candidate refresh", async () => 
       ).isError,
     ).toBeFalsy();
     hold = true;
-    const refreshing = mcp.callTool({
+    refreshing = mcp.callTool({
       name: "binary_session",
       arguments: { refresh_candidates: true },
     });
-    await entered;
+    await awaitAcknowledgement(entered, refreshing, "candidate refresh");
     let switched = false;
-    const switching = mcp
+    switching = mcp
       .callTool({
         name: "open_binary",
         arguments: { path: target, provider_id: "beta" },
@@ -1049,11 +1054,14 @@ it("orders a provider switch after an in-flight candidate refresh", async () => 
     });
   } finally {
     finish();
+    await Promise.allSettled(
+      [refreshing, switching].filter((operation) => operation !== undefined),
+    );
   }
 });
 
 it("does not cancel an already admitted prompt lookup for a candidate refresh", async () => {
-  directory = await createTestTempDirectory("rea-refresh-prompt-");
+  const directory = await createTestTempDirectory("rea-refresh-prompt-");
   const target = join(directory, "fixture.hop");
   await writeFile(target, "fixture");
   const base = candidate("alpha", []);
@@ -1095,6 +1103,7 @@ it("does not cancel an already admitted prompt lookup for a candidate refresh", 
   resources.push(mcp, server, { close: () => session.close() });
   await server.connect(serverTransport);
   await mcp.connect(clientTransport);
+  let lookup: ReturnType<typeof session.executeIfProviderReady> | undefined;
   try {
     expect(
       (
@@ -1107,8 +1116,8 @@ it("does not cancel an already admitted prompt lookup for a candidate refresh", 
     expect(
       (await mcp.callTool({ name: "address_name", arguments: {} })).isError,
     ).toBeFalsy();
-    const lookup = session.executeIfProviderReady("address_name", {});
-    await entered;
+    lookup = session.executeIfProviderReady("address_name", {});
+    await awaitAcknowledgement(entered, lookup, "prompt lookup");
     expect(
       (
         await mcp.callTool({
@@ -1121,11 +1130,14 @@ it("does not cancel an already admitted prompt lookup for a candidate refresh", 
     expect((await lookup)?.ok).toBe(true);
   } finally {
     finish();
+    await Promise.allSettled(lookup === undefined ? [] : [lookup]);
   }
 });
 
 it("retains failed candidate-refresh cleanup while preserving the selected binding", async () => {
-  directory = await createTestTempDirectory("rea-candidate-refresh-cleanup-");
+  const directory = await createTestTempDirectory(
+    "rea-candidate-refresh-cleanup-",
+  );
   const target = join(directory, "fixture.hop");
   await writeFile(target, "fixture");
   const starts: string[] = [];
@@ -1202,7 +1214,9 @@ it("retains failed candidate-refresh cleanup while preserving the selected bindi
 });
 
 it("retains attributed mixed profile cleanup through registered MCP calls and partial retry", async () => {
-  directory = await createTestTempDirectory("rea-profile-completion-mcp-");
+  const directory = await createTestTempDirectory(
+    "rea-profile-completion-mcp-",
+  );
   const path = join(directory, "fixture.hop");
   await writeFile(path, "fixture");
   const starts: string[] = [];
