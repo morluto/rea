@@ -259,15 +259,26 @@ const normalizePath = (path: string): string =>
 const isFullPath = (path: string): boolean =>
   /^(?:[a-z]:\\|\\\\)/u.test(normalizePath(path));
 
+/** An unexpanded `%VAR%` reference: the host is never consulted, so the path stays unresolved. */
+const hasUnexpandedVariable = (path: string): boolean =>
+  /%[^%\\/]+%/u.test(path);
+
 const iconDiffersFromTarget = (
   icon: string | undefined,
   targets: readonly string[],
 ): boolean | null => {
-  if (icon === undefined || !isFullPath(icon)) return null;
-  const fullTargets = targets.filter(isFullPath);
-  if (fullTargets.length === 0) return null;
+  if (icon === undefined || !isFullPath(icon) || hasUnexpandedVariable(icon))
+    return null;
   const location = normalizePath(icon);
-  return fullTargets.every((target) => normalizePath(target) !== location);
+  const fixedTargets = targets.filter(
+    (target) => isFullPath(target) && !hasUnexpandedVariable(target),
+  );
+  if (fixedTargets.some((target) => normalizePath(target) === location))
+    return false;
+  // A variable-bearing target could name the icon's file, so no difference is claimed.
+  if (targets.some((t) => isFullPath(t) && hasUnexpandedVariable(t)))
+    return null;
+  return fixedTargets.length === 0 ? null : true;
 };
 
 const targetPaths = (report: {

@@ -552,6 +552,40 @@ it("compares an icon with a full target path, ignoring case and separators", asy
   expect(iconDifference(different)).toBe(true);
 });
 
+it("leaves the icon comparison unknown when a stored target keeps an unexpanded variable", async () => {
+  const environmentTarget = {
+    kind: "environment",
+    ansi: "C:\\Users\\%USERNAME%\\app.exe",
+    unicode: "C:\\Users\\%USERNAME%\\app.exe",
+  } as const;
+  const variableOnly = await parse(
+    windowsShortcutBytes({
+      flags: LINK_FLAG.IsUnicode | LINK_FLAG.HasIconLocation,
+      iconLocation: "C:\\Users\\Alice\\app.exe",
+      extraData: [environmentTarget],
+    }),
+  );
+  expect(iconDifference(variableOnly)).toBeNull();
+
+  const withFixedTarget = await parse(
+    windowsShortcutBytes({
+      linkInfo: { localBasePath: "C:\\Tools\\app.exe" },
+      iconLocation: "C:\\Users\\Alice\\app.exe",
+      extraData: [environmentTarget],
+    }),
+  );
+  expect(iconDifference(withFixedTarget)).toBeNull();
+
+  const matchesFixed = await parse(
+    windowsShortcutBytes({
+      linkInfo: { localBasePath: "C:\\Tools\\app.exe" },
+      iconLocation: "C:\\Tools\\app.exe",
+      extraData: [environmentTarget],
+    }),
+  );
+  expect(iconDifference(matchesFixed)).toBe(false);
+});
+
 it("charges the string budget before decoding a LinkInfo string", async () => {
   await expect(
     parse(
