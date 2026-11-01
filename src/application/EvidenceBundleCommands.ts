@@ -33,6 +33,7 @@ import {
   readImmutableEvidenceBundle,
   readComparisonEvidenceBundles,
   writeEvidenceBundle,
+  evidenceBundleExportReceipt,
 } from "./EvidenceBundleFiles.js";
 import { inspectEvidenceBundle } from "./investigation/InspectEvidenceBundle.js";
 import type { EvidenceRecordFilters } from "../domain/evidenceRecordSummary.js";
@@ -284,19 +285,17 @@ const projectWrite = (
   written: Result<PublishedEvidenceFile, AnalysisError>,
 ): Result<JsonValue, AnalysisError> =>
   written.ok
-    ? ok({
-        path: written.value.path,
-        bytes: written.value.bytes,
-        records: bundle.records.length,
-      })
+    ? ok(evidenceBundleExportReceipt(bundle, written.value))
     : err(written.error);
 
 /** Standalone bundle discovery shares the same read owner as import and comparison. */
 export const inspectEvidenceBundleCommand = async (
   input: {
     readonly path: string;
-    readonly detail: "complete" | "summary";
+    readonly detail: "complete" | "summary" | "records";
     readonly filters?: EvidenceRecordFilters | undefined;
+    readonly offset?: number | undefined;
+    readonly limit?: number | undefined;
   },
   signal?: AbortSignal,
 ) => {

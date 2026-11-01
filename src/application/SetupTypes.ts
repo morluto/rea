@@ -1,6 +1,7 @@
 import type { ClientConfigurationWriteProblem } from "./ClientConfigurationPublication.js";
 import type { DoctorReport, DoctorScope, runDoctor } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
+import type { HopperRequestFailure } from "./HopperDownload.js";
 import type { HopperReleaseError } from "./HopperReleaseFeed.js";
 import type {
   SkillDestination,
@@ -13,7 +14,6 @@ import type {
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import type { SetupClient } from "./SupportedClients.js";
-import type { SetupRegistrationPrewarm } from "./SetupRegistrationPrewarm.js";
 import type {
   SetupFailureCode,
   SetupHopperInstallResult,
@@ -143,10 +143,6 @@ export interface SetupHost {
   ): Promise<Result<void, SetupSkillInstallError>>;
   installSkill(clientIds: readonly string[]): Promise<SkillInstallResult>;
   doctor(scope?: DoctorScope): Promise<Awaited<ReturnType<typeof runDoctor>>>;
-  /** Best-effort materialization of the pinned package-runner cache entry
-   * before the first client start, so a one-time dependency install cannot
-   * consume a client's MCP startup deadline. Absent hosts skip the step. */
-  prewarmRegistrationRunner?(): Promise<SetupRegistrationPrewarm>;
 }
 /** Structured setup outcome carrying remediation instead of prompting. */
 export interface SetupResult {
@@ -164,11 +160,10 @@ export interface SetupResult {
   readonly clientStates: readonly SetupClientState[];
   readonly remediation?: string;
   readonly code?: SetupFailureCode;
+  /** The Hopper vendor request (stage, URL and observed outcome) whose failure stopped installation. */
+  readonly download?: HopperRequestFailure;
   /** Identified resources still retained after finalization; absent after confirmed release. */
   readonly cleanup?: AnalysisCleanupObservation | undefined;
-  /** Best-effort pinned package-runner cache materialization; absent when the
-   * host offers no prewarm capability or setup finished before finalization. */
-  readonly prewarm?: SetupRegistrationPrewarm;
 }
 
 /** Whether the requested setup actions still need approval or human repair. */

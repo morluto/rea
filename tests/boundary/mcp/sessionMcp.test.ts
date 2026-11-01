@@ -180,7 +180,8 @@ describe("public provider availability", () => {
     const unavailable: ProviderAvailability = {
       status: "unavailable",
       code: "unsupported_version",
-      reason: "Use Apktool 2.7.0 or newer.",
+      reason: "Apktool 2.6.3 is older than the supported minimum 2.7.0.",
+      remediation: "Use Apktool 2.7.0 or newer.",
       diagnostics: { minimum_version: "2.7.0" },
     };
     const adbDeviceAnalysis: AdbDeviceAnalysisPort = {
@@ -222,7 +223,11 @@ describe("public provider availability", () => {
       availability.groups.find(({ names }) =>
         names.includes("inspect_apktool_client"),
       ),
-    ).toMatchObject({ available: false, reason: "provider_unavailable" });
+    ).toMatchObject({
+      available: false,
+      reason: "provider_unavailable",
+      remediation: "Use Apktool 2.7.0 or newer.",
+    });
   });
 });
 
@@ -284,8 +289,10 @@ describe("owned-process prerequisite during status discovery", () => {
         available: false,
         reason: "provider_unavailable",
       });
-      expect(apktool?.remediation).toContain("procps-compatible ps");
-      expect(apktool?.remediation).toContain("spawn ps ENOENT");
+      // Discovery carries the prerequisite owner's repair, not its failure text.
+      expect(apktool?.remediation).toBe(
+        "Install your distribution's procps or procps-ng package, or put a procps-compatible ps on REA's PATH, then retry.",
+      );
       expect(
         availability.groups.find(({ names }) =>
           names.includes("inspect_adb_client"),
@@ -629,7 +636,15 @@ describe("target-free MCP workflow", () => {
     expect(
       structured(await mcp.callTool({ name: "list_unknowns", arguments: {} }))
         .result,
-    ).toMatchObject({ items: [] });
+    ).toMatchObject({
+      items: [
+        {
+          unknown_id: recordedUnknown.unknown_id,
+          revision: 2,
+          status: "resolved",
+        },
+      ],
+    });
     expect(
       (
         await mcp.callTool({
@@ -713,12 +728,16 @@ describe("session filesystem path boundaries over MCP", () => {
 });
 
 describe("json depth bounds over MCP", () => {
-  it("classifies deeply nested evidence parameters as an input validation error", async () => {
+  it("preserves source integrity and nesting-limit diagnostics for borrowed parameters", async () => {
     directory = await createTestTempDirectory("rea-mcp-depth-bound-");
+    const createClient = vi.fn<AnalysisProvider["createClient"]>(() => {
+      throw new Error("Offline comparison must not open a provider");
+    });
     const { mcp } = await createSessionMcpHarness(
       directory,
-      provider,
+      (closed) => ({ ...provider(closed), createClient }),
       resources,
+      4_096,
     );
     const input = INVESTIGATION_EXAMPLES.compare_process_captures.input;
     const baseline = await mcp.callTool({
@@ -742,23 +761,23 @@ describe("json depth bounds over MCP", () => {
     expect(result.isError, JSON.stringify(result.content)).toBe(true);
     expect(parseMcpToolError(result)).toMatchObject({
       error: {
-        code: "invalid_request",
-        recovery: {
-          kind: "inspect_input_contract",
-          operation: "compare_process_captures",
-        },
-        details: {
-          operation: "compare_process_captures",
-          issues: [
-            {
-              path: [],
-              reason: "invalid_value",
-              message: `left.parameters: JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}. This release has no runtime override.`,
-            },
-          ],
-        },
+        // The Evidence owner authenticates borrowed source records after
+        // envelope admission and preserves the JSON bound before cloning.
+        code: "evidence_integrity_mismatch",
+        category: "integrity_mismatch",
+        message: expect.stringContaining(
+          `The left Evidence failed validation (at parameters: JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}. This release has no runtime override.)`,
+        ),
+        details: { reason: "left Evidence failed validation" },
       },
     });
+    const recovered = await mcp.callTool({
+      name: "compare_process_captures",
+      arguments: input,
+    });
+    expect(recovered.isError, JSON.stringify(recovered.content)).not.toBe(true);
+    expect(recovered.structuredContent).toEqual(baseline.structuredContent);
+    expect(createClient).not.toHaveBeenCalled();
   }, 10_000);
 });
 

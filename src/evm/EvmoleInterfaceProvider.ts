@@ -1,4 +1,6 @@
+import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import { createHash, randomUUID } from "node:crypto";
 import { access, readFile, stat, writeFile } from "node:fs/promises";
@@ -74,11 +76,11 @@ import {
   projectEvmoleFunctions,
 } from "./EvmoleInterfaceAdapter.js";
 import {
-  EVMOLE_PROVIDER_IDENTITY,
   EVM_CPU_SECONDS,
   EVM_INTERFACE_LIMITS,
   EVM_FILE_SIZE_FAILURE_EXIT,
 } from "./EvmoleRelease.js";
+import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
 import { decodeEvmBytecodeCarrier } from "./EvmBytecodeCarrier.js";
 import {
   selectEvmWorkerLimits,
@@ -110,7 +112,7 @@ export interface EvmLimiterProbeOptions {
 
 type EvmLimiterSelection = {
   readonly path: string;
-  readonly diagnostics: Readonly<Record<string, string>>;
+  readonly diagnostics: Readonly<Record<string, JsonValue>>;
 };
 type EvmLimiterUnavailable = EvmLimiterSelection & {
   readonly reason: string;
@@ -142,20 +144,29 @@ const selectEvmLimiter = async (
   const diagnostics = { limiter_path: path, platform, arch };
   try {
     if (!isAbsolute(path))
-      throw new Error(
-        "REA_EVM_PRLIMIT_COMMAND must be an absolute executable path.",
-      );
+      throw new EvmAdmissionError("prlimit_not_absolute", {
+        setting: "REA_EVM_PRLIMIT_COMMAND",
+      });
     const fs = probes?.fs ?? { access, stat };
     await fs.access(path, constants.X_OK);
     throwIfAborted();
     if (!(await fs.stat(path)).isFile())
-      throw new Error(
-        "Configured prlimit must be a regular executable file, not a directory.",
-      );
+      throw new EvmAdmissionError("prlimit_not_file");
     throwIfAborted();
     return ok({ path, diagnostics });
   } catch (cause: unknown) {
     throwIfAborted();
+    if (cause instanceof EvmAdmissionError)
+      return err({
+        path,
+        diagnostics: {
+          ...diagnostics,
+          code: cause.code,
+          ...cause.detail,
+        },
+        reason: cause.code,
+        cause,
+      });
     const reason = `Offline EVM interface inspection requires caller-supplied util-linux prlimit: ${path}; ${cause instanceof Error ? cause.message : String(cause)}`;
     return err({ path, diagnostics, reason, cause });
   }
@@ -184,6 +195,8 @@ export const evmLimiterAvailability = async (
         status: "unavailable",
         code: "executable_missing",
         reason: selected.error.reason,
+        // The limiter owner does not yet author a separate repair (#8508).
+        remediation: selected.error.reason,
         diagnostics: selected.error.diagnostics,
       };
 };
@@ -452,10 +465,13 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
               stopped.status === "incomplete" ||
               stopped.status === "not-owned"
             )
-              throw new Error(
+              throw new EvmAdmissionError(
                 stopped.status === "incomplete"
-                  ? stopped.reason
-                  : "Owned EVM worker cleanup did not confirm ownership.",
+                  ? "cleanup_incomplete"
+                  : "cleanup_unconfirmed",
+                stopped.status === "incomplete"
+                  ? { reason: stopped.reason }
+                  : undefined,
                 { cause: stopped },
               );
           },
@@ -511,6 +527,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           selectedLimiter.error.reason,
           {
             cause: selectedLimiter.error.cause,
+            diagnostics: selectedLimiter.error.diagnostics,
             userMessage: selectedLimiter.error.reason,
           },
         );
@@ -813,9 +830,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             marker = completed;
           }
           if (!marker.bytes.equals(Buffer.from("F")))
-            throw new Error(
-              "Private worker failure marker does not match the observed exit status.",
-            );
+            throw new EvmAdmissionError("marker_mismatch");
           fileFailure = { verified: true, failure: null };
         } catch (markerFailure: unknown) {
           fileFailure = {

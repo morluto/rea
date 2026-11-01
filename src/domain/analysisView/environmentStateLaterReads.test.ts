@@ -6,6 +6,7 @@ import {
 } from "../../../tests/fixtures/analysisView.js";
 import {
   GHOST_DELETED_ROWS,
+  INITIAL_TRASH_ROWS,
   LATER_FIELD_ROWS,
   LATER_MIXED_BULK_ROWS,
   MAX_SIZE_ROWS,
@@ -25,6 +26,13 @@ const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
 };
 
 describe("deletes the application answers for afterwards", () => {
+  it("replays an initial list that includes a deleted entity", () => {
+    expect(
+      viewOf(INITIAL_TRASH_ROWS).views.find(
+        (view) => view.tool === "get_contacts",
+      ),
+    ).toMatchObject({ shape: "recorded", reason: "list-differs" });
+  });
   it("confirms a delete by an item read that shows the entity marked deleted", () => {
     expect(planOf(SOFT_DELETED_ROWS, "delete_contacts_by_id")).toMatchObject({
       served: true,

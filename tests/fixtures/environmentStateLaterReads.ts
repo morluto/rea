@@ -18,6 +18,18 @@ const ADA = contact(1, "Ada Finch");
 const MINA = contact(2, "Mina Okafor");
 const RUI = contact(3, "Rui Castellanos");
 
+/** An initial trash-style list includes an entity already marked deleted. */
+export const INITIAL_TRASH_ROWS: readonly TimedCaptureRow[] = [
+  [
+    "GET",
+    "/api/contacts?maxSize=20&offset=0",
+    page([ADA, MINA, { ...RUI, deleted: true }]),
+  ],
+  ["GET", "/api/contacts/1", ADA],
+  ["GET", "/api/contacts/2", MINA],
+  ["GET", "/api/contacts/3", { ...RUI, deleted: true }],
+];
+
 /** A contact deleted, then read by id as EspoCRM answers for soft-deleted records: still found, marked `deleted`. */
 export const SOFT_DELETED_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/contacts?maxSize=20&offset=0", page([ADA, MINA, RUI])],

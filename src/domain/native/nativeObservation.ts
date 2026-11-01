@@ -27,6 +27,20 @@ export type ContainingProcedureResolution = z.infer<
   typeof containingProcedureResolutionSchema
 >;
 
+/** A trace can retain a reference when its provider cannot resolve ownership. */
+export const traceContainingProcedureSchema = z.union([
+  containingProcedureResolutionSchema,
+  z.strictObject({
+    query_address: z.string(),
+    status: z.literal("unavailable"),
+    provider_id: z.string(),
+    reason: z.string(),
+  }),
+]);
+export type TraceContainingProcedure = z.infer<
+  typeof traceContainingProcedureSchema
+>;
+
 /** Validate provider procedure facts before a workflow interprets absence. */
 export const parseContainingProcedureResolution = (
   value: JsonValue,

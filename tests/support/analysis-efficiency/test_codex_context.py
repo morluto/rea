@@ -23,7 +23,7 @@ class ManagedCoverageTests(unittest.TestCase):
         original = {**expected, 'module_ref_count': 0, 'pinvoke_import_count': 2}
         scope, checks = project(original, expected, {'module_ref_count': 0, 'pinvoke_import_count': 2})
         self.assertEqual(scope, expected)
-        self.assertTrue(all(checks.values()))
+        self.assertEqual(checks, {'module_ref_count': True, 'pinvoke_import_count': True})
         self.assertEqual(original['pinvoke_import_count'], 2)
         for count in [3, '2', True]:
             scope, checks = project({**expected, 'pinvoke_import_count': count}, expected, {'pinvoke_import_count': 2})
@@ -651,6 +651,7 @@ class ContextCaptureTests(unittest.TestCase):
             (runtime / 'scripts').mkdir(parents=True)
             (runtime / 'scripts' / 'rea.mjs').write_text('')
             (runtime / 'package-lock.json').write_text('{}')
+            (runtime / '.nvmrc').write_text('24.22.1\n')
             auth_home = root / 'source-auth'
             auth_home.mkdir()
             (auth_home / 'auth.json').write_text('synthetic-credential')
@@ -664,7 +665,7 @@ class ContextCaptureTests(unittest.TestCase):
             with patch.dict(os.environ, {'CODEX_HOME': str(auth_home)}, clear=True), \
                     patch.object(sys, 'argv', arguments), \
                     patch.object(agent.shutil, 'which', return_value='/fixture/node'), \
-                    patch.object(agent.subprocess, 'check_output', return_value='v24.18.0\n'), \
+                    patch.object(agent.subprocess, 'check_output', return_value='v24.22.1\n'), \
                     patch.object(agent.subprocess, 'Popen', return_value=child), \
                     patch.object(agent, 'capture_tool_context', side_effect=OSError('fixture capture failure')), \
                     patch.object(agent.Path, 'home', side_effect=AssertionError('Explicit CODEX_HOME must not resolve the default home')), \

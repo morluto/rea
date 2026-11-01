@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   requireMcpLifecycleResult,
   requireMcpOutput,
+  requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -13,8 +14,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { nativeInstructionSchema } from "../dist/domain/native/nativeInstruction.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildDosComFixture } from "../tests/conformance/ghidra/dos-com-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
@@ -157,6 +160,83 @@ try {
   assert.equal(
     instruction.bytes.replaceAll(" ", "").toLowerCase(),
     fixture.entry_hex,
+  );
+  // This NOP follows the entry's terminating INT 20h and is not reached by
+  // either function. It remains valid instruction bytes outside the listing.
+  const unlistedAddress = "0x1013f";
+  const unlistedBytes = await call("read_bytes", {
+    address: unlistedAddress,
+    length: 1,
+  });
+  assert.equal(unlistedBytes.bytes_hex, "90");
+  const unlistedResponse = await client.callTool({
+    name: "inspect_native_instruction",
+    arguments: { address: unlistedAddress },
+  });
+  const unlistedEvidence = parseEvidence(
+    requireMcpOutput(unlistedResponse, "inspect_native_instruction"),
+  );
+  const unlisted = unlistedEvidence.normalized_result;
+  assert.equal(unlisted.status, "not-in-listing");
+  assert.equal(unlisted.bytes, null);
+  assert.ok(
+    unlisted.limitations.some((item) =>
+      item.includes("did not attempt a decode"),
+    ),
+  );
+  const tools = (await client.listTools()).tools;
+  const advertised = tools.find(
+    (tool) => tool.name === "inspect_native_instruction",
+  );
+  assert.ok(advertised?.outputSchema);
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  assert.equal(ajv.validateSchema(advertised.outputSchema), true);
+  assert.equal(
+    ajv.validate(advertised.outputSchema, unlistedResponse.structuredContent),
+    true,
+    JSON.stringify(ajv.errors),
+  );
+  assert.ok(
+    nativeInstructionSchema.safeParse({ ...unlisted, status: "undecodable" })
+      .success,
+  );
+  const contextDefinition = tools.find(
+    (tool) => tool.name === "inspect_address_context",
+  );
+  assert.ok(contextDefinition?.outputSchema);
+  const documents = await call("list_documents");
+  assert.equal(documents.length, 1);
+  const document = documents[0];
+  for (const input of [
+    { address: fixture.entry, document: `${document}-not-a-program` },
+    { address: "not-an-address", document },
+  ]) {
+    const direct = requireMcpToolError(
+      await client.callTool({ name: "address_name", arguments: input }),
+    );
+    const response = await client.callTool(
+      { name: "inspect_address_context", arguments: input },
+      { timeout: 240000, toolDefinition: contextDefinition },
+    );
+    const context = requireMcpLifecycleResult(
+      response,
+      "inspect_address_context",
+    );
+    assert.equal(context.name.state, "unavailable");
+    assert.equal(context.name.error.code, "invalid_request");
+    assert.deepEqual(context.name.error.details.issues, direct.details.issues);
+    assert.equal(context.name.reason, direct.message);
+    assert.equal(context.name.remediation, direct.remediation.action);
+  }
+  assert.equal(
+    (await call("resolve_native_call_targets", { address: unlistedAddress }))
+      .status,
+    "unavailable",
+  );
+  assert.deepEqual(
+    (await cli("inspect-native-instruction", unlistedAddress))
+      .normalized_result,
+    unlisted,
   );
   const cliImage = await cli("inspect-native-load-image");
   const stable = (x) => ({
@@ -307,6 +387,7 @@ try {
       clear_comments: true,
       cli_mcp_parity: true,
     },
+    context_input_errors_preserved: true,
     original_unchanged: true,
     address_truncation_rejected: true,
     limitations: image.limitations,

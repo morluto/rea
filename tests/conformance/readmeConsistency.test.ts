@@ -2,7 +2,6 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { PRODUCT_IDENTITY } from "../../src/identity.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { processTest } from "../support/process/processFixture.js";
 
@@ -31,14 +30,14 @@ describe("onboarding documentation product facts", () => {
     },
   );
 
-  it("keeps the installation MCP example aligned with the package registration command", async () => {
+  it("documents manual MCP registration with an absolute runtime and entry script", async () => {
     const content = await readFile(resolve("docs/installation.md"), "utf8");
     expect(jsonExamples(content)).toContainEqual(
       expect.objectContaining({
         mcpServers: expect.objectContaining({
           rea: expect.objectContaining({
-            command: "npx",
-            args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+            command: "/absolute/path/to/node",
+            args: ["/absolute/path/to/rea/scripts/rea.mjs", "mcp"],
           }),
         }),
       }),

@@ -32,6 +32,9 @@ import {
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
 
+/** Predicate shared by ordinary provider analysis observations. */
+export const ANALYSIS_EVIDENCE_PREDICATE = "rea.analysis";
+
 /** Provider identity schema shared by evidence-bearing persistence formats. */
 export const providerSchema = z.strictObject({
   id: z.string().min(1),
@@ -274,6 +277,16 @@ export const parseEvidence = (input: unknown): Evidence => {
   return authenticatedEvidenceSchema.parse(input);
 };
 
+/** Recognize authenticated Evidence in a union of partial observations. */
+export const tryParseEvidence = (input: unknown): Evidence | undefined => {
+  if (typeof input !== "object" || input === null || !("evidence_id" in input))
+    return undefined;
+  const immutable = immutableEvidenceSnapshots.get(input);
+  if (immutable !== undefined) return immutable;
+  const parsed = authenticatedEvidenceSchema.safeParse(input);
+  return parsed.success ? parsed.data : undefined;
+};
+
 /** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */
 export const immutableEvidence = (input: unknown): Evidence => {
   const parsed = parseEvidence(input);
@@ -443,7 +456,7 @@ const normalizeEvidenceObservation = (
       version: provider.version,
     },
     analysis_profile: observation.analysisProfile ?? null,
-    predicate_type: observation.predicateType ?? "rea.analysis",
+    predicate_type: observation.predicateType ?? ANALYSIS_EVIDENCE_PREDICATE,
     operation: observation.operation,
     parameters: observation.parameters,
     raw_result: observation.rawResult ?? null,

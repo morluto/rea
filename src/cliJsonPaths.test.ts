@@ -108,12 +108,14 @@ describe("CLI JSON path normalization", () => {
     "FILE:electron",
     "https://example.test/app",
   ])("keeps URL %j distinguishable from a local path", (value) => {
-    const input = {
+    const expected = {
       executable_path: value,
       application_path: resolve("/synthetic/app"),
     };
+    const input = { ...expected };
     const normalized = resolveCliJsonPaths(input, paths);
-    expect(normalized).toEqual(input);
+    expect(normalized).toEqual(expected);
+    expect(input).toEqual(expected);
     const parsed = electronActiveObservationInputSchema.safeParse(normalized);
     expect(parsed.success).toBe(false);
     if (parsed.success) throw new Error("Expected URL path rejection");

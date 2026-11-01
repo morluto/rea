@@ -3,6 +3,7 @@ import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExam
 import { compareArtifacts } from "./artifactComparison.js";
 import {
   artifactInventoryResultSchema,
+  type ArtifactNode,
   type ArtifactOccurrence,
 } from "./artifactGraph.js";
 import { artifactGraphDigest, artifactManifestId } from "./artifactIdentity.js";
@@ -13,6 +14,8 @@ const packingObservation = (
   unpacked: boolean | undefined,
   hashStatus: ArtifactOccurrence["hash_status"] = "verified",
   changedContent = false,
+  occurrenceChanges: Partial<ArtifactOccurrence> = {},
+  nodeChanges: Partial<ArtifactNode> = {},
 ) => {
   const source = changedContent
     ? ARTIFACT_COMPARISON_EXAMPLE.right
@@ -24,6 +27,13 @@ const packingObservation = (
     ...occurrence,
     ...(unpacked === undefined ? {} : { unpacked }),
     hash_status: hashStatus,
+    ...occurrenceChanges,
+  }));
+  if (occurrenceChanges.artifact_format !== undefined)
+    inventory.manifest.root_format = occurrenceChanges.artifact_format;
+  inventory.nodes = inventory.nodes.map((node) => ({
+    ...node,
+    ...nodeChanges,
   }));
   const graphSha256 = artifactGraphDigest({
     nodes: inventory.nodes,
@@ -52,6 +62,80 @@ const packingObservation = (
     },
   );
 };
+
+it.each([
+  [{ artifact_kind: "unknown" }, { artifact_kind: "javascript" }, "verified"],
+  [{ artifact_kind: "javascript" }, { artifact_kind: "unknown" }, "verified"],
+  [
+    { artifact_format: "unknown" },
+    { artifact_format: "javascript-bundle" },
+    "verified",
+  ],
+  [
+    { artifact_format: "javascript-bundle" },
+    { artifact_format: "unknown" },
+    "verified",
+  ],
+  [
+    { artifact_kind: "unknown" },
+    { artifact_kind: "javascript" },
+    "unavailable",
+  ],
+  [
+    { artifact_format: "unknown" },
+    { artifact_format: "javascript-bundle" },
+    "unavailable",
+  ],
+] as const)(
+  "keeps an unknown occurrence classification uncertain",
+  (left, right, hashStatus) => {
+    const result = compareArtifacts(
+      packingObservation(undefined, hashStatus, false, left),
+      packingObservation(undefined, "verified", false, right),
+    );
+    expect(result).toMatchObject({
+      status: "unknown",
+      changes: [{ classification: "unknown", dimensions: ["availability"] }],
+    });
+  },
+);
+
+it("retains definite kind and format changes between known occurrence values", () => {
+  const result = compareArtifacts(
+    packingObservation(undefined, "verified", false, {
+      artifact_kind: "javascript",
+      artifact_format: "javascript-bundle",
+    }),
+    packingObservation(undefined, "verified", false, {
+      artifact_kind: "resource",
+      artifact_format: "file",
+    }),
+  );
+  expect(result).toMatchObject({
+    status: "changed",
+    changes: [{ classification: "changed", dimensions: ["kind", "format"] }],
+  });
+});
+
+it.each(["media_type", "architecture"] as const)(
+  "keeps missing node %s uncertain without claiming metadata change",
+  (field) => {
+    const result = compareArtifacts(
+      packingObservation(undefined, "verified", false, {}, { [field]: null }),
+      packingObservation(
+        undefined,
+        "verified",
+        false,
+        {},
+        { [field]: "known" },
+      ),
+    );
+    expect(result).toMatchObject({
+      status: "unknown",
+      changes: [{ classification: "unknown", dimensions: ["availability"] }],
+    });
+  },
+);
 
 it.each([true, false, undefined])(
   "retains equality for matching packing observations %s",

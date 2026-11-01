@@ -24,7 +24,6 @@ import {
   inspectClientRegistrationCommand,
   type ClientRegistrationCommandFacts,
   type ClientRegistrationCommandIdentity,
-  packageRunnerRegistrationCommand,
 } from "./ClientRegistrationIdentity.js";
 import {
   clientEvidencePaths,
@@ -470,17 +469,7 @@ const registrationAligned = ({
     (registration.serverName !== "rea" || registration.transport !== "stdio")
   )
     return "stale";
-  if (
-    (["npx", "bunx"] as const).some((runner) => {
-      const expected = packageRunnerRegistrationCommand(runner, platform);
-      return (
-        command.length === expected.length &&
-        command.every((argument, index) => argument === expected[index])
-      );
-    })
-  )
-    return "aligned";
-  // Other owned package references remain stale until pinned to this version.
+  // Legacy package runners remain owned, but setup migrates them to the selected installation.
   if (commandFacts.package !== undefined) return "stale";
   // Owning the script does not establish how its shebang interpreter resolves
   // in the client. Setup migrates these launchers without losing ownership.

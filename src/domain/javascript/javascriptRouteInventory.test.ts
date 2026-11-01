@@ -204,6 +204,33 @@ it("binds ordinary constants to application segments across sources and excludes
   ]);
   expect(result.statistics.unanchored_literals_excluded).toBe(2);
 });
+it.each(["api", "assets", "static", "_next"])(
+  "retains constants under an anchored %s segment without promoting unanchored paths",
+  (prefix) => {
+    const result = build([
+      source("route.js", `router.push('/${prefix}/status');`),
+      source(
+        "runtime.js",
+        `globalThis.TURBOPACK=[];const same='/${prefix}/status';const help='/${prefix}/help';const other='/unanchored/noise';`,
+      ),
+    ]);
+    const anchored = result.routes.find(
+      ({ path }) => path === `/${prefix}/status`,
+    );
+    const descendant = result.routes.find(
+      ({ path }) => path === `/${prefix}/help`,
+    );
+    expect(anchored).toMatchObject({ occurrence_count: 2, source_count: 2 });
+    expect(descendant).toMatchObject({
+      confidence: "low",
+      classification: "unknown",
+    });
+    expect(result.routes.some(({ path }) => path === "/unanchored/noise")).toBe(
+      false,
+    );
+    expect(result.coverage.application_routes).toBe("unknown");
+  },
+);
 it("retains inferred Next script bases and the unprefixed path", () => {
   const result = build([
     source(

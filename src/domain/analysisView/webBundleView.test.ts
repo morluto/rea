@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import type { WebBundleAnalysis } from "../webBundleAnalysis.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
+import { projectAnalysisError } from "../analysisErrorProjection.js";
 import {
   analysisViewRequestSchema,
   projectAnalysisView,
@@ -108,6 +109,7 @@ const sampleAnalysis = (): WebBundleAnalysis => ({
 const makeParent = (
   overrides?: Partial<WebBundleAnalysis>,
 ): AnalysisViewParent => ({
+  predicateType: "rea.web-bundle-analysis",
   evidenceId: `ev_${"c".repeat(64)}`,
   operation: "analyze_web_bundle",
   limitations: ["Parent run was bounded"],
@@ -414,6 +416,9 @@ it("returns typed AnalysisResourceConstraintError when a single record exceeds 1
   if (result.ok) throw new Error("Expected resource error");
   expect(result.error._tag).toBe("AnalysisResourceConstraintError");
   expect(result.error.message).toContain("byte budget");
+  expect(projectAnalysisError(result.error).remediation.action).toContain(
+    "select fewer fields",
+  );
 });
 
 it.each([undefined, ["call:fetch"]])(
@@ -472,6 +477,7 @@ it.each(["indices", "values", "script_keys", "mechanisms"])(
 
 it("rejects non-web-bundle parent operation with invalid_value", () => {
   const invalidParent: AnalysisViewParent = {
+    predicateType: "rea.javascript-application-analysis",
     evidenceId: `ev_${"d".repeat(64)}`,
     operation: "analyze_javascript_application",
     limitations: [],
@@ -623,6 +629,7 @@ it("correctly counts zero findings in summary for an empty web bundle", () => {
 
 it("rejects malformed parent analysis report", () => {
   const malformedParent: AnalysisViewParent = {
+    predicateType: "rea.web-bundle-analysis",
     evidenceId: `ev_${"e".repeat(64)}`,
     operation: "analyze_web_bundle",
     limitations: [],

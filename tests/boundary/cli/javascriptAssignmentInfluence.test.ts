@@ -4,7 +4,7 @@ import { expect } from "vitest";
 import { z } from "zod";
 import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 cliTest(
   "traces reassignment inputs through the public analysis and trace commands",
@@ -48,9 +48,12 @@ cliTest(
         },
       };
       await writeFile(queryFile, JSON.stringify(query));
-      const traced = await cli.run({
+      const trace = {
         arguments: ["trace-javascript-semantics", queryFile, "--json"],
-      });
+      };
+      const traced = await (name === "declaration"
+        ? cli.run(trace)
+        : runFileCli(cli, trace));
       expect(traced.exitCode, `${name} traced: ${traced.stderr}`).toBe(0);
       const { normalized_result: result } = z
         .object({ normalized_result: javaScriptSemanticTraceResultSchema })
@@ -71,7 +74,7 @@ cliTest(
           query: { ...query.query, include_ambiguous_dynamic_edges: true },
         }),
       );
-      const expanded = await cli.run({
+      const expanded = await runFileCli(cli, {
         arguments: ["trace-javascript-semantics", queryFile, "--json"],
       });
       expect(expanded.exitCode, `${name} expanded: ${expanded.stderr}`).toBe(0);

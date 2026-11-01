@@ -3,7 +3,7 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
 // These intrinsic properties hold symbols, so ToPropertyKey cannot produce a

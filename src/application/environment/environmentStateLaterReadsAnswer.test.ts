@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  INITIAL_TRASH_ROWS,
   LATER_BULK_ROWS,
   LATER_FIELD_ROWS,
   OMITTED_FLAG_ROWS,
@@ -26,6 +27,12 @@ const names = (body: JsonValue | undefined): JsonValue[] => {
 };
 
 describe("served writes modelled on later reads", () => {
+  it("replays the recorded list when it includes a deleted row", () => {
+    const contacts = servedFrom(INITIAL_TRASH_ROWS);
+    expect(
+      contacts.answer("get_contacts", { maxSize: "20", offset: "0" }).body,
+    ).toEqual(INITIAL_TRASH_ROWS[0]![2]);
+  });
   it("keeps an initially deleted item readable without treating it as live", () => {
     const deleted = { id: 4, name: "Gone", deleted: true };
     const rows = [

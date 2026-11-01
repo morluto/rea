@@ -10,6 +10,8 @@ import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import type { DesktopFile, DesktopFact } from "../domain/desktopApplication.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
+import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
+import { DESKTOP_PROBES_PER_FACT } from "../domain/desktopApplicationProjection.js";
 import { observeIl2cppMetadataHeaderPrefix } from "../domain/il2cpp/il2cppMetadataHeaderPrefix.js";
 import {
   parsePeRecordFacts,
@@ -22,6 +24,10 @@ import { ManagedReaderFailure } from "../dotnet/ManagedReaderFailure.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import { hasMachoMagic } from "../domain/apple/machoContainer.js";
+import {
+  hasUnityFsHeader,
+  readUnityFsHeaderFacts,
+} from "../domain/unityfsFormat.js";
 
 export interface DesktopReadBudget {
   bytes: number;
@@ -29,6 +35,31 @@ export interface DesktopReadBudget {
   retainedBytes: number;
   readonly maximumRetainedBytes: number;
 }
+
+/**
+ * A retained string's larger representation: two-byte heap code units, or its
+ * escaped UTF-8 JSON (up to six bytes for a control character).
+ */
+export const retainedTextBytes = (text: string): number =>
+  Math.max(2 * text.length, jsonStringByteLength(text));
+
+/** One retained fact besides its value and probes: kind, offset and keys. */
+export const RETAINED_FACT_BYTES = 512;
+/** One retained read range: offset, length and SHA-256. */
+const RETAINED_RANGE_BYTES = 256;
+/** One next probe besides its local_path: IDs, operation and rationale. */
+const RETAINED_PROBE_BYTES = 512;
+/** Charge the next probes that one fact can make repeat a row's local_path. */
+export const retainedFactReferenceBytes = (localPath: string): number =>
+  DESKTOP_PROBES_PER_FACT *
+  (RETAINED_PROBE_BYTES + retainedTextBytes(localPath));
+
+const retainedFactsLimit = () =>
+  new ArtifactReaderFailure(
+    "limit",
+    "Directory facts reached the retained metadata budget",
+    { boundary: "memory" },
+  );
 
 /** A resource refusal is separate from malformed format declarations. */
 class DesktopProbeLimit extends ArtifactReaderFailure {
@@ -69,6 +100,13 @@ export const inspectDesktopFile = async (
         "Declared byte range lies outside the file",
       );
     if (bytes > budget.maximum - budget.bytes) throw new DesktopProbeLimit();
+    // Reserve the retained range before reading its bytes.
+    if (
+      RETAINED_RANGE_BYTES >
+      budget.maximumRetainedBytes - budget.retainedBytes
+    )
+      throw retainedFactsLimit();
+    budget.retainedBytes += RETAINED_RANGE_BYTES;
     const result = Buffer.alloc(bytes);
     let consumed = 0;
     while (consumed < bytes) {
@@ -97,14 +135,12 @@ export const inspectDesktopFile = async (
   };
   const fact = (observation: DesktopFact) => {
     const remaining = budget.maximumRetainedBytes - budget.retainedBytes;
+    const fixed =
+      RETAINED_FACT_BYTES + retainedFactReferenceBytes(row.local_path);
     const reservation =
-      512 + jsonValueByteLength(observation.value, (remaining - 512) / 12) * 12;
-    if (reservation > budget.maximumRetainedBytes - budget.retainedBytes)
-      throw new ArtifactReaderFailure(
-        "limit",
-        "Directory facts reached the retained metadata budget",
-        { boundary: "memory" },
-      );
+      fixed +
+      jsonValueByteLength(observation.value, (remaining - fixed) / 12) * 12;
+    if (reservation > remaining) throw retainedFactsLimit();
     budget.retainedBytes += reservation;
     row.facts.push(observation);
   };
@@ -134,6 +170,23 @@ export const inspectDesktopFile = async (
         placement: "standalone",
       },
     });
+  }
+  if (prefix.length >= 20 && hasUnityFsHeader(prefix)) {
+    const unityfsHeader = readUnityFsHeaderFacts(prefix);
+    if (unityfsHeader !== undefined)
+      fact({
+        kind: "unityfs-header",
+        offset: 0,
+        value: {
+          format_version: unityfsHeader.formatVersion,
+          engine_version: unityfsHeader.engineVersion,
+          flags: unityfsHeader.flags,
+          declared_size:
+            unityfsHeader.declaredSize <= BigInt(Number.MAX_SAFE_INTEGER)
+              ? Number(unityfsHeader.declaredSize)
+              : null,
+        },
+      });
   }
   if (
     prefix.length >= 16 &&

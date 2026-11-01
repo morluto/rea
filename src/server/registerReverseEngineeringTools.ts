@@ -14,7 +14,11 @@ import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
+import { retainExternalMutationCancellation } from "./externalMutationAdmission.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
 
@@ -31,7 +35,7 @@ export const registerReverseEngineeringTools = (
     path: string | undefined,
     signal: AbortSignal | undefined,
     operation: () => Promise<Result<Value, AnalysisError>>,
-    retirementFailure: (
+    completionFailure: (
       value: Result<Value, AnalysisError>,
       error: AnalysisError,
     ) => AnalysisError,
@@ -98,6 +102,13 @@ export const registerReverseEngineeringTools = (
             );
           },
           (value, cause) => {
+            if (cause instanceof AnalysisCancelledError) {
+              return retainExternalMutationCancellation(
+                value,
+                cause,
+                (evidence) => evidence,
+              );
+            }
             if (!value.ok)
               return value.error.retainSecondaryFailure(cause, {
                 retirement_error: projectAnalysisError(cause),
@@ -108,9 +119,6 @@ export const registerReverseEngineeringTools = (
               "Rizin may have changed the bound artifact, but the active analysis session could not be retired.",
               {
                 cause,
-                ...(cause.cleanup === undefined
-                  ? {}
-                  : { cleanup: cause.cleanup }),
                 ...(cause.capturedOutput === undefined
                   ? {}
                   : { capturedOutput: cause.capturedOutput }),

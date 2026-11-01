@@ -1,12 +1,12 @@
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
 import { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -15,23 +15,17 @@ const linuxX64 = process.platform === "linux" && process.arch === "x64";
 const connect = async (
   options: Parameters<typeof createServer>[1],
 ): Promise<{
-  readonly client: Client;
-  readonly server: ReturnType<typeof createServer>;
   readonly availability: () => Promise<Record<string, unknown> | undefined>;
-  readonly close: () => Promise<void>;
 }> => {
   const session = createTestBinarySession(() => {
     throw new Error("binary analysis must not start during status discovery");
   });
-  const server = createServer({ kind: "session", session }, options);
-  const client = new Client({ name: "evm-limiter-availability", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: options,
+    clientIdentity: { name: "evm-limiter-availability", version: "1" },
+  });
   return {
-    client,
-    server,
     availability: async () => {
       const response = await client.callTool({
         name: "binary_session",
@@ -44,13 +38,6 @@ const connect = async (
       return expandToolAvailability(parsed.tool_availability).find(
         ({ name }) => name === "inspect_evm_interface",
       );
-    },
-    close: async () => {
-      await Promise.allSettled([
-        client.close(),
-        server.close(),
-        session.close(),
-      ]);
     },
   };
 };
@@ -66,15 +53,11 @@ it.runIf(linuxX64)(
         REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
       },
     });
-    try {
-      expect(await harness.availability()).toMatchObject({
-        available: false,
-        reason: "provider_missing",
-        remediation: expect.stringContaining(limiter),
-      });
-    } finally {
-      await harness.close();
-    }
+    expect(await harness.availability()).toMatchObject({
+      available: false,
+      reason: "provider_missing",
+      remediation: expect.stringContaining(limiter),
+    });
   },
 );
 
@@ -94,13 +77,9 @@ it("keeps a caller-injected EVM service independent of the default prlimit prere
     },
     evmInterface: service,
   });
-  try {
-    expect(await harness.availability()).toMatchObject({
-      available: true,
-      reason: "available",
-      remediation: null,
-    });
-  } finally {
-    await harness.close();
-  }
+  expect(await harness.availability()).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
 });

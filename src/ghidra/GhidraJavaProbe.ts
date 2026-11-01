@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { retainOwnedCommandCleanup } from "../providers/OwnedCommandCleanup.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { randomUUID } from "node:crypto";
@@ -184,7 +185,7 @@ const observeGhidraJava = async (
       },
     );
     if (interpreted === undefined)
-      throw new Error("Java command completed without an output observation");
+      throw new GhidraAdmissionError("output_unobserved");
     return interpreted;
   } catch (cause: unknown) {
     const commandFailure =

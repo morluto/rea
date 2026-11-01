@@ -16,10 +16,9 @@ import inventory. For current provider wiring, start with
 [`src/composition/binary.ts`](src/composition/binary.ts) for deep candidates and
 the other `src/composition/` factories for tool services, including
 [`gpu.ts`](src/composition/gpu.ts) and [`model.ts`](src/composition/model.ts).
-Live Frida and Cutter adapters are constructed directly in
-[`src/cli/fridaCommands.ts`](src/cli/fridaCommands.ts),
-[`src/cli/cutterCommands.ts`](src/cli/cutterCommands.ts), and
-[`src/server/createServer.ts`](src/server/createServer.ts).
+Live Frida, Cutter, GDB and Rizin construction also uses shared composition
+factories. For service ownership, availability and catalog declarations, follow
+the [capability composition guide](docs/capability-composition.md).
 Production factories construct fresh providers without starting engines or
 acquiring targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
@@ -232,6 +231,8 @@ Use the development toolchain pinned in `.nvmrc` and
 `package.json#packageManager`. Run `nvm use` before installing dependencies;
 installed-package runtime support is documented in
 [installation](docs/installation.md#start-setup).
+Use Node.js and npm for source builds and verifier scripts; the installed
+package's Bun runtime support does not extend to those development scripts.
 
 ```bash
 npm ci
@@ -245,6 +246,15 @@ CLI or MCP server; it compiles the runtime and bundles the authored skill.
 catalogs, documentation projections, or managed verification evidence. Turbo
 caches deterministic builds and static checks across Git worktrees. After a package, lockfile, or managed-skill version change, run
 `npm run metadata:generate` before building.
+
+Dependabot proposes updates for the npm lockfiles, website Python requirements,
+and GitHub Actions. Review dependency changes and run the checks relevant to
+their consumers. For dependencies maintained outside Dependabot, including
+`third_party/` and the HTTP/3 lab's pinned requirements, the maintainer should
+review upstream security advisories when updating or using them. Preserve source
+and version provenance, update license notices when needed, and report which
+verification was actually repeated. The lab requirements describe a recorded
+environment; a dependency update does not verify the revised environment.
 
 Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
 protocols in adapters and shared CLI/MCP workflows in the application layer.
@@ -272,7 +282,10 @@ The general source suite (`npm run test:fast`, `npm run test:changed`, and
 On a Windows checkout, some source tests fail because fixtures use POSIX paths,
 `#!/bin/sh` tool stubs, or POSIX rename semantics. Compare failures against the
 base revision, or run the suite on Linux or WSL, before attributing them to a
-change. See [testing](docs/testing.md#developer-commands) for command scopes
+change. The embedded-artifact parent-swap tests exercise the selected-path
+replacement when the rename succeeds; if Windows refuses it while the admitted
+file is open, they instead verify the refusal and cleanup. See
+[testing](docs/testing.md#developer-commands) for command scopes
 and lane selection.
 
 `git submodule update --init --recursive` fails at the pinned Unblob submodule

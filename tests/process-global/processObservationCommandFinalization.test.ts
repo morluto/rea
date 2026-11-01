@@ -29,18 +29,28 @@ const waitForFile = async (path: string, timeoutMs = 4_000): Promise<void> => {
 };
 
 const waitForCommandOrFailure = async (
-  readyPath: string,
+  ready: Promise<void>,
   pending: Promise<unknown>,
 ): Promise<void> => {
   const outcome = await Promise.race([
-    waitForFile(readyPath).then(() => undefined),
+    ready.then(() => ({ ready: true as const })),
     pending.then(
-      () => new Error("The command completed before its ready marker"),
-      (cause: unknown) => cause,
+      () => ({ ready: false as const, cause: undefined }),
+      (cause: unknown) => ({ ready: false as const, cause }),
     ),
   ]);
-  if (outcome !== undefined) throw outcome;
+  if (!outcome.ready)
+    throw new Error("The command completed before its ready marker", {
+      cause: outcome.cause,
+    });
 };
+
+it("rejects an early command failure even when its reason is undefined", async () => {
+  const ready = new Promise<void>(() => {});
+  await expect(
+    waitForCommandOrFailure(ready, Promise.reject(undefined)),
+  ).rejects.toBeInstanceOf(Error);
+});
 
 const delayedCommandSource = (
   readyPath: string,
@@ -92,7 +102,7 @@ const expectOwnedCommandToFinishOnAbort = async (
 
   pending = run(controller.signal, directory);
   void pending.catch(() => {});
-  await waitForCommandOrFailure(command.readyPath, pending);
+  await waitForCommandOrFailure(waitForFile(command.readyPath), pending);
   controller.abort(reason);
   const failure = await pending.then(
     () => undefined,
@@ -251,7 +261,7 @@ const expectDarwinReaderCommandToFinishOnAbort = async (
       ? reader.read([processEntry], controller.signal)
       : reader.identities([processEntry], controller.signal);
   void pending.catch(() => {});
-  await waitForCommandOrFailure(command.readyPath, pending);
+  await waitForCommandOrFailure(waitForFile(command.readyPath), pending);
   controller.abort(reason);
   const failure = await pending.then(
     () => undefined,

@@ -27,6 +27,7 @@ describe("Hopper provider discovery", () => {
         status: "unavailable",
         code: "executable_missing",
         reason: `Hopper launcher is missing or not executable: ${missingPath}`,
+        remediation: expect.stringContaining("HOPPER_LAUNCHER_PATH"),
         diagnostics: {
           launcher_path: missingPath,
           platform: process.platform,
@@ -43,6 +44,7 @@ describe("Hopper provider discovery", () => {
         status: "unavailable",
         code: "executable_missing",
         reason: `Hopper launcher is missing or not executable: ${directory}`,
+        remediation: expect.stringContaining("HOPPER_LAUNCHER_PATH"),
         diagnostics: {
           launcher_path: directory,
           platform: process.platform,

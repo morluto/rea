@@ -34,8 +34,10 @@ export const finishAnalysisCommand = async <
     ) => Value | undefined;
   } = {},
 ): Promise<Result<Value, ReturnType<typeof projectAnalysisError>>> => {
+  // The command releases its provider resources and runtime before the caller
+  // reads this result, so guidance needing a continuing session is omitted.
   const projectFailure = (error: AnalysisError) =>
-    projectAnalysisError(options.redactFailure?.(error) ?? error);
+    projectAnalysisError(options.redactFailure?.(error) ?? error, "invocation");
   let result: Result<Value, AnalysisError>;
   let cleanup: AnalysisError | undefined;
   try {
@@ -61,6 +63,7 @@ export const finishAnalysisCommand = async <
     result.error.capturedOutput !== undefined
       ? projectAnalysisErrorWithoutCapturedOutput(
           options.redactFailure?.(result.error) ?? result.error,
+          "invocation",
         )
       : initialFailure;
   try {

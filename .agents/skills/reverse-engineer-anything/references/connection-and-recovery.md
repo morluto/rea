@@ -156,7 +156,10 @@ Use the current supported client's ID: `claude_code`, `claude_desktop`, `codex`,
 `copilot_cli`, `commandcode`, `qwen_code`, `vscode`, `trae`, `grok_build`, `omp`, `pi`,
 `hermes`, `qoder`, `droid`, `zcode`, `dsh`, `freebuff`, or `grok_bot`. If unknown, inspect `doctor --json` before choosing a
 scope. `grok_bot` uses a chat registration step rather than local `mcp.json`.
-For unsupported clients, use version-pinned manual stdio registration or CLI.
+For unsupported clients, use manual stdio registration with the selected
+installation’s absolute runtime and entry script, or continue through the CLI.
+Acquire packages from a trusted directory outside the target project. Keep a
+package-runner installation and its runtime available while registrations use it.
 
 Show the plan's exact paths, backups, changes and bundled-skill replacement.
 Obtain approval for writes when that concrete scope is not already authorized,

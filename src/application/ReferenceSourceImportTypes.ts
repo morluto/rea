@@ -21,6 +21,7 @@ export interface ReferenceSourceImportError {
   readonly tag: "reference-source-import";
   readonly code: "cancelled" | "invalid-root" | "unsupported" | "io" | "parse";
   readonly message: string;
+  readonly remediationAction?: string;
   readonly cleanup?: AnalysisCleanupObservation;
   readonly partial?: ReferenceSourceRead;
   readonly cause?: unknown;
@@ -42,7 +43,8 @@ const IMPORT_FAILURE_GUIDANCE = {
 export const projectReferenceSourceImportError = (
   error: ReferenceSourceImportError,
 ): AnalysisErrorProjection => {
-  const guidance = IMPORT_FAILURE_GUIDANCE[error.code];
+  const guidance =
+    error.remediationAction ?? IMPORT_FAILURE_GUIDANCE[error.code];
   const message = `${error.message} ${guidance}`;
   const partial = error.partial;
   const options: AnalysisErrorOptions = {
@@ -77,7 +79,13 @@ export const projectReferenceSourceImportError = (
     case "invalid-root":
       primary = new AnalysisInputError(
         "import_reference_source",
-        { ...options, userMessage: message },
+        {
+          ...options,
+          userMessage: message,
+          ...(error.remediationAction === undefined
+            ? {}
+            : { remediationAction: error.remediationAction }),
+        },
         [{ path: ["root"], reason: "invalid_value", message: error.message }],
       );
       break;
