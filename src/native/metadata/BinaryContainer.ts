@@ -112,6 +112,8 @@ export type ImageSection = {
       };
       readonly segment_mapping: FileMapping | null;
       readonly segment_unmapped: boolean;
+      /** Non-zero-fill bytes within the file and the segment's file range. */
+      readonly on_disk: boolean;
     }
 );
 
@@ -158,7 +160,8 @@ export type BinaryContainer = BinaryContainerFacts &
           readonly dynamicSegments: readonly ElfDynamicSegment[];
         };
       }
-    | { readonly format: "pe" | "macho" }
+    | { readonly format: "pe" }
+    | { readonly format: "macho"; readonly macho_cpu_type: number }
   );
 
 /** All declared file-backed image memory, including PE headers at the image base. */

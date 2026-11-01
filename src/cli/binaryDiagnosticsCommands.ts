@@ -8,6 +8,7 @@ import {
   createRecordedCrashService,
   createBinaryLayoutService,
   createElfNotesService,
+  createDwarfUnitsService,
   createAppleIpsService,
   createDevicetreeService,
   createKernelModuleService,
@@ -29,6 +30,8 @@ import { inspectPeCertificatesInputSchema } from "../domain/native/peCertificate
 import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
 import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
+import { inspectDwarfUnitsInputSchema } from "../domain/native/dwarfUnits.js";
+import { machoSliceArchitectureSchema } from "../domain/apple/machoTargetSelection.js";
 import { inspectAppleIpsInputSchema } from "../domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../domain/native/kernelModule.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -78,6 +81,53 @@ export const registerBinaryDiagnosticsCommands = (
               elf,
               "rea-elf-notes",
               "inspect_elf_notes",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectDwarfUnits, {
+    description: "Inspect DWARF compile units without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe(
+        "Local ELF, Mach-O, or PE image, or a DWARF file inside a .dSYM bundle",
+      ),
+    }),
+    options: z.object({
+      maxFileBytes: inspectDwarfUnitsInputSchema.shape.max_file_bytes,
+      offset: inspectDwarfUnitsInputSchema.shape.offset,
+      limit: inspectDwarfUnitsInputSchema.shape.limit,
+      architecture: machoSliceArchitectureSchema
+        .optional()
+        .describe(
+          "CPU family of the slice to read from a universal Mach-O; required for universal files",
+        ),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const dwarf = createDwarfUnitsService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectDwarfUnits,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                dwarf.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    offset: options.offset,
+                    limit: options.limit,
+                    ...(options.architecture === undefined
+                      ? {}
+                      : { architecture: options.architecture }),
+                  },
+                  { signal },
+                ),
+              dwarf,
+              "rea-dwarf-units",
+              "inspect_dwarf_units",
               signal,
             ).then(projectCliAnalysisResult),
         );

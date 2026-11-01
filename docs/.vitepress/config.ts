@@ -36,6 +36,7 @@ export default defineConfig({
           { text: "PE imports", link: "/pe-imports" },
           { text: "PE TLS/load config", link: "/pe-load-config" },
           { text: "ELF notes", link: "/elf-notes" },
+          { text: "DWARF compile units", link: "/dwarf-units" },
           { text: "Apple IPS crash reports", link: "/apple-ips" },
           { text: "Linux kernel modules", link: "/kernel-modules" },
           { text: "CPython pyc files", link: "/python-pyc" },

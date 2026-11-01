@@ -109,6 +109,7 @@ import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.j
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
 import { Il2cppMetadataProvider } from "../../src/il2cpp/Il2cppMetadataProvider.js";
 import { ElfNotesProvider } from "../../src/native/elf/ElfNotesProvider.js";
+import { DwarfUnitsProvider } from "../../src/native/dwarf/DwarfUnitsProvider.js";
 import { AppleIpsProvider } from "../../src/native/apple/AppleIpsProvider.js";
 import { KernelModuleProvider } from "../../src/native/elf/KernelModuleProvider.js";
 import { PeCertificatesProvider } from "../../src/native/pe/PeCertificatesProvider.js";
@@ -116,6 +117,7 @@ import { PeImportsProvider } from "../../src/native/pe/PeImportsProvider.js";
 import { NativeExportsProvider } from "../../src/native/exports/NativeExportsProvider.js";
 import { BeamProvider } from "../../src/erlang/BeamProvider.js";
 import { inspectElfNotesInputSchema } from "../../src/domain/native/elfNotes.js";
+import { inspectDwarfUnitsInputSchema } from "../../src/domain/native/dwarfUnits.js";
 import { inspectAppleIpsInputSchema } from "../../src/domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../../src/domain/native/kernelModule.js";
 import { inspectPeCertificatesInputSchema } from "../../src/domain/native/peCertificates.js";
@@ -996,6 +998,7 @@ it.each([
 const stableArtifactProviders = [
   ...staticProviders,
   ["ELF notes", () => new ElfNotesProvider()],
+  ["DWARF units", () => new DwarfUnitsProvider()],
   ["Apple IPS", () => new AppleIpsProvider()],
   ["kernel module", () => new KernelModuleProvider()],
   ["PE certificates", () => new PeCertificatesProvider()],
@@ -1024,6 +1027,11 @@ const inspectFileFailure = (
   if (provider instanceof ElfNotesProvider)
     return provider.inspect(
       inspectElfNotesInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof DwarfUnitsProvider)
+    return provider.inspect(
+      inspectDwarfUnitsInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof AppleIpsProvider)
@@ -1097,6 +1105,7 @@ it.each(
       expect(result.error._tag).toBe(
         expectedTag ??
           (provider instanceof ElfNotesProvider ||
+          provider instanceof DwarfUnitsProvider ||
           provider instanceof KernelModuleProvider ||
           provider instanceof PeCertificatesProvider ||
           provider instanceof PeResourcesProvider

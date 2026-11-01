@@ -166,6 +166,21 @@ absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
 
+## DWARF compile units
+
+Use `inspect_dwarf_units` for an explicit local ELF, Mach-O, or PE image when
+the question concerns compile-unit source file, compilation directory,
+producer, language, or split-DWARF `dwo_name`. No `open_binary` or target
+execution is required. The CLI equivalent is `inspect-dwarf-units PATH`. For a
+`.dSYM` bundle, pass the DWARF file inside the bundle; the bundle itself is
+not opened. Universal Mach-O requires `architecture`. Preserve artifact
+SHA-256, section file ranges, and per-unit issues. Absent `.debug_info`
+describes this file only and does not establish that a separate debug file is
+absent. Partial coverage includes a declared `.debug_info` that was not read,
+such as an undecodable section or a `.dwo` object. A present `.gnu_debuglink` is named and not decoded. Child DIEs,
+types, line tables, and location expressions are not read. See
+[DWARF compile units](https://github.com/morluto/rea/blob/main/docs/dwarf-units.md).
+
 ## Apple IPS crash reports
 
 Use `inspect_apple_ips` for an explicit local Apple `.ips` file when the
