@@ -27,6 +27,13 @@ identified by SHA-256. A caller-supplied build reporting the supported protocol
 version retains its actual digest and an unknown source revision unless its
 bytes match the audited release.
 
+Obtain the audited JAR from the pinned
+[upstream release](https://github.com/1013503897/jadx-headless-mcp/releases/tag/v0.7.1)
+and follow the [download and SHA-256 verification steps](../docs/android-analysis.md#supply-tools)
+before setting `REA_JADX_MCP_JAR`. A same-named npm package or GitHub repository
+does not establish this source identity; verify the JAR against REA's pinned
+release metadata rather than selecting an engine by name alone.
+
 When updating: review upstream protocol and license changes, update the gitlink
 and release identity together, exercise the adapter's producer regressions, and
 run the real APK CLI/MCP lane. Never attribute modified engine bytes to the
