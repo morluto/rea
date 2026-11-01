@@ -136,6 +136,7 @@ describe("provider selection over MCP", () => {
       open: false,
       analysis_run: null,
       analysis_provider_binding: null,
+      analysis_provider_candidates_observed: "status_request",
       analysis_provider_candidates: [
         {
           provider: { id: "alpha" },
@@ -201,6 +202,7 @@ describe("provider selection over MCP", () => {
     );
     expect(status.result).toMatchObject({
       open: true,
+      analysis_provider_candidates_observed: "target_selection",
       analysis_run: {
         run_id: expect.stringMatching(
           /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
@@ -780,6 +782,63 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
   result.isError === true
     ? parseMcpToolError(result)
     : z.record(z.string(), z.unknown()).parse(result.structuredContent);
+
+it("labels unbound provider observations as selection-time after a repair", async () => {
+  directory = await createTestTempDirectory("rea-candidate-observation-");
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  let available = false;
+  const base = candidate("alpha", []);
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...base,
+        inspectAvailability: () =>
+          candidate("alpha", [], available).inspectAvailability(),
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "candidate-scope", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  expect(
+    (await mcp.callTool({ name: "open_binary", arguments: { path: target } }))
+      .isError,
+  ).toBeFalsy();
+  available = true;
+  const stale = toolContract("binary_session").outputSchema.parse(
+    (await mcp.callTool({ name: "binary_session", arguments: {} }))
+      .structuredContent,
+  ).result;
+  expect(stale.analysis_provider_binding).toBeNull();
+  expect(stale.analysis_provider_candidates_observed).toBe("target_selection");
+  expect(stale.analysis_provider_candidates[0]?.availability.status).toBe(
+    "unavailable",
+  );
+  expect(
+    (
+      await mcp.callTool({
+        name: "open_binary",
+        arguments: { path: target, provider_id: "alpha" },
+      })
+    ).isError,
+  ).toBeFalsy();
+  const refreshed = toolContract("binary_session").outputSchema.parse(
+    (await mcp.callTool({ name: "binary_session", arguments: {} }))
+      .structuredContent,
+  ).result;
+  expect(refreshed.analysis_provider_candidates_observed).toBe(
+    "target_selection",
+  );
+  expect(refreshed.analysis_provider_binding?.provider.id).toBe("alpha");
+});
 
 it("retains attributed mixed profile cleanup through registered MCP calls and partial retry", async () => {
   directory = await createTestTempDirectory("rea-profile-completion-mcp-");

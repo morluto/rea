@@ -265,6 +265,11 @@ const openServer = async (provider) => {
       path: provider.path,
       provider_id: provider.id,
     });
+    const session = (await call("binary_session")).value;
+    assert.equal(
+      session.analysis_provider_candidates_observed,
+      "target_selection",
+    );
   } catch (cause) {
     // A rejected connection/target still owns its transport and workspace.
     await close(cause);

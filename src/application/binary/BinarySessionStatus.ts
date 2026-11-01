@@ -138,6 +138,12 @@ export const binarySessionStatus = async ({
     capabilities,
     analysis_provider_binding: analysisProviderBinding,
     analysis_provider_candidates: analysisProviderCandidates,
+    analysis_provider_candidates_observed:
+      bundleResourceRoot !== undefined
+        ? "not_applicable"
+        : route.selection === undefined
+          ? "status_request"
+          : "target_selection",
     analysis_run:
       runId === undefined
         ? null

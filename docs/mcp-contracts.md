@@ -792,8 +792,14 @@ availability. Expand every group operation while retaining its provider
 identity, availability, reason, rejection code, effects, and ordered
 limitations.
 
-`binary_session.analysis_provider_candidates` is authoritative for deep-engine
-discovery. Each candidate's capability sets, returned with complete detail,
+`binary_session.analysis_provider_candidates` reports deep-engine discovery.
+`analysis_provider_candidates_observed` is `target_selection` when those facts
+were retained from the active target's selection, `status_request` when the
+target-free request sought candidate observations, and `not_applicable` for resource-only
+sessions. Selection-time readiness may have changed since the target was opened;
+candidate statuses can still be unknown when an inspection cannot complete.
+an explicit `open_binary` performs a new selection. A changed route can retire
+the previous engine and its ephemeral edits. Each candidate's capability sets, returned with complete detail,
 describe that possible provider;
 they do not select it. The top-level `capabilities` describe the current route,
 while `analysis_provider_binding` identifies the concrete selected route. These

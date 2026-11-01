@@ -539,6 +539,11 @@ export const sessionProviderFacts = z
     analysis_run: analysisRun,
     analysis_activity: analysisActivity,
     provider_operation_health: providerOperationHealth,
+    analysis_provider_candidates_observed: z
+      .enum(["status_request", "target_selection", "not_applicable"])
+      .describe(
+        "When provider candidate observations were collected: this status request, the retained target selection, or not applicable to a resource-only session.",
+      ),
     analysis_provider_binding: z
       .object({
         provider: providerIdentity,
