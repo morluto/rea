@@ -91,7 +91,10 @@ import { callPathResultSchema } from "../domain/callPathSchemas.js";
 import { staticRuntimeCorrelationResultSchema } from "../domain/staticRuntimeCorrelation.js";
 import { reconstructionVerificationResultSchema } from "../domain/reconstructionVerificationSchemas.js";
 import { decompileDirectoryManifestSchema } from "./decompileDirectory.js";
-import { analysisErrorProjectionSchema } from "./errorSchemas.js";
+import {
+  analysisErrorProjectionSchema,
+  analysisInputErrorProjectionSchema,
+} from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";
@@ -117,6 +120,7 @@ const contextFacetSchema = z.discriminatedUnion("state", [
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
+    error: analysisInputErrorProjectionSchema.optional(),
   }),
 ]);
 const bookmarkFacetSchema = z.discriminatedUnion("state", [
@@ -128,6 +132,7 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
+    error: analysisInputErrorProjectionSchema.optional(),
   }),
 ]);
 

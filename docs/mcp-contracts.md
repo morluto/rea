@@ -1340,7 +1340,9 @@ cursor outside a procedure is represented as
 procedure resolution returns typed unreadable output; provider errors never
 become absence from their message text. `inspect_address_context` requires an explicit address and
 returns name, procedure, comment, inline-comment, and bookmark facets;
-unsupported facets are local `unavailable` outcomes. Use `current_document`,
+unsupported facets are local `unavailable` outcomes. A facet whose input is
+rejected includes its canonical `error` projection, including any structured
+issues, alongside the other facet outcomes. Use `current_document`,
 `current_address`, and `current_procedure` for direct single-field lookups; use
 the aggregate tools when you need related context together.
 
