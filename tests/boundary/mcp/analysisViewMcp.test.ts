@@ -275,6 +275,68 @@ it("preserves native relationship coverage through inline and retained MCP views
   }
 });
 
+it("directs unsupported parent views to the original Evidence", async () => {
+  const { client, session } = await connect();
+  const root = await createTestTempDirectory("rea-unsupported-view-mcp-");
+  const file = join(root, "evidence.json");
+  const bundle = join(root, "bundle.json");
+  const parent = createEvidence(
+    { path: "/fixtures/native.exe", format: "pe", sha256: "a".repeat(64) },
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "trace_feature",
+      parameters: { query: "marker" },
+      result: { matches: [], references: [] },
+    },
+  );
+  expect(session.recordEvidence(parent).ok).toBe(true);
+  await writeFile(file, JSON.stringify(parent));
+  const errorSchema = JSON.parse(
+    await readFile("docs/error-contract.schema.json", "utf8"),
+  );
+  for (const source of [
+    { kind: "inline", evidence: parent },
+    { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    { kind: "evidence-file", path: file },
+  ]) {
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source, view: { kind: "summary" } },
+    });
+    const { error } = parseMcpToolError(response);
+    expect(schemaValidation.assertions.validate(errorSchema, error)).toBe(true);
+    expect(error).toMatchObject({
+      code: "unsupported_target",
+      retryable: false,
+      details: {
+        operation: "inspect_analysis_view",
+        reason: expect.stringContaining(
+          'Parent Evidence operation "trace_feature"',
+        ),
+      },
+    });
+    expect(error.remediation.action).toContain("original complete Evidence");
+    expect(error.remediation.action).toContain("get_evidence_bundle");
+    expect(error.remediation.action).toContain("export_evidence_bundle");
+    expect(error.remediation.action).not.toContain("target format");
+  }
+  const complete = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: { detail: "complete" },
+  });
+  expect(complete.isError).not.toBe(true);
+  expect(complete.structuredContent).toMatchObject({
+    result: { records: expect.arrayContaining([parent]) },
+  });
+  const exported = await client.callTool({
+    name: "export_evidence_bundle",
+    arguments: { path: bundle },
+  });
+  expect(exported.isError).not.toBe(true);
+  const saved = JSON.parse(await readFile(bundle, "utf8"));
+  expect(saved.records).toContainEqual(parent);
+});
+
 it("advertises typed module references and preserves portable/retained Evidence parity", async () => {
   const { client, session } = await connect();
   const parent = analysisViewJavaScriptEvidence(
