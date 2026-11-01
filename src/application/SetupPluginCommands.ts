@@ -17,7 +17,7 @@ import {
   type SetupPluginCommandResult,
 } from "./SetupPluginCommand.js";
 
-const launchPluginCommand: SetupPluginCommandLauncher = async (
+export const launchPluginCommand: SetupPluginCommandLauncher = async (
   command,
   arguments_,
   options,
@@ -30,7 +30,13 @@ const launchPluginCommand: SetupPluginCommandLauncher = async (
     PATHEXT: selectedEnvironment.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
   };
   const found = await findWindowsExecutable(command, environment, {
-    signal: AbortSignal.timeout(options.timeoutMs),
+    signal:
+      options.signal === undefined
+        ? AbortSignal.timeout(options.timeoutMs)
+        : AbortSignal.any([
+            options.signal,
+            AbortSignal.timeout(options.timeoutMs),
+          ]),
     cwd: options.cwd,
     allowBatch: command !== "node",
   });

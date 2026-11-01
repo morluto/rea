@@ -1,4 +1,9 @@
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
+import {
+  describeHopperRequestFailure,
+  hopperRequestRecovery,
+  type HopperRequestFailure,
+} from "./HopperDownload.js";
 import { HOPPER_LINUX_PRIMARY_FINGERPRINT } from "./HopperReleaseFeed.js";
 import type { LinuxPackageInstallFailure } from "./LinuxHopper.js";
 
@@ -33,6 +38,8 @@ export type SetupHopperInstallResult =
       readonly status: "failed";
       readonly code: SetupFailureCode;
       readonly remediation: string;
+      /** The vendor request whose observed transport failure produced `code`. */
+      readonly download?: HopperRequestFailure;
     };
 
 export type SetupHopperInstallFailure = Extract<
@@ -104,11 +111,37 @@ const packageManagerRemediation = (
   return `The system package-manager command failed (${failure.command}; ${status}); ${observed} Resolve the reported problem, grant the authorization the command needs, or install the planned Hopper package and Linux runtime dependencies manually, then rerun rea setup.`;
 };
 
-/** Map provider installer failures to stable setup codes and safe recovery. */
+/**
+ * Map provider installer failures to stable setup codes and safe recovery. A
+ * failed vendor request replaces the stage's generic advice with its observed
+ * URL and outcome, and stays structured for programmatic callers.
+ */
 export const setupInstallFailure = (
   reason: HopperInstallFailureReason,
-  packageFailure?: LinuxPackageInstallFailure,
-  platform: NodeJS.Platform = "darwin",
+  context: {
+    readonly packageFailure?: LinuxPackageInstallFailure | undefined;
+    readonly platform?: NodeJS.Platform;
+    readonly download?: HopperRequestFailure | undefined;
+  } = {},
+): SetupHopperInstallFailure => {
+  const failure = stageFailure(
+    reason,
+    context.packageFailure,
+    context.platform ?? "darwin",
+  );
+  return context.download === undefined
+    ? failure
+    : {
+        ...failure,
+        remediation: `${describeHopperRequestFailure(context.download)} ${hopperRequestRecovery(context.download)}`,
+        download: context.download,
+      };
+};
+
+const stageFailure = (
+  reason: HopperInstallFailureReason,
+  packageFailure: LinuxPackageInstallFailure | undefined,
+  platform: NodeJS.Platform,
 ): SetupHopperInstallFailure => {
   switch (reason) {
     case "unsupported_host":

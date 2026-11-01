@@ -34,7 +34,7 @@ it("reports an unconfigured Kuna as a missing optional engine", async () => {
 it("publishes the caller's explicit settings once the installation validates", async () => {
   const root = await createTestTempDirectory("rea-kuna-doctor-");
   const kuna = await writeFakeKuna(root, {
-    version: { stdout: "kuna 1.986\n" },
+    version: { stdout: "kuna 1.988\n" },
   });
   const cache = join(root, "cache");
 
@@ -48,7 +48,7 @@ it("publishes the caller's explicit settings once the installation validates", a
   expect(inspection).toMatchObject({
     configured: true,
     available: true,
-    providerVersion: "1.986",
+    providerVersion: "1.988",
     registrationEnvironment: {
       REA_KUNA_COMMAND: kuna,
       REA_KUNA_CACHE_DIR: cache,
@@ -59,10 +59,10 @@ it("publishes the caller's explicit settings once the installation validates", a
         name: "installation",
         ok: true,
         detail: expect.stringMatching(
-          /reports Kuna 1\.986 \(sha256 [a-f0-9]{64}\)\.$/u,
+          /reports Kuna 1\.988 \(sha256 [a-f0-9]{64}\)\.$/u,
         ),
         remediation: null,
-        details: { version: "1.986", verified_version: "1.986" },
+        details: { version: "1.988", verified_version: "1.988" },
       },
       {
         name: "cache",
@@ -88,7 +88,7 @@ it("flags an unverified release without failing the installation", async () => {
       "You may continue with the selected unverified release.",
     ),
     remediation: expect.stringContaining("setting REA_KUNA_COMMAND"),
-    details: { verified_version: "1.986" },
+    details: { verified_version: "1.988" },
   });
 });
 

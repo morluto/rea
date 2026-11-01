@@ -4,12 +4,52 @@ import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 
 import { launchSetupPluginCommand } from "./SetupPluginCommand.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 
 const scope = () => {
   const resources = new ArtifactResourceScope();
   onTestFinished(() => resources.close());
   return resources;
 };
+
+it.each(["running", "cleanup"] as const)(
+  "joins the admitted command when caller cancellation arrives during %s",
+  async (stage) => {
+    const controller = new AbortController();
+    const resources = scope();
+    await expect(
+      launchSetupPluginCommand(
+        process.execPath,
+        stage === "running"
+          ? ["-e", "setInterval(() => {}, 1000)"]
+          : ["--version"],
+        {
+          env: process.env,
+          cwd: process.cwd(),
+          timeoutMs: 5000,
+          platform: process.platform,
+          resources,
+          signal: controller.signal,
+          launcher: async (options) => {
+            const launched = await spawnOwnedProviderProcess(options);
+            if (stage === "running") controller.abort("cancel active child");
+            return {
+              ...launched,
+              cleanup: async () => {
+                controller.abort("cancel during child cleanup");
+                return (
+                  launched.cleanup?.() ??
+                  cleanupOwnedProcessGroup(launched.ownership)
+                );
+              },
+            };
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(AnalysisCancelledError);
+    expect(resources.hasPending).toBe(false);
+  },
+);
 
 it("returns interruption after successful child cleanup without terminating the setup owner", async () => {
   const kill = process.kill.bind(process);
