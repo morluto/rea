@@ -438,6 +438,38 @@ try {
   assert.deepEqual(reopened.normalized_result, overlaySearch.normalized_result);
   assert.equal(reopened.evidence_id, overlaySearch.evidence_id);
   await call("close_binary");
+  const help = await promisify(execFile)(
+    process.execPath,
+    [entrypoint, "search-bytes", "--help"],
+    { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+  );
+  assert.match(
+    help.stdout,
+    /unbounded searches skip unloaded blocks and overlays/u,
+  );
+  assert.match(help.stdout, /overlay address space to search it/u);
+  for (const [bounds, expected] of [
+    [[], defaultSearch],
+    [["--start", overlayQuery.start, "--end", overlayQuery.end], overlaySearch],
+  ]) {
+    const { stdout: searchOutput } = await promisify(execFile)(
+      process.execPath,
+      [
+        entrypoint,
+        "search-bytes",
+        overlayPath,
+        overlayQuery.pattern,
+        "--provider",
+        "ghidra",
+        "--json",
+        ...bounds,
+      ],
+      { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+    );
+    const observed = parseEvidence(JSON.parse(searchOutput));
+    assert.equal(observed.subject.digest.sha256, overlaySha256);
+    assert.deepEqual(observed.normalized_result, expected.normalized_result);
+  }
   assert.deepEqual(await readFile(overlayPath), overlayBytes);
   report = {
     ok: true,
