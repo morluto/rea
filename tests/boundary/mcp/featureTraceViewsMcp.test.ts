@@ -195,7 +195,7 @@ it.each(["full", "compact"] as const)(
     // The advertised page contract binds each collection to its own rows.
     const mixed = {
       ...jsonObjectSchema.parse(selected.evidence.normalized_result),
-      items: graph.nodes.slice(0, 1),
+      items: graph.edges.slice(0, 1),
     };
     expect(analysisViewResultSchema.safeParse(mixed).success).toBe(false);
     expect(
