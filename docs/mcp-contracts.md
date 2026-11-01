@@ -529,7 +529,11 @@ names, the native API record, and high-pcode facets without starting a provider.
 and limit default to 0 and 64; pseudocode uses UTF-16 code units and never
 splits surrogate pairs, while other pages count rows. Unavailable facts and
 provider limitations remain explicit. Source is
-an exact same-session retained reference or portable inline Evidence. Views are
+an exact same-session retained reference, portable inline Evidence, or an
+Evidence record or bundle file. Native function, inventory, and observation
+views require the `rea.analysis` predicate; function-matching views require
+`rea.native-function-matching`. A mismatched predicate returns an
+`invalid_request` identifying `source.predicate_type`. Views are
 a summary, a layout mitigations or linkage facet, one section/symbol/module, or
 a stable page with a caller-selected positive `limit`. Module pages include
 JavaScript assets, bundled modules, and source modules. Select an exact
@@ -760,6 +764,13 @@ for every selector. A trace whose start and goal resolve to the same address can
 finish without reading relationships, even when neither traversal mode is
 available. Discovery does not block that direct invocation or replace its typed
 partial/error outcomes.
+
+`trace_native_ui_action` reports authored-UI and native-seed modes separately.
+Apple dispatch metadata requires a Mach-O target; another provider may supply
+the symbol-only alternative on other formats. If neither mode is available,
+read each mode's missing operations and remediation: a remedy for an authored
+app-bundle route does not by itself describe the native-seed route. Availability
+does not guarantee that every selector or provider operation will succeed.
 
 With complete detail, the `effects` and `annotations` arrays list the true
 members of their fixed vocabularies. A known member omitted from either array is false. This applies
