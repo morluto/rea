@@ -131,28 +131,36 @@ export const createElectronIpcContext = (
  * `electron`, `electron/main` and the other supported subpaths count while an
  * unrelated `electron-helper` package does not.
  *
- * Module links are the richer fact and are preferred: they distinguish a
- * type-only import, which promises no boundary fact, from a runtime reference.
- * They are absent when semantic analysis was skipped for a budget, and a
- * rejected application projection drops them, so the retained static reference
- * answers the same question in that case. A dynamic specifier is never counted
- * by either owner, so this establishes an observed reference rather than
- * absence.
+ * The two fact owners answer different parts of the question. Module links are
+ * the richer fact and answer a runtime `import` or `require`, while excluding a
+ * type-only import that promises no boundary fact. They are absent when semantic
+ * analysis was skipped for a budget, and a rejected application projection drops
+ * them; they also never hold a dynamic import. The retained static reference
+ * therefore answers both, and is read for every kind except `static-import` so
+ * that a type-only import is not counted as a runtime one. A dynamic specifier is
+ * never counted by either owner, so this establishes an observed reference
+ * rather than absence.
  */
 export const electronModuleReferenced = (
   analysis: JavaScriptArtifactAnalysis,
 ): boolean =>
   analysis.files.some(({ javascript, semantic }) => {
     const links = semantic?.ir.moduleLinks;
-    if (links !== undefined)
-      return links.some(
+    if (
+      links !== undefined &&
+      links.some(
         ({ specifier, kind }) =>
           kind !== "type-import" &&
           specifier !== null &&
           ELECTRON_MODULE.test(specifier),
-      );
+      )
+    )
+      return true;
     return (javascript?.references ?? []).some(
-      ({ specifier }) => specifier !== null && ELECTRON_MODULE.test(specifier),
+      ({ specifier, kind }) =>
+        kind !== "static-import" &&
+        specifier !== null &&
+        ELECTRON_MODULE.test(specifier),
     );
   });
 

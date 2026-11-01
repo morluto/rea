@@ -204,3 +204,13 @@ describe("Electron semantic coverage", () => {
     expect(electronSemantics).toBe("empty");
   });
 });
+
+it("counts a dynamic Electron import that module links do not retain", async () => {
+  // The semantic collector keeps no module link for `import("electron")`, so
+  // only the retained static reference names Electron here.
+  const { limitations, electronSemantics } = await graphFor(
+    `const electron = import("electron");\nelectron.then(() => {});\n`,
+  );
+  expect(electronSemantics).toBe("empty");
+  expect(limitations).toContain(EMPTY_COVERAGE);
+});
