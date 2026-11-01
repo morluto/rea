@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { projectNativeApiInspection } from "../dist/application/native/NativeApiInspection.js";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { nativeApiBoundarySchema } from "../dist/domain/native/nativeApiBoundary.js";
 import { parseGhidraFunctionResult } from "../dist/ghidra/GhidraFunctionValues.js";
 import { ghidraJavaEnvironment } from "../dist/ghidra/GhidraInstallation.js";
