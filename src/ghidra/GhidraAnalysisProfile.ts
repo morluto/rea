@@ -480,6 +480,7 @@ export const existingGhidraAnalysisProfile = (
     architecture: target.architecture ?? null,
     import_mode: "existing-project-private-copy-v1",
     ...sharedAnalysisSemantics,
+    selected_project_relationship_coverage: "prior-analysis-unknown-v1",
     annotation_policy: "read-only-existing-project-v1",
     existing_project: project,
     original_analysis: { completeness: "unknown", settings: "unknown" },
