@@ -68,7 +68,7 @@ export const collectJavaScriptSemanticResources = (
     (candidate) =>
       !socketPortInFirstArgument(candidate) ||
       tlsOptionsReplaceFirstArgument(candidate, context) ||
-      !rejectsSocketPortLiteral(candidate.node, context),
+      !rejectsSocketPortLiteral(candidate, context),
   );
   return [
     ...acquisitions.map(immutableAcquisition),
@@ -248,7 +248,9 @@ const rejectsPortValue = (
   if (t.isStringLiteral(value))
     return stringIsPath
       ? value.value.length === 0
-      : value.value === "" || !usablePort(Number(value.value));
+      : // Node trims a port string before coercing it, so a whitespace-only
+        // port is `ERR_SOCKET_BAD_PORT` while `" 80 "` is a valid port.
+        value.value.trim().length === 0 || !usablePort(Number(value.value));
   if (
     t.isNullLiteral(value) ||
     t.isBigIntLiteral(value) ||
@@ -356,9 +358,10 @@ const optionsSupplyPort = (
  * exactly readable value is decided.
  */
 const rejectsSocketPortLiteral = (
-  node: t.CallExpression | t.OptionalCallExpression,
+  candidate: Pick<ResourceCandidate, "specifier" | "node">,
   context: DataEffectTraversalContext,
 ): boolean => {
+  const node = candidate.node;
   const port = node.arguments[0];
   if (port === undefined || t.isSpreadElement(port)) return false;
   const value = unwrapJavaScriptExpression(port).node;
@@ -367,6 +370,13 @@ const rejectsSocketPortLiteral = (
   // socket ignores `port`, a falsy path still validates it, and any other
   // readable path throws before a socket exists.
   if (t.isObjectExpression(value)) {
+    // `tls.connect` wraps an existing socket and never connects, so it also
+    // never validates `port`; `net.connect` still rejects the same object.
+    if (
+      candidate.specifier === "tls" &&
+      lastMemberValue(value, "socket") !== undefined
+    )
+      return false;
     const intent = socketOptionsIntent(value);
     if (intent === "socket" || intent === "unknown") return false;
     if (intent === "invalid") return true;
