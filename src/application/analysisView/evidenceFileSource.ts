@@ -13,7 +13,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { safeParseImmutableEvidence } from "../../domain/evidenceValidation.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
-import { projectInputIssuesWithinBudget } from "../../domain/inputIssueProjection.js";
+import { projectInputIssuesBounded } from "../../domain/inputIssueProjection.js";
 import { readJsonFile } from "../JsonFiles.js";
 
 /** The request cancellation and the scope retaining descriptors whose close failed. */
@@ -132,33 +132,21 @@ const boundedContentIssues = (
   issues: readonly z.core.$ZodIssue[],
   input: unknown,
 ): readonly AnalysisInputIssue[] => {
-  const projected = projectInputIssuesWithinBudget(
+  const bounded = projectInputIssuesBounded(
     issues,
     input,
     EVIDENCE_CONTENT_ISSUE_BUDGET_BYTES,
   );
-  if (projected !== undefined) return projected;
-  const omission = (omitted: number): AnalysisInputIssue => ({
-    path: [],
-    reason: "invalid_value",
-    message: `${String(omitted)} of ${String(issues.length)} field issues were omitted because they do not fit the response budget; repair the reported fields and retry.`,
-  });
-  // Report the largest leading group that still fits so the caller keeps
-  // actionable detail instead of only the omission notice.
-  let keep = Math.floor(issues.length / 2);
-  while (keep > 0) {
-    const attempt = projectInputIssuesWithinBudget(
-      issues.slice(0, keep),
-      input,
-      EVIDENCE_CONTENT_ISSUE_BUDGET_BYTES,
-    );
-    if (attempt !== undefined)
-      return [...attempt, omission(issues.length - keep)];
-    keep = Math.floor(keep / 2);
-  }
-  return [omission(issues.length)];
+  if (bounded.omittedIssueCount === 0) return bounded.issues;
+  return [
+    ...bounded.issues,
+    {
+      path: [],
+      reason: "invalid_value",
+      message: `${String(bounded.omittedIssueCount)} of ${String(issues.length)} validator issues were omitted because they do not fit the response budget; repair the reported fields and retry.`,
+    },
+  ];
 };
-
 /** Read one Evidence record or select from an authenticated bundle without rereading the file. */
 export const readEvidenceFileSource = async (
   path: string,

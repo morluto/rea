@@ -372,7 +372,7 @@ describe("malformed Evidence file diagnostics (#8453)", () => {
     expect(issues).toContainEqual(
       expect.objectContaining({
         path: [],
-        message: expect.stringContaining("field issues were omitted"),
+        message: expect.stringContaining("validator issues were omitted"),
       }),
     );
   });
