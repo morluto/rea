@@ -634,6 +634,11 @@ so its profile may be different from the attempted selection; check the digest
 before using it for this comparison. A configuration difference does not by
 itself establish why analysis results differ.
 
+If no target is open and you intend to inspect the selected binding, open that
+target without the snapshot, then check its profile digest in `binary_session`
+before comparing parameters. This may start the selected provider; the saved
+snapshot remains a separate file.
+
 If a selected snapshot's file descriptor cannot close, `open_binary` reports
 `cleanup_incomplete`. `binary_session` reports `cleanup_pending` even when no
 target opened. Retry `close_binary` to release the retained descriptor before
