@@ -329,3 +329,66 @@ it.each([
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
   expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
 });
+
+/**
+ * `tls.connect` validates an options `path` as a string before it merges the
+ * object, so a readable non-string path throws regardless of the first argument
+ * or any `port`:
+ *
+ *   tls.connect(-1, { path: 1, port: 443 })  -> THREW ERR_INVALID_ARG_TYPE
+ *   tls.connect(80, { path: {} })            -> THREW ERR_INVALID_ARG_TYPE
+ *   tls.connect(-1, { path: "", port: 443 }) -> Socket created
+ *   tls.connect(80, { path: null })          -> Socket created
+ *   --- net accepts the same object ---
+ *   net.connect(80, { path: 1 })             -> Socket created
+ */
+it.each([
+  [
+    "a numeric tls path beside a port",
+    `tls.connect(-1, { path: 1, port: 443 })`,
+  ],
+  [
+    "a boolean tls path beside a port",
+    `tls.connect(-1, { path: true, port: 443 })`,
+  ],
+  [
+    "an object tls path beside a port",
+    `tls.connect(-1, { path: {}, port: 443 })`,
+  ],
+  [
+    "an array tls path beside a port",
+    `tls.connect(-1, { path: [], port: 443 })`,
+  ],
+  ["a numeric tls path with a usable port", `tls.connect(80, { path: 1 })`],
+  ["an object tls path with a usable port", `tls.connect(80, { path: {} })`],
+  ["an array tls path with a usable port", `tls.connect(80, { path: [] })`],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "an empty tls path beside a port",
+    `tls.connect(-1, { path: "", port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls Unix socket path",
+    `tls.connect(-1, { path: "/tmp/x.sock" })`,
+    "connect",
+  ],
+  ["a null tls path", `tls.connect(80, { path: null })`, "connect"],
+  ["a falsy boolean tls path", `tls.connect(80, { path: false })`, "connect"],
+  [
+    "a numeric net path with a usable port",
+    `net.connect(80, { path: 1 })`,
+    "connect",
+  ],
+  [
+    "an object net path with a usable port",
+    `net.connect(80, { path: {} })`,
+    "connect",
+  ],
+] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
+  expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
+});
