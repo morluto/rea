@@ -720,6 +720,86 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   });
 });
 
+it.each([true, false])(
+  "offers an entry-comment handoff only when the selected provider admits it (%s)",
+  async (entryCommentAvailable) => {
+    directory = await createTestTempDirectory("rea-comment-recovery-");
+    const target = join(directory, "fixture.hop");
+    await writeFile(target, "fixture");
+    const starts: string[] = [];
+    const selected = candidate("beta", starts);
+    const identity = selected.identity();
+    const annotation = capability(identity);
+    const session = composeBinarySession(
+      new AnalysisProviderRegistry([
+        {
+          ...selected,
+          capabilities: () => [
+            capability(identity),
+            entryCommentAvailable
+              ? { ...annotation, operation: "annotate_native_function" }
+              : {
+                  ...annotation,
+                  operation: "annotate_native_function",
+                  available: false,
+                  reason: "Selected analysis is read-only.",
+                  availabilityCode: "open_options_invalid",
+                },
+          ],
+        },
+      ]),
+    );
+    const server = createServer(
+      { kind: "session", session },
+      { logger: silentLogger },
+    );
+    const mcp = new Client({ name: "comment-recovery", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(mcp, server, { close: () => session.close() });
+    await server.connect(serverTransport);
+    await mcp.connect(clientTransport);
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "beta" },
+        })
+      ).isError,
+    ).not.toBe(true);
+    for (const [operation, field, flag] of [
+      ["set_comment", "comment", "--comment"],
+      ["set_inline_comment", "inline_comment", "--inline-comment"],
+    ] as const) {
+      const reply = await mcp.callTool({
+        name: operation,
+        arguments: { address: "0x1000", comment: "note" },
+      });
+      const error = parseMcpToolError(reply).error;
+      expect(error.code).toBe("capability_unavailable");
+      expect(error.details).toMatchObject({ provider_id: "beta", operation });
+      expect(error.remediation.action).toBe(
+        undeclaredOperationGuidance(operation, entryCommentAvailable),
+      );
+      if (entryCommentAvailable) {
+        expect(error.remediation.action).toContain("annotate_native_function");
+        expect(error.remediation.action).toContain(field);
+        expect(error.remediation.action).toContain(flag);
+      } else
+        expect(error.remediation.action).not.toContain(
+          "annotate_native_function",
+        );
+    }
+    expect(starts).toEqual([]);
+    const after = structured(
+      await mcp.callTool({ name: "binary_session", arguments: {} }),
+    );
+    expect(after.result).toMatchObject({
+      analysis_provider_binding: { provider: { id: "beta" } },
+    });
+  },
+);
+
 const candidate = (
   id: string,
   starts: string[],
