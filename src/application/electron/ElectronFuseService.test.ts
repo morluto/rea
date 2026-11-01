@@ -57,7 +57,9 @@ it("retains completed fuse Evidence when the provider completes after abort", as
       parameters: { path: report.artifact.selected_path },
       confidence: "observed",
       limitations: expect.arrayContaining(report.limitations),
-      locations: [{ kind: "artifact-path", path: report.artifact.selected_path }],
+      locations: [
+        { kind: "artifact-path", path: report.artifact.selected_path },
+      ],
       normalized_result: report,
     });
   }
