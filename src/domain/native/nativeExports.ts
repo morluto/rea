@@ -72,6 +72,12 @@ const elfExportSchema = z.strictObject({
   size: z.string().regex(/^[0-9]+$/u),
   type: z.enum(["function", "ifunc", "object", "tls", "other"]),
   binding: z.enum(["global", "weak", "unique"]),
+  visibility: z
+    .enum(["default", "protected"])
+    .exactOptional()
+    .describe(
+      "ELF symbol visibility as recorded in st_other. Omission means visibility was not recorded; it is not evidence of default visibility or a runtime binding.",
+    ),
   version: z.union([
     z.null(),
     z.literal("unknown"),

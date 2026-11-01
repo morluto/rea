@@ -4,9 +4,13 @@ import { expect } from "vitest";
 import { z } from "zod";
 import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { evidenceSchema } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSchema,
+} from "../../../src/domain/evidence.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { nativeExportsSchema } from "../../../src/domain/native/nativeExports.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import {
   elfExportImage,
@@ -17,6 +21,50 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 
 const exportsContract = toolContract("inspect_native_exports");
 const viewContract = toolContract("inspect_analysis_view");
+
+const checkElfVisibility = async (
+  call: Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"],
+  parent: z.infer<typeof evidenceSchema>,
+) => {
+  const view = {
+    kind: "native-exports",
+    collection: "exports",
+    names: ["selected"],
+    fields: ["visibility"],
+    offset: 1,
+    limit: 1,
+  };
+  const visibility = await call("inspect_analysis_view", {
+    source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    view,
+  });
+  expect(visibility.isError).not.toBe(true);
+  expect(
+    viewContract.outputSchema.parse(visibility.structuredContent)
+      .normalized_result,
+  ).toMatchObject({
+    items: [{ source_index: 1, visibility: "protected" }],
+  });
+  const report = nativeExportsSchema.parse(parent.normalized_result);
+  if (report.format !== "elf") throw new Error("Expected ELF report");
+  const historical = createEvidence(undefined, parent.provider, {
+    operation: "inspect_native_exports",
+    parameters: {},
+    result: {
+      ...report,
+      exports: report.exports.map(({ visibility: _visibility, ...row }) => row),
+    },
+  });
+  const oldView = await call("inspect_analysis_view", {
+    source: { kind: "inline", evidence: historical },
+    view,
+  });
+  expect(oldView.isError).not.toBe(true);
+  expect(
+    viewContract.outputSchema.parse(oldView.structuredContent)
+      .normalized_result,
+  ).toHaveProperty("items", [{ source_index: 1 }]);
+};
 
 cliTest.for(["pe", "elf"] as const)(
   "queries retained %s exports through CLI and actual stdio MCP after the source is deleted",
@@ -36,7 +84,7 @@ cliTest.for(["pe", "elf"] as const)(
         : elfExportImage({
             symbols: [
               { name: "selected", version: 2 },
-              { name: "selected", version: 0x8002 },
+              { name: "selected", version: 0x8002, visibility: 3 },
             ],
             versionDefinitions: ["fixture", "V1"],
           });
@@ -47,6 +95,14 @@ cliTest.for(["pe", "elf"] as const)(
     });
     expect(complete.exitCode, complete.stderr).toBe(0);
     const parent = exportsContract.outputSchema.parse(complete.json);
+    if (format === "elf") {
+      const exports = nativeExportsSchema.parse(parent.normalized_result);
+      expect(exports.format).toBe("elf");
+      expect(exports.exports).toMatchObject([
+        { visibility: "default" },
+        { visibility: "protected" },
+      ]);
+    }
     const bundle = join(root, "complete.bundle.json");
     const summarized = await run({
       arguments: [
@@ -144,6 +200,7 @@ cliTest.for(["pe", "elf"] as const)(
     ]);
     const { view_digest, ...content } = projectedView;
     expect(view_digest).toBe(digestCanonicalValue(content, "Analysis view"));
+    if (format === "elf") await checkElfVisibility(call, parent);
   },
 );
 
