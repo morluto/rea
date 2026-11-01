@@ -298,6 +298,15 @@ const inspectSearch = ({
       // cannot add a path to the goal, so its dossier limits are contextual
       // but do not make the searched start-to-goal closure incomplete.
       if (node === goal) continue;
+      const discoveryFact = coverage?.discovery?.callees;
+      if (
+        discoveryFact !== undefined &&
+        discoveryFact.status !== "complete" &&
+        discoveryFact.reason !== undefined
+      )
+        limitations.push(
+          `Call discovery for ${node} is ${discoveryFact.status}: ${discoveryFact.reason}`,
+        );
       discovery = combineRelationshipDiscovery(discovery, coverage, "callees");
       if (snapshot.unresolvedCallCaveats.length > 0)
         incompleteExpandedCoverage = true;

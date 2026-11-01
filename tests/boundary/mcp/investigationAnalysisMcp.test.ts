@@ -288,6 +288,22 @@ it.each([
     exhaustive: true,
   },
   {
+    label: "partially discovered code",
+    coverage: {
+      status: "complete",
+      discovery: {
+        callees: {
+          status: "partial",
+          reason: "This node was classified as data.",
+        },
+      },
+    } as RelationshipCoverage,
+    providerLimitations: [],
+    dossierLimitations: [],
+    status: "unknown",
+    exhaustive: true,
+  },
+  {
     label: "partial",
     coverage: {
       status: "partial",
@@ -419,6 +435,11 @@ it.each([
           ...scenario.providerLimitations,
           ...scenario.dossierLimitations,
           ...reasons,
+          ...(coverage?.discovery?.callees?.reason === undefined
+            ? []
+            : [
+                `Call discovery for 0x1000 is ${coverage.discovery.callees.status}: ${coverage.discovery.callees.reason}`,
+              ]),
         ]),
       });
       expect(evidence.evidence_links).toEqual([dossier.evidence_id]);
