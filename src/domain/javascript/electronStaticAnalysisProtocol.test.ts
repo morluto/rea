@@ -289,8 +289,18 @@ describe("Electron protocol registrations without a scheme", () => {
 
 describe("Electron protocol calls that register nothing", () => {
   it.each([
-    ["a handler without a callback", 'protocol.handle("app");'],
-    ["a handler with a null callback", 'protocol.handle("app", null);'],
+    [
+      "a legacy handler without a callback",
+      'protocol.registerStringProtocol("app");',
+    ],
+    [
+      "a legacy handler with a null callback",
+      'protocol.registerStringProtocol("app", null);',
+    ],
+    [
+      "a legacy handler with a void callback",
+      'protocol.registerStringProtocol("app", void 0);',
+    ],
     [
       "an interceptor without a callback",
       'protocol.interceptHttpProtocol("https");',
@@ -330,4 +340,32 @@ describe("Electron protocol calls that register nothing", () => {
       { scheme: literal("app"), enabled_privileges: ["secure"] },
     ]);
   });
+});
+
+describe("Electron wrapped protocol.handle registrations", () => {
+  it.each([
+    ["protocol", "default-protocol"],
+    ["session.defaultSession.protocol", "default-session"],
+  ])(
+    "retains %s registrations before handler invocation",
+    (receiver, session) => {
+      const protocols = protocolsOf(`
+      const { protocol, session } = require("electron");
+      ${receiver}.handle("omitted");
+      ${receiver}.handle("null", null);
+      ${receiver}.handle("undefined", void 0);
+    `);
+      expect(protocols).toMatchObject([
+        { api: "handle", role: "handler", session, scheme: literal("omitted") },
+        { api: "handle", role: "handler", session, scheme: literal("null") },
+        {
+          api: "handle",
+          role: "handler",
+          session,
+          scheme: literal("undefined"),
+        },
+      ]);
+      expect(protocols).toHaveLength(3);
+    },
+  );
 });
