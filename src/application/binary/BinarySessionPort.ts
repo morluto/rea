@@ -1,5 +1,6 @@
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
+import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
 import type { ExecutableFormatHint } from "../../domain/dosCom.js";
 import type {
   BinaryArchitecture,
@@ -98,6 +99,22 @@ export interface BinarySessionPort
   close(
     options?: BinarySessionCloseOptions,
   ): Promise<Result<null, AnalysisError>>;
+  /** Seal runtime acquisition and release investigation state after successful cleanup. */
+  dispose(
+    options?: Pick<ExecutionOptions, "progress"> & {
+      readonly retainProviderDocuments?: boolean;
+    },
+  ): Promise<Result<null, AnalysisError>>;
+  /** Seal future acquisition/admission while previously admitted work drains. */
+  beginShutdown(): void;
+  /** Drain work, optionally checkpoint, and clear records without closing the active engine. */
+  resetInvestigation(options?: {
+    readonly savePath?: string;
+    readonly overwrite?: boolean;
+    readonly signal?: AbortSignal;
+    /** Adapter-owned cleanup joins the drained transaction before clearing records. */
+    readonly retryCleanup?: () => Promise<Result<null, AnalysisError>>;
+  }): Promise<Result<ResetInvestigationReceipt, AnalysisError>>;
   /** Save a snapshot and close while excluding later provider requests. */
   closeWithSnapshot(
     path: string,

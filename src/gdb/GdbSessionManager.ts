@@ -1,3 +1,12 @@
+import {
+  GDB_PROVIDER_IDENTITY,
+  isGdbInterruptCommand,
+  isGdbTargetDispositionCommand,
+} from "./GdbProviderIdentity.js";
+export {
+  isGdbInterruptCommand,
+  isGdbTargetDispositionCommand,
+} from "./GdbProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import { snapshotGdbCommandRecords } from "./GdbCommandRecords.js";import { randomUUID } from "node:crypto";
@@ -116,12 +125,6 @@ const cancelledWithCallerReason = (
     cancellation.bindCleanupDependencies([previous]);
   return cancellation;
 };
-
-export const GDB_PROVIDER_IDENTITY = {
-  id: "gnu.gdb",
-  name: "GNU GDB",
-  version: null,
-} as const;
 
 interface PendingCommand {
   readonly token: number;
@@ -3338,14 +3341,6 @@ export const waitForGdbCommandTurn = (
       throw new AnalysisCancelledError("gdb_console", { cause: signal.reason });
   });
 };
-
-/** Only this exact, argument-free control can reuse an already admitted run. */
-export const isGdbInterruptCommand = (command: string): boolean =>
-  command.trim() === "interrupt";
-
-/** Only explicit target disposition may run while its debugger retains ownership. */
-export const isGdbTargetDispositionCommand = (command: string): boolean =>
-  command.trim() === "kill" || command.trim() === "detach";
 
 const isGdbTargetInspectionCommand = (command: string): boolean =>
   /^(?:file|exec-file|symbol-file|info|show)(?:\s|$)/u.test(

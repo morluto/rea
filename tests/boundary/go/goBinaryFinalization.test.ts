@@ -65,6 +65,7 @@ it.each(["control", "close-failure", "close-cancel", "close-both"] as const)(
             _tag: "AnalysisCancelledError",
             cause: reason,
           });
+          expect(primary.cause).toBe(reason);
         }
         close.mockRestore();
         await service.close();

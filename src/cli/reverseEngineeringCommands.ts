@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import { createReverseEngineeringService } from "../composition/reverseEngineering.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
+  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -26,7 +27,10 @@ import {
   GdbSessionManager,
   gdbOneShotCommandMayInvalidateDetachProof,
 } from "../gdb/GdbSessionManager.js";
-import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
+import {
+  createGdbSessionManager,
+  createRizinDebugSessionManager,
+} from "../composition/debuggerSessions.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   analysisEvidenceDeliveryOptions,
@@ -40,6 +44,7 @@ import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 const executeWithCleanup = async (
   execute: () => Promise<Result<Evidence, AnalysisError>>,
   close: () => Promise<void>,
+  signal: AbortSignal,
 ): Promise<Result<Evidence, AnalysisError>> => {
   let result: Result<Evidence, AnalysisError>;
   try {
@@ -72,10 +77,25 @@ const executeWithCleanup = async (
   }
   if (!result.ok && hadIncompleteCleanup && !result.error.cleanupIncomplete) {
     const evidence = cleanupOnlyCompleteEvidence(result.error);
-    if (evidence !== undefined) return { ok: true, value: evidence };
+    if (evidence !== undefined)
+      return cancelledAfterCleanup({ ok: true, value: evidence }, signal);
   }
-  return result;
+  return cancelledAfterCleanup(result, signal);
 };
+
+/** Late cancellation observed during finalization keeps the completed Evidence as partial data. */
+const cancelledAfterCleanup = (
+  result: Result<Evidence, AnalysisError>,
+  signal: AbortSignal,
+): Result<Evidence, AnalysisError> =>
+  result.ok && signal.aborted
+    ? err(
+        new AnalysisCancelledError(result.value.operation, {
+          cause: signal.reason,
+          partialObservation: result.value,
+        }),
+      )
+    : result;
 
 const cleanupOnlyCompleteEvidence = (
   error: AnalysisError,
@@ -155,8 +175,7 @@ export const registerReverseEngineeringCommands = (
   environment: Readonly<NodeJS.ProcessEnv>,
   createGdbManager: (
     environment: Readonly<NodeJS.ProcessEnv>,
-  ) => GdbSessionManager = (providerEnvironment) =>
-    new GdbSessionManager({ environment: providerEnvironment }),
+  ) => ReturnType<typeof createGdbSessionManager> = createGdbSessionManager,
   createService: typeof createReverseEngineeringService = createReverseEngineeringService,
 ): void => {
   // Closed services cannot run again, but failed cleanup must outlive a run.
@@ -170,6 +189,7 @@ export const registerReverseEngineeringCommands = (
     retainedService = undefined;
   };
   const runWithService = async (
+    signal: AbortSignal,
     execute: (
       service: ReverseEngineeringService,
     ) => Promise<Result<Evidence, AnalysisError>>,
@@ -197,6 +217,7 @@ export const registerReverseEngineeringCommands = (
       return await executeWithCleanup(
         () => execute(service),
         () => closeRetained(service),
+        signal,
       );
     } finally {
       running = false;
@@ -279,7 +300,7 @@ export const registerReverseEngineeringCommands = (
           };
           const inputError = cliEvidenceDeliveryInputError(delivery);
           if (inputError !== undefined) return projectAnalysisError(inputError);
-          const result = await runWithService((service) =>
+          const result = await runWithService(signal, (service) =>
             service.inspectWithObjdump(
               {
                 ...args,
@@ -326,7 +347,7 @@ export const registerReverseEngineeringCommands = (
             const inputError = cliEvidenceDeliveryInputError(delivery);
             if (inputError !== undefined)
               return projectAnalysisError(inputError);
-            const result = await runWithService((service) =>
+            const result = await runWithService(signal, (service) =>
               service.inspectWithObjdump(
                 {
                   operation: "architectures",
@@ -362,7 +383,7 @@ export const registerReverseEngineeringCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.executeRizinCommand, async () => {
-          const result = await runWithService((service) =>
+          const result = await runWithService(signal, (service) =>
             service.executeRizinCommand(
               {
                 ...args,
@@ -482,7 +503,7 @@ export const registerReverseEngineeringCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.debugWithRizin, async () => {
-          const manager = new RizinDebugSessionManager(environment);
+          const manager = createRizinDebugSessionManager(environment);
           let sessionId: string | undefined;
           return finishAnalysisCommand(
             async () => {

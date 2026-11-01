@@ -13,7 +13,9 @@ documentation, and live catalogs may describe different versions.
 For provider-backed work, exercise the analyst's task through REA and compare
 relevant native provider and independent artifact observations where available.
 Check applicable partial results, recovery and session boundaries; report what
-was not exercised. Use [workflow verification](../../../docs/testing.md#provider-backed-workflow-verification)
+was not exercised. For failure guidance, follow [design recovery around the
+failure](../../../docs/tool-design.md#design-recovery-around-the-failure).
+Use [workflow verification](../../../docs/testing.md#provider-backed-workflow-verification)
 to select evidence for the proposed contract instead of seeking provider API
 parity.
 

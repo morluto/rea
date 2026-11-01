@@ -1,4 +1,9 @@
 import { randomUUID } from "node:crypto";
+import {
+  writeEvidenceBundle,
+  evidenceBundleExportReceipt,
+} from "../EvidenceBundleFiles.js";
+import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
 
 import { retainSavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 
@@ -46,6 +51,7 @@ import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { recordEvidenceSources } from "../investigation/recordEvidenceSources.js";
 import { BinarySessionRecords } from "./BinarySessionRecords.js";
 import { binarySessionStatus } from "./BinarySessionStatus.js";
+import { SessionRuntimeAvailability } from "./SessionRuntimeAvailability.js";
 import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import {
@@ -196,10 +202,7 @@ export class BinarySession
   readonly #bundleResourceFactory: BundleResourceClientFactory | undefined;
   #activeBundleResources: ActiveBundleResourceSession | undefined;
   #pendingBundleResourceCleanup: ActiveBundleResourceSession[] = [];
-  readonly #runtimeUnavailability = new Map<
-    string,
-    { readonly reason: string }
-  >();
+  readonly #runtimeAvailability = new SessionRuntimeAvailability();
   readonly #availabilityListeners = new Set<() => void | Promise<void>>();
 
   constructor(
@@ -317,11 +320,7 @@ export class BinarySession
         options.signal,
         "open_bundle_resources",
       );
-      const closed = await this.#closeActive(
-        {},
-        false,
-        cleanupFailures.onFailure,
-      );
+      const closed = await this.#closeActive({}, cleanupFailures.onFailure);
       if (!closed.ok) {
         this.#pendingBundleResourceCleanup.push(candidate);
         const candidateClosed = await this.#retryPendingBundleResourceCleanup(
@@ -467,8 +466,8 @@ export class BinarySession
       current: this.#active,
       target,
       options,
-      stagedSnapshotMatches: (target, profile) =>
-        this.matchesSnapshot(target, profile),
+      stagedSnapshotMismatch: (target, profile) =>
+        this.snapshotMismatch(target, profile),
     }).then((resolved) =>
       resolved.ok && isAborted(options.signal)
         ? err(
@@ -496,8 +495,8 @@ export class BinarySession
           current: this.#active,
           path,
           options: admitted,
-          stagedSnapshotMatches: (target, profile) =>
-            this.matchesSnapshot(target, profile),
+          stagedSnapshotMismatch: (target, profile) =>
+            this.snapshotMismatch(target, profile),
         }),
       options,
     );
@@ -518,8 +517,8 @@ export class BinarySession
             ...resolved,
             current: this.#active,
             options,
-            stagedSnapshotMatches: (target, profile) =>
-              this.matchesSnapshot(target, profile),
+            stagedSnapshotMismatch: (target, profile) =>
+              this.snapshotMismatch(target, profile),
           }),
         ),
       options,
@@ -878,7 +877,7 @@ export class BinarySession
       if (this.#externalMutationCleanupFailure !== undefined) onDispatch();
       const retireTarget = dispatched && activeAtDispatch !== undefined;
       if (retireTarget) {
-        const retired = await this.#closeActive({}, false);
+        const retired = await this.#closeActive({});
         if (!retired.ok) {
           const primary = completionFailure(value, retired.error);
           const failure =
@@ -965,7 +964,7 @@ export class BinarySession
     return err(new AnalysisCancelledError(operation));
   }
 
-  /** Close the active target, if any. */
+  /** Release the engine and replay state while retaining investigation history. */
   close(
     options: BinarySessionCloseOptions = {},
   ): Promise<Result<null, AnalysisError>> {
@@ -1016,6 +1015,96 @@ export class BinarySession
     });
   }
 
+  /** Explicit whole-runtime disposal, separate from reusable engine cleanup. */
+  dispose(
+    options: Pick<ExecutionOptions, "progress"> & {
+      readonly retainProviderDocuments?: boolean;
+    } = {},
+  ): Promise<Result<null, AnalysisError>> {
+    this.beginShutdown();
+    return this.#serialize(async (admittedThrough) => {
+      await this.#drainCalls(admittedThrough);
+      const closed = await this.#closeActive(options);
+      if (closed.ok) this.disposeInvestigationRecords();
+      return closed;
+    });
+  }
+
+  /** Save once at an explicit boundary, then end the investigation atomically. */
+  resetInvestigation(
+    options: {
+      readonly savePath?: string;
+      readonly overwrite?: boolean;
+      readonly signal?: AbortSignal;
+      readonly retryCleanup?: () => Promise<Result<null, AnalysisError>>;
+    } = {},
+  ): Promise<Result<ResetInvestigationReceipt, AnalysisError>> {
+    if (this.#shutdownStarted)
+      return Promise.resolve(
+        err(new AnalysisCancelledError("reset_investigation")),
+      );
+    return this.#serialize(async (admittedThrough) => {
+      await this.#drainCalls(admittedThrough);
+      const cancelled = () =>
+        new AnalysisCancelledError("reset_investigation", {
+          cause: options.signal?.reason,
+        });
+      if (isAborted(options.signal)) return err(cancelled());
+      const adapterResources = await options.retryCleanup?.();
+      if (adapterResources !== undefined && !adapterResources.ok)
+        return adapterResources;
+      if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
+        return err(this.#externalMutationCleanupFailure);
+      const pending = await this.#retryPendingCleanup();
+      if (!pending.ok) return pending;
+      const bundles = await this.#retryPendingBundleResourceCleanup();
+      if (!bundles.ok) return bundles;
+      const files = await this.closeFileResources();
+      if (!files.ok) return files;
+      if (this.#providerRouter.hasPendingOwnedResources()) {
+        const candidates = await this.#providerRouter.closeOwnedResources();
+        if (!candidates.ok) return candidates;
+      }
+      if (isAborted(options.signal)) return err(cancelled());
+      const statistics = this.investigationStatistics();
+      let saved: ResetInvestigationReceipt["saved_bundle"];
+      if (options.savePath !== undefined) {
+        const bundle = this.immutableEvidenceBundle();
+        const written = await writeEvidenceBundle(
+          bundle,
+          options.savePath,
+          options.overwrite ?? false,
+          this.fileResources,
+          options.signal,
+          "reset_investigation",
+        );
+        if (!written.ok) return written;
+        saved = evidenceBundleExportReceipt(bundle, written.value);
+      }
+      // Publication can win cancellation. Report the committed file but retain
+      // the investigation if cancellation arrived during publication/cleanup.
+      if (isAborted(options.signal))
+        return err(
+          new AnalysisCancelledError("reset_investigation", {
+            cause: options.signal?.reason,
+            ...(saved === undefined
+              ? {}
+              : { diagnostics: { saved_bundle: saved } }),
+          }),
+        );
+      this.clearInvestigationRecords();
+      return ok({
+        cleared_evidence_records: statistics.evidence_records,
+        cleared_unknown_revisions: statistics.unknown_revisions,
+        cleared_unknown_heads: statistics.unknown_heads,
+        retained_target:
+          this.#active !== undefined ||
+          this.#activeBundleResources !== undefined,
+        ...(saved === undefined ? {} : { saved_bundle: saved }),
+      });
+    });
+  }
+
   /** Offer the caller's retry only while this session retains the failed cleanup. */
   #offerCleanupRetry(
     closed: Result<null, AnalysisError>,
@@ -1043,7 +1132,6 @@ export class BinarySession
 
   async #closeActive(
     options: BinarySessionCloseOptions,
-    clearRecords = true,
     onCleanupFailure?: (failure: AnalysisError) => void,
   ): Promise<Result<null, AnalysisError>> {
     const previous = this.#active;
@@ -1052,14 +1140,14 @@ export class BinarySession
     this.#activeBundleResources = undefined;
     if (previousResources !== undefined)
       this.#pendingBundleResourceCleanup.push(previousResources);
-    const closed =
+    const closing =
       previous === undefined
-        ? await this.#retryPendingCleanup(
+        ? this.#retryPendingCleanup(
             options.progress,
             options.retainProviderDocuments,
             onCleanupFailure,
           )
-        : await this.#retireClient(previous, {
+        : this.#retireClient(previous, {
             ...(options.progress === undefined
               ? {}
               : { progress: options.progress }),
@@ -1068,8 +1156,11 @@ export class BinarySession
               : {}),
             ...(onCleanupFailure === undefined ? {} : { onCleanupFailure }),
           });
-    if (clearRecords) this.clearSessionRecords();
+    // Register the retiring resource owner before notifying observers that
+    // the engine/cache is gone. Cleanup is still pending at this boundary.
+    this.clearEngineRecords();
     this.#clearRuntimeAvailability();
+    const closed = await closing;
     const fileResources = await this.closeFileResources();
     if (!fileResources.ok) onCleanupFailure?.(fileResources.error);
     const candidateResources = await this.#providerRouter.closeOwnedResources();
@@ -1109,15 +1200,7 @@ export class BinarySession
       return err(combined);
     }
     if (!closed.ok) return closed;
-    if (resourceFailure !== undefined) return err(resourceFailure);
-    if (clearRecords) {
-      // Closing analysis resources cannot acknowledge another owner's writer.
-      // That owner resolves its retained failure only after confirmed cleanup.
-      if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
-        return err(this.#externalMutationCleanupFailure);
-      this.#externalMutationCleanupFailure = undefined;
-    }
-    return ok(null);
+    return resourceFailure === undefined ? ok(null) : err(resourceFailure);
   }
 
   async #retryPendingBundleResourceCleanup(
@@ -1258,6 +1341,7 @@ export class BinarySession
     const client = run?.client;
     return binarySessionStatus({
       ...options,
+      investigation: this.investigationStatistics(),
       target: this.#active?.target,
       ...(resourceRun === undefined
         ? {}
@@ -1267,7 +1351,7 @@ export class BinarySession
           }),
       route: this.#currentRoute(),
       router: this.#providerRouter,
-      runtimeUnavailability: this.#runtimeUnavailability,
+      runtimeUnavailability: this.#runtimeAvailability.entries,
       runId: run?.runId,
       runtimeLineageSnapshots: client?.runtimeLineageSnapshots?.() ?? [],
       requestActivitySnapshots: client?.requestActivitySnapshots?.() ?? [],
@@ -1360,6 +1444,8 @@ export class BinarySession
     signal: AbortSignal | undefined,
     operation: (analysis: AnalysisOperationPort) => Promise<Value>,
   ): Promise<Result<Value, AnalysisError>> {
+    if (this.#shutdownStarted)
+      return Promise.resolve(err(new AnalysisCancelledError(operationName)));
     const generation = this.#transitionGeneration;
     const transition = this.#transition;
     const call = (async (): Promise<Result<Value, AnalysisError>> => {
@@ -1427,6 +1513,7 @@ export class BinarySession
     // A failed reply cannot prove that a dispatched metadata write rolled back.
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
+    const dispatch = this.#runtimeAvailability.dispatch();
     const call = active.client.execute(name, arguments_, options);
     const result = unrecordedExecution(await call);
     const profiled = bindExecutionTarget(
@@ -1455,7 +1542,15 @@ export class BinarySession
       this.#active === active
     )
       this.#active.nativeSourceAdmitted = true;
-    this.#observeRuntimeAvailability(name, execution);
+    if (
+      this.#runtimeAvailability.observe(
+        dispatch,
+        capability,
+        active.route.capabilities.values(),
+        execution,
+      )
+    )
+      this.#emitAvailabilityChanged();
     // Source facts belong to the observation, even when this query cannot be
     // replayed (for example a Ghidra procedure read without a document selector).
     if (execution.ok && execution.value.sourceEvidence !== undefined) {
@@ -1499,56 +1594,8 @@ export class BinarySession
     return execution;
   }
 
-  #observeRuntimeAvailability(
-    operation: AnalysisOperation,
-    result: Result<AnalysisExecution, AnalysisError>,
-  ): void {
-    if (result.ok) {
-      if (this.#markRuntimeAvailable(operation))
-        this.#emitAvailabilityChanged();
-      return;
-    }
-    if (result.error._tag === "AnalysisCapabilityUnavailableError") {
-      if (this.#markRuntimeUnavailable(operation, result.error.message))
-        this.#emitAvailabilityChanged();
-      return;
-    }
-    if (
-      [
-        "ProviderAdapterError",
-        "HopperProcessError",
-        "HopperStartError",
-      ].includes(result.error._tag)
-    ) {
-      const capabilities = this.#active?.route.capabilities;
-      const providerId = capabilities?.get(operation)?.provider.id;
-      let changed = false;
-      for (const descriptor of capabilities?.values() ?? [])
-        if (providerId !== undefined && descriptor.provider.id === providerId)
-          changed =
-            this.#markRuntimeUnavailable(
-              descriptor.operation,
-              `${result.error._tag}: ${result.error.message}`,
-            ) || changed;
-      if (changed) this.#emitAvailabilityChanged();
-    }
-  }
-
-  #markRuntimeAvailable(operation: string): boolean {
-    return this.#runtimeUnavailability.delete(operation);
-  }
-
-  #markRuntimeUnavailable(operation: string, reason: string): boolean {
-    const current = this.#runtimeUnavailability.get(operation);
-    if (current?.reason === reason) return false;
-    this.#runtimeUnavailability.set(operation, { reason });
-    return true;
-  }
-
   #clearRuntimeAvailability(): void {
-    if (this.#runtimeUnavailability.size === 0) return;
-    this.#runtimeUnavailability.clear();
-    this.#emitAvailabilityChanged();
+    if (this.#runtimeAvailability.clear()) this.#emitAvailabilityChanged();
   }
 
   #emitAvailabilityChanged(): void {

@@ -388,6 +388,24 @@ it("does not project cancellation cleanup as incomplete after a successful retry
   });
 });
 
+it("returns cancellation with the completed observation when the caller interrupts service close", async () => {
+  const evidence = observation("complete");
+  const service = {
+    inspectWithObjdump: vi.fn(async () => ok(evidence)),
+    close: vi.fn(async () => {
+      process.emit("SIGINT");
+    }),
+  };
+
+  const result = await runObjdump(service);
+
+  expect(result).toMatchObject({
+    code: "cancelled",
+    details: { partial_observation: evidence },
+  });
+  expect(process.exitCode).toBe(130);
+});
+
 it("runs an independent service for each command so cleanup cannot close later runs", async () => {
   const { directory, path } = await createArtifact();
   const commands = new Map<

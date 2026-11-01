@@ -1418,6 +1418,14 @@ it.each([
     { workflows: true, code: true, package: false, website: false },
   ],
   [
+    ".github/workflows/codeql.yml",
+    { workflows: true, code: true, runtime: false, package: false },
+  ],
+  [
+    ".github/codeql/production.yml",
+    { workflows: true, code: true, runtime: false, package: false },
+  ],
+  [
     ".github/workflows/real-ghidra-windows.yml",
     { workflows: true, code: true, package: false, website: false },
   ],

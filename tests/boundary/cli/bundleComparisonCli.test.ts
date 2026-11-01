@@ -91,7 +91,11 @@ cliTest(
     const display = await compare(displayPath);
     expect(display.exitCode).toBe(0);
     const displayResult = bundleComparisonResultSchema.parse(display.json);
-    expect(displayResult).toMatchObject({ status: "unchanged", changes: [] });
+    expect(displayResult).toMatchObject({
+      status: "unchanged",
+      summary: { records_unchanged: 1, unresolved: 0 },
+      changes: [],
+    });
     expect(displayResult.left_bundle_sha256).not.toBe(
       displayResult.right_bundle_sha256,
     );

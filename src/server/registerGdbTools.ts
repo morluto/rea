@@ -1,11 +1,11 @@
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
+import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
 import {
   isGdbInterruptCommand,
   isGdbTargetDispositionCommand,
-  type GdbSessionManager,
-} from "../gdb/GdbSessionManager.js";
+} from "../gdb/GdbProviderIdentity.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import {

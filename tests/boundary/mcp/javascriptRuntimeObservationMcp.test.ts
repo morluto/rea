@@ -20,6 +20,7 @@ import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contract
 import { createJavaScriptRuntimeObservationEvidence } from "../../../src/application/javascript/JavaScriptRuntimeObservationEvidence.js";
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/inspector/providerIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -271,6 +272,14 @@ function registerRetainedRuntimeEvidence(
       },
     });
     const evidenceId = evidenceIdFrom(observedRuntime.structuredContent);
+    const bundle = await client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {},
+    });
+    expect(bundle.isError).not.toBe(true);
+    expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(
+      observedRuntime.structuredContent,
+    );
     expect(observedRuntime.structuredContent).toMatchObject({
       evidence_id: evidenceId,
       operation: "observe_javascript_runtime",

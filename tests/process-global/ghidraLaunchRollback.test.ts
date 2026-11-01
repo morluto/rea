@@ -226,9 +226,10 @@ it.skipIf(process.platform === "win32")(
     expect(result.error.cause).toBeInstanceOf(AggregateError);
     if (!(result.error.cause instanceof AggregateError))
       throw new Error("Expected composite failure");
-    expect(result.error.cause.errors[0]).toMatchObject({
-      cause: fault.failure,
-    });
+    const primary: unknown = result.error.cause.errors[0];
+    expect(primary).toBeInstanceOf(GhidraLaunchError);
+    if (!(primary instanceof GhidraLaunchError)) throw primary;
+    expect(primary.cause).toBe(fault.failure);
     expect(result.error.cause.errors[1]).toBeUndefined();
     expect(result.error.partialLaunch).toBeDefined();
     denyCleanup = false;

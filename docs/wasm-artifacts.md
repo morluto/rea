@@ -83,7 +83,8 @@ valid: partial results state whether WABT validation is unknown, rejected the
 module, or succeeded before a later inspection failure.
 CLI errors include this partial Evidence inline. MCP errors can return its
 `retained-evidence` reference in `details.partial_observation`; use
-`get_evidence_bundle` with `detail: "complete"` to retrieve the matching record.
+`get_evidence_bundle` with `detail: "records"` and that `evidence_id` filter to
+retrieve the matching record.
 
 Core validation remains authoritative when an optional custom section cannot
 be interpreted. WABT warning output is preserved in `custom_section_warnings`;
