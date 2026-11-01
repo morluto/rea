@@ -204,7 +204,7 @@ describe("provider selection over MCP", () => {
         details: { provider_id: "beta", operation: "read_bytes" },
         remediation: {
           action: expect.stringMatching(
-            /binary_session.*complete.*open_binary.*provider_id.*may discard provider session edits/u,
+            /binary_session.*complete.*open_binary.*provider_id.*may discard provider session edits.*Evidence does not restore/u,
           ),
         },
       },
