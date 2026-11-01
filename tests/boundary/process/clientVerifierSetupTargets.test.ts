@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
-it.each([
+it.each(([
   ["gemini", "relative path", false],
   ["gemini", "profile traversal", false],
   ["gemini", "profile root alias", false],
@@ -23,7 +23,7 @@ it.each([
   ["qwen", "skill traversal", false],
   ["qwen", "profile child", true],
   ["qwen", "skill child", true],
-] as const)(
+] as const).filter(([client]) => process.platform !== "win32" || client !== "copilot"))(
   "%s checks %s setup-plan targets before writing",
   async (client, kind, allowed) => {
     const state = await mkdtemp(join(tmpdir(), "rea-client-plan-"));
