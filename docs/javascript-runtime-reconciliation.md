@@ -93,6 +93,10 @@ coverage. It does not print captured source text.
 Runtime targets, frames, scripts, and workers become capture-scoped graph
 nodes. REA evaluates compatible static candidates conservatively:
 
+V8 Inspector targets whose protocol type is `node` use JavaScript asset/module
+candidates for their verified entry location. A target-only correspondence does
+not mark that script loaded; load-state evidence requires a script observation.
+
 1. A captured-source SHA-256 plus one matching mapped location yields
    a content-and-location match.
 2. When no static candidate exists at a mapped location, one unique exact
