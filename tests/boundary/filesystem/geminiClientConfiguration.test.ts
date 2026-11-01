@@ -1,5 +1,5 @@
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,6 +42,15 @@ describe("Gemini CLI configuration paths", () => {
       format: "json",
     });
     expect(client?.discoveryPaths).toEqual([
+      join("/home/a", ".gemini", "tmp"),
+      join("/home/a", ".gemini", "trustedFolders.json"),
+    ]);
+  });
+
+  it("resolves the client applicability evidence paths", () => {
+    const client = geminiPath("/home/a");
+    if (client === undefined) throw new Error("missing gemini_cli client");
+    expect(clientEvidencePaths(client)).toEqual([
       join("/home/a", ".gemini", "settings.json"),
       join("/home/a", ".gemini", "tmp"),
       join("/home/a", ".gemini", "trustedFolders.json"),
@@ -107,5 +116,27 @@ describe("Gemini CLI detection isolation", () => {
 
     const detected = await detectClients(home);
     expect(detected.map(({ name }) => name)).toContain("gemini_cli");
+  });
+
+  it("preserves a dangling settings symlink as evidence in doctor and detection", async () => {
+    const home = await createTestTempDirectory("rea-gemini-dangling-settings-");
+    await mkdir(join(home, ".gemini"), { recursive: true });
+    await symlink(
+      join(home, ".gemini", "nonexistent-target.json"),
+      join(home, ".gemini", "settings.json"),
+    );
+
+    const detected = await detectClients(home);
+    expect(detected.map(({ name }) => name)).toContain("gemini_cli");
+
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: process.platform,
+      environment: {},
+    });
+    const geminiStatus = statuses.find(({ client }) => client === "gemini_cli");
+    expect(geminiStatus).toMatchObject({
+      client: "gemini_cli",
+      state: "missing",
+    });
   });
 });

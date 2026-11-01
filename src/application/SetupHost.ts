@@ -2,7 +2,7 @@ import {
   isClientConfigurationCleanupFailure,
   retryClientConfigurationCleanup,
 } from "./ClientConfigurationCleanup.js";
-import { access } from "node:fs/promises";
+import { access, lstat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -451,14 +451,16 @@ export const detectClients = async (
 };
 
 const clientEvidencePresent = async (client: SetupClient): Promise<boolean> => {
+  const configs = new Set([client.configPath, ...(client.configPaths ?? [])]);
   for (const path of clientEvidencePaths(client))
-    if (await exists(path)) return true;
+    if (await exists(path, configs.has(path))) return true;
   return false;
 };
 
-const exists = async (path: string): Promise<boolean> => {
+const exists = async (path: string, isConfig = false): Promise<boolean> => {
   try {
-    await access(path);
+    if (isConfig) await lstat(path);
+    else await access(path);
     return true;
   } catch (cause: unknown) {
     // best-effort cleanup: optional host probing; absence means unavailable.

@@ -565,7 +565,6 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     discoveryPaths: ({ home, env }: ClientPathContext) => {
       const root = join(env.GEMINI_CLI_HOME || home, ".gemini");
       return [
-        join(root, "settings.json"),
         join(root, "tmp"),
         env.GEMINI_CLI_TRUSTED_FOLDERS_PATH ||
           join(root, "trustedFolders.json"),
@@ -782,17 +781,21 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
 export const clientEvidencePaths = (
   client: Pick<
     SetupClient,
-    "configPath" | "configPaths" | "markerPath" | "discoveryPaths"
+    | "configPath"
+    | "configPaths"
+    | "markerPath"
+    | "discoveryPaths"
+    | "sharedRegistration"
   >,
 ): readonly string[] => [
   ...new Set(
-    (
-      client.discoveryPaths ?? [
-        client.configPath,
-        ...(client.configPaths ?? []),
-        client.markerPath,
-      ]
-    ).filter((path): path is string => path !== undefined && path.length > 0),
+    [
+      ...(client.sharedRegistration === true
+        ? []
+        : [client.configPath, ...(client.configPaths ?? [])]),
+      ...(client.discoveryPaths ??
+        (client.markerPath === undefined ? [] : [client.markerPath])),
+    ].filter((path): path is string => path !== undefined && path.length > 0),
   ),
 ];
 
