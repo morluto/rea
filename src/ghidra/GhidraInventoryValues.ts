@@ -459,8 +459,8 @@ const resultSchemas = {
   list_strings: z.array(stringItem),
   procedure_address: nativeAddressObservationSchema,
   resolve_containing_procedure: containingProcedure,
-  search_procedures: z.array(addressedItem),
-  search_strings: z.array(addressedItem),
+  search_procedures: z.array(procedureItem),
+  search_strings: z.array(stringItem),
 } satisfies Readonly<
   Record<Exclude<GhidraInventoryOperation, GhidraNamingOperation>, z.ZodType>
 >;

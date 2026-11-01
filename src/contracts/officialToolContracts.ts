@@ -218,13 +218,13 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "search_procedures",
-    `Search every analyzed procedure name using literal matching by default or regex when requested. Results are deterministic and complete. ${hopperRegexDeadline} Select detail summary for counts and retained native-inventory pages; complete remains the default.`,
+    `Search every analyzed procedure name using literal matching by default or regex when requested. Results are deterministic and complete. Ghidra rows retain their reported external and thunk classification. ${hopperRegexDeadline} Select detail summary for counts and retained native-inventory pages; complete remains the default.`,
     z.object({ ...nativeSearchInput, detail: analysisDetailSchema }),
     { evidenceParameters: "omit-detail" },
   ),
   official(
     "search_strings",
-    `Search every provider-reported string object or candidate using literal matching by default or regex when requested. Results are deterministic and complete over that provider inventory, not every text sequence in artifact bytes. Kuna scans mapped sequences of at least five characters, including unterminated fragments, without computing references. Ghidra may omit packed or undefined literals, including Rust strings; an empty result does not prove text is absent. If an address is known, read_bytes and xrefs inspect its bytes and references. Hopper retains typed byte decoding, native display, and explicit decoding unknowns. Adjacent long-literal fragments match independently. ${hopperRegexDeadline} Select detail summary for counts and retained native-inventory pages; complete remains the default.`,
+    `Search every provider-reported string object or candidate using literal matching by default or regex when requested. Results are deterministic and complete over that provider inventory, not every text sequence in artifact bytes. Kuna scans mapped sequences of at least five characters, including unterminated fragments, without computing references. Ghidra reports each defined string's encoding, byte length and termination; it may omit packed or undefined literals, including Rust strings. An empty result does not prove text is absent. If an address is known, read_bytes and xrefs inspect its bytes and references. Hopper retains typed byte decoding, native display, and explicit decoding unknowns. Adjacent long-literal fragments match independently. ${hopperRegexDeadline} Select detail summary for counts and retained native-inventory pages; complete remains the default.`,
     z.object({ ...nativeSearchInput, detail: analysisDetailSchema }),
     { evidenceParameters: "omit-detail" },
   ),

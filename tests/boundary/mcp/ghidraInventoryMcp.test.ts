@@ -432,7 +432,15 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
       );
     }
     output = jsonValueSchema.parse([
-      { address: "0x401000", value: "projection cache ignored" },
+      {
+        address: "0x401000",
+        value: "projection cache ignored",
+        string: {
+          encoding: "US-ASCII",
+          termination: "present_or_not_required",
+          byte_length: 25,
+        },
+      },
     ]);
     const matched = await harness.mcp.callTool({
       name: "search_strings",
@@ -515,6 +523,31 @@ it("rejects contradictory provider output before emitting MCP Evidence", async (
         name: "search_strings",
         arguments: { pattern: "needle" },
         output: [{ address: "0x401000" }],
+      },
+      {
+        name: "search_strings",
+        arguments: { pattern: "needle" },
+        output: [{ address: "0x401000", value: "needle" }],
+      },
+      {
+        name: "search_strings",
+        arguments: { pattern: "needle" },
+        output: [
+          {
+            address: "0x401000",
+            value: "needle",
+            string: {
+              encoding: "UTF-8",
+              termination: "present_or_not_required",
+              byte_length: -1,
+            },
+          },
+        ],
+      },
+      {
+        name: "search_procedures",
+        arguments: { pattern: "fixture" },
+        output: [{ address: "0x401000", value: "fixture_main" }],
       },
       {
         name: "read_function_instructions",
