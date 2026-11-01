@@ -13,6 +13,16 @@ import {
   webSourceLocationInputSchema,
   webSourceLocationResultSchema,
 } from "../domain/webSourceLocation.js";
+import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
+
+const exportWebScriptsMcpInputSchema = exportWebScriptsInputSchema.extend({
+  capture_path: absoluteLocalPathStringSchema.describe(
+    "Absolute filesystem path to saved inspect_web_page or capture_browser_scenario JSON, normalized result or complete Evidence",
+  ),
+  output_directory: absoluteLocalPathStringSchema.describe(
+    "Absolute absent filesystem directory for verified scripts and manifest; parent directory must exist",
+  ),
+});
 
 /** Local captured-script publication contracts shared by CLI and MCP. */
 export const WEB_SCRIPT_TOOL_CONTRACTS = [
@@ -68,7 +78,7 @@ export const WEB_SCRIPT_TOOL_CONTRACTS = [
     description:
       "Export JavaScript bytes already retained in one local inspect_web_page or capture_browser_scenario JSON capture (normalized result or complete Evidence). Writes scripts and a digest-verified manifest into an absent absolute output_directory. Returns all source URLs, script or transaction/event references, unavailable states, and an analysis_input for analyze_javascript_application when any bytes were exported. Include script sources in inspect_web_page or select capture.network.response_body in scenarios. No refetch or execution. Safe unambiguous URL layouts preserve relative module paths; versions, query variants, inline scripts, and path collisions are isolated with explicit resolution limitations.",
     kind: "application",
-    inputSchema: exportWebScriptsInputSchema,
+    inputSchema: exportWebScriptsMcpInputSchema,
     outputSchema: evidenceResultOf(webScriptExportResultSchema),
     examples: [
       {

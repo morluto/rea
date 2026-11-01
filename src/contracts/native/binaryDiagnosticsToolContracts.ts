@@ -56,6 +56,7 @@ import {
   inspectKernelModuleInputSchema,
   kernelModuleSchema,
 } from "../../domain/native/kernelModule.js";
+import { absoluteLocalPathStringSchema } from "../../domain/localPath.js";
 
 /** Caller-selected delivery of completed binary layout Evidence. */
 export const inspectBinaryLayoutRequestSchema =
@@ -66,7 +67,32 @@ export const inspectNativeExportsRequestSchema =
 
 /** Public byte-entropy input retains the producer schema's closed-object policy. */
 export const inspectByteEntropyRequestSchema =
-  inspectByteEntropyInputSchema.extend({ detail: analysisDetailSchema });
+  inspectByteEntropyInputSchema.extend({
+    path: absoluteLocalPathStringSchema.describe(
+      "Absolute filesystem path to the file to inspect",
+    ),
+    detail: analysisDetailSchema,
+  });
+
+const inspectElfNotesMcpInputSchema = inspectElfNotesInputSchema.extend({
+  path: absoluteLocalPathStringSchema.describe(
+    "Absolute filesystem path to an ELF image",
+  ),
+});
+
+const inspectAppleIpsMcpInputSchema = inspectAppleIpsInputSchema.extend({
+  path: absoluteLocalPathStringSchema.describe(
+    "Absolute filesystem path to an Apple .ips crash report",
+  ),
+});
+
+const inspectKernelModuleMcpInputSchema = inspectKernelModuleInputSchema.extend(
+  {
+    path: absoluteLocalPathStringSchema.describe(
+      "Absolute filesystem path to an ELF kernel module or a compressed .ko container",
+    ),
+  },
+);
 
 /** Offline binary diagnostics are independent of macOS process/UI providers. */
 export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
@@ -77,6 +103,9 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     description:
       "Inspect an explicit local flattened devicetree blob (FDT v16/v17) without execution or external tools. Returns validated header, memory reservations, full node/property tree with bounded raw hex, derived standard strings, cells and parent-sized reg tuples, aliases and selected single-cell phandle references with unresolved targets. Binding-specific arrays, overlays and runtime hardware remain unknown. Malformed structure or exhausted named budgets fails without partial success. Complete detail returns all Evidence inline; summary retains it for inspect_analysis_view kind devicetree, collections nodes, properties (requires exact path), reservations and references, with offset/limit pagination.",
     inputSchema: inspectDevicetreeInputSchema.extend({
+      path: absoluteLocalPathStringSchema.describe(
+        "Absolute filesystem path to a flattened devicetree blob",
+      ),
       detail: analysisDetailSchema,
     }),
     outputSchema: analysisDetailOutputSchemaOf(
@@ -112,7 +141,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     kind: "native-provider",
     description:
       "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file; malformed ELF headers, truncated notes and exhausted budgets return no partial success. Portable on supported Node hosts; no debug package or catalog is required.",
-    inputSchema: inspectElfNotesInputSchema,
+    inputSchema: inspectElfNotesMcpInputSchema,
     outputSchema: evidenceResultOf(elfNotesSchema),
     examples: [
       {
@@ -127,7 +156,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     kind: "native-provider",
     description:
       "Inspect one explicit local Apple .ips crash report without executing a target, launching atos, or opening a disassembler. Parses the first-line metadata object and, when bug_type is the string 309, the crash body: process identity, exception and termination facts, threads, usedImages, lossless integer registers, and deterministic classification from documented SIGKILL, EXC_GUARD, pointer-authentication and dyld strings. Other bug_type values, including 288 stackshots, return no crash result. A missing or truncated body fails without partial success. Opened Mach-O and dSYM UUID joins remain unobserved. Portable on supported Node hosts; no Xcode or pwntools required.",
-    inputSchema: inspectAppleIpsInputSchema,
+    inputSchema: inspectAppleIpsMcpInputSchema,
     outputSchema: evidenceResultOf(appleIpsSchema),
     examples: [
       {
@@ -142,7 +171,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     kind: "native-provider",
     description:
       "Inspect one explicit local ELF32/ELF64 ET_REL Linux kernel module without executing it or opening a disassembler. Returns ordered .modinfo key/value entries (duplicates preserved), __versions symbol CRCs, presence of .gnu.linkonce.this_module and __ksymtab sections, observed .init.text and .exit.text sizes, and an appended module signature trailer with its module_signature fields plus a PKCS#7 byte range and SHA-256. Does not execute the module, decode struct module, or validate certificates. A missing section is observed absence when section names are known, not proof the module never carried that metadata. Other ELF types are not applicable. gzip, xz, and zstd containers are unsupported and name external_decompression as the next probe; neither this tool nor extract_artifact decodes those codecs, so decompress with an external utility and inspect the result. Reads a stable regular file; malformed ELF headers and exhausted entry budgets return no partial success. Portable on supported Node hosts.",
-    inputSchema: inspectKernelModuleInputSchema,
+    inputSchema: inspectKernelModuleMcpInputSchema,
     outputSchema: evidenceResultOf(kernelModuleSchema),
     examples: [
       {

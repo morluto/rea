@@ -25,13 +25,20 @@ export const localPathStringSchema = nulFreeStringSchema.min(1);
  * unescaped `/` inside a class, and Windows hosts advertise this pattern.
  */
 export const windowsAbsolutePathPattern =
-  /^(?:[\x5C\x2F]|[A-Za-z]:[\x5C\x2F])/u;
+  /^(?=[^\x00]*$)(?:[\x5C\x2F]|[A-Za-z]:[\x5C\x2F])/u;
 
 /** A caller-selected path that is absolute on the host running REA. */
-export const absoluteLocalPathStringSchema = localPathStringSchema.regex(
-  process.platform === "win32" ? windowsAbsolutePathPattern : /^\//u,
-  "must be an absolute local filesystem path",
-);
+// Keep both constraints in one pattern: SDK conversion of multiple regexes
+// emits an allOf, which can force compact MCP schemas to lose validation.
+export const absoluteLocalPathStringSchema = z
+  .string()
+  .min(1)
+  .regex(
+    process.platform === "win32"
+      ? windowsAbsolutePathPattern
+      : /^(?=[^\x00]*$)\//u,
+    "must be an absolute local filesystem path without NUL",
+  );
 
 /** Test lexical containment on the host platform; callers must resolve symlinks first. */
 export const isPathWithinRoot = (root: string, path: string): boolean => {

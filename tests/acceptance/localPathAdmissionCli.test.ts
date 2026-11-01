@@ -140,3 +140,19 @@ cliTest(
     });
   },
 );
+
+cliTest("still accepts a relative byte-entropy input", async ({ cli }) => {
+  const cwd = await createTestTempDirectory("rea-relative-entropy-");
+  const path = join(cwd, "sample.bin");
+  await writeFile(path, Buffer.alloc(512));
+  const result = await runFileCli(cli, {
+    arguments: ["inspect-byte-entropy", "./sample.bin", "--json"],
+    cwd,
+  });
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(parseEvidence(result.json)).toMatchObject({
+    operation: "inspect_byte_entropy",
+    subject: { local_path: path },
+    normalized_result: { artifact: { bytes: 512 } },
+  });
+});
