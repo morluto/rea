@@ -389,9 +389,11 @@ export const joinInterfaceBuilderDispatch = (
         id: functionId,
         kind: "function",
         name: `${implementation.class_name} ${selector}`,
+        // `implementation.location` is the method record, which stays in its
+        // Evidence. Only the reader's mapping of the code address locates it.
         location: {
           address: implementation.implementation_address,
-          file_offset: implementation.location.file_offset,
+          file_offset: implementation.implementation_file_offset ?? null,
         },
         attributes: {
           class_name: implementation.class_name,

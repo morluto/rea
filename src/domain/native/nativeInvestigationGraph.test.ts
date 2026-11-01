@@ -257,6 +257,90 @@ describe("Interface Builder dispatch joins", () => {
   );
 });
 
+describe("Interface Builder handler locations", () => {
+  const record = { address: "0x100000798", file_offset: 34712 };
+  const handlerFor = (implementationFileOffset?: number | null) => {
+    const ui = buildInterfaceBuilderAnalysis({
+      targetSha256: "b".repeat(64),
+      toolVersion: "test",
+      documents: [
+        {
+          relativePath: "Contents/Resources/Main.nib",
+          archiveSha256: "c".repeat(64),
+          documentKind: "nib",
+          raw: {
+            "com.apple.ibtool.document.objects": {
+              controller: { customClass: "AuditController" },
+              button: { class: "NSButton", title: "Run" },
+            },
+            "com.apple.ibtool.document.connections": {
+              button: [
+                {
+                  type: "action",
+                  label: "runAction:",
+                  destinationId: "controller",
+                },
+              ],
+            },
+          },
+        },
+      ],
+      limits: interfaceBuilderLimitsSchema.parse({}),
+    });
+    const metadata = objcSwiftMetadataSchema.parse({
+      objc_dispatch_implementations: [
+        {
+          class_name: "AuditController",
+          selector: "runAction:",
+          method_type: "instance",
+          implementation_address: "0x10000077c",
+          ...(implementationFileOffset === undefined
+            ? {}
+            : { implementation_file_offset: implementationFileOffset }),
+          location: record,
+          decode: { status: "decoded", reason: null },
+          evidence: [
+            {
+              kind: "binary_metadata",
+              description: "Encoded relative Objective-C method entry",
+              location: record,
+              artifact_path: "/fixture/Audit.app/Contents/MacOS/Audit",
+              artifact_sha256: "b".repeat(64),
+            },
+          ],
+        },
+      ],
+      db_save_result: null,
+    });
+    return joinInterfaceBuilderDispatch(ui.graph, metadata).nodes.find(
+      ({ id }) => id === "native:function:0x10000077c",
+    );
+  };
+
+  it.each([
+    { label: "mapped selected-slice", offset: 34684, expected: 34684 },
+    { label: "unmapped", offset: null, expected: null },
+    {
+      label: "older Evidence without a mapped",
+      offset: undefined,
+      expected: null,
+    },
+  ])(
+    "pairs the handler address only with its $label implementation offset",
+    ({ offset, expected }) => {
+      const handler = handlerFor(offset);
+      expect(handler?.location).toEqual({
+        address: "0x10000077c",
+        file_offset: expected,
+      });
+      // The method record keeps its own coordinates as Evidence.
+      expect(handler?.evidence.map(({ location }) => location)).toEqual([
+        record,
+      ]);
+    },
+  );
+});
+
 describe("Objective-C category ownership joins", () => {
   it.each([
     {

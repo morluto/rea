@@ -799,6 +799,7 @@ jobs:
           tests/boundary/filesystem/installScript.test.ts
           tests/boundary/filesystem/nibNativeHierarchy.test.ts
           tests/boundary/filesystem/interfaceBuilderBundle.test.ts
+          tests/acceptance/nativeUiHandlerLocation.test.ts
           tests/boundary/cli/nativePlistCli.test.ts
           tests/boundary/cli/nativePlistPrototypeKeyCli.test.ts
           tests/boundary/cli/nativePlistSelectionFailureCli.test.ts

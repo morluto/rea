@@ -139,10 +139,12 @@ describe("symbol-only Objective-C implementation addresses", () => {
         1,
       );
       expect(result.objc_classes[0]?.methods[0]?.address).toBe(numeric);
+      // A provider symbol names an address; it does not map it into the file.
       expect(result.objc_dispatch_implementations[0]).toMatchObject({
         implementation_address: canonical,
-        location: { address: canonical },
-        evidence: [{ location: { address: source } }],
+        implementation_file_offset: null,
+        location: { address: canonical, file_offset: null },
+        evidence: [{ location: { address: source, file_offset: null } }],
       });
     },
   );
