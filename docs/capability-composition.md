@@ -95,3 +95,7 @@ found exactly once; provider roots need the corresponding adapter discovery lane
 
 This is an internal composition contract. External plugin distribution, automatic
 provider installation and a universal provider interface are separate concerns.
+
+The [initial verification report](verification/capability-composition-2026-11-01.md)
+records the executed public workflows, cleanup boundaries, resource measurements
+and remaining provider qualification gaps for this composition increment.
