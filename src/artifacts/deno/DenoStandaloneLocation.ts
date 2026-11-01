@@ -255,7 +255,9 @@ const locateMachOSlice = async (
  * an Intel Deno executable, and the backward search meets that asset's
  * sentinel before the sentinel of the app that stores it. Sentinels inside a
  * confirmed payload are that payload's data, so only the remaining trailers
- * are returned, and `collapseRanges` rejects any that differ. Each byte is
+ * are returned, and `collapseRanges` rejects any that differ. A truncated
+ * trailer that would enclose a confirmed one fails only if no enclosing
+ * trailer found later in the search holds it as data. Each byte is
  * read at most once. When the slice cannot be searched to its start, a
  * confirmed trailer is refused because an enclosing one may remain unread,
  * and with none confirmed the image stays with native inventory.
@@ -270,6 +272,8 @@ const locateIntelTrailers = async (
   let tail = Buffer.alloc(0);
   let examined = 0;
   let trailers: IntelTrailer[] = [];
+  /** Sentinels of truncated trailers that would enclose a confirmed one. */
+  let truncated: number[] = [];
   while (position > base) {
     abortIfNeeded(carrier.signal);
     const chunkStart = Math.max(base, position - INTEL_CHUNK_BYTES);
@@ -312,26 +316,19 @@ const locateIntelTrailers = async (
       if (marker === undefined || !marker.equals(DENO_SECTION_MAGIC)) continue;
       if (length > sliceEnd - offset) {
         // A marker-confirmed trailer whose payload runs past the slice is a
-        // truncated Deno app. Sentinels inside a confirmed payload are that
-        // payload's data. Otherwise a confirmed trailer after this payload
-        // start lies inside the claimed payload, so the enclosing app cannot
-        // be read and the inner one must not be reported in its place.
-        const isData = trailers.some(
-          (trailer) =>
-            sentinelStart >= trailer.offset &&
-            sentinelStart < trailer.offset + trailer.length,
-        );
-        if (!isData && trailers.some((t) => t.sentinelOffset >= offset))
-          throw denoCarrierFailure(
-            "Intel Mach-O Deno trailer is truncated and encloses another Deno trailer",
-          );
+        // truncated Deno app. When a confirmed trailer lies after its payload
+        // start, the truncated app would enclose it, and the inner one must
+        // not be reported in its place. The sentinel may still be stored data
+        // of an enclosing trailer the backward search has not reached, so
+        // the failure waits until the search ends.
+        if (trailers.some((t) => t.sentinelOffset >= offset))
+          truncated.push(sentinelStart);
         continue;
       }
       const end = offset + length;
-      trailers = trailers.filter(
-        (trailer) =>
-          trailer.sentinelOffset < offset || trailer.sentinelOffset >= end,
-      );
+      const inside = (at: number): boolean => at >= offset && at < end;
+      trailers = trailers.filter((trailer) => !inside(trailer.sentinelOffset));
+      truncated = truncated.filter((at) => !inside(at));
       trailers.push({
         sentinelOffset: sentinelStart,
         offset,
@@ -342,6 +339,10 @@ const locateIntelTrailers = async (
     tail = Buffer.from(chunk.subarray(0, Math.min(chunk.length, overlap)));
     position = chunkStart;
   }
+  if (truncated.length > 0)
+    throw denoCarrierFailure(
+      "Intel Mach-O Deno trailer is truncated and encloses another Deno trailer",
+    );
   return trailers;
 };
 

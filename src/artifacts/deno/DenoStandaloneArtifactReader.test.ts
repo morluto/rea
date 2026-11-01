@@ -1096,6 +1096,40 @@ it("treats a nested Intel sentinel as asset data when its length overruns the ap
   });
 });
 
+it("reads a valid app whose earlier Intel asset overruns past a later one", async () => {
+  const damagedApp = intelApp("damaged.ts", Buffer.from("damaged\n"));
+  const damaged = denoIntelTrailer(damagedApp);
+  damaged.writeBigUInt64LE(
+    BigInt(damagedApp.length + 4 * 1024 * 1024),
+    damaged.length - damagedApp.length - 8,
+  );
+  const valid = denoIntelTrailer(intelApp("valid.ts", Buffer.from("valid\n")));
+  const outer = buildDenoSection({
+    vfs: [
+      { File: { n: "damaged-app", o: [0, damaged.length], u: false } },
+      {
+        File: {
+          n: "valid-app",
+          o: [damaged.length, valid.length],
+          u: false,
+        },
+      },
+    ],
+    vfsFileData: Buffer.concat([damaged, valid]),
+  });
+  const bytes = denoIntelTrailer(outer);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: {
+      embedding: "mach-o-intel-trailer",
+      offset: bytes.length - outer.length,
+      length: outer.length,
+    },
+  });
+});
+
 it("fails closed when the enclosing Intel trailer is truncated around a nested app", async () => {
   const { outer } = nestedIntelApp();
   const bytes = denoIntelTrailer(outer).subarray(0, -1);
