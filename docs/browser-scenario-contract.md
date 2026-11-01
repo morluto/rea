@@ -417,10 +417,10 @@ data you may change. This scenario creates one item:
   `Location` from the browser's network reporting and offers them to the capture
   as the request's `response`, which is subject to the same event budgets and
   omission ledgers as any other response. If the browser offers no such report,
-  reports more than 256 KiB of headers, or cannot attribute the answer to this
-  step's request, the redirect's
-  status and `Location` are unavailable and the capture reports incomplete
-  event coverage.
+  reports more than 256 KiB of headers or more than 4,096 header entries
+  (repeated values count separately), or cannot attribute the answer to this
+  step's request, the redirect's status and `Location` are unavailable and the
+  capture reports incomplete event coverage.
 - Header values are literals, declared secrets, a cookie the browser holds for
   the request URL (`{"source": "cookie", "name"}`, HttpOnly cookies included,
   whose value the page's scripts can then see while the request runs), or a
