@@ -5,6 +5,7 @@ import {
   HOPPER_DOWNLOAD_STALL_MS,
   HOPPER_DOWNLOAD_TIMEOUT_MS,
 } from "../../src/application/HopperDownload.js";
+import { err, ok } from "../../src/domain/result.js";
 
 const url = "https://www.hopperapp.com/downloader/public/Hopper-Linux-demo.rpm";
 
@@ -58,9 +59,7 @@ it("completes a slow download that keeps delivering bytes past the former 120 s 
   stubPackage(20_000, 9);
   const pending = downloadHopperPackage(url);
   await vi.advanceTimersByTimeAsync(9 * 20_000);
-  const result = await pending;
-  expect(result.ok).toBe(true);
-  expect(result.bytes.byteLength).toBe(9 * 1024);
+  expect(await pending).toEqual(ok(Buffer.alloc(9 * 1024)));
 });
 
 it("fails a download whose next bytes stall, naming the URL and the bytes received", async () => {
@@ -82,16 +81,17 @@ it("fails a download whose next bytes stall, naming the URL and the bytes receiv
     );
   });
   vi.stubGlobal("fetch", fetch);
-  const failure = downloadHopperPackage(url).catch((error: unknown) => error);
+  const pending = downloadHopperPackage(url);
   await vi.advanceTimersByTimeAsync(HOPPER_DOWNLOAD_STALL_MS);
-  expect(await failure).toMatchObject({
-    _tag: "HopperDownloadTimeoutError",
-    limit: "stalled",
-    url,
-    limitMs: HOPPER_DOWNLOAD_STALL_MS,
-    receivedBytes: 1024,
-    message: `No response bytes arrived for 30 s from ${url}; 1024 bytes were received before the download stalled.`,
-  });
+  expect(await pending).toEqual(
+    err({
+      url,
+      kind: "timeout",
+      limit: "stalled",
+      timeoutMs: HOPPER_DOWNLOAD_STALL_MS,
+      receivedBytes: 1024,
+    }),
+  );
   expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
 });
 
@@ -111,23 +111,30 @@ it("treats a response that never starts as stalled", async () => {
         }),
     ),
   );
-  const failure = downloadHopperPackage(url).catch((error: unknown) => error);
+  const pending = downloadHopperPackage(url);
   await vi.advanceTimersByTimeAsync(HOPPER_DOWNLOAD_STALL_MS);
-  expect(await failure).toMatchObject({
-    limit: "stalled",
-    receivedBytes: 0,
-  });
+  expect(await pending).toEqual(
+    err({
+      url,
+      kind: "timeout",
+      limit: "stalled",
+      timeoutMs: HOPPER_DOWNLOAD_STALL_MS,
+      receivedBytes: 0,
+    }),
+  );
 });
 
 it("bounds a download that keeps trickling within the stall bound", async () => {
   stubPackage(20_000, Number.POSITIVE_INFINITY);
-  const failure = downloadHopperPackage(url).catch((error: unknown) => error);
+  const pending = downloadHopperPackage(url);
   await vi.advanceTimersByTimeAsync(HOPPER_DOWNLOAD_TIMEOUT_MS);
-  expect(await failure).toMatchObject({
-    _tag: "HopperDownloadTimeoutError",
-    limit: "deadline",
-    limitMs: HOPPER_DOWNLOAD_TIMEOUT_MS,
-    receivedBytes: 44 * 1024,
-    message: `The download from ${url} did not finish within 900 s; 45056 bytes were received.`,
-  });
+  expect(await pending).toEqual(
+    err({
+      url,
+      kind: "timeout",
+      limit: "deadline",
+      timeoutMs: HOPPER_DOWNLOAD_TIMEOUT_MS,
+      receivedBytes: 44 * 1024,
+    }),
+  );
 });

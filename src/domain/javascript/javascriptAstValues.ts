@@ -154,6 +154,14 @@ export const staticJavaScriptTruthiness = (
   if (t.isStringLiteral(value)) return value.value.length > 0;
   if (t.isNumericLiteral(value))
     return value.value !== 0 && !Number.isNaN(value.value);
+  // Babel exposes a BigIntLiteral value as either "0" or 0n depending on version.
+  if (t.isBigIntLiteral(value)) return String(value.value) !== "0";
+  if (
+    t.isUnaryExpression(value) &&
+    value.operator === "-" &&
+    t.isNumericLiteral(value.argument)
+  )
+    return value.argument.value !== 0 && !Number.isNaN(value.argument.value);
   if (
     t.isObjectExpression(value) ||
     t.isArrayExpression(value) ||

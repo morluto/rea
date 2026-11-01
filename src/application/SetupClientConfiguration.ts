@@ -379,7 +379,6 @@ const persistClientConfiguration = async ({
       transactionPath,
       serialized.value,
       original,
-      0o600,
       { requestedPath: client.configPath, state: snapshot?.state },
     );
   } catch (cause: unknown) {

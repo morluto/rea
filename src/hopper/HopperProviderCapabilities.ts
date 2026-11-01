@@ -1,4 +1,8 @@
 import {
+  HOPPER_PROVIDER_IDENTITY,
+  HOPPER_OPERATIONS,
+} from "./HopperProviderMetadata.js";
+import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   type RegexMatchingDeadline,
 } from "../config/regexMatchingDeadline.js";
@@ -7,58 +11,7 @@ import {
   type RegexWorkerHeapRequest,
 } from "../config/regexWorkerHeapRequest.js";
 import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
-import type {
-  CapabilityDescriptor,
-  ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import type { OfficialToolName } from "../contracts/officialToolContracts.js";
-
-/** Public identity committed by every Hopper-backed observation. */
-export const HOPPER_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
-  id: "hopper",
-  name: "Hopper Disassembler",
-  version: null,
-});
-
-/** Analyst operations implemented by REA's private Hopper bridge. */
-export const HOPPER_OPERATIONS = Object.freeze([
-  "address_name",
-  "comment",
-  "current_address",
-  "current_procedure",
-  "current_document",
-  "goto_address",
-  "inline_comment",
-  "list_bookmarks",
-  "list_documents",
-  "list_names",
-  "list_procedures",
-  "list_segments",
-  "list_strings",
-  "next_address",
-  "prev_address",
-  "procedure_address",
-  "procedure_assembly",
-  "procedure_callees",
-  "procedure_callers",
-  "procedure_info",
-  "read_function_instructions",
-  "read_bytes",
-  "address_to_file_offset",
-  "procedure_references",
-  "procedure_pseudo_code",
-  "resolve_containing_procedure",
-  "search_procedures",
-  "search_strings",
-  "set_address_name",
-  "set_addresses_names",
-  "set_bookmark",
-  "set_comment",
-  "set_inline_comment",
-  "unset_bookmark",
-  "xrefs",
-  "analyze_function",
-] as const satisfies readonly (OfficialToolName | "analyze_function")[]);
+import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
 
 const MUTATING_OPERATIONS = new Set<string>([
   "set_address_name",
@@ -79,6 +32,8 @@ export const hopperCapabilities = (
       Object.freeze({
         provider: HOPPER_PROVIDER_IDENTITY,
         operation,
+        // Hopper's GUI can change the document without a revision token.
+        cachePolicy: "live" as const,
         ...(operation === "search_bytes"
           ? {
               available: false as const,

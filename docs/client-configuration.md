@@ -273,7 +273,7 @@ This headroom is a practical default, not a guarantee for every analysis
 duration. Setup preserves positive timeout values already in the `rea` entry.
 
 Setup also forwards explicitly selected input/output schema profiles,
-`REA_MCP_MAX_RESPONSE_BYTES`, provider paths and supported Ghidra, JADX and Kuna
+`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, provider paths and supported Ghidra, JADX and Kuna
 settings. It also forwards explicit executable and resource selections for ADB,
 apktool, packet capture, GDB/Rizin/objdump, Cutter, WABT, Wakaru, firmware and
 signal tools, browser inspection, and pwntools/pwndbg. This includes their
@@ -283,8 +283,9 @@ patterns. A provider being unavailable does not discard its selected paths;
 doctor reports its readiness separately. Explicit selections override discovered
 defaults, including when setup runs again with a changed selection. Unrelated
 environment variables, process ownership tokens and one-shot target paths are not
-copied. Existing client environment overrides remain intact unless setup supplies
-the same key.
+copied. For an explicitly configured startup target, see the
+[initial-target settings](mcp-contracts.md#initial-target-at-startup). Existing
+client environment overrides remain intact unless setup supplies the same key.
 You can edit `startupTimeoutMs` and `toolTimeoutMs` there; doctor keeps positive
 caller-selected values aligned and reports a non-blocking advisory when a tool
 timeout is shorter than the known provider allowance.
@@ -616,9 +617,10 @@ the fallback file untouched. Existing REA environment overrides are preserved
 when refreshing its command. A malformed or unreadable fallback file fails setup instead of
 being silently suppressed; repair or remove it and rerun. Uninstall removes an
 REA-owned `rea` entry from both the native table and the fallback, backing up
-each changed file, so an emptied native table cannot load a leftover fallback
-registration; other fallback servers, settings and a foreign `rea` entry are
-kept. ZCode disables a
+each changed file. If removing the last native server would activate a retained
+fallback server, uninstall refuses before changing either file; review the
+fallback configuration before retrying. Other fallback servers, settings and a
+foreign `rea` entry are kept. ZCode disables a
 server with `enable: false` on its entry; doctor reports such a registration
 as stale, and rerunning setup removes the flag to repair it. Native configuration
 uses strict JSON; setup refuses comments, trailing commas and a BOM rather than

@@ -24,7 +24,8 @@ export const unsentChange = (rule: FieldRule): boolean =>
   rule.rule === "composed" ||
   rule.rule === "stamp" ||
   rule.rule === "derived" ||
-  rule.rule === "set";
+  rule.rule === "set" ||
+  rule.rule === "toggle";
 
 /** Whether serving gives a rule's field a new value on every call, so no call may have kept it. */
 export const regenerates = (rule: FieldRule): boolean =>
@@ -55,6 +56,34 @@ export const disagreesWithCall = (
         !same(ownMember(call.written, rule.field), call.after[rule.field])) ||
       (regenerates(rule) && call.kept.includes(rule.field)),
   );
+
+/** A plan's set rules a later call flipped back, and that call's own, as toggles; `steady` names fields a call found already set, which an action sets rather than toggles. Every earlier call must have started from a boolean too, or serving rejects the first one. */
+export const toggledRules = (
+  rules: readonly FieldRule[],
+  later: readonly FieldRule[],
+  before: JsonObject,
+  steady: ReadonlySet<string>,
+  earlier: readonly { readonly startedBoolean: ReadonlySet<string> }[],
+): { readonly rules: FieldRule[]; readonly later: FieldRule[] } => {
+  const flipped = new Set(
+    later.flatMap((rule) => {
+      const was = ownMember(before, rule.field);
+      const held = rules.find((other) => other.field === rule.field);
+      return rule.rule === "set" &&
+        typeof was === "boolean" &&
+        rule.value === !was &&
+        !steady.has(rule.field) &&
+        earlier.every((call) => call.startedBoolean.has(rule.field)) &&
+        ((held?.rule === "set" && held.value === was) ||
+          held?.rule === "toggle")
+        ? [rule.field]
+        : [];
+    }),
+  );
+  const toggle = (rule: FieldRule): FieldRule =>
+    flipped.has(rule.field) ? { field: rule.field, rule: "toggle" } : rule;
+  return { rules: rules.map(toggle), later: later.map(toggle) };
+};
 
 /** The fields a call found already at the value a set rule gives them: the action sets them rather than toggling them. */
 export const steadyFields = (
@@ -104,8 +133,13 @@ const sameObserved = (left: ObservedValue, right: ObservedValue): boolean =>
 /** The equality facts a modelled update showed, scalar inputs it sent, and fields it kept, which later rules must reproduce. */
 export interface UpdateCall {
   readonly shown: ReadonlyMap<string, ObservedValue>;
+  /** Members its answer left out that the read after it showed, which a default must agree with too. */
+  readonly read: ReadonlyMap<string, ObservedValue>;
   readonly sent: ReadonlyMap<string, JsonValue>;
+  readonly sentMembers: ReadonlySet<string>;
   readonly kept: readonly string[];
+  /** Fields whose value before the call was a boolean. A toggle requires this of every call. */
+  readonly startedBoolean: ReadonlySet<string>;
 }
 
 /** How a later update's entity and the plan's calls and held entities showed `&` in the slugs it learns. */
@@ -191,8 +225,8 @@ export const contradictsEarlierCalls = (
           integerOf(observation.value) !== undefined
         );
       if (rule.rule === "set") return !sameObserved(observation, expected!);
-      // Serving stamps a clock on every call, so a field an earlier call kept contradicts it.
-      if (rule.rule === "clock") return true;
+      // Serving stamps a clock and flips a toggle on every call, so a field an earlier call kept contradicts it.
+      if (rule.rule === "clock" || rule.rule === "toggle") return true;
       if (rule.rule === "stamp") return !sameObserved(observation, expected!);
       if (rule.rule === "derived")
         return sent.has(rule.member) && !sameObserved(observation, expected!);
@@ -228,11 +262,21 @@ export const refinedBody = (
   const accepted = later.accepted.filter(
     (member) => !body.accepted.includes(member),
   );
+  const held = body.defaults ?? [];
+  const defaults = [
+    ...held,
+    ...(later.defaults ?? []).filter(
+      (entry) => !held.some((kept) => kept.member === entry.member),
+    ),
+  ];
   return {
     ...body,
+    ...(defaults.length === 0 ? {} : { defaults }),
     // A later call may be the first to show the body repeating the path's id.
     identity: body.identity ?? later.identity,
     accepted: [...body.accepted, ...accepted],
+    // A member is required only when every call sent it.
+    required: body.required.filter((member) => later.required.includes(member)),
     fixed: [
       ...body.fixed,
       ...later.fixed.filter((entry) => !fixed.has(entry.member)),
@@ -314,6 +358,42 @@ export const appliedUpdate = (
   };
 };
 
+/** Whether defaults disagree with a call that left their member out: a remembered call, or this one, showed it otherwise. */
+export const defaultsDisagree = (
+  defaults: WriteBody["defaults"],
+  calls: {
+    readonly earlier: readonly UpdateCall[];
+    readonly sent?: JsonObject;
+    readonly after?: JsonObject;
+  },
+  rules: readonly FieldRule[],
+): boolean => {
+  // A call that named a reference's entity by its member supplied the field.
+  const sources = new Map(
+    rules.flatMap((rule) =>
+      rule.rule === "reference" ? [[rule.field, rule.member] as const] : [],
+    ),
+  );
+  const supplied = (sent: (member: string) => boolean, member: string) =>
+    sent(member) || (sources.has(member) && sent(sources.get(member)!));
+  return (defaults ?? []).some(
+    ({ member, value }) =>
+      calls.earlier.some((call) => {
+        const stored = call.shown.get(member) ?? call.read.get(member);
+        return (
+          !supplied((name) => call.sentMembers.has(name), member) &&
+          stored !== undefined &&
+          !same(stored, observedValue(value))
+        );
+      }) ||
+      (calls.sent !== undefined &&
+        calls.after !== undefined &&
+        !supplied((name) => Object.hasOwn(calls.sent!, name), member) &&
+        Object.hasOwn(calls.after, member) &&
+        !same(calls.after[member], value)),
+  );
+};
+
 /** Keep what a modelled update call showed, which later calls' rules must reproduce, and the fields it found already set. */
 export const rememberCall = (
   retain: (bytes: number) => void,
@@ -328,6 +408,8 @@ export const rememberCall = (
     readonly after: JsonObject;
     readonly sent: JsonObject;
     readonly kept: readonly string[];
+    /** The entity as the read after the call showed it, when one did. */
+    readonly read?: JsonObject | undefined;
   },
   /** Clocks the call left as they were in its own second, which show neither a stamp nor a kept value. */
   sameSecond: readonly string[],
@@ -342,8 +424,35 @@ export const rememberCall = (
     ]),
   );
   for (const field of unstamped) shown.delete(field);
-  const facts = { shown, sent: scalars(call.sent), kept };
-  retain(64 + jsonTextCodeUnits([...facts.shown, ...facts.sent, kept]) * 2);
+  const read = new Map(
+    Object.entries(call.read ?? {})
+      .filter(([field]) => !Object.hasOwn(call.after, field))
+      .map(([field, value]) => [field, observedValue(value)]),
+  );
+  const facts = {
+    shown,
+    read,
+    sent: scalars(call.sent),
+    sentMembers: new Set(Object.keys(call.sent)),
+    kept,
+    startedBoolean: new Set(
+      Object.entries(call.before).flatMap(([field, value]) =>
+        typeof value === "boolean" ? [field] : [],
+      ),
+    ),
+  };
+  retain(
+    64 +
+      jsonTextCodeUnits([
+        ...facts.shown,
+        ...facts.read,
+        ...facts.sent,
+        [...facts.sentMembers],
+        kept,
+        [...facts.startedBoolean],
+      ]) *
+        2,
+  );
   draft.updates.push(facts);
   for (const field of steadyFields(draft.plan.rules, call.before, call.after))
     draft.steady.add(field);

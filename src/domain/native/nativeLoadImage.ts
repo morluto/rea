@@ -50,6 +50,8 @@ export const nativeLoadImageObservationSchema = z.strictObject({
       offset: integer.max(0xffff).nullable(),
       status: z.string().min(1),
       type: z.int(),
+      // Missing on retained observations made before the provider recorded it.
+      symbol: z.string().nullable().exactOptional(),
       values: z.array(
         z.int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
       ),
@@ -166,6 +168,17 @@ export type NativeLoadImage = z.infer<typeof nativeLoadImageSchema>;
 export type NativeLoadImageObservation = z.infer<
   typeof nativeLoadImageObservationSchema
 >;
+
+/** Remove entry-context rows that carry no register observations. */
+export const normalizeNativeLoadImageObservation = (
+  observation: NativeLoadImageObservation,
+): NativeLoadImageObservation => ({
+  ...observation,
+  entry_context: observation.entry_context.filter(
+    ({ registers }) => registers.length > 0,
+  ),
+});
+
 /** One independently compared native import fact. */
 export type NativeLoadImageCheck = z.infer<typeof nativeLoadImageCheckSchema>;
 

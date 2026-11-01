@@ -1,20 +1,36 @@
 import type { z } from "zod";
 
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { ContainingProcedureResolution } from "../domain/native/nativeObservation.js";
+import type { TraceContainingProcedure } from "../domain/native/nativeObservation.js";
 import { err, type Result } from "../domain/result.js";
 import {
   enhancedInputSchemas,
   type EnhancedToolName,
 } from "../contracts/enhancedInputs.js";
 
-export type EnhancedResult = Promise<Result<JsonValue, AnalysisError>>;
+/** A failure that stopped a workflow after it admitted part of its result. */
+export interface PartialEnhancedFailure {
+  readonly ok: false;
+  readonly error: AnalysisError;
+  /** The workflow's own result shape, holding only work admitted before the stop. */
+  readonly partialResult: JsonValue;
+}
+export type EnhancedOutcome =
+  | Result<JsonValue, AnalysisError>
+  | PartialEnhancedFailure;
+export type EnhancedResult = Promise<EnhancedOutcome>;
+
+/** Keep the stopping failure primary while retaining the admitted result. */
+export const failedWithPartialResult = (
+  error: AnalysisError,
+  partialResult: JsonValue,
+): PartialEnhancedFailure => ({ ok: false, error, partialResult });
 export type TraceReference = {
   readonly target_address: string;
   readonly source_address: string;
-  readonly containing_procedure: ContainingProcedureResolution;
+  readonly containing_procedure: TraceContainingProcedure;
 };
 
 /** One enhanced call whose input was parsed at its owning adapter boundary. */
@@ -27,6 +43,9 @@ export type ValidatedEnhancedCall = {
 
 export const invalidEnhancedInput = (
   name: EnhancedToolName,
-  cause: Error,
+  cause: z.ZodError,
+  input: unknown,
 ): EnhancedResult =>
-  Promise.resolve(err(new AnalysisInputError(name, { cause })));
+  Promise.resolve(
+    err(analysisInputErrorFromIssues(name, cause.issues, input, { cause })),
+  );

@@ -162,7 +162,7 @@ export const processComparisonContract = (
     ? { pid_normalization_version: "sampled-identifiers-v2" }
     : {}),
   ...(scenario.normalization.paths
-    ? { path_normalization_version: "path-component-boundaries-v2" }
+    ? { path_normalization_version: "path-component-boundaries-v3" }
     : {}),
   ...(scenario.normalization.ports
     ? { port_normalization_version: "contextual-endpoints-v3" }

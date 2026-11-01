@@ -69,13 +69,13 @@ msgstr "作者 N0zoM1z0 · 2026 年 10 月 10 日"
 #: website/public/examples/dino-lab/index.html:484
 #: website/public/faq/index.html:582
 #: website/public/first-investigation/index.html:543
-#: website/public/get-started/index.html:1826
+#: website/public/get-started/index.html:1860
 #: website/public/guides/browser/index.html:516
 #: website/public/guides/index.html:310
 #: website/public/guides/javascript/index.html:520
-#: website/public/guides/native/index.html:518
+#: website/public/guides/native/index.html:521
 #: website/public/guides/rl-environments/index.html:507
-#: website/public/index.html:1312 website/public/showcase/aegis/index.html:817
+#: website/public/index.html:1312 website/public/showcase/aegis/index.html:824
 #: website/public/showcase/ctf/index.html:786
 #: website/public/showcase/dx-ball/index.html:794
 #: website/public/showcase/index.html:346
@@ -2882,27 +2882,27 @@ msgstr "终端机"
 #: website/public/get-started/index.html:550
 #: website/public/get-started/index.html:582
 #: website/public/get-started/index.html:611
-#: website/public/get-started/index.html:746
-#: website/public/get-started/index.html:776
-#: website/public/get-started/index.html:801
-#: website/public/get-started/index.html:816
-#: website/public/get-started/index.html:864
-#: website/public/get-started/index.html:897
-#: website/public/get-started/index.html:1049
-#: website/public/get-started/index.html:1111
-#: website/public/get-started/index.html:1134
-#: website/public/get-started/index.html:1158
-#: website/public/get-started/index.html:1206
-#: website/public/get-started/index.html:1281
-#: website/public/get-started/index.html:1307
-#: website/public/get-started/index.html:1324
-#: website/public/get-started/index.html:1567
-#: website/public/get-started/index.html:1626
-#: website/public/get-started/index.html:1645
-#: website/public/get-started/index.html:1667
-#: website/public/get-started/index.html:1710
-#: website/public/get-started/index.html:1740
-#: website/public/get-started/index.html:1761
+#: website/public/get-started/index.html:777
+#: website/public/get-started/index.html:807
+#: website/public/get-started/index.html:832
+#: website/public/get-started/index.html:847
+#: website/public/get-started/index.html:895
+#: website/public/get-started/index.html:928
+#: website/public/get-started/index.html:1083
+#: website/public/get-started/index.html:1145
+#: website/public/get-started/index.html:1168
+#: website/public/get-started/index.html:1192
+#: website/public/get-started/index.html:1240
+#: website/public/get-started/index.html:1315
+#: website/public/get-started/index.html:1341
+#: website/public/get-started/index.html:1358
+#: website/public/get-started/index.html:1601
+#: website/public/get-started/index.html:1660
+#: website/public/get-started/index.html:1679
+#: website/public/get-started/index.html:1701
+#: website/public/get-started/index.html:1744
+#: website/public/get-started/index.html:1774
+#: website/public/get-started/index.html:1795
 msgctxt "page:get-started/index.html"
 msgid "Copy"
 msgstr "复制"
@@ -2960,13 +2960,13 @@ msgstr "{ph0}寻求帮助{ph1}"
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/get-started/index.html:771
+#: website/public/get-started/index.html:802
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}你的编程助手"
 
-#: website/public/get-started/index.html:797
+#: website/public/get-started/index.html:828
 msgctxt "page:get-started/index.html"
 msgid "Or run setup yourself"
 msgstr "也可以自己运行 setup"
@@ -3028,7 +3028,7 @@ msgid ""
 msgstr ""
 "用 {ph0} {ph1} 粘贴命令（macOS：{ph2} {ph3}；Linux 终端：{ph4} {ph5} {ph6}），再按 Enter。"
 
-#: website/public/get-started/index.html:833
+#: website/public/get-started/index.html:864
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose your client and review the setup plan. REA adds its MCP connection "
@@ -3036,7 +3036,7 @@ msgid ""
 "configuration. It asks before applying the changes."
 msgstr "选择客户端，并查看配置计划。REA 会添加 MCP 连接和配套调查技能，同时备份已有配置。确认后才会应用更改。"
 
-#: website/public/get-started/index.html:847
+#: website/public/get-started/index.html:878
 msgctxt "page:get-started/index.html"
 msgid "How do I restart my client?"
 msgstr "如何重启客户端？"
@@ -3045,7 +3045,7 @@ msgstr "如何重启客户端？"
 #. {ph1}: </strong>
 #. {ph2}: <kbd>⌘</kbd>
 #. {ph3}: <kbd>Q</kbd>
-#: website/public/get-started/index.html:848
+#: website/public/get-started/index.html:879
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3059,7 +3059,7 @@ msgstr ""
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/get-started/index.html:855
+#: website/public/get-started/index.html:886
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3067,7 +3067,7 @@ msgid ""
 " and start it again."
 msgstr "{ph0}终端助手{ph1}（Claude Code、Codex、Gemini CLI）：退出当前会话，再启动一次。"
 
-#: website/public/get-started/index.html:959
+#: website/public/get-started/index.html:990
 msgctxt "page:get-started/index.html"
 msgid "How do I get a folder's full path?"
 msgstr "怎么取得文件夹的完整路径？"
@@ -3076,7 +3076,7 @@ msgstr "怎么取得文件夹的完整路径？"
 #. {ph1}: </strong>
 #. {ph2}: <em>
 #. {ph3}: </em>
-#: website/public/get-started/index.html:961
+#: website/public/get-started/index.html:992
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3090,7 +3090,7 @@ msgstr ""
 #. {ph1}: </strong>
 #. {ph2}: <em>
 #. {ph3}: </em>
-#: website/public/get-started/index.html:966
+#: website/public/get-started/index.html:997
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3100,7 +3100,7 @@ msgstr "{ph0}macOS：{ph1}在 Finder 中右键文件夹，按住 Option，选择
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/get-started/index.html:970
+#: website/public/get-started/index.html:1001
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3108,27 +3108,27 @@ msgid ""
 "appears."
 msgstr "{ph0}所有系统：{ph1}把文件夹拖进终端窗口，也能显示路径。"
 
-#: website/public/get-started/index.html:975
-#: website/public/get-started/index.html:1733
+#: website/public/get-started/index.html:1006
+#: website/public/get-started/index.html:1767
 msgctxt "page:get-started/index.html"
 msgid "In a terminal, put quotes around a path that contains spaces."
 msgstr "在终端里，包含空格的路径需要加引号。"
 
-#: website/public/get-started/index.html:1560
+#: website/public/get-started/index.html:1594
 msgctxt "page:get-started/index.html"
 msgid ""
 "Analyze a JavaScript or Electron application folder or ASAR archive without "
 "running the app:"
 msgstr "静态分析 JavaScript 或 Electron 应用目录、ASAR 文件，无需启动应用："
 
-#: website/public/get-started/index.html:1566
+#: website/public/get-started/index.html:1600
 msgctxt "page:get-started/index.html"
 msgid "Static application analysis"
 msgstr "静态应用分析"
 
 #. {ph0}: <code>.asar</code>
 #. {ph1}: <code>"D:/apps/example"</code>
-#: website/public/get-started/index.html:1578
+#: website/public/get-started/index.html:1612
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3136,13 +3136,13 @@ msgid ""
 "Windows, a path such as {ph1} works here."
 msgstr "把路径换成解包后的应用目录或 {ph0} 文件。Windows 上也可以使用 {ph1} 这样的路径。"
 
-#: website/public/get-started/index.html:1584
+#: website/public/get-started/index.html:1618
 msgctxt "page:get-started/index.html"
 msgid "Where do I find an app's .asar file?"
 msgstr "在哪里找到应用的 .asar 文件？"
 
 #. {ph0}: <code>resources</code>
-#: website/public/get-started/index.html:1585
+#: website/public/get-started/index.html:1619
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "Electron apps usually keep it in a {ph0} folder:"
@@ -3153,7 +3153,7 @@ msgstr "Electron 应用通常把它放在 {ph0} 文件夹中："
 #. {ph2}: <code
 #. >C:\Users\&lt;you&gt;\AppData\Local\Programs\&lt;App&gt;\resources\app.asar</code
 #. >
-#: website/public/get-started/index.html:1590
+#: website/public/get-started/index.html:1624
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Windows:{ph1} {ph2}"
@@ -3165,7 +3165,7 @@ msgstr "{ph0} Windows :{ph1} {ph2}"
 #. >/Applications/&lt;App&gt;.app/Contents/Resources/app.asar</code >
 #. {ph3}: <em>
 #. {ph4}: </em>
-#: website/public/get-started/index.html:1596
+#: website/public/get-started/index.html:1630
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3176,20 +3176,20 @@ msgstr "{ph0}macOS：{ph1}{ph2}（右键应用，选择{ph3}“显示包内容�
 #. {ph0}: <strong>
 #. {ph1}: </strong>
 #. {ph2}: <code>/opt/&lt;App&gt;/resources/app.asar</code>
-#: website/public/get-started/index.html:1604
+#: website/public/get-started/index.html:1638
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Linux:{ph1} often {ph2}"
 msgstr "{ph0}Linux：{ph1}通常位于 {ph2}"
 
 #. {ph0}: <code>app.asar</code>
-#: website/public/get-started/index.html:1609
+#: website/public/get-started/index.html:1643
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "Some apps install elsewhere. Search the app's folder for {ph0}."
 msgstr "有些应用安装在其他位置。在应用目录里搜索 {ph0}。"
 
-#: website/public/get-started/index.html:1614
+#: website/public/get-started/index.html:1648
 msgctxt "page:get-started/index.html"
 msgid ""
 "The result identifies the app, shows connections between modules and gives "
@@ -3198,36 +3198,36 @@ msgid ""
 msgstr "结果会识别应用，展示模块之间的关系，并给出源码位置。REA 无法解析的关系会在结果中注明。"
 
 #. {ph0}: <code>rea</code>
-#: website/public/get-started/index.html:1619
+#: website/public/get-started/index.html:1653
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "If you'd like a permanent {ph0} command in your shell:"
 msgstr "如果希望在 shell 中直接使用 {ph0} 命令："
 
-#: website/public/get-started/index.html:1625
+#: website/public/get-started/index.html:1659
 msgctxt "page:get-started/index.html"
 msgid "Install the CLI"
 msgstr "安装CLI"
 
 #. {ph0}: <a href="../guides/javascript/" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1637
+#: website/public/get-started/index.html:1671
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Continue with the JavaScript application guide{ph1}"
 msgstr "{ph0}继续看 JavaScript 应用指南{ph1}"
 
-#: website/public/get-started/index.html:1154
+#: website/public/get-started/index.html:1188
 msgctxt "page:get-started/index.html"
 msgid "Connect your Ghidra installation"
 msgstr "连接已有的 Ghidra"
 
-#: website/public/get-started/index.html:1124
+#: website/public/get-started/index.html:1158
 msgctxt "page:get-started/index.html"
 msgid "Connect Ghidra on Windows"
 msgstr "在 Windows 上连接 Ghidra"
 
-#: website/public/get-started/index.html:1125
+#: website/public/get-started/index.html:1159
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
@@ -3237,31 +3237,31 @@ msgstr ""
 "Windows x64 提供实验性的只读支持：分析固定本地 NTFS 驱动器上的原生 x86、x64 PE 应用和 DLL。使用已有的 Ghidra "
 "12.1.x 和 64 位 JDK 21 或更新版本："
 
-#: website/public/get-started/index.html:1148
+#: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
 msgid ""
 "Replace the two paths with your installations, then review setup's plan."
 msgstr "把两个路径换成安装位置，再查看 setup 计划。"
 
-#: website/public/get-started/index.html:1030
+#: website/public/get-started/index.html:1061
 msgctxt "page:get-started/index.html"
 msgid ""
 "Connect Hopper on macOS or Linux. Run the setup command above; it detects an"
 " existing installation or offers an installation plan for your approval."
 msgstr "在 macOS 或 Linux 上连接 Hopper。运行上面的 setup 命令，它会检测已有安装，或提出安装计划供你确认。"
 
-#: website/public/get-started/index.html:1691
+#: website/public/get-started/index.html:1725
 msgctxt "page:get-started/index.html"
 msgid "Getting help"
 msgstr "寻求帮助"
 
-#: website/public/get-started/index.html:1693
+#: website/public/get-started/index.html:1727
 msgctxt "page:get-started/index.html"
 msgid "If your agent doesn't see REA"
 msgstr "助手看不到 REA 工具时"
 
 #. {ph0}: <code>doctor</code>
-#: website/public/get-started/index.html:1694
+#: website/public/get-started/index.html:1728
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3269,22 +3269,22 @@ msgid ""
 "{ph0}; for Codex:"
 msgstr "配置后重启或重新连接客户端。用 {ph0} 检查 REA 连接。以 Codex 为例："
 
-#: website/public/get-started/index.html:1705
+#: website/public/get-started/index.html:1739
 msgctxt "page:get-started/index.html"
 msgid "If a provider needs attention"
 msgstr "分析后端出现问题时"
 
-#: website/public/get-started/index.html:1706
+#: website/public/get-started/index.html:1740
 msgctxt "page:get-started/index.html"
 msgid "Check the provider you're using. For Ghidra:"
 msgstr "检查正在使用的分析后端。以 Ghidra 为例："
 
-#: website/public/get-started/index.html:1709
+#: website/public/get-started/index.html:1743
 msgctxt "page:get-started/index.html"
 msgid "Check one provider"
 msgstr "检查一个分析后端"
 
-#: website/public/get-started/index.html:1721
+#: website/public/get-started/index.html:1755
 msgctxt "page:get-started/index.html"
 msgid "The report gives the failed check and a suggested next step."
 msgstr "报告会列出失败的检查和建议的下一步。"
@@ -3293,7 +3293,7 @@ msgstr "报告会列出失败的检查和建议的下一步。"
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1786
+#: website/public/get-started/index.html:1820
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3304,7 +3304,7 @@ msgstr "{ph0}REA FAQ{ph1}{ph2}关于更新、助手和分析的常见解答。{p
 #. {ph1}: </a >
 #. {ph2}: <span >
 #. {ph3}: </span >
-#: website/public/get-started/index.html:1790
+#: website/public/get-started/index.html:1824
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3316,7 +3316,7 @@ msgstr "{ph0}选择调查指南{ph1}{ph2}二进制、Electron 应用和浏览器
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1797
+#: website/public/get-started/index.html:1831
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3328,7 +3328,7 @@ msgstr "{ph0}GitHub issues{ph1}{ph2}附上命令与诊断结果，反馈问题�
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1801
+#: website/public/get-started/index.html:1835
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3384,27 +3384,27 @@ msgctxt "page:get-started/index.html"
 msgid "REA getting started guide"
 msgstr "REA入门指南"
 
-#: website/public/get-started/index.html:776
+#: website/public/get-started/index.html:807
 msgctxt "page:get-started/index.html"
 msgid "Copy REA installation prompt"
 msgstr "复制REA安装提示"
 
-#: website/public/get-started/index.html:1567
+#: website/public/get-started/index.html:1601
 msgctxt "page:get-started/index.html"
 msgid "Copy JavaScript analysis command"
 msgstr "复制JavaScript分析命令"
 
-#: website/public/get-started/index.html:1626
+#: website/public/get-started/index.html:1660
 msgctxt "page:get-started/index.html"
 msgid "Copy CLI installation command"
 msgstr "复制CLI安装命令"
 
-#: website/public/get-started/index.html:1710
+#: website/public/get-started/index.html:1744
 msgctxt "page:get-started/index.html"
 msgid "Copy provider diagnosis command"
 msgstr "复制提供者诊断命令"
 
-#: website/public/get-started/index.html:1826
+#: website/public/get-started/index.html:1860
 msgctxt "page:get-started/index.html"
 msgid "Back to top"
 msgstr "回到顶部"
@@ -4634,20 +4634,7 @@ msgstr "REA需要其中一个来阅读原生程序:"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/guides/native/index.html:316
-#, python-brace-format
-msgctxt "page:guides/native/index.html"
-msgid ""
-"{ph0}Hopper{ph1} (macOS or Linux): REA's setup detects it or offers to "
-"install it. On macOS, open Hopper once and choose demo mode or activate a "
-"license before your first analysis."
-msgstr ""
-"{ph0}Hopper{ph1}（macOS 或 Linux）：REA 的安装与配置流程会检测到它，或提示你安装。在 macOS 上，先打开一次 "
-"Hopper，选择演示模式或在首次分析前激活许可证。"
-
-#. {ph0}: <strong>
-#. {ph1}: </strong>
-#: website/public/guides/native/index.html:322
+#: website/public/guides/native/index.html:323
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4657,18 +4644,9 @@ msgstr ""
 "{ph0}Ghidra{ph1}（macOS 或 Linux；在 Windows 上为实验性）：免费，但需要已安装的 Ghidra 12.1.x，以及 "
 "64 位 JDK 21 或更新版本。"
 
-#. {ph0}: <strong>
-#. {ph1}: </strong>
-#: website/public/guides/native/index.html:327
-#, python-brace-format
-msgctxt "page:guides/native/index.html"
-msgid ""
-"{ph0}IDA{ph1} (Windows): for an existing IDA setup with an MCP registration."
-msgstr "{ph0}IDA{ph1}（Windows）：适用于已完成 MCP 注册的现有 IDA 配置。"
-
 #. {ph0}: <a href="../../get-started/#native">
 #. {ph1}: </a>
-#: website/public/guides/native/index.html:332
+#: website/public/guides/native/index.html:335
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "See {ph0}Set up native analysis{ph1} for the steps."
@@ -4682,14 +4660,14 @@ msgstr "具体步骤参见{ph0}配置原生分析{ph1}。"
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/guides/native/index.html:340
+#: website/public/guides/native/index.html:343
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}你的编程助手"
 
-#: website/public/guides/native/index.html:344
-#: website/public/guides/native/index.html:475
+#: website/public/guides/native/index.html:347
+#: website/public/guides/native/index.html:478
 msgctxt "page:guides/native/index.html"
 msgid "Copy"
 msgstr "复制"
@@ -4700,7 +4678,7 @@ msgstr "复制"
 #. {ph3}: </span >
 #. {ph4}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph5}: </span>
-#: website/public/guides/native/index.html:353
+#: website/public/guides/native/index.html:356
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4709,7 +4687,7 @@ msgid ""
 msgstr ""
 "{ph0}›{ph1}{ph2}用 REA 找出 DX-Ball 如何计算声音的左右位置。解释计算过程，并展示代码。{ph3}{ph4}{ph5}"
 
-#: website/public/guides/native/index.html:361
+#: website/public/guides/native/index.html:364
 msgctxt "page:guides/native/index.html"
 msgid ""
 "Example prompt. Give your agent the path to your local DX-Ball 1.07 "
@@ -4719,7 +4697,7 @@ msgstr ""
 "示例提示词。把本地 DX-Ball 1.07 可执行文件的路径交给编程助手。REA 不附带 DX-"
 "Ball，请使用你自己的副本；也可以就你手上的另一个小型 Windows 程序问同样的问题。"
 
-#: website/public/guides/native/index.html:368
+#: website/public/guides/native/index.html:371
 msgctxt "page:guides/native/index.html"
 msgid "How do I get a file's full path?"
 msgstr "如何获取文件的完整路径？"
@@ -4728,7 +4706,7 @@ msgstr "如何获取文件的完整路径？"
 #. {ph1}: </strong>
 #. {ph2}: <em>
 #. {ph3}: </em>
-#: website/public/guides/native/index.html:370
+#: website/public/guides/native/index.html:373
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4742,7 +4720,7 @@ msgstr ""
 #. {ph1}: </strong>
 #. {ph2}: <em>
 #. {ph3}: </em>
-#: website/public/guides/native/index.html:375
+#: website/public/guides/native/index.html:378
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4752,7 +4730,7 @@ msgstr "{ph0} macOS :{ph1} 在Finder中，右键单击文件，按住选项并�
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/guides/native/index.html:379
+#: website/public/guides/native/index.html:382
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4760,30 +4738,30 @@ msgid ""
 "appears."
 msgstr "{ph0}任何系统:{ph1} 将文件拖到终端窗口中并显示其路径。"
 
-#: website/public/guides/native/index.html:387
+#: website/public/guides/native/index.html:390
 msgctxt "page:guides/native/index.html"
 msgid "Read the REA results"
 msgstr "阅读REA结果"
 
-#: website/public/guides/native/index.html:388
+#: website/public/guides/native/index.html:391
 msgctxt "page:guides/native/index.html"
 msgid "Read the input"
 msgstr "阅读输入"
 
-#: website/public/guides/native/index.html:397
+#: website/public/guides/native/index.html:400
 msgctxt "page:guides/native/index.html"
 msgid ""
 "The instructions load an integer argument and convert it for floating-point "
 "arithmetic. This is the input absent from the first pseudocode view."
 msgstr "指令加载一个整数参数并将其转换为浮点算术。 这是第一个伪代码视图中没有的输入。"
 
-#: website/public/guides/native/index.html:402
+#: website/public/guides/native/index.html:405
 msgctxt "page:guides/native/index.html"
 msgid "Follow the caller"
 msgstr "跟随调用方"
 
 #. {ph0}: <code>0x14</code>
-#: website/public/guides/native/index.html:411
+#: website/public/guides/native/index.html:414
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4791,24 +4769,24 @@ msgid ""
 "tile coordinate by 30; adding {ph0} (20) gives the brick's screen position."
 msgstr "REA 找到砖块碰撞处理函数。它先把砖块横坐标乘以 30，再加上 {ph0}（20），得到砖块的屏幕位置。"
 
-#: website/public/guides/native/index.html:416
+#: website/public/guides/native/index.html:419
 msgctxt "page:guides/native/index.html"
 msgid "Read the referenced constants"
 msgstr "读取引用的常量"
 
-#: website/public/guides/native/index.html:427
+#: website/public/guides/native/index.html:430
 msgctxt "page:guides/native/index.html"
 msgid ""
 "The arithmetic references these addresses. Reading the bytes supplies the "
 "actual values; the instruction order tells the agent how they are used."
 msgstr "算术引用这些地址。 读取字节提供实际值；指令顺序告诉编程助手如何使用它们。"
 
-#: website/public/guides/native/index.html:434
+#: website/public/guides/native/index.html:437
 msgctxt "page:guides/native/index.html"
 msgid "Write and check the recovered function"
 msgstr "写入并检查恢复的函数"
 
-#: website/public/guides/native/index.html:443
+#: website/public/guides/native/index.html:446
 msgctxt "page:guides/native/index.html"
 msgid ""
 "With a scale of 1.0, screen positions 0, 320 and 640 map to −500, 0 and 500 "
@@ -4816,7 +4794,7 @@ msgid ""
 "the center of the stereo field."
 msgstr "比例为 1.0 时，屏幕坐标 0、320 和 640 在整数转换前映射到 -500、0 和 500。这一计算把屏幕正中放在立体声场的中心。"
 
-#: website/public/guides/native/index.html:448
+#: website/public/guides/native/index.html:451
 msgctxt "page:guides/native/index.html"
 msgid ""
 "The agent used REA's findings to write the C. Separate checks compared 3,205"
@@ -4826,20 +4804,20 @@ msgstr "编程助手使用REA的发现来编写C.单独的检查将3,205个输�
 
 #. {ph0}: <a href="../../showcase/dx-ball/#sound-pan" >
 #. {ph1}: </a >
-#: website/public/guides/native/index.html:453
+#: website/public/guides/native/index.html:456
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}See the full investigation and assembly-to-C comparison{ph1}"
 msgstr "{ph0}查看完整调查过程和汇编与 C 的对比{ph1}"
 
-#: website/public/guides/native/index.html:460
+#: website/public/guides/native/index.html:463
 msgctxt "page:guides/native/index.html"
 msgid "Try it with your own binary"
 msgstr "用你自己的二进制文件试试"
 
 #. {ph0}: <a href="../../get-started/#native" >
 #. {ph1}: </a >
-#: website/public/guides/native/index.html:461
+#: website/public/guides/native/index.html:464
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4850,20 +4828,20 @@ msgid ""
 msgstr ""
 "{ph0}连接原生分析提供程序{ph1}，然后给编程助手一个本地可执行文件或库，并指定要调查的功能。有用的起始问题包括“如何解析这个文件？”或“哪个函数处理这个菜单操作？”"
 
-#: website/public/guides/native/index.html:468
+#: website/public/guides/native/index.html:471
 msgctxt "page:guides/native/index.html"
 msgid ""
 "If you already know a function name or address, you can query it from the "
 "terminal. For a configured Ghidra installation:"
 msgstr "如果你已经知道函数名称或地址，则可以从终端查询它。 对于已配置的Ghidra安装:"
 
-#: website/public/guides/native/index.html:474
+#: website/public/guides/native/index.html:477
 msgctxt "page:guides/native/index.html"
 msgid "Function analysis"
 msgstr "函数分析"
 
 #. {ph0}: <code>main</code>
-#: website/public/guides/native/index.html:487
+#: website/public/guides/native/index.html:490
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4875,7 +4853,7 @@ msgstr ""
 "替换目标路径和 {ph0} 使用你自己的函数名称或地址。 每个 CLI 调用导入并分析二进制文件，然后关闭其会话。 你的编程助手 MCP "
 "查询在该会话打开时重用导入的二进制文件。"
 
-#: website/public/guides/native/index.html:493
+#: website/public/guides/native/index.html:496
 msgctxt "page:guides/native/index.html"
 msgid ""
 "Read the pseudocode alongside instructions and references. When a result "
@@ -4904,17 +4882,17 @@ msgctxt "page:guides/native/index.html"
 msgid "Native analysis"
 msgstr "机器代码程序分析"
 
-#: website/public/guides/native/index.html:344
+#: website/public/guides/native/index.html:347
 msgctxt "page:guides/native/index.html"
 msgid "Copy example prompt"
 msgstr "复制示例提示"
 
-#: website/public/guides/native/index.html:475
+#: website/public/guides/native/index.html:478
 msgctxt "page:guides/native/index.html"
 msgid "Copy function analysis"
 msgstr "复制函数分析"
 
-#: website/public/guides/native/index.html:518
+#: website/public/guides/native/index.html:521
 msgctxt "page:guides/native/index.html"
 msgid "Back to top"
 msgstr "回到顶部"
@@ -5840,7 +5818,7 @@ msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}你的编程助手"
 
 #: website/public/showcase/aegis/index.html:276
-#: website/public/showcase/aegis/index.html:739
+#: website/public/showcase/aegis/index.html:746
 msgctxt "page:showcase/aegis/index.html"
 msgid "Copy"
 msgstr "复制"
@@ -6224,22 +6202,9 @@ msgctxt "page:showcase/aegis/index.html"
 msgid "Inspect the APK yourself"
 msgstr "亲自检查APK"
 
-# Reviewed for clear case-study reasoning and evidence.
-#. {ph0}: <a href="../../get-started/">
-#. {ph1}: </a>
-#: website/public/showcase/aegis/index.html:714
-#, python-brace-format
-msgctxt "page:showcase/aegis/index.html"
-msgid ""
-"{ph0}Set up REA{ph1} on macOS or Linux, then download these two files into "
-"the same folder. On Windows, use a Linux environment such as WSL."
-msgstr ""
-"先在 macOS 或 Linux 上{ph0}设置 REA{ph1}，再将这两个文件下载到同一文件夹。Windows 上可使用 WSL 等 Linux "
-"环境。"
-
 #. {ph0}: <code>JAVA_HOME</code>
 #. {ph1}: <code>PATH</code>
-#: website/public/showcase/aegis/index.html:719
+#: website/public/showcase/aegis/index.html:726
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6247,19 +6212,19 @@ msgid ""
 "{ph1}. This case used JDK 21."
 msgstr "Android 分析需要完整的 JDK 17 或更高版本。通过设置 {ph0} 或 {ph1} 来选择它。本案例使用了 JDK 21。"
 
-#: website/public/showcase/aegis/index.html:735
+#: website/public/showcase/aegis/index.html:742
 msgctxt "page:showcase/aegis/index.html"
 msgid "Point REA at the provider file and inspect the APK:"
 msgstr "让 REA 使用分析后端配置文件，再检查 APK："
 
-#: website/public/showcase/aegis/index.html:738
+#: website/public/showcase/aegis/index.html:745
 msgctxt "page:showcase/aegis/index.html"
 msgid "macOS / Linux"
 msgstr "macOS/Linux"
 
 # Reviewed for clear case-study reasoning and evidence.
 #. {ph0}: <code>REA_JADX_MCP_JAR</code>
-#: website/public/showcase/aegis/index.html:752
+#: website/public/showcase/aegis/index.html:759
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6269,7 +6234,7 @@ msgstr "助手可以通过 REA CLI 继续使用上方的 prompt。如果使用 M
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
-#: website/public/showcase/aegis/index.html:757
+#: website/public/showcase/aegis/index.html:764
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6277,7 +6242,7 @@ msgid ""
 "different time interval?{ph1}"
 msgstr "下一个问题: {ph0}当帐户使用八位数字或不同的时间间隔时会发生什么？{ph1}"
 
-#: website/public/showcase/aegis/index.html:767
+#: website/public/showcase/aegis/index.html:774
 msgctxt "page:showcase/aegis/index.html"
 msgid "Sources"
 msgstr "资料来源"
@@ -6293,7 +6258,7 @@ msgstr "资料来源"
 #. href="https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/LICENSE"
 #. >
 #. {ph5}: </a >
-#: website/public/showcase/aegis/index.html:769
+#: website/public/showcase/aegis/index.html:776
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6305,14 +6270,14 @@ msgstr "{ph0}官方Aegis3.4.3发布{ph1} · {ph2}匹配源提交{ph3} · {ph4}GP
 #. {ph1}: </a >
 #. {ph2}: <a href="test-vectors.json">
 #. {ph3}: </a>
-#: website/public/showcase/aegis/index.html:785
+#: website/public/showcase/aegis/index.html:792
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid "{ph0}RFC 6238 reference cases{ph1} · {ph2}Demo test data{ph3}"
 msgstr "{ph0}RFC6238参考案例{ph1} · {ph2}演示测试数据{ph3}"
 
 # Reviewed for clear case-study reasoning and evidence.
-#: website/public/showcase/aegis/index.html:792
+#: website/public/showcase/aegis/index.html:799
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
 "Inspected with REA 6.1.0 on 9 October 2026. Decompiled excerpts are credited"
@@ -6353,12 +6318,12 @@ msgctxt "page:showcase/aegis/index.html"
 msgid "Follow the login-code calculation"
 msgstr "按照登录代码计算"
 
-#: website/public/showcase/aegis/index.html:739
+#: website/public/showcase/aegis/index.html:746
 msgctxt "page:showcase/aegis/index.html"
 msgid "Copy APK inspection command"
 msgstr "复制APK检查命令"
 
-#: website/public/showcase/aegis/index.html:817
+#: website/public/showcase/aegis/index.html:824
 msgctxt "page:showcase/aegis/index.html"
 msgid "Back to top"
 msgstr "回到顶部"
@@ -9924,13 +9889,13 @@ msgstr "指南"
 #: website/public/examples/dino-lab/index.html:476
 #: website/public/faq/index.html:574
 #: website/public/first-investigation/index.html:535
-#: website/public/get-started/index.html:1818
+#: website/public/get-started/index.html:1852
 #: website/public/guides/browser/index.html:508
 #: website/public/guides/index.html:302
 #: website/public/guides/javascript/index.html:512
-#: website/public/guides/native/index.html:510
+#: website/public/guides/native/index.html:513
 #: website/public/guides/rl-environments/index.html:499
-#: website/public/index.html:1304 website/public/showcase/aegis/index.html:809
+#: website/public/index.html:1304 website/public/showcase/aegis/index.html:816
 #: website/public/showcase/ctf/index.html:778
 #: website/public/showcase/dx-ball/index.html:786
 #: website/public/showcase/index.html:338
@@ -9947,13 +9912,13 @@ msgstr "源代码"
 #: website/public/examples/dino-lab/index.html:477
 #: website/public/faq/index.html:575
 #: website/public/first-investigation/index.html:536
-#: website/public/get-started/index.html:1819
+#: website/public/get-started/index.html:1853
 #: website/public/guides/browser/index.html:509
 #: website/public/guides/index.html:303
 #: website/public/guides/javascript/index.html:513
-#: website/public/guides/native/index.html:511
+#: website/public/guides/native/index.html:514
 #: website/public/guides/rl-environments/index.html:500
-#: website/public/index.html:1305 website/public/showcase/aegis/index.html:810
+#: website/public/index.html:1305 website/public/showcase/aegis/index.html:817
 #: website/public/showcase/ctf/index.html:779
 #: website/public/showcase/dx-ball/index.html:787
 #: website/public/showcase/index.html:339
@@ -9970,13 +9935,13 @@ msgstr "MIT 许可证"
 #: website/public/examples/dino-lab/index.html:478
 #: website/public/faq/index.html:576
 #: website/public/first-investigation/index.html:537
-#: website/public/get-started/index.html:1820
+#: website/public/get-started/index.html:1854
 #: website/public/guides/browser/index.html:510
 #: website/public/guides/index.html:304
 #: website/public/guides/javascript/index.html:514
-#: website/public/guides/native/index.html:512
+#: website/public/guides/native/index.html:515
 #: website/public/guides/rl-environments/index.html:501
-#: website/public/index.html:1306 website/public/showcase/aegis/index.html:811
+#: website/public/index.html:1306 website/public/showcase/aegis/index.html:818
 #: website/public/showcase/ctf/index.html:780
 #: website/public/showcase/dx-ball/index.html:788
 #: website/public/showcase/index.html:340
@@ -9993,13 +9958,13 @@ msgstr "加入社区"
 #: website/public/examples/dino-lab/index.html:479
 #: website/public/faq/index.html:577
 #: website/public/first-investigation/index.html:538
-#: website/public/get-started/index.html:1821
+#: website/public/get-started/index.html:1855
 #: website/public/guides/browser/index.html:511
 #: website/public/guides/index.html:305
 #: website/public/guides/javascript/index.html:515
-#: website/public/guides/native/index.html:513
+#: website/public/guides/native/index.html:516
 #: website/public/guides/rl-environments/index.html:502
-#: website/public/index.html:1307 website/public/showcase/aegis/index.html:812
+#: website/public/index.html:1307 website/public/showcase/aegis/index.html:819
 #: website/public/showcase/ctf/index.html:781
 #: website/public/showcase/dx-ball/index.html:789
 #: website/public/showcase/index.html:341
@@ -10084,22 +10049,22 @@ msgctxt "page:guides/javascript/index.html"
 msgid "REA result · summary.ipc excerpt"
 msgstr "REA 结果 · summary.ipc 摘录"
 
-#: website/public/guides/native/index.html:391
+#: website/public/guides/native/index.html:394
 msgctxt "page:guides/native/index.html"
 msgid "REA instruction excerpt · 0x406409"
 msgstr "REA指令摘录·0x406409"
 
-#: website/public/guides/native/index.html:405
+#: website/public/guides/native/index.html:408
 msgctxt "page:guides/native/index.html"
 msgid "REA caller excerpt · 0x411f5b"
 msgstr "REA调用方摘录 · 0x411f5b"
 
-#: website/public/guides/native/index.html:419
+#: website/public/guides/native/index.html:422
 msgctxt "page:guides/native/index.html"
 msgid "REA byte results · interpreted as little-endian doubles"
 msgstr "REA字节结果 · 解释为little-endian双精度浮点数"
 
-#: website/public/guides/native/index.html:436
+#: website/public/guides/native/index.html:439
 msgctxt "page:guides/native/index.html"
 msgid "Recovered C · excerpt"
 msgstr "恢复C · 摘录"
@@ -10160,12 +10125,12 @@ msgctxt "page:showcase/aegis/index.html"
 msgid "REA · generateOTP, complete body"
 msgstr "REA · generateOTP 完整函数体"
 
-#: website/public/showcase/aegis/index.html:725
+#: website/public/showcase/aegis/index.html:732
 msgctxt "page:showcase/aegis/index.html"
 msgid "Download Aegis APK"
 msgstr "下载Aegis APK"
 
-#: website/public/showcase/aegis/index.html:729
+#: website/public/showcase/aegis/index.html:736
 msgctxt "page:showcase/aegis/index.html"
 msgid "Download Android analysis provider"
 msgstr "下载 Android 分析提供程序"
@@ -10510,7 +10475,7 @@ msgstr ""
 #. {ph4}: </span >
 #. {ph5}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph6}: </span>
-#: website/public/get-started/index.html:785
+#: website/public/get-started/index.html:816
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12278,15 +12243,6 @@ msgctxt "page:get-started/index.html"
 msgid "All supported clients and setup IDs"
 msgstr "全部支持的客户端与 setup ID"
 
-#. {ph0}: <code>--client</code>
-#: website/public/get-started/index.html:635
-#, python-brace-format
-msgctxt "page:get-started/index.html"
-msgid ""
-"The npm 6.4.0 release supports the clients below. Use the ID with {ph0} when"
-" choosing a client explicitly."
-msgstr "npm 6.4.0 支持下面这些客户端。指定客户端时，在 {ph0} 后填写对应的 ID。"
-
 #: website/public/get-started/index.html:643
 msgctxt "page:get-started/index.html"
 msgid "Client"
@@ -12297,22 +12253,6 @@ msgctxt "page:get-started/index.html"
 msgid "Setup ID"
 msgstr "Setup ID"
 
-#. {ph0}: <code>qoder</code>
-#. {ph1}: <code>droid</code>
-#. {ph2}: <code>trae</code>
-#. {ph3}: <code>zcode</code>
-#. {ph4}: <code>dsh</code>
-#: website/public/get-started/index.html:719
-#, python-brace-format
-msgctxt "page:get-started/index.html"
-msgid ""
-"Qoder ({ph0}), Factory Droid ({ph1}), Trae ({ph2}), ZCode ({ph3}) and "
-"DeepSeek Harness ({ph4}) are available on repository main; use a source "
-"build or a release containing those integrations."
-msgstr ""
-"Qoder（{ph0}）、Factory Droid（{ph1}）、Trae（{ph2}）、ZCode（{ph3}）和 DeepSeek "
-"Harness（{ph4}）已在 main 中提供；需要使用源码构建或包含这些集成的新版本。"
-
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
 #. configuration.md" >
 #. {ph1}: </a >
@@ -12320,7 +12260,7 @@ msgstr ""
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#released-
 #. package-and-main" >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:726
+#: website/public/get-started/index.html:757
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12328,13 +12268,13 @@ msgid ""
 "availability{ph3}"
 msgstr "{ph0}客户端配置与故障排查{ph1} · {ph2}版本支持情况{ph3}"
 
-#: website/public/get-started/index.html:738
+#: website/public/get-started/index.html:769
 msgctxt "page:get-started/index.html"
 msgid "Grok Bot · connect on its hosted computer"
 msgstr "Grok Bot · 在它的托管电脑上连接"
 
 #. {ph0}: <code>rea</code>
-#: website/public/get-started/index.html:739
+#: website/public/get-started/index.html:770
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12345,29 +12285,29 @@ msgstr "在 Grok Bot 聊天中，请它添加名为 {ph0} 的自定义 MCP 服�
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
 #. configuration.md#other-client-settings" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:757
+#: website/public/get-started/index.html:788
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Grok Bot connector instructions{ph1}"
 msgstr "{ph0}Grok Bot 连接器说明{ph1}"
 
-#: website/public/get-started/index.html:767
+#: website/public/get-started/index.html:798
 msgctxt "page:get-started/index.html"
 msgid "3. Connect REA"
 msgstr "3. 连接 REA"
 
-#: website/public/get-started/index.html:768
+#: website/public/get-started/index.html:799
 msgctxt "page:get-started/index.html"
 msgid "Copy this into your coding agent:"
 msgstr "把这段话复制给编程助手："
 
-#: website/public/get-started/index.html:812
+#: website/public/get-started/index.html:843
 msgctxt "page:get-started/index.html"
 msgid "For one specific client, add its setup ID:"
 msgstr "指定某一个客户端时，附上它的 setup ID："
 
 #. {ph0}: <code>y</code>
-#: website/public/get-started/index.html:827
+#: website/public/get-started/index.html:858
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12377,14 +12317,14 @@ msgid ""
 msgstr ""
 "如果 npm 询问是否下载，输入 {ph0} 后按 Enter。在 REA 的客户端列表中，用方向键移动、空格键选择，然后按 Enter 继续。"
 
-#: website/public/get-started/index.html:838
+#: website/public/get-started/index.html:869
 msgctxt "page:get-started/index.html"
 msgid ""
 "MCP is the connection that lets your agent call REA. The skill gives it a "
 "workflow for investigating software."
 msgstr "MCP 让编程助手能够调用 REA；skill 则为它提供分析软件的工作流程。"
 
-#: website/public/get-started/index.html:842
+#: website/public/get-started/index.html:873
 msgctxt "page:get-started/index.html"
 msgid ""
 "For the first exercise, you can skip the optional Hopper installation. "
@@ -12393,7 +12333,7 @@ msgstr "第一次练习可以跳过可选的 Hopper 安装。setup 完成后，�
 
 #. {ph0}: <code>codex</code>
 #. {ph1}: <code>"healthy": true</code>
-#: website/public/get-started/index.html:875
+#: website/public/get-started/index.html:906
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12401,19 +12341,19 @@ msgid ""
 " Then ask your agent:"
 msgstr "把 {ph0} 换成你客户端的 setup ID。检查通过时会显示 {ph1}。然后问编程助手："
 
-#: website/public/get-started/index.html:881
+#: website/public/get-started/index.html:912
 msgctxt "page:get-started/index.html"
 msgid "Check that REA is connected and show me which REA tools you can use."
 msgstr "检查 REA 是否已连接，并告诉我你能使用哪些 REA 工具。"
 
-#: website/public/get-started/index.html:888
+#: website/public/get-started/index.html:919
 msgctxt "page:get-started/index.html"
 msgid "4. Try your first investigation"
 msgstr "4. 开始第一次分析"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/get-started/index.html:889
+#: website/public/get-started/index.html:920
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12424,7 +12364,7 @@ msgstr ""
 "示例是一个包含六个文件的 Electron 应用，带有{ph0}Export notes{ph1}按钮。编程助手无需安装或启动 Electron "
 "就能检查它的代码。"
 
-#: website/public/get-started/index.html:896
+#: website/public/get-started/index.html:927
 msgctxt "page:get-started/index.html"
 msgid "Your coding agent"
 msgstr "你的编程助手"
@@ -12438,7 +12378,7 @@ msgstr "你的编程助手"
 #. {ph5}: </span >
 #. {ph6}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph7}: </span>
-#: website/public/get-started/index.html:906
+#: website/public/get-started/index.html:937
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12450,7 +12390,7 @@ msgstr ""
 "{ph0}›{ph1}{ph2}下载 {ph3}，放进一个新的示例文件夹并解压。用 REA 找出点击 Export notes 后发生了什么。展示 "
 "{ph4} 写到哪里、有哪些字段，以及相关文件和行号。{ph5}{ph6}{ph7}"
 
-#: website/public/get-started/index.html:920
+#: website/public/get-started/index.html:951
 msgctxt "page:get-started/index.html"
 msgid "Look for a short explanation with file and line references:"
 msgstr "寻找带文件和行号的简短解释："
@@ -12459,7 +12399,7 @@ msgstr "寻找带文件和行号的简短解释："
 #. {ph1}: <code>notes.csv</code>
 #. {ph2}: <code>id</code>
 #. {ph3}: <code>title</code>
-#: website/public/get-started/index.html:922
+#: website/public/get-started/index.html:953
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12470,13 +12410,13 @@ msgstr "按钮发送 {ph0} 消息。主进程把笔记转换为 CSV，并将 {ph
 
 #. {ph0}: <a href="../first-investigation/#check" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:929
+#: website/public/get-started/index.html:960
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Check a prediction in the guided exercise →{ph1}"
 msgstr "{ph0}跟着练习检查一个预测 →{ph1}"
 
-#: website/public/get-started/index.html:935
+#: website/public/get-started/index.html:966
 msgctxt "page:get-started/index.html"
 msgid "Download the example yourself, or use your own app"
 msgstr "自行下载示例，或使用自己的应用"
@@ -12484,14 +12424,14 @@ msgstr "自行下载示例，或使用自己的应用"
 #. {ph0}: <a class="button" href="../examples/notes-example.zip"
 #. download="notes-example.zip" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:938
+#: website/public/get-started/index.html:969
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Download example ZIP{ph1}"
 msgstr "{ph0}下载示例ZIP{ph1}"
 
 #. {ph0}: <code>notes-example</code>
-#: website/public/get-started/index.html:946
+#: website/public/get-started/index.html:977
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12500,7 +12440,7 @@ msgid ""
 msgstr "如果助手不能下载文件，你也可以手动解压。把 {ph0} 文件夹的路径交给它，再问同一个导出问题。"
 
 #. {ph0}: <code>/absolute/path/to/app</code>
-#: website/public/get-started/index.html:952
+#: website/public/get-started/index.html:983
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12508,71 +12448,66 @@ msgid ""
 "relevant files and lines."
 msgstr "用 REA 检查 {ph0} 中的应用。找出它怎样导出数据，并给出相关文件和行号。"
 
-#: website/public/get-started/index.html:982
+#: website/public/get-started/index.html:1013
 msgctxt "page:get-started/index.html"
 msgid "Analyze another kind of software"
 msgstr "分析其他类型的软件"
 
-#: website/public/get-started/index.html:983
+#: website/public/get-started/index.html:1014
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose the section for your target. A provider is the local analysis tool "
 "REA uses for that kind of software."
 msgstr "按你的目标选择对应小节。Provider 指 REA 分析这类软件时使用的本地工具。"
 
-#: website/public/get-started/index.html:988
+#: website/public/get-started/index.html:1019
 msgctxt "page:get-started/index.html"
 msgid "Native executables and libraries · Hopper, Ghidra or IDA"
 msgstr "原生可执行文件和库 · Hopper、Ghidra 或 IDA"
 
-#: website/public/get-started/index.html:991
+#: website/public/get-started/index.html:1022
 msgctxt "page:get-started/index.html"
 msgid ""
 "Install one analysis tool on the computer running REA. The host is your "
 "operating system; the target is the program you want to inspect."
 msgstr "在运行 REA 的电脑上安装一个分析工具。Host 指你使用的操作系统，target 指要分析的程序。"
 
-#: website/public/get-started/index.html:1000
+#: website/public/get-started/index.html:1031
 msgctxt "page:get-started/index.html"
 msgid "Provider"
 msgstr "分析工具"
 
-#: website/public/get-started/index.html:1009
+#: website/public/get-started/index.html:1040
 msgctxt "page:get-started/index.html"
 msgid "Unavailable"
 msgstr "不支持"
 
-#: website/public/get-started/index.html:1011
-msgctxt "page:get-started/index.html"
-msgid "Supported distributions"
-msgstr "支持的发行版"
-
-#: website/public/get-started/index.html:1015
+#: website/public/get-started/index.html:1046
 msgctxt "page:get-started/index.html"
 msgid "x64 · experimental"
 msgstr "x64 · 实验性支持"
 
-#: website/public/get-started/index.html:1021
+#: website/public/get-started/index.html:1052
 msgctxt "page:get-started/index.html"
 msgid "Verified profiles"
 msgstr "已验证的配置"
 
-#: website/public/get-started/index.html:1022
+#: website/public/get-started/index.html:1053
 msgctxt "page:get-started/index.html"
 msgid "Verified headless profile"
 msgstr "已验证的无界面配置"
 
-#: website/public/get-started/index.html:1023
+#: website/public/get-started/index.html:1054
 msgctxt "page:get-started/index.html"
 msgid "See provider guide"
 msgstr "参阅 provider 指南"
 
-#: website/public/get-started/index.html:1029
+#: website/public/get-started/index.html:1060
 msgctxt "page:get-started/index.html"
 msgid "Hopper · let setup install or connect it"
 msgstr "Hopper · 通过 setup 安装或连接"
 
-#: website/public/get-started/index.html:1035
+#: website/public/get-started/index.html:1066
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose Hopper in setup and review its separate installation plan. On macOS, "
@@ -12582,16 +12517,7 @@ msgstr ""
 "在 setup 中选择 Hopper，查看它的独立安装计划。macOS 首次打开 Hopper 时选择试用模式或激活许可证；Linux 的 setup "
 "会准备支持的试用版及其专用显示环境。"
 
-#: website/public/get-started/index.html:1041
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"Linux 支持 Ubuntu 24.04+、Fedora 41+、Nobara 44+、Arch Linux、CachyOS 和 "
-"Omarchy。Hopper 是商业软件，试用版有厂商规定的限制。"
-
-#: website/public/get-started/index.html:1060
+#: website/public/get-started/index.html:1094
 msgctxt "page:get-started/index.html"
 msgid ""
 "If macOS asks for Automation permission, allow the app that starts REA in "
@@ -12602,18 +12528,18 @@ msgstr "如果 macOS 请求自动化权限，在“系统设置 → 隐私与安
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#hopper"
 #. >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1065
+#: website/public/get-started/index.html:1099
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Hopper setup and troubleshooting{ph1}"
 msgstr "{ph0}Hopper 安装与故障排查{ph1}"
 
-#: website/public/get-started/index.html:1073
+#: website/public/get-started/index.html:1107
 msgctxt "page:get-started/index.html"
 msgid "Ghidra · install the free analysis tool and Java"
 msgstr "Ghidra · 安装免费的分析工具和 Java"
 
-#: website/public/get-started/index.html:1077
+#: website/public/get-started/index.html:1111
 msgctxt "page:get-started/index.html"
 msgid ""
 "Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
@@ -12621,7 +12547,7 @@ msgid ""
 msgstr "安装包含 Java 编译器的 64 位 JDK 21 或更新版本。下载时选择符合电脑架构的安装包。"
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
-#: website/public/get-started/index.html:1082
+#: website/public/get-started/index.html:1116
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12632,7 +12558,7 @@ msgstr "从 Ghidra 12.1.4 发布页的 Assets 列表下载并解压 {ph0}。选�
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
 #. {ph2}: <code>GHIDRA_INSTALL_DIR</code>
-#: website/public/get-started/index.html:1087
+#: website/public/get-started/index.html:1121
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12646,7 +12572,7 @@ msgstr "找到解压后包含 {ph0} 或 {ph1} 的文件夹，把该文件夹的�
 #. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
 #. >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:1093
+#: website/public/get-started/index.html:1127
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
@@ -12654,7 +12580,7 @@ msgstr "{ph0}下载 JDK{ph1} · {ph2}下载 Ghidra 12.1.4{ph3}"
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
-#: website/public/get-started/index.html:1103
+#: website/public/get-started/index.html:1137
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12662,7 +12588,7 @@ msgid ""
 "second confirms the compiler is installed:"
 msgstr "检查 Java。第一条命令会显示 {ph0}，将该文件夹用于 {ph1}；第二条确认编译器已安装："
 
-#: website/public/get-started/index.html:1219
+#: website/public/get-started/index.html:1253
 msgctxt "page:get-started/index.html"
 msgid ""
 "Keep these commands in the same terminal session. Rerun setup after setting "
@@ -12677,7 +12603,7 @@ msgstr "在同一个终端会话中运行这些命令。设置路径后重新运
 #. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/windows-
 #. ghidra-p0.md" >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:1224
+#: website/public/get-started/index.html:1258
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12685,12 +12611,12 @@ msgid ""
 "guide{ph3}"
 msgstr "{ph0}Ghidra 配置与架构要求{ph1} · {ph2}Windows Ghidra 指南{ph3}"
 
-#: website/public/get-started/index.html:1237
+#: website/public/get-started/index.html:1271
 msgctxt "page:get-started/index.html"
 msgid "IDA · connect an existing installation"
 msgstr "IDA · 连接已有安装"
 
-#: website/public/get-started/index.html:1238
+#: website/public/get-started/index.html:1272
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the IDA provider guide to prepare an upstream MCP registration. Choose "
@@ -12699,7 +12625,7 @@ msgid ""
 msgstr ""
 "按 IDA provider 指南准备上游 MCP 配置。可以连接已打开原始程序的 IDA 界面，或使用创建独立数据库的无界面 supervisor。"
 
-#: website/public/get-started/index.html:1243
+#: website/public/get-started/index.html:1277
 msgctxt "page:get-started/index.html"
 msgid ""
 "Verified profiles include the Windows legacy GUI and headless supervisor, "
@@ -12709,7 +12635,7 @@ msgstr ""
 "已验证的配置包括 Windows 旧版 GUI 与无界面 supervisor，以及 macOS arm64 上的 IDA Professional "
 "9.1 无界面 supervisor。可选的原生 GUI 桥接另有版本和平台要求。"
 
-#: website/public/get-started/index.html:1338
+#: website/public/get-started/index.html:1372
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the JSON registration file you prepared with the provider guide, then "
@@ -12719,13 +12645,13 @@ msgstr "使用按 provider 指南准备好的 JSON 配置文件，再运行 setu
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/ida-
 #. provider.md" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1342
+#: website/public/get-started/index.html:1376
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}IDA profiles, registration examples and verified platforms{ph1}"
 msgstr "{ph0}IDA 配置、注册示例与已验证平台{ph1}"
 
-#: website/public/get-started/index.html:1350
+#: website/public/get-started/index.html:1384
 msgctxt "page:get-started/index.html"
 msgid ""
 "Once connected, give your agent the original executable's full path and name"
@@ -12734,128 +12660,128 @@ msgstr "连接后，把原始可执行文件的完整路径和分析工具名称
 
 #. {ph0}: <a href="../guides/native/">
 #. {ph1}: </a>
-#: website/public/get-started/index.html:1362
+#: website/public/get-started/index.html:1396
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Follow a native analysis example{ph1}"
 msgstr "{ph0}跟着示例分析原生程序{ph1}"
 
-#: website/public/get-started/index.html:1367
+#: website/public/get-started/index.html:1401
 msgctxt "page:get-started/index.html"
 msgid "Websites, Android, .NET, firmware and other targets"
 msgstr "网站、Android、.NET、固件及其他目标"
 
-#: website/public/get-started/index.html:1370
+#: website/public/get-started/index.html:1404
 msgctxt "page:get-started/index.html"
 msgid ""
 "Open the guide for the target you have. Each guide gives the additional "
 "tools, supported hosts and first command."
 msgstr "打开对应目标的指南，其中会列出额外工具、支持的平台和第一条分析命令。"
 
-#: website/public/get-started/index.html:1378
+#: website/public/get-started/index.html:1412
 msgctxt "page:get-started/index.html"
 msgid "Target"
 msgstr "目标"
 
-#: website/public/get-started/index.html:1379
+#: website/public/get-started/index.html:1413
 msgctxt "page:get-started/index.html"
 msgid "Tools to prepare"
 msgstr "需要准备的工具"
 
-#: website/public/get-started/index.html:1380
+#: website/public/get-started/index.html:1414
 msgctxt "page:get-started/index.html"
 msgid "Guide"
 msgstr "指南"
 
-#: website/public/get-started/index.html:1385
+#: website/public/get-started/index.html:1419
 msgctxt "page:get-started/index.html"
 msgid "JavaScript / Electron"
 msgstr "JavaScript / Electron"
 
 #. {ph0}: <a href="../guides/javascript/">
 #. {ph1}: </a>
-#: website/public/get-started/index.html:1387
-#: website/public/get-started/index.html:1392
-#: website/public/get-started/index.html:1397
-#: website/public/get-started/index.html:1407
-#: website/public/get-started/index.html:1417
-#: website/public/get-started/index.html:1427
-#: website/public/get-started/index.html:1437
-#: website/public/get-started/index.html:1447
-#: website/public/get-started/index.html:1457
-#: website/public/get-started/index.html:1467
-#: website/public/get-started/index.html:1477
-#: website/public/get-started/index.html:1487
-#: website/public/get-started/index.html:1497
-#: website/public/get-started/index.html:1507
-#: website/public/get-started/index.html:1517
-#: website/public/get-started/index.html:1527
+#: website/public/get-started/index.html:1421
+#: website/public/get-started/index.html:1426
+#: website/public/get-started/index.html:1431
+#: website/public/get-started/index.html:1441
+#: website/public/get-started/index.html:1451
+#: website/public/get-started/index.html:1461
+#: website/public/get-started/index.html:1471
+#: website/public/get-started/index.html:1481
+#: website/public/get-started/index.html:1491
+#: website/public/get-started/index.html:1501
+#: website/public/get-started/index.html:1511
+#: website/public/get-started/index.html:1521
+#: website/public/get-started/index.html:1531
+#: website/public/get-started/index.html:1541
+#: website/public/get-started/index.html:1551
+#: website/public/get-started/index.html:1561
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Open guide{ph1}"
 msgstr "{ph0}查看指南{ph1}"
 
-#: website/public/get-started/index.html:1390
+#: website/public/get-started/index.html:1424
 msgctxt "page:get-started/index.html"
 msgid "Website"
 msgstr "网站"
 
-#: website/public/get-started/index.html:1395
+#: website/public/get-started/index.html:1429
 msgctxt "page:get-started/index.html"
 msgid ".NET / Flutter / packages"
 msgstr ".NET / Flutter / 软件包"
 
-#: website/public/get-started/index.html:1405
+#: website/public/get-started/index.html:1439
 msgctxt "page:get-started/index.html"
 msgid "Android APK"
 msgstr "Android APK"
 
-#: website/public/get-started/index.html:1415
+#: website/public/get-started/index.html:1449
 msgctxt "page:get-started/index.html"
 msgid "Android device"
 msgstr "Android 设备"
 
-#: website/public/get-started/index.html:1425
+#: website/public/get-started/index.html:1459
 msgctxt "page:get-started/index.html"
 msgid "Android resources"
 msgstr "Android 资源"
 
-#: website/public/get-started/index.html:1435
+#: website/public/get-started/index.html:1469
 msgctxt "page:get-started/index.html"
 msgid "JEB project"
 msgstr "JEB 项目"
 
-#: website/public/get-started/index.html:1445
+#: website/public/get-started/index.html:1479
 msgctxt "page:get-started/index.html"
 msgid "Firmware"
 msgstr "固件"
 
-#: website/public/get-started/index.html:1455
+#: website/public/get-started/index.html:1489
 msgctxt "page:get-started/index.html"
 msgid "WASM"
 msgstr "WASM"
 
-#: website/public/get-started/index.html:1485
+#: website/public/get-started/index.html:1519
 msgctxt "page:get-started/index.html"
 msgid "ELF / Linux crash"
 msgstr "ELF / Linux 崩溃记录"
 
-#: website/public/get-started/index.html:1495
+#: website/public/get-started/index.html:1529
 msgctxt "page:get-started/index.html"
 msgid "HAR / SAZ / mitmproxy"
 msgstr "HAR / SAZ / mitmproxy"
 
-#: website/public/get-started/index.html:1505
+#: website/public/get-started/index.html:1539
 msgctxt "page:get-started/index.html"
 msgid "PCAP / PCAPNG"
 msgstr "PCAP / PCAPNG"
 
-#: website/public/get-started/index.html:1515
+#: website/public/get-started/index.html:1549
 msgctxt "page:get-started/index.html"
 msgid "Logic signals"
 msgstr "逻辑信号"
 
-#: website/public/get-started/index.html:1525
+#: website/public/get-started/index.html:1559
 msgctxt "page:get-started/index.html"
 msgid "Process behavior"
 msgstr "进程行为"
@@ -12871,7 +12797,7 @@ msgstr "进程行为"
 #. {ph5}: </a >
 #. {ph6}: <a href="../guides/">
 #. {ph7}: </a>
-#: website/public/get-started/index.html:1537
+#: website/public/get-started/index.html:1571
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12881,18 +12807,18 @@ msgstr ""
 "{ph0}Flutter 指南{ph1} · {ph2}软件包与资源{ph3} · {ph4}EVM 字节码{ph5} · "
 "{ph6}全部分析指南{ph7}"
 
-#: website/public/get-started/index.html:1557
+#: website/public/get-started/index.html:1591
 msgctxt "page:get-started/index.html"
 msgid "Use REA from a terminal"
 msgstr "在终端中使用 REA"
 
-#: website/public/get-started/index.html:1559
+#: website/public/get-started/index.html:1593
 msgctxt "page:get-started/index.html"
 msgid "CLI commands, global installation and curl"
 msgstr "CLI 命令、全局安装与 curl"
 
 #. {ph0}: <code>main</code>
-#: website/public/get-started/index.html:1656
+#: website/public/get-started/index.html:1690
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12900,26 +12826,26 @@ msgid ""
 "list. Ghidra must be configured first."
 msgstr "把 {ph0} 换成目标函数列表中的名称或地址。先完成 Ghidra 配置再运行。"
 
-#: website/public/get-started/index.html:1660
+#: website/public/get-started/index.html:1694
 msgctxt "page:get-started/index.html"
 msgid ""
 "On macOS or Linux, you can also use the curl installer after preparing "
 "Node.js:"
 msgstr "macOS 或 Linux 准备好 Node.js 后，也可以使用 curl 安装："
 
-#: website/public/get-started/index.html:1698
+#: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the client check in step 3 with your setup ID. In editor clients, enable"
 " REA in MCP settings and allow its tools in the agent chat."
 msgstr "在第 3 步的检查命令中填写你的 setup ID。使用编辑器时，在 MCP 设置中启用 REA，并在助手聊天中允许使用它的工具。"
 
-#: website/public/get-started/index.html:1726
+#: website/public/get-started/index.html:1760
 msgctxt "page:get-started/index.html"
 msgid "Windows, WSL and paths with spaces"
 msgstr "Windows、WSL 与含空格的路径"
 
-#: website/public/get-started/index.html:1727
+#: website/public/get-started/index.html:1761
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use Windows PowerShell for Windows clients and analysis tools. If your agent"
@@ -12929,17 +12855,17 @@ msgstr ""
 "Windows 客户端和分析工具使用 Windows PowerShell。如果编程助手在 WSL 内运行，就在那个 Linux 环境中安装 "
 "Node.js 和 REA，并使用 Linux 路径。无界面 provider 与 REA 在同一个系统环境中运行。"
 
-#: website/public/get-started/index.html:1736
+#: website/public/get-started/index.html:1770
 msgctxt "page:get-started/index.html"
 msgid "Windows setup command:"
 msgstr "Windows setup 命令："
 
-#: website/public/get-started/index.html:1753
+#: website/public/get-started/index.html:1787
 msgctxt "page:get-started/index.html"
 msgid "Update or remove REA"
 msgstr "更新或移除 REA"
 
-#: website/public/get-started/index.html:1754
+#: website/public/get-started/index.html:1788
 msgctxt "page:get-started/index.html"
 msgid ""
 "To refresh your agent connection, run the latest setup command again, review"
@@ -12948,7 +12874,7 @@ msgstr "要更新编程助手的连接，重新运行最新版 setup，查看并
 
 #. {ph0}: <code>rea update</code>
 #. {ph1}: <code>npx rea-agents@latest uninstall</code>
-#: website/public/get-started/index.html:1772
+#: website/public/get-started/index.html:1806
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12960,7 +12886,7 @@ msgstr "全局安装的 CLI 用 {ph0} 更新。使用 {ph1} 移除 REA 的客户
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#diagnose-
 #. update-and-remove" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1778
+#: website/public/get-started/index.html:1812
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Update and uninstall details{ph1}"
@@ -12979,27 +12905,27 @@ msgstr "复制 Windows REA setup 命令"
 #: website/public/get-started/index.html:550
 #: website/public/get-started/index.html:582
 #: website/public/get-started/index.html:611
-#: website/public/get-started/index.html:746
-#: website/public/get-started/index.html:801
-#: website/public/get-started/index.html:816
-#: website/public/get-started/index.html:864
-#: website/public/get-started/index.html:1049
-#: website/public/get-started/index.html:1111
-#: website/public/get-started/index.html:1134
-#: website/public/get-started/index.html:1158
-#: website/public/get-started/index.html:1206
-#: website/public/get-started/index.html:1281
-#: website/public/get-started/index.html:1307
-#: website/public/get-started/index.html:1324
-#: website/public/get-started/index.html:1645
-#: website/public/get-started/index.html:1667
-#: website/public/get-started/index.html:1740
-#: website/public/get-started/index.html:1761
+#: website/public/get-started/index.html:777
+#: website/public/get-started/index.html:832
+#: website/public/get-started/index.html:847
+#: website/public/get-started/index.html:895
+#: website/public/get-started/index.html:1083
+#: website/public/get-started/index.html:1145
+#: website/public/get-started/index.html:1168
+#: website/public/get-started/index.html:1192
+#: website/public/get-started/index.html:1240
+#: website/public/get-started/index.html:1315
+#: website/public/get-started/index.html:1341
+#: website/public/get-started/index.html:1358
+#: website/public/get-started/index.html:1679
+#: website/public/get-started/index.html:1701
+#: website/public/get-started/index.html:1774
+#: website/public/get-started/index.html:1795
 msgctxt "page:get-started/index.html"
 msgid "Copy command"
 msgstr "复制命令"
 
-#: website/public/get-started/index.html:897
+#: website/public/get-started/index.html:928
 msgctxt "page:get-started/index.html"
 msgid "Copy Notes investigation prompt"
 msgstr "复制笔记调查提示"
@@ -13048,14 +12974,14 @@ msgctxt "page:get-started/index.html"
 msgid "OpenCode · choose an AI model"
 msgstr "OpenCode · 选择 AI 模型"
 
-#: website/public/get-started/index.html:1265
+#: website/public/get-started/index.html:1299
 msgctxt "page:get-started/index.html"
 msgid "Prepare the IDA registration file"
 msgstr "准备 IDA 配置文件"
 
 #. {ph0}: <code>ida-mcp.json</code>
 #. {ph1}: <code>.txt</code>
-#: website/public/get-started/index.html:1266
+#: website/public/get-started/index.html:1300
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13069,7 +12995,7 @@ msgstr ""
 #. {ph0}: <code>idb_open</code>
 #. {ph1}: <code>idb_list</code>
 #. {ph2}: <code>idb_close</code>
-#: website/public/get-started/index.html:1273
+#: website/public/get-started/index.html:1307
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13080,7 +13006,7 @@ msgstr "如果使用提供 {ph0}、{ph1} 和 {ph2} 的无界面 supervisor，文
 #. {ph0}: <code>command</code>
 #. {ph1}: <code>args</code>
 #. {ph2}: <code>env</code>
-#: website/public/get-started/index.html:1296
+#: website/public/get-started/index.html:1330
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13091,12 +13017,12 @@ msgstr ""
 "如果连接旧版 1.4.0 GUI 服务，把可用的 {ph0}、{ph1} 和可选的 {ph2} 复制到文件中。先在 IDA "
 "中打开原始程序并启动上游插件，再让 REA 分析。"
 
-#: website/public/get-started/index.html:1465
+#: website/public/get-started/index.html:1499
 msgctxt "page:get-started/index.html"
 msgid "SQLite database"
 msgstr "SQLite 数据库"
 
-#: website/public/get-started/index.html:1475
+#: website/public/get-started/index.html:1509
 msgctxt "page:get-started/index.html"
 msgid "EVM bytecode"
 msgstr "EVM 字节码"
@@ -13147,7 +13073,7 @@ msgid ""
 "in step 3{ph1}."
 msgstr "查看并确认计划，重新打开 Claude，再{ph0}按第 3 步检查连接{ph1}。"
 
-#: website/public/get-started/index.html:1170
+#: website/public/get-started/index.html:1204
 msgctxt "page:get-started/index.html"
 msgid ""
 "Replace both paths with your existing installations. For a fresh macOS or "
@@ -13156,12 +13082,12 @@ msgid ""
 msgstr ""
 "把两个路径换成你已有的安装位置。如果是全新安装在 macOS 或 Linux arm64 上，请先为这台电脑编译原生反编译器，再继续下面的步骤。"
 
-#: website/public/get-started/index.html:1176
+#: website/public/get-started/index.html:1210
 msgctxt "page:get-started/index.html"
 msgid "Build Ghidra's native decompiler"
 msgstr "编译 Ghidra 的原生反编译器"
 
-#: website/public/get-started/index.html:1177
+#: website/public/get-started/index.html:1211
 msgctxt "page:get-started/index.html"
 msgid ""
 "On macOS, the build needs Xcode Command Line Tools, make and bison. Use the "
@@ -13172,7 +13098,7 @@ msgstr "macOS 编译需要 Xcode Command Line Tools、make 和 bison。选择符
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#missing-
 #. macos-native-decompiler" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1182
+#: website/public/get-started/index.html:1216
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Intel{ph1}"
@@ -13182,7 +13108,7 @@ msgstr "{ph0}macOS · Intel{ph1}"
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#macos-
 #. arm64-native-decompiler" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1188
+#: website/public/get-started/index.html:1222
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Apple Silicon{ph1}"
@@ -13192,13 +13118,13 @@ msgstr "{ph0}macOS · Apple Silicon{ph1}"
 #. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1194
+#: website/public/get-started/index.html:1228
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Linux arm64 · native build instructions{ph1}"
 msgstr "{ph0}Linux arm64 · 原生组件编译说明{ph1}"
 
-#: website/public/get-started/index.html:1202
+#: website/public/get-started/index.html:1236
 msgctxt "page:get-started/index.html"
 msgid "Then check Ghidra and save its paths for your client:"
 msgstr "然后检查 Ghidra，并为客户端保存这些路径："
@@ -13555,7 +13481,7 @@ msgid "Other install options: {ph0}{ph1} →{ph2}"
 msgstr "其他安装方式：{ph0}{ph1} →{ph2}"
 
 #. {ph0}: <code>rea setup</code>
-#: website/public/get-started/index.html:1678
+#: website/public/get-started/index.html:1712
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13568,7 +13494,7 @@ msgstr "按设置提示连接你的助手。如果没有出现提示，运行 {p
 #. setup" >
 #. {ph1}: </a >
 #. {ph2}: <code>6.4.0</code>
-#: website/public/get-started/index.html:1249
+#: website/public/get-started/index.html:1283
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13581,7 +13507,7 @@ msgstr ""
 #. {ph0}: <code>node scripts/rea.mjs doctor --provider ida --json</code>
 #. {ph1}: <code>node scripts/rea.mjs setup</code>
 #. {ph2}: <code>npx</code>
-#: website/public/get-started/index.html:1258
+#: website/public/get-started/index.html:1292
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13591,7 +13517,7 @@ msgstr "在已构建的源码目录中，运行 {ph0} 和 {ph1}，不要使用�
 
 #. {ph0}: <code>rea</code>
 #. {ph1}: <code>"$HOME/.local/bin/rea" setup</code>
-#: website/public/get-started/index.html:1682
+#: website/public/get-started/index.html:1716
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13600,7 +13526,7 @@ msgid ""
 msgstr "如果终端找不到 {ph0}，请使用安装器打印的可执行文件路径。在 Linux 上，默认的设置命令是 {ph1}。"
 
 #. {ph0}: <code>/absolute/path/to/program</code>
-#: website/public/get-started/index.html:1355
+#: website/public/get-started/index.html:1389
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13616,13 +13542,13 @@ msgstr "用 REA 通过我已配置的分析引擎检查 {ph0}。列出它的函�
 #: website/public/examples/dino-lab/index.html:475
 #: website/public/faq/index.html:573
 #: website/public/first-investigation/index.html:534
-#: website/public/get-started/index.html:1817
+#: website/public/get-started/index.html:1851
 #: website/public/guides/browser/index.html:507
 #: website/public/guides/index.html:301
 #: website/public/guides/javascript/index.html:511
-#: website/public/guides/native/index.html:509
+#: website/public/guides/native/index.html:512
 #: website/public/guides/rl-environments/index.html:498
-#: website/public/index.html:1303 website/public/showcase/aegis/index.html:808
+#: website/public/index.html:1303 website/public/showcase/aegis/index.html:815
 #: website/public/showcase/ctf/index.html:777
 #: website/public/showcase/dx-ball/index.html:785
 #: website/public/showcase/index.html:337
@@ -14463,6 +14389,158 @@ msgid ""
 "renderer has since changed; the recorded source locations accompany the API,"
 " channel and handler findings."
 msgstr ""
+
+#. {ph0}: <code>--client</code>
+#: website/public/get-started/index.html:635
+#, python-brace-format
+msgctxt "page:get-started/index.html"
+msgid ""
+"Use the ID with {ph0} when choosing a client explicitly. These clients are "
+"supported in npm 6.8.0 and later."
+msgstr ""
+
+#. {ph0}: <code>droid</code>
+#. {ph1}: <code>dsh</code>
+#. {ph2}: <code>kimi</code>
+#. {ph3}: <code>qoder</code>
+#. {ph4}: <code>trae</code>
+#. {ph5}: <code>workbuddy</code>
+#. {ph6}: <code>zcode</code>
+#. {ph7}: <code>freebuff</code>
+#: website/public/get-started/index.html:751
+#, python-brace-format
+msgctxt "page:get-started/index.html"
+msgid ""
+"{ph0}, {ph1}, {ph2}, {ph3}, {ph4}, {ph5} and {ph6} require npm 6.5.0 or "
+"later. {ph7} requires npm 6.8.0 or later."
+msgstr ""
+
+#. {ph0}: <strong>
+#. {ph1}: </strong>
+#: website/public/guides/native/index.html:328
+#, python-brace-format
+msgctxt "page:guides/native/index.html"
+msgid ""
+"{ph0}IDA{ph1} (Windows; macOS arm64 headless): use an existing IDA setup "
+"with an MCP registration. The macOS headless profile requires a source build"
+" or a release that includes it."
+msgstr ""
+
+#: website/public/get-started/index.html:1042
+msgctxt "page:get-started/index.html"
+msgid "x86_64 installer on supported distributions"
+msgstr ""
+
+#. {ph0}: <a href="../../get-started/">
+#. {ph1}: </a>
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/android-
+#. analysis.md" >
+#. {ph3}: </a >
+#: website/public/showcase/aegis/index.html:714
+#, python-brace-format
+msgctxt "page:showcase/aegis/index.html"
+msgid ""
+"{ph0}Set up REA{ph1}, then download these two files into the same folder. On"
+" Windows x64, use a package with matching Windows native controls and owned "
+"protocol stdin support; see the {ph2}Android provider guide{ph3} for "
+"prerequisites and PowerShell setup. A Linux environment such as WSL is "
+"another option."
+msgstr ""
+
+#: website/public/get-started/index.html:1072
+msgctxt "page:get-started/index.html"
+msgid ""
+"Automated Linux setup requires an x86_64 host running Ubuntu 24.04+, Fedora "
+"41+, Nobara 44+, Arch Linux, CachyOS or Omarchy. An existing Hopper launcher"
+" can also be configured on other supported Linux distributions. On Linux "
+"arm64, use Ghidra. Hopper is commercial software; its demo has vendor-"
+"defined limits."
+msgstr ""
+
+#. {ph0}: <strong>
+#. {ph1}: </strong>
+#: website/public/guides/native/index.html:316
+#, python-brace-format
+msgctxt "page:guides/native/index.html"
+msgid ""
+"{ph0}Hopper{ph1} (macOS or Linux): REA's setup detects it or offers to "
+"install it. On macOS, open Hopper once and choose demo mode or activate a "
+"license before your first analysis. Automated Linux setup requires x86_64; "
+"use Ghidra on Linux arm64."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Automated Linux setup requires an x86_64 host running Ubuntu 24.04+, Fedora "
+#~ "41+, Nobara 44+, Arch Linux, CachyOS or Omarchy. An existing Hopper launcher"
+#~ " can also be configured on other supported Linux distributions. On other "
+#~ "Linux architectures, use Ghidra. Hopper is commercial software; its demo has"
+#~ " vendor-defined limits."
+#~ msgstr ""
+
+#, python-brace-format
+#~ msgctxt "page:guides/native/index.html"
+#~ msgid ""
+#~ "{ph0}Hopper{ph1} (macOS or Linux): REA's setup detects it or offers to "
+#~ "install it. On macOS, open Hopper once and choose demo mode or activate a "
+#~ "license before your first analysis. Automated Linux setup requires x86_64; "
+#~ "use Ghidra on other Linux architectures."
+#~ msgstr ""
+
+#, python-brace-format
+#~ msgctxt "page:guides/native/index.html"
+#~ msgid ""
+#~ "{ph0}Hopper{ph1} (macOS or Linux): REA's setup detects it or offers to "
+#~ "install it. On macOS, open Hopper once and choose demo mode or activate a "
+#~ "license before your first analysis."
+#~ msgstr ""
+#~ "{ph0}Hopper{ph1}（macOS 或 Linux）：REA 的安装与配置流程会检测到它，或提示你安装。在 macOS 上，先打开一次 "
+#~ "Hopper，选择演示模式或在首次分析前激活许可证。"
+
+# Reviewed for clear case-study reasoning and evidence.
+#, python-brace-format
+#~ msgctxt "page:showcase/aegis/index.html"
+#~ msgid ""
+#~ "{ph0}Set up REA{ph1} on macOS or Linux, then download these two files into "
+#~ "the same folder. On Windows, use a Linux environment such as WSL."
+#~ msgstr ""
+#~ "先在 macOS 或 Linux 上{ph0}设置 REA{ph1}，再将这两个文件下载到同一文件夹。Windows 上可使用 WSL 等 Linux "
+#~ "环境。"
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid "Supported distributions"
+#~ msgstr "支持的发行版"
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "Linux 支持 Ubuntu 24.04+、Fedora 41+、Nobara 44+、Arch Linux、CachyOS 和 "
+#~ "Omarchy。Hopper 是商业软件，试用版有厂商规定的限制。"
+
+#, python-brace-format
+#~ msgctxt "page:guides/native/index.html"
+#~ msgid ""
+#~ "{ph0}IDA{ph1} (Windows): for an existing IDA setup with an MCP registration."
+#~ msgstr "{ph0}IDA{ph1}（Windows）：适用于已完成 MCP 注册的现有 IDA 配置。"
+
+#, python-brace-format
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "The npm 6.4.0 release supports the clients below. Use the ID with {ph0} when"
+#~ " choosing a client explicitly."
+#~ msgstr "npm 6.4.0 支持下面这些客户端。指定客户端时，在 {ph0} 后填写对应的 ID。"
+
+#, python-brace-format
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Qoder ({ph0}), Factory Droid ({ph1}), Trae ({ph2}), ZCode ({ph3}) and "
+#~ "DeepSeek Harness ({ph4}) are available on repository main; use a source "
+#~ "build or a release containing those integrations."
+#~ msgstr ""
+#~ "Qoder（{ph0}）、Factory Droid（{ph1}）、Trae（{ph2}）、ZCode（{ph3}）和 DeepSeek "
+#~ "Harness（{ph4}）已在 main 中提供；需要使用源码构建或包含这些集成的新版本。"
 
 #~ msgctxt "page:guides/javascript/index.html"
 #~ msgid ""

@@ -73,6 +73,7 @@ const formatSchema = z.enum([
   "hsp",
   "app-pack",
   "asar",
+  "ines",
   "godot-pck",
   "unityfs",
   "dmg",
@@ -80,6 +81,10 @@ const formatSchema = z.enum([
   "intel-hex",
   "srec",
   "esp-image",
+  "uf2",
+  "dfuse",
+  "esp-flash-image",
+  "fit",
   "plist",
   "javascript",
   "source-map",
@@ -100,7 +105,10 @@ const targetSchema = z.discriminatedUnion("format", [
   targetIdentitySchema.extend({
     format: z.enum(
       formatSchema.options.filter(
-        (format) => format !== "raw-binary" && format !== "gamecube-dol",
+        (format) =>
+          format !== "raw-binary" &&
+          format !== "gamecube-dol" &&
+          format !== "esp-flash-image",
       ),
     ),
     architecture: architectureSchema
@@ -118,6 +126,14 @@ const targetSchema = z.discriminatedUnion("format", [
     kind: z.literal("executable"),
     architecture: z.literal("powerpc"),
     entry_point: rawBinaryEntryPointSchema,
+  }),
+  // The caller's inputs select how the dump is read, so they are identity.
+  targetIdentitySchema.extend({
+    format: z.literal("esp-flash-image"),
+    kind: z.literal("archive"),
+    architecture: z.null(),
+    flash_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
+    partition_table_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
   }),
 ]);
 const bindingSchema = z
@@ -387,12 +403,21 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
           format: target.format,
           entry_point: target.entryPoint,
         }
-      : {
-          sha256: target.sha256,
-          kind: target.kind,
-          architecture: target.architecture ?? null,
-          format: target.format,
-        };
+      : target.format === "esp-flash-image"
+        ? {
+            sha256: target.sha256,
+            kind: target.kind,
+            architecture: null,
+            format: target.format,
+            flash_offset: target.espFlash.flashOffset,
+            partition_table_offset: target.espFlash.partitionTableOffset,
+          }
+        : {
+            sha256: target.sha256,
+            kind: target.kind,
+            architecture: target.architecture ?? null,
+            format: target.format,
+          };
 
 /** Build the immutable provider/profile binding used by a cached snapshot. */
 export const snapshotBinding = (
@@ -417,7 +442,12 @@ export const snapshotMatchesTarget = (
       snapshot.entry_point === target.entryPoint)) &&
   (snapshot.format !== "gamecube-dol" ||
     (target.format === "gamecube-dol" &&
-      snapshot.entry_point === target.entryPoint));
+      snapshot.entry_point === target.entryPoint)) &&
+  (snapshot.format !== "esp-flash-image" ||
+    (target.format === "esp-flash-image" &&
+      snapshot.flash_offset === target.espFlash.flashOffset &&
+      snapshot.partition_table_offset ===
+        target.espFlash.partitionTableOffset));
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */
 export const snapshotMatchesProfile = (
@@ -427,14 +457,72 @@ export const snapshotMatchesProfile = (
   committedProvidersEqual(binding.provider, profile.provider) &&
   analysisProfilesEqual(binding.analysis_profile, profile);
 
-/** Require an exact target and selected provider/profile cache partition. */
-export const snapshotMatchesBinding = (
+/** Confirmed differences in the same target and profile commitments used for replay. */
+export interface SnapshotBindingMismatch {
+  readonly target?: {
+    readonly snapshot: AnalysisSnapshotTarget;
+    readonly selected: AnalysisSnapshotTarget;
+  };
+  readonly provider?: {
+    readonly snapshot: AnalysisSnapshotBinding["provider"];
+    readonly selected: AnalysisProfileCommitment["provider"];
+  };
+  readonly profile_digest?: {
+    readonly snapshot: string;
+    readonly selected: string;
+  };
+  /** A selected profile was not available at this validation boundary. */
+  readonly profile_comparison?: "not_compared";
+  /** A matching profileless binding contains workflows outside its permitted scope. */
+  readonly workflow_scope?: "incompatible";
+  /** Staged internal state has no complete binding to compare. */
+  readonly staged_binding?: "incomplete";
+}
+
+/** Explain only comparisons made against authenticated binding facts. */
+export const snapshotBindingMismatch = (
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
   target: BinaryTarget,
-  profile: AnalysisProfileCommitment,
-): boolean =>
-  snapshotMatchesTarget(snapshot.target, target) &&
-  snapshotMatchesProfile(snapshot.binding, profile);
+  profile: AnalysisProfileCommitment | undefined,
+): SnapshotBindingMismatch | undefined => {
+  const targetMatches = snapshotMatchesTarget(snapshot.target, target);
+  const profileMatches =
+    profile !== undefined && snapshotMatchesProfile(snapshot.binding, profile);
+  if (targetMatches && profileMatches) return undefined;
+  return {
+    ...(targetMatches
+      ? {}
+      : {
+          target: {
+            snapshot: { ...snapshot.target },
+            selected: snapshotTarget(target),
+          },
+        }),
+    ...(profile === undefined
+      ? { profile_comparison: "not_compared" as const }
+      : {
+          ...(committedProvidersEqual(
+            snapshot.binding.provider,
+            profile.provider,
+          )
+            ? {}
+            : {
+                provider: {
+                  snapshot: { ...snapshot.binding.provider },
+                  selected: { ...profile.provider },
+                },
+              }),
+          ...(profileMatches
+            ? {}
+            : {
+                profile_digest: {
+                  snapshot: snapshot.binding.analysis_profile.digest,
+                  selected: profile.digest,
+                },
+              }),
+        }),
+  };
+};
 
 /** Find exact persisted CLI Evidence without starting an analysis provider. */
 export const snapshotEvidenceForQuery = (
@@ -456,7 +544,7 @@ export const snapshotEvidenceForQuery = (
     provider,
     evidenceProfile,
   } = query;
-  if (!snapshotMatchesBinding(snapshot, target, bindingProfile))
+  if (snapshotBindingMismatch(snapshot, target, bindingProfile) !== undefined)
     return undefined;
   const encodedParameters = canonicalJson(parameters);
   const queryId = analysisQueryId(

@@ -1,5 +1,9 @@
 import { projectArtifactIntegrityDetails } from "./artifactIntegrity.js";
-import type { AnalysisErrorRecovery } from "./analysisErrorRecovery.js";
+import {
+  cleanupRetryRecovery,
+  cleanupRetryRemediation,
+  type AnalysisErrorRecovery,
+} from "./analysisErrorRecovery.js";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 import { isImmutableJsonSnapshot } from "./immutableJson.js";
 
@@ -27,6 +31,7 @@ import {
 } from "./configurationErrors.js";
 import { BrowserObservationError } from "./browserObservationError.js";
 import {
+  AnalysisSnapshotMismatchError,
   EvidenceFileError,
   EvidenceIntegrityError,
   EvidenceReferenceError,
@@ -133,7 +138,13 @@ const projectError = (
             : jsonValueSchema.parse(partialObservation),
         }),
   };
-  const recovery = errorRecovery(error);
+  // The retained cleanup owner's retry precedes the failed operation's hint.
+  const cleanupRetry = error.cleanupRetry;
+  const recovery =
+    cleanupRetry === undefined
+      ? errorRecovery(error)
+      : cleanupRetryRecovery(cleanupRetry);
+  const remediation = analysisErrorRemediationAction(error);
   return {
     code,
     category: analysisErrorCategory(error),
@@ -146,7 +157,10 @@ const projectError = (
         error instanceof AnalysisResourceConstraintError &&
         (error.retryable ?? error.resource === "capacity")),
     remediation: {
-      action: analysisErrorRemediationAction(error),
+      action:
+        cleanupRetry === undefined
+          ? remediation
+          : `${remediation} ${cleanupRetryRemediation(cleanupRetry)}`,
     },
     ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),
@@ -157,10 +171,9 @@ const errorRecovery = (
   error: AnalysisError,
 ): AnalysisErrorRecovery | undefined => {
   if (error instanceof AnalysisInputError)
-    return {
-      kind: "inspect_input_contract",
-      operation: error.operation,
-    };
+    return error.conformsToInputContract
+      ? undefined
+      : { kind: "inspect_input_contract", operation: error.operation };
   if (error instanceof AnalysisTimeoutError)
     return {
       kind: "inspect_timeout_state",
@@ -236,7 +249,8 @@ const evidenceFileCode = (
   reason: EvidenceFileError["reason"],
 ): AnalysisErrorProjection["code"] => {
   if (reason === "invalid-json") return "evidence_integrity_mismatch";
-  if (reason === "path-limit") return "resource_constraint";
+  if (reason === "path-limit" || reason === "storage-limit")
+    return "resource_constraint";
   // A missing, non-file or already-existing path is the caller's selection.
   if (reason === "io") return "execution_failure";
   return "invalid_request";
@@ -378,8 +392,18 @@ const requestErrorDetails = (
     return {
       evidence_id: error.evidenceId,
       reason: error.reason,
+      ...(error.referenceScope === undefined
+        ? {}
+        : { reference_scope: error.referenceScope }),
       expected: error.expected,
       actual: error.actual,
+    };
+  if (error instanceof AnalysisSnapshotMismatchError)
+    return {
+      reason: error.message,
+      ...(error.bindingMismatch === undefined
+        ? {}
+        : { binding_mismatch: jsonValueSchema.parse(error.bindingMismatch) }),
     };
   if (error instanceof EvidenceIntegrityError) return { reason: error.message };
   return undefined;
@@ -418,6 +442,9 @@ const artifactStateErrorDetails = (
       operation: error.operation,
       reason: error.reason,
       ...(error.reason === "path-limit" ? { boundary: "filesystem-path" } : {}),
+      ...(error.systemCode === undefined
+        ? {}
+        : { system_code: error.systemCode }),
       ...(error.path === undefined ? {} : { path: error.path }),
       ...(error.contentIssues === undefined
         ? {}
@@ -460,6 +487,9 @@ const providerErrorDetails = (
         origin: rejection.origin,
         code: rejection.code,
         reason: rejection.reason,
+        ...(rejection.remediation === undefined
+          ? {}
+          : { remediation: rejection.remediation }),
         diagnostics: rejection.diagnostics,
       })),
     };
@@ -635,6 +665,10 @@ const lifecycleErrorDetails = (
       ...(error.constraint === undefined
         ? {}
         : { constraint: error.constraint }),
+      ...(error.infoPlist === undefined ? {} : { info_plist: error.infoPlist }),
+      ...(error.probedPaths === undefined
+        ? {}
+        : { probed_paths: [...error.probedPaths] }),
       ...(error.systemCode === undefined
         ? {}
         : { system_code: error.systemCode, boundary: "filesystem-read" }),

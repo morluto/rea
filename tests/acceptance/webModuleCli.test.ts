@@ -136,3 +136,35 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "retains an invalid caller-selected browser path in trace errors",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-module-browser-config-");
+    const artifacts = webModuleArtifactsFixture('import "./dep.js"');
+    const files = join(root, "files");
+    await mkdir(join(files, "modules"), { recursive: true });
+    await writeFile(join(files, "modules", "main.js"), artifacts.source);
+    const manifest = join(root, "manifest.json");
+    await writeFile(
+      manifest,
+      JSON.stringify({
+        ...artifacts.manifest,
+        output_directory: root,
+        analysis_input: { input_path: files, format: "directory" },
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["trace-web-module-imports", manifest, "0", "--json"],
+      environment: { REA_BROWSER_EXECUTABLE: "relative/chromium" },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "capability_unavailable",
+      details: {
+        reason: "invalid_browser_executable",
+        diagnostics: { executable: "relative/chromium" },
+      },
+    });
+  },
+);

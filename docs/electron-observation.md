@@ -75,6 +75,13 @@ DOM node indices retain their snapshot positions. Invalid rows are omitted with
 completeness diagnostics, so `total_nodes` can exceed the retained node count
 and a parent index can refer to an omitted source node.
 
+`dom.node_value_length_unit` is `utf8-bytes`: each node's `node_value_length`
+counts the bytes needed to encode its value as UTF-8, not characters. Web
+observations instead declare `utf16-code-units`. These existing measurements
+are preserved; the unit is reported once for the whole DOM, without retaining
+text values. Historical captures without the unit leave it unknown; reading
+them does not infer a unit or convert their stored lengths.
+
 Script metadata retains its execution-context frame ID when CDP supplies one and
 records admission separately in `frame_scope`. An `authorized` scope refers to
 the observed document generation; `unknown` retains the known frame ID without
@@ -139,6 +146,14 @@ window-targeted renderer reload/crash actions, and synthetic `open-url` or
 `second-instance` deep-link delivery. It records capture-scoped window and
 WebContents identities, process metrics, and IPC channel and value-shape metadata.
 Payload values are not retained.
+
+For the exact Playwright launch sequence, the active hook removes only REA's
+bootstrap arguments from the application-visible `process.argv`. The vector keeps
+the selected entry point and every caller argument, in order, including repeated
+hook paths, `.asar` filenames, and debug-like options. The private launch handoff
+is consumed before application code runs. If the observed sequence cannot be
+matched exactly, argv stays unchanged and capture coverage reports `hook_conflict`;
+REA does not guess an entry point or remove arguments by filename patterns.
 
 `window_index` selects from Playwright's current Page list at the start of each action. REA resolves that Page to its corresponding BrowserWindow once; the action's `target` uses the BrowserWindow's capture-scoped `window_id`, matching the window inventory. Reordering either enumeration after selection does not retarget the action. Handle cleanup failures retain the completed action records and remain owned for provider cleanup retry.
 

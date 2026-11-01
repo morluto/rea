@@ -62,7 +62,7 @@ Kisi app mein aisa feature dekha jo aap apne product mein chahte hain? Apne agen
 
 REA aapke agent ko native binaries, JavaScript aur Electron apps, .NET assemblies aur websites inspect karne wale tools se jorta hai. Yehi tools terminal se bhi use kar sakte hain. Analysis local machine par hota hai, aur har natije ke saath uske saboot aur limitations bhi milti hain.
 
-Setup REA ko aapke agent ke saath register karta hai aur uske mutabiq workflow instructions install karta hai. Native analysis ke liye pehle se installed Hopper, Ghidra ya IDA use ho sakta hai; aapki approval par setup Hopper bhi install kar sakta hai. Static JavaScript analysis ke liye native analysis engine ki zaroorat nahi.
+Setup REA ko aapke agent ke saath register karta hai aur uske mutabiq workflow instructions install karta hai. Native analysis ke liye pehle se installed Hopper, Ghidra, IDA ya Kuna use ho sakta hai; aapki approval par setup Hopper bhi install kar sakta hai. Static JavaScript analysis ke liye native analysis engine ki zaroorat nahi.
 
 > Setup instructions, tasveeron ke saath guides aur asli case studies ke liye **[REA ki website dekhein](https://rea.tools/)**.
 
@@ -187,7 +187,7 @@ Mazeed tools aur host support target par depend karte hain:
 | Target                  | REA kya wapas deta hai                                                                            | Zarooriyat aur guide                                                                                                              |
 | ----------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | Desktop installations   | Runtime candidates, supporting files, component markers aur agle probes                           | Built-in bounded directory/header inspection; [desktop applications](../desktop-applications.md)                                  |
-| Native binaries         | Pseudocode, assembly, strings, symbols, calls aur references                                      | Hopper, Ghidra ya IDA; [native analysis](../native-investigation.md)                                                              |
+| Native binaries         | Pseudocode, assembly, strings, symbols, calls aur references                                      | Hopper, Ghidra, IDA ya Kuna; [native analysis](../native-investigation.md)                                                        |
 | Offline ELF layout      | Sections, segments, original symbols/relocations aur static mitigation candidates                 | Linux x64 par aapka diya hua pwntools; [binary diagnostics](../binary-diagnostics.md)                                             |
 | Go binaries             | Embedded compiler version, modules, replacements aur build settings                               | Built-in static ELF/PE/thin Mach-O inspection; Go install karna zaroori nahi                                                      |
 | GPU code objects        | CUDA/HIP targets, selected kernel parameters aur resources, retained PTX text                     | Built-in static ELF/PE/fatbin/CUBIN/PTX inspection; [GPU code objects](../gpu-code-objects.md)                                    |
@@ -342,11 +342,11 @@ use kar sakte hain.
 </details>
 
 <details>
-<summary><strong>Kya mujhe Hopper, Ghidra ya IDA chahiye?</strong></summary>
+<summary><strong>Kya mujhe Hopper, Ghidra, IDA ya Kuna chahiye?</strong></summary>
 
 Deep native analysis in mein se ek use karta hai. Static JavaScript aur .NET
 inspection native analysis engine ke baghair kaam karti hai. Approval ke baad
-setup Hopper install kar sakta hai; Ghidra aur IDA ke liye aapki existing
+setup Hopper install kar sakta hai; Ghidra, IDA aur Kuna ke liye aapki existing
 installations use hoti hain. [Provider setup](../installation.md#hopper) dekhein.
 
 </details>

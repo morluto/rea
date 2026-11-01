@@ -7,7 +7,7 @@ import {
   pckU64,
   type GodotPckMember,
 } from "../../tests/fixtures/godotPck.js";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { text } from "node:stream/consumers";
 import { once } from "node:events";
@@ -15,6 +15,7 @@ import { once } from "node:events";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { renameOpenParent } from "../../tests/fixtures/renameOpenParent.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 
 import type { ArtifactEntry } from "./ArtifactReader.js";
@@ -381,7 +382,7 @@ describe("GodotPckArtifactReader member streams", () => {
   });
 
   it.each([false, true])(
-    "reads located pack facts from the admitted descriptor after path replacement (embedded: %s)",
+    "reads located pack facts from the admitted descriptor after an attempted path replacement (embedded: %s)",
     async (embedded) => {
       const root = await createTestTempDirectory("rea-godot-borrowed-source-");
       const selected = join(root, "selected");
@@ -399,12 +400,14 @@ describe("GodotPckArtifactReader member streams", () => {
         if (location === undefined) throw new Error("expected a pack location");
         // Replace the selected directory without changing the admitted inode's
         // metadata. Moving the file itself would change its validated ctime.
-        await rename(selected, join(root, "original"));
-        await mkdir(selected);
-        await writeFile(
-          path,
-          buildGodotPck(3, [{ path: "other.gd", data: "" }]),
-        );
+        const swap = await renameOpenParent(selected, join(root, "original"));
+        if (swap.kind === "renamed") {
+          await mkdir(selected);
+          await writeFile(
+            path,
+            buildGodotPck(3, [{ path: "other.gd", data: "" }]),
+          );
+        }
         const reader = new GodotPckArtifactReader(path, {
           kind: "godot-pck",
           source: descriptor,

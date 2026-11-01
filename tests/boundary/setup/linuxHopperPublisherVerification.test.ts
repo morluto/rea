@@ -22,6 +22,8 @@ import { fileURLToPath } from "node:url";
 
 import { createMessage, generateKey, readPrivateKey, sign } from "openpgp";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   LinuxHopperPublisher,
@@ -34,7 +36,10 @@ import {
   type LinuxHopperRelease,
 } from "../../../src/application/HopperReleaseFeed.js";
 import * as signatures from "../../../src/process/DetachedPgpSignature.js";
-import { downloadHopperPackage } from "../../../src/application/HopperDownload.js";
+import {
+  downloadHopperPackage,
+  HOPPER_METADATA_TIMEOUT_MS,
+} from "../../../src/application/HopperDownload.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import * as leases from "../../../src/process/HopperLease.js";
@@ -788,15 +793,20 @@ it("bounds a stalled metadata fetch and preserves caller cancellation", async ()
         }),
     ),
   );
-  await expect(
-    downloadHopperPackage("https://www.hopperapp.com/fixture", {
+  // REA's own deadline is a returned transport fact; only caller cancellation rejects.
+  expect(
+    await downloadHopperPackage("https://www.hopperapp.com/fixture", {
       timeoutMs: 10,
     }),
-  ).rejects.toMatchObject({
-    _tag: "HopperDownloadTimeoutError",
-    limit: "deadline",
-    limitMs: 10,
-    receivedBytes: 0,
+  ).toEqual({
+    ok: false,
+    error: {
+      url: "https://www.hopperapp.com/fixture",
+      kind: "timeout",
+      limit: "deadline",
+      timeoutMs: 10,
+      receivedBytes: 0,
+    },
   });
   const controller = new AbortController();
   const reason = new Error("Caller cancelled metadata inspection");
@@ -824,14 +834,18 @@ it("names the release feed and its limit when the metadata fetch times out", asy
     );
     const publisher = new LinuxHopperPublisher({}, async () => "deb");
     const pending = publisher.currentRelease("deb");
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(HOPPER_METADATA_TIMEOUT_MS);
     expect(await pending).toMatchObject({
       ok: false,
       error: {
         reason: "release_metadata",
-        message: expect.stringMatching(
-          /^The download from https:\/\/www\.hopperapp\.com\/.+ did not finish within 10 s; 0 bytes were received\.$/u,
-        ),
+        download: {
+          request: "release_feed",
+          kind: "timeout",
+          limit: "deadline",
+          timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
+          receivedBytes: 0,
+        },
       },
     });
   } finally {
@@ -858,7 +872,14 @@ it("cancels an oversized chunked metadata response before retaining it", async (
     await downloadHopperPackage("https://www.hopperapp.com/fixture", {
       maxBytes: 3,
     }),
-  ).toEqual({ ok: false, bytes: new Uint8Array() });
+  ).toEqual({
+    ok: false,
+    error: {
+      url: "https://www.hopperapp.com/fixture",
+      kind: "response_too_large",
+      maxBytes: 3,
+    },
+  });
   expect(cancelled).toHaveBeenCalledOnce();
 });
 
@@ -1072,9 +1093,13 @@ portableTar(
           throw new Error("Fixture descriptor close temporarily unavailable");
         return await originalClose.apply(this);
       });
-    try {
-      const inspection = f.publisher.inspectLauncher(f.launcher);
-      await metadataCloseStarted;
+    const inspection = f.publisher.inspectLauncher(f.launcher);
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(
+        metadataCloseStarted,
+        inspection,
+        "metadata close",
+      );
       const hashFailure = await f.publisher.hashLauncher(f.launcher).then(
         () => undefined,
         (cause: unknown) => cause,
@@ -1094,11 +1119,14 @@ portableTar(
       });
       await expect(f.publisher.close()).resolves.toBeUndefined();
       expect(close).toHaveBeenCalledTimes(9);
-    } finally {
-      releaseMetadataClose();
-      close.mockRestore();
-      await f.publisher.close();
-    }
+    }, [
+      releaseMetadataClose,
+      async () => {
+        await inspection;
+      },
+      () => close.mockRestore(),
+      () => f.publisher.close(),
+    ]);
   },
 );
 

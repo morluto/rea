@@ -5,6 +5,7 @@ import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
   INTEL_HEX_I32_GAP,
+  intelHexRecord,
   SREC_S19,
 } from "../../src/domain/firmware/hexRecords.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
@@ -67,6 +68,54 @@ cliTest.for(cases)(
         .filter((row) => row.logical_path !== ".")
         .map((row) => row.logical_path),
     ).toEqual(Object.keys(regions));
+    if (encoding === "intel-hex") {
+      expect(graph.coverage.scope).toBe("container-entries");
+      expect(graph.limitations).toContain(
+        "Intel HEX/S-record inventory decodes data records into address-contiguous regions. It does not establish CPU, byte order, memory map, or that a declared start address is executable; gaps are unwritten, not zero.",
+      );
+      expect(
+        graph.occurrences.find((row) => row.logical_path === "."),
+      ).toMatchObject({
+        artifact_kind: "container",
+        format_metadata: { region_count: 2 },
+      });
+      expect(
+        graph.occurrences
+          .filter((row) => row.logical_path !== ".")
+          .map((row) => [
+            row.logical_path,
+            row.declared_size,
+            row.format_metadata,
+          ]),
+      ).toEqual([
+        [
+          "0x08000000-0x0800001f.bin",
+          32,
+          {
+            kind: "hex-record-region",
+            start_address: 0x0800_0000,
+            end_address: 0x0800_001f,
+            length: 32,
+            record_count: 2,
+            first_line: 2,
+            last_line: 3,
+          },
+        ],
+        [
+          "0x08000100-0x08000103.bin",
+          4,
+          {
+            kind: "hex-record-region",
+            start_address: 0x0800_0100,
+            end_address: 0x0800_0103,
+            length: 4,
+            record_count: 1,
+            first_line: 4,
+            last_line: 4,
+          },
+        ],
+      ]);
+    }
     expect(inspection.next_probes.map((probe) => probe.operation)).toEqual([
       "open_binary",
     ]);
@@ -97,7 +146,35 @@ cliTest("rejects a malformed record through the CLI", async ({ cli }) => {
     arguments: ["inspect-artifact", source, "--json"],
   });
   expect(result.exitCode).not.toBe(0);
+  expect(result.json).toMatchObject({
+    code: "artifact_operation_failed",
+    details: { operation: "inspect_artifact", reason: "format" },
+  });
   expect(result.stdout + result.stderr).toContain(
     "Intel HEX is malformed: line 4: record type 00 checksum 0xc4 does not match computed 0xc3",
   );
 });
+
+cliTest.for([3, 5])(
+  "rejects reserved offsets in Intel HEX start record %i through the CLI",
+  async (type, { cli }) => {
+    const directory = await createTestTempDirectory("rea-hex-start-cli-");
+    const source = join(directory, "firmware.hex");
+    await writeFile(
+      source,
+      [
+        intelHexRecord(0, 0x20, [0xa5]),
+        intelHexRecord(type, 0x1234, [0, 0, 0, 1]),
+        intelHexRecord(1, 0),
+      ].join("\n"),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "artifact_operation_failed",
+      details: { operation: "inspect_artifact", reason: "format" },
+    });
+  },
+);

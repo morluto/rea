@@ -14,13 +14,18 @@ import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,
-  isUnmodifiedCommonJsWrapperBinding,
-  commonJsWrapperBindingDeclaration,
   semanticResolutionBlocked,
   semanticStableInitializer,
-  semanticBindingHasPriorValueWrite,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+import {
+  commonJsWrapperBindingDeclaration,
+  isUnmodifiedCommonJsWrapperBinding,
+  semanticBindingAtRead,
+  semanticBindingHasPriorValueWrite,
+  semanticEffectTiming,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticStaticPropertyKey,
   semanticMemberChain,
@@ -31,11 +36,6 @@ import {
   staticSourceRelativeUrlPath,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
-import {
-  semanticEffectTiming,
-  semanticBindingAtRead,
-  semanticTopLevelEffectFollowsCapture,
-} from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
@@ -54,21 +54,19 @@ import {
 } from "./javascriptSemanticAliasSelections.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
+  semanticRequireOriginReaders,
+  type JavaScriptRequireLoaderFact,
+  type JavaScriptRequireOrigin,
+} from "./javascriptSemanticRequireOriginSlot.js";
+import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
 
-export interface JavaScriptRequireOrigin {
-  readonly origin: JavaScriptModuleOrigin;
-  readonly call: t.CallExpression;
-}
-
-export type JavaScriptRequireLoaderFact =
-  | "commonjs-loader"
-  | "factory-loader"
-  | "create-require"
-  | "local"
-  | "unknown";
+export type {
+  JavaScriptRequireLoaderFact,
+  JavaScriptRequireOrigin,
+} from "./javascriptSemanticRequireOriginSlot.js";
 
 const possibleCommonJsDelegateWriteStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();
@@ -972,16 +970,22 @@ const inheritLoaderSourceContext = (
     ),
   }));
 
+// A later read site selects only the remaining path. This member selects its
+// own key when it is evaluated, so `o.k = o.k || d` reads o.k before the write.
 const loaderMemberSource = (
   current: ModuleObjectSource,
   member: t.MemberExpression | t.OptionalMemberExpression,
 ): ModuleObjectSource => ({
   node: member.object,
   readAt: current.readAt ?? member,
-  capturedSelections: semanticShiftCapturedSelections(
-    current.capturedSelections,
-    1,
-  ),
+  capturedSelections:
+    current.readAt === undefined
+      ? semanticShiftCapturedSelections(current.capturedSelections, 1)
+      : semanticNormalizeCapturedSelections([
+          { at: member, depth: 1 },
+          ...(semanticShiftCapturedSelections(current.capturedSelections, 1) ??
+            []),
+        ]),
   path: [
     semanticStaticPropertyKey(member.property, member.computed),
     ...current.path,
@@ -1058,13 +1062,10 @@ const hasCommonJsModuleSource = (
   readAt?: t.Node,
 ): boolean => {
   type Work = ModuleObjectSource & {
-    readonly ancestors: ReadonlySet<object>;
     /** Await occurs after this many requested outer property selections. */
     readonly awaitDepths: readonly number[];
   };
-  const pending: Work[] = [
-    { node, path: [], readAt, ancestors: new Set(), awaitDepths: [] },
-  ];
+  const pending: Work[] = [{ node, path: [], readAt, awaitDepths: [] }];
   // Keep depths separate and join finite key alternatives at each source read.
   const selections = new SemanticAliasSelections(() => {
     state.valueResourceLimits.add("alias-selections");
@@ -1110,13 +1111,10 @@ const hasCommonJsModuleSource = (
       identity = {};
       context.identities.set(pathKey, identity);
     }
-    if (next.ancestors.has(identity)) {
-      if (includeUnknown) return true;
-      continue;
-    }
+    // A revisited state adds no source. A cycle's other entries are expanded
+    // once each, so a cycle is not an unknown loader.
     if (examined.has(identity)) continue;
     examined.add(identity);
-    const ancestors = new Set([...next.ancestors, identity]);
     const enqueueAt = (
       depths: readonly number[],
       ...sources: ModuleObjectSource[]
@@ -1124,7 +1122,6 @@ const hasCommonJsModuleSource = (
       pending.push(
         ...inheritLoaderSourceContext(next, sources).map((source) => ({
           ...source,
-          ancestors,
           awaitDepths: depths,
         })),
       );
@@ -1661,3 +1658,6 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
     ? { specifier, path }
     : undefined;
 };
+
+semanticRequireOriginReaders.origin = semanticRequireOrigin;
+semanticRequireOriginReaders.loader = semanticRequireLoaderAt;

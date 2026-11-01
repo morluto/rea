@@ -58,6 +58,8 @@ interface ArtifactPathResolutionBase {
   readonly limitations: readonly string[];
   readonly conditional_resolutions?: readonly ConditionalModuleResolution[];
   readonly candidate_path?: string;
+  /** An external module can run code whose imports were not inventoried. */
+  readonly unexamined_module_imports?: true;
 }
 
 export interface ConditionalModuleResolution {
@@ -192,6 +194,7 @@ type CandidateResolution = {
   readonly limitations: readonly string[];
   readonly candidatePath?: string;
   readonly conditionalResolutions?: readonly ConditionalModuleResolution[];
+  readonly unexaminedModuleImports?: true;
 } & (
   | { readonly resolvedPath: string; readonly status: "resolved" }
   | {
@@ -219,6 +222,9 @@ export const resolveArtifactPathByContext = (
       : {}),
     resolution_context: input.context,
     limitations: resolution.limitations,
+    ...(resolution.unexaminedModuleImports === true
+      ? { unexamined_module_imports: true as const }
+      : {}),
     ...(resolution.candidatePath === undefined
       ? {}
       : { candidate_path: resolution.candidatePath }),
@@ -339,6 +345,10 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
     return sameOutcome
       ? {
           ...imported,
+          ...(imported.unexaminedModuleImports === true ||
+          required.unexaminedModuleImports === true
+            ? { unexaminedModuleImports: true as const }
+            : {}),
           limitations: [
             ...new Set([
               ...imported.limitations,
@@ -910,10 +920,21 @@ const bareModuleCandidate = (
       } else return packageResolution;
     }
   }
-  if (nearestNotFound !== null) return nearestNotFound;
-  return unresolvedCandidate("external", [
-    "No matching bare package was inventoried in an enclosing node_modules directory.",
-  ]);
+  if (nearestNotFound !== null)
+    return {
+      ...nearestNotFound,
+      ...(ELECTRON_MODULE.test(input.declaredPath)
+        ? {}
+        : { unexaminedModuleImports: true as const }),
+    };
+  return {
+    ...unresolvedCandidate("external", [
+      "No matching bare package was inventoried in an enclosing node_modules directory.",
+    ]),
+    ...(ELECTRON_MODULE.test(input.declaredPath)
+      ? {}
+      : { unexaminedModuleImports: true as const }),
+  };
 };
 
 function* packageLookupDirectories(

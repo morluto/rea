@@ -398,3 +398,23 @@ describe("hex record recognition", () => {
     expect(detectHexRecordEncoding(Buffer.from(text))).toBe(expected);
   });
 });
+
+it("keeps data offsets, start payloads and the ignored EOF offset distinct", () => {
+  const parsed = image(
+    [
+      intelHexRecord(0, 0x1234, [0xa5]),
+      intelHexRecord(3, 0, [0x10, 0, 0x12, 0x34]),
+      intelHexRecord(5, 0, [0x12, 0x34, 0x56, 0x78]),
+      intelHexRecord(1, 0x1234),
+    ].join("\n"),
+  );
+  expect(parsed.metadata).toMatchObject({
+    start_segment_cs: 0x1000,
+    start_segment_ip: 0x1234,
+    start_address: 0x12345678,
+  });
+  expect(parsed.terminated).toBe(true);
+  expect(parsed.regions).toMatchObject([
+    { start: 0x1234, end: 0x1234, bytes: Uint8Array.of(0xa5) },
+  ]);
+});

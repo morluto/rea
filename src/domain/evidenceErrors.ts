@@ -31,10 +31,31 @@ export class EvidenceIntegrityError extends AnalysisError {
 }
 
 /** A valid snapshot belongs to a different target, provider, or analysis profile. */
-export class AnalysisSnapshotMismatchError extends EvidenceIntegrityError {}
+export class AnalysisSnapshotMismatchError extends EvidenceIntegrityError {
+  constructor(
+    message: string,
+    readonly bindingMismatch?: import("./analysisSnapshot.js").SnapshotBindingMismatch,
+  ) {
+    super(message);
+  }
+}
+
+/** A resource session cannot import or export a binary analysis snapshot. */
+export class ResourceSnapshotMismatchError extends AnalysisSnapshotMismatchError {
+  constructor(readonly operation: "import" | "export") {
+    super(
+      "Analysis snapshots do not apply to a resource-only app session because it has no executable identity or replay binding.",
+    );
+  }
+}
 
 /** A session Evidence reference is missing or has the wrong semantic identity. */
 export class EvidenceReferenceError extends EvidenceIntegrityError {
+  readonly expected: string;
+  readonly actual: string | null;
+  /** Set when the consuming workflow requires retained closure. */
+  readonly referenceScope: "retained-closure" | undefined;
+
   constructor(
     readonly evidenceId: string,
     readonly reason:
@@ -42,10 +63,16 @@ export class EvidenceReferenceError extends EvidenceIntegrityError {
       | "wrong_operation"
       | "wrong_predicate"
       | "identity_mismatch",
-    readonly expected: string,
-    readonly actual: string | null,
+    options: AnalysisErrorOptions & {
+      readonly expected: string;
+      readonly actual: string | null;
+      readonly referenceScope?: "retained-closure" | undefined;
+    },
   ) {
-    super(`Evidence reference ${reason}: ${evidenceId}`);
+    super(`Evidence reference ${reason}: ${evidenceId}`, options);
+    this.expected = options.expected;
+    this.actual = options.actual;
+    this.referenceScope = options.referenceScope;
   }
 }
 
@@ -60,6 +87,7 @@ export class EvidenceFileError extends AnalysisError {
   readonly published: PublishedEvidenceFileObservation | undefined;
   /** Schema issues relative to the selected file's JSON root, never the request envelope. */
   readonly contentIssues: readonly AnalysisInputIssue[] | undefined;
+  readonly systemCode: "EFBIG" | "ENOSPC" | "EDQUOT" | undefined;
 
   constructor(
     readonly operation: "read" | "write",
@@ -70,6 +98,7 @@ export class EvidenceFileError extends AnalysisError {
       | "invalid-json"
       | "missing"
       | "path-limit"
+      | "storage-limit"
       | "symlink-traversal"
       | "io",
     options?: AnalysisErrorOptions & {
@@ -77,6 +106,7 @@ export class EvidenceFileError extends AnalysisError {
       readonly published?: PublishedEvidenceFileObservation;
       readonly userMessage?: string;
       readonly contentIssues?: readonly AnalysisInputIssue[];
+      readonly systemCode?: "EFBIG" | "ENOSPC" | "EDQUOT";
     },
   ) {
     super(`Evidence bundle ${operation} failed: ${reason}`, options);
@@ -84,5 +114,6 @@ export class EvidenceFileError extends AnalysisError {
     this.published = options?.published;
     this.userMessage = options?.userMessage;
     this.contentIssues = options?.contentIssues;
+    this.systemCode = options?.systemCode;
   }
 }

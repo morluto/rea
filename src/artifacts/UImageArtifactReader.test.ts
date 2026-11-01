@@ -82,6 +82,20 @@ it("names unknown enum values as unknown instead of failing", () => {
   });
 });
 
+it.each([
+  [14, "kernel_noload"],
+  [22, "loadable"],
+  [45, "tfa-bl31"],
+  [47, "amlimage"],
+  [48, "unknown"],
+])("names image type %i as %s", (type, typeName) => {
+  const bytes = buildUImage({ type });
+  const parsed = parseUImageHeaderFields(bytes.subarray(0, UIMAGE_HEADER_SIZE));
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) return;
+  expect(parsed.value).toMatchObject({ type, typeName });
+});
+
 it("rejects a bad magic and a bad header CRC", () => {
   const good = buildUImage();
   const badMagic = Buffer.from(good);

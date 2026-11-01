@@ -38,7 +38,7 @@ export type CapturedResource = Omit<
   "resource_key"
 > & { readonly rawUrl: string };
 
-/** Normalize every allowed frame, optionally selecting a leading frame. */
+/** Normalize allowed frames and retain the enclosing tree's root identity. */
 export const captureFrames = (
   result: unknown,
   allowedOrigins: ReadonlySet<string>,
@@ -46,13 +46,15 @@ export const captureFrames = (
   completeness?: CdpCaptureCompleteness,
 ): {
   readonly items: WebPageInspection["frames"];
+  readonly root: WebPageInspection["frames"][number] | undefined;
 } => {
   const root = recordValue(recordValue(result)?.frameTree);
   if (root === undefined) {
     completeness?.exclude("frames", "invalid_protocol_value");
-    return { items: [] };
+    return { items: [], root: undefined };
   }
   const items: WebPageInspection["frames"] = [];
+  let rootFrame: WebPageInspection["frames"][number] | undefined;
   for (const tree of walkFrameTrees(root, (omittedCount) =>
     completeness?.exclude("frames", "invalid_protocol_value", omittedCount),
   )) {
@@ -84,14 +86,17 @@ export const captureFrames = (
       (tree !== root && identity.parentRelation === "root")
     )
       completeness?.exclude("frames", "invalid_protocol_value");
-    items.push({
+    const captured = {
       frame_id: frameId,
       parent_frame_id: identity.parentId,
       url: facts.url,
       origin: facts.origin,
-    });
+    };
+    items.push(captured);
+    if (tree === root && identity.parentRelation === "root")
+      rootFrame = captured;
   }
-  return { items };
+  return { items, root: rootFrame };
 };
 
 export type CdpFrameUrlObservation =
@@ -270,6 +275,7 @@ interface DomMetadataCapture {
 
 export interface DomCapture extends DomMetadataCapture {
   readonly total: number;
+  readonly nodeValueLengthUnit: "utf16-code-units";
   readonly nodes: WebPageInspection["dom"]["nodes"];
 }
 
@@ -415,6 +421,7 @@ export function* captureDom(
   }
   return {
     total,
+    nodeValueLengthUnit: "utf16-code-units",
     nodes,
     urls,
     agentHints,

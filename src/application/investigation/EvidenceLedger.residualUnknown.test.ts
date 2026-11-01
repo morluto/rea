@@ -4,6 +4,7 @@ import canonicalize from "canonicalize";
 import { describe, expect, it } from "vitest";
 
 import { EvidenceLedger } from "./EvidenceLedger.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
   createEvidence,
   withEvidenceCallerInputPath,
@@ -60,6 +61,21 @@ const input = (
     ...overrides,
   });
 const mutation = (label: string) => evidence(`mutation-${label}`);
+const expectHistoryConflict = (
+  error: import("../../domain/analysisErrorBase.js").AnalysisError,
+  unknownId: string,
+) => {
+  expect(projectAnalysisError(error)).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    retryable: false,
+    message: expect.stringContaining("conflicts with a revision retained"),
+    remediation: { action: expect.stringContaining("cannot reconcile") },
+    details: {
+      reason: "Conflicting unknown revision",
+      diagnostics: { unknown_id: unknownId, revision: 2 },
+    },
+  });
+};
 const update = (
   unknown: ResidualUnknown,
   overrides: Readonly<Record<string, unknown>> = {},
@@ -432,7 +448,10 @@ describe("residual unknown registry resolution and history", () => {
       ).ok,
     ).toBe(true);
     const before = serializeEvidenceBundle(base.export());
-    expect(base.import(branch.export()).ok).toBe(false);
+    const conflict = base.import(branch.export());
+    expect(conflict.ok).toBe(false);
+    if (conflict.ok) throw new Error("Expected divergent history refusal");
+    expectHistoryConflict(conflict.error, created.value.unknown_id);
     expect(base.get(source.evidence_id)?.caller_input_path).toBe("./original");
     expect(serializeEvidenceBundle(base.export())).toBe(before);
   });

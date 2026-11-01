@@ -20,7 +20,6 @@ import {
 } from "./LinuxHopper.js";
 import type { HopperDownload } from "./HopperDownload.js";
 import { err, ok } from "../domain/result.js";
-import { HopperDownloadTimeoutError } from "./HopperDownload.js";
 import {
   type LinuxPackageFamily,
   HopperReleaseError,
@@ -77,7 +76,11 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
     Promise.resolve(ok(releasesFor(new Uint8Array([1, 2, 3]))[family]));
   download = (url: string): Promise<HopperDownload> => {
     this.downloads.push(url);
-    return Promise.resolve({ ok: this.archiveOk, bytes: this.archive });
+    return Promise.resolve(
+      this.archiveOk
+        ? ok(this.archive)
+        : err({ url, kind: "http_status", httpStatus: 503 }),
+    );
   };
   createTemporaryDirectory = (): Promise<string> =>
     Promise.resolve("/tmp/rea test");
@@ -395,7 +398,19 @@ describe("Linux Hopper installation failure classification", () => {
       ...(scenario === "package manager failure"
         ? { packageFailure: host.packageFailure }
         : {}),
+      ...(scenario === "package request failure"
+        ? {
+            download: {
+              request: "package",
+              url: host.downloads[0],
+              kind: "http_status",
+              httpStatus: 503,
+            },
+          }
+        : {}),
     });
+    if (scenario === "package request failure")
+      expect(host.cleaned).toEqual([]);
     if (host.installed.length > 0)
       expect(host.cleaned).toEqual(["/tmp/rea test"]);
   });
@@ -584,23 +599,6 @@ it("retains archive staging failure after download and cleans the owned temporar
   expect(host.downloads).toHaveLength(1);
   expect(host.installed).toEqual([]);
   expect(host.cleaned).toEqual(["/tmp/rea test"]);
-});
-
-it("reports a timed-out package download as a download failure with its reason", async () => {
-  const host = new RecordingLinuxHost();
-  const stalled = new HopperDownloadTimeoutError(
-    "stalled",
-    "https://www.hopperapp.com/fixture.deb",
-    30_000,
-    1024,
-  );
-  host.download = () => Promise.reject(stalled);
-  expect(await installLinuxHopper(host)).toMatchObject({
-    status: "failed",
-    reason: "download",
-    operationFailure: { operation: "download", detail: stalled.message },
-  });
-  expect(host.installed).toEqual([]);
 });
 
 it("keeps an installed launcher inspection failure distinct from confirmed absence", async () => {

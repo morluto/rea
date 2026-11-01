@@ -316,8 +316,12 @@ request to change it.
   `runtime-configuration:` check. Re-run `rea setup` for that client when the
   setting is on the registration allowlist, then reconnect so the new process
   sees it.
-- `invalid_request`: correct the reported fields from the current schema or
-  CLI help. Do not repeat the unchanged call.
+- `invalid_request`: follow the specific recovery and reported issue. Inspect
+  the schema or CLI help when the input violates the contract or the response
+  asks for `inspect_input_contract`. A valid selector can instead require a
+  different choice, such as selecting a reported address; an inventory miss
+  does not establish that the target lacks the item. Do not repeat the
+  unchanged call when the response says it cannot succeed unchanged.
 
 A restart is required to adopt a changed launch environment or registration.
 The curated runtime settings above require no REA restart. It is not the first step for a transient
@@ -378,3 +382,17 @@ The [verification report](../verification/runtime-analysis-settings.md) separate
 public MCP checks, simulated provider coverage, real Ghidra execution, and
 measured task costs. It does not establish real-provider behavior for every
 editable setting or active worker telemetry.
+
+## Bun standalone module graphs
+
+`MAX_BUN_MODULE_COUNT` admits at most 100,000 module records.
+`MAX_BUN_RETAINED_BYTES` admits at most 256 MiB of serialized graph payload and
+separately bounds retained entry metadata. Physical metadata read work is also
+limited to 256 MiB per preparation, including repeated uncached ranges. A
+256 KiB / 1,024-entry exact-range cache avoids full-page amplification. The
+combined logical path tree admits at most 250,000 distinct prefixes; this is
+checked before adding nodes, with shared prefixes counted once. The shared
+artifact expansion budget also bounds the sum of referenced member lengths. Refusals name the boundary.
+There is no runtime override; additional host memory or `NODE_OPTIONS` does not
+raise these ceilings. Use a smaller producer fixture or a separately reviewed
+reader for larger graphs. No partial extraction is claimed on admission failure.
