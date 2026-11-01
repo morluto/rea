@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { InvestigationStatistics } from "../../domain/investigationLifecycle.js";
 import { artifactTargetRefusal } from "../../domain/apple/artifactTargetApplicability.js";
+import { targetApplicabilityRefusal } from "../../domain/targetApplicability.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
@@ -76,7 +77,12 @@ export const binarySessionStatus = async ({
       const targetRefusal =
         target === undefined
           ? undefined
-          : artifactTargetRefusal(descriptor.operation, target);
+          : descriptor.targetApplicability === undefined
+            ? artifactTargetRefusal(descriptor.operation, target)
+            : targetApplicabilityRefusal(
+                descriptor.targetApplicability,
+                target,
+              );
       if (targetRefusal !== undefined && descriptor.available)
         return {
           ...descriptor,

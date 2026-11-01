@@ -765,6 +765,13 @@ finish without reading relationships, even when neither traversal mode is
 available. Discovery does not block that direct invocation or replace its typed
 partial/error outcomes.
 
+`trace_native_ui_action` reports authored-UI and native-seed modes separately.
+Apple dispatch metadata requires a Mach-O target; another provider may supply
+the symbol-only alternative on other formats. If neither mode is available,
+read each mode's missing operations and remediation: a remedy for an authored
+app-bundle route does not by itself describe the native-seed route. Availability
+does not guarantee that every selector or provider operation will succeed.
+
 With complete detail, the `effects` and `annotations` arrays list the true
 members of their fixed vocabularies. A known member omitted from either array is false. This applies
 only to these closed flag sets; it does not make an omitted tool, provider, mode,
