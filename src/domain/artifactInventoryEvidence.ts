@@ -19,6 +19,7 @@ import {
   artifactEdgeId,
   artifactGraphDigest,
   artifactIdForContent,
+  artifactIdForNode,
   artifactManifestId,
   occurrenceIdForLocation,
 } from "./artifactIdentity.js";
@@ -360,7 +361,14 @@ const validateInventoryPage = (inventory: ArtifactInventoryResult): void => {
     "edge ID",
   );
   for (const node of inventory.nodes)
-    if (node.artifact_id !== artifactIdForContent(node.sha256))
+    if (
+      node.artifact_id !== artifactIdForNode(node) &&
+      // Evidence retained before virtual identities were domain-separated.
+      !(
+        node.content_state === "virtual" &&
+        node.artifact_id === artifactIdForContent(node.sha256)
+      )
+    )
       throw new ArtifactInventoryValidationError(
         "Artifact node ID is not content-addressed",
       );
