@@ -361,6 +361,25 @@ posix(
   },
 );
 
+posix(
+  "reads the working directory only when the PATH search reaches a relative entry",
+  async () => {
+    const { executable } = await rizinExecutableFixture();
+    const directory = dirname(executable);
+    const workingDirectory = vi.fn((): string => {
+      throw Object.assign(new Error("uv_cwd"), { code: "ENOENT" });
+    });
+    await expect(
+      lookupExecutable("rizin", workingDirectory, `${directory}${delimiter}.`),
+    ).resolves.toEqual({ status: "found", path: executable });
+    expect(workingDirectory).not.toHaveBeenCalled();
+    await expect(
+      lookupExecutable("rizin", workingDirectory, `.${delimiter}${directory}`),
+    ).resolves.toMatchObject({ status: "no-working-directory" });
+    expect(workingDirectory).toHaveBeenCalledOnce();
+  },
+);
+
 posix.each(["cancellation", "deadline"] as const)(
   "stops a stalled executable lookup on its %s without running anything",
   async (interruption) => {

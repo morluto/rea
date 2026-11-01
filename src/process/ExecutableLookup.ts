@@ -39,10 +39,10 @@ export interface ExecutableLookupBounds {
  * Resolve a command the way process spawning searches for it. A command that
  * contains a path separator is the selected path; PATH search continues past
  * denied directories, and an existing file without execute permission is not
- * a match. The working directory is read only for a relative command or PATH
- * entry, since it may have been removed. A file-system call cannot itself be
- * cancelled, so an interrupted lookup stops waiting for it and lets it settle
- * unobserved.
+ * a match. The working directory is read only when the search reaches a
+ * relative command or PATH entry, since it may have been removed. A
+ * file-system call cannot itself be cancelled, so an interrupted lookup stops
+ * waiting for it and lets it settle unobserved.
  */
 export const lookupExecutable = async (
   command: string,
@@ -65,21 +65,24 @@ export const lookupExecutable = async (
     isAbsolute(command) ||
     command.includes("/") ||
     (sep === "\\" && command.includes("\\"));
-  let candidates: string[];
-  try {
-    // Match Node's Unix default search path when PATH is absent.
-    candidates = explicit
-      ? [located(command)]
-      : (searchPath ?? "/usr/bin:/bin")
-          .split(delimiter)
-          .map((directory) => appendCallerPath(located(directory), command));
-  } catch (cause) {
-    return { status: "no-working-directory", cause };
-  }
+  // Match Node's Unix default search path when PATH is absent.
+  const entries = explicit
+    ? [command]
+    : (searchPath ?? "/usr/bin:/bin").split(delimiter);
   const interruption = lookupInterruption(signal, timeoutMs);
   try {
     const checked: string[] = [];
-    for (const candidate of candidates) {
+    for (const entry of entries) {
+      // Resolved only when reached: a match in an earlier entry never needs
+      // the working directory that a later relative entry would read.
+      let candidate: string;
+      try {
+        candidate = explicit
+          ? located(entry)
+          : appendCallerPath(located(entry), command);
+      } catch (cause) {
+        return { status: "no-working-directory", cause };
+      }
       const metadata = await interruption.race(stat(candidate));
       if (metadata.status === "interrupted") return metadata;
       if (metadata.status === "rejected") {
