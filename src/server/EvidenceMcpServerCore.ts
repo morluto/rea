@@ -11,6 +11,7 @@ import {
   isJSONRPCResultResponse,
   type CallToolResult,
   type Implementation,
+  type LoggingMessageNotification,
   type Icon,
   type JSONRPCMessage,
   type McpServerOptions,
@@ -63,6 +64,7 @@ import {
   measureMcpResultWithinBudget,
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
+import type { UpdateNotices } from "./UpdateNotices.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
 import { DISCOVER_TOOLS } from "../catalogDiscovery.js";
 import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
@@ -107,6 +109,8 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
     },
   } as Schema;
 };
+// The SDK's logging helper filters levels but does not expose transport routing.
+const currentUpdateNoticeRequest = new AsyncLocalStorage<RequestId>();
 
 /** Signal for the completion request currently being dispatched by the SDK. */
 export const currentMcpRequestSignal = (): AbortSignal | undefined =>
@@ -315,6 +319,8 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   /** Transport-owned Evidence uses the same lifetime as application writes. */
   withAdmittedAnalysis: WithAdmittedAnalysis | undefined;
   private identity: ReturnType<typeof createCatalogIdentity> | undefined;
+  updateNoticeFactory: (() => UpdateNotices) | undefined;
+  private readonly noticeOwners = new Set<UpdateNotices>();
 
   /** Composition supplies identity without importing the canonical schema graph. */
   get catalogIdentity(): ReturnType<typeof createCatalogIdentity> {
@@ -390,8 +396,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     return super.registerPrompt(name, config, callback);
   }
   private readonly compactPresentation:
-    | CompactInputSchemaPresentation
-    | undefined;
+    CompactInputSchemaPresentation | undefined;
   private readonly maximumInputElements: number;
   private readonly evidenceReferenceAlternatives = new Set<string>();
 
@@ -408,8 +413,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     private readonly outputSchemaProfile: McpOutputSchemaProfile = "full",
     identity?: ReturnType<typeof createCatalogIdentity>,
     readonly advertisedToolFamilies:
-      | ReadonlySet<string>
-      | undefined = undefined,
+      ReadonlySet<string> | undefined = undefined,
   ) {
     const maximumInputElements =
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
@@ -420,6 +424,28 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
         ? undefined
         : { budgetBytes: compactPresentation.budgetBytes };
     this.identity = identity;
+  }
+
+  /** The lookup remains ours even after the SDK has discarded a closed transport. */
+  override async close(): Promise<void> {
+    const results = await Promise.allSettled([
+      Promise.resolve().then(() => super.close()),
+      ...[...this.noticeOwners].map((notices) => this.closeNotices(notices)),
+    ]);
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(
+        failures,
+        "MCP server and update lookup cleanup failed",
+      );
+  }
+
+  private async closeNotices(notices: UpdateNotices): Promise<void> {
+    await notices.close();
+    this.noticeOwners.delete(notices);
   }
 
   /**
@@ -520,21 +546,39 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   }
 
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */
-  override connect(transport: Transport): Promise<void> {
+  override async connect(transport: Transport): Promise<void> {
     // HTTP reuses the analysis server after draining the previous transport.
     // Reset visibility while disconnected, before the next initialize/list.
     if (!this.isConnected()) this.progressiveCatalog?.reset();
-    return super.connect(
-      new ErrorEvidenceTransport(
-        transport,
-        () => this.recordEvidence,
-        () => this.delivery,
-        () => this.withAdmittedAnalysis,
-        this.outputSchemaProfile,
-        this.maximumInputElements,
-        this.evidenceReferenceAlternatives,
-      ),
-    );
+    const notices = this.updateNoticeFactory?.();
+    if (notices !== undefined) {
+      this.noticeOwners.add(notices);
+    }
+    try {
+      if (notices !== undefined)
+        this.server.registerCapabilities({ logging: {} });
+      await super.connect(
+        new ErrorEvidenceTransport(
+          transport,
+          () => this.recordEvidence,
+          () => this.delivery,
+          () => this.withAdmittedAnalysis,
+          this.outputSchemaProfile,
+          this.maximumInputElements,
+          this.evidenceReferenceAlternatives,
+          notices,
+          (params) =>
+            this.server.sendLoggingMessage(params, transport.sessionId),
+          () =>
+            notices === undefined
+              ? Promise.resolve()
+              : this.closeNotices(notices),
+        ),
+      );
+    } catch (cause) {
+      if (notices !== undefined) await this.closeNotices(notices);
+      throw cause;
+    }
   }
 }
 
@@ -565,13 +609,17 @@ class ErrorEvidenceTransport implements Transport {
   constructor(
     private readonly transport: Transport,
     private readonly currentEvidenceWriter: () =>
-      | EvidenceWriter["recordEvidence"]
-      | undefined,
+      EvidenceWriter["recordEvidence"] | undefined,
     private readonly currentDelivery: () => ToolResultDelivery,
     private readonly currentAdmission: () => WithAdmittedAnalysis | undefined,
     private readonly outputSchemaProfile: McpOutputSchemaProfile,
     private readonly maximumInputElements: number,
     private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
+    private readonly updateNotices: UpdateNotices | undefined,
+    private readonly sendNotice: (
+      params: LoggingMessageNotification["params"],
+    ) => Promise<void>,
+    private readonly closeUpdateNotices: () => Promise<void>,
   ) {
     if (transport.hasPerRequestStream !== undefined)
       this.hasPerRequestStream = transport.hasPerRequestStream;
@@ -607,6 +655,7 @@ class ErrorEvidenceTransport implements Transport {
         this.pendingTools.set(message.id, message.params["name"]);
         validation = new McpToolRequest(message.id, message.params["name"]);
         this.pendingValidation.set(message.id, validation);
+        this.updateNotices?.refresh();
       }
       if (isJSONRPCRequest(message) && message.method === "tools/list")
         this.pendingToolLists.add(message.id);
@@ -644,6 +693,7 @@ class ErrorEvidenceTransport implements Transport {
     };
     transport.onerror = (error) => this.onerror?.(error);
     transport.onclose = () => {
+      void this.closeUpdateNotices();
       this.pendingTools.clear();
       for (const validation of this.pendingValidation.values())
         validation.cancel();
@@ -669,7 +719,10 @@ class ErrorEvidenceTransport implements Transport {
 
   async close(): Promise<void> {
     try {
-      await this.transport.close();
+      await Promise.all([
+        Promise.resolve().then(() => this.transport.close()),
+        this.closeUpdateNotices(),
+      ]);
     } finally {
       this.pendingTools.clear();
       for (const validation of this.pendingValidation.values())
@@ -694,6 +747,13 @@ class ErrorEvidenceTransport implements Transport {
     message: JSONRPCMessage,
     options?: TransportSendOptions,
   ): Promise<void> {
+    const noticeRequest = currentUpdateNoticeRequest.getStore();
+    if (
+      noticeRequest !== undefined &&
+      isJSONRPCNotification(message) &&
+      message.method === "notifications/message"
+    )
+      options = { ...options, relatedRequestId: noticeRequest };
     const id =
       "id" in message &&
       (typeof message.id === "string" || typeof message.id === "number")
@@ -756,7 +816,11 @@ class ErrorEvidenceTransport implements Transport {
             options,
             request,
           );
-      } else await publish();
+      } else {
+        if (tool !== undefined && id !== undefined)
+          this.sendUpdateNotice(message, id);
+        await publish();
+      }
     } finally {
       request?.finishPublication();
       if (!isJSONRPCRequest(message) && id !== undefined) {
@@ -800,6 +864,44 @@ class ErrorEvidenceTransport implements Transport {
           }
         : result;
     await this.transport.send({ ...message, result: marked }, options);
+  }
+
+  private sendUpdateNotice(
+    message: JSONRPCMessage,
+    requestId: RequestId,
+  ): void {
+    if (!isJSONRPCResultResponse(message) || !isCallToolResult(message.result))
+      return;
+    const notice = this.updateNotices?.peek();
+    if (notice === undefined) return;
+    // Server-authored advice must not inherit analysis-target provenance.
+    const params: LoggingMessageNotification["params"] = {
+      level: "notice",
+      logger: "rea.update",
+      data: notice.text,
+    };
+    const notification: JSONRPCMessage = {
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params,
+    };
+    if (
+      !measureMcpResultWithinBudget(
+        notification,
+        this.delivery.resultBudgetBytes,
+      ).ok
+    )
+      return;
+    this.updateNotices?.acknowledge(notice.version);
+    // The SDK owns log filtering and notification routing for this session.
+    // An advisory send failure must never replace or hold up an analysis reply.
+    try {
+      void currentUpdateNoticeRequest
+        .run(requestId, () => this.sendNotice(params))
+        .catch(() => undefined);
+    } catch {
+      // Even a synchronous advisory transport failure leaves the result intact.
+    }
   }
 
   private recoverError(
