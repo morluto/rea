@@ -1,7 +1,6 @@
 import {
   nativeAddressListSchema,
   nativeObservationSourceSchemas,
-  traceContainingProcedureSchema,
 } from "../domain/native/nativeObservation.js";
 import { overviewInventoryCoverageSchema } from "../domain/native/inventoryCoverage.js";
 import {
@@ -16,8 +15,9 @@ import {
   machoSummaryViewResultSchema,
   managedArtifactSummaryViewResultSchema,
   managedMemberSummaryViewResultSchema,
+  nativeTraceSummaryViewResultSchema,
 } from "../domain/analysisView/analysisView.js";
-import { literalFeatureMatchSchema } from "../domain/native/literalFeatureMatch.js";
+import { literalFeatureTraceResultSchema } from "../domain/native/literalFeatureTrace.js";
 import { byteEntropySchema } from "../domain/native/byteEntropy.js";
 import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
 import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
@@ -252,21 +252,9 @@ export const officialOutputSchemas = {
   xrefs: evidenceResultOf(nativeAddressListSchema),
 } as const satisfies Readonly<Record<string, z.ZodObject>>;
 
-const literalTraceOutput = evidenceResultOf(
-  z.object({
-    query: z.string(),
-    search_mode: z.literal("literal"),
-    matches: z.array(literalFeatureMatchSchema),
-    references: z.array(
-      z.object({
-        target_address: z.string(),
-        source_address: z.string(),
-        containing_procedure: traceContainingProcedureSchema,
-      }),
-    ),
-    truncated: z.boolean(),
-    residual_unknowns: z.array(z.string()),
-  }),
+const literalTraceOutput = analysisDetailOutputSchemaOf(
+  literalFeatureTraceResultSchema,
+  nativeTraceSummaryViewResultSchema,
 );
 
 const callPathTraceOutput = evidenceResultOf(

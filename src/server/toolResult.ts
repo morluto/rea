@@ -16,18 +16,25 @@ export const createToolResultDelivery = (
     retainedEvidenceContinuation,
   );
 
-/** Offer a named, schema-validated source page only for retained native analysis. */
+/** Offer a named, schema-validated first page for retained analysis whose owner supports paging. */
 const retainedEvidenceContinuation = (
   evidence: Evidence,
 ): Readonly<Record<string, JsonValue>> => {
   const view =
     evidence.operation === "analyze_function"
       ? { kind: "native", facet: "pseudocode", offset: 0 }
-      : isNativeInventoryOperation(evidence.operation)
-        ? { kind: "native-inventory", offset: 0, limit: 64 }
-        : isNativeObservationOperation(evidence.operation)
-          ? { kind: "native-observation", offset: 0, limit: 64 }
-          : undefined;
+      : evidence.operation === "trace_feature"
+        ? {
+            kind: "native-trace",
+            collection: "references",
+            offset: 0,
+            limit: 64,
+          }
+        : isNativeInventoryOperation(evidence.operation)
+          ? { kind: "native-inventory", offset: 0, limit: 64 }
+          : isNativeObservationOperation(evidence.operation)
+            ? { kind: "native-observation", offset: 0, limit: 64 }
+            : undefined;
   if (view === undefined) return {};
   const input = inspectAnalysisViewInputSchema.safeParse({
     source: { kind: "retained-evidence", evidence_id: evidence.evidence_id },

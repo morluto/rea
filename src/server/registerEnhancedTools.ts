@@ -204,10 +204,11 @@ export const registerEnhancedTools = (
   server.registerTool(
     traceFeature.name,
     toolRegistrationOptions(traceFeature),
-    (input, context) =>
+    ({ detail, ...input }, context) =>
       executeEnhancedTool(registration, traceFeature, {
         validatedCall: { name: "trace_feature", input },
         context,
+        detail,
       }),
   );
   server.registerTool(

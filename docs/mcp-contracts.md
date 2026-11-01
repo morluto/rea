@@ -218,6 +218,23 @@ Malformed provider replies return `unreadable_output` for
 `resolve_containing_procedure` before successful-result projection;
 cancellation and incomplete cleanup remain errors.
 
+A large trace can be read on demand. `detail: "summary"` retains the complete
+trace in the session and returns its `query`, `truncated`, match counts by type,
+reference counts by owner outcome (`found`, `not-found`, `unavailable`) and the
+residual-unknown count. `inspect_analysis_view` with the returned
+`parent_evidence_id` and `{"kind":"native-trace","collection":...}` pages
+`references`, `matches` or `residual_unknowns` in retained order. Each row keeps
+its `source_index`, and reference rows also carry their derived `owner`.
+References filter by exact `where.target_addresses` (no address normalization)
+and `where.owners`; matches filter by `where.types`. Omitted filters select all;
+empty arrays select none. Page coverage counts the retained provider-reported
+rows only: a missing row never establishes an absent reference, and `truncated`
+stays visible on every page. Residual unknowns are paged, not repeated in each
+view, and their session Unknowns are recorded exactly as for complete
+delivery. An oversized complete trace offers a ready-to-call first `references`
+page. The CLI keeps complete JSON; save it and use `inspect-analysis-view` with
+an `evidence-file` source.
+
 REA prepares complete MCP results within the pinned stdio client's 10 MiB
 receive-buffer budget, including both text and structured representations and
 room for the JSON-RPC envelope. Tool errors omit `structuredContent` from the
