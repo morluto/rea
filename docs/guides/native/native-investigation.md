@@ -1603,10 +1603,12 @@ returns ordered addresses with segments, source file offsets and containing
 procedures. The CLI equivalent is
 `rea search-bytes ./program '48 8B ?? ?? 89' --provider ghidra`.
 Use `start`/`end` to constrain the inclusive address window, and continue with
-`next_cursor` until `complete` is true. Inspect `searched` for page coverage and
-skipped uninitialized blocks. A missing match does not establish absence from
-uninitialized or excluded memory. See
-[Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
+`next_cursor` until `complete` is true. A cursor from another target, analysis
+profile or project, pattern, mask, bounds, or document is rejected without
+schema-repair guidance; the error does not claim which of those differs.
+Inspect `searched` for page coverage and skipped uninitialized blocks. A
+missing match does not establish absence from uninitialized or excluded memory.
+See [Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
 
 Exact-name xref lookup reports distinct candidate addresses as an input ambiguity;
