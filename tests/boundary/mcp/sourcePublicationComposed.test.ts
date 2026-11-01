@@ -10,6 +10,35 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
 import { JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { compareApplicationVersionsEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+
+it("preserves the source when an inline result with unknown retention exceeds delivery", async () => {
+  const session = new BinarySession(
+    createTestProviderRouter(() => {
+      throw new Error("no provider needed");
+    }),
+    new InvestigationRecords({ maximumRepresentationBytes: 0 }),
+  );
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: { delivery: createToolResultDelivery(10 * 1024) },
+  });
+  const response = await client.callTool({
+    name: "compare_application_versions",
+    arguments: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
+  });
+  expect(parseMcpToolError(response).error).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      partial_observation: { kind: "unretained-evidence" },
+      completed_observation_omitted: {
+        reason: "mcp-response-limit",
+        retention: "unknown",
+        source_closure: "not-established",
+      },
+    },
+  });
+});
 
 it("does not infer ledger membership from an independently registered reader", async () => {
   const computed = compareApplicationVersionsEvidence(
