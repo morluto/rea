@@ -93,6 +93,7 @@ describe(".xtensa.info ABI declarations", () => {
 
   it.each([
     [info("ABI=0\nABI=1\n"), "declares ABI more than once"],
+    [info("ABI=0\n\0ABI=1\n"), "non-zero bytes after its terminating NUL"],
     [info("ABI=windowed\n"), "malformed ABI value"],
     [info("ABI= 0\n"), "malformed ABI value"],
     [Buffer.concat([info("ABI=0\n"), info("ABI=0\n")]), "more than one"],

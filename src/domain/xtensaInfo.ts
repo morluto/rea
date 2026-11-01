@@ -58,6 +58,12 @@ export const parseXtensaInfoAbi = (
   if (descriptor === undefined)
     return unavailable(".xtensa.info holds no Xtensa_Info note.");
   const end = descriptor.indexOf(0);
+  // binutils pads the text's terminator with NULs to a word boundary; other
+  // bytes after it could contradict the declaration read before it.
+  if (end >= 0 && !descriptor.subarray(end).every((byte) => byte === 0))
+    return unavailable(
+      "The Xtensa_Info note holds non-zero bytes after its terminating NUL.",
+    );
   const [value, ...repeated] = descriptor
     .subarray(0, end < 0 ? descriptor.length : end)
     .toString("latin1")
