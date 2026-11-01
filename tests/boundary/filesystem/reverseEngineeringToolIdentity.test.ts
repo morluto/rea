@@ -619,6 +619,7 @@ posix.each(["deadline", "cancellation"] as const)(
       },
     });
     const caller = new AbortController();
+    const pending: Promise<unknown>[] = [];
     try {
       const call = service.executeRizinCommand(
         {
@@ -628,7 +629,12 @@ posix.each(["deadline", "cancellation"] as const)(
         },
         { signal: caller.signal },
       );
-      await within(digestStarted.opened, "executable digest");
+      pending.push(call);
+      await awaitAcknowledgement(
+        digestStarted.opened,
+        call,
+        "executable digest",
+      );
       if (interruption === "cancellation") caller.abort("stop the digest");
       const result = await within(call, "interrupted digest");
       if (result.ok) throw new Error("Expected the digest to end the call");
@@ -647,6 +653,8 @@ posix.each(["deadline", "cancellation"] as const)(
     } finally {
       release.open();
       caller.abort("test cleanup");
+      await Promise.allSettled(pending);
+      await service.close();
     }
   },
 );
