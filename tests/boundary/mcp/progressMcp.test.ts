@@ -2,11 +2,18 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+
+import {
+  createAnalysisExecution,
+  type AnalysisOperationPort,
+} from "../../../src/application/AnalysisProvider.js";
+import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import { err } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 describe("ordinary MCP progress and cancellation", () => {
   it("advances MCP progress when provider waiting does not advance completed work", async () => {
@@ -33,7 +40,7 @@ describe("ordinary MCP progress and cancellation", () => {
       total?: number | undefined;
       message?: string | undefined;
     }[] = [];
-    try {
+    await withVerifierCleanup(async () => {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
       const result = await client.callTool(
@@ -56,31 +63,78 @@ describe("ordinary MCP progress and cancellation", () => {
         );
         expect(update.total).toBeUndefined();
       });
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-    }
+    }, [() => client.close(), () => server.close()]);
+  });
+
+  it("keeps analyze_function progress strictly increasing from start to completion", async () => {
+    const analysis: AnalysisOperationPort = {
+      execute: (operation) =>
+        Promise.resolve(
+          ok(
+            createAnalysisExecution(
+              operation === "analyze_function"
+                ? FUNCTION_COMPARISON_EXAMPLE.left.normalized_result
+                : "0x1000",
+              { id: "fixture", name: "Fixture", version: "1" },
+            ),
+          ),
+        ),
+    };
+    const server = createServer({ kind: "fixed", analysis });
+    const client = new Client({ name: "function-progress-test", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const progress: number[] = [];
+    await withVerifierCleanup(async () => {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool(
+        {
+          name: "analyze_function",
+          arguments: { procedure: "main", detail: "complete" },
+        },
+        { onprogress: (update) => progress.push(update.progress) },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(progress.length).toBeGreaterThanOrEqual(2);
+      progress.forEach((value, index) => {
+        expect(value).toBeGreaterThan(progress[index - 1] ?? 0);
+      });
+    }, [() => client.close(), () => server.close()]);
   });
 
   it("propagates client cancellation to the active provider request", async () => {
     let providerObservedCancellation = false;
-    let markProviderStarted: (() => void) | undefined;
+    let providerWasStarted = false;
+    let markProviderStarted!: () => void;
+    let markProviderFinished!: () => void;
+    let releaseProvider!: () => void;
     const providerStarted = new Promise<void>((resolve) => {
       markProviderStarted = resolve;
     });
+    const providerFinished = new Promise<void>((resolve) => {
+      markProviderFinished = resolve;
+    });
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
     const analysis: AnalysisOperationPort = {
       execute: async (operation, _parameters, options) => {
-        markProviderStarted?.();
-        await new Promise<void>((resolve) => {
-          options?.signal?.addEventListener(
-            "abort",
-            () => {
-              providerObservedCancellation = true;
-              resolve();
-            },
-            { once: true },
-          );
-        });
-        return err(new AnalysisCancelledError(operation));
+        const onAbort = () => {
+          providerObservedCancellation = true;
+          releaseProvider();
+        };
+        options?.signal?.addEventListener("abort", onAbort, { once: true });
+        providerWasStarted = true;
+        markProviderStarted();
+        try {
+          await providerGate;
+          return err(new AnalysisCancelledError(operation));
+        } finally {
+          options?.signal?.removeEventListener("abort", onAbort);
+          markProviderFinished();
+        }
       },
     };
     const server = createServer({ kind: "fixed", analysis });
@@ -88,19 +142,24 @@ describe("ordinary MCP progress and cancellation", () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const controller = new AbortController();
-    try {
+    await withVerifierCleanup(async () => {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
       const request = client.callTool(
         { name: "current_address", arguments: {} },
         { signal: controller.signal },
       );
-      await providerStarted;
+      await awaitAcknowledgement(providerStarted, request, "provider request");
       controller.abort();
       await expect(request).rejects.toThrow(/abort/iu);
       await expect.poll(() => providerObservedCancellation).toBe(true);
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-    }
+    }, [
+      async () => {
+        releaseProvider();
+        if (providerWasStarted) await providerFinished;
+      },
+      () => client.close(),
+      () => server.close(),
+    ]);
   });
 });

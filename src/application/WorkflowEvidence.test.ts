@@ -4,6 +4,7 @@ import {
   recordWorkflowUnknowns,
   createWorkflowEvidence,
   executeComposedWorkflow,
+  workflowSnapshotRecord,
 } from "./WorkflowEvidence.js";
 import { InvestigationRecords } from "./investigation/InvestigationRecords.js";
 import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
@@ -15,8 +16,98 @@ import {
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { nativeApiBoundarySchema } from "../domain/native/nativeApiBoundary.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
+import { ANALYSIS_SNAPSHOT_PROFILE } from "../domain/analysisSnapshot.fixture.js";
+import { createEvidence } from "../domain/evidence.js";
+
+it("links shared provider source Evidence once without copying its payload into the workflow", async () => {
+  const source = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "health",
+      parameters: { facet: "saved-analysis-report" },
+      result: { report: "historical content ".repeat(1_000) },
+    },
+    { immutable: true },
+  );
+  const result = await executeComposedWorkflow(
+    {
+      execute: async () =>
+        ok(
+          createAnalysisExecution(
+            "observed",
+            { id: "fixture", name: "Fixture", version: "1" },
+            { sourceEvidence: [source] },
+          ),
+        ),
+    },
+    async (observed) => {
+      await observed.execute("list_procedures", {});
+      await observed.execute("procedure_pseudo_code", { procedure: "0x1000" });
+      return ok({ count: 1 });
+    },
+  );
+  expect(result).toEqual({
+    ...ok({
+      result: { count: 1 },
+      limitations: [],
+      evidenceLinks: [source.evidence_id],
+    }),
+    sourceEvidence: [source],
+  });
+  expect(result.ok && JSON.stringify(result.value)).not.toContain(
+    "historical content",
+  );
+});
+
+it.each([false, true])(
+  "propagates transient=%s through composed snapshot decisions while retaining Evidence",
+  async (transient) => {
+    let calls = 0;
+    const composed = await executeComposedWorkflow(
+      {
+        execute: async () =>
+          ok(
+            createAnalysisExecution(
+              "observed",
+              provider,
+              transient && calls++ === 0
+                ? { cachePolicy: "live" as const }
+                : {},
+            ),
+          ),
+      },
+      async (observed) => {
+        await observed.execute("analyze_function", { procedure: "0x1000" });
+        const last = await observed.execute("procedure_info", {
+          procedure: "0x1000",
+        });
+        return last.ok ? ok(last.value.result) : last;
+      },
+    );
+    if (!composed.ok) throw composed.error;
+    const evidence = createWorkflowEvidence({
+      target: undefined,
+      operation: "inspect_native_api",
+      parameters: {},
+      result: composed.value.result,
+      upstreamProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      upstreamLimitations: composed.value.limitations,
+    });
+    expect(new InvestigationRecords().recordEvidence(evidence).ok).toBe(true);
+    expect(
+      workflowSnapshotRecord(
+        evidence,
+        "inspect_native_api",
+        ANALYSIS_SNAPSHOT_PROFILE,
+        composed.value.cachePolicy,
+      ) === undefined,
+    ).toBe(transient);
+    expect(evidence.normalized_result).toBe("observed");
+  },
+);
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 
@@ -97,7 +188,8 @@ it("retains unique upstream limits in canonical order across concurrent observat
   const analysis: AnalysisOperationPort = {
     execute: async (operation, parameters, forwarded) => {
       expect(parameters).toEqual({ marker: true });
-      expect(forwarded).toBe(options);
+      expect(forwarded).toMatchObject(options);
+      expect(forwarded?.workScope).toBeDefined();
       const call = calls++;
       if (call === 0) await gate;
       else release();
@@ -159,6 +251,159 @@ it("deduplicates exact source caveats without merging providers or operations", 
       limitations: [
         "First (first 1) list_procedures, list_strings: same source caveat",
         "Second (second 1) list_strings: same source caveat",
+      ],
+    }),
+  );
+});
+
+it("bounds per-item caveat retention while preserving inventory caveats", async () => {
+  const result = await executeComposedWorkflow(
+    {
+      execute: async (operation, parameters) =>
+        ok(
+          createAnalysisExecution(null, provider, {
+            limitations:
+              operation === "list_procedures"
+                ? ["inventory caveat"]
+                : [
+                    "shared caveat",
+                    `caveat at ${String(parameters.procedure)}`,
+                  ],
+          }),
+        ),
+    },
+    async (observed) => {
+      await observed.execute("list_procedures", {});
+      for (const procedure of ["0x1", "0x2", "0x3"])
+        await observed.execute("procedure_pseudo_code", { procedure });
+      return ok({ count: 3 });
+    },
+    {
+      perItemOperations: new Set(["procedure_pseudo_code"]),
+      maxDistinct: 2,
+      retainedIn: "the files keep them",
+    },
+  );
+  expect(result).toEqual(
+    ok({
+      result: { count: 3 },
+      limitations: [
+        "Fixture (fixture 1) list_procedures: inventory caveat",
+        "Fixture (fixture 1) procedure_pseudo_code: caveat at 0x1",
+        "Fixture (fixture 1) procedure_pseudo_code: shared caveat",
+        "2 per-item provider limitation observations were omitted from this answer; the files keep them.",
+      ],
+    }),
+  );
+});
+
+it("spends one budget slot on a caveat that two per-item operations share", async () => {
+  const result = await executeComposedWorkflow(
+    {
+      execute: async (operation, parameters) =>
+        ok(
+          createAnalysisExecution(null, provider, {
+            limitations: [
+              "shared caveat",
+              `${operation} at ${String(parameters.procedure)}`,
+            ],
+          }),
+        ),
+    },
+    async (observed) => {
+      await observed.execute("procedure_info", { procedure: "0x1" });
+      await observed.execute("procedure_pseudo_code", { procedure: "0x1" });
+      return ok(null);
+    },
+    {
+      perItemOperations: new Set(["procedure_info", "procedure_pseudo_code"]),
+      maxDistinct: 2,
+      retainedIn: "the files keep them",
+    },
+  );
+  expect(result).toEqual(
+    ok({
+      result: null,
+      limitations: [
+        "Fixture (fixture 1) procedure_info, procedure_pseudo_code: shared caveat",
+        "Fixture (fixture 1) procedure_info: procedure_info at 0x1",
+        "1 per-item provider limitation observation was omitted from this answer; the files keep them.",
+      ],
+    }),
+  );
+});
+
+it("counts repeated omitted observations without retaining their text for ranking", async () => {
+  const result = await executeComposedWorkflow(
+    {
+      execute: async (_operation, parameters) =>
+        ok(
+          createAnalysisExecution(null, provider, {
+            limitations: [
+              parameters.procedure === "first"
+                ? "first caveat"
+                : "later caveat",
+            ],
+          }),
+        ),
+    },
+    async (observed) => {
+      await observed.execute("procedure_pseudo_code", { procedure: "first" });
+      for (let index = 0; index < 30; index += 1)
+        await observed.execute("procedure_pseudo_code", { procedure: "later" });
+      return ok(null);
+    },
+    {
+      perItemOperations: new Set(["procedure_pseudo_code"]),
+      maxDistinct: 1,
+      retainedIn: "the index keeps them",
+    },
+  );
+  expect(result).toEqual(
+    ok({
+      result: null,
+      limitations: [
+        "Fixture (fixture 1) procedure_pseudo_code: first caveat",
+        "30 per-item provider limitation observations were omitted from this answer; the index keeps them.",
+      ],
+    }),
+  );
+});
+
+it("bounds retained caveat text while preserving smaller later observations", async () => {
+  const result = await executeComposedWorkflow(
+    {
+      execute: async () =>
+        ok(
+          createAnalysisExecution(null, provider, {
+            limitations: [
+              "x".repeat(9_000),
+              "first",
+              "second",
+              "x".repeat(9_000),
+              "ok",
+            ],
+          }),
+        ),
+    },
+    async (observed) => {
+      await observed.execute("procedure_pseudo_code", {});
+      return ok(null);
+    },
+    {
+      perItemOperations: new Set(["procedure_pseudo_code"]),
+      maxDistinct: 8,
+      maxBytes: 12,
+      retainedIn: "the index keeps them",
+    },
+  );
+  expect(result).toEqual(
+    ok({
+      result: null,
+      limitations: [
+        "Fixture (fixture 1) procedure_pseudo_code: first",
+        "Fixture (fixture 1) procedure_pseudo_code: ok",
+        "3 per-item provider limitation observations were omitted from this answer; the index keeps them.",
       ],
     }),
   );
@@ -368,9 +613,11 @@ it.each([
         recordUnknown: (input) => records.recordUnknown(input),
       }).ok,
     ).toBe(true);
-    expect(
-      records.listUnknowns().map(({ question: retained }) => retained),
-    ).toEqual(
+    const unknowns = records
+      .listUnknowns()
+      .map(({ question: retained }) => retained);
+    expect(unknowns).toHaveLength(2);
+    expect(unknowns).toEqual(
       expect.arrayContaining([
         `Which boundary? (Evidence ${evidence.evidence_id})`,
         `Which indirect branches does this function contain? The provider did not report an indirect-branch inventory. (Evidence ${evidence.evidence_id})`,
@@ -385,3 +632,60 @@ it.each([
     });
   },
 );
+
+it("shares temporary provider state only within a single completed workflow", async () => {
+  const owner = {};
+  const scopes: Array<
+    NonNullable<import("./AnalysisProvider.js").ExecutionOptions["workScope"]>
+  > = [];
+  const provider = { id: "fixture", name: "Fixture", version: "1" };
+  const analysis: AnalysisOperationPort = {
+    execute: async (_operation, _parameters, options) => {
+      const scope = options?.workScope;
+      if (scope === undefined) throw new Error("workflow scope missing");
+      scopes.push(scope);
+      scope.set(owner, (scope.get<number>(owner) ?? 0) + 1);
+      return ok(createAnalysisExecution(null, provider));
+    },
+  };
+  const run = () =>
+    executeComposedWorkflow(analysis, async (observed) => {
+      await observed.execute("health", {});
+      await observed.execute("health", {});
+      expect(scopes.at(-1)?.get(owner)).toBe(2);
+      return ok(null);
+    });
+  await run();
+  expect(scopes[0]?.get(owner)).toBeUndefined();
+  scopes[0]?.set(owner, "late completion");
+  expect(scopes[0]?.get(owner)).toBeUndefined();
+  await run();
+  expect(scopes[0]).toBe(scopes[1]);
+  expect(scopes[0]).not.toBe(scopes[2]);
+  expect(scopes[2]).toBe(scopes[3]);
+});
+
+it("clears workflow state when its callback throws", async () => {
+  const owner = {};
+  let captured: import("./AnalysisProvider.js").ExecutionOptions["workScope"];
+  const analysis: AnalysisOperationPort = {
+    execute: async (_operation, _parameters, options) => {
+      captured = options?.workScope;
+      captured?.set(owner, "in flight");
+      return ok(
+        createAnalysisExecution(null, {
+          id: "fixture",
+          name: "Fixture",
+          version: "1",
+        }),
+      );
+    },
+  };
+  await expect(
+    executeComposedWorkflow(analysis, async (observed) => {
+      await observed.execute("health", {});
+      throw new Error("failed workflow");
+    }),
+  ).rejects.toThrow("failed workflow");
+  expect(captured?.get(owner)).toBeUndefined();
+});

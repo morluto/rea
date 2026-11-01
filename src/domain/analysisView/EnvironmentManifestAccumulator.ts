@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { jsonValueType, parseJsonObject } from "../jsonShape.js";
 import { ok, type Result } from "../result.js";
@@ -11,20 +10,34 @@ import {
   type WebNetworkCaptureRecord,
 } from "../webNetworkCapture.js";
 import { completeWithinViewCoverage } from "./analysisViewCoverage.js";
-import type { UnsignedAnalysisView } from "./analysisView.js";
+import {
+  recordedResponseBodyIsEmpty,
+  readRecordedResponseDeclaration,
+} from "./recordedResponseBody.js";
+import { readRecordedRequestBody } from "./recordedExchangeBody.js";
+import { isJson, isJsonLike, mediaTypeEssence } from "./recordedMediaType.js";
+import { z } from "zod";
+import { environmentManifestFields } from "./environmentManifestSchema.js";
+import type { ScenarioResponseBodyRetention } from "./scenarioCaptureRecords.js";
 import { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
 import {
-  applyTemplateRules,
   compareTools,
   parameterNames,
   pathTemplate,
-  SIBLING_VARIANCE_SEGMENT_LIMIT,
   toolName,
   toolNameRegistry,
+} from "./environmentManifestNames.js";
+import {
+  primaryOrigin,
+  type OriginStats,
+} from "./environmentManifestOrigin.js";
+import {
+  applyTemplateRules,
+  SEGMENT_LIMITED_RULES,
+  SIBLING_VARIANCE_SEGMENT_LIMIT,
   type BodyShape,
   type JsonTypeName,
   type LiteralPart,
-  type ManifestRule,
   type TemplateRule,
   type ToolGroup,
 } from "./environmentManifestRules.js";
@@ -33,31 +46,23 @@ import {
   GROUP_BYTES,
   RECORD_SCRATCH_BYTES,
   SEGMENT_BYTES,
-  mediaTypeEssence,
   readQueryParameterNames,
   readRecordedRequestLine,
   routePartCount,
   scanRouteTemplate,
   textBytes,
   type RecordedRequestLine,
+  type RouteRule,
   type RouteTemplate,
 } from "./webNetworkRouteTemplates.js";
 
-type Manifest = Extract<UnsignedAnalysisView, { kind: "environment-manifest" }>;
-type ManifestFields = Pick<
-  Manifest,
-  | "origin"
-  | "name"
-  | "tools"
-  | "records"
-  | "excluded"
-  | "unknowns"
-  | "templated_groups"
-  | "coverage"
-  | "limitations"
->;
-type Tool = Manifest["tools"][number];
-type Exclusion = Manifest["excluded"][number];
+type ManifestCore = {
+  [Key in keyof typeof environmentManifestFields]: z.output<
+    (typeof environmentManifestFields)[Key]
+  >;
+};
+type Tool = ManifestCore["tools"][number];
+type Exclusion = ManifestCore["excluded"][number];
 type RequestLine = Extract<RecordedRequestLine, { kind: "line" }>;
 
 interface RecordLine {
@@ -72,7 +77,7 @@ type MutablePart =
   | LiteralPart
   | {
       readonly kind: "param";
-      readonly rule: ManifestRule;
+      readonly rule: RouteRule;
       readonly values: Set<string>;
     };
 
@@ -84,20 +89,27 @@ interface GroupState extends ToolGroup {
   readonly queryNames: Set<string>;
   readonly apiPath: boolean;
   jsonLike: boolean;
+  /** Every response of the write group had no body, as a 204 has. */
+  bodiless: boolean;
 }
 
-const postDataSchema = z.object({
-  request: z.object({
-    postData: z
-      .object({
-        mimeType: z.unknown().optional(),
-        text: z.unknown().optional(),
-      })
-      .nullable()
-      .optional(),
-  }),
-});
-const JSON_LIKE_TEXT = new Set(["text/plain", "text/markdown"]);
+/** Manifest eligibility also accepts declared bodyless statuses and a recorded zero size when no text was retained. */
+const manifestResponseIsEmpty = (record: WebNetworkCaptureRecord): boolean => {
+  const response = readRecordedResponseDeclaration(record.reported);
+  if (response === undefined) return false;
+  const { status, content } = response;
+  return (
+    status === 204 ||
+    status === 205 ||
+    recordedResponseBodyIsEmpty(record, response) ||
+    ((content?.text === undefined || content.text === null) &&
+      content?.size === 0)
+  );
+};
+/** A write group every response of which had no body, at least one of them a success. */
+const answeredEmpty = (group: GroupState): boolean =>
+  group.bodiless &&
+  [...group.statuses].some((status) => status >= 200 && status < 300);
 const ASSET_ESSENCES = new Set([
   "text/html",
   "application/xhtml+xml",
@@ -111,9 +123,11 @@ const ASSET_PREFIXES = ["image/", "font/", "audio/", "video/"];
 const ASSET_PATH =
   /\.(?:m?js|css|map|html?|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|otf)$/iu;
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH"]);
+/** A write whose every response is empty is a tool whatever its content type: the empty reply is its answer. */
+const BODILESS_WRITE_METHODS = new Set([...WRITE_METHODS, "DELETE"]);
 /** Quotes, separators and brackets a four-part composite key adds around its texts. */
 const KEY_OVERHEAD_CHARS = 32;
-const UNKNOWNS: Manifest["unknowns"] = [
+const UNKNOWNS: ManifestCore["unknowns"] = [
   {
     kind: "authorization-model",
     statement:
@@ -130,16 +144,6 @@ const UNKNOWNS: Manifest["unknowns"] = [
       "Recorded exchanges are independent observations; the manifest states no ordering, side effects or state transitions between tools.",
   },
 ];
-
-/** `application/json` or `application/*+json`; a `+json` suffix on another type is not JSON here. */
-const isJson = (essence: string | null): boolean =>
-  essence === "application/json" ||
-  (essence !== null &&
-    essence.startsWith("application/") &&
-    essence.endsWith("+json"));
-
-const isJsonLike = (essence: string | null): boolean =>
-  isJson(essence) || (essence !== null && JSON_LIKE_TEXT.has(essence));
 
 const isApiPath = (path: string): boolean =>
   path.startsWith("/api/") || path.startsWith("/apis/");
@@ -185,21 +189,32 @@ const hasParam = (parts: readonly MutablePart[]): boolean =>
 export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumulator {
   readonly #groups = new Map<string, GroupState>();
   readonly #records: RecordLine[] = [];
-  readonly #origins = new Map<string, { records: number; jsonLike: number }>();
+  readonly #origins = new Map<string, OriginStats>();
   readonly #rules: ReadonlySet<TemplateRule>;
   #unrepresented = 0;
-  #unrepresentableBodyKey = false;
+  #scenarioTransactions = 0;
+  #scenarioWithoutBody = 0;
+  #scenarioRedactedBodies = 0;
 
   constructor(
     maximumBytes = WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
     readonly includeQueryParameterNames = true,
     rules: readonly TemplateRule[] = [],
+    budgetSubject = "Environment-manifest",
   ) {
-    super(maximumBytes, "Environment-manifest");
+    super(maximumBytes, budgetSubject);
     this.#rules = new Set(rules);
   }
 
-  add(record: WebNetworkCaptureRecord): Result<void, AnalysisError> {
+  /** Whether the finished projection publishes body shapes, and so states their limitation. */
+  protected get reportsBodyShapes(): boolean {
+    return true;
+  }
+
+  add(
+    record: WebNetworkCaptureRecord,
+    scenarioResponseBody?: ScenarioResponseBodyRetention,
+  ): Result<void, AnalysisError> {
     const limitations = this.addLimitations(record.limitations);
     if (!limitations.ok) return limitations;
     try {
@@ -209,9 +224,18 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         this.scratch,
       );
       if (line === null) return this.overBudget();
+      const releaseGrouping = this.temporaryCheckpoint();
       if (line.kind === "excluded") {
         this.#unrepresented += 1;
-        return ok(undefined);
+        releaseGrouping();
+        return this.onRecordedRequestLine(record, line);
+      }
+      // Coverage uses the same admitted request line as grouping, including origin and raw path.
+      if (scenarioResponseBody !== undefined) {
+        this.#scenarioTransactions += 1;
+        if (scenarioResponseBody === "absent") this.#scenarioWithoutBody += 1;
+        if (scenarioResponseBody === "redacted")
+          this.#scenarioRedactedBodies += 1;
       }
       const route = scanRouteTemplate(line.path, this.scratch);
       if (route === null) return this.overBudget();
@@ -242,28 +266,39 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
           ? this.#bodyShape(record.reported)
           : ok(null);
       if (!bodyShape.ok) return bodyShape;
-      return this.#append(
+      const grouped = this.#append(
         record.ordinal,
         line,
         route,
         queryNames,
         { key, group },
-        bodyShape.value,
+        { shape: bodyShape.value, empty: manifestResponseIsEmpty(record) },
       );
+      if (!grouped.ok) return grouped;
+      // Keep the parsed line's admission while releasing grouping-only scratch.
+      releaseGrouping();
+      return this.onRecordedRequestLine(record, line);
     } finally {
       this.releaseTemporary();
     }
   }
 
+  /** Consume the owner's parsed request line after successful grouping, including exclusions. */
+  protected onRecordedRequestLine(
+    _record: WebNetworkCaptureRecord,
+    _line: RecordedRequestLine,
+  ): Result<void, AnalysisError> {
+    return ok(undefined);
+  }
+
   /** Read the top-level key types of the group's first recorded JSON-typed request body; nested values are never walked. */
   #bodyShape(reported: unknown): Result<BodyShape | null, AnalysisError> {
-    const parsed = postDataSchema.safeParse(reported);
-    const body = parsed.success ? parsed.data.request.postData : undefined;
+    const request = readRecordedRequestBody(reported);
+    const body = request.kind === "request" ? request.postData : undefined;
     if (
-      body === undefined ||
-      body === null ||
-      typeof body.text !== "string" ||
-      typeof body.mimeType !== "string"
+      body?.kind !== "object" ||
+      body.text === undefined ||
+      body.mimeType === undefined
     )
       return ok(null);
     // The media type is scanned and lowercased before it is known to be JSON; charge it first.
@@ -276,11 +311,8 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     const root = parseJsonObject(body.text);
     if (root === null) return ok(null);
     const entries: [string, JsonTypeName][] = [];
-    for (const [name, value] of Object.entries(root)) {
-      // JSON parsers and schema clones drop a __proto__ own property; omit it explicitly.
-      if (name === "__proto__") this.#unrepresentableBodyKey = true;
-      else entries.push([name, jsonValueType(value)]);
-    }
+    for (const [name, value] of Object.entries(root))
+      entries.push([name, jsonValueType(value)]);
     return ok({ type: "object", properties: Object.fromEntries(entries) });
   }
 
@@ -290,8 +322,9 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     route: RouteTemplate,
     queryNames: ReadonlySet<string> | undefined,
     bucket: { readonly key: string; readonly group: GroupState | undefined },
-    bodyShape: BodyShape | null,
+    exchange: { readonly shape: BodyShape | null; readonly empty: boolean },
   ): Result<void, AnalysisError> {
+    const bodyShape = exchange.shape;
     const mime = mediaTypeEssence(line.rawMime);
     let group = bucket.group;
     // One retained record pointer, including its projected output.
@@ -359,6 +392,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         bodyShape,
         apiPath: isApiPath(route.template),
         jsonLike: false,
+        bodiless: BODILESS_WRITE_METHODS.has(line.method),
       };
       this.#groups.set(bucket.key, group);
     } else {
@@ -369,28 +403,11 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     }
     group.positions.push(position);
     group.jsonLike ||= jsonLike;
+    group.bodiless &&= exchange.empty;
     if (line.status !== null) group.statuses.add(line.status);
     if (mime !== null) group.contentTypes.add(mime);
     for (const name of queryNames ?? []) group.queryNames.add(name);
     return ok(undefined);
-  }
-
-  /** The origin with the most JSON-like records, then most records, then lowest code points. */
-  #primaryOrigin(): string | null {
-    let best: { origin: string; records: number; jsonLike: number } | null =
-      null;
-    for (const [origin, stats] of this.#origins) {
-      if (
-        best === null ||
-        stats.jsonLike > best.jsonLike ||
-        (stats.jsonLike === best.jsonLike &&
-          (stats.records > best.records ||
-            (stats.records === best.records &&
-              compare(origin, best.origin) < 0)))
-      )
-        best = { origin, ...stats };
-    }
-    return best?.origin ?? null;
   }
 
   #tools(groups: readonly ToolGroup[]): Tool[] {
@@ -438,16 +455,30 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       });
   }
 
+  /** One limitation per selected sibling rule when a route is too long for it to compare. */
+  #segmentLimitLimitations(toolGroups: readonly ToolGroup[]): string[] {
+    if (
+      !toolGroups.some(
+        (group) => group.parts.length > SIBLING_VARIANCE_SEGMENT_LIMIT,
+      )
+    )
+      return [];
+    return SEGMENT_LIMITED_RULES.filter((rule) => this.#rules.has(rule)).map(
+      (rule) =>
+        `Routes with more than ${String(SIBLING_VARIANCE_SEGMENT_LIMIT)} segments are not compared by ${rule}; they keep their grouped templates.`,
+    );
+  }
+
   /** Project the complete manifest; tools, records and exclusions are sorted deterministically. */
-  finish(): Result<ManifestFields, AnalysisError> {
-    const primary = this.#primaryOrigin();
+  finish() {
+    const primary = primaryOrigin(this.#origins);
     const toolGroups: GroupState[] = [];
     const exclusions = new Map<string, Exclusion & { templated: boolean }>();
     for (const group of this.#groups.values()) {
       const reason: Exclusion["reason"] | null =
         group.origin !== primary
           ? "other-origin"
-          : group.apiPath || group.jsonLike
+          : group.apiPath || group.jsonLike || answeredEmpty(group)
             ? null
             : isAsset(group)
               ? "ui-page-or-asset"
@@ -483,22 +514,21 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         compare(left.reason, right.reason),
     );
     const limitations = this.addLimitations([
-      ...(tools.some((tool) => tool.body_shape !== null)
+      ...(this.reportsBodyShapes &&
+      tools.some((tool) => tool.body_shape !== null)
         ? [
             "Body shapes list top-level JSON key types from one recorded request each; they do not establish required fields or a complete schema.",
           ]
         : []),
-      ...(this.#unrepresentableBodyKey
+      ...this.#segmentLimitLimitations(toolGroups),
+      ...(this.#scenarioWithoutBody > 0
         ? [
-            "A top-level __proto__ key in a recorded JSON body is omitted from body_shape; it cannot be an own property of the published object.",
+            `${String(this.#scenarioWithoutBody)} of ${String(this.#scenarioTransactions)} scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.`,
           ]
         : []),
-      ...(this.#rules.has("sibling-variance") &&
-      toolGroups.some(
-        (group) => group.parts.length > SIBLING_VARIANCE_SEGMENT_LIMIT,
-      )
+      ...(this.#scenarioRedactedBodies > 0
         ? [
-            `Routes with more than ${String(SIBLING_VARIANCE_SEGMENT_LIMIT)} segments are not compared by sibling-variance; they keep their grouped templates.`,
+            `${String(this.#scenarioRedactedBodies)} of ${String(this.#scenarioTransactions)} scenario transactions with a usable request line retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.`,
           ]
         : []),
       ...(this.#unrepresented > 0

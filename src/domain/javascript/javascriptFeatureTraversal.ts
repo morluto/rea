@@ -8,6 +8,8 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 interface AdjacencyEntry {
   readonly edge: ApplicationEdge;
   readonly nextNodeId: string;
+  /** In "both", the step goes from a contained node up to its container. */
+  readonly ascends: boolean;
 }
 
 interface Predecessor {
@@ -33,20 +35,36 @@ export const traverseApplicationFeature = (
   const visited = new Set(seedNodeIds);
   const retainedEdges = new Map<string, ApplicationEdge>();
   const predecessors = new Map<string, Predecessor>();
+  // A feature crosses relationships in both directions: a renderer invokes a
+  // channel that its handler also points at. A container reached from one of
+  // its children only leads further up; expanding it would return every
+  // sibling in a shared asset or artifact root.
+  const ascendedOnly = new Set<string>();
   const queue = [...seedNodeIds];
   for (let offset = 0; offset < queue.length; offset += 1) {
     const current = queue[offset];
     if (current === undefined) continue;
+    const confined = ascendedOnly.has(current);
     for (const entry of adjacency.get(current) ?? []) {
+      if (confined && !entry.ascends) continue;
       retainedEdges.set(entry.edge.edge_id, entry.edge);
-      if (visited.has(entry.nextNodeId)) continue;
-      if (!nodeById.has(entry.nextNodeId)) continue;
-      visited.add(entry.nextNodeId);
-      predecessors.set(entry.nextNodeId, {
-        previousNodeId: current,
-        edgeId: entry.edge.edge_id,
-      });
-      queue.push(entry.nextNodeId);
+      const next = entry.nextNodeId;
+      if (!nodeById.has(next)) continue;
+      const nextConfined = confined || entry.ascends;
+      // A node reached only from below is expanded again once it is reached
+      // another way.
+      if (visited.has(next) && (nextConfined || !ascendedOnly.has(next)))
+        continue;
+      if (!visited.has(next)) {
+        visited.add(next);
+        predecessors.set(next, {
+          previousNodeId: current,
+          edgeId: entry.edge.edge_id,
+        });
+      }
+      if (nextConfined) ascendedOnly.add(next);
+      else ascendedOnly.delete(next);
+      queue.push(next);
     }
   }
   return {
@@ -73,11 +91,13 @@ const buildAdjacency = (
       addAdjacency(adjacency, edge.source_node_id, {
         edge,
         nextNodeId: edge.target_node_id,
+        ascends: false,
       });
     if (direction !== "outgoing")
       addAdjacency(adjacency, edge.target_node_id, {
         edge,
         nextNodeId: edge.source_node_id,
+        ascends: direction === "both" && edge.relation === "contains",
       });
   }
   for (const entries of adjacency.values())

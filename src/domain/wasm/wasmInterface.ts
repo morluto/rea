@@ -55,7 +55,7 @@ export const wasmInterfaceSchema = z.object({
         module: z.string().nullable(),
         name: z.string(),
         kind,
-        index: z.number().int().nonnegative().max(0xffff_ffff).nullable(),
+        index: z.int().nonnegative().max(0xffff_ffff).nullable(),
         signature: signature.nullable(),
         wat_form: z.string(),
         issue: z.string().nullable(),

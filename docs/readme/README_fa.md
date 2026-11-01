@@ -1,7 +1,7 @@
 <div align="center" dir="rtl">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · **فارسی** · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
 
 # REA: مهندسی معکوس هر چیزی
 
@@ -20,7 +20,7 @@
 
 **[وب‌سایت](https://rea.tools/fa/) · [راهنماها](https://rea.tools/fa/guides/) · [نمونه‌های عملی](https://rea.tools/fa/showcase/)**
 
-[شروع سریع](#شروع-سریع) · [REA چگونه کار می‌کند؟](#rea-چگونه-کار-می‌کند) · [چه چیزهایی را میتوان تحلیل کرد؟](#چه-چیزهایی-را-می‌توان-تحلیل-کرد) · [نمونه‌های عملی](#نمونه‌های-عملی) · [پرسش‌های متداول](#پرسش‌های-متداول) · [ابزارهای GNU objdump و Rizin](../reverse-engineering-tools.md) · [مستندات](#مستندات)
+[شروع سریع](#شروع-سریع) · [REA چگونه کار می‌کند؟](#rea-چگونه-کار-می‌کند) · [چه چیزهایی را میتوان تحلیل کرد؟](#چه-چیزهایی-را-می‌توان-تحلیل-کرد) · [نمونه‌های عملی](#نمونه‌های-عملی) · [ساخت محیط‌های RL](#build-rl-environments) · [پرسش‌های متداول](#پرسش‌های-متداول) · [مستندات](#مستندات)
 
 <code>npx rea-agents setup</code>
 
@@ -52,11 +52,13 @@
 
 REA ایجنت شما را به ابزارهایی برای بررسی باینری‌های بومی، برنامه‌های JavaScript و Electron، اسمبلی‌های .NET و وب‌سایت‌ها متصل می‌کند. همین ابزارها از ترمینال نیز قابل استفاده‌اند. تحلیل به‌صورت محلی انجام می‌شود و نتایج شامل شواهد و محدودیت‌های پشت هر نتیجه‌گیری هستند.
 
-فرایند راه‌اندازی، REA را در ایجنت شما ثبت می‌کند و دستورالعمل‌های گردش‌کار متناظر را نصب می‌کند. تحلیل بومی می‌تواند از نصب موجود Hopper یا Ghidra استفاده کند؛ همچنین راه‌اندازی می‌تواند با تأیید شما Hopper را به‌صورت اختیاری نصب کند. تحلیل ایستای JavaScript به هیچ‌یک از این موتورهای تحلیل نیاز ندارد.
+راه‌اندازی، REA را در ایجنت ثبت و دستورالعمل‌های متناظر را نصب می‌کند. تحلیل بومی می‌تواند از Hopper، Ghidra، IDA یا Kuna موجود استفاده کند؛ نصب Hopper پس از تأیید شما ممکن است. تحلیل ایستای JavaScript به موتور تحلیل بومی نیاز ندارد.
 
 > برای دستورالعمل‌های راه‌اندازی، راهنماهای تصویری و مطالعات موردی واقعی، **[به وب‌سایت REA مراجعه کنید](https://rea.tools/fa/)**.
 
 ## شروع سریع
+
+در Linux، اجرای Ghidra، JADX و ابزارهای firmware و تحلیل ایستای JavaScript/Electron برای بررسی مالکیت فرایندها به `ps` سازگار با procps در `PATH` مربوط به REA نیاز دارد. راهکارها در پیش‌نیاز Linux آمده‌اند.
 
 ### ایجنت خود را راه‌اندازی کنید
 
@@ -69,6 +71,8 @@ npx rea-agents setup
 ایجنت‌های موردنظر را انتخاب کنید، تغییرات پیشنهادی را بررسی و تأیید کنید. فرایند راه‌اندازی، سرور MCP مربوط به REA و دستورالعمل‌های گردش‌کار متناظر را اضافه می‌کند و از پیکربندی موجود نسخهٔ پشتیبان می‌گیرد. پس از آن ایجنت خود را مجدداً راه‌اندازی کنید.
 
 راه‌اندازی از Claude Code، Codex، Cursor، Gemini CLI، Grok Build و [ایجنت‌های دیگر](../installation.md#supported-agents) پشتیبانی می‌کند. برای پیکربندی ارائه‌دهنده و ثبت دستی MCP، [نصب و راه‌اندازی](../installation.md) را ببینید.
+
+MCP به‌طور پیش‌فرض از schema ورودی فشرده استفاده می‌کند. برای راهنمای کامل فیلدها و اعتبارسنجی تو‌در‌تو، در ثبت MCP مقدار `REA_MCP_INPUT_SCHEMA_PROFILE=full` را تنظیم کنید. هر دو حالت همهٔ ابزارها و اعتبارسنجی استاندارد یکسان سرور را نگه می‌دارند؛ راهنمای قراردادهای MCP را ببینید.
 
 ### از ایجنت خود بپرسید
 
@@ -101,11 +105,15 @@ rea --help
 
 REA به‌سرعت تغییر می‌کند و نسخه‌های جدید معمولاً شامل رفع اشکال‌های متعددی هستند. نصب خود را به‌روز نگه دارید.
 
-برای CLI نصب‌شده از طریق npm:
+برای CLI نصب‌شده از طریق `npm install --global` / `bun add --global`:
 
 ```bash
 rea update
 ```
+
+`rea --update` نام مستعار `rea update` با همان گزینه‌های عمومی خروجی است. فرمان‌های به‌روزرسانی در مجموع حداکثر 4 MiB از stdout/stderr را نگه می‌دارند. پاسخ فرادادهٔ بزرگ‌تر پس از پایان فرمان رد می‌شود؛ نصب‌های پرخروجی تشخیص‌های محدود دارند. نمایش پیشرفت فشار برگشتی ترمینال را رعایت و تا پایان نوشتن‌های ارسال‌شده صبر می‌کند.
+
+به‌روزرسانی سراسری با Bun به Bun 1.2.17 یا جدیدتر نیاز دارد. پیش از اجرای `rea update` نسخه‌های قدیمی‌تر Bun را دستی ارتقا دهید.
 
 برای به‌روزرسانی ثبت ایجنت‌ها و skill، دستور setup نمایش‌داده‌شده توسط به‌روزرسانی را اجرا کنید.
 
@@ -116,6 +124,8 @@ npx rea-agents@latest setup
 ```
 
 تغییرات راه‌اندازی را بررسی کنید و ایجنت را دوباره اجرا کنید. برای اجرای یک‌بارهٔ دستورات CLI، از `npx rea-agents@latest` و سپس دستور موردنظر استفاده کنید.
+
+با Bun، به‌جای `npx rea-agents@latest` از `bunx rea-agents@latest` استفاده کنید.
 
 ## REA چگونه کار می‌کند؟
 
@@ -129,19 +139,27 @@ npx rea-agents@latest setup
 
 ## چه چیزهایی را می‌توان تحلیل کرد؟
 
-REA به Node.js 22.x (>=22.19)، 24.x (>=24.11) یا 26+، به‌همراه npm نیاز دارد. ابزارهای اضافی و پشتیبانی سیستم میزبان به نوع هدف بستگی دارند:
+REA به Node.js 22.x (>=22.23.4)، 24.x (>=24.22.1) یا 26+ (>=26.12.1)، به‌همراه npm نیاز دارد. ابزارهای اضافی و پشتیبانی سیستم میزبان به نوع هدف بستگی دارند:
 
 | هدف                    | خروجی REA                                                                           | پیش‌نیازها و راهنما                                                                                                                |
 | ---------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| باینری‌های بومی         | شبه‌کد، اسمبلی، رشته‌ها، نمادها، فراخوانی‌ها و ارجاعات                                 | Hopper، Ghidra یا IDA؛ [تحلیل بومی](../native-investigation.md)                                                                   |
+| باینری‌های بومی         | شبه‌کد، اسمبلی، رشته‌ها، نمادها، فراخوانی‌ها و ارجاعات                                 | Hopper، Ghidra، IDA یا Kuna؛ [تحلیل بومی](../native-investigation.md)                                                             |
 | ساختار ELF آفلاین       | بخش‌ها، سگمنت‌ها، نمادها و relocationهای اصلی و گزینه‌های احتمالی کاهش آسیب‌پذیری ایستا | pwntools تأمین‌شده توسط فراخواننده روی Linux x64؛ [تشخیص باینری](../binary-diagnostics.md)                                         |
+| PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields        | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                           |
+| PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash          | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                     |
 | بایت‌کد EVM             | selectorهای dispatch، offsetهای بایتی، آرگومان‌های استنباط‌شده و قابلیت تغییر وضعیت   | دادهٔ خام/hex محلی روی Linux x64؛ [راهنمای EVM آفلاین](../evm-bytecode.md)                                                          |
 | Rust binaries          | Embedded cargo-auditable dependency list                                            | [Rust binaries](../rust-binaries.md)                                                                                              |
+| ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                     | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                      |
+| Apple IPS crashes      | .ips metadata, threads, images, registers and crash classes                         | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                     |
+| Linux kernel modules   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer         | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                            |
+| Erlang BEAM            | IFF chunks, atoms, exports, and tables                                              | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                 |
 | کرش‌های ثبت‌شدهٔ لینوکس   | یادداشت‌های خام، رجیسترها/سیگنال‌های تمام threadهای ثبت‌شده و گزینه‌های احتمالی نگاشت   | pwntools تأمین‌شده توسط فراخواننده روی Linux x64؛ GDB/pwndbg اختیاری؛ [کرش‌های ثبت‌شده](../recorded-crashes.md)                      |
-| JavaScript / Electron  | ماژول‌ها، importها، source mapها، مسیرها، IPC و ارتباط افزونه‌های بومی                | Node.js و npm؛ [تحلیل برنامه](../javascript-application-workflows.md)                                                             |
+| نصب‌های دسکتاپ          | نامزدهای زمان اجرا، فایل‌های شاهد، نشانه‌های مؤلفه‌ها و مراحل بعدی                     | بررسی محدود پوشه‌ها و سرآیندها；[برنامه‌های دسکتاپ](../desktop-applications.md)                                                     |
+| JavaScript / Electron  | ماژول‌ها، importها، source mapها، مسیرها، IPC و ارتباط افزونه‌های بومی                | Node.js و npm؛ [تحلیل برنامه](../javascript-application-workflows.md); Linux: procps `ps`                                         |
 | وب‌سایت‌ها               | ساختار صفحه، اسکریپت‌ها، مشاهدات شبکه و اسکرین‌شات‌های درخواستی                        | مرورگر مبتنی بر Chrome؛ [تحلیل مرورگر](../browser-observation.md)                                                                 |
-| داده‌های ضبط‌شدهٔ شبکه    | درخواست‌ها، پاسخ‌ها، payloadهای آشکارشده و مکان آن‌ها در منبع                          | HAR؛ ابزار mitmdump در لینوکس برای ضبط‌های بومی mitmproxy؛ [راهنمای ضبط شبکه](../web-network-captures.md)                          |
+| داده‌های ضبط‌شدهٔ شبکه    | درخواست‌ها، پاسخ‌ها، payloadهای آشکارشده و مکان آن‌ها در منبع                          | HAR / Fiddler Everywhere SAZ؛ ابزار mitmdump در لینوکس برای ضبط‌های بومی mitmproxy؛ [راهنمای ضبط شبکه](../web-network-captures.md) |
 | اسمبلی‌های .NET         | فراداده، دستورالعمل‌های CIL، وابستگی‌های بومی اعلام‌شده و مقایسهٔ buildها                | بررسی ایستا؛ [راهنمای کد مدیریت‌شده](../managed-code-analysis.md)                                                                  |
+| PyInstaller            | CArchive, PYZ, Python bytecode                                                      | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                             |
 | فایل‌های APK اندروید    | تعاریف Manifest، کلاس‌ها، متدهای دیکامپایل‌شده و ارجاعات                               | JADX بدون رابط گرافیکی و JDK کامل در Linux/macOS/Windows x64؛ [راهنمای اندروید](../android-analysis.md)                           |
 | دستگاه‌های اندروید      | دستگاه‌ها، بسته‌ها، فرایندها، لاگ‌ها، دامپ‌ها، اسکرین‌شات‌ها و انتقال APK/فایل             | adb تأمین‌شده توسط فراخوان‌کننده (شبیه‌ساز یا دستگاه)؛ [راهنمای ADB](../adb-device-analysis.md)                                      |
 | پروژه‌های JEB           | واحدهای پروژه از موتور، هش‌های مصنوع و شبه‌کدِ نوع/متد                                 | یک کلاینت JEB که توسط فراخوان‌کننده اجرا شده و MCP ارائه می‌دهد و با REA_JEB_MCP_URL انتخاب می‌شود؛ [راهنمای JEB](../jeb-analysis.md) |
@@ -153,16 +171,33 @@ REA به Node.js 22.x (>=22.19)، 24.x (>=24.11) یا 26+، به‌همراه np
 | سیگنال‌های منطقی ضبط‌شده | توضیحات رمزگشا، بازه‌های نمونه و اطلاعات عیب‌یابی                                      | Linux: sigrok-cli 0.7.2 + prlimit; [راهنمای سیگنال‌ها](../signal-recordings.md)                                                    |
 | بسته‌ها و منابع         | فهرست فایل‌ها، digestها، فایل‌های plist، ساختار bundle اپل و منابع استخراج‌شده         | [راهنمای آرتیفکت و JavaScript](../javascript-artifact-reconstruction.md)، [برنامه‌های اپل](../apple-application-analysis.md)       |
 | رفتار فرایند           | خروجی ترمینال، تعاملات، وضعیت خروج، مشاهدات سیستم فایل و مقایسهٔ اجراها               | Linux/macOS با PTY بومی؛ [ضبط فرایند](../process-capture.md)                                                                      |
+| باینری‌های Go           | نسخهٔ کامپایلر تعبیه‌شده، ماژول‌ها، جایگزینی‌ها و تنظیمات ساخت                          | بررسی ایستای داخلی ELF/PE/thin Mach-O; نصب Go لازم نیست                                                                            |
+| پایگاه‌های SQLite       | جدول‌ها، ستون‌ها، ایندکس‌ها، نماها، تریگرها و سطرهای انتخاب‌شدهٔ جدول‌های عادی            | snapshot محلی پایگاه/WAL؛ Node.js 24.x >=24.15 یا 26+ با محدودیت‌های بومی SQLite                                                   |
+| اشیای کد GPU           | هدف‌های CUDA/HIP، پارامترها و منابع کرنل‌های انتخاب‌شده و متن PTX نگه‌داری‌شده           | بررسی ایستای داخلی ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                         |
+| فایل‌های مدل            | فرادادهٔ GGUF / safetensors، اعلان تانسورها و مجموع‌های مشتق‌شده                        | بررسی هدر؛ هش کل فایل اختیاری است; [GGUF / safetensors](../model-artifacts.md)                                                    |
+| فرادادهٔ IL2CPP         | تصاویر اسمبلی، نام نوع‌ها/متدها و بازهٔ ایندکس‌ها در Unity global-metadata.dat         | رمزگشایی ایستای نسخه‌های 24، 27، 29، 31 و 39؛ بدون نیاز به Unity                                                                   |
+| Godot PCK              | فهرست و استخراج آرشیو، اطلاعات اصلی هدر/دایرکتوری و هویت محتوای انتخاب‌شده            | قالب‌های ایستای 2، 3 و 4؛ بدون نیاز به Godot                                                                                       |
+| مصنوعات WASM           | اعتبارسنجی، بخش‌ها، فرم دقیق WAT ورودی/خروجی و WAT رمزگشایی‌شده                       | تهیه‌شده توسط کاربر WABT 1.0.42; `inspect_wasm_artifact`                                                                           |
+| امضاهای APK            | امضاکنندگان v1/v2/v3/v3.1، اثر انگشت گواهی، چرخش کلید و سازگاری داخلی digest        | بررسی ایستای داخلی; `inspect_apk_signature`                                                                                       |
 
 بررسی ایستای JavaScript و .NET فایل‌های ارائه‌شده را بدون اجرای برنامه می‌خواند. ضبط زمان اجرا، هدف انتخاب‌شده را با مجوزهای کاربری شما اجرا می‌کند یا با آن تعامل دارد؛ آثار این عملیات در راهنمای مربوط به هر نوع ضبط توضیح داده شده‌اند.
 
+برای بررسی آفلاین فایل‌های باینری بومی، REA از GNU objdump و Rizin نیز پشتیبانی می‌کند؛ این ابزارها را باید خودتان فراهم کنید. [راهنمای ابزارهای مهندسی معکوس](../reverse-engineering-tools.md) تنظیم ارائه‌دهندگان، فرمان‌های CLI و محدودیت‌های Evidence را توضیح می‌دهد. REA هیچ‌یک از این دو ارائه‌دهنده را نصب یا به‌روزرسانی نمی‌کند.
+
 <a id="choosing-a-deep-analysis-provider"></a>
+
+برای باینری‌های بزرگ، مهلت شروع را با `REA_GHIDRA_STARTUP_TIMEOUT_MS` یا `REA_HOPPER_STARTUP_TIMEOUT_MS` افزایش دهید.
 
 فرمت‌های بومی و پشتیبانی سیستم میزبان بر اساس ارائه‌دهنده متفاوت‌اند. [راه‌اندازی Hopper و Ghidra](../installation.md#hopper)، [راهنمای IDA](../ida-provider.md)، [Kuna](../kuna-provider.md) و [پشتیبانی آزمایشی Ghidra در ویندوز](../windows-ghidra-p0.md) را ببینید. Ghidra همچنین از [تحلیل DOS شانزده‌بیتی](../ghidra-dos.md) پشتیبانی می‌کند. برای انتخاب ارائه‌دهنده، به [راهنمای CLI](../cli.md#choose-a-provider) مراجعه کنید. برای قابلیت‌هایی که پس از آخرین انتشار npm اضافه شده‌اند، [وضعیت انتشار](../installation.md#released-package-and-main) را بررسی کنید.
 
 ## نمونه‌های عملی
 
-[![تصویرهایی از نمونه‌های پنینگ صدای DX-Ball، پل کلیپ‌بورد Notion و حلقهٔ گلوله‌های TH04](../assets/rea-showcases.png)](https://rea.tools/fa/showcase/)
+<a href="https://rea.tools/fa/showcase/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
+    <img alt="تصویرهایی از نمونه‌های پنینگ صدای DX-Ball، پل کلیپ‌بورد Notion و حلقهٔ گلوله‌های TH04" src="../assets/rea-showcases.svg" />
+  </picture>
+</a>
 
 ### DX-Ball: بازسازی محاسبهٔ موقعیت استریوی صدا
 
@@ -182,7 +217,50 @@ API کلیپ‌بورد در renderer را پیدا کنید، مسیر آن ر�
 
 [مطالعهٔ موردی](https://rea.tools/fa/showcase/th04/) · [مخزن بازسازی](https://github.com/N0zoM1z0/th04)
 
+### ساخت محیط‌های RL با REA
+
+یک نشست برنامهٔ وب را ضبط کنید، API آن را به ابزار تبدیل کنید و محیطی برای عامل هوش مصنوعی صادر کنید. آن را با AgentEnv اجرا کنید و کارها و بررسی پاداش را برای آموزش RL یا ارزیابی اضافه کنید.
+
+[راهنمای ساخت محیط](https://rea.tools/guides/rl-environments/) ·
+[نمایش را در X ببینید](https://x.com/reatools/status/2112574822584918075?s=20)
+
 اگر از REA برای بررسی موضوع جالبی استفاده کرده‌اید، خوشحال می‌شویم آن را به اشتراک بگذارید. یک [issue](https://github.com/morluto/rea/issues) یا [pull request](https://github.com/morluto/rea/pulls) ثبت کنید و هدف، پرسش خود، نقش REA و یافته‌هایتان را توضیح دهید.
+
+<a id="build-rl-environments"></a>
+
+## ساخت محیط‌های RL
+
+محیطی محلی بسازید تا عامل هوش مصنوعی بدون اجرای برنامهٔ اصلی، کارهایی مثل پیدا کردن یک مسئله یا ساخت پوشه را تمرین کند. از آن برای یادگیری تقویتی (RL) یا سنجش توانایی عامل در انجام کارها استفاده کنید.
+
+REA درخواست‌ها و پاسخ‌های ضبط‌شدهٔ API را به ابزارهایی تبدیل می‌کند که عامل می‌تواند فراخوانی کند. محیط از داده‌های ضبط‌شده استفاده می‌کند و فقط تغییراتی را پشتیبانی می‌کند که اثرشان در ضبط تأیید شده باشد.
+
+پس از راه‌اندازی REA در عامل، نشانی نمونه و کارهای مربوط به پوشه را با موارد خودتان جایگزین کنید:
+
+```text
+با REA از برنامهٔ وب آزمایشی من در این نشانی یک محیط RL بساز:
+http://127.0.0.1:3000
+فهرست کردن، ساختن، تغییر نام و حذف پوشه‌ها را پوشش بده. می‌توانی پوشه‌های
+آزمایشی بسازی و حذف کنی، اما داده‌های موجود را تغییر نده.
+در پوشه‌ای به نام my-env ذخیره کن، عملیات قابل استفاده را بررسی کن و روش اجرا را بگو.
+```
+
+<details>
+<summary>استفاده از خط فرمان</summary>
+
+اگر فایل ضبط درخواست‌ها و پاسخ‌های برنامه در مرورگر را دارید، از این فرمان‌ها استفاده کنید. اجرای نتیجه به AgentEnv و Docker هم نیاز دارد.
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA محیطی آمادهٔ اجرا همراه با یک آزمون ساده برای بررسی شروع به کار و پاسخ‌گویی آن صادر می‌کند. آن را به چارچوب RL متصل کنید تا اهداف کارها و بررسی پاداش را تعریف و آموزش را اجرا کنید.
+
+[راهنمای ساخت محیط](https://rea.tools/guides/rl-environments/) ·
+[مرجع محیط‌ها](../agent-environments.md) ·
+[نمایش را در X ببینید](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## پرسش‌های متداول
 
@@ -192,9 +270,9 @@ API کلیپ‌بورد در renderer را پیدا کنید، مسیر آن ر�
 
 </details>
 
-<details><summary><strong>آیا به Hopper، Ghidra یا IDA نیاز دارم؟</strong></summary>
+<details><summary><strong>آیا به Hopper، Ghidra، IDA یا Kuna نیاز دارم؟</strong></summary>
 
-تحلیل عمیق بومی به یکی از آن‌ها نیاز دارد. بررسی ایستای JavaScript و .NET بدون موتور تحلیل بومی کار می‌کند. setup می‌تواند با تأیید شما Hopper را نصب کند؛ Ghidra و IDA از نصب‌های موجود شما استفاده می‌کنند. [راه‌اندازی ارائه‌دهنده](../installation.md#hopper) را ببینید.
+تحلیل عمیق بومی به یکی از آن‌ها نیاز دارد. بررسی ایستای JavaScript و .NET بدون موتور تحلیل بومی کار می‌کند. setup می‌تواند با تأیید شما Hopper را نصب کند؛ Ghidra، IDA و Kuna از نصب‌های موجود شما استفاده می‌کنند. [راه‌اندازی ارائه‌دهنده](../installation.md#hopper) را ببینید.
 
 </details>
 
@@ -257,7 +335,7 @@ npx rea-agents@latest setup
 
 ## تاریخچهٔ ستاره‌ها
 
-🎉 **۳۰۰٬۰۰۰ ستارهٔ GitHub — سپاسگزاریم!**
+🎉 **۴۰۰٬۰۰۰ ستارهٔ GitHub — سپاسگزاریم!**
 
 از همهٔ کسانی که از REA استفاده می‌کنند، خطاها را گزارش می‌دهند، قابلیت‌های جدید پیشنهاد می‌کنند، buildها را آزمایش می‌کنند و در بهبود پروژه مشارکت دارند سپاسگزاریم.
 

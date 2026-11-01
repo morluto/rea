@@ -1,35 +1,24 @@
+import {
+  KUNA_PROVIDER_IDENTITY,
+  KUNA_OPERATIONS,
+} from "./KunaProviderMetadata.js";
 import type {
   AnalysisOperation,
   CapabilityDescriptor,
+  ProviderAvailability,
 } from "../application/AnalysisProvider.js";
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
-import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
-import { REGEX_MATCHING_LIMITATION } from "../process/RegexMatcher.js";
+
+import {
+  DEFAULT_REGEX_MATCHING_DEADLINE,
+  type RegexMatchingDeadline,
+} from "../config/regexMatchingDeadline.js";
+import {
+  DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+  type RegexWorkerHeapRequest,
+} from "../config/regexWorkerHeapRequest.js";
+import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
 
-/** Static identity; the observed Kuna release is reported in each analysis profile. */
-export const KUNA_PROVIDER_IDENTITY = Object.freeze({
-  id: KUNA_PROVIDER_ID,
-  name: "Kuna",
-  version: null,
-});
-
-/** Analyst outcomes Kuna's inventory and project export can answer. */
-export const KUNA_OPERATIONS = Object.freeze([
-  "list_documents",
-  "list_procedures",
-  "search_procedures",
-  "list_strings",
-  "search_strings",
-  "procedure_address",
-  "address_name",
-  "procedure_pseudo_code",
-  "procedure_assembly",
-  "analyze_function",
-  "procedure_callers",
-  "procedure_callees",
-  "xrefs",
-] as const satisfies readonly Exclude<AnalysisOperation, "health">[]);
 export type KunaOperation = (typeof KUNA_OPERATIONS)[number];
 
 export const KUNA_RELATIONSHIP_LIMITATION =
@@ -62,6 +51,8 @@ const KUNA_TEXT_CAPACITY_LIMITATION = `Each buffered source facet admits at most
 /** The limitations that apply to one operation's answer, and only those. */
 export const kunaLimitations = (
   operation: KunaOperation,
+  deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
+  heapRequest: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 ): readonly string[] => {
   switch (operation) {
     case "list_documents":
@@ -72,7 +63,7 @@ export const kunaLimitations = (
       return [
         KUNA_PROVENANCE,
         KUNA_STRING_LIMITATION,
-        REGEX_MATCHING_LIMITATION,
+        launchRegexMatchingLimitation(deadline, heapRequest),
       ];
     case "list_procedures":
     case "procedure_address":
@@ -82,7 +73,7 @@ export const kunaLimitations = (
       return [
         KUNA_PROVENANCE,
         KUNA_ENTRY_LIMITATION,
-        REGEX_MATCHING_LIMITATION,
+        launchRegexMatchingLimitation(deadline, heapRequest),
       ];
     case "procedure_callers":
     case "procedure_callees":
@@ -106,23 +97,20 @@ export const KUNA_SINGLE_FUNCTION_LIMITATION =
 
 /** Advertise Kuna's static, process-launching operations truthfully. */
 export const kunaCapabilities = (
-  availability:
-    | { readonly available: true }
-    | {
-        readonly available: false;
-        readonly reason: string;
-        readonly code: ProviderRejectionCode;
-      },
+  availability: ProviderAvailability,
+  deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
+  heapRequest: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 ): readonly CapabilityDescriptor[] =>
   KUNA_OPERATIONS.map((operation) => ({
     provider: KUNA_PROVIDER_IDENTITY,
     operation,
-    ...(availability.available
+    ...(availability.status === "available"
       ? ({ available: true, reason: null } as const)
       : ({
           available: false,
           reason: availability.reason,
           availabilityCode: availability.code,
+          remediation: availability.remediation,
         } as const)),
     // Text can change when the export finishes. References own bounded session
     // reuse; generic snapshot replay must not bypass that lifecycle.
@@ -136,5 +124,5 @@ export const kunaCapabilities = (
       changesPermissions: false,
       requiresRoot: false,
     },
-    limitations: kunaLimitations(operation),
+    limitations: kunaLimitations(operation, deadline, heapRequest),
   }));

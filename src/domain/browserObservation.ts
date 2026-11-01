@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { webRuntimeCommandTimeoutSchema } from "./browserDeadline.js";
 import { urlDeclaresQueryOrFragment } from "./urlComponents.js";
 import {
   parseRecordedTransportUrl,
@@ -43,6 +44,18 @@ export const browserOriginSchema = z
     return origin;
   });
 
+/** Already-normalized HTTP(S) origin retained in provider output. */
+export const recordedBrowserOriginSchema = z
+  .string()
+  .superRefine((value, context) => {
+    const parsed = browserOriginSchema.safeParse(value);
+    if (parsed.success && parsed.data === value) return;
+    context.addIssue({
+      code: "custom",
+      message: "Expected one canonical HTTP(S) origin",
+    });
+  });
+
 /** Recognize the URL API's bracketed IPv6 form and normalized bare literals. */
 export const isLiteralLoopbackHostname = (hostname: string): boolean =>
   hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
@@ -52,31 +65,45 @@ const HTTP_ENDPOINT_MESSAGE =
 const BROWSER_SOCKET_PATH = "/devtools/browser/";
 const REDACTED_BROWSER_SOCKET_PATH = `${BROWSER_SOCKET_PATH}[REDACTED]`;
 
-/** Normalized origin of an accepted loopback CDP HTTP discovery endpoint. */
-const httpDiscoveryOrigin = (url: URL): string | undefined =>
+/** Retain an explicit default port, which URL.port and URL.origin erase. */
+const explicitEndpointAuthority = (
+  value: string,
+  url: URL,
+): string | undefined => {
+  const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/?#\\]*)/iu.exec(value)?.[1];
+  const port =
+    authority === undefined ? undefined : /:([0-9]+)$/u.exec(authority)?.[1];
+  return port === undefined
+    ? undefined
+    : `${url.protocol}//${url.hostname}:${String(Number(port))}`;
+};
+
+/** Normalized explicit-port origin of a loopback CDP HTTP discovery endpoint. */
+const httpDiscoveryOrigin = (value: string, url: URL): string | undefined =>
   url.protocol === "http:" &&
   isLiteralLoopbackHostname(url.hostname) &&
-  url.port !== "" &&
   url.username === "" &&
   url.password === "" &&
   url.pathname === "/" &&
   !urlDeclaresQueryOrFragment(url)
-    ? url.origin
+    ? explicitEndpointAuthority(value, url)
     : undefined;
 
 /** Scheme and authority of an accepted loopback CDP browser WebSocket. */
-const browserSocketAuthority = (url: URL): string | undefined => {
+const browserSocketAuthority = (
+  value: string,
+  url: URL,
+): string | undefined => {
   const id = url.pathname.slice(BROWSER_SOCKET_PATH.length);
   return url.protocol === "ws:" &&
     isLiteralLoopbackHostname(url.hostname) &&
-    url.port !== "" &&
     url.username === "" &&
     url.password === "" &&
     !urlDeclaresQueryOrFragment(url) &&
     url.pathname.startsWith(BROWSER_SOCKET_PATH) &&
     id.length > 0 &&
     !id.includes("/")
-    ? `${url.protocol}//${url.host}`
+    ? explicitEndpointAuthority(value, url)
     : undefined;
 };
 
@@ -86,7 +113,7 @@ export const browserEndpointSchema = z
   .min(1)
   .transform((value, context) => {
     const url = URL.parse(value);
-    const origin = url === null ? undefined : httpDiscoveryOrigin(url);
+    const origin = url === null ? undefined : httpDiscoveryOrigin(value, url);
     if (origin !== undefined) return origin;
     context.addIssue({
       code: "custom",
@@ -119,14 +146,14 @@ export const browserObservationEndpointSchema = z
       context.addIssue({ code: "custom", message: "Invalid CDP endpoint URL" });
       return z.NEVER;
     }
-    const origin = httpDiscoveryOrigin(url);
+    const origin = httpDiscoveryOrigin(value, url);
     if (origin !== undefined)
       return { transport: "http_discovery", url: origin, recorded: origin };
-    const authority = browserSocketAuthority(url);
+    const authority = browserSocketAuthority(value, url);
     if (authority !== undefined)
       return {
         transport: "browser_websocket",
-        url: url.href,
+        url: `${authority}${url.pathname}`,
         recorded: `${authority}${REDACTED_BROWSER_SOCKET_PATH}`,
       };
     context.addIssue({
@@ -148,8 +175,8 @@ export const recordedBrowserObservationEndpointSchema = z
       const url = URL.parse(value);
       return (
         url !== null &&
-        (httpDiscoveryOrigin(url) !== undefined ||
-          (browserSocketAuthority(url) !== undefined &&
+        (httpDiscoveryOrigin(value, url) !== undefined ||
+          (browserSocketAuthority(value, url) !== undefined &&
             url.pathname === REDACTED_BROWSER_SOCKET_PATH))
       );
     },
@@ -169,15 +196,20 @@ const browserInput = {
   allowed_origins: browserAllowedOriginsSchema,
 };
 
-/** Public input for complete discovery, optionally filtered by exact origin. */
+/**
+ * Public input for complete discovery, optionally filtered by exact origin.
+ * Discovery uses the fixed deadline and the socket closes without a later
+ * command, so this operation accepts no command_timeout_ms.
+ */
 export const listBrowserTargetsInputSchema = z.strictObject({
   ...browserInput,
 });
 
 const inspectWebPageInputFacts = {
   ...browserInput,
-  target_id: z.string().trim().min(1),
-  observation_ms: z.number().int().min(0).default(500),
+  target_id: z.string().min(1),
+  command_timeout_ms: webRuntimeCommandTimeoutSchema,
+  observation_ms: z.int().min(0).default(500),
   include_accessibility_text: z.boolean().default(false),
   include_console_text: z.boolean().default(false),
   include_json_body_shapes: z.boolean().default(false),
@@ -242,32 +274,49 @@ export const sanitizedBrowserUrlSchema = z.object({
 });
 export type SanitizedBrowserUrl = z.infer<typeof sanitizedBrowserUrlSchema>;
 
-/** Preserve local URL data while removing only URL userinfo credentials. */
-export const sanitizeBrowserUrl = (value: string): SanitizedBrowserUrl => {
+/** Parsed URL syntax and sanitized transport data share one interpretation. */
+export type BrowserUrlObservation =
+  | { readonly kind: "malformed"; readonly source: string }
+  | {
+      readonly kind: "parsed";
+      readonly source: string;
+      readonly protocol: string;
+      readonly sanitized: SanitizedBrowserUrl;
+    };
+
+export const observeBrowserUrl = (value: string): BrowserUrlObservation => {
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch (cause: unknown) {
-    // Unparseable input is preserved verbatim in the sanitized result.
     void cause;
-    return {
-      url: value,
-      origin: null,
-      query_parameter_names: [],
-      redacted: false,
-    };
+    return { kind: "malformed", source: value };
   }
   const hadCredentials = parsed.username !== "" || parsed.password !== "";
-  const names = [...parseUrlQueryParameterNames(parsed.search)];
-  const sanitizedUrl = hadCredentials
-    ? removeUrlUserInfo(value, parsed)
-    : value;
   return {
-    url: sanitizedUrl,
-    origin: parsed.origin === "null" ? null : parsed.origin,
-    query_parameter_names: names,
-    redacted: hadCredentials,
+    kind: "parsed",
+    source: value,
+    protocol: parsed.protocol,
+    sanitized: {
+      url: hadCredentials ? removeUrlUserInfo(value, parsed) : value,
+      origin: parsed.origin === "null" ? null : parsed.origin,
+      query_parameter_names: [...parseUrlQueryParameterNames(parsed.search)],
+      redacted: hadCredentials,
+    },
   };
+};
+
+/** Preserve local URL data while removing only URL userinfo credentials. */
+export const sanitizeBrowserUrl = (value: string): SanitizedBrowserUrl => {
+  const observation = observeBrowserUrl(value);
+  return observation.kind === "parsed"
+    ? observation.sanitized
+    : {
+        url: observation.source,
+        origin: null,
+        query_parameter_names: [],
+        redacted: false,
+      };
 };
 
 const removeUrlUserInfo = (value: string, parsed: URL): string => {

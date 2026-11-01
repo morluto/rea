@@ -11,6 +11,14 @@ export interface ReadinessResult {
   readonly description: string;
 }
 export interface ReadinessGitHub {
+  graphql(
+    query: string,
+    variables: {
+      readonly owner: string;
+      readonly name: string;
+      readonly after: string | null;
+    },
+  ): Promise<unknown>;
   readonly rest: {
     readonly pulls: {
       get(input: {

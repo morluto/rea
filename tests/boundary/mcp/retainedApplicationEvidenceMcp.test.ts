@@ -1,9 +1,9 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterEach, expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema } from "ajv";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import {
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
@@ -11,11 +11,10 @@ import {
 } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE } from "../../../src/contracts/javascript/javascriptExportShapeComparisonExample.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
-const resources: Array<{ close(): Promise<unknown> }> = [];
-afterEach(async () => {
-  for (const resource of resources.splice(0)) await resource.close();
-});
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 const retained = (evidence_id: string) => ({
   kind: "retained-evidence",
   evidence_id,
@@ -24,46 +23,95 @@ const application = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
 const pair = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE;
 const exportPair = JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE;
 
-async function connect() {
+async function connect(profile?: "full" | "compact") {
   const session = createTestBinarySession(() => {
     throw new Error("references must not launch a provider");
   });
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "retained-evidence-test", version: "1" });
-  resources.push(client, server, session);
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(b);
-  await client.connect(a);
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "retained-evidence-test", version: "1" },
+    schemaValidator: schemaValidation,
+    serverOptions: {
+      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+    },
+  });
   return { client, session };
 }
 
-it("advertises the primitive literal seeds accepted by semantic tracing", async () => {
+it("advertises semantic discovery paging and validates the returned Evidence", async () => {
   const { client } = await connect();
   const { tools } = await client.listTools();
-  const tool = tools.find(({ name }) => name === "trace_javascript_semantics");
-  if (tool === undefined) throw new Error("Semantic trace tool is missing");
-  const validate = new Ajv2020({
-    strict: false,
-    validateFormats: false,
-  }).compile(tool.inputSchema);
-  for (const value of ["literal", 42, true, null, {}, []]) {
-    const primitive = value === null || typeof value !== "object";
-    const arguments_ = {
-      application,
-      query: {
-        seed: { kind: "literal", value },
-        direction: "backward-provenance",
-      },
-    };
-    expect(validate(arguments_), JSON.stringify(value)).toBe(primitive);
-    const result = await client.callTool({
-      name: tool.name,
-      arguments: arguments_,
-    });
-    if (primitive) expect(result.isError).not.toBe(true);
-    else expect(result.isError).toBe(true);
-  }
+  const tool = tools.find(({ name }) => name === "trace_application_feature");
+  if (tool?.outputSchema === undefined)
+    throw new Error("Missing feature trace output schema");
+  const input = {
+    application,
+    seed: { kind: "string", value: "missing-semantic-name", match: "exact" },
+    semantic_page: { offset: 0, limit: 1 },
+  };
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const outputSchema = tool.outputSchema as AnySchema;
+  expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
+  expect(ajv.validateSchema(outputSchema)).toBe(true);
+  expect(ajv.compile(tool.inputSchema)(input)).toBe(true);
+  const result = await client.callTool({ name: tool.name, arguments: input });
+  expect(result.isError).not.toBe(true);
+  expect(ajv.compile(outputSchema)(result.structuredContent)).toBe(true);
+  expect(result.structuredContent).toMatchObject({
+    normalized_result: { semantic_discovery: { total: 0, next_offset: null } },
+  });
 });
+
+it.each(["full", "compact"] as const)(
+  "advertises the primitive literal seeds accepted by semantic tracing (%s)",
+  async (profile) => {
+    const { client } = await connect(profile);
+    const { tools } = await client.listTools();
+    const tool = tools.find(
+      ({ name }) => name === "trace_javascript_semantics",
+    );
+    if (tool === undefined) throw new Error("Semantic trace tool is missing");
+    const validate = new Ajv2020({
+      strict: false,
+      validateFormats: false,
+    }).compile(tool.inputSchema);
+    const cases = [
+      { value: "literal", expectedPrimitive: true },
+      { value: 42, expectedPrimitive: true },
+      { value: true, expectedPrimitive: true },
+      { value: null, expectedPrimitive: true },
+      { value: {}, expectedPrimitive: false },
+      { value: [], expectedPrimitive: false },
+    ] as const;
+    let malformedChecks = 0;
+    for (const { value, expectedPrimitive } of cases) {
+      const arguments_ = {
+        application,
+        query: {
+          seed: { kind: "literal", value },
+          direction: "backward-provenance",
+        },
+      };
+      if (expectedPrimitive || profile === "full")
+        expect(validate(arguments_), JSON.stringify(value)).toBe(
+          expectedPrimitive,
+        );
+      const result = await client.callTool({
+        name: tool.name,
+        arguments: arguments_,
+      });
+      if (expectedPrimitive) expect(result.isError).not.toBe(true);
+      else {
+        malformedChecks += 1;
+        expect(parseMcpToolError(result).error).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+        });
+      }
+    }
+    expect(malformedChecks).toBe(2);
+  },
+);
 
 it("runs the same trace/compare workflows with inline and retained application Evidence", async () => {
   const { client, session } = await connect();
@@ -153,7 +201,7 @@ it("runs the same trace/compare workflows with inline and retained application E
   expect(mixed.isError).not.toBe(true);
 });
 
-it("keeps references session-scoped and expires them when close_binary clears the ledger", async () => {
+it("keeps references connection-scoped through close and expires them on explicit investigation reset", async () => {
   const first = await connect();
   const second = await connect();
   expect(first.session.recordEvidence(application).ok).toBe(true);
@@ -182,6 +230,12 @@ it("keeps references session-scoped and expires them when close_binary clears th
     arguments: {},
   });
   expect(closed.isError).not.toBe(true);
+  expect((await first.client.callTool(request)).isError).not.toBe(true);
+  const reset = await first.client.callTool({
+    name: "reset_investigation",
+    arguments: {},
+  });
+  expect(reset.isError).not.toBe(true);
   expect(parseMcpToolError(await first.client.callTool(request))).toMatchObject(
     { error: { details: { reason: "missing" } } },
   );

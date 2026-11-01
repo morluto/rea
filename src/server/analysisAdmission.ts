@@ -3,6 +3,7 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { currentMcpToolRequest } from "./McpToolRequest.js";
 
 /** Run a provider-backed tool while its target binding stays admitted. */
 export type WithAdmittedAnalysis = <Value>(
@@ -22,8 +23,18 @@ export const withAdmittedAnalysis = (
 ): WithAdmittedAnalysis =>
   source.kind === "session"
     ? (operationName, signal, operation) =>
+        currentMcpToolRequest()?.admit(
+          source.session,
+          operationName,
+          signal,
+          operation,
+        ) ??
         source.session.withAdmittedAnalysis(operationName, signal, operation)
     : async (operationName, signal, operation) =>
         signal?.aborted === true
-          ? err(new AnalysisCancelledError(operationName))
+          ? err(
+              new AnalysisCancelledError(operationName, {
+                cause: signal.reason,
+              }),
+            )
           : ok(await operation(source.analysis));

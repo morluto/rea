@@ -1,4 +1,4 @@
-import type { FunctionDossier } from "../../domain/hopperValues.js";
+import type { FunctionDossier } from "../../domain/native/functionDossier.js";
 import {
   nativeApiInspectionResultSchema,
   type NativeApiBoundary,
@@ -123,6 +123,10 @@ const availableResidualUnknowns = (
       branch.decompiler_outcome === "jump_table_recovery_failed"
         ? `Which targets can the indirect branch at ${branch.branch_address} reach? The decompiler could not recover a jump table there and rewrote it as a call or return; it may be a dispatch inside this function or an indirect tail call.`
         : `Is the indirect branch at ${branch.branch_address} a tail call or a dispatch inside this function, and which targets can it reach?`,
+    );
+  if (boundary.unresolved_indirect_branches_omitted !== undefined)
+    unknowns.push(
+      `Which targets can the ${String(boundary.unresolved_indirect_branches_omitted)} further computed jump(s) in this function reach? The provider's indirect-branch inventory reached its bound and did not list them.`,
     );
   for (const value of [boundary.return_type, ...boundary.parameters]) {
     if (value.confidence === "low")

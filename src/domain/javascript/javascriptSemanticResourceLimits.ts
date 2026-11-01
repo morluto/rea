@@ -9,6 +9,8 @@ export const SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT = 256;
 export const SEMANTIC_EXPRESSION_DEPTH_LIMIT = 256;
 /** Getter jobs and local result work retained in one precise query. */
 export const SEMANTIC_GETTER_EXPANSION_LIMIT = 512;
+/** Additional selector states retained by one precise alias query. */
+export const SEMANTIC_ALIAS_SELECTION_LIMIT = 512;
 /** Bound normalized strings and transient keys independently of transport limits. */
 export const SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT = 1_048_576;
 
@@ -21,6 +23,8 @@ const RESOURCE_LIMIT_REASON: Record<JavaScriptSemanticResourceLimit, string> = {
     "Semantic expression depth budget exceeded (maximum 256 nested expressions).",
   "getter-expansion":
     "Getter expansion was conservatively bounded (maximum 512 scheduled states or a growing receiver cycle).",
+  "alias-selections":
+    "Alias selection expansion was conservatively bounded (maximum 512 additional selector states); selected paths remain unknown.",
 };
 
 /** Check UTF-16 length against worst-case JSON escaping without flattening. */

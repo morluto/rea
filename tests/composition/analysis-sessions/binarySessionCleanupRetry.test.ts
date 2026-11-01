@@ -1,8 +1,15 @@
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
-import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../../../src/artifacts/AnalysisCleanupLease.js";
+import type {
+  AnalysisClient,
+  AnalysisProvider,
+} from "../../../src/application/AnalysisProvider.js";
 import { HopperStartError } from "../../../src/domain/hopperErrors.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -10,13 +17,17 @@ import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
+  createCacheProvider,
   createDeferred,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+const CLOSE_RETRY = { operation: "close_binary" } as const;
+
 const retryFixture = async (
   execute: AnalysisClient["execute"] = () => Promise.resolve(ok(null)),
+  onClose?: () => void,
 ) => {
   const parent = await createTestTempDirectory("rea-session-cleanup-retry-");
   const runtime = join(parent, "owned-runtime");
@@ -32,6 +43,11 @@ const retryFixture = async (
     reason: "owned runtime removal denied",
     leftover_paths: [runtime],
   });
+  const cleanupLease = new AnalysisCleanupLease(
+    () => rm(runtime, { recursive: true, force: true }),
+    [runtime],
+  );
+  new AnalysisCleanupLeaseGroup(cleanupError, [cleanupLease]);
   const client: AnalysisClient = {
     execute,
     operationHealthSnapshot: () => ({
@@ -42,8 +58,9 @@ const retryFixture = async (
       requests: [],
     }),
     close: async (options) => {
+      onClose?.();
       if (!allowed) return err(cleanupError);
-      await rm(runtime, { recursive: true, force: true });
+      await cleanupLease.release();
       if (options?.retainDocument !== true) await rm(document, { force: true });
       return resultOk(null);
     },
@@ -157,6 +174,106 @@ it.each(["close", "switch", "open after close"] as const)(
   },
 );
 
+it("offers a caller's close retry only while the session retains its cleanup", async () => {
+  const fixture = await retryFixture();
+  expect((await fixture.session.open(fixture.targets[0])).ok).toBe(true);
+  // One-shot callers name no retry and therefore receive none.
+  const oneShot = await fixture.session.close();
+  if (oneShot.ok) throw new Error("Expected retained cleanup");
+  expect(projectAnalysisError(oneShot.error)).not.toHaveProperty("recovery");
+
+  const offered = await fixture.session.close({ cleanupRetry: CLOSE_RETRY });
+  if (offered.ok) throw new Error("Expected retained cleanup");
+  expect(projectAnalysisError(offered.error)).toMatchObject({
+    code: "cleanup_incomplete",
+    recovery: { kind: "retry_cleanup", operation: "close_binary" },
+    details: { resources: [fixture.runtime] },
+  });
+
+  fixture.allowCleanup();
+  expect((await fixture.session.close({ cleanupRetry: CLOSE_RETRY })).ok).toBe(
+    true,
+  );
+  expect(projectAnalysisError(fixture.cleanupError)).not.toHaveProperty(
+    "recovery",
+  );
+});
+
+it("offers a close retry after a saved snapshot but not after a failed save", async () => {
+  const [first] = await createBinarySessionTargets();
+  const parent = await createTestTempDirectory("rea-snapshot-close-retry-");
+  const failedSave = join(parent, "failed-save.json");
+  const savedPath = join(parent, "saved.json");
+  const cache = createCacheProvider([]);
+  let allowed = false;
+  const cleanupError = new ProviderCleanupError("fixture", ["runtime"], {
+    reason: "runtime removal denied",
+  });
+  const provider: AnalysisProvider = {
+    ...cache,
+    createClient: (...arguments_) => ({
+      ...cache.createClient(...arguments_),
+      close: async () => (allowed ? resultOk(null) : err(cleanupError)),
+    }),
+  };
+  const session = createTestBinarySession(provider);
+  onTestFinished(async () => {
+    allowed = true;
+    await session.close();
+  });
+  expect((await session.open(first)).ok).toBe(true);
+  // The composite route creates the provider client on first use.
+  expect((await session.execute("address_name", {})).ok).toBe(true);
+
+  // A retained session file owner shows the offer does not follow pending
+  // cleanup alone: the failed save keeps the target open.
+  let releaseFile = false;
+  session.resourceScope.retain(
+    {
+      close: async () => {
+        if (!releaseFile) throw new Error("retained descriptor close denied");
+      },
+      cleanupResources: [failedSave],
+    },
+    failedSave,
+  );
+  const saveFailure = new ProviderCleanupError("rea", [failedSave], {
+    reason: "snapshot descriptor close denied",
+  });
+  const write = vi
+    .spyOn(session, "writeAnalysisSnapshot")
+    .mockResolvedValueOnce(err(saveFailure));
+  onTestFinished(() => write.mockRestore());
+  expect(
+    await session.closeWithSnapshot(failedSave, false, {
+      cleanupRetry: CLOSE_RETRY,
+    }),
+  ).toEqual(err(saveFailure));
+  expect(projectAnalysisError(saveFailure)).not.toHaveProperty("recovery");
+  expect(await session.status()).toMatchObject({
+    open: true,
+    cleanup_pending: true,
+  });
+
+  releaseFile = true;
+  const closed = await session.closeWithSnapshot(savedPath, false, {
+    cleanupRetry: CLOSE_RETRY,
+  });
+  if (closed.ok) throw new Error("Expected retained provider cleanup");
+  expect(projectAnalysisError(closed.error)).toMatchObject({
+    code: "cleanup_incomplete",
+    recovery: { kind: "retry_cleanup", operation: "close_binary" },
+    details: {
+      resources: ["runtime"],
+      partial_observation: { saved_snapshot: { bytes: expect.any(Number) } },
+    },
+  });
+  await access(savedPath);
+  allowed = true;
+  expect((await session.close({ cleanupRetry: CLOSE_RETRY })).ok).toBe(true);
+  expect(await session.status()).toMatchObject({ cleanup_pending: false });
+});
+
 it("keeps a failed candidate for cleanup and preserves its startup failure", async () => {
   const primary = new HopperStartError();
   const fixture = await retryFixture(() => Promise.resolve(err(primary)));
@@ -219,6 +336,34 @@ it("retains cancelled startup cleanup and the cancellation reason", async () => 
   await expect(access(fixture.runtime)).rejects.toMatchObject({
     code: "ENOENT",
   });
+});
+
+it("keeps cancellation as the primary when previous-client retirement fails after abort", async () => {
+  const controller = new AbortController();
+  const reason = { phase: "binary-retirement" };
+  const fixture = await retryFixture(undefined, () => controller.abort(reason));
+  expect((await fixture.session.open(fixture.targets[0])).ok).toBe(true);
+  const result = await fixture.session.open(fixture.targets[1], {
+    signal: controller.signal,
+  });
+  if (result.ok) throw new Error("Expected cancelled retirement");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupPrimary).toMatchObject({
+    _tag: "AnalysisCancelledError",
+  });
+  expect(result.error.cleanupPrimary?.cause).toBe(reason);
+  expect(await fixture.session.status()).toMatchObject({
+    open: false,
+    cleanup_pending: true,
+  });
+  fixture.allowCleanup();
+  expect((await fixture.session.close()).ok).toBe(true);
+  expect(fixture.cleanupError.cleanupIncomplete).toBe(false);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cancelled",
+  });
+  expect(result.error.cleanupPrimary?.cause).toBe(reason);
 });
 
 it("preserves caller-selected document retention when retrying cleanup", async () => {

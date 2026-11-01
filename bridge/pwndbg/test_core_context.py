@@ -14,7 +14,7 @@ BRIDGE = Path(__file__).with_name("core_context.py")
 
 
 class CoreContextTests(unittest.TestCase):
-    def inspect(self, failure=None, connection="core", symbols=None, architecture="x86_64-little-endian"):
+    def inspect(self, failure=None, connection="core", symbols=None, architecture="x86_64-little-endian", objfile="recorded-executable"):
         commands, reads, queries = [], [], []
         state = {"executable": None, "symbols": None, "connection": None}
         gdb = types.ModuleType("gdb")
@@ -50,7 +50,7 @@ class CoreContextTests(unittest.TestCase):
         def maps():
             self.assertIsNone(state["executable"], "Helper executable must be discarded before mapping queries")
             queries.append("maps")
-            return [types.SimpleNamespace(start=4096, end=8192, offset=0, flags=5, objfile="recorded-executable")]
+            return [types.SimpleNamespace(start=4096, end=8192, offset=0, flags=5, objfile=objfile)]
 
         pwndbg.aglib.vmmap.get = maps
         modules = {module.__name__: module for module in [
@@ -103,6 +103,15 @@ class CoreContextTests(unittest.TestCase):
         self.assertNotIn("core-file ../object.snapshot", commands)
         self.assertEqual(reads, [])
         self.assertEqual(queries, [])
+
+    def test_output_limit_message_separates_the_words_and_names_the_limit(self):
+        result, _, reads, queries = self.inspect(objfile="m" * (64 * 1024 * 1024))
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "output-limit")
+        self.assertNotIn("exceeds64", result["message"])
+        self.assertEqual(result["message"], "Complete debugger context exceeds the 64 MiB reply budget.")
+        self.assertEqual(reads, [])
+        self.assertEqual(queries, ["maps"])
 
     def test_wrong_connection_or_remaining_symbols_never_queries_mappings(self):
         for options in [{"connection": "native"}, {"symbols": "unexpected-symbols"}]:

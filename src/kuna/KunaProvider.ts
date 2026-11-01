@@ -1,3 +1,4 @@
+import { KunaDocumentError } from "./KunaDocumentError.js";
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 import { accessSync, constants, statSync } from "node:fs";
 
@@ -15,13 +16,19 @@ import {
 } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
-  RegularFileCleanupFailure,
-  regularFileCancellation,
-} from "../filesystem/OwnedRegularFile.js";
+  resolveRegexMatchingDeadline,
+  type RegexMatchingDeadline,
+} from "../config/regexMatchingDeadline.js";
+import {
+  resolveRegexWorkerHeapRequest,
+  type RegexWorkerHeapRequest,
+} from "../config/regexWorkerHeapRequest.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   kunaFileCleanupError,
+  kunaRetainedResourceCleanupError,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
 import {
@@ -29,14 +36,12 @@ import {
   type KunaConfiguration,
 } from "./KunaConfiguration.js";
 import {
-  createKunaFileCloseScope,
+  createKunaResourceScope,
   inspectKunaInstallation,
 } from "./KunaInstallation.js";
 import { KunaProjectCache } from "./KunaProjectCache.js";
-import {
-  KUNA_PROVIDER_IDENTITY,
-  kunaCapabilities,
-} from "./KunaProviderCapabilities.js";
+import { kunaCapabilities } from "./KunaProviderCapabilities.js";
+import { KUNA_PROVIDER_IDENTITY } from "./KunaProviderMetadata.js";
 import { KUNA_COMMAND_REMEDIATION, KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import { KunaRunSlots } from "./KunaRunSlots.js";
 import { KunaSessionClient } from "./KunaSessionClient.js";
@@ -55,8 +60,11 @@ const VERIFIED_ARCHITECTURES: ReadonlySet<string> = new Set([
  */
 export class KunaProvider implements AnalysisProviderCandidate {
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
+  readonly #deadline: RegexMatchingDeadline;
+  readonly #heapRequest: RegexWorkerHeapRequest;
   readonly #platform: NodeJS.Platform;
   readonly #launcher: KunaProcessLauncher | undefined;
+  readonly #probeTimeoutMs: number | undefined;
   readonly #singleFunctionRuns: number | undefined;
   #cache: KunaProjectCache | undefined;
   #runSlots: KunaRunSlots | undefined;
@@ -66,13 +74,32 @@ export class KunaProvider implements AnalysisProviderCandidate {
     options: {
       readonly platform?: NodeJS.Platform;
       readonly launcher?: KunaProcessLauncher;
+      /** Test seam for bounded installation-probe lifecycle cases. */
+      readonly probeTimeoutMs?: number;
       /** Test seam for foreground native runs; production derives it from the host. */
       readonly singleFunctionRuns?: number;
+      /**
+       * Deadline already resolved at startup. Omitted means resolve the
+       * selected environment; an invalid setting is refused.
+       */
+      readonly regexMatchingDeadline?: RegexMatchingDeadline;
+      /**
+       * Heap request already resolved at startup. Omitted means resolve the
+       * selected environment; an invalid setting is refused.
+       */
+      readonly regexWorkerHeapRequest?: RegexWorkerHeapRequest;
     } = {},
   ) {
     this.#platform = options.platform ?? process.platform;
     this.#environment = snapshotEnvironment(environment, this.#platform);
+    this.#deadline =
+      options.regexMatchingDeadline ??
+      resolveRegexMatchingDeadline(this.#environment);
+    this.#heapRequest =
+      options.regexWorkerHeapRequest ??
+      resolveRegexWorkerHeapRequest(this.#environment);
     this.#launcher = options.launcher;
+    this.#probeTimeoutMs = options.probeTimeoutMs;
     this.#singleFunctionRuns = options.singleFunctionRuns;
   }
 
@@ -81,15 +108,10 @@ export class KunaProvider implements AnalysisProviderCandidate {
   }
 
   capabilities() {
-    const availability = this.inspectAvailability();
     return kunaCapabilities(
-      availability.status === "available"
-        ? { available: true }
-        : {
-            available: false,
-            reason: availability.reason,
-            code: availability.code,
-          },
+      this.inspectAvailability(),
+      this.#deadline,
+      this.#heapRequest,
     );
   }
 
@@ -103,6 +125,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
         status: "unavailable",
         code: configuration.error.code,
         reason: configuration.error.reason,
+        remediation: configuration.error.remediation,
         diagnostics: {
           configured: configuration.error.code !== "not_configured",
           version_probed: false,
@@ -111,12 +134,14 @@ export class KunaProvider implements AnalysisProviderCandidate {
     const { command } = configuration.value;
     try {
       accessSync(command, constants.X_OK);
-      if (!statSync(command).isFile()) throw new Error("not a regular file");
+      if (!statSync(command).isFile())
+        throw new KunaDocumentError("command_not_file");
     } catch (cause: unknown) {
       return {
         status: "unavailable",
         code: "executable_missing",
         reason: `Cannot execute REA_KUNA_COMMAND ${command}: ${cause instanceof Error ? cause.message : String(cause)}. ${KUNA_COMMAND_REMEDIATION}`,
+        remediation: KUNA_COMMAND_REMEDIATION,
         diagnostics: { configured: true, command, version_probed: false },
       };
     }
@@ -177,39 +202,60 @@ export class KunaProvider implements AnalysisProviderCandidate {
         }),
       );
     let installation: Awaited<ReturnType<typeof inspectKunaInstallation>>;
-    const fileCloseResources = options?.fileCloseResources;
-    if (fileCloseResources === undefined)
+    const resourceScope = options?.resourceScope;
+    if (resourceScope === undefined)
       return err(
         kunaUnavailable(
           "kuna:profile",
-          "Kuna profile inspection requires a durable file resource owner",
+          "Kuna profile inspection requires a durable resource scope",
         ),
       );
-    const fileCloseScope = createKunaFileCloseScope(fileCloseResources);
+    const kunaResources = createKunaResourceScope(resourceScope);
     try {
       installation = await inspectKunaInstallation(this.#environment, {
         platform: this.#platform,
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
-        fileCloseResources: fileCloseScope.owner,
+        resourceScope: kunaResources.owner,
+        ...(this.#launcher === undefined
+          ? {}
+          : { processLauncher: this.#launcher }),
+        ...(this.#probeTimeoutMs === undefined
+          ? {}
+          : { probeTimeoutMs: this.#probeTimeoutMs }),
       });
     } catch (cause: unknown) {
-      const cancellation = regularFileCancellation(cause);
-      if (
-        !(cause instanceof RegularFileCleanupFailure) &&
-        cancellation !== undefined
-      )
-        return err(
-          new AnalysisCancelledError("kuna:profile", {
-            cause: cancellation.reason,
-          }),
+      const retainedCleanup = kunaRetainedResourceCleanupError(
+        cause,
+        "kuna:profile",
+      );
+      if (retainedCleanup !== undefined) return err(retainedCleanup);
+      if (!(cause instanceof RegularFileCleanupFailure)) {
+        const cancellation = kunaResources.installationCancellationError(
+          cause,
+          "kuna:profile",
         );
+        if (cancellation !== undefined) return err(cancellation);
+      }
       if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
       const error = kunaFileCleanupError(cause, "kuna:profile");
-      fileCloseScope.bindFailure(cause, error);
+      kunaResources.bindFailure(cause, error);
       return err(error);
     }
-    if (!installation.ok)
-      return err(kunaUnavailable("open_binary", installation.error.reason));
+    if (!installation.ok) {
+      const error = kunaUnavailable("open_binary", installation.error.reason, {
+        diagnostics: installation.error.diagnostics,
+        ...(!kunaResources.hasPending
+          ? {}
+          : {
+              cleanup: {
+                reason: "Kuna version-probe process cleanup is unconfirmed.",
+                resources: kunaResources.cleanupResources ?? [],
+              },
+            }),
+      });
+      kunaResources.bindRetainedFailure(error);
+      return err(error);
+    }
     const { value } = installation;
     return ok({
       profile: createAnalysisProfile(
@@ -217,6 +263,8 @@ export class KunaProvider implements AnalysisProviderCandidate {
         {
           kuna_version: value.version,
           kuna_sha256: value.sha256,
+          kuna_command: value.configuration.command,
+          kuna_executable: value.executable,
           verified_release: value.verified,
           jobs: value.configuration.jobs,
           export: "decompile-project",
@@ -267,6 +315,8 @@ export class KunaProvider implements AnalysisProviderCandidate {
       cache: this.#projectCache(configuration.value),
       runSlots: this.#foregroundSlots(configuration.value),
       environment: this.#environment,
+      deadline: this.#deadline,
+      heapRequest: this.#heapRequest,
       ...(this.#launcher === undefined ? {} : { launcher: this.#launcher }),
     });
   }

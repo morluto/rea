@@ -1,14 +1,13 @@
-import { ok as javaProbeOk } from "../../../src/domain/result.js";
+import { ok as javaProbeOk, ok } from "../../../src/domain/result.js";
 import type { GhidraJavaObservation } from "../../../src/ghidra/GhidraJavaProbe.js";
 import { expect } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { ok } from "../../../src/domain/result.js";
 import type { GhidraInstallationHost } from "../../../src/ghidra/GhidraInstallation.js";
 import type { GhidraOperation } from "../../../src/ghidra/GhidraClient.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
@@ -16,7 +15,6 @@ import type { GhidraProviderClientFactory } from "../../../src/ghidra/GhidraProv
 import { GHIDRA_SESSION_CAPABILITIES } from "../../../src/ghidra/GhidraSessionValues.js";
 import type { GhidraSessionInfo } from "../../../src/ghidra/GhidraSessionValues.js";
 import { silentLogger } from "../../../src/logger.js";
-import { createServer } from "../../../src/server/createServer.js";
 import {
   ghidraFunctionClassification,
   ghidraFunctionDossier,
@@ -34,6 +32,7 @@ export const connectGhidraMcp = async (
     readonly pdb?: GhidraSessionInfo["pdb"];
     readonly sessionTarget?: GhidraSessionInfo["target"];
     readonly attestDosTargetSnapshot?: ReturnType<GhidraProviderClientFactory>["attestDosTargetSnapshot"];
+    readonly close?: ReturnType<GhidraProviderClientFactory>["close"];
   } = {},
 ) => {
   const calls: GhidraOperation[] = [];
@@ -51,9 +50,9 @@ export const connectGhidraMcp = async (
     callTool: (operation, input, options) => {
       calls.push(operation);
       if (execute !== undefined) return execute(operation, input, options);
-      return Promise.resolve(ok(resultFor(operation, input)));
+      return Promise.resolve(ok(ghidraFixtureResult(operation, input)));
     },
-    close: () => Promise.resolve(ok(null)),
+    close: fixture.close ?? (() => Promise.resolve(ok(null))),
     ...(fixture.attestDosTargetSnapshot === undefined
       ? {}
       : { attestDosTargetSnapshot: fixture.attestDosTargetSnapshot }),
@@ -70,20 +69,18 @@ export const connectGhidraMcp = async (
   const session = composeBinarySession(
     new AnalysisProviderRegistry([provider]),
   );
-  const server = createServer(
-    { kind: "session", session },
-    { logger: silentLogger },
-  );
-  const mcp = new Client({ name, version: "1.0.0" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  const close = async () => {
-    await Promise.allSettled([mcp.close(), server.close()]);
-    await session.close();
-  };
+  const { client: mcp, close } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name, version: "1.0.0" },
+    serverOptions: {
+      logger: silentLogger,
+      environment: {
+        ...process.env,
+        REA_MCP_MAX_INPUT_ELEMENTS: process.env.REA_MCP_MAX_INPUT_ELEMENTS,
+      },
+    },
+  });
   try {
-    await server.connect(serverTransport);
-    await mcp.connect(clientTransport);
     const opened = await mcp.callTool({
       name: "open_binary",
       arguments: { path: fixture.targetPath ?? process.execPath },
@@ -92,16 +89,19 @@ export const connectGhidraMcp = async (
       throw new Error(
         `The Ghidra MCP harness could not open its target: ${JSON.stringify(opened)}`,
       );
+    return { calls, mcp, session, close };
   } catch (cause: unknown) {
-    await close();
+    try {
+      await close();
+    } catch (cleanup: unknown) {
+      throw new AggregateError(
+        [cause, cleanup],
+        "Ghidra MCP harness setup and cleanup failed",
+        { cause },
+      );
+    }
     throw cause;
   }
-  return {
-    calls,
-    mcp,
-    session,
-    close,
-  };
 };
 
 export const sessionEvidence = (session: BinarySession, value: unknown) => {
@@ -156,7 +156,7 @@ const resultBuilders = new Map<GhidraOperation, GhidraResultBuilder>([
     "read_binary_inventory_summary",
     () => ({
       document: "fixture",
-      segments: resultFor("list_segments", {}),
+      segments: ghidraFixtureResult("list_segments", {}),
       procedure_count: 1,
       string_count: 2,
     }),
@@ -265,13 +265,16 @@ const resultBuilders = new Map<GhidraOperation, GhidraResultBuilder>([
       procedure: ghidraFunctionIdentity(),
       direction: input.direction ?? "outgoing",
       references: [ghidraReferenceEdge()],
+      reference_kinds_available: true,
+      unresolved_calls: [],
     }),
   ],
   ["xrefs", () => ["0x401001"]],
   ["analyze_function", () => ghidraFunctionDossier()],
 ]);
 
-const resultFor = (
+/** The harness bridge reply for one operation, before any test override. */
+export const ghidraFixtureResult = (
   operation: GhidraOperation,
   input: Readonly<Record<string, JsonValue>>,
 ): JsonValue => {

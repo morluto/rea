@@ -3,7 +3,11 @@ import {
   analysisViewCaptureFixture,
   analysisViewCaptureEvidence,
 } from "../../../tests/fixtures/analysisView.js";
-import { projectAnalysisView } from "./analysisView.js";
+import {
+  analysisViewRequestSchema,
+  projectAnalysisView,
+} from "./analysisView.js";
+import { projectAnalysisError } from "../analysisErrorProjection.js";
 
 const project = (
   capture = analysisViewCaptureFixture(),
@@ -15,6 +19,7 @@ const project = (
   const parent = analysisViewCaptureEvidence(capture);
   return projectAnalysisView(
     {
+      predicateType: parent.predicate_type,
       evidenceId: parent.evidence_id,
       operation: parent.operation,
       normalizedResult: parent.normalized_result,
@@ -198,6 +203,7 @@ it("rejects native captures and malformed parents with typed errors", () => {
   expect(
     projectAnalysisView(
       {
+        predicateType: "rea.analysis",
         evidenceId: `ev_${"a".repeat(64)}`,
         operation: "inspect_web_network_capture",
         normalizedResult: {},
@@ -207,6 +213,40 @@ it("rejects native captures and malformed parents with typed errors", () => {
     ),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
 });
+
+it.each(["api-surface", "environment-manifest", "environment-state"])(
+  "preserves nested capture-schema diagnostics for %s",
+  (kind) => {
+    const capture = analysisViewCaptureFixture();
+    const result = projectAnalysisView(
+      {
+        predicateType: "rea.analysis",
+        evidenceId: `ev_${"a".repeat(64)}`,
+        operation: "inspect_web_network_capture",
+        limitations: [],
+        parameters: { sensitive_value_count: 0 },
+        normalizedResult: {
+          ...capture,
+          artifact: { ...capture.artifact, bytes: "invalid" },
+        },
+      },
+      analysisViewRequestSchema.parse({ kind }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected parent admission to fail");
+    expect(result.error.cause).toMatchObject({ name: "ZodError" });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: {
+        issues: [
+          expect.objectContaining({
+            path: ["source", "normalized_result", "artifact", "bytes"],
+            reason: "invalid_type",
+          }),
+        ],
+      },
+    });
+  },
+);
 
 it("preserves partial response facts and explains unavailable requests", () => {
   const capture = analysisViewCaptureFixture();
@@ -320,6 +360,7 @@ it("rejects cyclic captures and accessor members without invoking them", () => {
     expect(
       projectAnalysisView(
         {
+          predicateType: "rea.analysis",
           evidenceId: `ev_${"a".repeat(64)}`,
           operation: "inspect_web_network_capture",
           normalizedResult,

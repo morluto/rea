@@ -1,13 +1,102 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
+import { Ajv2020 } from "ajv/dist/2020.js";
 
 import type { FlutterBuildAnalysisPort } from "../../../src/application/flutter/FlutterBuildAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
-import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createFlutterBuildAnalysisProvider } from "../../../src/composition/flutter.js";
+import {
+  ABI_SELECTOR_MESSAGE,
+  flutterResultSchemas,
+} from "../../../src/domain/flutter/flutterBuildAnalysis.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
+import { aotFixtureImage } from "../../../src/flutter/FlutterBuild.fixture.js";
+import { createFlutterApk } from "../../fixtures/flutterApk.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+
+it.each([
+  { label: "ARM64-V8A", paired: false },
+  ...[
+    "ARM64-V8A",
+    "arm64.v8a",
+    "A",
+    ".",
+    "..",
+    "abi\\label",
+    "abi\u0000label",
+    "abi\nlabel",
+    "abi\u0085label",
+    "l".repeat(336),
+    "l".repeat(1010),
+    "界".repeat(336),
+    "😀".repeat(252),
+  ].map((label) => ({ label, paired: true })),
+])(
+  "selects the exact reported archive ABI $label (paired=$paired)",
+  async ({ label, paired }) => {
+    const path = await createFlutterApk("reported-label.apk", [
+      {
+        path: `lib/${label}/libapp.so`,
+        bytes: aotFixtureImage("a".repeat(32)),
+      },
+      ...(paired
+        ? [
+            {
+              path: "lib/x86_64/libapp.so",
+              bytes: aotFixtureImage("b".repeat(32)),
+            },
+          ]
+        : []),
+    ]);
+    const provider = createFlutterBuildAnalysisProvider();
+    onTestFinished(() => provider.close());
+    const harness = await createApplicationMcpHarness({
+      serverOptions: { flutterAnalysis: provider },
+    });
+    onTestFinished(harness.close);
+    const call = (name: string, abi?: string) =>
+      harness.client.callTool({
+        name,
+        arguments: { path, ...(abi === undefined ? {} : { abi }) },
+      });
+    const inventoryReply = await call("identify_flutter_build");
+    expect(inventoryReply.isError).not.toBe(true);
+    const inventory = flutterResultSchemas.identify_flutter_build.parse(
+      parseEvidence(inventoryReply.structuredContent).normalized_result,
+    );
+    expect(inventory.abis.map((row) => row.abi)).toContain(label);
+    const defaultReply = await call("inspect_dart_aot");
+    expect(defaultReply.isError).not.toBe(true);
+    const defaultFacts = flutterResultSchemas.inspect_dart_aot.parse(
+      parseEvidence(defaultReply.structuredContent).normalized_result,
+    );
+    expect(defaultFacts.abi).toBe(paired ? "x86_64" : label);
+    expect(defaultFacts.libapp.snapshot_hash).toBe(
+      (paired ? "b" : "a").repeat(32),
+    );
+    const selectedReply = await call("inspect_dart_aot", label);
+    expect(selectedReply.isError).not.toBe(true);
+    const evidence = parseEvidence(selectedReply.structuredContent);
+    const selected = flutterResultSchemas.inspect_dart_aot.parse(
+      evidence.normalized_result,
+    );
+    expect(selected.abi).toBe(label);
+    expect(selected.libapp.snapshot_hash).toBe("a".repeat(32));
+    expect(selected.libapp.coverage).toBe("complete");
+    expect(evidence.parameters).toEqual({ path, abi: label });
+    const tool = (await harness.client.listTools()).tools.find(
+      (tool) => tool.name === "inspect_dart_aot",
+    );
+    if (tool === undefined) throw new Error("Missing AOT tool");
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
+    expect(ajv.validate(tool.inputSchema, { path, abi: label })).toBe(true);
+  },
+);
 
 const identity = {
   id: "flutter",
@@ -122,21 +211,79 @@ const fakeProvider = (): FlutterBuildAnalysisPort => ({
   },
 });
 
+it("advertises and enforces the same Unicode selector grammar through MCP", async () => {
+  const harness = await createApplicationMcpHarness({
+    serverOptions: {
+      flutterAnalysis: fakeProvider(),
+      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+    },
+  });
+  onTestFinished(harness.close);
+  const tool = (await harness.client.listTools()).tools.find(
+    (tool) => tool.name === "inspect_dart_aot",
+  );
+  if (tool === undefined) throw new Error("Missing AOT tool");
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
+  for (const abi of [
+    "😀".repeat(1010),
+    "l".repeat(1010),
+    "😀".repeat(1009) + "\n",
+    ...["\n", "\r", "\u2028", "\u2029"].map(
+      (terminator) => "l".repeat(1009) + terminator,
+    ),
+  ]) {
+    const arguments_ = { path: "/fixture.apk", abi };
+    expect(ajv.validate(tool.inputSchema, arguments_)).toBe(true);
+    expect(
+      (
+        await harness.client.callTool({
+          name: "inspect_dart_aot",
+          arguments: arguments_,
+        })
+      ).isError,
+    ).not.toBe(true);
+  }
+  for (const [abi, reason] of [
+    ["", "out_of_range"],
+    ["lib/x86_64", "invalid_format"],
+    ["😀".repeat(1011), "invalid_value"],
+    ...["\n", "\r", "\u2028", "\u2029"].map(
+      (terminator) => ["l".repeat(1010) + terminator, "invalid_value"] as const,
+    ),
+  ] as const) {
+    const arguments_ = { path: "/fixture.apk", abi };
+    expect(ajv.validate(tool.inputSchema, arguments_)).toBe(false);
+    const refused = await harness.client.callTool({
+      name: "inspect_dart_aot",
+      arguments: arguments_,
+    });
+    expect(parseMcpToolError(refused).error).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        operation: "inspect_dart_aot",
+        issues: [
+          expect.objectContaining({
+            path: ["abi"],
+            reason,
+            message: ABI_SELECTOR_MESSAGE,
+          }),
+        ],
+      },
+    });
+  }
+});
+
 it("advertises an exact valid Flutter schema and records inline evidence through MCP", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { flutterAnalysis: fakeProvider() },
-  );
-  onTestFinished(() => server.close());
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  const client = new Client({ name: "flutter-boundary", version: "0.0.0" });
-  onTestFinished(() => client.close());
-  await client.connect(clientTransport);
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "flutter-boundary", version: "0.0.0" },
+    serverOptions: { flutterAnalysis: fakeProvider() },
+  });
 
   const { tools } = await client.listTools();
   assertAdvertisedMcpContracts(
@@ -172,6 +319,14 @@ it("advertises an exact valid Flutter schema and records inline evidence through
     .map((part) => part.text ?? "")
     .join("");
   const inspectedEvidence = parseEvidence(JSON.parse(inspectedText));
+  const bundle = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  expect(bundle.isError).not.toBe(true);
+  const records = parseMcpEvidenceBundle(bundle).records;
+  expect(records).toContainEqual(evidence);
+  expect(records).toContainEqual(inspectedEvidence);
   expect(inspectedEvidence.normalized_result).toMatchObject({
     abi: "arm64-v8a",
     libapp: {

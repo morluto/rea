@@ -1,4 +1,9 @@
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
+import {
+  describeHopperRequestFailure,
+  hopperRequestRecovery,
+  type HopperRequestFailure,
+} from "./HopperDownload.js";
 import { HOPPER_LINUX_PRIMARY_FINGERPRINT } from "./HopperReleaseFeed.js";
 import type { LinuxPackageInstallFailure } from "./LinuxHopper.js";
 
@@ -12,6 +17,9 @@ export type SetupFailureCode =
   | "unsupported_hopper_build"
   | "setup_cancelled"
   | "destination_exists"
+  | "destination_inspection_failed"
+  | "archive_write_failed"
+  | "launcher_inspection_failed"
   | "mount_failed"
   | "bundle_invalid"
   | "publisher_verification_failed"
@@ -30,6 +38,8 @@ export type SetupHopperInstallResult =
       readonly status: "failed";
       readonly code: SetupFailureCode;
       readonly remediation: string;
+      /** The vendor request whose observed transport failure produced `code`. */
+      readonly download?: HopperRequestFailure;
     };
 
 export type SetupHopperInstallFailure = Extract<
@@ -48,6 +58,9 @@ export type HopperInstallFailureReason =
   | "unsupported_hopper_build"
   | "cancelled"
   | "destination_exists"
+  | "destination_inspection"
+  | "archive_write"
+  | "launcher_inspection"
   | "mount"
   | "bundle"
   | "publisher_verification_failed"
@@ -98,11 +111,37 @@ const packageManagerRemediation = (
   return `The system package-manager command failed (${failure.command}; ${status}); ${observed} Resolve the reported problem, grant the authorization the command needs, or install the planned Hopper package and Linux runtime dependencies manually, then rerun rea setup.`;
 };
 
-/** Map provider installer failures to stable setup codes and safe recovery. */
+/**
+ * Map provider installer failures to stable setup codes and safe recovery. A
+ * failed vendor request replaces the stage's generic advice with its observed
+ * URL and outcome, and stays structured for programmatic callers.
+ */
 export const setupInstallFailure = (
   reason: HopperInstallFailureReason,
-  packageFailure?: LinuxPackageInstallFailure,
-  platform: NodeJS.Platform = "darwin",
+  context: {
+    readonly packageFailure?: LinuxPackageInstallFailure | undefined;
+    readonly platform?: NodeJS.Platform;
+    readonly download?: HopperRequestFailure | undefined;
+  } = {},
+): SetupHopperInstallFailure => {
+  const failure = stageFailure(
+    reason,
+    context.packageFailure,
+    context.platform ?? "darwin",
+  );
+  return context.download === undefined
+    ? failure
+    : {
+        ...failure,
+        remediation: `${describeHopperRequestFailure(context.download)} ${hopperRequestRecovery(context.download)}`,
+        download: context.download,
+      };
+};
+
+const stageFailure = (
+  reason: HopperInstallFailureReason,
+  packageFailure: LinuxPackageInstallFailure | undefined,
+  platform: NodeJS.Platform,
 ): SetupHopperInstallFailure => {
   switch (reason) {
     case "unsupported_host":
@@ -151,6 +190,27 @@ export const setupInstallFailure = (
         code: "setup_cancelled",
         remediation:
           "Setup was cancelled. Run rea doctor to inspect the current state before retrying.",
+      };
+    case "destination_inspection":
+      return {
+        status: "failed",
+        code: "destination_inspection_failed",
+        remediation:
+          "REA could not inspect the Hopper installation destination. Check access to the reported path before retrying; an existing installation has not been established.",
+      };
+    case "archive_write":
+      return {
+        status: "failed",
+        code: "archive_write_failed",
+        remediation:
+          "The Hopper download completed, but REA could not stage its local archive. Check the reported path, permissions and free space, then retry setup.",
+      };
+    case "launcher_inspection":
+      return {
+        status: "failed",
+        code: "launcher_inspection_failed",
+        remediation:
+          "REA could not verify the installed Hopper launcher. Repair the reported inspection failure before retrying; launcher absence has not been established.",
       };
     case "destination_exists":
       return {

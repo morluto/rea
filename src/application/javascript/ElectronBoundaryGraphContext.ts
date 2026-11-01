@@ -108,23 +108,3 @@ export const addElectronInferenceEdge = (
     }),
   });
 };
-
-/** Deterministic source-range key for artifact-local graph identities. */
-export const electronRangeKey = (range: JavaScriptSourceRange): string =>
-  `${String(range.start.line)}:${String(range.start.column)}-${String(range.end.line)}:${String(range.end.column)}`;
-
-/** Test exact source-range containment without assuming runtime reachability. */
-export const electronRangeContains = (
-  outer: JavaScriptSourceRange,
-  inner: JavaScriptSourceRange,
-): boolean =>
-  comparePoint(outer.start, inner.start) <= 0 &&
-  comparePoint(outer.end, inner.end) >= 0;
-
-const comparePoint = (
-  left: JavaScriptSourceRange["start"],
-  right: JavaScriptSourceRange["start"],
-): number =>
-  left.line === right.line
-    ? left.column - right.column
-    : left.line - right.line;

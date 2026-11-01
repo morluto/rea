@@ -1,12 +1,77 @@
+/** Exact UTF-16 code units of a JSON string, including escaping and quotes. */
+export const jsonStringCodeUnits = (value: string): number => {
+  let length = value.length + 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 34 || code === 92) length += 1;
+    else if (code < 32)
+      length +=
+        code === 8 || code === 9 || code === 10 || code === 12 || code === 13
+          ? 1
+          : 5;
+    else if (code >= 0xd800 && code <= 0xdfff) {
+      const next = value.charCodeAt(index + 1);
+      if (code <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) index += 1;
+      else length += 5;
+    }
+  }
+  return length;
+};
+
 /** Encode ordinary JSON as bounded string parts without a document-sized allocation. */
 export function* jsonParts(value: unknown, pretty = false): Generator<string> {
   yield* encodeValue(value, pretty, false);
 }
 
+/** Exact UTF-8 bytes of ordinary JSON without allocating the whole document. */
+export const jsonByteLength = (value: unknown): number => {
+  let bytes = 0;
+  for (const part of jsonParts(value)) bytes += Buffer.byteLength(part, "utf8");
+  return bytes;
+};
+
+/** Exact UTF-16 code units of ordinary JSON without allocating the whole document. */
+export const jsonTextCodeUnits = (value: unknown): number => {
+  let length = 0;
+  for (const part of jsonParts(value)) length += part.length;
+  return length;
+};
+
 /** Encode validated JSON with canonical key ordering without allocating the whole document. */
 export function* canonicalJsonParts(value: unknown): Generator<string> {
   yield* encodeValue(value, false, true);
 }
+
+/** Compare ordinary JSON text in bounded parts, preserving native key order. */
+export const equalJsonText = (left: unknown, right: unknown): boolean => {
+  const a = jsonParts(left);
+  const b = jsonParts(right);
+  let x = a.next();
+  let y = b.next();
+  let i = 0;
+  let j = 0;
+  try {
+    while (!x.done && !y.done) {
+      const length = Math.min(x.value.length - i, y.value.length - j);
+      if (x.value.slice(i, i + length) !== y.value.slice(j, j + length))
+        return false;
+      i += length;
+      j += length;
+      if (i === x.value.length) {
+        x = a.next();
+        i = 0;
+      }
+      if (j === y.value.length) {
+        y = b.next();
+        j = 0;
+      }
+    }
+    return x.done === true && y.done === true;
+  } finally {
+    a.return(undefined);
+    b.return(undefined);
+  }
+};
 
 /** Buffer JSON parts while preserving complete UTF-16 surrogate pairs. */
 export function* bufferedJsonParts(parts: Iterable<string>): Generator<string> {

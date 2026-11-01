@@ -15,10 +15,12 @@ cliTest.for(["xml", "binary"] as const)(
   "distinguishes serialized scalar objects from lookalike dictionaries in a %s keyed archive",
   async (format, { cli }) => {
     const root = await createTestTempDirectory("rea-keyed-scalar-kinds-");
+    const uid = (value: number) =>
+      format === "binary" ? { UID: value } : { CF$UID: value };
     const archive = {
       $archiver: "NSKeyedArchiver",
       $version: 100000,
-      $top: { root: { CF$UID: 12 }, data: { CF$UID: 1 } },
+      $top: { root: uid(12), data: uid(1) },
       $objects: [
         "$null",
         Buffer.from("deadbeef", "hex"),
@@ -31,8 +33,8 @@ cliTest.for(["xml", "binary"] as const)(
         { $plist_type: "data", base64: "3q2+7w==" },
         { $plist_type: "date", iso8601: "2001-01-01T00:00:00.000Z" },
         { $plist_type: "real", value: 0 },
-        [{ CF$UID: 1 }],
-        { $class: { CF$UID: 13 }, payload: { CF$UID: 1 } },
+        [uid(1)],
+        { $class: uid(13), payload: uid(1) },
         { $classname: "ScalarHolder", $classes: ["ScalarHolder", "NSObject"] },
       ],
     };
@@ -152,7 +154,7 @@ cliTest.for(["xml", "binary"] as const)(
         status: "resolved",
       }),
     ]);
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -160,13 +162,15 @@ cliTest.for(["xml", "binary"] as const)(
   "keeps a negative-zero real distinct from positive zero in a %s keyed archive",
   async (format, { cli }) => {
     const root = await createTestTempDirectory("rea-keyed-signed-zero-");
+    const uid = (value: number) =>
+      format === "binary" ? { UID: value } : { CF$UID: value };
     const archive = {
       $archiver: "NSKeyedArchiver",
       $version: 100000,
       $top: {
-        negative: { CF$UID: 1 },
-        positive: { CF$UID: 2 },
-        control: { CF$UID: 3 },
+        negative: uid(1),
+        positive: uid(2),
+        control: uid(3),
       },
       $objects: ["$null", 1.5, 0.25, 1.25],
     };
@@ -239,7 +243,7 @@ cliTest.for(["xml", "binary"] as const)(
     expect(result.limitations).toContain(
       '1 negative-zero real value(s) are reported as { "$plist_type": "real", "value": "-0" } because a JSON number cannot carry the sign of zero.',
     );
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -294,9 +298,9 @@ cliTest("preserves binary IEEE non-finite scalar identity", async ({ cli }) => {
       $archiver: "NSKeyedArchiver",
       $version: 100000,
       $top: {
-        positive: { CF$UID: 1 },
-        negative: { CF$UID: 2 },
-        nan: { CF$UID: 3 },
+        positive: { UID: 1 },
+        negative: { UID: 2 },
+        nan: { UID: 3 },
       },
       $objects: [
         "$null",
@@ -342,7 +346,7 @@ cliTest("preserves binary IEEE non-finite scalar identity", async ({ cli }) => {
       parseEvidence(mcp.structuredContent).normalized_result,
     ),
   ).toEqual(result);
-  expect(await readFile(path)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
 cliTest(
@@ -415,6 +419,6 @@ cliTest(
     expect(result.limitations).not.toContainEqual(
       expect.stringContaining('"value": null'),
     );
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );

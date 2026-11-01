@@ -147,14 +147,92 @@ describe("Swift classification through MCP", () => {
 
   it("returns cancellation during the symbol join", async () => {
     const controller = new AbortController();
+    const reason = { stage: "symbol-join" };
     const tools = new EnhancedTools({
       execute: async (operation) => {
-        if (operation === "list_names") controller.abort();
+        if (operation === "list_names") controller.abort(reason);
         return ok([{ address: "0x1", value: "$s4main4PairVMa" }]);
       },
     });
-    expect(
-      await tools.execute("analyze_swift_types", {}, controller.signal),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+    const result = await tools.execute(
+      "analyze_swift_types",
+      {},
+      controller.signal,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", operation: "list_names" },
+    });
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cause).toBe(reason);
+  });
+});
+
+describe("Swift category uncertainty through MCP", () => {
+  it("keeps unsupported nested Unicode names unresolved through MCP filters", async () => {
+    const names = [
+      "_$s6Nested8EnvelopeV007IhuqBAbO8describeSSyF",
+      "_$s6Nested8EnvelopeV007jvrtDBlCAEycfC",
+      "_$s6Nested8EnvelopeV007jvrtDBlCMa",
+    ];
+    const procedures = [
+      ...names.map((name, index) => ({
+        address: `0x${String(index + 1)}`,
+        value: name,
+      })),
+      { address: "0x10", value: "_$s6Nested8EnvelopeVMa" },
+      { address: "0x11", value: "_$s6Nested8EnvelopeV5InnerCMa" },
+      { address: "0x12", value: "_$s6Nested8EnvelopeV5InnerC6methodyyF" },
+    ];
+    const client = await connect({
+      execute: async (operation) =>
+        ok(operation === "list_procedures" ? procedures : []),
+    });
+
+    const all = jsonResult(
+      await client.callTool({
+        name: "analyze_swift_types",
+        arguments: {},
+      }),
+    );
+    expect(all).toMatchObject({
+      total: 6,
+      categories: {
+        structs: {
+          items: [{ name: "_$s6Nested8EnvelopeVMa" }],
+        },
+        classes: {
+          items: [
+            { name: "_$s6Nested8EnvelopeV5InnerCMa" },
+            { name: "_$s6Nested8EnvelopeV5InnerC6methodyyF" },
+          ],
+        },
+        other: {
+          items: names.map((name) => ({ name, mangled_names: [name] })),
+        },
+      },
+      unclassified: names.map((name) => ({
+        name,
+        mangled_names: [name],
+        reason: "category_not_decoded",
+      })),
+    });
+
+    for (const category of ["classes", "enums"] as const) {
+      const filtered = jsonResult(
+        await client.callTool({
+          name: "analyze_swift_types",
+          arguments: { category },
+        }),
+      );
+      expect(filtered).toMatchObject({
+        categories: { [category]: { count: category === "classes" ? 2 : 0 } },
+        unclassified: names.map((name) => ({
+          name,
+          mangled_names: [name],
+          reason: "category_not_decoded",
+        })),
+      });
+    }
   });
 });

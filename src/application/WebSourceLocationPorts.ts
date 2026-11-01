@@ -36,6 +36,7 @@ export interface WebSourceMapPort {
       readonly path: string;
       readonly url: string;
       readonly position: WebSourceLocationInput["generated_position"];
+      readonly decodeTimeoutMs?: number;
     },
     options?: ExecutionOptions,
   ): Promise<Result<WebSourceMapReport, AnalysisError>>;

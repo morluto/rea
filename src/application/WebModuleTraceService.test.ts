@@ -160,6 +160,81 @@ describe("selected module trace workflow", () => {
   });
 });
 
+describe("reported module context provenance", () => {
+  it.each(["", "not a URL", "https://user:password@app.test/main.js"])(
+    "retains unusable reported context as a capability limitation: %s",
+    async (reportedUrl) => {
+      const artifacts = webModuleArtifactsFixture();
+      const script = artifacts.manifest.scripts[0];
+      if (script === undefined) throw new Error("fixture script missing");
+      script.url = reportedUrl;
+      const service = new WebModuleTraceService(
+        { load: () => Promise.resolve(ok(artifacts)) },
+        {
+          resolve: () => {
+            throw new Error("must not resolve without a usable context");
+          },
+        },
+      );
+      const response = await service.trace(args);
+      if (response.ok) throw new Error("expected unavailable context");
+      expect(projectAnalysisError(response.error)).toMatchObject({
+        code: "capability_unavailable",
+        message: expect.stringContaining("Select importer_url explicitly"),
+        details: { reason: "reported_source_context_unavailable" },
+      });
+      expect(projectAnalysisError(response.error).details).not.toHaveProperty(
+        "issues",
+      );
+    },
+  );
+  it("keeps an unsupported reported scheme distinct from malformed context", async () => {
+    const artifacts = webModuleArtifactsFixture();
+    const script = artifacts.manifest.scripts[0];
+    if (script === undefined) throw new Error("fixture script missing");
+    script.url = "file:///captured/main.js";
+    const response = await new WebModuleTraceService(
+      { load: async () => ok(artifacts) },
+      webModuleResolverFixture,
+    ).trace(args);
+    if (response.ok) throw new Error("expected unsupported context");
+    expect(projectAnalysisError(response.error)).toMatchObject({
+      code: "capability_unavailable",
+      message: expect.stringContaining("reported source URL"),
+      details: { reason: "unsupported_context_scheme" },
+    });
+  });
+  it("honors an explicit context while retaining the unusable reported source URL", async () => {
+    const artifacts = webModuleArtifactsFixture();
+    const script = artifacts.manifest.scripts[0];
+    if (script === undefined) throw new Error("fixture script missing");
+    script.url = "not a URL";
+    const result = await new WebModuleTraceService(
+      { load: async () => ok(artifacts) },
+      webModuleResolverFixture,
+    ).trace({ ...args, importer_url: "https://selected.test/base/main.js" });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      parameters: { importer_url: "https://selected.test/base/main.js" },
+      normalized_result: {
+        source: { script: { url: "not a URL" } },
+        importer: {
+          url: "https://selected.test/base/main.js",
+          basis: "caller-selected",
+        },
+        imports: expect.arrayContaining([
+          expect.objectContaining({
+            resolution: {
+              state: "resolved",
+              url: "https://selected.test/base/dep.js",
+            },
+          }),
+        ]),
+      },
+    });
+  });
+});
+
 it.each([null, { request: "opaque cancellation" }])(
   "retains completed module Evidence and the exact late abort reason: %j",
   async (reason) => {
@@ -248,7 +323,10 @@ it.each(["incomplete", "provider-failure"])(
     if (result.ok) throw new Error("expected original failure");
     expect(result.error).toBeInstanceOf(AnalysisOutputError);
     if (kind === "provider-failure") expect(result.error).toBe(primary);
-    expect(result.error.partialObservation).toBeUndefined();
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "web-trace-observation",
+      analysis: "incomplete",
+    });
   },
 );
 
@@ -335,7 +413,7 @@ it.each([
       });
     } else
       expect(result.error.partialObservation).toHaveProperty(
-        "kind",
+        "resolver_observation.kind",
         "web-module-resolution",
       );
   },
@@ -367,5 +445,28 @@ it("retains a completed engine-free trace when artifact loading finishes under c
         { resolution: { state: "unknown", reason: "computed-specifier" } },
       ],
     },
+  });
+});
+
+it("resolves imports from relational JavaScript using the selected source grammar", async () => {
+  const artifacts = webModuleArtifactsFixture(
+    'const order = left < import("./dep.js") > (right);',
+  );
+  const result = await new WebModuleTraceService(
+    { load: async () => ok(artifacts) },
+    webModuleResolverFixture,
+  ).trace(args);
+  if (!result.ok) throw result.error;
+  expect(
+    webModuleTraceResultSchema.parse(result.value.normalized_result),
+  ).toMatchObject({
+    parser: { state: "parsed", diagnostics: [] },
+    imports: [
+      {
+        kind: "dynamic-import",
+        specifier: "./dep.js",
+        resolution: { state: "resolved", url: "https://app.test/dep.js" },
+      },
+    ],
   });
 });

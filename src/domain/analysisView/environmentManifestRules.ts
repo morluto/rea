@@ -1,17 +1,22 @@
+import { compositeKey } from "../unicodeCodePointOrder.js";
 import {
-  compareUnicodeCodePoints as compare,
-  compositeKey,
-} from "../unicodeCodePointOrder.js";
-import { ROUTE_RULES, type RouteRule } from "./webNetworkRouteTemplates.js";
+  spelledLikeObserved,
+  spellingSummary,
+  type SpellingSummary,
+} from "./environmentManifestSpelling.js";
+import type { RouteRule } from "./webNetworkRouteTemplates.js";
 
 /** Opt-in template rules applied after the four exact format rules. */
 export const TEMPLATE_RULES = [
   "after-uid-literal",
   "opaque-token",
   "sibling-variance",
+  "sibling-pair-variance",
+  "prefix-variance",
 ] as const;
 export type TemplateRule = (typeof TEMPLATE_RULES)[number];
-export type ManifestRule = RouteRule | TemplateRule;
+/** The opt-in rules whose parameters a prefix-variance parameter can share; never itself, so shared evidence does not chain. */
+type SharedRule = Exclude<TemplateRule, "prefix-variance">;
 
 export type JsonTypeName =
   | "string"
@@ -31,11 +36,19 @@ export interface LiteralPart {
   readonly kind: "literal";
   readonly value: string;
 }
-export interface ParamPart {
+interface ParamFields {
   readonly kind: "param";
-  readonly rule: ManifestRule;
   readonly values: ReadonlySet<string>;
+  /** Which half of a sibling-pair-variance pair; fixed when the pair forms so later merges cannot change it. */
+  readonly pairRole?: "namespace" | "name";
 }
+export type ParamPart =
+  | (ParamFields & { readonly rule: RouteRule | SharedRule })
+  | (ParamFields & {
+      readonly rule: "prefix-variance";
+      /** The rule of the parameter this one shares a position with, which also names it. */
+      readonly sharedRule: SharedRule;
+    });
 export type RoutePart = LiteralPart | ParamPart;
 
 /** One candidate tool: a merged request-line group on the primary origin. */
@@ -53,7 +66,7 @@ export interface ToolGroup {
 }
 
 const OPAQUE_TOKEN = /^(?=.*\d)(?=.*[a-z])[a-z0-9]{12,}$/u;
-const VERSION_TOKEN = /^v\d/u;
+export const VERSION_TOKEN = /^v\d/u;
 const STOP_WORDS = new Set([
   "search",
   "settings",
@@ -68,14 +81,17 @@ const STOP_WORDS = new Set([
   "dto",
   "markdown",
 ]);
-const DROPPED_NAME_LITERALS = new Set(["api", "apis", "namespaces", "default"]);
-const TOOL_NAME_LIMIT = 60;
 /** Longest route sibling-variance compares; every position rebuilds a key over the whole route. */
 export const SIBLING_VARIANCE_SEGMENT_LIMIT = 32;
-const BASE_RULES: ReadonlySet<string> = new Set(ROUTE_RULES);
+/** The rules that compare routes and so skip those beyond the segment limit. */
+export const SEGMENT_LIMITED_RULES = [
+  "sibling-variance",
+  "sibling-pair-variance",
+  "prefix-variance",
+] as const;
 const OPT_IN_RULES: ReadonlySet<string> = new Set(TEMPLATE_RULES);
 
-const param = (rule: ManifestRule, values: Iterable<string>): ParamPart => ({
+const param = (rule: SharedRule, values: Iterable<string>): ParamPart => ({
   kind: "param",
   rule,
   values: new Set(values),
@@ -113,16 +129,18 @@ const mergeGroups = (
     parts: shape.parts.map((part, index) =>
       part.kind === "literal"
         ? part
-        : param(
-            part.rule,
-            groups.flatMap((group) => {
-              const sibling = group.parts[index];
-              if (sibling === undefined) return [];
-              return sibling.kind === "param"
-                ? [...sibling.values]
-                : [sibling.value];
-            }),
-          ),
+        : {
+            ...part,
+            values: new Set(
+              groups.flatMap((group) => {
+                const sibling = group.parts[index];
+                if (sibling === undefined) return [];
+                return sibling.kind === "param"
+                  ? [...sibling.values]
+                  : [sibling.value];
+              }),
+            ),
+          },
     ),
     positions: groups
       .flatMap((group) => group.positions)
@@ -134,19 +152,25 @@ const mergeGroups = (
   };
 };
 
-const rebucket = (groups: readonly ToolGroup[]): ToolGroup[] => {
+const rebucket = (
+  groups: readonly ToolGroup[],
+  keyOf: (part: RoutePart) => unknown = partKey,
+  shapeOf: (bucket: readonly ToolGroup[]) => ToolGroup = earliest,
+): ToolGroup[] => {
   const buckets = new Map<string, ToolGroup[]>();
   for (const group of groups) {
     const key = compositeKey([
       group.method,
       group.origin,
-      ...group.parts.map(partKey),
+      ...group.parts.map(keyOf),
     ]);
     const bucket = buckets.get(key);
     if (bucket === undefined) buckets.set(key, [group]);
     else bucket.push(group);
   }
-  return [...buckets.values()].map((bucket) => mergeGroups(bucket));
+  return [...buckets.values()].map((bucket) =>
+    mergeGroups(bucket, shapeOf(bucket)),
+  );
 };
 
 const templateAfterUidLiteral = (parts: readonly RoutePart[]): RoutePart[] =>
@@ -253,12 +277,7 @@ const mergeSiblings = (
 
 /** Merge groups that differ in exactly one identifier-like segment at index two or later. */
 const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
-  const beyondLimit = groups.filter(
-    (group) => group.parts.length > SIBLING_VARIANCE_SEGMENT_LIMIT,
-  );
-  let current = groups.filter(
-    (group) => group.parts.length <= SIBLING_VARIANCE_SEGMENT_LIMIT,
-  );
+  let current = [...groups];
   const longest = Math.max(0, ...current.map((group) => group.parts.length));
   for (let position = 2; position < longest; position += 1) {
     const buckets = new Map<string, ToolGroup[]>();
@@ -284,8 +303,239 @@ const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
       output.push(...mergeSiblings(bucket, position));
     current = output;
   }
-  return [...current, ...beyondLimit];
+  return current;
 };
+
+/** Fewest distinct literal pairs that make two adjacent positions one templated pair. */
+export const SIBLING_PAIR_MINIMUM = 3;
+
+/**
+ * Both positions are literals that are neither stop words nor versions, right after a plural literal
+ * and before another literal: a trailing pair such as `/users/alice/followers` names a sub-resource.
+ */
+const pairCandidate = (group: ToolGroup, position: number): boolean => {
+  const previous = group.parts[position - 1];
+  const first = group.parts[position];
+  const second = group.parts[position + 1];
+  return (
+    previous?.kind === "literal" &&
+    previous.value.endsWith("s") &&
+    !STOP_WORDS.has(previous.value) &&
+    first?.kind === "literal" &&
+    second?.kind === "literal" &&
+    group.parts[position + 2]?.kind === "literal" &&
+    [first.value, second.value].every(
+      (value) => !STOP_WORDS.has(value) && !VERSION_TOKEN.test(value),
+    )
+  );
+};
+
+/** Merge one bucket when its pairs are distinct enough and both positions vary; otherwise keep its tools. */
+const mergePairBucket = (
+  bucket: readonly ToolGroup[],
+  position: number,
+): ToolGroup[] => {
+  const pairs = new Set(
+    bucket.map((group) =>
+      compositeKey([
+        literalAt(group, position),
+        literalAt(group, position + 1),
+      ]),
+    ),
+  );
+  const firsts = new Set(bucket.map((group) => literalAt(group, position)));
+  const seconds = new Set(
+    bucket.map((group) => literalAt(group, position + 1)),
+  );
+  if (pairs.size < SIBLING_PAIR_MINIMUM || firsts.size < 2 || seconds.size < 2)
+    return [...bucket];
+  const first = earliest(bucket);
+  const shape = withParts(
+    first,
+    first.parts.map((part, index) =>
+      index === position || index === position + 1
+        ? {
+            ...param("sibling-pair-variance", [literalAt(first, index)]),
+            pairRole: index === position ? "namespace" : "name",
+          }
+        : part,
+    ),
+  );
+  return [
+    mergeGroups(
+      bucket.map((group) => (group === first ? shape : group)),
+      shape,
+    ),
+  ];
+};
+
+/** Merge groups that differ in two adjacent literals after a plural literal, such as `/repos/{owner}/{repo}/…`. */
+const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
+  let current = [...groups];
+  const longest = Math.max(0, ...current.map((group) => group.parts.length));
+  for (let position = 2; position + 1 < longest; position += 1) {
+    const buckets = new Map<string, ToolGroup[]>();
+    const output: ToolGroup[] = [];
+    for (const group of current) {
+      if (!pairCandidate(group, position)) {
+        output.push(group);
+        continue;
+      }
+      const key = compositeKey([
+        group.method,
+        group.origin,
+        group.parts.length,
+        ...group.parts.map((part, index) =>
+          index === position || index === position + 1 ? null : partKey(part),
+        ),
+      ]);
+      const bucket = buckets.get(key);
+      if (bucket === undefined) buckets.set(key, [group]);
+      else bucket.push(group);
+    }
+    for (const bucket of buckets.values())
+      output.push(...mergePairBucket(bucket, position));
+    current = output;
+  }
+  return current;
+};
+
+/** A part by the rule that names it: a prefix-variance parameter keys as the parameter it shares. */
+const nameKey = (part: RoutePart): unknown =>
+  part.kind === "literal"
+    ? part.value
+    : [
+        "param",
+        part.rule === "prefix-variance" ? part.sharedRule : part.rule,
+        part.pairRole ?? null,
+      ];
+
+const prefixKey = (group: ToolGroup, position: number): string =>
+  compositeKey([group.origin, ...group.parts.slice(0, position).map(nameKey)]);
+
+/** A parameter a position can share: the earliest tool's parameter of one naming rule, and every value tools named by that rule observed there. */
+interface SharedDonor {
+  readonly part: ParamPart & { readonly rule: SharedRule };
+  readonly values: Set<string>;
+}
+
+const isShared = (
+  part: RoutePart | undefined,
+): part is ParamPart & { readonly rule: SharedRule } =>
+  part?.kind === "param" &&
+  part.rule !== "prefix-variance" &&
+  OPT_IN_RULES.has(part.rule);
+
+/** A position's donors, earliest first, with each one's spelling summarised once for every literal it is compared with. */
+type SharedPosition = readonly (SharedDonor & {
+  readonly spelling: SpellingSummary;
+})[];
+
+/** Opt-in parameters at one position by their preceding parts, one donor per naming rule, so a value stays with the parameter that observed it. */
+const sharedPositions = (
+  groups: readonly ToolGroup[],
+  position: number,
+): Map<string, SharedPosition> => {
+  const donors = new Map<string, Map<string, SharedDonor>>();
+  const ordered = [...groups].sort(
+    (left, right) => (left.positions[0] ?? 0) - (right.positions[0] ?? 0),
+  );
+  for (const group of ordered) {
+    const part = group.parts[position];
+    if (!isShared(part)) continue;
+    const key = prefixKey(group, position);
+    const byRule = donors.get(key) ?? new Map<string, SharedDonor>();
+    donors.set(key, byRule);
+    const rule = compositeKey([nameKey(part)]);
+    const known = byRule.get(rule);
+    if (known === undefined)
+      byRule.set(rule, { part, values: new Set(part.values) });
+    else for (const value of part.values) known.values.add(value);
+  }
+  return new Map(
+    [...donors].map(([key, byRule]) => [
+      key,
+      [...byRule.values()].map((donor) => ({
+        ...donor,
+        spelling: spellingSummary(donor.values),
+      })),
+    ]),
+  );
+};
+
+/** The donor a literal shares a position with: one that observed it, else one it is spelled like, earliest first; never for an empty literal, a stop word or a version. */
+const donorFor = (
+  value: string,
+  donors: SharedPosition,
+): SharedDonor | undefined =>
+  value === "" || STOP_WORDS.has(value) || VERSION_TOKEN.test(value)
+    ? undefined
+    : (donors.find((donor) => donor.values.has(value)) ??
+      donors.find((donor) => spelledLikeObserved(value, donor.spelling)));
+
+/** The bucket's earliest group, with each position's parameter taken from a group that templated it by its own rule when one did. */
+const sharedShape = (bucket: readonly ToolGroup[]): ToolGroup => {
+  const first = earliest(bucket);
+  return withParts(
+    first,
+    first.parts.map((part, index) =>
+      part.kind === "param" && part.rule === "prefix-variance"
+        ? (bucket.map((group) => group.parts[index]).find(isShared) ?? part)
+        : part,
+    ),
+  );
+};
+
+/** Template literals at positions another tool templates by an opt-in rule after the same preceding parts, at any method or length. */
+const mergePrefixVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
+  let current = [...groups];
+  const longest = Math.max(0, ...current.map((group) => group.parts.length));
+  for (let position = 0; position < longest; position += 1) {
+    const shared = sharedPositions(current, position);
+    if (shared.size === 0) continue;
+    current = current.map((group) => {
+      const part = group.parts[position];
+      const donors =
+        part?.kind === "literal"
+          ? shared.get(prefixKey(group, position))
+          : undefined;
+      const known =
+        part?.kind === "literal" && donors !== undefined
+          ? donorFor(part.value, donors)
+          : undefined;
+      if (part?.kind !== "literal" || known === undefined) return group;
+      // Copies the shared parameter's pair role; the values are this literal only.
+      const templated: ParamPart = {
+        ...known.part,
+        rule: "prefix-variance",
+        sharedRule: known.part.rule,
+        values: new Set([part.value]),
+      };
+      return withParts(
+        group,
+        group.parts.map((other, index) =>
+          index === position ? templated : other,
+        ),
+      );
+    });
+  }
+  return rebucket(current, nameKey, sharedShape);
+};
+
+/** Run a comparing pass over routes within the segment limit; longer routes keep their groups. */
+const withinSegmentLimit = (
+  groups: readonly ToolGroup[],
+  pass: (groups: readonly ToolGroup[]) => ToolGroup[],
+): ToolGroup[] => [
+  ...pass(
+    groups.filter(
+      (group) => group.parts.length <= SIBLING_VARIANCE_SEGMENT_LIMIT,
+    ),
+  ),
+  ...groups.filter(
+    (group) => group.parts.length > SIBLING_VARIANCE_SEGMENT_LIMIT,
+  ),
+];
 
 /** Apply the selected opt-in rules in fixed order; every merge is an inference. */
 export const applyTemplateRules = (
@@ -302,144 +552,14 @@ export const applyTemplateRules = (
       withParts(group, templateOpaqueTokens(group.parts)),
     );
   current = rebucket(current);
-  if (rules.has("sibling-variance")) current = mergeSiblingVariance(current);
+  // Pairs merge first: a single-position merge could otherwise template one
+  // half of a pair and leave too few literal pairs to recognize.
+  if (rules.has("sibling-pair-variance"))
+    current = withinSegmentLimit(current, mergeSiblingPairs);
+  if (rules.has("sibling-variance"))
+    current = withinSegmentLimit(current, mergeSiblingVariance);
+  // Last, so it can share the parameters every other rule produced.
+  if (rules.has("prefix-variance"))
+    current = withinSegmentLimit(current, mergePrefixVariance);
   return current;
 };
-
-const sanitizeToken = (text: string): string =>
-  text
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9_]+/gu, "_")
-    .replaceAll(/_+/gu, "_")
-    .replace(/^_/u, "")
-    .replace(/_$/u, "");
-
-const singular = (word: string): string => {
-  if (word.endsWith("ies") && word.length > 3) return `${word.slice(0, -3)}y`;
-  if (word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1);
-  return word;
-};
-
-const paramBaseName = (parts: readonly RoutePart[], index: number): string => {
-  const part = parts[index];
-  if (part?.kind !== "param") return "";
-  switch (part.rule) {
-    case "numeric":
-      return "id";
-    case "uuid":
-      return "uuid";
-    case "hex":
-      return "hash";
-    case "iso-date":
-      return "date";
-    case "after-uid-literal":
-    case "opaque-token":
-      return "uid";
-    case "sibling-variance": {
-      const previous = parts[index - 1];
-      const stem =
-        previous?.kind === "literal"
-          ? sanitizeToken(singular(previous.value))
-          : "";
-      return stem.length > 0 ? `${stem}_id` : "id";
-    }
-  }
-};
-
-/** Parameter names in segment order; repeated names get numeric suffixes. */
-export const parameterNames = (parts: readonly RoutePart[]): string[] => {
-  const used = new Map<string, number>();
-  return parts.flatMap((part, index) => {
-    if (part.kind !== "param") return [];
-    const base = paramBaseName(parts, index);
-    const count = used.get(base) ?? 0;
-    used.set(base, count + 1);
-    return [count === 0 ? base : `${base}_${String(count + 1)}`];
-  });
-};
-
-/** Format-rule placeholders keep their api-surface spelling; opt-in rules use the parameter name. */
-export const pathTemplate = (
-  parts: readonly RoutePart[],
-  names: readonly string[],
-): string => {
-  let next = 0;
-  return `/${parts
-    .map((part) => {
-      if (part.kind === "literal") return part.value;
-      const name = names[next] ?? "";
-      next += 1;
-      return BASE_RULES.has(part.rule) ? `{${part.rule}}` : `{${name}}`;
-    })
-    .join("/")}`;
-};
-
-/** Names assigned in one manifest and the next suffix to try for each colliding truncated base. */
-export interface ToolNameRegistry {
-  readonly used: Set<string>;
-  readonly nextSuffix: Map<string, number>;
-}
-export const toolNameRegistry = (): ToolNameRegistry => ({
-  used: new Set(),
-  nextSuffix: new Map(),
-});
-/** Deterministic tool name from the method and route literals, unique within a manifest. */
-export const toolName = (
-  method: string,
-  parts: readonly RoutePart[],
-  names: readonly string[],
-  registry: ToolNameRegistry,
-): string => {
-  const literals = parts.flatMap((part, index) => {
-    if (part.kind !== "literal") return [];
-    const value = part.value;
-    if (
-      value.length === 0 ||
-      DROPPED_NAME_LITERALS.has(value) ||
-      VERSION_TOKEN.test(value) ||
-      (value === "uid" && parts[index + 1]?.kind === "param")
-    )
-      return [];
-    return [value.split(".")[0] ?? ""];
-  });
-  const base =
-    sanitizeToken(
-      [
-        method.toLowerCase(),
-        ...literals,
-        ...(names.length > 0 ? ["by", ...names] : []),
-      ].join("_"),
-    ) || "tool";
-  const truncate = (text: string, limit: number): string =>
-    text.slice(0, limit).replace(/_+$/u, "");
-  let candidate = truncate(base, TOOL_NAME_LIMIT);
-  if (registry.used.has(candidate)) {
-    let suffix = 2;
-    for (;;) {
-      const tail = `_${String(suffix)}`;
-      const prefix = truncate(base, TOOL_NAME_LIMIT - tail.length);
-      // Suffixes can truncate distinct full names to the same prefix. Share
-      // progress for that actual candidate family, separately for each width:
-      // a longer suffix can change the prefix and must not skip free short names.
-      const namespace = compositeKey([prefix, tail.length]);
-      const next = registry.nextSuffix.get(namespace) ?? suffix;
-      if (next > suffix) {
-        suffix = next;
-        continue;
-      }
-      candidate = `${prefix}${tail}`;
-      registry.nextSuffix.set(namespace, suffix + 1);
-      if (!registry.used.has(candidate)) break;
-      suffix += 1;
-    }
-  }
-  registry.used.add(candidate);
-  return candidate;
-};
-
-/** Sort tools by template then method with locale-independent ordering. */
-export const compareTools = (
-  left: { readonly template: string; readonly method: string },
-  right: { readonly template: string; readonly method: string },
-): number =>
-  compare(left.template, right.template) || compare(left.method, right.method);

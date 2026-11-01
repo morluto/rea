@@ -183,6 +183,7 @@ describe its recorded investigation; update them only when repeating that work.
 - `public/faq/index.html`: concise answers about setup, updates, analysis and troubleshooting.
 - `public/contributors/index.html`: one searchable, alphabetical grid of GitHub contributors, with profile links and contribution guidance.
 - `public/guides/`: a guide hub and native, JavaScript/Electron and browser examples.
+- `public/guides/rl-environments/index.html`: recording a web app, exporting a runnable environment, and adding tasks and reward checks.
 - `public/examples/`: downloadable Electron source and an interactive Notes browser app.
 - `public/assets/`: shared styles, interactions, favicon and explanatory figures.
 
@@ -359,32 +360,43 @@ Evidence. [evidence/dx-ball-sound-pan.md](evidence/dx-ball-sound-pan.md) records
 their provenance and the scope of the validation claims. The original executable
 and complete private Evidence records are not website assets.
 
-The homepage pairs a short introduction with the installation prompt and
-ordinary setup command. Get started is the primary action; a second link goes
-straight to the first interactive example. Short Showcases and Blog descriptions
-below those actions keep both reading paths available. The introduction and
-setup retain the original equal-width desktop columns. Platform links go
+The homepage pairs a short introduction with the installation prompt. Get
+started is the primary action; a second link goes straight to the first
+interactive example. The terminal command and platform options use native
+disclosures that start open, and the setup-guide link stays visible. Platform links go
 directly to the Windows, macOS and Linux steps in Get started; the optional
-curl installer is listed separately and links to its on-site instructions.
-The setup-guide link
-starts on its own line. A full-width definition and three steps explain the
+curl installer links to its on-site instructions.
+RL environments, Showcases and Blog form a separate row below the introduction
+and setup, with a short description for each destination. The homepage uses a
+1200px content width and equal desktop columns, stacking the introduction and
+setup at 1100px and below. Reading pages retain their narrower content width.
+A full-width definition and three steps explain the
 workflow, followed by a short transition into the dinosaur and Calculator
-cases. The detailed manual/agent comparison is folded,
-as are each example's investigation flow and verification details. Plain
+cases. The full Calculator manual/agent comparison is visible by default.
+Each example's supporting investigation flow and verification details are folded. Plain
 paragraphs introduce the cases without repeating goal and purpose panels.
 Three case-study previews lead to further investigations. The closing sections
 offer a guided first task and target-specific guides. FAQ, Discord and issue
 links each have their own line explaining their purpose.
-Every content page's header and footer link GitHub, Discord and X.
-A right-side table of contents stays visible at widths of 1440px and above.
-On narrower screens it becomes a sticky, native disclosure; selecting a link
+Every content page's header and footer link GitHub, Discord and X. The main
+navigation contains Get started, Showcases, Blog and Guides. FAQ and Contributors
+are in the footer. Utility controls use quiet borders with visible hover and
+keyboard focus states.
+A right-side table of contents stays visible at widths of 1800px and above,
+with a 48px gap from the content. CSS owns this layout choice; the homepage
+script reads the displayed position when opening or closing the menu.
+On narrower screens it becomes a sticky, native disclosure after the opening
+section; selecting a link
 closes the menu and focuses the destination. The homepage script follows
 the reading position and marks the current link. Without JavaScript, the
 menu stays open and its fragment links remain usable.
+The RL environments section pairs its explanation and guide links with a
+copyable agent prompt on a contrasting surface. It follows the case studies
+and stacks into reading order on small screens.
 The comparison uses the same Calculator question on both sides: three
 selectable manual steps pair original instructions with an analyst illustration
 and thought bubbles; the agent side pairs a copyable question with an
-illustrative answer. The outer disclosure opens the complete comparison, with
+illustrative answer. The outer disclosure starts open, showing the complete comparison with
 the original desktop column proportions and the agent explanation first on
 mobile. Thoughts illustrate the reasoning behind the findings. The
 shared code-step script selects the initial note on load, so all three notes remain
@@ -396,8 +408,8 @@ Each introduces the goal, then follows three named steps: ask a question,
 find the rule, and try a reconstruction. The question and plain-language finding
 are on the left, with the demo on the right; mobile keeps that reading order.
 Code excerpts and source details join the optional investigation flow and checks
-in each disclosure. Calculator’s excerpt
-comes from an installed model DLL; Microsoft’s public implementation supplies
+in each disclosure. Calculator's excerpt
+comes from an installed model DLL; Microsoft's public implementation supplies
 names and a crosscheck. Its controls apply the percentage rule to generic inputs.
 The target guides end with an optional larger-project disclosure, preserving
 the original website-cloning and game-reconstruction prompts.

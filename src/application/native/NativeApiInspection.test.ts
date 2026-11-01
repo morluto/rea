@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import { nativeApiBoundarySchema } from "../../domain/native/nativeApiBoundary.js";
 import { projectNativeApiInspection } from "./NativeApiInspection.js";
@@ -184,6 +184,66 @@ describe("native API unresolved indirect branches", () => {
             evidence: [],
           },
         ],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("native API bounded indirect-branch inventory", () => {
+  it("reports omitted branches as one residual unknown and retains omitted listing-target counts", () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    const boundary = dossier.native_api;
+    if (boundary?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    const bounded = functionDossierSchema.parse({
+      ...dossier,
+      native_api: {
+        ...boundary,
+        unresolved_indirect_branches: [
+          {
+            branch_address: "0x401040",
+            decompiler_outcome: "no_jump_table_warning",
+            listing_targets: ["0x401060"],
+            listing_targets_omitted: 3,
+            evidence: [
+              {
+                kind: "indirect-branch",
+                source: "ghidra-listing",
+                detail: "Ghidra's listing marks br as a computed jump.",
+              },
+            ],
+          },
+        ],
+        unresolved_indirect_branches_omitted: 7,
+      },
+    });
+    const output = bounded.native_api;
+    if (output?.available !== true)
+      throw new TypeError("Bounded native API fixture is unavailable");
+    expect(
+      output.unresolved_indirect_branches?.[0]?.listing_targets_omitted,
+    ).toBe(3);
+
+    const projected = projectNativeApiInspection(bounded);
+    expect(projected.unsupported_branches).toEqual([
+      "indirect-branch-target-recovery",
+    ]);
+    expect(projected.residual_unknowns).toContain(
+      "Which targets can the 7 further computed jump(s) in this function reach? The provider's indirect-branch inventory reached its bound and did not list them.",
+    );
+  });
+
+  it.each([0, -1, 1.5])("rejects an omitted count of %s", (omitted) => {
+    const boundary = functionDossierSchema.parse(
+      ghidraFunctionDossier(),
+    ).native_api;
+    if (boundary?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    expect(
+      nativeApiBoundarySchema.safeParse({
+        ...boundary,
+        unresolved_indirect_branches: [],
+        unresolved_indirect_branches_omitted: omitted,
       }).success,
     ).toBe(false);
   });

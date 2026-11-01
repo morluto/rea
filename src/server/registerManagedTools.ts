@@ -1,22 +1,14 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
-import { MANAGED_TOOL_CONTRACTS } from "../contracts/managed/managedToolContracts.js";
+import {
+  MANAGED_TOOL_CONTRACTS,
+  isManagedToolName,
+} from "../contracts/managed/managedToolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { err } from "../domain/result.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
-import {
-  retainedSummaryDelivery,
-  withoutDeliveryDetail,
-  type EvidenceToolFamilyOptions,
-} from "./retainedSummaryDelivery.js";
+import type { EvidenceToolFamilyOptions } from "./retainedSummaryDelivery.js";
 import { runManagedProviderExecution } from "../composition/directAnalysis.js";
-import { isManagedToolName } from "../contracts/managed/managedToolContracts.js";
-
-/** Operations whose MCP delivery may be a retained summary view. */
-const SUMMARY_DELIVERY: ReadonlySet<string> = new Set([
-  "inspect_managed_artifact",
-  "inspect_managed_members",
-]);
 
 /** Register execution-free managed PE/CLI inspection. */
 export const registerManagedTools = (
@@ -24,7 +16,6 @@ export const registerManagedTools = (
   options: EvidenceToolFamilyOptions,
 ): void => {
   let selectedManagedPath: string | undefined;
-  const withoutDelivery = withoutDeliveryDetail(SUMMARY_DELIVERY);
   const analysisForAdmission = (
     analysis: AnalysisOperationPort,
   ): AnalysisOperationPort => ({
@@ -64,9 +55,6 @@ export const registerManagedTools = (
   });
   registerEvidenceTools(server, MANAGED_TOOL_CONTRACTS, {
     ...options,
-    ...retainedSummaryDelivery(SUMMARY_DELIVERY, options),
-    parametersForExecution: withoutDelivery,
-    parametersForEvidence: withoutDelivery,
     analysisForAdmission,
   });
 };

@@ -63,7 +63,9 @@ cliTest(
         code: "ENOENT",
       });
       expect(await readFile(trust, "utf8")).toBe(text);
-      expect(await readFile(fixture.user)).toEqual(fixture.originalUser);
+      expect(
+        Buffer.compare(await readFile(fixture.user), fixture.originalUser),
+      ).toBe(0);
     }
 
     const workspaceText = "{ not json";
@@ -92,7 +94,9 @@ cliTest(
     });
     expect(await readFile(fixture.workspace, "utf8")).toBe(workspaceText);
     expect(await readFile(trust, "utf8")).toBe("{ not json");
-    expect(await readFile(fixture.user)).toEqual(fixture.originalUser);
+    expect(
+      Buffer.compare(await readFile(fixture.user), fixture.originalUser),
+    ).toBe(0);
   },
 );
 
@@ -135,8 +139,12 @@ for (const scenario of [
           ]),
         },
       });
-      expect(await readFile(fixture.workspace)).toEqual(malformed);
-      expect(await readFile(fixture.user)).toEqual(fixture.originalUser);
+      expect(Buffer.compare(await readFile(fixture.workspace), malformed)).toBe(
+        0,
+      );
+      expect(
+        Buffer.compare(await readFile(fixture.user), fixture.originalUser),
+      ).toBe(0);
       await expect(
         access(`${fixture.workspace}.rea.backup`),
       ).rejects.toMatchObject({
@@ -162,7 +170,9 @@ for (const scenario of [
             ]),
           },
         });
-        expect(await readFile(fixture.workspace)).toEqual(excluded);
+        expect(
+          Buffer.compare(await readFile(fixture.workspace), excluded),
+        ).toBe(0);
       }
     },
   );
@@ -208,8 +218,12 @@ cliTest(
           ]),
         },
       });
-      expect(await readFile(fixture.workspace)).toEqual(original);
-      expect(await readFile(fixture.user)).toEqual(fixture.originalUser);
+      expect(Buffer.compare(await readFile(fixture.workspace), original)).toBe(
+        0,
+      );
+      expect(
+        Buffer.compare(await readFile(fixture.user), fixture.originalUser),
+      ).toBe(0);
       await expect(
         access(`${fixture.workspace}.rea.backup`),
       ).rejects.toMatchObject({

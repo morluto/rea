@@ -49,7 +49,7 @@ async function inventoryCall(client, operation, parameters) {
     );
   const parsed = parseGhidraInventoryResult(operation, called.value);
   if (!parsed.ok) throw parsed.error;
-  return parsed.value;
+  return parsed.value.value;
 }
 
 export async function verifyDebugFunctionOperations(
@@ -415,7 +415,7 @@ async function verifyRequestCancellationAndTimeout(client, entry) {
 }
 
 async function verifyConcurrentRequests(client, entry, leaf) {
-  const concurrent = await Promise.all([
+  await Promise.all([
     functionCall(client, "procedure_info", {
       document: null,
       procedure: entry.address,
@@ -425,9 +425,7 @@ async function verifyConcurrentRequests(client, entry, leaf) {
       address: leaf.address,
     }),
   ]);
-  if (concurrent.length !== 2)
-    throw new Error("Ghidra serial request queue lost a concurrent result");
-  return "serialized-two-results";
+  return "two-concurrent-requests-completed";
 }
 
 /** Prove dense jump-table completeness on the optimized jump-table fixture. */
@@ -679,6 +677,80 @@ export async function verifyIndirectBranches(client) {
   )
     throw new Error(
       `Computed branch at ${branchAddress} did not retain its decompiler warning evidence: ${JSON.stringify(unresolved)}`,
+    );
+  // A caller can store the warning text as an entry comment. The comment must
+  // not hide the actual decompiler-generated warning or its Evidence.
+  const warningDetail = unresolved.evidence.find(
+    (evidence) => evidence.source === "ghidra-decompiler-warning",
+  )?.detail;
+  const warningText = warningDetail?.match(/reported "([^"]+)"/u)?.[1];
+  if (!warningText)
+    throw new Error(`Missing original Ghidra warning text: ${warningDetail}`);
+  const annotated = await functionCall(client, "annotate_native_function", {
+    procedure: computed.address,
+    comment: warningText,
+  });
+  const retained =
+    annotated.dossier.native_api?.unresolved_indirect_branches?.find(
+      (branch) => branch.branch_address === branchAddress,
+    );
+  if (
+    annotated.annotations.comment !== warningText ||
+    retained?.decompiler_outcome !== "jump_table_recovery_failed" ||
+    !retained.evidence.some(
+      (evidence) => evidence.source === "ghidra-decompiler-warning",
+    )
+  )
+    throw new Error(
+      `Stored comment hid genuine jump-table warning at ${branchAddress}: ${JSON.stringify(retained)}`,
+    );
+  // A caller comment that spells the whole warning is rendered as a second
+  // warning line. Only that line is discounted, so the real one still counts.
+  const forged = `WARNING: ${warningText}`;
+  const reannotated = await functionCall(client, "annotate_native_function", {
+    procedure: computed.address,
+    comment: forged,
+  });
+  const renderedWarnings =
+    reannotated.dossier.pseudocode.match(
+      /WARNING:\s+Could not recover jumptable at/gu,
+    )?.length ?? 0;
+  const kept =
+    reannotated.dossier.native_api?.unresolved_indirect_branches?.find(
+      (branch) => branch.branch_address === branchAddress,
+    );
+  if (
+    reannotated.annotations.comment !== forged ||
+    renderedWarnings < 2 ||
+    kept?.decompiler_outcome !== "jump_table_recovery_failed" ||
+    !kept.evidence.some(
+      (evidence) => evidence.source === "ghidra-decompiler-warning",
+    )
+  )
+    throw new Error(
+      `A stored copy of the warning hid the genuine jump-table warning at ${branchAddress} (${String(renderedWarnings)} rendered): ${JSON.stringify(kept)}`,
+    );
+  // A long stored warning can wrap or be truncated by the decompiler.
+  // That must not consume a separate real warning at the same branch.
+  const verbose = `WARNING: ${warningText} ${"padding ".repeat(100)}`;
+  const afterVerboseComment = await functionCall(
+    client,
+    "annotate_native_function",
+    { procedure: computed.address, comment: verbose },
+  );
+  const preserved =
+    afterVerboseComment.dossier.native_api?.unresolved_indirect_branches?.find(
+      (branch) => branch.branch_address === branchAddress,
+    );
+  if (
+    afterVerboseComment.annotations.comment !== verbose ||
+    preserved?.decompiler_outcome !== "jump_table_recovery_failed" ||
+    !preserved.evidence.some(
+      (evidence) => evidence.source === "ghidra-decompiler-warning",
+    )
+  )
+    throw new Error(
+      `Long caller comment hid a real decompiler warning at ${branchAddress}: ${JSON.stringify(preserved)}`,
     );
   // The tail call's classification depends on Ghidra's own heuristics, so it
   // is recorded rather than asserted.

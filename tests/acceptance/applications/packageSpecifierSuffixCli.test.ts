@@ -9,6 +9,7 @@ import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
+import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 
 type PackageSpecifierCase = {
   readonly specifier: string;
@@ -157,8 +158,8 @@ const requests = [
   })),
   ...encodedDotSpecifiers.map((specifier) => ({
     specifier,
-    target: null,
-    status: "rejected" as const,
+    target: "node_modules/legacy/feature.js",
+    status: "resolved" as const,
     value: "legacy feature",
     error: null,
   })),
@@ -350,13 +351,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             resolution_status: status,
           }),
           evidence: expect.objectContaining({
-            ...(encodedDotSpecifiers.includes(specifier)
-              ? {
-                  limitations: expect.arrayContaining([
-                    "Encoded dot or separator bytes are rejected before artifact path resolution.",
-                  ]),
-                }
-              : {}),
             ...(directoryFormSpecifiers.includes(specifier)
               ? {
                   limitations: expect.arrayContaining([
@@ -376,6 +370,65 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             }),
             location: expect.objectContaining({
               value: expect.objectContaining({ source: "main.mjs" }),
+            }),
+          }),
+        }),
+      );
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "confines legacy package traversal before URL normalization through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-package-root-traversal-");
+    const cases = [
+      { specifier: "legacy/../../outside.js", status: "resolved" },
+      {
+        specifier: "legacy/../../outside.js?cache=/../../rea-artifact/#/..",
+        status: "resolved",
+      },
+      { specifier: "legacy//../../../outside.js", status: "resolved" },
+      {
+        specifier: "legacy/../../../rea-artifact/outside.js",
+        status: "rejected",
+      },
+      {
+        specifier: "legacy/../../../../rea-artifact/outside.js",
+        status: "rejected",
+      },
+      {
+        specifier: "legacy/../.\t./.\n./rea-artifact/outside.js?cache=1#entry",
+        status: "rejected",
+      },
+    ] as const;
+    const source = cases
+      .map(({ specifier }) => `import ${JSON.stringify(specifier)};`)
+      .join("\n");
+    await writeFixtureFiles(root, {
+      "main.mjs": source,
+      "outside.js": "export default 1;",
+      "node_modules/legacy/package.json": "{}",
+    });
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    for (const { specifier, status } of cases)
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          relation: "imports",
+          properties: expect.objectContaining({
+            specifier,
+            resolution_status: status,
+            resolved_path: status === "resolved" ? "outside.js" : null,
+          }),
+          evidence: expect.objectContaining({
+            ...(status === "rejected"
+              ? {
+                  limitations: expect.arrayContaining([
+                    "The resolved candidate escapes the canonical artifact root.",
+                  ]),
+                }
+              : {}),
+            artifact: expect.objectContaining({
+              sha256: createHash("sha256").update(source).digest("hex"),
             }),
           }),
         }),

@@ -1,9 +1,11 @@
+import { markPlistDictionary } from "./apple/plistUid.js";
 import type { Node } from "@xmldom/xmldom";
 
 import { readXmlPlistSource } from "./propertyListXmlSource.js";
 
 import { createPlistNumberCollector } from "./apple/plistNumbers.js";
 import { UnknownPlistScalar } from "./apple/unknownPlistScalar.js";
+import { MAX_PLIST_DEPTH } from "./apple/plistValue.js";
 import {
   decodeXmlPlistDateLiteral,
   parseXmlPlistIntegerLiteral,
@@ -11,8 +13,11 @@ import {
 } from "./propertyListXmlScalar.js";
 
 /** Own source interpretation, depth, values and numeric facts together. */
-export const decodeXmlPropertyList = (text: string) => {
-  const source = readXmlPlistSource(text);
+export const decodeXmlPropertyList = (
+  text: string,
+  maximumDepth = MAX_PLIST_DEPTH,
+) => {
+  const source = readXmlPlistSource(text, maximumDepth);
   const document = source.document;
   const root = document.documentElement;
   if (root?.nodeName !== "plist")
@@ -85,16 +90,26 @@ export const decodeXmlPropertyList = (text: string) => {
             key = undefined;
           }
         }
-        if (key !== undefined) entries.push([key, ""]);
-        // Define own properties safely, including __proto__; the caller owns omission accounting.
-        return Object.fromEntries(entries);
+        if (key !== undefined)
+          throw new TypeError("Missing value for key while parsing <dict/>");
+        // Dictionary names are data, including __proto__.
+        const value = Object.fromEntries(entries);
+        // XML archives use Foundation's CF$UID convention; a UID key is data.
+        const keys = Object.keys(value);
+        markPlistDictionary(
+          value,
+          keys.length === 1 &&
+            keys[0] === "CF$UID" &&
+            typeof value["CF$UID"] === "number"
+            ? value["CF$UID"]
+            : undefined,
+        );
+        return value;
       }
       case "key": {
         // The pinned decoder also accepted key elements as scalars. Keep their
         // first-child interpretation separate from dictionary key identities.
         const value = node.firstChild === null ? "" : node.firstChild.nodeValue;
-        if (value === "__proto__")
-          throw new TypeError("__proto__ is not a scalar plist key");
         return value;
       }
       case "string":

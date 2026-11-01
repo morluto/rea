@@ -35,6 +35,46 @@ export const historicalHar = () => ({
   },
 });
 
+/** Unknown document fields may resemble entry fields without owning HTTP semantics. */
+export const harWithContainerLookalikes = () => {
+  const fixture = historicalHar();
+  const entry = fixture.log.entries[0]!;
+  const request = {
+    ...entry.request,
+    url: "https://user:password@example.test/opaque",
+    headers: [{ name: "Authorization", value: "ordinary-root-evidence" }],
+    cookies: [{ name: "session", value: "ordinary-root-evidence" }],
+  };
+  const response = {
+    ...entry.response,
+    redirectURL: "https://user:password@example.test/redirect",
+    headers: [{ name: "Set-Cookie", value: "ordinary-root-evidence" }],
+    content: {
+      ...entry.response.content,
+      encoding: "base64",
+      text: "ordinary-root-evidence",
+    },
+  };
+  return {
+    ...fixture,
+    request,
+    response,
+    log: {
+      ...fixture.log,
+      entries: [
+        {
+          ...entry,
+          request,
+          response: {
+            ...response,
+            content: { ...response.content, text: "QUJD" },
+          },
+        },
+      ],
+    },
+  };
+};
+
 /** Request paths exercising only the public API surface format rules. */
 export const apiSurfaceHar = () => {
   const fixture = historicalHar();
@@ -309,3 +349,14 @@ export const environmentManifestHar = () => ({
     ),
   },
 });
+
+/** The Grafana-shaped HAR with one second between requests, so its timeline orders reads before the writes that follow them. */
+export const environmentStateHar = () => {
+  const har = environmentManifestHar();
+  const start = Date.parse("2026-10-17T18:00:00.000Z");
+  har.log.entries = har.log.entries.map((entry, index) => ({
+    ...entry,
+    startedDateTime: new Date(start + index * 1000).toISOString(),
+  }));
+  return har;
+};

@@ -46,7 +46,7 @@ const keyedArchive = (nested: boolean) =>
   });
 
 cliTest.skipIf(process.platform !== "darwin")(
-  "retains recognized NIBArchive resource keys and provenance through CLI and MCP without a catalog",
+  "retains resource keys and complete empty inventory through CLI and MCP at a positive offset",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-asset-resource-keys-");
     const { call } = await connectLocalToolsMcp();
@@ -78,7 +78,20 @@ cliTest.skipIf(process.platform !== "darwin")(
       const graph = interfaceBuilderAnalysisSchema.parse(
         parseEvidence(decoded.json).normalized_result,
       ).graph;
-      expect(graph.truncated).toBe(false);
+      // The fixture need not describe a complete view hierarchy to establish
+      // decoded object facts used by asset-key matching.
+      expect(graph.coverage).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            facet: "archive_decode",
+            status: "complete",
+          }),
+          expect.objectContaining({
+            facet: "archive_object_decode",
+            status: "complete",
+          }),
+        ]),
+      );
       const resource = graph.nodes.find(
         (node) =>
           node.kind === "resource" && node.attributes.class_name === "NSImage",
@@ -91,13 +104,21 @@ cliTest.skipIf(process.platform !== "darwin")(
         [field]: "Toolbar",
       });
       const inspected = await cli.run({
-        arguments: ["inspect-asset-catalog", app, "--json"],
+        arguments: ["inspect-asset-catalog", app, "--offset", "1", "--json"],
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
       const result = appleAssetCatalogResultSchema.parse(
         parseEvidence(inspected.json).normalized_result,
       );
+      const executableSha256 = createHash("sha256").update(mach).digest("hex");
       expect(result.catalogs).toEqual([]);
+      expect(result).toMatchObject({
+        total_records: 0,
+        offset: 1,
+        records: [],
+        next_offset: null,
+        truncated: false,
+      });
       expect(result.resource_key_matches).toEqual(
         !recognized
           ? []
@@ -115,13 +136,38 @@ cliTest.skipIf(process.platform !== "darwin")(
               },
             ],
       );
-      const opened = await call("open_binary", { path: app });
+      const opened = await call("open_bundle_resources", { path: app });
       expect(opened.isError).not.toBe(true);
-      const mcp = await call("inspect_asset_catalog", {});
+      const mcp = await call("inspect_asset_catalog", { offset: 1 });
       expect(mcp.isError).not.toBe(true);
       expect(parseEvidence(mcp.structuredContent).normalized_result).toEqual(
         result,
       );
+
+      const binaryOpened = await call("open_binary", { path: app });
+      expect(binaryOpened.isError).not.toBe(true);
+      const binary = await call("inspect_asset_catalog", { offset: 1 });
+      expect(binary.isError).not.toBe(true);
+      const binaryResult = appleAssetCatalogResultSchema.parse(
+        parseEvidence(binary.structuredContent).normalized_result,
+      );
+      expect(binaryResult.target_sha256).toBe(executableSha256);
+      expect(binaryResult.resource_root).toBeUndefined();
+      expect(binaryResult).toEqual({
+        target_sha256: executableSha256,
+        catalogs: result.catalogs,
+        catalog_coverage: result.catalog_coverage,
+        inventory_coverage: result.inventory_coverage,
+        total_records: result.total_records,
+        offset: result.offset,
+        limit: result.limit,
+        records: result.records,
+        resource_key_matches: result.resource_key_matches,
+        resource_key_coverage: result.resource_key_coverage,
+        next_offset: result.next_offset,
+        truncated: result.truncated,
+        limitations: result.limitations,
+      });
     }
   },
   30_000,

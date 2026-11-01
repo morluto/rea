@@ -59,6 +59,8 @@ it("keeps a nested function's directive out of its owner fingerprint", () => {
   const second = analyze('"ordinary"');
   expect(first.size).toBe(2);
   expect(second.get("outer")).toEqual(first.get("outer"));
+  expect(first.get("inner")?.literalSetSha256).toEqual(expect.any(String));
+  expect(second.get("inner")?.literalSetSha256).toEqual(expect.any(String));
   expect(second.get("inner")?.literalSetSha256).not.toBe(
     first.get("inner")?.literalSetSha256,
   );

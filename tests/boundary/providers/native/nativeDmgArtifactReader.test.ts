@@ -13,10 +13,14 @@ import { build } from "plist";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { execFileOutput } from "../../../../src/process/ExecFileOutput.js";
+import {
+  ExecFileOutputCancelledError,
+  execFileOutput,
+} from "../../../../src/process/ExecFileOutput.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
+  type ArtifactReaderTraversal,
   type ArtifactTraversalOmission,
 } from "../../../../src/artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
@@ -26,7 +30,7 @@ import {
   NativeDmgArtifactReader,
   type NativeDmgHost,
 } from "../../../../src/artifacts/NativeDmgArtifactReader.js";
-import { scanCanonicalArtifactInventory } from "../../../../src/artifacts/inventory/scanCanonical.js";
+import { scanCanonicalArtifactInventoryInScope } from "../../../../src/artifacts/inventory/scanCanonical.js";
 
 const createAttachedReader = async (
   path: string,
@@ -219,19 +223,23 @@ describe("DMG inventory reader ownership", () => {
     let closeCalls = 0;
     const resourceScope = new ArtifactResourceScope();
     onTestFinished(() => resourceScope.close());
-    const failure = await scanCanonicalArtifactInventory(
-      path,
-      { resourceScope },
-      (inputPath, _format, environment) => {
-        reader = new NativeDmgArtifactReader(inputPath, environment, host);
-        const closeReader = reader.close.bind(reader);
-        reader.close = () => {
-          closeCalls += 1;
-          return closeReader();
-        };
-        return reader;
-      },
-    ).catch((cause: unknown) => cause);
+    const failure = await resourceScope
+      .run(() =>
+        scanCanonicalArtifactInventoryInScope(
+          path,
+          { resourceScope },
+          (inputPath, _format, environment) => {
+            reader = new NativeDmgArtifactReader(inputPath, environment, host);
+            const closeReader = reader.close.bind(reader);
+            reader.close = () => {
+              closeCalls += 1;
+              return closeReader();
+            };
+            return reader;
+          },
+        ),
+      )
+      .catch((cause: unknown) => cause);
 
     expect(failure).toMatchObject({
       reason: "format",
@@ -938,80 +946,97 @@ describe("DMG attach fallback recovery", () => {
 });
 
 describe("DMG attach cancellation and preexisting mounts", () => {
-  it("waits for an aborted attach result before discovering and detaching its mount", async () => {
-    const calls: string[][] = [];
-    const controller = new AbortController();
-    const mount = createMountFixture();
-    let markAttachStarted = (): void => {};
-    const attachStarted = new Promise<void>((resolveStarted) => {
-      markAttachStarted = resolveStarted;
-    });
-    let attached = false;
-    let mountPoint: string | undefined;
-    const host: NativeDmgHost = {
-      async run(arguments_, signal) {
-        calls.push([...arguments_]);
-        if (arguments_[0] === "info")
-          return {
-            stdout:
-              !attached || mountPoint === undefined
-                ? emptyInfoPlist
-                : infoPlist("/tmp/image.dmg", [
-                    {
-                      "dev-entry": "/dev/disk21",
-                      "mount-point": mountPoint,
-                    },
-                  ]),
-            exitCode: 0,
-          };
-        if (arguments_[0] === "detach") {
-          attached = false;
-          return { stdout: "", exitCode: 0 };
-        }
-        if (arguments_[0] !== "attach") return { stdout: "", exitCode: 0 };
-        mountPoint = join(mount.rememberRoot(arguments_), "Fixture");
-        markAttachStarted();
-        return new Promise((_, reject) => {
-          signal?.addEventListener(
-            "abort",
-            () => {
-              void mkdir(mountPoint ?? "").then(async () => {
-                attached = true;
-                await writeFile(
-                  join(mountPoint ?? "", "hello.txt"),
-                  "after exit",
-                );
-                reject(
-                  Object.assign(new Error("attach aborted"), {
-                    name: "AbortError",
-                  }),
-                );
-              });
-            },
-            { once: true },
-          );
-        });
-      },
-    };
+  it.each(["owned cancellation", "opaque AbortError"] as const)(
+    "waits for an aborted attach result before discovering and detaching its mount (%s)",
+    async (kind) => {
+      const calls: string[][] = [];
+      const controller = new AbortController();
+      const reason = { request: "cancel DMG attach" };
+      const commandFailure =
+        kind === "owned cancellation"
+          ? new ExecFileOutputCancelledError(reason)
+          : Object.assign(new Error("attach aborted"), { name: "AbortError" });
+      const mount = createMountFixture();
+      let markAttachStarted = (): void => {};
+      const attachStarted = new Promise<void>((resolveStarted) => {
+        markAttachStarted = resolveStarted;
+      });
+      let attached = false;
+      let mountPoint: string | undefined;
+      const host: NativeDmgHost = {
+        async run(arguments_, signal) {
+          calls.push([...arguments_]);
+          if (arguments_[0] === "info")
+            return {
+              stdout:
+                !attached || mountPoint === undefined
+                  ? emptyInfoPlist
+                  : infoPlist("/tmp/image.dmg", [
+                      {
+                        "dev-entry": "/dev/disk21",
+                        "mount-point": mountPoint,
+                      },
+                    ]),
+              exitCode: 0,
+            };
+          if (arguments_[0] === "detach") {
+            attached = false;
+            return { stdout: "", exitCode: 0 };
+          }
+          if (arguments_[0] !== "attach") return { stdout: "", exitCode: 0 };
+          mountPoint = join(mount.rememberRoot(arguments_), "Fixture");
+          markAttachStarted();
+          return new Promise((_, reject) => {
+            signal?.addEventListener(
+              "abort",
+              () => {
+                void mkdir(mountPoint ?? "").then(async () => {
+                  attached = true;
+                  await writeFile(
+                    join(mountPoint ?? "", "hello.txt"),
+                    "after exit",
+                  );
+                  reject(commandFailure);
+                });
+              },
+              { once: true },
+            );
+          });
+        },
+      };
 
-    const creating = createAttachedReader(
-      "/tmp/image.dmg",
-      process.env,
-      controller.signal,
-      host,
-    );
-    await attachStarted;
-    controller.abort();
-    await expect(creating).rejects.toMatchObject({ reason: "cancelled" });
-    expect(calls.map(([operation]) => operation)).toEqual([
-      "verify",
-      "info",
-      "attach",
-      "info",
-      "detach",
-    ]);
-    expect(calls).toContainEqual(["detach", "/dev/disk21"]);
-  });
+      const creating = createAttachedReader(
+        "/tmp/image.dmg",
+        process.env,
+        controller.signal,
+        host,
+      );
+      await attachStarted;
+      controller.abort(reason);
+      const failure: unknown = await creating.catch((cause: unknown) => cause);
+      if (!(failure instanceof ArtifactReaderFailure))
+        throw new Error("Expected the settled attach failure");
+      expect(failure.reason).toBe(
+        kind === "owned cancellation" ? "cancelled" : "unavailable",
+      );
+      expect(failure.cause).toBe(commandFailure);
+      if (kind === "owned cancellation")
+        expect(failure.cancellation?.reason).toBe(reason);
+      else expect(failure.cancellation).toBeUndefined();
+      expect(calls.map(([operation]) => operation)).toEqual([
+        "verify",
+        "info",
+        "attach",
+        "info",
+        "detach",
+      ]);
+      expect(calls).toContainEqual(["detach", "/dev/disk21"]);
+      expect(attached).toBe(false);
+      await expect(realpath(mount.root() ?? "")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
 
   it("leaves a preexisting outside-root mount attached", async () => {
     const calls: string[][] = [];
@@ -1530,6 +1555,57 @@ describe("native DMG localized verification cleanup", () => {
     } finally {
       close.mockRestore();
     }
+  });
+});
+
+describe("native DMG checksum-free images", () => {
+  it("attaches after hdiutil reports no stored checksum and reports integrity as unverified", async () => {
+    const { host, state } = createOmittedInventoryHost();
+    state.inventoryMode = "listed";
+    state.detachAttempts = 4;
+    const verify = vi.fn(async () => ({
+      stdout: "",
+      stderr: 'hdiutil: verify: "/tmp/image.dmg" has no checksum.\n',
+      exitCode: 1,
+    }));
+    const reader = new NativeDmgArtifactReader("/tmp/image.dmg", process.env, {
+      ...host,
+      run: (arguments_, signal, options) =>
+        arguments_[0] === "verify"
+          ? verify()
+          : host.run(arguments_, signal, options),
+    });
+    onTestFinished(() => reader.close());
+    const coverage: ArtifactReaderTraversal[] = [];
+    const paths: string[] = [];
+    for await (const entry of reader.entries(undefined, {
+      onCoverage: (observed) => coverage.push(observed),
+    }))
+      paths.push(entry.path);
+
+    expect(paths).toContain("image.dmg/Fixture/hello.txt");
+    // Absence is a terminal answer, not a transient refusal to retry.
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(coverage).toEqual([
+      {
+        status: "complete",
+        limitations: [
+          expect.stringMatching(
+            /no stored checksum .* integrity was not verified/u,
+          ),
+        ],
+      },
+    ]);
+    expect(
+      reader
+        .provenance()
+        .map(({ arguments: [operation], exit_code }) => [operation, exit_code]),
+    ).toEqual([
+      ["verify", 1],
+      ["attach", 0],
+    ]);
+    await reader.close();
+    expect(state.attached).toBe(false);
   });
 });
 

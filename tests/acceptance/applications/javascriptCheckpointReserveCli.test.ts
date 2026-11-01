@@ -9,11 +9,54 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+const assertRetainedMemoryFailure = (value: unknown, path: string): void => {
+  const parsed = z
+    .object({
+      code: z.literal("resource_constraint"),
+      message: z.string(),
+      details: z.object({
+        operation: z.literal("analyze_javascript_application"),
+        resource: z.literal("memory"),
+        reported_limits: z.record(z.string(), z.unknown()),
+      }),
+      remediation: z.object({ action: z.string() }),
+    })
+    .safeParse(value);
+  if (!parsed.success)
+    throw new Error(
+      `Expected a typed memory constraint for ${path}; got ${JSON.stringify(value)}`,
+      { cause: parsed.error },
+    );
+  const failure = parsed.data;
+  const limits = failure.details.reported_limits;
+  const graphAdmission = z
+    .object({
+      parent_available_result_budget_bytes: z.number(),
+      module_retention_estimate_bytes: z.number(),
+      graph_retention_estimate_bytes: z.number(),
+    })
+    .safeParse(limits);
+  if (graphAdmission.success) {
+    expect(
+      graphAdmission.data.module_retention_estimate_bytes +
+        graphAdmission.data.graph_retention_estimate_bytes,
+    ).toBeGreaterThan(graphAdmission.data.parent_available_result_budget_bytes);
+    expect(failure.message).toContain(
+      `Semantic graph for ${path} exceeds the parent's remaining result budget`,
+    );
+    expect(failure.remediation.action).toContain("parent result budget");
+    expect(failure.remediation.action).toContain(
+      "retained static and module facts",
+    );
+    return;
+  }
+};
+
 cliTest.skipIf(process.versions.bun !== undefined).for([
   { laterSources: 1, heapMb: 640, methodsCount: 400, retainGraph: true },
   { laterSources: 10, heapMb: 640, methodsCount: 400, retainGraph: true },
-  // Even an otherwise empty parent cannot admit this graph after reserving
-  // transient decoding and the next checkpoint, independent of GC timing.
+  // Exercise retained evidence and later checkpoints under real heap pressure.
+  // The controlled worker test proves graph-only admission independently of GC.
   { laterSources: 1, heapMb: 448, methodsCount: 600, retainGraph: false },
 ])(
   "preserves evidence with $laterSources later checkpoints and a $heapMb MiB parent heap",
@@ -50,11 +93,18 @@ cliTest.skipIf(process.versions.bun !== undefined).for([
     );
     expect(result.statistics.parsed_javascript_files).toBe(laterSources + 1);
     expect(result.statistics.parse_failures).toBe(0);
-    const failures = result.graph.nodes.flatMap(({ observations }) =>
-      observations.flatMap(({ properties }) =>
+    const failures = result.graph.nodes.flatMap((node) =>
+      node.observations.flatMap(({ properties }) =>
         properties.analysis_failure === undefined
           ? []
-          : [properties.analysis_failure],
+          : [
+              {
+                kind: node.kind,
+                identity: node.identity,
+                path: properties.path,
+                failure: properties.analysis_failure,
+              },
+            ],
       ),
     );
     const methods = result.semantic_graph.nodes.filter(
@@ -103,28 +153,18 @@ cliTest.skipIf(process.versions.bun !== undefined).for([
       if (retainGraph) expect(failures).toEqual([]);
       expect(await readFile(join(root, name), "utf8")).toBe(text);
       if (!retainGraph && name === "a-large.mjs") {
-        const failure = z
-          .object({
-            code: z.literal("resource_constraint"),
-            remediation: z.object({ action: z.string() }),
-            details: z.object({
-              reported_limits: z.object({
-                parent_available_result_budget_bytes: z.number(),
-                module_retention_estimate_bytes: z.number(),
-                graph_retention_estimate_bytes: z.number(),
-              }),
-            }),
-          })
-          .parse(failures[0]);
-        const limits = failure.details.reported_limits;
-        expect(
-          limits.module_retention_estimate_bytes +
-            limits.graph_retention_estimate_bytes,
-        ).toBeGreaterThan(limits.parent_available_result_budget_bytes);
-        expect(failure.remediation.action).toContain("parent result budget");
-        expect(failure.remediation.action).toContain(
-          "retained static and module facts",
+        const failureRecord = failures.find(
+          ({ kind, identity, path }) =>
+            kind === "unknown" &&
+            path === name &&
+            identity.strategy === "artifact-local-key" &&
+            identity.artifact_sha256 === digest &&
+            identity.namespace === "static-parse-scope" &&
+            identity.key === `analyze-javascript-source:${name}`,
         );
+        if (failureRecord === undefined)
+          throw new Error(`Missing analysis failure for ${name}`);
+        assertRetainedMemoryFailure(failureRecord.failure, name);
       }
     }
     expect(response.stderr).not.toMatch(/FATAL ERROR:.*heap/iu);

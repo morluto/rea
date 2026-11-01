@@ -5,11 +5,15 @@ import {
 import type { AnalysisError } from "../analysisErrorBase.js";
 import type { BinaryLayout } from "../native/binaryLayout.js";
 import { err, ok, type Result } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+  AdmittedView,
+  FacetAnalysisView,
+  ItemAnalysisView,
+  PageAnalysisView,
+  SummaryAnalysisView,
+} from "./analysisViewShape.js";
+import { assertOwnedView } from "./analysisViewShape.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage as completeCoverage,
@@ -39,17 +43,20 @@ const layoutUnknowns = (layout: BinaryLayout): readonly string[] => {
   return unknowns;
 };
 
-const displayName = (name: LayoutName): string => name.display;
-
 const namedMatches = <Row extends { readonly name: LayoutName }>(
   rows: readonly Row[],
   name: string,
-): readonly { readonly index: number; readonly row: Row }[] =>
-  rows.flatMap((row, index) =>
-    row.name.unknown_reason === null && displayName(row.name) === name
+): readonly { readonly index: number; readonly row: Row }[] => {
+  const bytes = Buffer.from(name, "utf8");
+  // Display text may replace malformed source bytes or use provider formatting.
+  if (bytes.toString("utf8") !== name) return [];
+  const encoded = bytes.toString("base64");
+  return rows.flatMap((row, index) =>
+    row.name.unknown_reason === null && row.name.bytes_base64 === encoded
       ? [{ index, row }]
       : [],
   );
+};
 
 const selectNamed = <Row extends { readonly name: LayoutName }>(
   collection: "sections" | "symbols",
@@ -90,14 +97,24 @@ const selectIndexed = <Row>(
 ): Result<Row, AnalysisError> => {
   const row = rows[index];
   if (row !== undefined) return ok(row);
+  if (rows.length === 0)
+    return err(
+      inputError([
+        {
+          path: ["view", "selector", "index"],
+          reason: "invalid_value",
+          message: `No retained ${collection} entries can be selected by index.`,
+        },
+      ]),
+    );
   return err(
     inputError([
       {
         path: ["view", "selector", "index"],
         reason: "out_of_range",
-        message: `${collection} index ${String(index)} is outside 0..${String(Math.max(0, rows.length - 1))} (${String(rows.length)} entries).`,
+        message: `${collection} index ${String(index)} is outside 0..${String(rows.length - 1)} (${String(rows.length)} entries).`,
         minimum: 0,
-        maximum: Math.max(0, rows.length - 1),
+        maximum: rows.length - 1,
       },
     ]),
   );
@@ -157,11 +174,8 @@ const layoutSummary = (layout: BinaryLayout) => ({
 export const projectBinaryLayoutView = (
   parent: AnalysisViewParent,
   layout: BinaryLayout,
-  view: Exclude<
-    AnalysisViewRequest,
-    { kind: "api-surface" | "environment-manifest" }
-  >,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   const shared = parentFields(parent, layout);
   if (view.kind === "native")
     return err(
@@ -179,9 +193,10 @@ export const projectBinaryLayoutView = (
     return err(
       layoutIncompatible("EVM views require inspect_evm_interface Evidence."),
     );
-  if (view.kind === "summary")
+  if (view.kind === "summary") {
+    assertOwnedView<SummaryAnalysisView>(view, "summary");
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary: layoutSummary(layout),
       coverage: completeCoverage(
@@ -196,15 +211,19 @@ export const projectBinaryLayoutView = (
       ),
       ...shared,
     });
-  if (view.kind === "facet")
+  }
+  if (view.kind === "facet") {
+    assertOwnedView<FacetAnalysisView>(view, "facet");
     return ok({
-      kind: "facet",
+      kind: "facet" as const,
       view,
       facet: view.facet === "mitigations" ? layout.mitigations : layout.linkage,
       coverage: completeCoverage(1, 1),
       ...shared,
     });
+  }
   if (view.kind === "item") {
+    assertOwnedView<ItemAnalysisView>(view, "item");
     if (view.collection === "modules")
       return err(
         layoutIncompatible(
@@ -217,7 +236,7 @@ export const projectBinaryLayoutView = (
         : selectLayoutItem(view.collection, layout.symbols, view.selector);
     if (!selected.ok) return selected;
     return ok({
-      kind: "item",
+      kind: "item" as const,
       view,
       item: selected.value,
       coverage: completeCoverage(
@@ -235,6 +254,7 @@ export const projectBinaryLayoutView = (
         "Layout views require summary, facet, item or page selections.",
       ),
     );
+  assertOwnedView<PageAnalysisView>(view, "page");
   if (view.collection === "modules")
     return err(
       layoutIncompatible(
@@ -248,7 +268,7 @@ export const projectBinaryLayoutView = (
       ? pageRows(layout.sections, view.offset, view.limit)
       : pageRows(layout.symbols, view.offset, view.limit);
   return ok({
-    kind: "page",
+    kind: "page" as const,
     view,
     items: [...items],
     coverage: pageCoverage(view.offset, items.length, rows.length),
@@ -259,7 +279,7 @@ export const projectBinaryLayoutView = (
 const selectLayoutItem = <Row extends { readonly name: LayoutName }>(
   collection: "sections" | "symbols",
   rows: readonly Row[],
-  selector: Extract<AnalysisViewRequest, { readonly kind: "item" }>["selector"],
+  selector: ItemAnalysisView["selector"],
 ): Result<Row, AnalysisError> => {
   if ("index" in selector)
     return selectIndexed(collection, rows, selector.index);

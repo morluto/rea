@@ -2,15 +2,55 @@ import { describe, expect, it } from "vitest";
 
 import {
   ArtifactPathRegistry,
+  destinationCaseCollision,
+  DestinationCaseCollisionFailure,
   annotateEnglishUnicodeCaseCollisions,
   ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION,
+  normalizeArtifactPath,
 } from "./ArtifactPaths.js";
 
 const NOTE =
   "a case-insensitive destination cannot store both. This comparison is not a filesystem observation.";
 
+it.each(["drive", "escaped", "normalization", "prefix", "collision"])(
+  "bounds path failure diagnostics at the owning boundary: %s",
+  (kind) => {
+    const name = "x".repeat(1024 * 1024);
+    const registry = new ArtifactPathRegistry();
+    const fail = () => {
+      if (kind === "drive") normalizeArtifactPath("C:/" + name);
+      else if (kind === "escaped")
+        normalizeArtifactPath("\0".repeat(name.length));
+      else if (kind === "normalization")
+        normalizeArtifactPath(name + "/../child");
+      else {
+        registry.add(name, "file");
+        registry.add(kind === "prefix" ? name + "/child" : name, "directory");
+      }
+    };
+    const failure = (() => {
+      try {
+        fail();
+      } catch (cause: unknown) {
+        return cause;
+      }
+      return undefined;
+    })();
+    expect(failure).toMatchObject({ reason: "path" });
+    expect((failure as Error).message.length).toBeLessThan(1024);
+  },
+);
+
+it.each(["a:b", "C:cache/file.txt", "a:"])(
+  "preserves a literal POSIX colon name %s",
+  (path) => {
+    expect(normalizeArtifactPath(path)).toBe(path);
+  },
+);
+
 const annotate = (paths: readonly string[]) => {
   const occurrences = paths.map((logical_path) => ({
+    entry_kind: "file" as const,
     logical_path,
     limitations: [] as string[],
   }));
@@ -124,3 +164,36 @@ const caseVariants = (lowercase: string, count: number): string[] =>
       )
       .join(""),
   );
+
+it("retains both source spellings and the native failure in a destination collision", () => {
+  const cause = Object.assign(new Error("exclusive create refused"), {
+    code: "EEXIST",
+  });
+  const collision = destinationCaseCollision("res/café.js", ["CAFÉ.js"], {
+    cause,
+  });
+  expect(collision).toBeInstanceOf(DestinationCaseCollisionFailure);
+  expect(collision).toMatchObject({
+    reason: "path",
+    requestedPath: "res/café.js",
+    existingPath: "res/CAFÉ.js",
+  });
+  expect(collision?.cause).toBe(cause);
+});
+
+it.each([["app.js", "App.js"], ["other.js"]])(
+  "does not invent a destination alias from listing %j",
+  (...names) => {
+    expect(destinationCaseCollision("res/app.js", names)).toBeUndefined();
+  },
+);
+
+it("reserves prefix capacity atomically without declaring destination kinds", () => {
+  const registry = new ArtifactPathRegistry({ maxParts: 4, maxNodes: 3 });
+  registry.reservePath("a/b");
+  expect(() => registry.reservePath("a/c/d")).toThrow();
+  expect(() => registry.reservePath("z")).not.toThrow();
+  expect(() => registry.reservePath("a/b")).not.toThrow();
+  registry.add("a/b", "file");
+  expect(() => registry.add("a/b", "directory")).toThrow();
+});

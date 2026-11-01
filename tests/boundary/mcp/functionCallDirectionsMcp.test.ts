@@ -1,13 +1,14 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const observe = (relationshipCoverage: RelationshipCoverage) => {
   const template = FUNCTION_COMPARISON_EXAMPLE.left;
@@ -32,12 +33,22 @@ const observe = (relationshipCoverage: RelationshipCoverage) => {
   );
 };
 
-it("preserves directional gaps through advertised schemas and public path reconstruction", async () => {
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
+
+const profiles = ["full", "compact"] as const;
+it.each(profiles)("preserves directional gaps (%s)", async (profile) => {
   const session = createTestBinarySession(() => {
     throw new Error("Offline call paths must not launch a provider");
   });
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "function-call-directions", version: "1" });
+  const server = createServer(
+    { kind: "session", session },
+    { environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile } },
+  );
+  const client = new Client(
+    { name: "function-call-directions", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -48,9 +59,8 @@ it("preserves directional gaps through advertised schemas and public path recons
     );
     if (advertised === undefined)
       throw new Error("Missing build_call_path contract");
-    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const ajv = schemaValidation.assertions;
     expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
-    const validate = ajv.compile(advertised.inputSchema);
     for (const { directions, status, exhaustive } of [
       {
         directions: ["callers"] as ["callers"],
@@ -82,28 +92,45 @@ it("preserves directional gaps through advertised schemas and public path recons
         start: { address: "0x1000" },
         goal: { address: "0x9999" },
       };
-      expect(validate(input), JSON.stringify(validate.errors)).toBe(true);
+      expect(
+        ajv.validate(advertised.inputSchema, input),
+        JSON.stringify(ajv.errors),
+      ).toBe(true);
       for (const limited_directions of [
         [],
         ["callers", "callers"],
         ["callees", "callees"],
         ["callers", "callees", "callers"],
         ["incoming"],
-      ])
-        expect(
-          validate({
-            ...input,
-            functions: [
-              {
-                ...observation,
-                relationship_coverage: {
-                  ...coverage,
-                  limited_directions,
-                },
+      ]) {
+        const malformed = {
+          ...input,
+          functions: [
+            {
+              ...observation,
+              relationship_coverage: {
+                ...coverage,
+                limited_directions,
               },
-            ],
-          }),
-        ).toBe(false);
+            },
+          ],
+        };
+        if (profile === "full")
+          expect(ajv.validate(advertised.inputSchema, malformed)).toBe(false);
+        const rejected = await client.callTool({
+          name: "build_call_path",
+          arguments: malformed,
+        });
+        // Source admission belongs to the Evidence owner in both profiles;
+        // malformed supplied records fail integrity instead of SDK validation.
+        expect(parseMcpToolError(rejected)).toMatchObject({
+          error: {
+            code: "evidence_integrity_mismatch",
+            category: "integrity_mismatch",
+            message: expect.stringContaining("relationship_coverage"),
+          },
+        });
+      }
       const result = await client.callTool({
         name: "build_call_path",
         arguments: input,

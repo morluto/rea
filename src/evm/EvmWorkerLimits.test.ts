@@ -43,13 +43,44 @@ it("independently preserves CPU and file output restrictions", () => {
   ).toMatchObject({ ok: true, value: { cpuSeconds: 5, fileSizeBytes: 4096 } });
 });
 it.each([
-  ["not-text", null],
-  ["soft-unlimited-hard-finite", limits("unlimited", "2147483648")],
-  ["soft-exceeds-hard", limits("3", "2")],
-  ["missing-row", limits().replace("Max file size", "Max other size")],
-  ["duplicate-row", limits() + "Max cpu time 1 1 seconds\n"],
-  ["wrong-unit", limits().replace("bytes", "pages")],
-  ["oversized", "x".repeat(65537)],
-])("rejects malformed/ambiguous resource observations: %s", (_label, input) => {
-  expect(selectEvmWorkerLimits(input).ok).toBe(false);
-});
+  [
+    "not-text",
+    null,
+    "Linux resource limits must be text within the 64 KiB parsing budget.",
+  ],
+  [
+    "soft-unlimited-hard-finite",
+    limits("unlimited", "2147483648"),
+    "Inherited Max address space soft limit exceeds its hard limit.",
+  ],
+  [
+    "soft-exceeds-hard",
+    limits("3", "2"),
+    "Inherited Max address space soft limit exceeds its hard limit.",
+  ],
+  [
+    "missing-row",
+    limits().replace("Max file size", "Max other size"),
+    "Linux resource limits must report exactly one Max file size row.",
+  ],
+  [
+    "duplicate-row",
+    limits() + "Max cpu time 1 1 seconds\n",
+    "Linux resource limits must report exactly one Max cpu time row.",
+  ],
+  [
+    "wrong-unit",
+    limits().replace("bytes", "pages"),
+    "Malformed inherited Linux resource limit: Max address space.",
+  ],
+  [
+    "oversized",
+    "x".repeat(65537),
+    "Linux resource limits must be text within the 64 KiB parsing budget.",
+  ],
+])(
+  "rejects malformed/ambiguous resource observations: %s",
+  (_label, input, error) => {
+    expect(selectEvmWorkerLimits(input)).toEqual({ ok: false, error });
+  },
+);

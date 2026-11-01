@@ -8,6 +8,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { compareProcessEvidenceFiles } from "../../../src/application/process/ProcessCli.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
+import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCapture.fixture.js";
 import {
   capture,
   partialSpecification,
@@ -24,7 +25,7 @@ import {
   parseEvidence,
   type EvidenceProvider,
 } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import { digestProcessCommitment } from "../../../src/domain/process/processScenario.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -42,14 +43,14 @@ const captureEvidence = (
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { side },
-    result: jsonValueSchema.parse({
+    result: {
       ...observation,
       manifest: {
         ...observation.manifest,
         comparison_contract: comparisonContract,
         comparison_contract_sha256: digestProcessCommitment(comparisonContract),
       },
-    }),
+    },
     confidence: "observed",
     authority: "controlled-replay",
   });
@@ -63,8 +64,19 @@ const connect = async (
   session = createTestBinarySession(() => {
     throw new Error("Process comparison must not launch a provider");
   }),
+  maximumInputElements?: number,
 ) => {
-  const server = createServer({ kind: "session", session });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      environment: {
+        ...process.env,
+        ...(maximumInputElements === undefined
+          ? {}
+          : { REA_MCP_MAX_INPUT_ELEMENTS: String(maximumInputElements) }),
+      },
+    },
+  );
   const client = new Client({ name: "process-comparison-test", version: "1" });
   onTestFinished(async () => {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
@@ -433,7 +445,9 @@ it("rejects a deep trace cycle as an input error through CLI and MCP", async () 
     details: { issues: [issue] },
   });
 
-  const client = await connect();
+  // This 6,000-event graph intentionally exercises cycle validation beyond
+  // ordinary transport admission. Keep a finite explicit fixture allowance.
+  const client = await connect(undefined, 131_072);
   const response = await client.callTool({
     name: "compare_process_captures",
     arguments: { left: capture, right: capture, trace_spec: trace },
@@ -490,32 +504,112 @@ it("names the side and constraint when Evidence is not a usable capture", async 
     },
   });
 
-  const invalidResult = createEvidence(undefined, PROCESS_PROVIDER, {
-    predicateType: "rea.process-capture",
-    operation: "capture_process_scenario",
-    parameters: {},
-    result: { manifest: {} },
-  });
-  const malformed = await client.callTool({
-    name: "compare_process_captures",
-    arguments: { left: capture, right: invalidResult },
-  });
-  expect(parseMcpToolError(malformed)).toMatchObject({
-    error: {
-      code: "evidence_integrity_mismatch",
-      message: expect.stringContaining(
-        "The right Evidence has an invalid process capture result (at ",
-      ),
+  const coverage = EMPTY_PROCESS_CAPTURE_EXAMPLE.truncation_details;
+  const invalidCaptures = [
+    { result: { manifest: {} }, description: "(at " },
+    {
+      result: {
+        ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+        truncated: true,
+        truncation_details: {
+          ...coverage,
+          rendered_terminal: {
+            ...coverage.rendered_terminal,
+            observed_frames: 2,
+            unknown_size_frames: 1,
+            normalization_over_budget_frames: 2,
+          },
+        },
+      },
+      description:
+        "(at truncation_details.rendered_terminal.normalization_over_budget_frames: normalization omissions must be a subset of unknown-size rendered frames)",
     },
-  });
-
+  ];
   const root = await createTestTempDirectory("rea-process-malformed-");
   const leftPath = join(root, "left.json");
   const rightPath = join(root, "right.json");
   await writeFile(leftPath, JSON.stringify(capture));
-  await writeFile(rightPath, JSON.stringify(invalidResult));
-  expect(await compareProcessEvidenceFiles(leftPath, rightPath)).toMatchObject({
+  for (const { result, description } of invalidCaptures) {
+    const invalidResult = createEvidence(undefined, PROCESS_PROVIDER, {
+      predicateType: "rea.process-capture",
+      operation: "capture_process_scenario",
+      parameters: {},
+      result: result,
+    });
+    expect(parseEvidence(invalidResult)).toEqual(invalidResult);
+    const malformed = await client.callTool({
+      name: "compare_process_captures",
+      arguments: { left: capture, right: invalidResult },
+    });
+    expect(parseMcpToolError(malformed)).toMatchObject({
+      error: {
+        code: "evidence_integrity_mismatch",
+        message: expect.stringContaining(
+          `The right Evidence has an invalid process capture result ${description}`,
+        ),
+      },
+    });
+
+    await writeFile(rightPath, JSON.stringify(invalidResult));
+    expect(
+      await compareProcessEvidenceFiles(leftPath, rightPath),
+    ).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      message: expect.stringContaining(
+        `Capture evidence is malformed ${description}`,
+      ),
+      details: { issues: [expect.objectContaining({ path: ["right"] })] },
+    });
+  }
+});
+
+it("keeps structural capture issues alongside semantic ones through MCP and the CLI", async () => {
+  const client = await connect();
+  const capture = captureEvidence("left");
+  const {
+    manifest: { completed_at: _completedAt, ...manifest },
+    exit,
+    ...rest
+  } = FINALIZED_PROCESS_CAPTURE_EXAMPLE;
+  const mixed = createEvidence(undefined, PROCESS_PROVIDER, {
+    predicateType: "rea.process-capture",
+    operation: "capture_process_scenario",
+    parameters: {},
+    result: {
+      ...rest,
+      manifest,
+      exit: {
+        ...exit,
+        finalization: {
+          ...exit.finalization,
+          signals: [
+            { ...exit.finalization.signals[0], reason: "not allowed here" },
+          ],
+        },
+      },
+    },
+  });
+  const described =
+    "(at manifest.completed_at: Invalid input: expected string, received undefined (1 more issues))";
+
+  const response = await client.callTool({
+    name: "compare_process_captures",
+    arguments: { left: capture, right: mixed },
+  });
+  expect(parseMcpToolError(response)).toMatchObject({
+    error: {
+      code: "evidence_integrity_mismatch",
+      message: expect.stringContaining(
+        `The right Evidence has an invalid process capture result ${described}`,
+      ),
+    },
+  });
+  expect(await compareViaCli(capture, mixed)).toMatchObject({
+    code: "invalid_request",
     category: "invalid_input",
-    message: expect.stringContaining("Capture evidence is malformed (at "),
+    message: expect.stringContaining(
+      `Capture evidence is malformed ${described}`,
+    ),
   });
 });

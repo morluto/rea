@@ -46,6 +46,7 @@ const installation = async (
     javac,
     [
       "#!/bin/sh",
+      'printf "invoked\\n" >> "$REA_JAVAC_MARKER"',
       'if [ "$1" = "-version" ]; then echo "javac 21.0.12"; exit 0; fi',
       ...(compilerStatus === 0
         ? ["exit 0"]
@@ -60,8 +61,10 @@ const installation = async (
   await mkdir(scratchParent);
   return {
     scratchParent,
+    javacMarker: join(root, "javac-invocations"),
     environment: {
       ...process.env,
+      REA_JAVAC_MARKER: join(root, "javac-invocations"),
       GHIDRA_INSTALL_DIR: install,
       JAVA_HOME: javaHome,
       TMPDIR: scratchParent,
@@ -102,7 +105,7 @@ const admissionCases: readonly AdmissionCase[] = [
   {
     name: "malformed Unicode escape",
     properties: "application.version=12.1.4\nother=\\u00xx\n",
-    error: "Malformed Unicode escape in Java properties file",
+    error: "malformed_unicode_escape",
   },
 ];
 
@@ -193,6 +196,9 @@ it.skipIf(process.platform === "win32").each([
       ),
     });
     expect(await readdir(fixture.scratchParent)).toEqual([]);
+    await expect(readFile(fixture.javacMarker)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   },
 );
 
@@ -210,7 +216,15 @@ it("rejects an omitted auxiliary source at the actual package verification bound
       "--input-type=module",
       "-e",
       `import { verifyPackedBridge } from "./scripts/verify-packed-bridge.mjs";
-       await verifyPackedBridge({ tarball: "unused-because-admission-must-fail", packedFiles: JSON.parse(process.argv[1]) });`,
+       import { createPackageVerifierCommands } from "./scripts/lib/verify-package-commands.mjs";
+       import { withVerifierCleanup } from "./scripts/lib/verifier-cleanup.mjs";
+       import { PrivateRuntimeRoot } from "./dist/process/PrivateRuntimeRoot.js";
+       const root = await PrivateRuntimeRoot.create({ prefix: "rea-bridge-admission-" });
+       let commands;
+       await withVerifierCleanup(async () => {
+         commands = await createPackageVerifierCommands({ workspace: root });
+         await verifyPackedBridge({ tarball: "unused-because-admission-must-fail", packedFiles: JSON.parse(process.argv[1]), commands });
+       }, [() => commands === undefined ? root.close() : commands.close()]);`,
       JSON.stringify(packedFiles),
     ]),
   ).rejects.toMatchObject({

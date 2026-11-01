@@ -7,8 +7,8 @@ import { afterEach, expect, it, vi } from "vitest";
 
 const observation = vi.hoisted(() => ({
   path: "",
-  namedReads: 0,
-  cancelAt: 0,
+  cancelAfterDescriptorInspection: false,
+  descriptorInspected: false,
   controller: undefined as AbortController | undefined,
   reason: undefined as Error | undefined,
   handles: [] as FileHandle[],
@@ -30,14 +30,23 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...original,
     open: async (...args: Parameters<typeof original.open>) => {
       const handle = await original.open(...args);
-      if (args[0] === observation.path) observation.handles.push(handle);
+      if (args[0] === observation.path) {
+        observation.handles.push(handle);
+        const stat = handle.stat.bind(handle);
+        vi.spyOn(handle, "stat").mockImplementation(async (options) => {
+          const stats = await stat(options);
+          observation.descriptorInspected = true;
+          return stats;
+        });
+      }
       return handle;
     },
     lstat: async (...args: Parameters<typeof original.lstat>) => {
       const stats = await original.lstat(...args);
       if (
         args[0] === observation.path &&
-        ++observation.namedReads === observation.cancelAt
+        observation.cancelAfterDescriptorInspection &&
+        observation.descriptorInspected
       )
         observation.controller?.abort(observation.reason);
       return stats;
@@ -45,17 +54,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { parseProcessScenario } from "../../src/domain/process/processScenario.js";
+import { processScenarioSchema } from "../../src/domain/process/processScenario.js";
 import {
   hashFile,
   snapshotRoots,
+  ProcessCaptureSnapshotFailure,
 } from "../../src/process/capture/FilesystemSnapshot.js";
+import { ProcessCaptureReadFailure } from "../../src/process/capture/ProcessCaptureRead.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 afterEach(() => {
   observation.path = "";
-  observation.namedReads = 0;
-  observation.cancelAt = 0;
+  observation.cancelAfterDescriptorInspection = false;
+  observation.descriptorInspected = false;
   observation.controller = undefined;
   observation.reason = undefined;
   observation.handles.length = 0;
@@ -76,21 +87,48 @@ it.each(["hash", "snapshot"] as const)(
     observation.path = path;
     observation.controller = controller;
     observation.reason = reason;
-    // A root file snapshot first inspects presence and entry metadata, then
-    // reaches the same two named-file inspections as direct hashing.
-    observation.cancelAt = operation === "hash" ? 2 : 4;
+    // The final fallback inspection is the named lookup after the opened
+    // descriptor was inspected. Admission may perform other named lookups.
+    observation.cancelAfterDescriptorInspection = true;
     const result =
       operation === "hash"
         ? hashFile(path, expected, 1_000, controller.signal)
         : snapshotRoots(
-            parseProcessScenario({
+            processScenarioSchema.parse({
               executable: process.execPath,
               working_directory: directory,
               filesystem_observation_paths: [path],
             }),
             controller.signal,
           );
-    await expect(result).rejects.toBe(reason);
+    const failure: unknown = await result.catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      _tag: "ProcessCaptureError",
+      reason: "cancelled",
+      userCategory: "cancelled",
+    });
+    if (operation === "hash") {
+      expect(failure).toBeInstanceOf(ProcessCaptureReadFailure);
+      const read = failure as ProcessCaptureReadFailure;
+      expect(read.cause).toBe(reason);
+      expect(read.userCategory).toBe("cancelled");
+      expect(read.outcome).toMatchObject({ kind: "failed", cause: reason });
+      expect(read.cleanupLeases).toEqual([]);
+      expect(read.cleanupIncomplete).toBe(false);
+    } else {
+      expect(failure).toBeInstanceOf(ProcessCaptureSnapshotFailure);
+      const snapshot = failure as ProcessCaptureSnapshotFailure;
+      expect(snapshot.cause).toBe(reason);
+      expect(snapshot.userCategory).toBe("cancelled");
+      expect(snapshot.snapshot).toMatchObject({
+        files: [],
+        completeRoots: [],
+        truncated: true,
+        coverage: { enumeration_truncated: true },
+      });
+      expect(snapshot.cleanupLeases).toEqual([]);
+      expect(snapshot.cleanupIncomplete).toBe(false);
+    }
     expect(controller.signal.aborted).toBe(true);
     expect(observation.handles).toHaveLength(1);
     await expect(observation.handles[0]?.stat()).rejects.toMatchObject({
@@ -110,7 +148,7 @@ it("keeps an unchanged fallback digest and closes its descriptor", async () => {
     state: "hashed",
     sha256: createHash("sha256").update(bytes).digest("hex"),
   });
-  expect(observation.namedReads).toBe(2);
+  expect(observation.descriptorInspected).toBe(true);
   expect(observation.handles).toHaveLength(1);
   await expect(observation.handles[0]?.stat()).rejects.toMatchObject({
     code: "EBADF",

@@ -214,6 +214,7 @@ const createElectronActiveBoundaryPatches = ({
   const patchApplicationEffects = (app) => {
     if (app === null || app === undefined) return;
     for (const method of [
+      "moveToApplicationsFolder",
       "relaunch",
       "setAsDefaultProtocolClient",
       "setLoginItemSettings",
@@ -222,12 +223,19 @@ const createElectronActiveBoundaryPatches = ({
       if (typeof original !== "function") continue;
       app[method] = function blockedApplicationEffect(...args) {
         recordRuntime(
-          method === "relaunch" ? "updater" : "protocol",
+          method === "relaunch"
+            ? "updater"
+            : method === "moveToApplicationsFolder"
+              ? "app-lifecycle"
+              : "protocol",
           method,
           "blocked",
           { argument_shape_values: args, error: true },
         );
-        return method === "setAsDefaultProtocolClient" ? false : undefined;
+        return method === "setAsDefaultProtocolClient" ||
+          method === "moveToApplicationsFolder"
+          ? false
+          : undefined;
       };
     }
   };
@@ -341,6 +349,8 @@ const createElectronActiveBoundaryPatches = ({
     openExternal: () =>
       Promise.reject(new Error("External shell effects are blocked")),
     openPath: () =>
+      Promise.reject(new Error("External shell effects are blocked")),
+    trashItem: () =>
       Promise.reject(new Error("External shell effects are blocked")),
     // Synchronous `void`: reveals a path in the host file manager.
     showItemInFolder: () => undefined,

@@ -14,7 +14,7 @@ describe.skipIf(process.platform !== "darwin")(
   "native Mach-O CLI dylib identity",
   () => {
     cliTest(
-      "keeps a dylib's own install name out of its dependencies",
+      "preserves dylib identity and thin or single-slice FAT framing",
       async ({ cli, processes }) => {
         const directory = await createTestTempDirectory("rea-dylib-identity-");
         const source = join(directory, "library.c");
@@ -51,6 +51,27 @@ describe.skipIf(process.platform !== "darwin")(
             ({ kind }) => kind === "LC_ID_DYLIB",
           )?.fields.name,
         ).toBe("@rpath/libprobe.dylib (offset 24)");
+
+        // One architecture can still have a FAT container header.
+        const universal = join(directory, "libprobe-universal.dylib");
+        const combined = await processes.run(
+          "/usr/bin/lipo",
+          ["-create", library, "-output", universal],
+          { timeoutMs: 30_000 },
+        );
+        expect(combined.exitCode, combined.stderr).toBe(0);
+        const fatResult = await cli.run({
+          arguments: ["inspect-macho", universal, "--json"],
+          environment: { REA_LOG_LEVEL: "silent" },
+        });
+        expect(fatResult.exitCode, fatResult.stdout + fatResult.stderr).toBe(0);
+        const fat = evidenceSchema.parse(fatResult.json).normalized_result;
+        expect(fat.format).toBe("mach-o-universal");
+        expect(fat.architectures.items).toHaveLength(1);
+        expect(fatResult.json).toMatchObject({
+          subject: { format: fat.format },
+        });
+        expect(inspected.format).toBe("mach-o");
       },
     );
   },

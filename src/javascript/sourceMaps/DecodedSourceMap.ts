@@ -5,7 +5,7 @@ import {
 } from "./SourceMapFormat.js";
 
 /** Determine whether a leaf-local mapping falls before its enclosing boundary. */
-export const isBeforeSourceMapLeafStop = (
+const isBeforeSourceMapLeafStop = (
   leaf: SourceMapLeaf,
   line: number,
   column: number,
@@ -28,7 +28,6 @@ export const decodeValidatedSourceMapLeaves = (
   readonly leaf: SourceMapLeaf;
   readonly map: TraceMap;
   readonly rows: ReturnType<typeof decodedMappings>;
-  readonly resolvedSources: readonly string[];
 }[] =>
   leaves.map((leaf) => {
     check?.();
@@ -40,6 +39,11 @@ export const decodeValidatedSourceMapLeaves = (
         const generatedLine = leaf.offset.line + line;
         const generatedColumn =
           segment[0] + (line === 0 ? leaf.offset.column : 0);
+        if (!isBeforeSourceMapLeafStop(leaf, line, segment[0]))
+          throw new SourceMapFormatFailure(
+            "section-overlap",
+            "Embedded source-map mappings overlap the following section boundary.",
+          );
         if (
           !Number.isSafeInteger(generatedLine) ||
           !Number.isSafeInteger(generatedColumn) ||
@@ -54,5 +58,5 @@ export const decodeValidatedSourceMapLeaves = (
           );
       }
     }
-    return { leaf, map, rows, resolvedSources: map.resolvedSources };
+    return { leaf, map, rows };
   });

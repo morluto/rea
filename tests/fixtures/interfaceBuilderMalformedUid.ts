@@ -69,10 +69,8 @@ const expectView = (result: Analysis, oracle: Oracle, uid: number) => {
 };
 const childEdges = (result: Analysis, oracle: Oracle) =>
   result.graph.edges.filter(
-    ({ id, from, relation }) =>
-      from === viewId(result, oracle.rootUID) &&
-      relation === "contains" &&
-      id.includes(":hierarchy:"),
+    ({ from, relation }) =>
+      from === viewId(result, oracle.rootUID) && relation === "contains",
   );
 
 /** Native producer and independent plist oracle precede every consumer assertion. */

@@ -1,17 +1,15 @@
+import { requireAnalysisViewRetention } from "../../application/analysisView/AnalysisViewService.js";
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { resolveApplicationEvidenceRequest } from "../../application/EvidenceInputResolver.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 
-import { compareSourceToBundleEvidenceValidated } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
-import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import { sourceToBundleComparisonResultSchema } from "../../domain/javascript/sourceToBundleComparisonSchemas.js";
+import { executeSourceToBundleComparison } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { recordResult } from "./helpers.js";
+import { deliverApplicationEvidence } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
-const contract = applicationToolContract("compare_source_to_bundle");
+const contract = toolContract("compare_source_to_bundle");
 
 /** Register conservative historical-source to bundle comparison. */
 export const registerCompareSourceToBundleTool = (
@@ -28,35 +26,36 @@ export const registerCompareSourceToBundleTool = (
         contract.name,
         context.mcpReq.signal,
         async () => {
-          const resolved = resolveApplicationEvidenceRequest(
-            input,
-            options.evidenceById,
-          );
-          if (!resolved.ok)
-            return server.delivery.toCallToolResult(resolved, contract);
-          const parsed = resolved.value;
+          if (input.view !== undefined) {
+            const retention = requireAnalysisViewRetention(
+              contract.name,
+              options,
+            );
+            if (!retention.ok)
+              return server.delivery.toCallToolResult(retention, contract);
+          }
           const result = await logToolExecution(
             options.logger,
             contract.name,
             () =>
-              Promise.resolve(compareSourceToBundleEvidenceValidated(parsed)),
+              executeSourceToBundleComparison(
+                input,
+                contract.inputSchema,
+                options.evidenceById,
+                options.artifactResources,
+                { signal: context.mcpReq.signal },
+              ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, contract);
-          const recorded = recordSessionEvidenceSources(
-            options.recordEvidence,
-            [parsed.application],
-          );
-          if (!recorded.ok)
-            return server.delivery.toCallToolResult(recorded, contract);
-          const comparison = sourceToBundleComparisonResultSchema.parse(
-            result.value.normalized_result,
-          );
-          return recordResult(
-            { ...options, delivery: server.delivery },
+          return deliverApplicationEvidence(
+            server,
+            options,
             contract,
             result.value,
-            comparison.summary.unknown > 0
+            input.view,
+            context.mcpReq.signal,
+            result.value.result.summary.unknown > 0
               ? "source-to-bundle-comparison"
               : undefined,
           );

@@ -1,19 +1,24 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
+import { promisify } from "node:util";
 
 import { AdbDeviceAnalysisService } from "../dist/application/adb/AdbDeviceAnalysisService.js";
 import { createAdbDeviceAnalysisProvider } from "../dist/composition/adb.js";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 
+const execFileAsync = promisify(execFile);
 const options = parseArguments(process.argv.slice(2));
 if (options.help) {
   process.stdout.write(
     "Usage: npm run verify:adb [-- --serial SERIAL --pull PACKAGE]\n" +
       "Requires a caller-selected adb binary (REA_ADB_PATH or PATH) and a\n" +
-      "connected device or emulator. Verifies all five operations against\n" +
-      "the live device; --pull acquires a real package and re-digests the\n" +
+      "connected device or emulator. Verifies observation and transfer operations\n" +
+      "against the live device. --install-apk is unavailable until APK identity\n" +
+      "and device cleanup ownership can be established safely.\n" +
+      "--pull acquires a real package and re-digests the\n" +
       "files on disk against the returned SHA-256 values.\n",
   );
   process.exit(0);
@@ -38,6 +43,80 @@ const run = async (operation, input) => {
     return null;
   }
   return result.value.normalized_result;
+};
+
+// Remove the verifier's own transfer probe with the provider-reported adb
+// client, then confirm through the directory listing that it is gone.
+const removeDeviceProbe = async (binary, serial, devicePath) => {
+  const name = "verifier transfer probe removed";
+  if (typeof binary !== "string" || binary === "") {
+    check(name, false, `${devicePath}: adb client path unavailable`);
+    return;
+  }
+  try {
+    await execFileAsync(
+      binary,
+      ["-s", serial, "shell", "rm", "--", devicePath],
+      {
+        timeout: 30_000,
+      },
+    );
+  } catch (cause) {
+    check(name, false, `${devicePath}: ${formatFailure(cause)}`);
+    return;
+  }
+  const listing = await run("list_adb_directory", {
+    serial,
+    device_path: posix.dirname(devicePath),
+  });
+  if (listing !== null)
+    check(
+      name,
+      listing.coverage === "complete" &&
+        !listing.entries.some(
+          (entry) => entry.name === posix.basename(devicePath),
+        ),
+      devicePath,
+    );
+};
+
+const verifyTransferRoundtrip = async ({
+  adbBinary,
+  serial,
+  payload,
+  devicePath,
+  outputDirectory,
+}) => {
+  const pushed = await run("push_adb_file", {
+    serial,
+    local_path: payload,
+    device_path: devicePath,
+    overwrite: false,
+  });
+  if (pushed === null) return;
+  // A successful no-overwrite push proves the verifier created this exact
+  // destination; pull_adb_file deliberately retains device originals.
+  try {
+    check(
+      "push reports matching device-side digest",
+      pushed.device_digest_source === "device_sha256sum" &&
+        pushed.device_sha256 === pushed.sha256,
+      `${pushed.bytes} bytes`,
+    );
+    const pulled = await run("pull_adb_file", {
+      serial,
+      device_path: devicePath,
+      output_directory: outputDirectory,
+    });
+    if (pulled !== null)
+      check(
+        "pulled file digest matches the pushed digest",
+        pulled.sha256 === pushed.sha256,
+        `${pulled.bytes} bytes`,
+      );
+  } finally {
+    await removeDeviceProbe(adbBinary, serial, devicePath);
+  }
 };
 
 let verifierFailed = false;
@@ -245,31 +324,13 @@ try {
         fs.writeFile(payload, payloadBytes),
       );
       const deviceTarget = `/data/local/tmp/rea-verify-${Date.now()}.txt`;
-      const pushed = await run("push_adb_file", {
+      await verifyTransferRoundtrip({
+        adbBinary: client?.client.binary_path,
         serial,
-        local_path: payload,
-        device_path: deviceTarget,
-        overwrite: false,
+        payload,
+        devicePath: deviceTarget,
+        outputDirectory: transferRoot,
       });
-      if (pushed !== null) {
-        check(
-          "push reports matching device-side digest",
-          pushed.device_digest_source === "device_sha256sum" &&
-            pushed.device_sha256 === pushed.sha256,
-          `${pushed.bytes} bytes`,
-        );
-        const pulled = await run("pull_adb_file", {
-          serial,
-          device_path: deviceTarget,
-          output_directory: transferRoot,
-        });
-        if (pulled !== null)
-          check(
-            "pulled file digest matches the pushed digest",
-            pulled.sha256 === pushed.sha256,
-            `${pulled.bytes} bytes`,
-          );
-      }
       const screenRoot = await mkdtemp(join(tmpdir(), "rea-adb-screen-"));
       try {
         const screen = await run("capture_adb_screen", {
@@ -297,79 +358,7 @@ try {
             `versionCode=${String(details.version_code)}`,
           );
       }
-      if (options.installApk !== null && options.installApk !== undefined) {
-        const probePackage = "com.rea.adb.probe";
-        const installedProbe = await run("install_adb_package", {
-          serial,
-          apk_path: options.installApk,
-          replace: false,
-        });
-        if (installedProbe !== null) {
-          check(
-            "install reports the APK digest",
-            typeof installedProbe.sha256 === "string" &&
-              installedProbe.sha256.length === 64,
-            `${installedProbe.bytes} bytes`,
-          );
-          const resolved = await run("resolve_adb_packages", {
-            serial,
-            query: "rea.adb.probe",
-          });
-          if (resolved !== null)
-            check(
-              "resolve finds the installed probe uniquely",
-              resolved.matches.length === 1 &&
-                resolved.matches[0]?.package_name === probePackage,
-              `${resolved.matches.length} match(es)`,
-            );
-          const started = await run("start_adb_app", {
-            serial,
-            package: probePackage,
-          });
-          if (started !== null)
-            check(
-              "app start resolves and launches the launcher activity",
-              typeof started.component === "string" &&
-                started.component.startsWith(probePackage),
-              String(started.component),
-            );
-          const observedProcesses = await run("list_adb_processes", { serial });
-          if (observedProcesses !== null)
-            check(
-              "started app appears in the process listing",
-              observedProcesses.processes.some(
-                (process) => process.name === probePackage,
-              ),
-            );
-          const stopped = await run("stop_adb_app", {
-            serial,
-            package: probePackage,
-          });
-          if (stopped !== null)
-            check(
-              "force-stop completes the dynamic-analysis run",
-              stopped.package_name === probePackage,
-            );
-          const removed = await run("uninstall_adb_package", {
-            serial,
-            package: probePackage,
-          });
-          if (removed !== null)
-            check(
-              "uninstall completes the lifecycle",
-              removed.package_name === probePackage,
-            );
-          const afterRemoval = await run("resolve_adb_packages", {
-            serial,
-            query: "rea.adb.probe",
-          });
-          if (afterRemoval !== null)
-            check(
-              "resolve reports zero matches after removal",
-              afterRemoval.matches.length === 0,
-            );
-        }
-      }
+
     } finally {
       await rm(transferRoot, { recursive: true, force: true });
     }
@@ -379,10 +368,7 @@ try {
   verifierFailure = cause;
 } finally {
   try {
-    await closeVerifierResources(
-      [() => provider.close()],
-      verifierFailed ? verifierFailure : undefined,
-    );
+    await closeVerifierResources([() => provider.close()]);
   } catch (cause) {
     process.stderr.write(`[FAIL] verifier cleanup — ${formatFailure(cause)}\n`);
     failures += 1;
@@ -403,7 +389,7 @@ if (failures > 0) {
 }
 
 function parseArguments(argv) {
-  const parsed = { help: false, serial: null, pull: null, installApk: null };
+  const parsed = { help: false, serial: null, pull: null };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--help" || argument === "-h") parsed.help = true;
@@ -414,8 +400,10 @@ function parseArguments(argv) {
       parsed.pull = argv[index + 1] ?? null;
       index += 1;
     } else if (argument === "--install-apk") {
-      parsed.installApk = argv[index + 1] ?? null;
-      index += 1;
+      process.stderr.write(
+        "--install-apk is unavailable: APK identity and device cleanup ownership cannot be established safely\n",
+      );
+      process.exit(1);
     } else {
       process.stderr.write(`unknown argument: ${argument}\n`);
       process.exit(2);

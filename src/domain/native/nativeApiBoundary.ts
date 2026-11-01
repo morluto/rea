@@ -18,10 +18,10 @@ const inferenceEvidenceSchema = z
   .strict();
 
 const inferredBoundaryTypeFacts = {
-  ordinal: z.number().int().min(0).nullable(),
+  ordinal: z.int().min(0).nullable(),
   name: z.string().min(1).nullable(),
   data_type: z.string().min(1),
-  size_bytes: z.number().int().min(0).nullable(),
+  size_bytes: z.int().min(0).nullable(),
   storage: z.string().min(1).nullable(),
   confidence: inferenceConfidenceSchema,
   evidence: z.array(inferenceEvidenceSchema).min(1),
@@ -44,7 +44,7 @@ const inferredReturnTypeSchema = z.strictObject({
 const inferredParameterTypeSchema = z.strictObject({
   ...inferredBoundaryTypeFacts,
   role: z.literal("parameter"),
-  ordinal: z.number().int().min(0),
+  ordinal: z.int().min(0),
 });
 
 const jumpTableDataSourceSchema = z
@@ -56,8 +56,8 @@ const jumpTableDataSourceSchema = z
       "ghidra-aarch64-byte-table",
       "ghidra-aarch64-halfword-table",
     ]),
-    entry_size_bytes: z.number().int().min(1).nullable(),
-    entry_count: z.number().int().min(0).nullable(),
+    entry_size_bytes: z.int().min(1).nullable(),
+    entry_count: z.int().min(0).nullable(),
     confidence: inferenceConfidenceSchema,
     evidence: z.array(inferenceEvidenceSchema).min(1),
   })
@@ -65,7 +65,7 @@ const jumpTableDataSourceSchema = z
 
 const jumpTableMappingSchema = z
   .object({
-    case_value: z.number().int().nullable(),
+    case_value: z.int().nullable(),
     target_address: z.string().min(1),
     confidence: inferenceConfidenceSchema,
     evidence: z.array(inferenceEvidenceSchema).min(1),
@@ -99,10 +99,18 @@ const unresolvedIndirectBranchSchema = z.strictObject({
     "no_jump_table_warning",
   ]),
   listing_targets: z.array(z.string().min(1)),
+  listing_targets_omitted: z
+    .number()
+    .int()
+    .positive()
+    .exactOptional()
+    .describe(
+      "Listing flow targets beyond the provider's per-branch bound that were not reported.",
+    ),
   evidence: z.array(inferenceEvidenceSchema).min(1),
 });
 
-const availableNativeApiBoundarySchema = z
+export const availableNativeApiBoundarySchema = z
   .object({
     available: z.literal(true),
     provenance: z.string().min(1),
@@ -116,6 +124,14 @@ const availableNativeApiBoundarySchema = z
       .exactOptional()
       .describe(
         "Computed jumps inside the function with no recovered jump table. Absent when the provider did not inspect indirect branches, which is not evidence that none exist.",
+      ),
+    unresolved_indirect_branches_omitted: z
+      .number()
+      .int()
+      .positive()
+      .exactOptional()
+      .describe(
+        "Further computed jumps beyond the provider's inventory bound that were not reported.",
       ),
     pseudocode: z
       .object({
@@ -136,7 +152,7 @@ const availableNativeApiBoundarySchema = z
   })
   .strict();
 
-const unavailableNativeApiBoundarySchema = z
+export const unavailableNativeApiBoundarySchema = z
   .object({
     available: z.literal(false),
     reason: z.string().min(1),

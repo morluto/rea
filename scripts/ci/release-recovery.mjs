@@ -6,10 +6,8 @@ import { promisify } from "node:util";
 import { valid } from "semver";
 import { z } from "zod";
 
-import {
-  validateVerifiedPackage,
-  verifyPublishedPackageIntegrity,
-} from "./verified-package.mjs";
+import { validateVerifiedPackage } from "./verified-package.mjs";
+import { verifyPublishedPackageIntegrity } from "./qualified-package-envelope.mjs";
 
 const execute = promisify(execFile);
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
@@ -82,9 +80,19 @@ export function selectRecoveryRelease({
       throw new Error(`Original release did not pass ${name}`);
   const publish = requireJob("Publish to npm");
   const writes = publish.steps.filter((step) => step.name === "Publish");
-  const verified = publish.steps.filter(
-    (step) => step.name === "Verify published npm bytes and dist-tag",
+  const verificationJobs = parsedJobs.filter(
+    (job) => job.name === "Verify published npm package",
   );
+  if (
+    verificationJobs.length > 1 ||
+    verificationJobs.some((job) => job.status !== "completed")
+  )
+    throw new Error(
+      "Expected at most one completed original npm verification job",
+    );
+  const verified = [publish, ...verificationJobs]
+    .flatMap((job) => job.steps)
+    .filter((step) => step.name === "Verify published npm bytes and dist-tag");
   if (
     !(
       (writes.length === 1 && writes[0].conclusion === "success") ||
@@ -118,6 +126,8 @@ export async function verifyRecoveryPackage({
     runAttempt,
     packageVersion: version,
     nodeVersion: process.version,
+    // Existing published releases retain their original v1 artifact; never rewrite it.
+    allowLegacyManifest: true,
   });
   await verifyPublishedPackageIntegrity(tarball, integrity);
   return { version, sourceSha, runId, runAttempt, integrity };

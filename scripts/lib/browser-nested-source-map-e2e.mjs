@@ -11,7 +11,7 @@ import { parseEvidence } from "../../dist/domain/evidence.js";
 import { traceSourceMap } from "../../dist/javascript/sourceMaps/TraceSourceMap.js";
 import { startBrowserSourceMapSite } from "../fixtures/browser-source-map-site.mjs";
 import { startRuntimeFixtureBrowser } from "./browser-runtime-fixture-lifecycle.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 const cases = [
   { name: "same-line nested column control", prefixes: ["\n\n       ", "   "] },
@@ -59,134 +59,137 @@ async function verifyCase(executable, entrypoint, scenario) {
   });
   let fixture;
   let connection;
-  let primaryError;
   let phase = "native-map-admission";
   let browserVersion;
   let expected;
   let observed;
-  try {
-    const mapUrl = `${site.origin}/maps/app.js.map`;
-    // This independent existing decoder already composes valid nested offsets.
-    // It is a before-product admission control, not the expected browser oracle.
-    const point = traceSourceMap(site.map, mapUrl, site.position);
-    assert.equal(point.matches.length, 1);
-    assert.equal(
-      point.matches[0].original_position.line,
-      site.originalPosition.line,
-    );
-    assert.equal(
-      point.matches[0].original_position.column,
-      site.originalPosition.column,
-    );
-    expected = compilerMappingsAtPhysicalPositions(site, mapUrl);
-    assert.ok(
-      expected.length > 0,
-      "Native compiler leaf must carry point mappings",
-    );
+  return withVerifierCleanup(async () => {
+    try {
+      const mapUrl = `${site.origin}/maps/app.js.map`;
+      // This independent existing decoder already composes valid nested offsets.
+      // It is a before-product admission control, not the expected browser oracle.
+      const point = traceSourceMap(site.map, mapUrl, site.position);
+      assert.equal(point.matches.length, 1);
+      assert.equal(
+        point.matches[0].original_position.line,
+        site.originalPosition.line,
+      );
+      assert.equal(
+        point.matches[0].original_position.column,
+        site.originalPosition.column,
+      );
+      expected = compilerMappingsAtPhysicalPositions(site, mapUrl);
+      assert.ok(
+        expected.length > 0,
+        "Native compiler leaf must carry point mappings",
+      );
 
-    phase = "owned-browser-startup";
-    fixture = await startRuntimeFixtureBrowser(executable, site.origin);
-    const endpoint = `http://127.0.0.1:${fixture.port}`;
-    const provider = new CdpBrowserProvider();
-    const targets = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: endpoint,
-        allowed_origins: [site.origin],
-      }),
-    );
-    if (!targets.ok) throw targets.error;
-    const target = targets.value.targets[0];
-    assert.ok(target, "Owned fixture target missing");
-    const pages = await (await fetch(`${endpoint}/json/list`)).json();
-    const page = pages.find(({ id }) => id === target.target_id);
-    assert.ok(page, "Owned CDP fixture page missing");
-    connection = await CdpConnection.connect(
-      page.webSocketDebuggerUrl,
-      "inspect_web_page",
-    );
-    await ready(connection);
-    browserVersion = await connection.send("Browser.getVersion");
-    phase = "public-cli";
-    const { stdout } = await promisify(execFile)(
-      process.execPath,
-      [
-        entrypoint,
-        "analyze-web-bundle",
-        endpoint,
-        target.target_id,
-        "--allowed-origins",
-        site.origin,
-        "--fetch-source-maps",
-        "--observation-ms",
-        "0",
-        "--json",
-      ],
-      {
-        env: { ...process.env, REA_LOG_LEVEL: "silent" },
-        timeout: 45_000,
-        maxBuffer: 16 * 1024 * 1024,
-      },
-    );
-    const evidence = parseEvidence(JSON.parse(stdout));
-    assert.equal(evidence.operation, "analyze_web_bundle");
-    const maps = evidence.normalized_result.observations.source_maps;
-    const item = maps.items.find(({ artifact }) => artifact?.text === site.map);
-    assert.ok(
-      item,
-      "Public browser analysis omitted the exact compiler-derived map",
-    );
-    phase = "public-map-assertions";
-    observed = item?.mappings;
-    assert.equal(item.status, "included");
-    assert.equal(item.mappings.length, expected.length);
-    for (const [index, coordinates] of expected.entries()) {
-      const mapping = item.mappings[index];
-      for (const [key, value] of Object.entries(coordinates))
-        assert.deepEqual(mapping[key], value);
-      // This compiler fixture has one source declaration in one wrapped leaf.
-      assert.equal(mapping.source_index, 0);
-      assert.equal(mapping.declaration_index, 0);
+      phase = "owned-browser-startup";
+      fixture = await startRuntimeFixtureBrowser(executable, site.origin);
+      const endpoint = `http://127.0.0.1:${fixture.port}`;
+      const provider = new CdpBrowserProvider();
+      const targets = await provider.listTargets(
+        listBrowserTargetsInputSchema.parse({
+          cdp_endpoint: endpoint,
+          allowed_origins: [site.origin],
+        }),
+      );
+      if (!targets.ok) throw targets.error;
+      const target = targets.value.targets[0];
+      assert.ok(target, "Owned fixture target missing");
+      const pages = await (await fetch(`${endpoint}/json/list`)).json();
+      const page = pages.find(({ id }) => id === target.target_id);
+      assert.ok(page, "Owned CDP fixture page missing");
+      connection = await CdpConnection.connect(
+        page.webSocketDebuggerUrl,
+        "inspect_web_page",
+      );
+      await ready(connection);
+      browserVersion = await connection.send("Browser.getVersion");
+      phase = "public-cli";
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [
+          entrypoint,
+          "analyze-web-bundle",
+          endpoint,
+          target.target_id,
+          "--allowed-origins",
+          site.origin,
+          "--fetch-source-maps",
+          "--observation-ms",
+          "0",
+          "--json",
+        ],
+        {
+          env: { ...process.env, REA_LOG_LEVEL: "silent" },
+          timeout: 45_000,
+          maxBuffer: 16 * 1024 * 1024,
+        },
+      );
+      const evidence = parseEvidence(JSON.parse(stdout));
+      assert.equal(evidence.operation, "analyze_web_bundle");
+      const maps = evidence.normalized_result.observations.source_maps;
+      const item = maps.items.find(
+        ({ artifact }) => artifact?.text === site.map,
+      );
+      assert.ok(
+        item,
+        "Public browser analysis omitted the exact compiler-derived map",
+      );
+      phase = "public-map-assertions";
+      observed = item?.mappings;
+      assert.equal(item.status, "included");
+      assert.equal(item.mappings.length, expected.length);
+      for (const [index, coordinates] of expected.entries()) {
+        const mapping = item.mappings[index];
+        for (const [key, value] of Object.entries(coordinates))
+          assert.deepEqual(mapping[key], value);
+        // This compiler fixture has one source declaration in one wrapped leaf.
+        assert.equal(mapping.source_index, 0);
+        assert.equal(mapping.declaration_index, 0);
+      }
+      assert.equal(item.original_sources.length, 1);
+      assert.equal(item.artifact.sha256, sha(site.map));
+      assert.equal(item.artifact.bytes, Buffer.byteLength(site.map));
+      assert.equal(
+        item.original_sources[0].artifact.sha256,
+        sha(site.original),
+      );
+      assert.ok(
+        site.mapRequests() > 0,
+        "Actual browser workflow did not fetch the declared map",
+      );
+      return {
+        compiler: site.compiler,
+        browser: browserVersion.product,
+        generated_sha256: sha(site.generated),
+        source_map_sha256: sha(site.map),
+        original_sha256: sha(site.original),
+        mappings: expected.length,
+        native_decoder_control: true,
+      };
+    } catch (cause) {
+      const failure = new Error(
+        `Nested source-map ${phase}: ${String(cause)}`,
+        {
+          cause,
+        },
+      );
+      failure.qualificationPhase = phase;
+      failure.qualificationReceipt = {
+        compiler: site.compiler,
+        browser: browserVersion?.product ?? null,
+        generated_sha256: sha(site.generated),
+        leaf_map_sha256: sha(site.leafMap),
+        source_map_sha256: sha(site.map),
+        original_sha256: sha(site.original),
+        expected_first_mapping: expected?.[0] ?? null,
+        observed_first_mapping: observed?.[0] ?? null,
+      };
+      throw failure;
     }
-    assert.equal(item.original_sources.length, 1);
-    assert.equal(item.artifact.sha256, sha(site.map));
-    assert.equal(item.artifact.bytes, Buffer.byteLength(site.map));
-    assert.equal(item.original_sources[0].artifact.sha256, sha(site.original));
-    assert.ok(
-      site.mapRequests() > 0,
-      "Actual browser workflow did not fetch the declared map",
-    );
-    return {
-      compiler: site.compiler,
-      browser: browserVersion.product,
-      generated_sha256: sha(site.generated),
-      source_map_sha256: sha(site.map),
-      original_sha256: sha(site.original),
-      mappings: expected.length,
-      native_decoder_control: true,
-    };
-  } catch (cause) {
-    const failure = new Error(`Nested source-map ${phase}: ${String(cause)}`, {
-      cause,
-    });
-    failure.qualificationPhase = phase;
-    failure.qualificationReceipt = {
-      compiler: site.compiler,
-      browser: browserVersion?.product ?? null,
-      generated_sha256: sha(site.generated),
-      leaf_map_sha256: sha(site.leafMap),
-      source_map_sha256: sha(site.map),
-      original_sha256: sha(site.original),
-      expected_first_mapping: expected?.[0] ?? null,
-      observed_first_mapping: observed?.[0] ?? null,
-    };
-    primaryError = failure;
-    throw failure;
-  } finally {
-    await closeVerifierResources(
-      [() => connection?.close(), () => fixture?.close(), () => site.close()],
-      primaryError,
-    );
-  }
+  }, [() => connection?.close(), () => fixture?.close(), () => site.close()]);
 }
 
 function compilerMappingsAtPhysicalPositions(site, mapUrl) {

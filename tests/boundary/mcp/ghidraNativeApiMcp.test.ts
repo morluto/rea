@@ -10,10 +10,107 @@ import { join } from "node:path";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { nativeLoadImageSchema } from "../../../src/domain/native/nativeLoadImage.js";
 import { nativeApiInspectionResultSchema } from "../../../src/domain/native/nativeApiBoundary.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ok } from "../../../src/domain/result.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+
+it("retains complete load-image facts and pages selected relocations through the advertised SDK contracts", async () => {
+  const fixture = fixtureDosOverlapLoadImage();
+  const directory = await createTestTempDirectory("rea-mcp-load-summary-");
+  const targetPath = join(directory, "inert.exe");
+  await writeFile(targetPath, fixture.bytes);
+  const harness = await connectGhidraMcp(
+    "ghidra-load-summary",
+    async () => ok(jsonValueSchema.parse(fixture.observation)),
+    {
+      targetPath,
+      sessionTarget: {
+        name: "inert.exe",
+        language_id: fixture.observation.language_id,
+        compiler_spec_id: fixture.observation.compiler_spec_id,
+        image_base: fixture.observation.image_base,
+        default_address_space: fixture.observation.default_address_space,
+        sha256: fixture.sha256,
+      },
+      attestDosTargetSnapshot: async (observations) =>
+        compareDosClientFixture(fixture.bytes, fixture.sha256, observations),
+    },
+  );
+  try {
+    const catalog = await harness.mcp.listTools();
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const call = async (
+      name: "inspect_native_load_image" | "inspect_analysis_view",
+      input: Record<string, unknown>,
+    ) => {
+      const definition = catalog.tools.find((tool) => tool.name === name);
+      if (!definition?.outputSchema) throw new Error("Missing named schema");
+      const inputSchema: Record<string, unknown> = definition.inputSchema;
+      const outputSchema: Record<string, unknown> = definition.outputSchema;
+      expect(ajv.validateSchema(inputSchema)).toBe(true);
+      expect(ajv.validateSchema(outputSchema)).toBe(true);
+      const reply = await harness.mcp.callTool(
+        { name, arguments: input },
+        { toolDefinition: definition },
+      );
+      expect(reply.isError).not.toBe(true);
+      expect(
+        ajv.validate(outputSchema, reply.structuredContent),
+        JSON.stringify(ajv.errors),
+      ).toBe(true);
+      return sessionEvidence(harness.session, reply.structuredContent);
+    };
+    const complete = await call("inspect_native_load_image", {});
+    const summary = await call("inspect_native_load_image", {
+      detail: "summary",
+    });
+    expect(summary.normalized_result).toMatchObject({
+      parent_evidence_id: complete.evidence_id,
+      source_provider: complete.provider,
+      source_analysis_profile_digest: complete.analysis_profile?.digest,
+      source_parameters: complete.parameters,
+      summary: {
+        verification: { status: "verified", format: "dos-mz" },
+        counts: { relocations: 2 },
+      },
+    });
+    const calls = harness.calls.length;
+    const page = await call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id: complete.evidence_id },
+      view: {
+        kind: "native-load-image",
+        collection: "relocations",
+        offset: 1,
+        limit: 1,
+        fields: ["address", "memory_bytes_hex"],
+      },
+    });
+    const parsed = analysisViewResultSchema.parse(page.normalized_result);
+    if (parsed.kind !== "native-load-image")
+      throw new Error("Expected load-image page");
+    expect(parsed.verification_status).toBe("verified");
+    expect(parsed.items.rows).toEqual([
+      {
+        source_index: 1,
+        record: {
+          address: fixture.observation.relocations[1]!.address,
+          memory_bytes_hex:
+            fixture.observation.relocations[1]!.memory_bytes_hex,
+        },
+      },
+    ]);
+    expect(harness.calls).toHaveLength(calls);
+    expect(harness.session.evidenceById(complete.evidence_id)).toEqual(
+      complete,
+    );
+    expect(complete.parameters).toEqual({});
+  } finally {
+    await harness.close();
+  }
+});
 
 it.each([
   { state: "final", failed: [] },
@@ -88,6 +185,60 @@ it.each([
 );
 
 describe("Ghidra MCP native API evidence", () => {
+  it("retains transient failure Evidence without freezing the composed API inspection", async () => {
+    let failed = true;
+    const harness = await connectGhidraMcp(
+      "ghidra-native-api-recovery",
+      async (operation) => {
+        if (operation !== "analyze_function")
+          throw new Error(`Unexpected operation: ${operation}`);
+        const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+        if (failed)
+          dossier.native_api = {
+            available: false,
+            reason: "Injected backend failure",
+            residual_unknowns: ["Retry after recovery."],
+          };
+        return ok(
+          jsonValueSchema.parse({
+            value: dossier,
+            limitations: [],
+            ...(failed ? { cache_policy: "live" } : {}),
+          }),
+        );
+      },
+    );
+    try {
+      const inspect = async () => {
+        const reply = await harness.mcp.callTool({
+          name: "inspect_native_api",
+          arguments: { procedure: "fixture_main" },
+        });
+        expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
+        return sessionEvidence(harness.session, reply.structuredContent);
+      };
+      const degraded = await inspect();
+      expect(degraded.normalized_result).toMatchObject({
+        boundary: { available: false },
+      });
+      const snapshot = harness.session.exportAnalysisSnapshot();
+      if (!snapshot.ok) throw snapshot.error;
+      expect(snapshot.value.entries).toEqual([]);
+      expect(snapshot.value.workflow_entries).toEqual([]);
+      expect(harness.session.evidenceById(degraded.evidence_id)).toEqual(
+        degraded,
+      );
+      failed = false;
+      expect((await inspect()).normalized_result).toMatchObject({
+        boundary: { available: true },
+      });
+      await inspect();
+      expect(harness.calls).toEqual(["analyze_function", "analyze_function"]);
+    } finally {
+      await harness.close();
+    }
+  }, 30_000);
+
   it("returns complete native API boundaries without output-cap unknowns", async () => {
     const harness = await connectGhidraMcp("ghidra-native-api");
     const { mcp, session } = harness;
@@ -136,10 +287,6 @@ describe("Ghidra MCP native API evidence", () => {
 
 it("retains unavailable Ghidra native API observations across provenance and exact replay", async () => {
   const residual = "The controlled provider omitted native API boundary facts.";
-  const residuals = [
-    residual,
-    "Which indirect branches does this function contain? The provider did not report an indirect-branch inventory.",
-  ];
   // This wire fixture is controlled and never launches Ghidra.
   const harness = await connectGhidraMcp(
     "ghidra-native-api-unavailable-identity",
@@ -199,12 +346,11 @@ it("retains unavailable Ghidra native API observations across provenance and exa
           reason: residual,
           residual_unknowns: [residual],
         },
-        unsupported_branches: [
-          "structured-boundary-types",
-          "jump-table-data-mapping",
-          "indirect-branch-inventory",
+        // The provider's boundary unknown, plus the absent indirect-branch inventory.
+        residual_unknowns: [
+          residual,
+          "Which indirect branches does this function contain? The provider did not report an indirect-branch inventory.",
         ],
-        residual_unknowns: residuals,
       });
       return evidence;
     };
@@ -236,20 +382,34 @@ it("retains unavailable Ghidra native API observations across provenance and exa
     const unknownPage = toolContract("list_unknowns").outputSchema.parse(
       listed.structuredContent,
     ).result;
+    // Two automatic unknowns for each of the three result Evidence records.
     expect(unknownPage.total).toBe(6);
-    expect(unknownPage.items).toHaveLength(6);
     expect(unknownPage.items).toEqual(
-      expect.arrayContaining(
-        [first, replay, second].flatMap(({ evidence_id }) =>
-          residuals.map((question) =>
-            expect.objectContaining({
-              question: `${question} (Evidence ${evidence_id})`,
-              supporting_evidence_ids: [evidence_id],
-            }),
-          ),
-        ),
-      ),
+      expect.arrayContaining([
+        expect.objectContaining({
+          question: expect.stringContaining(first.evidence_id),
+          supporting_evidence_ids: [first.evidence_id],
+        }),
+        expect.objectContaining({
+          question: expect.stringContaining(replay.evidence_id),
+          supporting_evidence_ids: [replay.evidence_id],
+        }),
+        expect.objectContaining({
+          question: expect.stringContaining(second.evidence_id),
+          supporting_evidence_ids: [second.evidence_id],
+        }),
+      ]),
     );
+    const indirectBranchQuestion =
+      "Which indirect branches does this function contain? The provider did not report an indirect-branch inventory.";
+    expect(
+      unknownPage.items.filter(({ question }) => question.includes(residual)),
+    ).toHaveLength(3);
+    expect(
+      unknownPage.items.filter(({ question }) =>
+        question.includes(indirectBranchQuestion),
+      ),
+    ).toHaveLength(3);
   } finally {
     await harness.close();
   }

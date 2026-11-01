@@ -4,16 +4,28 @@ import { basename, dirname, extname, join } from "node:path";
 import { promisify } from "node:util";
 
 import {
+  hopperCancelledBySignal,
   HopperCancelledError,
   HopperProcessError,
   HopperStartError,
 } from "../domain/hopperErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  artifactPrimaryCleanupLeases,
+} from "../artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
+import type {
+  OwnedProcessGroup,
+  ProcessCleanupResult,
+} from "../process/ProcessOwnership.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import {
+  type ProviderProcessHandle,
   type ProviderProcessLaunch,
   spawnOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
@@ -28,12 +40,21 @@ import {
   prepareHopperMachOImage,
   type HopperMachOImage,
 } from "./HopperMachOImage.js";
+import {
+  prepareHopperExecutableImage,
+  type HopperImageCopyFileSystem,
+} from "./HopperImageCopy.js";
 
 import {
   acquireHopperTargetLease,
   acquireLinuxHopperApplicationLease,
 } from "../process/HopperLease.js";
-import type { HopperTargetLease } from "../process/HopperLease.js";
+import type { OwnedLease } from "../process/OwnedLease.js";
+import {
+  MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+  MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+  type BridgeMaxRequestBytes,
+} from "../config/bridgeMaxRequestBytes.js";
 import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import { verifyMacHopperNativeHelper } from "./HopperMacPublisher.js";
 import { inspectLinuxHopperLauncher } from "../application/LinuxHopper.js";
@@ -41,6 +62,25 @@ import { retryLinuxHopperPublisherCleanup } from "../application/LinuxHopperPubl
 
 const execFileAsync = promisify(execFile);
 const HOPPER_BACKGROUND_STARTUP_MS = 5_000;
+/**
+ * Bound for the Linux demo helper's orderly shutdown during teardown.
+ * The helper stops Hopper and Xvfb with SIGTERM (up to 2s each in
+ * stop_process); Xvfb removes its /tmp/.X<n>-lock on that clean exit.
+ */
+const LINUX_DEMO_ORDERLY_SHUTDOWN_GRACE_MS = 10_000;
+
+const bindRetainedArtifactCleanup = (
+  error: AnalysisError,
+  cause: unknown,
+): void => {
+  const leases = artifactPrimaryCleanupLeases(cause);
+  if (leases !== undefined && leases.length > 0) {
+    new AnalysisCleanupLeaseGroup(error, leases);
+    return;
+  }
+  if (cause instanceof AnalysisError && cause.cleanupIncomplete)
+    error.bindCleanupDependencies([cause]);
+};
 
 /** Coordinates for one private bridge session. */
 export interface BridgeSession {
@@ -95,8 +135,12 @@ interface SharedHopperApplicationLauncherOptions {
   readonly launcherPath: string;
   readonly targetPath: string;
   readonly targetKind: "executable" | "database";
+  /** Selected artifact identity; provider-created executable launches always supply it. */
+  readonly targetSha256?: string;
   readonly loaderArgs: readonly string[];
   readonly bridgeScriptPath: string;
+  /** Caller-selected request ceiling. Omitted or source default leaves the bridge at 16 MiB. */
+  readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
   readonly preparedImage?: {
     readonly image: HopperMachOImage;
     readonly sourceSha256: string;
@@ -115,6 +159,7 @@ export type HopperApplicationLauncherOptions =
     });
 
 export interface HopperApplicationLauncherDependencies {
+  readonly imageFileSystem?: HopperImageCopyFileSystem;
   readonly verifyNativeHelper?: typeof verifyMacHopperNativeHelper;
   readonly verifyLinuxLauncher?: typeof inspectLinuxHopperLauncher;
   readonly retryPublisherCleanup?: typeof retryLinuxHopperPublisherCleanup;
@@ -126,6 +171,11 @@ export interface HopperApplicationLauncherDependencies {
     readonly helperPath: string;
     readonly signal?: AbortSignal;
   }) => Promise<LinuxPrivateDisplaySelection>;
+  /**
+   * How long teardown waits for the Linux demo helper's orderly shutdown
+   * (stdin EOF → SIGTERM to Hopper and Xvfb) before the process-group kill.
+   */
+  readonly demoOrderlyShutdownGraceMs?: number;
 }
 
 /**
@@ -143,35 +193,88 @@ export interface HopperApplicationLauncherDependencies {
  * macOS LaunchServices may create or reuse.
  */
 export class HopperApplicationLauncher implements BridgeLauncher {
+  readonly #preparedImageResources = new ArtifactResourceScope();
+  readonly #probeResources = new ArtifactResourceScope();
+
   constructor(
     readonly options: HopperApplicationLauncherOptions,
     readonly dependencies: HopperApplicationLauncherDependencies = {},
   ) {}
 
   async cleanup(): Promise<Result<null, ProviderCleanupError>> {
-    if (!usesLinuxDemo(this.options)) return ok(null);
+    const failures: ProviderCleanupError[] = [];
     try {
-      await (
-        this.dependencies.retryPublisherCleanup ??
-        retryLinuxHopperPublisherCleanup
-      )();
-      return ok(null);
+      await this.#preparedImageResources.retryCleanup();
     } catch (cause: unknown) {
       const observation = ArtifactReaderFailure.cleanupObservation(
         cause,
-        "hopper-publisher-verification",
+        this.#preparedImageResources.cleanupResources,
       );
-      return err(
-        new ProviderCleanupError(
+      const failure = new ProviderCleanupError(
+        "hopper",
+        observation.resources,
+        { reason: observation.reason },
+        { cause },
+      );
+      bindRetainedArtifactCleanup(failure, cause);
+      failures.push(failure);
+    }
+    try {
+      await this.#probeResources.retryCleanup();
+    } catch (cause: unknown) {
+      const observation = ArtifactReaderFailure.cleanupObservation(
+        cause,
+        this.#probeResources.cleanupResources,
+      );
+      const failure = new ProviderCleanupError(
+        "hopper",
+        observation.resources,
+        { reason: observation.reason },
+        { cause },
+      );
+      bindRetainedArtifactCleanup(failure, cause);
+      failures.push(failure);
+    }
+    if (usesLinuxDemo(this.options)) {
+      try {
+        await (
+          this.dependencies.retryPublisherCleanup ??
+          retryLinuxHopperPublisherCleanup
+        )();
+      } catch (cause: unknown) {
+        const observation = ArtifactReaderFailure.cleanupObservation(
+          cause,
+          "hopper-publisher-verification",
+        );
+        const failure = new ProviderCleanupError(
           "hopper",
           observation.resources,
-          {
-            reason: observation.reason,
-          },
+          { reason: observation.reason },
           { cause },
-        ),
-      );
+        );
+        bindRetainedArtifactCleanup(failure, cause);
+        failures.push(failure);
+      }
     }
+    if (failures.length === 0) return ok(null);
+    if (failures.length === 1) return err(failures[0]!);
+    const resources = [
+      ...new Set(failures.flatMap((failure) => failure.cleanupResources)),
+    ];
+    const failure = new ProviderCleanupError(
+      "hopper",
+      resources,
+      {
+        reason: failures.map((failure) => failure.message).join("; "),
+      },
+      {
+        cause: new AggregateError(
+          failures,
+          "Hopper image and publisher cleanup remain incomplete",
+        ),
+      },
+    );
+    return err(failure.bindCleanupDependencies(failures));
   }
 
   async launch(
@@ -186,17 +289,52 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     const leaseResult = await this.#acquireLaunchLease(session.runId);
     if (!leaseResult.ok) return leaseResult;
     const lease = leaseResult.value;
-    let leaseTransferred = false;
-    try {
+    const outcome = await (async () => {
       let loadedPath = this.options.targetPath;
-      if (this.options.preparedImage !== undefined) {
-        const prepared = await prepareHopperMachOImage(
-          this.options.targetPath,
-          this.options.preparedImage.sourceSha256,
-          this.options.preparedImage.image,
-          join(session.directory, "image.macho"),
-          options.signal,
-        );
+      const preparedImage = this.options.preparedImage;
+      const sourceSha256 =
+        preparedImage?.sourceSha256 ??
+        (this.options.targetKind === "executable"
+          ? this.options.targetSha256
+          : undefined);
+      if (sourceSha256 !== undefined) {
+        let prepared: Awaited<ReturnType<typeof prepareHopperMachOImage>>;
+        try {
+          const copyOptions = {
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+            resourceScope: this.#preparedImageResources,
+            ...(this.dependencies.imageFileSystem === undefined
+              ? {}
+              : { fileSystem: this.dependencies.imageFileSystem }),
+          };
+          prepared = await this.#preparedImageResources.run(() =>
+            preparedImage === undefined
+              ? prepareHopperExecutableImage(
+                  this.options.targetPath,
+                  sourceSha256,
+                  join(session.directory, "image.executable"),
+                  copyOptions,
+                )
+              : prepareHopperMachOImage(
+                  this.options.targetPath,
+                  sourceSha256,
+                  preparedImage.image,
+                  join(session.directory, "image.macho"),
+                  copyOptions,
+                ),
+          );
+        } catch (cause: unknown) {
+          const failure = new HopperStartError({
+            cause,
+            userMessage: `Previous Hopper image cleanup remains incomplete: ${cause instanceof Error ? cause.message : String(cause)}`,
+            cleanup: {
+              reason: cause instanceof Error ? cause.message : String(cause),
+              resources: this.#preparedImageResources.cleanupResources,
+            },
+          });
+          bindRetainedArtifactCleanup(failure, cause);
+          return err(failure);
+        }
         if (!prepared.ok) return prepared;
         loadedPath = prepared.value;
       }
@@ -215,11 +353,33 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         ownsProcessLifetime,
         lease,
       });
-      leaseTransferred = launched.ok;
       return launched;
-    } finally {
-      if (!leaseTransferred) await lease?.release();
-    }
+    })().catch((cause: unknown) => err(new HopperStartError({ cause })));
+    if (outcome.ok || lease === undefined) return outcome;
+    const released = await this.#probeResources.release({
+      kind: "lease",
+      resource: lease.socketPath ?? session.directory,
+      lease,
+    });
+    if (released.kind === "released") return outcome;
+    const cleanup = this.#probeResources.cleanupFailure({ kind: "completed" }, [
+      released,
+    ]);
+    const leaseFailure = new HopperStartError({
+      cause: cleanup,
+      cleanup: cleanup.cleanup,
+    });
+    bindRetainedArtifactCleanup(leaseFailure, cleanup);
+    const failure = new HopperStartError({
+      cause: cleanup,
+      cleanupPrimary: outcome.error,
+      cleanup: cleanup.cleanup,
+      ...(outcome.error.userMessage === undefined
+        ? {}
+        : { userMessage: outcome.error.userMessage }),
+    });
+    failure.bindCleanupDependencies([outcome.error, leaseFailure]);
+    return err(failure);
   }
 
   async #launchPreparedTarget(input: {
@@ -228,7 +388,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     readonly bootstrapPath: string;
     readonly loadedPath: string;
     readonly ownsProcessLifetime: boolean;
-    readonly lease: HopperTargetLease | undefined;
+    readonly lease: OwnedLease | undefined;
   }): Promise<
     Result<
       BridgeLaunch,
@@ -249,9 +409,33 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     ];
     let launched = false;
     try {
-      if (signal?.aborted === true) return err(new HopperCancelledError());
-      const display = await this.#privateDisplay(signal);
-      if (!display.ok) return err(display.error);
+      if (signal?.aborted === true) return err(hopperCancelledBySignal(signal));
+      if ((this.dependencies.platform ?? process.platform) === "darwin") {
+        // The vendor helper embeds argv in AppleScript quoted literals. Check
+        // the actual prepared paths before even starting the application. Do
+        // not rewrite caller names or double-escape values passed to the helper.
+        const rejected = [
+          this.options.launcherPath,
+          ...argumentsForTarget,
+        ].findIndex((value) => /["\\\r\n]/u.test(value));
+        if (rejected !== -1)
+          return err(
+            new HopperStartError({
+              userMessage:
+                "The macOS Hopper launcher cannot pass double quotes, backslashes or line breaks literally through its AppleScript handoff. Select launcher, target and runtime paths and loader arguments without these characters; the selected values were not rewritten.",
+              launchRejection: {
+                boundary: "argument_encoding",
+                reason: "applescript_literal",
+                ...(rejected === 0
+                  ? { source: "launcher_path" as const }
+                  : {
+                      source: "argument" as const,
+                      argument_index: rejected - 1,
+                    }),
+              },
+            }),
+          );
+      }
       let expectedLinuxSha256: string | undefined;
       if (usesLinuxDemo(this.options)) {
         const inspected = await (
@@ -259,7 +443,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         )(this.options.launcherPath, this.options.environment, signal);
         if (!inspected.ok)
           return inspected.error.reason === "cancelled"
-            ? err(new HopperCancelledError())
+            ? err(cancelledLauncherVerification(signal, inspected.error))
             : err(
                 new HopperStartError({
                   userMessage: inspected.error.message,
@@ -272,6 +456,8 @@ export class HopperApplicationLauncher implements BridgeLauncher {
               );
         expectedLinuxSha256 = inspected.value.sha256;
       }
+      const display = await this.#privateDisplay(signal);
+      if (!display.ok) return err(display.error);
       const nativeHelperVerified =
         (this.dependencies.platform ?? process.platform) === "darwin" &&
         this.options.launchMode === "native" &&
@@ -284,7 +470,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         this.options.environment,
         signal,
       );
-      if (!prepared) return err(new HopperCancelledError());
+      if (!prepared) return err(hopperCancelledBySignal(signal));
       const linuxDemo = linuxDemoLaunch(
         this.options,
         session,
@@ -301,11 +487,18 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         linuxDemo,
         signal,
       });
-      if (started === null) return err(new HopperCancelledError());
+      if (started === null) return err(hopperCancelledBySignal(signal));
       launched = true;
-      const cleanup = () => cleanupOwnedProcessGroup(started.ownership);
+      const cleanup = () =>
+        cleanupHopperLauncherSession({
+          helper: linuxDemo === undefined ? undefined : started.process,
+          ownership: started.ownership,
+          orderlyShutdownGraceMs:
+            this.dependencies.demoOrderlyShutdownGraceMs ??
+            LINUX_DEMO_ORDERLY_SHUTDOWN_GRACE_MS,
+        });
       const ownedLauncher = {
-        ...(this.options.preparedImage === undefined
+        ...(input.loadedPath === this.options.targetPath
           ? {}
           : { preparedImagePath: input.loadedPath }),
         process: started.process,
@@ -328,13 +521,8 @@ export class HopperApplicationLauncher implements BridgeLauncher {
             ...(nativeHelperVerified
               ? { nativeHelperVerified: true as const }
               : {}),
-            // The vendor helper interpolates these values into AppleScript
-            // literals without escaping. Preserve them, but withhold the
-            // pre-handoff conclusion when they can alter that script.
-            ...((this.dependencies.platform ?? process.platform) === "darwin" &&
-            ![this.options.launcherPath, ...argumentsForTarget].some((value) =>
-              /["\\\r\n]/u.test(value),
-            )
+            // Argument admission above established literal handoff semantics.
+            ...((this.dependencies.platform ?? process.platform) === "darwin"
               ? { authorizationDenialBeforeHandoff: true as const }
               : {}),
           });
@@ -342,8 +530,8 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       return err(hopperLaunchFailure(cause, signal));
     } finally {
       // Remove the token-bearing bootstrap file on every non-success path.
-      // Only the launched process needs the file; all error returns, early
-      // cancellations, and thrown exceptions must not leave it on disk.
+      // This is best effort: the caller owns session.directory and performs
+      // authoritative private-runtime cleanup, retaining it when removal fails.
       if (!launched)
         await rm(bootstrapPath, { force: true }).catch(() => undefined);
     }
@@ -351,7 +539,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
 
   async #acquireLaunchLease(
     runId: string,
-  ): Promise<Result<HopperTargetLease | undefined, HopperStartError>> {
+  ): Promise<Result<OwnedLease | undefined, HopperStartError>> {
     const platform = this.dependencies.platform ?? process.platform;
     const applicationLease =
       platform === "linux" && usesLinuxDemo(this.options);
@@ -361,7 +549,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         ? await (
             this.dependencies.acquireApplicationLease ??
             acquireLinuxHopperApplicationLease
-          )({ runId })
+          )({ runId, resources: this.#probeResources })
         : await (
             this.dependencies.acquireTargetLease ?? acquireHopperTargetLease
           )({
@@ -369,6 +557,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
             targetKind: this.options.targetKind,
             loaderArgs: this.options.loaderArgs,
             runId,
+            resources: this.#probeResources,
           });
       if (!acquisition.acquired)
         return err(
@@ -410,7 +599,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       await chmod(bootstrapPath, 0o600);
       return ok(bootstrapPath);
     } catch (cause: unknown) {
-      // Clean up any partially written bootstrap file that may contain the token.
+      // Best effort; the caller also owns cleanup of the private runtime root.
       await rm(bootstrapPath, { force: true }).catch(() => undefined);
       return err(new HopperStartError({ cause }));
     }
@@ -435,35 +624,71 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       environment: this.options.environment,
       ...(signal === undefined ? {} : { signal }),
     });
-    if (signal?.aborted === true)
-      return { ok: false, error: new HopperCancelledError() };
-    return selection.ok
-      ? { ok: true, strategy: selection.strategy }
-      : {
-          ok: false,
-          error: new HopperProcessError(selection.exitCode, {
-            diagnostic: selection.diagnostic,
-          }),
-        };
+    const pending = selection.ok ? undefined : selection.cleanup;
+    if (pending !== undefined)
+      this.#probeResources.retain({
+        kind: "lease",
+        resource: "hopper-private-display-probe",
+        lease: pending.lease,
+      });
+    const cleanup =
+      pending === undefined
+        ? undefined
+        : {
+            reason: pending.reason,
+            resources: [
+              ...(pending.lease.cleanupResources ?? [
+                "hopper-private-display-probe",
+              ]),
+            ],
+          };
+    const error =
+      signal?.aborted === true
+        ? new HopperCancelledError(signal.reason, { cleanup })
+        : selection.ok
+          ? undefined
+          : new HopperProcessError(selection.exitCode, {
+              diagnostic: selection.diagnostic,
+              cleanup,
+            });
+    if (error === undefined)
+      return {
+        ok: true,
+        strategy: selection.ok ? selection.strategy : undefined,
+      };
+    if (pending !== undefined)
+      new AnalysisCleanupLeaseGroup(error, [pending.lease]);
+    return { ok: false, error };
   }
 }
 
-const bridgeBootstrapSource = (
+/** Bootstrap assignments Hopper execs before the bridge module. Exported for the ceiling regression. */
+export const bridgeBootstrapSource = (
   session: BridgeSession,
   options: SharedHopperApplicationLauncherOptions,
   ownsProcessLifetime: boolean,
   loadedPath: string,
-): string =>
-  [
+): string => {
+  const limit = options.bridgeMaxRequestBytes;
+  const injectedLimit =
+    limit?.source === "setting" &&
+    Number.isSafeInteger(limit.maximumBytes) &&
+    limit.maximumBytes >= MINIMUM_BRIDGE_MAX_REQUEST_BYTES &&
+    limit.maximumBytes <= MAXIMUM_BRIDGE_MAX_REQUEST_BYTES
+      ? `REA_BRIDGE_MAX_REQUEST_BYTES = ${String(limit.maximumBytes)}`
+      : undefined;
+  return [
     `REA_SOCKET = ${JSON.stringify(session.socketPath)}`,
     `REA_TOKEN = ${JSON.stringify(session.token)}`,
     `REA_RUN_ID = ${JSON.stringify(session.runId)}`,
     `REA_TARGET_PATH = ${JSON.stringify(loadedPath)}`,
     `REA_OWNS_PROCESS_LIFETIME = ${ownsProcessLifetime ? "True" : "False"}`,
     `REA_RECONNECT_TIMEOUT_SECONDS = ${HOPPER_SHUTDOWN_TIMEOUT_MS / 1_000}`,
+    ...(injectedLimit === undefined ? [] : [injectedLimit]),
     `exec(compile(open(${JSON.stringify(options.bridgeScriptPath)}, 'rb').read(), ${JSON.stringify(options.bridgeScriptPath)}, 'exec'))`,
     "",
   ].join("\n");
+};
 
 const launchHopperProcess = async (input: {
   readonly options: HopperApplicationLauncherOptions;
@@ -555,13 +780,77 @@ export const linuxDemoLaunch = (
   };
 };
 
+const cancelledLauncherVerification = (
+  signal: AbortSignal | undefined,
+  error: Error,
+): HopperCancelledError => {
+  if (signal?.aborted === true) return new HopperCancelledError(signal.reason);
+  return Object.hasOwn(error, "cause")
+    ? new HopperCancelledError(error.cause)
+    : new HopperCancelledError();
+};
+
 const hopperLaunchFailure = (
   cause: unknown,
   signal: AbortSignal | undefined,
 ): HopperCancelledError | HopperStartError =>
   signal?.aborted === true
-    ? new HopperCancelledError()
+    ? new HopperCancelledError(signal.reason)
     : new HopperStartError({ cause });
+
+/**
+ * Shut down a launched Hopper session, asking the Linux demo helper to stop
+ * orderly before the process-group kill.
+ *
+ * The helper treats stdin EOF as its shutdown signal (OwnerLifetime): its
+ * run_launch finally block then stops Hopper and Xvfb with SIGTERM, and Xvfb
+ * removes its /tmp/.X<n>-lock on that clean exit. SIGKILLing the group first
+ * orphans the lock, and later startups count each orphan as an
+ * address_collision. Anything still alive after the grace period is reaped by
+ * the token-verified group cleanup, so a stuck helper cannot hang teardown.
+ */
+const cleanupHopperLauncherSession = async (input: {
+  readonly helper: ProviderProcessHandle | undefined;
+  readonly ownership: OwnedProcessGroup;
+  readonly orderlyShutdownGraceMs: number;
+}): Promise<ProcessCleanupResult> => {
+  const helper = input.helper;
+  if (
+    helper !== undefined &&
+    helper.exitCode === null &&
+    helper.signalCode === null
+  ) {
+    try {
+      helper.stdin?.end();
+    } catch {
+      // Already gone; the group cleanup below covers the remainder.
+    }
+    await waitForHelperExit(helper, input.orderlyShutdownGraceMs);
+  }
+  return cleanupOwnedProcessGroup(input.ownership);
+};
+
+/** Wait for the helper's exit, giving up after the grace period. */
+const waitForHelperExit = (
+  helper: ProviderProcessHandle,
+  timeoutMs: number,
+): Promise<void> =>
+  new Promise((resolve) => {
+    if (helper.exitCode !== null || helper.signalCode !== null)
+      return resolve();
+    const timer = setTimeout(
+      () => {
+        helper.off("exit", onExit);
+        resolve();
+      },
+      Math.max(0, timeoutMs),
+    );
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    helper.once("exit", onExit);
+  });
 
 /** Select the publisher-verified demo adapter from the caller's explicit launch mode. */
 export const usesLinuxDemo = (

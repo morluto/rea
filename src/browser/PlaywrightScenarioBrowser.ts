@@ -7,12 +7,13 @@ import {
 } from "../artifacts/AnalysisCleanupLease.js";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import type {
   Browser,
   BrowserContext,
   CDPSession,
+  ConnectOverCDPOptions,
   Page,
   chromium,
 } from "playwright-core";
@@ -25,6 +26,13 @@ import {
   withPlaywrightExecutionBoundary,
   PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS,
 } from "./PlaywrightExecutionBoundary.js";
+import {
+  releaseLateScenarioCommand,
+  scenarioCommandPending,
+  scenarioCommandTimeoutMs,
+  settleScenarioCommand,
+  withScenarioCommandDeadline,
+} from "./ScenarioCommandDeadline.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 
@@ -43,9 +51,17 @@ export interface OpenedScenarioBrowser {
   readonly cleanup: PlaywrightScenarioBrowserCleanupOwner;
 }
 
+/** A retryable obligation that must hold before the browser transport closes. */
+export interface PlaywrightScenarioBrowserReleaseGate {
+  readonly revision: number;
+  run(): Promise<void>;
+}
+
 /** Provider actions retained until the owned browser and profile are released. */
 interface PlaywrightScenarioCleanupResources {
-  readonly closeBrowser: () => Promise<void>;
+  readonly closeBrowser: (
+    disconnectAtBoundary: (disconnect: () => Promise<void>) => Promise<void>,
+  ) => Promise<void>;
   readonly removeProfile: (() => Promise<void>) | undefined;
   readonly onSettled?: (browserClosed: boolean) => void;
 }
@@ -56,6 +72,7 @@ export class PlaywrightScenarioBrowserCleanupOwner {
   #profileRemoved: boolean;
   #eventFinalizationPromise: Promise<void> | undefined;
   #eventsFinalized = false;
+  #releaseGate: PlaywrightScenarioBrowserReleaseGate | undefined;
   readonly cleanupLease: AnalysisCleanupLease;
 
   /** Keep the narrow provider actions needed to release one opened browser. */
@@ -83,13 +100,20 @@ export class PlaywrightScenarioBrowserCleanupOwner {
   }
 
   /** Await actual resource release, including a late browser acknowledgement. */
-  release(finishEvents?: () => Promise<void>): Promise<void> {
+  release(
+    finishEvents?: () => Promise<void>,
+    releaseGate?: PlaywrightScenarioBrowserReleaseGate,
+  ): Promise<void> {
     this.#prepareEvents(finishEvents);
+    if (releaseGate !== undefined) this.#releaseGate = releaseGate;
     return this.cleanupLease.release();
   }
 
-  close(finishEvents?: () => Promise<void>): Promise<void> {
-    return this.#awaitCleanup(this.release(finishEvents));
+  close(
+    finishEvents?: () => Promise<void>,
+    releaseGate?: PlaywrightScenarioBrowserReleaseGate,
+  ): Promise<void> {
+    return this.#awaitCleanup(this.release(finishEvents, releaseGate));
   }
 
   #prepareEvents(finishEvents?: () => Promise<void>): void {
@@ -131,7 +155,9 @@ export class PlaywrightScenarioBrowserCleanupOwner {
     }
     if (!this.#browserClosed) {
       try {
-        await this.resources.closeBrowser();
+        await this.resources.closeBrowser((disconnect) =>
+          this.#runReleaseGate(disconnect),
+        );
         this.#browserClosed = true;
       } catch (cause: unknown) {
         failures.push(cause);
@@ -152,6 +178,25 @@ export class PlaywrightScenarioBrowserCleanupOwner {
     if (failures.length === 1) throw failures[0];
     if (failures.length > 1)
       throw new AggregateError(failures, "Browser session cleanup failed");
+  }
+
+  async #runReleaseGate(disconnect: () => Promise<void>): Promise<void> {
+    for (;;) {
+      const gate = this.#releaseGate;
+      if (gate === undefined) {
+        await disconnect();
+        return;
+      }
+      const revision = gate.revision;
+      await gate.run();
+      if (this.#releaseGate === gate && gate.revision === revision) {
+        // Invoke the physical disconnect in the same continuation that
+        // observes a stable stop revision; no await separates the check and
+        // the operation start.
+        await disconnect();
+        return;
+      }
+    }
   }
 }
 
@@ -332,22 +377,58 @@ const allowedBrowserEnvironment = (
     TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
   };
 };
+const ownLateScenarioCommand = (
+  cause: unknown,
+  retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
+  resource: string,
+  release: () => Promise<void> = () => releaseLateScenarioCommand(cause),
+): boolean => {
+  if (scenarioCommandPending(cause) === undefined) return false;
+  const late = new AnalysisCleanupLease(release, [resource]);
+  retainCleanup?.(late);
+  void late.release().catch(() => undefined);
+  return true;
+};
+
 const findConnectedPage = async (
   browser: Pick<Browser, "contexts">,
   targetId: string,
   signal: AbortSignal | undefined,
+  commandTimeoutMs: number,
+  retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
 ): Promise<{ readonly context: BrowserContext; readonly page: Page }> => {
   for (const context of browser.contexts())
     for (const page of context.pages()) {
-      const session = await context.newCDPSession(page);
+      let session: CDPSession;
+      try {
+        session = await withScenarioCommandDeadline(
+          () => context.newCDPSession(page),
+          commandTimeoutMs,
+          "command",
+          "Target.attachToTarget",
+        );
+      } catch (cause: unknown) {
+        ownLateScenarioCommand(cause, retainCleanup, "browser_transport");
+        throw cause;
+      }
       try {
         throwIfScenarioCancelled(signal);
-        const { targetInfo } = await session.send("Target.getTargetInfo");
+        const { targetInfo } = await withScenarioCommandDeadline(
+          () => session.send("Target.getTargetInfo"),
+          commandTimeoutMs,
+          "command",
+          "Target.getTargetInfo",
+        );
         throwIfScenarioCancelled(signal);
         if (targetInfo.targetId !== targetId) continue;
         return { context, page };
       } finally {
-        await session.detach();
+        await withScenarioCommandDeadline(
+          () => session.detach(),
+          commandTimeoutMs,
+          "command",
+          "Target.detachFromTarget",
+        );
       }
     }
   throw new BrowserObservationError(OPERATION, "target_not_found");
@@ -355,6 +436,7 @@ const findConnectedPage = async (
 
 /** Owns the target state changed while one scenario uses an attached page. */
 class AttachedScenarioEnvironmentOwner {
+  #focusOverride = false;
   #mediaOverride = false;
   #deviceMetricsOverride = false;
   #localeOverride = false;
@@ -365,20 +447,37 @@ class AttachedScenarioEnvironmentOwner {
   private constructor(
     private readonly page: Page,
     private readonly session: CDPSession,
+    private readonly commandTimeoutMs: number,
   ) {}
 
   static async create(
     context: BrowserContext,
     page: Page,
+    commandTimeoutMs: number,
+    retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
   ): Promise<AttachedScenarioEnvironmentOwner> {
+    let session: CDPSession;
+    try {
+      session = await withScenarioCommandDeadline(
+        () => context.newCDPSession(page),
+        commandTimeoutMs,
+        "command",
+        "Target.attachToTarget",
+      );
+    } catch (cause: unknown) {
+      ownLateScenarioCommand(cause, retainCleanup, "browser_transport");
+      throw cause;
+    }
     return new AttachedScenarioEnvironmentOwner(
       page,
-      await context.newCDPSession(page),
+      session,
+      commandTimeoutMs,
     );
   }
 
   get restored(): boolean {
     return (
+      !this.#focusOverride &&
       !this.#mediaOverride &&
       !this.#deviceMetricsOverride &&
       !this.#localeOverride &&
@@ -400,54 +499,109 @@ class AttachedScenarioEnvironmentOwner {
     return application;
   }
 
+  async #command(work: Promise<unknown>, method: string): Promise<void> {
+    await withScenarioCommandDeadline(
+      () => work,
+      this.commandTimeoutMs,
+      "command",
+      method,
+    );
+  }
+
   async #applyEnvironment(
     environment: BrowserScenario["environment"],
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    await this.page.emulateMedia({
-      colorScheme: environment.color_scheme,
-      reducedMotion: environment.reduced_motion,
-    });
-    this.#mediaOverride = true;
+    await this.#command(
+      this.page
+        .emulateMedia({
+          colorScheme: environment.color_scheme,
+          reducedMotion: environment.reduced_motion,
+        })
+        .then(() => {
+          this.#mediaOverride = true;
+        }),
+      "Emulation.setEmulatedMedia",
+    );
     throwIfScenarioCancelled(signal);
 
     // setViewportSize also resizes the external browser window. CDP metrics
     // provide the scenario viewport without changing that caller-owned window.
-    await this.session.send("Emulation.setDeviceMetricsOverride", {
-      width: environment.viewport.width,
-      height: environment.viewport.height,
-      deviceScaleFactor: environment.viewport.device_scale_factor,
-      mobile: false,
-      dontSetVisibleSize: true,
-    });
-    this.#deviceMetricsOverride = true;
+    await this.#command(
+      this.session
+        .send("Emulation.setDeviceMetricsOverride", {
+          width: environment.viewport.width,
+          height: environment.viewport.height,
+          deviceScaleFactor: environment.viewport.device_scale_factor,
+          mobile: false,
+          dontSetVisibleSize: true,
+        })
+        .then(() => {
+          this.#deviceMetricsOverride = true;
+        }),
+      "Emulation.setDeviceMetricsOverride",
+    );
     throwIfScenarioCancelled(signal);
 
-    await this.session.send("Emulation.setLocaleOverride", {
-      locale: environment.locale,
-    });
-    this.#localeOverride = true;
+    await this.#command(
+      this.session
+        .send("Emulation.setLocaleOverride", {
+          locale: environment.locale,
+        })
+        .then(() => {
+          this.#localeOverride = true;
+        }),
+      "Emulation.setLocaleOverride",
+    );
     throwIfScenarioCancelled(signal);
 
-    await this.session.send("Emulation.setTimezoneOverride", {
-      timezoneId: environment.timezone,
-    });
-    this.#timezoneOverride = true;
+    await this.#command(
+      this.session
+        .send("Emulation.setTimezoneOverride", {
+          timezoneId: environment.timezone,
+        })
+        .then(() => {
+          this.#timezoneOverride = true;
+        }),
+      "Emulation.setTimezoneOverride",
+    );
+    throwIfScenarioCancelled(signal);
+
+    // Keep scenario actions usable in the selected background page without
+    // Playwright's connection-wide focus override on unrelated pages.
+    await this.#command(
+      this.session
+        .send("Emulation.setFocusEmulationEnabled", { enabled: true })
+        .then(() => {
+          this.#focusOverride = true;
+        }),
+      "Emulation.setFocusEmulationEnabled",
+    );
     throwIfScenarioCancelled(signal);
   }
 
   async close(): Promise<void> {
     if (this.#detached) return;
-    // The execution boundary can report cancellation before a pending CDP
-    // command settles. Wait for that producer so every successful mutation is
-    // recorded before deciding which state this owner must restore.
+    // The execution boundary can report cancellation or a command deadline
+    // before a pending CDP command settles. Wait for that producer, including
+    // a command that finishes after its deadline, so every successful mutation
+    // is recorded before deciding which state this owner must restore.
     try {
       await this.#application;
-    } catch {
-      // The operation path reports application failures. Cleanup still owns
-      // and restores every mutation that completed before the failure.
+    } catch (cause: unknown) {
+      await settleScenarioCommand(cause);
     }
     const failures: unknown[] = [];
+    if (this.#focusOverride) {
+      try {
+        await this.session.send("Emulation.setFocusEmulationEnabled", {
+          enabled: false,
+        });
+        this.#focusOverride = false;
+      } catch (cause: unknown) {
+        failures.push(cause);
+      }
+    }
     if (this.#timezoneOverride) {
       try {
         await this.session.send("Emulation.setTimezoneOverride", {
@@ -540,6 +694,7 @@ type ScenarioBrowserLauncher = Pick<
 > & {
   readonly connectOverCDP: (
     endpoint: string,
+    options?: Pick<ConnectOverCDPOptions, "timeout" | "noDefaults">,
   ) => Promise<Pick<Browser, "contexts" | "close" | "isConnected" | "version">>;
 };
 
@@ -554,6 +709,7 @@ const openAttachedScenarioBrowser = async (
   launcher: ScenarioBrowserLauncher,
   signal: AbortSignal | undefined,
   retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
+  commandTimeoutMs: number,
 ): Promise<OpenedScenarioBrowser> => {
   const lease = await acquireAttachedScenario(browserRequest, signal);
   let cleanupOwner: PlaywrightScenarioBrowserCleanupOwner | undefined;
@@ -563,10 +719,21 @@ const openAttachedScenarioBrowser = async (
     if (priorOwner !== undefined) await priorOwner.close();
     throwIfScenarioCancelled(signal);
 
-    const browser = await launcher.connectOverCDP(browserRequest.cdp_endpoint);
+    const browser = await withScenarioCommandDeadline(
+      () =>
+        launcher.connectOverCDP(browserRequest.cdp_endpoint, {
+          timeout: commandTimeoutMs,
+          // Only the selected target's environment owner may apply overrides.
+          // Playwright defaults also mutate unrelated external pages and can
+          // require context management on an otherwise usable CDP endpoint.
+          noDefaults: true,
+        }),
+      commandTimeoutMs,
+      "handshake",
+    );
     const cleanup: PlaywrightScenarioBrowserCleanupOwner =
       new PlaywrightScenarioBrowserCleanupOwner({
-        closeBrowser: async () => {
+        closeBrowser: async (disconnectAtBoundary) => {
           let environmentFailure: unknown;
           const ownedEnvironment = environmentOwner;
           if (ownedEnvironment !== undefined) {
@@ -590,7 +757,7 @@ const openAttachedScenarioBrowser = async (
             }
           }
           try {
-            await browser.close();
+            await disconnectAtBoundary(() => browser.close());
             // Once target state is restored, disconnecting the transport is a
             // definitive fallback for an explicit session detach failure.
             environmentOwner = undefined;
@@ -614,14 +781,26 @@ const openAttachedScenarioBrowser = async (
     lease.admission.cleanupOwner = cleanup;
     throwIfScenarioCancelled(signal);
     const target = await withPlaywrightExecutionBoundary(
-      () => findConnectedPage(browser, browserRequest.target_id, signal),
+      () =>
+        findConnectedPage(
+          browser,
+          browserRequest.target_id,
+          signal,
+          commandTimeoutMs,
+          retainCleanup,
+        ),
       undefined,
       signal,
     );
     throwIfScenarioCancelled(signal);
     const configuredEnvironment = await withPlaywrightExecutionBoundary(
       () =>
-        AttachedScenarioEnvironmentOwner.create(target.context, target.page),
+        AttachedScenarioEnvironmentOwner.create(
+          target.context,
+          target.page,
+          commandTimeoutMs,
+          retainCleanup,
+        ),
       undefined,
       signal,
     );
@@ -639,7 +818,16 @@ const openAttachedScenarioBrowser = async (
     };
   } catch (cause: unknown) {
     if (cleanupOwner === undefined) {
-      lease.release();
+      const owned = ownLateScenarioCommand(
+        cause,
+        retainCleanup,
+        "browser_transport",
+        async () => {
+          await releaseLateScenarioCommand(cause);
+          lease.release();
+        },
+      );
+      if (!owned) lease.release();
       throw cause;
     }
     const cleanup = cleanupOwner;
@@ -666,6 +854,7 @@ export const openPlaywrightScenarioBrowser = async (
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
     options.launcher ?? (await import("playwright-core")).chromium;
+  const commandTimeoutMs = scenarioCommandTimeoutMs(scenario);
   if (scenario.browser.mode === "connect")
     return openAttachedScenarioBrowser(
       scenario.browser,
@@ -673,53 +862,88 @@ export const openPlaywrightScenarioBrowser = async (
       launcher,
       options.signal,
       options.retainCleanup,
+      commandTimeoutMs,
     );
 
   const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
   let context: BrowserContext;
+  const executablePath = scenario.browser.executable_path;
+  const headless = scenario.browser.headless;
+  let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
-    context = await launcher.launchPersistentContext(profilePath, {
-      executablePath: resolve(scenario.browser.executable_path),
-      headless: scenario.browser.headless,
-      acceptDownloads: false,
-      viewport: {
-        width: scenario.environment.viewport.width,
-        height: scenario.environment.viewport.height,
-      },
-      deviceScaleFactor: scenario.environment.viewport.device_scale_factor,
-      locale: scenario.environment.locale,
-      timezoneId: scenario.environment.timezone,
-      colorScheme: scenario.environment.color_scheme,
-      reducedMotion: scenario.environment.reduced_motion,
-      serviceWorkers: scenario.environment.service_workers,
-      env: allowedBrowserEnvironment(environment),
-      handleSIGHUP: false,
-      handleSIGINT: false,
-      handleSIGTERM: false,
-      timeout: 0,
-      // Termux's Chromium cannot create its renderer process through Android's
-      // executable boundary. Single-process mode keeps the browser and page in
-      // the Termux-launched process so scenario navigation remains available.
-      args:
-        process.platform === "android"
-          ? ["--no-sandbox", "--single-process"]
-          : [],
-    });
-  } catch (cause: unknown) {
-    const cleanup = new AnalysisCleanupLease(
-      () => rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
-      ["browser_profile"],
+    launchStarted = true;
+    context = await withScenarioCommandDeadline(
+      () =>
+        launcher.launchPersistentContext(profilePath, {
+          executablePath,
+          headless,
+          acceptDownloads: false,
+          viewport: {
+            width: scenario.environment.viewport.width,
+            height: scenario.environment.viewport.height,
+          },
+          deviceScaleFactor: scenario.environment.viewport.device_scale_factor,
+          locale: scenario.environment.locale,
+          timezoneId: scenario.environment.timezone,
+          colorScheme: scenario.environment.color_scheme,
+          reducedMotion: scenario.environment.reduced_motion,
+          serviceWorkers: scenario.environment.service_workers,
+          env: allowedBrowserEnvironment(environment),
+          handleSIGHUP: false,
+          handleSIGINT: false,
+          handleSIGTERM: false,
+          timeout: commandTimeoutMs,
+          // Termux's Chromium cannot create its renderer process through Android's
+          // executable boundary. Single-process mode keeps the browser and page in
+          // the Termux-launched process so scenario navigation remains available.
+          args:
+            process.platform === "android"
+              ? ["--no-sandbox", "--single-process"]
+              : [],
+        }),
+      commandTimeoutMs,
+      "launch",
+      undefined,
+      executablePath,
     );
+  } catch (cause: unknown) {
+    const cleanup = new AnalysisCleanupLease(async () => {
+      await releaseLateScenarioCommand(cause);
+      await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
+    }, ["browser_profile"]);
+    // Preserve Playwright's launch diagnostics before the generic provider
+    // boundary discards an untyped error. Keep the original cause for late
+    // command cleanup and leave typed timeout/cancellation failures intact.
+    const primary =
+      launchStarted && !(cause instanceof AnalysisError)
+        ? new ProviderAdapterError(
+            PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
+            OPERATION,
+            {
+              cause,
+              userMessage: "The selected browser could not start.",
+              remediationAction:
+                "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.",
+              diagnostics: {
+                executable_path: executablePath,
+                startup_error:
+                  cause instanceof Error ? cause.message : String(cause),
+              },
+            },
+          )
+        : cause;
     try {
-      return await failBrowserScenarioOperation(cleanup, cause);
+      return await failBrowserScenarioOperation(cleanup, primary);
     } catch (failure: unknown) {
-      if (failure !== cause) options.retainCleanup?.(cleanup);
+      if (failure !== primary) options.retainCleanup?.(cleanup);
       throw failure;
     }
   }
   const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
-    closeBrowser: () => context.close(),
+    closeBrowser: async (disconnectAtBoundary) => {
+      await disconnectAtBoundary(() => context.close());
+    },
     removeProfile: () =>
       rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
   });
