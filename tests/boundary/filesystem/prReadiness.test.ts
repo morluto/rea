@@ -180,6 +180,24 @@ describe("initial author declaration", () => {
     );
   });
 
+  it.each([
+    ["longer backticks", "````markdown", "`````", "success"],
+    ["longer tildes", "~~~~markdown", "~~~~~", "success"],
+    ["indented closer with whitespace", "```", "   ```` \t", "success"],
+    ["shorter backticks", "````", "```", "failure"],
+    ["shorter tildes", "~~~~", "~~~", "failure"],
+    ["different marker", "```", "~~~", "failure"],
+    ["mixed markers", "```", "``~", "failure"],
+    ["four-space indentation", "```", "    ```", "failure"],
+    ["text after the closer", "~~~", "~~~ text", "failure"],
+  ])(
+    "keeps declarations hidden until a valid closing fence: %s",
+    (_name, opening, closing, state) => {
+      const body = `${opening}\n${readyBody}\n${closing}\n${readyBody}`;
+      expect(evaluateReadiness(makePull({ body }), template).state).toBe(state);
+    },
+  );
+
   it("fails closed when the trusted template loses a declaration", () => {
     expect(() =>
       evaluateReadiness(
