@@ -7,6 +7,16 @@ import type {
   ElectronHookSnapshot,
   ElectronMetrics,
 } from "./PlaywrightElectronActiveActions.js";
+import type { OwnershipSweepUnverifiedProcess } from "../process/ProcessOwnership.js";
+
+/** Describe the cleanup owner's observations once for successful and partial captures. */
+export const electronCleanupLimitations = (
+  unverified: readonly OwnershipSweepUnverifiedProcess[],
+): string[] =>
+  unverified.map(
+    ({ pid, diagnostic }) =>
+      `Ownership of unrelated process ${String(pid)} could not be verified; it was left untouched: ${diagnostic}`,
+  );
 
 type ElectronCapturePaths = {
   readonly executable: string;

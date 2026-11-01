@@ -19,7 +19,10 @@ import type {
   CanonicalElectronActiveObservationInput,
   ElectronActiveObservationPort,
 } from "../application/javascript/ElectronActiveObservationPort.js";
-import type { ElectronActiveObservationResult } from "../domain/javascript/electronActiveObservation.js";
+import type {
+  ElectronActiveObservationResult,
+  ElectronActivePartialObservation,
+} from "../domain/javascript/electronActiveObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
@@ -40,7 +43,10 @@ import {
   readApplicationState,
   readFinalApplicationState,
 } from "./PlaywrightElectronActiveActions.js";
-import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjection.js";
+import {
+  projectElectronActiveCapture,
+  electronCleanupLimitations,
+} from "./PlaywrightElectronActiveProjection.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
 import { assertNodeCliInspectArgumentsSupported } from "./PlaywrightElectronActiveFuses.js";
 
@@ -275,6 +281,48 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       const owner = new ElectronCaptureCleanup(application, ownership, lineage);
       const released = await owner.release(this.#resources);
       const cleanup = owner.processResult;
+      const primaryPartial = !outcome.ok
+        ? outcome.error.partialObservation
+        : undefined;
+      const electronPartial =
+        primaryPartial !== undefined &&
+        "kind" in primaryPartial &&
+        primaryPartial.kind === "electron-active-observation"
+          ? primaryPartial
+          : undefined;
+      let retainedCapture:
+        | ElectronActivePartialObservation["capture"]
+        | undefined = electronPartial?.capture ?? capture;
+      if (cleanup?.unverified !== undefined && cleanup.unverified.length > 0) {
+        const limitations = electronCleanupLimitations(cleanup.unverified);
+        if (capture !== undefined) {
+          const observed = {
+            ...capture,
+            limitations: [...capture.limitations, ...limitations],
+          };
+          if (retainedCapture === capture) retainedCapture = observed;
+          capture = observed;
+        }
+        if (retainedCapture !== undefined && retainedCapture !== capture)
+          retainedCapture = {
+            ...retainedCapture,
+            limitations: [...retainedCapture.limitations, ...limitations],
+          };
+        if (outcome.ok && capture !== undefined) outcome = ok(capture);
+        else if (!outcome.ok && retainedCapture !== undefined) {
+          if (electronPartial !== undefined)
+            // Enrich only this operation's partial capture; keep other producers' facts.
+            outcome.error.partialObservation = {
+              ...electronPartial,
+              capture: retainedCapture,
+            };
+          else
+            outcome.error.retainPartialObservation({
+              kind: "electron-active-observation",
+              capture: retainedCapture,
+            });
+        }
+      }
       if (outcome.ok && options.signal?.aborted === true)
         outcome = err(cancelledCapture(outcome.value, options.signal.reason));
       if (
@@ -304,20 +352,20 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
             cause,
             detail: `${processFailure ? "Electron process cleanup could not be verified" : "Electron transport teardown failed after process cleanup"}: ${reason}. Collected observations are retained when available.`,
             cleanup: { reason, resources: owner.pendingResources },
-            ...(capture === undefined
+            ...(retainedCapture === undefined
               ? {}
               : {
                   partialObservation: {
                     kind: "electron-active-observation" as const,
                     capture: processFailure
                       ? {
-                          ...capture,
+                          ...retainedCapture,
                           application: {
-                            ...capture.application,
+                            ...retainedCapture.application,
                             cleanup: "unverified" as const,
                           },
                         }
-                      : capture,
+                      : retainedCapture,
                   },
                 }),
           },
@@ -333,17 +381,6 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           composed.partialObservation = failure.partialObservation;
         return err(composed);
       }
-      if (outcome.ok && cleanup?.cleaned && cleanup.unverified !== undefined)
-        outcome = ok({
-          ...outcome.value,
-          limitations: [
-            ...outcome.value.limitations,
-            ...cleanup.unverified.map(
-              ({ pid, diagnostic }) =>
-                `Ownership of unrelated process ${String(pid)} could not be verified; it was left untouched: ${diagnostic}`,
-            ),
-          ],
-        });
     }
     // Cleanup failures returned above keep precedence; a completed capture
     // observed under late cancellation is retained as partial Evidence.
