@@ -24,7 +24,7 @@ import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
 import { registerFridaCommands } from "./cli/fridaCommands.js";
 import type { FridaInstrumentationPort } from "./application/frida/FridaInstrumentationPort.js";
-import { Cli, z } from "incur";
+import { Cli, Errors, z } from "incur";
 import {
   adaptCliOutputArgumentsForIncur,
   normalizeCliArguments,
@@ -77,7 +77,7 @@ import {
 import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
 import { registerCutterCommands } from "./cli/cutterCommands.js";
 import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArguments.js";
-import { rejectSurplusCliArguments } from "./cli/strictPositionals.js";
+import { validateCliArguments } from "./cli/strictPositionals.js";
 import { presentCliArgumentErrors } from "./cli/argumentErrors.js";
 import { completionHelpNote, createCliCompletions } from "./cli/completions.js";
 import {
@@ -242,7 +242,17 @@ export const createCli = (
   });
   presentOmittableDefaults(cli);
   if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
-  const serveStrict = rejectSurplusCliArguments(cli);
+  const serveStrict = validateCliArguments(cli, (tokens, command) => {
+    if (command !== "setup" && command !== "environment-build") return;
+    const invalid = tokens.find((token) => {
+      const match = /^--(?:dry-run|dryRun)=(.*)$/s.exec(token);
+      return match !== null && match[1] !== "true" && match[1] !== "false";
+    });
+    if (invalid !== undefined)
+      throw new Errors.ParseError({
+        message: "Invalid --dry-run value; use true or false.",
+      });
+  });
   presentCliArgumentErrors(cli);
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
   const serve = cli.serve.bind(cli);

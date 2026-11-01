@@ -4,7 +4,7 @@ import { Cli, z } from "incur";
 import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
-import { rejectSurplusCliArguments } from "../../../src/cli/strictPositionals.js";
+import { validateCliArguments } from "../../../src/cli/strictPositionals.js";
 import {
   excludeDeclaredSensitiveArguments,
   explicitSensitiveValueOptions,
@@ -27,7 +27,7 @@ const serve = async (cli: CliInstance, argv: string[]) => {
   return { stdout, exitCode };
 };
 const installAdmission = (cli: CliInstance) => {
-  const strict = rejectSurplusCliArguments(cli);
+  const strict = validateCliArguments(cli);
   const declared = excludeDeclaredSensitiveArguments(cli);
   const original = cli.serve.bind(cli);
   cli.serve = (argv = [], options = {}) =>

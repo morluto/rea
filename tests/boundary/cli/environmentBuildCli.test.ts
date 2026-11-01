@@ -212,3 +212,45 @@ cliTest(
     ]);
   },
 );
+
+cliTest.for(["--dry-run=abc", "--dry-run="] as const)(
+  "rejects malformed environment-build dry-run %s before publication",
+  async (dryRun, { cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-environment-invalid-dry-run-",
+    );
+    const har = join(root, "grafana.har");
+    const output = join(root, "bundle");
+    await writeFile(har, JSON.stringify(environmentManifestHar()));
+    const result = await cli.run({
+      arguments: ["environment-build", har, output, dryRun, "--json"],
+      timeoutMs: 60_000,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("--dry-run");
+    expect(await readdir(root)).toEqual(["grafana.har"]);
+  },
+);
+
+cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
+  "preserves explicit environment-build dry-run value %s",
+  async (dryRun, { cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-environment-explicit-dry-run-",
+    );
+    const har = join(root, "grafana.har");
+    const output = join(root, "bundle");
+    await writeFile(har, JSON.stringify(environmentManifestHar()));
+    const result = await cli.run({
+      arguments: ["environment-build", har, output, dryRun, "--json"],
+      timeoutMs: 60_000,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.json).toMatchObject({
+      status: dryRun === "--dry-run=true" ? "planned" : "built",
+    });
+    expect((await readdir(root)).includes("bundle")).toBe(
+      dryRun === "--dry-run=false",
+    );
+  },
+);
