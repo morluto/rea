@@ -37,6 +37,7 @@ it("refuses staging bytes at the schema ceiling with the ceiling recovery", asyn
     root,
     MAX_FIRMWARE_STAGING_BYTES,
     MAX_FIRMWARE_STAGING_ENTRIES,
+    Number.MAX_SAFE_INTEGER,
     "extract_firmware",
   ).catch((cause: unknown) => cause);
 
@@ -71,6 +72,7 @@ it("still offers a raise for a budget below the schema ceiling", async () => {
     root,
     1,
     MAX_FIRMWARE_STAGING_ENTRIES,
+    Number.MAX_SAFE_INTEGER,
     "extract_firmware",
   ).catch((cause: unknown) => cause);
 

@@ -242,9 +242,12 @@ tree semantics, vulnerability scanning, emulation or hardware runtime capture.
   3, allowed range 1–10.
 
 Staging budgets are polled and rechecked after exit; short-lived overshoot is
-possible. The per-file process limit is the larger of the selected payload budget
-and the fixed report/diagnostic file allowances, so a small payload selection
-still permits the mandatory report. A tighter inherited host limit still applies.
+possible. The per-file process limit is one byte above the larger of the selected
+payload budget and the fixed report/diagnostic file allowances, so a small payload
+selection still permits the mandatory report, and a staged file the kernel stops
+at the limit exceeds its budget instead of passing as complete. A tighter
+inherited host limit still applies and can remove that byte, so a staged file
+that reaches the installed limit is rejected as possibly truncated.
 The inherited file-size limit bounds each file, not total storage;
 address-space limits are per process, not an aggregate memory quota. Worker
 count is not CPU affinity for every external extractor. These limits do not
