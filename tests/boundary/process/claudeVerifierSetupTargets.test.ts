@@ -5,16 +5,20 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
-it.each(([
-  ["claude", "relative path", false],
-  ["claude", "sibling", false],
-  ["claude", "parent traversal", false],
-  ["claude", "owned child", true],
-  ["opencode", "relative path", false],
-  ["opencode", "sibling", false],
-  ["opencode", "parent traversal", false],
-  ["opencode", "owned child", true],
-] as const).filter(([client]) => process.platform !== "win32" || client !== "opencode"))(
+it.each(
+  (
+    [
+      ["claude", "relative path", false],
+      ["claude", "sibling", false],
+      ["claude", "parent traversal", false],
+      ["claude", "owned child", true],
+      ["opencode", "relative path", false],
+      ["opencode", "sibling", false],
+      ["opencode", "parent traversal", false],
+      ["opencode", "owned child", true],
+    ] as const
+  ).filter(([client]) => process.platform !== "win32" || client !== "opencode"),
+)(
   "%s checks a %s setup-plan target before writing",
   async (client, kind, allowed) => {
     const state = await mkdtemp(join(tmpdir(), "rea-claude-plan-"));

@@ -76,7 +76,8 @@ export async function createVerifierCommands() {
 `.replace(
         "REPLACE_CONTRACTS",
         JSON.stringify(
-          new URL("../../../dist/contracts/toolContracts.js", import.meta.url).href,
+          new URL("../../../dist/contracts/toolContracts.js", import.meta.url)
+            .href,
         ),
       );
       await writeFile(join(state, "commands.mjs"), commands);
