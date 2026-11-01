@@ -1231,6 +1231,13 @@ When the deadline elapses, the `provider_timeout` error names
 fresh-import mode it also suggests `REA_GHIDRA_DISABLED_ANALYZERS` for analyzers
 that dominate the time and `REA_GHIDRA_PROJECT_PATH` for reusing a completed
 analysis; in existing-project mode it omits that import and analyzer advice.
+Its details also carry structured `env_name` and `elapsed_ms` fields. The
+elapsed time covers the shared startup attempt, including target snapshot
+copying, import and analysis (or copying and opening an existing project),
+bridge connection, and health-readiness checks; it is not analysis time alone.
+On Windows, `target_bytes` is also included when the failure retains the admitted
+target size. This field is omitted on Linux and macOS and when no admission
+size was retained.
 REA parses the supplied configuration environment and
 passes the deadline to each provider client; a startup failure is returned by the query that triggered it,
 without exposing partial analysis. This deadline is separate from MCP transport

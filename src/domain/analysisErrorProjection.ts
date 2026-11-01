@@ -603,6 +603,13 @@ const lifecycleErrorDetails = (
     return {
       operation: error.operation,
       timeout_ms: error.timeoutMs,
+      ...(error.elapsedMs === undefined
+        ? {}
+        : { elapsed_ms: Math.round(error.elapsedMs) }),
+      ...(error.targetBytes === undefined
+        ? {}
+        : { target_bytes: error.targetBytes }),
+      ...(error.envName === undefined ? {} : { env_name: error.envName }),
       ...(error.cleanup === undefined || !error.cleanupIncomplete
         ? {}
         : {

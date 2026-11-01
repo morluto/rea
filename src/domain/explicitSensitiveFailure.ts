@@ -218,6 +218,11 @@ const redactFailure = (
   if (error instanceof AnalysisTimeoutError)
     return new AnalysisTimeoutError(error.operation, error.timeoutMs, {
       ...context,
+      ...(error.elapsedMs === undefined ? {} : { elapsedMs: error.elapsedMs }),
+      ...(error.targetBytes === undefined
+        ? {}
+        : { targetBytes: error.targetBytes }),
+      ...(error.envName === undefined ? {} : { envName: text(error.envName) }),
       ...(error.userMessage === undefined
         ? {}
         : { userMessage: text(error.userMessage) }),

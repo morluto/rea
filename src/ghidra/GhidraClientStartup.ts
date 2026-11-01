@@ -69,4 +69,5 @@ const interruptionFailure = (
       )
     : options.failure("timeout", GHIDRA_STARTUP_DEADLINE_ELAPSED, undefined, {
         timeoutMs: options.startupTimeoutMs,
+        elapsedMs: options.deadline.elapsedMs(),
       });
