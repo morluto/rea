@@ -361,6 +361,21 @@ const projectError = (
       ? errorRecovery(error)
       : cleanupRetryRecovery(cleanupRetry);
   const remediation = analysisErrorRemediationAction(error);
+  const includesUnretainedEvidence =
+    options.partialObservation &&
+    [partialObservation, completedSourceObservation].some(
+      (observation) =>
+        typeof observation === "object" &&
+        observation !== null &&
+        "kind" in observation &&
+        observation.kind === "unretained-evidence",
+    );
+  const retentionGuidance =
+    error instanceof AnalysisResourceConstraintError &&
+    error.resource === "capacity" &&
+    includesUnretainedEvidence
+      ? " Unretained Evidence is not included in the exported investigation; if present in this response, save it separately."
+      : "";
   return {
     code,
     category: analysisErrorCategory(error),
@@ -375,8 +390,8 @@ const projectError = (
     remediation: {
       action:
         cleanupRetry === undefined
-          ? remediation
-          : `${remediation} ${cleanupRetryRemediation(cleanupRetry)}`,
+          ? `${remediation}${retentionGuidance}`
+          : `${remediation}${retentionGuidance} ${cleanupRetryRemediation(cleanupRetry)}`,
     },
     ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),

@@ -99,6 +99,12 @@ it.each(["compact", "full"] as const)(
       if (!authenticated.ok) throw authenticated.error;
       expect(session.hasEvidence(authenticated.value.evidence_id)).toBe(false);
       expect(records.statistics().evidenceRecords).toBe(0);
+      expect(error.remediation.action).toContain(
+        "Unretained Evidence is not included in the exported investigation",
+      );
+      expect(error.remediation.action).toContain(
+        "if present in this response, save it separately",
+      );
       expect(error.details).not.toHaveProperty("evidence_reference");
       const bundle = await client.callTool({
         name: "get_evidence_bundle",
@@ -175,6 +181,9 @@ it("keeps an oversized unretained observation failure bounded and the connection
     });
     expect(error.remediation.action).toContain(
       recoveryOmissionRemediation("unretained"),
+    );
+    expect(error.remediation.action).toContain(
+      "if present in this response, save it separately",
     );
     expect(error.details).not.toHaveProperty("partial_observation");
     expect(error.details).not.toHaveProperty("evidence_reference");
