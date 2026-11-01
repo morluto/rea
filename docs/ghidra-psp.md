@@ -103,3 +103,26 @@ These checks are selected static facts, not full behavioral equivalence, VFPU
 semantics or arbitrary PSP compatibility. Independently published PSP binaries
 are supplemental calibration targets after payload classification and license
 review; unsupported PRX/PBP must not count as a successful static-ELF case.
+
+### Computed indirect-branch conformance (depends on #2977)
+
+The optional source-owned control-flow fixture exercises two computed Allegrex
+`jr $t9` sites (dispatch and indirect-tail control), a `jr $ra` return, and a
+direct jump. It validates listing observations, unresolved-branch Evidence,
+residual unknowns, authenticated snapshot replay, unchanged ELF bytes, and
+owned-process cleanup. The synthesized ELF is only analyzed, never executed.
+
+With the Ghidra 12.1.3 / ghidra-allegrex v21.4 / PSPDEV v20261001 setup above,
+and after [#2977](https://github.com/morluto/rea/pull/2977) is available in
+the tested source tree, run:
+
+```bash
+npm run build:cached
+node scripts/verify-real-ghidra-psp-indirect.mjs
+```
+
+This test intentionally requires the unresolved computed-branch inventory
+added by #2977. It cannot pass against `main` until that dependency is
+integrated; this does not relax the existing PSP admission or generic MIPS
+verification requirements. It does not establish runtime game behavior,
+VFPU correctness, PRX admission, or arbitrary PSP binary support.

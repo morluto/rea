@@ -15,6 +15,7 @@
     "scripts/verify-real-ghidra-noreturn.mjs",
     "scripts/verify-real-ghidra-decompiler-failure.mjs",
     "scripts/verify-real-ghidra-decompile-timeout.mjs",
+    "scripts/verify-real-ghidra-psp-indirect.mjs",
     "tests/processOwnershipRunner.ts"
   ],
   "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"],
