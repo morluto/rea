@@ -165,6 +165,44 @@ it("resolves a data symbol's name for xrefs, which accept data addresses", async
   }
 });
 
+it("distinguishes an inventory miss from a missing procedure for xrefs", async () => {
+  const { open } = await machoSession("rea-kuna-macho-xrefs-miss-");
+  const client = open();
+  try {
+    expect(
+      await client.execute("xrefs", { address: "not_in_kuna" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        userMessage:
+          "Kuna's inventory contains no entry named not_in_kuna; inspect the target's supported symbol/export inventory and pass a verified address.",
+        conformsToInputContract: true,
+      },
+    });
+    expect(
+      await client.execute("procedure_address", { procedure: "not_in_kuna" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        userMessage:
+          "Kuna found no procedure named not_in_kuna; search_procedures finds similar names.",
+        conformsToInputContract: true,
+      },
+    });
+    expect(await client.execute("xrefs", { address: "puts" })).toMatchObject({
+      ok: false,
+      error: {
+        userMessage:
+          "puts names 2 Kuna entries (0x100000480, 0x100004000); select one by address.",
+        conformsToInputContract: true,
+      },
+    });
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
 it("classifies the published export's inventory with the section table it read", async () => {
   const { kuna, open } = await machoSession("rea-kuna-macho-warm-");
   const cold = open();
