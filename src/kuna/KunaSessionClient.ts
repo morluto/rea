@@ -1041,7 +1041,11 @@ export class KunaSessionClient implements AnalysisClient {
       if (entry === undefined)
         return err(
           new AnalysisInputError(operation, {
-            userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
+            userMessage:
+              field === "address"
+                ? `Kuna's inventory contains no entry at ${address}; inspect the target's supported symbol/export inventory and pass a verified address.`
+                : `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
+            conformsToInputContract: true,
           }),
         );
       return refused(entry) ? dataRefusal(entry) : selected(entry);
@@ -1056,10 +1060,13 @@ export class KunaSessionClient implements AnalysisClient {
       new AnalysisInputError(operation, {
         userMessage:
           matches.length === 0 && named.length === 0
-            ? `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
+            ? field === "address"
+              ? `Kuna's inventory contains no entry named ${selector}; inspect the target's supported symbol/export inventory and pass a verified address.`
+              : `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
             : matches.length === 0
               ? `${selector} names ${String(named.length)} Kuna entries that lie in Mach-O data regions (${named.map(({ address }) => address).join(", ")}); they are data, not procedures.`
               : `${selector} names ${String(matches.length)} Kuna entries (${matches.map(({ address }) => address).join(", ")}); select one by address.`,
+        conformsToInputContract: true,
       }),
     );
   }
