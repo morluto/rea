@@ -355,10 +355,7 @@ export class ReverseEngineeringService {
   ): Promise<Result<Evidence, AnalysisError>> {
     const { command_timeout_ms: commandTimeoutMs, ...input } = request;
     const command = (signal?: AbortSignal) =>
-      this.#commands.rizin(
-        input,
-        signal === undefined ? {} : { signal },
-      );
+      this.#commands.rizin(input, signal === undefined ? {} : { signal });
     return this.#observe(
       "execute_rizin_command",
       command,
@@ -703,7 +700,7 @@ export class ReverseEngineeringService {
             provider,
             operation,
             code === "ERR_PROCESS_OWNERSHIP_UNAVAILABLE" &&
-            cause instanceof Error
+              cause instanceof Error
               ? cause.message
               : `Unable to run configured command (${String(code ?? "unknown error")})`,
             {

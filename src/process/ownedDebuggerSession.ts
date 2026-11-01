@@ -360,7 +360,6 @@ const performOwnedDebuggerStop = async (
         reason: `Owned ${debuggerName} inferior detach could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`,
       };
     }
-
   }
   session.launched.process.kill("SIGTERM");
   if (!(await session.supervisor.waitForExit(300))) {

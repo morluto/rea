@@ -143,7 +143,11 @@ export const registerCloseLifecycleTool = ({
         // a later open request cannot overtake this close.
         const closing = logToolExecution(logger, closeContract.name, () =>
           closeWithResources((afterResourceClose) =>
-            session.close({ progress, cleanupRetry: CLOSE_RETRY, afterResourceClose }),
+            session.close({
+              progress,
+              cleanupRetry: CLOSE_RETRY,
+              afterResourceClose,
+            }),
           ),
         );
         await reportOperationStart(progress, closeContract.name);

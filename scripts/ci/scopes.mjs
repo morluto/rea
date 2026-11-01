@@ -734,10 +734,9 @@ export const CI_LANES = {
     ["reverse-tools-quality"],
     { earlyAll: true },
   ),
-  reverse_providers: sameJobs(
-    PATH_SCOPES.reverse_providers,
-    ["reverse_providers"],
-  ),
+  reverse_providers: sameJobs(PATH_SCOPES.reverse_providers, [
+    "reverse_providers",
+  ]),
   sqlite: sameJobs(PATH_SCOPES.sqlite, ["sqlite-runtime"], {
     testInputs: true,
   }),

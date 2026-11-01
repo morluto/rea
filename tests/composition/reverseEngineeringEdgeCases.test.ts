@@ -456,7 +456,6 @@ it("rejects work after reaching the concurrent provider-operation limit", async 
           max_concurrent_operations: 8,
           active_operations: 8,
         });
-
     }
     expect(providerCalls).toBe(0);
 
