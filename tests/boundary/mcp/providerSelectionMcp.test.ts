@@ -630,15 +630,23 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
     : z.record(z.string(), z.unknown()).parse(result.structuredContent);
 
 it("preserves a selected Ghidra project's read-only guidance when an edit is requested", async () => {
-  directory = await createTestTempDirectory("rea-project-refusal-mcp-");
+  const directory = await createTestTempDirectory("rea-project-refusal-mcp-");
   const target = join(directory, "fixture.hop");
   await writeFile(target, "fixture");
   const starts: string[] = [];
   const base = candidate("ghidra", starts);
+  const projectCapabilities = existingProjectCapabilities("linux");
+  const annotation = projectCapabilities.find(
+    (entry) => entry.operation === "annotate_native_function",
+  );
+  if (annotation === undefined || annotation.available)
+    throw new Error("Expected read-only annotation capability");
+  expect(annotation.userMessage).toBeDefined();
+  expect(annotation.remediationAction).toBeDefined();
   const provider = {
     ...base,
     capabilities: () =>
-      existingProjectCapabilities("linux").map((entry) => ({
+      projectCapabilities.map((entry) => ({
         ...entry,
         provider: base.identity(),
       })),
@@ -669,11 +677,9 @@ it("preserves a selected Ghidra project's read-only guidance when an edit is req
   expect(parseMcpToolError(refused)).toMatchObject({
     error: {
       code: "capability_unavailable",
-      message: expect.stringContaining("read-only"),
+      message: annotation.userMessage,
       details: { reason: "Existing Ghidra project sessions are read-only." },
-      remediation: {
-        action: expect.stringContaining("separate ephemeral analysis"),
-      },
+      remediation: { action: annotation.remediationAction },
     },
   });
   expect(starts).toEqual([]);
