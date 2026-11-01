@@ -206,6 +206,11 @@ try {
     const nativeApi = inspection.value;
     if (label === "computed_dispatch") originalDispatchInspection = nativeApi;
     const boundary = nativeApi.boundary;
+    assert.equal(
+      boundary.available,
+      true,
+      "Native API boundary unavailable: " + symbol,
+    );
     const branches = boundary.available
       ? (boundary.unresolved_indirect_branches ?? [])
       : [];
@@ -219,11 +224,6 @@ try {
       : false;
     if (computed) {
       computedListingBranches++;
-      assert.equal(
-        boundary.available,
-        true,
-        "Computed jump native API boundary unavailable: " + symbol,
-      );
       assert.equal(
         recovered,
         false,
