@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 
-const execute = promisify(execFile);
 export const XTENSA_LANGUAGE = "Xtensa:LE:32:default";
 export const XTENSA_COMPILER_SPEC = "default";
 
@@ -66,21 +63,24 @@ export function parseXtensaReadelf(text, names) {
   };
 }
 
-/** Independent reader is a bounded lane prerequisite, never an REA provider. */
-export async function inspectXtensaReadelf(path, names) {
+/**
+ * Independent reader is a bounded lane prerequisite, never an REA provider; it
+ * runs as a process tree that the lane's commands own.
+ */
+export async function inspectXtensaReadelf(path, names, commands) {
   const command = process.env.REA_XTENSA_READELF ?? "readelf";
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,
     maxBuffer: 1024 * 1024,
   };
-  const version = await execute(command, ["--version"], options);
+  const version = await commands.exec(command, ["--version"], options);
   assert.match(
     version.stdout,
     /\b(?:GNU readelf|LLVM)\b/u,
     "This lane requires GNU or LLVM readelf",
   );
-  const result = await execute(
+  const result = await commands.exec(
     command,
     ["-h", "-s", "-n", "-W", path],
     options,

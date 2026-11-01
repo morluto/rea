@@ -1,3 +1,5 @@
+import type { VerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+
 export const XTENSA_FIXTURE_TEXT: Buffer;
 export const XTENSA_FIXTURE_SYMBOLS: Record<
   "rea_xtensa_literal" | "rea_xtensa_entry" | "rea_xtensa_leaf",
@@ -25,6 +27,7 @@ export function writeXtensaFixture(
 export function buildXtensaCFixture(
   directory: string,
   compiler: string,
+  commands: Pick<VerifierCommands, "exec">,
 ): Promise<{
   path: string;
   bytes: Buffer;

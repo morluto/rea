@@ -1,4 +1,5 @@
 import type { XtensaElfMetadata } from "../../../src/domain/binaryTargetTypes.js";
+import type { VerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
 
 export const XTENSA_LANGUAGE: "Xtensa:LE:32:default";
 export const XTENSA_COMPILER_SPEC: "default";
@@ -14,6 +15,7 @@ export function parseXtensaReadelf(
 export function inspectXtensaReadelf(
   path: string,
   names: readonly string[],
+  commands: Pick<VerifierCommands, "exec">,
 ): Promise<XtensaReadelfFacts & { command: string; version: string }>;
 export function assertXtensaFixtureInstructions(
   instructions: Record<"entry" | "l32r" | "call8" | "retw", unknown>,

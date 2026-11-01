@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdtemp,
@@ -13,7 +12,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import Ajv from "ajv/dist/2020.js";
@@ -48,6 +46,7 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 if (process.argv.length !== 2)
@@ -71,9 +70,11 @@ const installation = await inspectVerifierGhidraInstallation({
 assert.equal(installation.status, "available", JSON.stringify(installation));
 assert.equal(installation.providerVersion, "12.1.4");
 
-const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
+// Every compiler, readelf and CLI command runs as an owned process tree with a
+// deadline.
+const commands = await createVerifierCommands();
 const workspace = await mkdtemp(join(tmpdir(), "rea-xtensa-proof-"));
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
@@ -123,7 +124,7 @@ try {
 
   const fixture = await writeXtensaFixture(workspace);
   const names = Object.keys(XTENSA_FIXTURE_SYMBOLS);
-  const independent = await inspectXtensaReadelf(fixture.path, names);
+  const independent = await inspectXtensaReadelf(fixture.path, names, commands);
   for (const name of names)
     assert.equal(
       BigInt(independent.symbols[name]),
@@ -277,7 +278,7 @@ try {
     const error = requireMcpToolError(reply);
     assert.ok(JSON.stringify(error).includes(reason), JSON.stringify(error));
     await assert.rejects(
-      execute(
+      commands.exec(
         process.execPath,
         [
           entrypoint,
@@ -291,9 +292,11 @@ try {
         { env, timeout: 60000, maxBuffer: 1024 * 1024 },
       ),
       (cause) =>
-        Number.isInteger(cause.code) &&
+        cause.name === "VerifierCommandExitError" &&
         cause.code !== 0 &&
-        `${cause.stdout}\n${cause.stderr}`.includes(reason),
+        `${cause.snapshot.stdout.text}\n${cause.snapshot.stderr.text}`.includes(
+          reason,
+        ),
     );
     refusals.push({ change, reason });
   }
@@ -321,7 +324,7 @@ try {
     { command: "search", operands: ["rea_xtensa_", "--kind", "procedures"] },
     { command: "function", operands: ["rea_xtensa_entry"] },
   ]) {
-    const cli = await execute(
+    const cli = await commands.exec(
       process.execPath,
       [
         entrypoint,
@@ -381,9 +384,9 @@ try {
 
   const compiler = process.env.REA_XTENSA_CC;
   if (compiler !== undefined) {
-    const built = await buildXtensaCFixture(workspace, compiler);
+    const built = await buildXtensaCFixture(workspace, compiler, commands);
     const cNames = ["rea_xtensa_c_entry", "rea_xtensa_c_scale"];
-    const readelf = await inspectXtensaReadelf(built.path, cNames);
+    const readelf = await inspectXtensaReadelf(built.path, cNames, commands);
     const cTarget = await parseBinaryTarget(built.path);
     if (!cTarget.ok) throw cTarget.error;
     assert.deepEqual(cTarget.value.xtensa, readelf.xtensa);
@@ -439,7 +442,13 @@ try {
 } catch (cause) {
   failure = cause;
 }
-for (const close of [() => client.close(), () => transport.close()]) {
+// The workspace is removed only after every owned command tree has stopped;
+// a failed close keeps it for inspection.
+for (const close of [
+  () => client.close(),
+  () => transport.close(),
+  () => commands.close(),
+]) {
   try {
     await close();
   } catch (cause) {

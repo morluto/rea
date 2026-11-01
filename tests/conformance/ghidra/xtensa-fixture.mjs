@@ -1,11 +1,7 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-
-const execute = promisify(execFile);
 
 /**
  * Source-owned windowed-ABI code, so the base lane needs no Xtensa compiler.
@@ -192,8 +188,9 @@ export async function writeXtensaFixture(directory) {
 /**
  * Optional route: build the C fixture with a caller-supplied Espressif
  * compiler, for example xtensa-esp32-elf-gcc. The lane never acquires one.
+ * The compiler runs as a process tree that the lane's commands own.
  */
-export async function buildXtensaCFixture(directory, compiler) {
+export async function buildXtensaCFixture(directory, compiler, commands) {
   const source = fileURLToPath(new URL("../c/xtensa.c", import.meta.url));
   const path = join(directory, "xtensa-c.elf");
   const args = [
@@ -208,8 +205,8 @@ export async function buildXtensaCFixture(directory, compiler) {
     path,
   ];
   const options = { timeout: 60000, maxBuffer: 1024 * 1024 };
-  const version = await execute(compiler, ["--version"], options);
-  await execute(compiler, args, options);
+  const version = await commands.exec(compiler, ["--version"], options);
+  await commands.exec(compiler, args, options);
   const bytes = await readFile(path);
   return {
     path,
