@@ -13,8 +13,8 @@ import {
   routePath,
 } from "./javascriptRoutePaths.js";
 
-const analyze = (source: string, budget?: number) => {
-  const file = parseJavaScriptSource(source);
+const analyze = (source: string, budget?: number, sourcePath?: string) => {
+  const file = parseJavaScriptSource(source, sourcePath);
   if (file === null) throw new Error("fixture must parse");
   const index = complete(
     indexJavaScriptBindingsWithReceiversSteps(file.program),
@@ -118,6 +118,78 @@ it.each([
     }),
   ]);
 });
+
+it.each([
+  ["var INDEX=true;globalThis.INDEX=false;", "INDEX"],
+  ['var INDEX=true;window["INDEX"]=false;', "INDEX"],
+  ["var INDEX=true;const host=globalThis;host.INDEX=false;", "INDEX"],
+  ["var INDEX=false;globalThis.INDEX=true;", "INDEX"],
+  ["var INDEX=true;const FLAG=INDEX;", "FLAG"],
+  ["var INDEX=true;", "(INDEX as boolean)"],
+  [
+    "export type Marker = string;var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+  ],
+] as const)(
+  "keeps script program-var index proofs unknown: %s %s",
+  (prefix, flag) => {
+    const facts = analyze(
+      `${prefix}createBrowserRouter([{index:${flag},children:[{path:'child'}]},{path:'/known'}]);`,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual([
+      "/child",
+      "/known",
+    ]);
+    expect(facts.unresolved).toEqual([
+      expect.objectContaining({
+        reason: expect.stringContaining("index-route flag"),
+      }),
+    ]);
+  },
+);
+
+it.each([
+  "var routes=[{path:'/reports'}];createBrowserRouter(routes);",
+  "var ROUTES=[{path:'/reports',children:[{path:'child'}]}];createBrowserRouter(ROUTES);",
+] as const)(
+  "keeps a program-var route configuration readable without an isolated runtime: %s",
+  (source) => {
+    const facts = analyze(source);
+    expect(facts.candidates.map(({ path }) => path)).toEqual(
+      expect.arrayContaining(["/reports"]),
+    );
+    expect(facts.unresolved).toEqual([]);
+  },
+);
+
+it.each([
+  ["const INDEX=true;globalThis.INDEX=false;", ""],
+  ["let INDEX=true;globalThis.INDEX=false;", ""],
+  ["export {};var INDEX=true;globalThis.INDEX=false;", ""],
+  ["function make(){var INDEX=true;globalThis.INDEX=false;", "}make();"],
+] as const)(
+  "preserves lexical, module and function-local index proofs: %s",
+  (prefix, suffix) => {
+    const facts = analyze(
+      `${prefix}createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]);${suffix}`,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/", "/child"]);
+    expect(facts.unresolved).toEqual([]);
+  },
+);
+
+it.each(["routes.cjs", "routes.cts", "routes.mjs", "routes.mts"])(
+  "preserves parser-proven runtime isolation for %s",
+  (path) => {
+    const facts = analyze(
+      "var INDEX=true;globalThis.INDEX=false;createBrowserRouter([{index:INDEX}]);",
+      undefined,
+      path,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/"]);
+    expect(facts.unresolved).toEqual([]);
+  },
+);
 
 it("keeps a known false index flag absent", () => {
   const facts = analyze(

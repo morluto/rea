@@ -33,6 +33,7 @@ import {
 } from "./javascriptSemanticAliasSelections.js";
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
@@ -1011,6 +1012,7 @@ export class JavaScriptRouteScan {
     node: t.Node,
     site: t.Node | undefined,
     index: JavaScriptBindingIndex,
+    proof: "source" | "isolated" = "source",
   ): t.Node | undefined {
     const seen = new Set<t.Node>();
     for (;;) {
@@ -1020,6 +1022,17 @@ export class JavaScriptRouteScan {
       seen.add(node);
       const binding = index.bindingForReferenceAt(node);
       if (binding === undefined) return;
+      // A boolean flag is asserted as definitely true or false, which a global
+      // property write can revoke. Object and path selections keep their source
+      // value: dropping those would cost ordinary route facts for the same
+      // unproven write, so only the flag consumer asks for isolated proof.
+      if (
+        proof === "isolated" &&
+        binding.declarationKinds.has("var") &&
+        index.bindings.scopesById.get(binding.scopeId)?.kind === "program" &&
+        javaScriptRuntimeContext(index.bindings.program) === "unknown"
+      )
+        return;
       const read = semanticBindingAtRead(
         binding,
         node,
@@ -1495,7 +1508,9 @@ export class JavaScriptRouteScan {
       } else if (!typed) {
         const flag = own.get("index")?.value;
         const value =
-          flag === undefined ? undefined : this.#resolve(flag, site, index);
+          flag === undefined
+            ? undefined
+            : this.#resolve(flag, site, index, "isolated");
         emit = t.isBooleanLiteral(value) && value.value;
         if (flag !== undefined && !t.isBooleanLiteral(value))
           this.#unknown(

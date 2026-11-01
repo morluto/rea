@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
+import { z } from "zod";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -13,6 +14,169 @@ const routeViewFromEvidence = (evidence: unknown) =>
     parseEvidence(evidence).normalized_result,
   );
 
+const indexRouteCases = [
+  ["literal", "", "true", "js", ["/"], "module", false],
+  ["alias", "const INDEX=true;", "INDEX", "js", ["/"], "module", false],
+  ["wrapper", "", "(true as const)", "ts", ["/"], "module", false],
+  [
+    "wrapped-alias",
+    "const INDEX=true;",
+    "(INDEX as boolean)",
+    "ts",
+    ["/"],
+    "module",
+    false,
+  ],
+  ["false", "const INDEX=false;", "INDEX", "js", [], "module", false],
+  ["dynamic", "const INDEX=choose();", "INDEX", "js", [], "module", true],
+  [
+    "script-global",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "js",
+    [],
+    "script",
+    true,
+  ],
+  [
+    "script-alias",
+    "var INDEX=true;const host=globalThis;host.INDEX=false;",
+    "INDEX",
+    "js",
+    [],
+    "script",
+    true,
+  ],
+  [
+    "module-var",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "js",
+    ["/"],
+    "module",
+    false,
+  ],
+  [
+    "commonjs-var",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "cjs",
+    ["/"],
+    "script",
+    false,
+  ],
+  [
+    "commonjs-typescript-var",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "cts",
+    ["/"],
+    "script",
+    false,
+  ],
+  [
+    "script-type-export",
+    "export type Marker = string;var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "ts",
+    [],
+    "script",
+    true,
+  ],
+] as const;
+
+cliTest(
+  "retains resolved index routes and reports unresolved flags through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-index-routes-");
+    for (const [
+      name,
+      prefix,
+      flag,
+      extension,
+      paths,
+      sourceType,
+      partial,
+    ] of indexRouteCases) {
+      const path = join(root, name);
+      await mkdir(path);
+      await writeFile(
+        join(path, "package.json"),
+        JSON.stringify({
+          name: "index-fixture",
+          private: true,
+          type: sourceType === "module" ? "module" : undefined,
+        }),
+      );
+      const route = `createBrowserRouter([{index:${flag},Component:Home}])`;
+      await writeFile(
+        join(path, `routes.${extension}`),
+        sourceType === "module"
+          ? `import {createBrowserRouter} from 'react-router';${prefix}export const router=${route};function Home(){return null;}`
+          : `${prefix}${route};function Home(){return null;}`,
+      );
+      const response = await cli.run({
+        arguments: [
+          "analyze-javascript-application",
+          path,
+          "--evidence_output",
+          join(root, `${name}-evidence.json`),
+          "--detail",
+          "summary",
+          "--view",
+          JSON.stringify({
+            kind: "javascript-routes",
+            collection: "routes",
+            fields: ["path"],
+          }),
+          "--json",
+        ],
+      });
+      expect(
+        response.exitCode,
+        `${name}: ${response.stdout}\n${response.stderr}`,
+      ).toBe(0);
+      const envelope = z.object({ summary: z.unknown() }).parse(response.json);
+      const view = routeViewFromEvidence(envelope.summary);
+      expect(view.items, name).toEqual(
+        paths.map((path) => expect.objectContaining({ path })),
+      );
+      expect(view.source_coverage, name).toMatchObject({
+        source_parsing: "complete",
+        candidate_enumeration: partial ? "partial" : "complete",
+        application_routes: "unknown",
+      });
+      if (partial) {
+        const unknowns = await cli.run({
+          arguments: [
+            "analyze-javascript-application",
+            path,
+            "--evidence_output",
+            join(root, `${name}-unknowns-evidence.json`),
+            "--detail",
+            "summary",
+            "--view",
+            JSON.stringify({
+              kind: "javascript-routes",
+              collection: "unknowns",
+            }),
+            "--json",
+          ],
+        });
+        expect(unknowns.exitCode, unknowns.stderr).toBe(0);
+        const unknownEnvelope = z
+          .object({ summary: z.unknown() })
+          .parse(unknowns.json);
+        expect(routeViewFromEvidence(unknownEnvelope.summary).items).toEqual([
+          expect.objectContaining({
+            kind: "interpretation",
+            reason: expect.stringContaining("index-route flag"),
+          }),
+        ]);
+      }
+    }
+  },
+);
 const expectAccountRoutes = (items: unknown[]) => {
   expect(items).toHaveLength(2);
   expect(items).toEqual(
