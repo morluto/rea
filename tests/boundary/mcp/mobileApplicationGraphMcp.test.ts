@@ -2,14 +2,13 @@ import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisRes
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import {
   TextReader,
   Uint8ArrayReader,
   Uint8ArrayWriter,
   ZipWriter,
 } from "@zip.js/zip.js";
-import { afterEach, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { androidApplicationProjectionResultSchema } from "../../../src/domain/android/androidApplication.js";
@@ -19,28 +18,18 @@ import { fragmentInventoryEvidence } from "../../fixtures/artifactEvidence.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
 const { runProviderAnalysis } = createDirectAnalysis({});
-
-const resources: Array<{ close(): Promise<unknown> }> = [];
-afterEach(async () => {
-  for (const resource of resources.splice(0)) await resource.close();
-});
 
 async function connect() {
   const session = createTestBinarySession(() => {
     throw new Error("mobile graph projection must not launch a provider");
   });
-  const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "mobile-application-graph-test",
-    version: "1",
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "mobile-application-graph-test", version: "1" },
   });
-  resources.push(client, server, session);
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(b);
-  await client.connect(a);
   return client;
 }
 
@@ -105,6 +94,21 @@ it("advertises and executes Android and Apple inventory projections", async () =
     provider: { id: "rea-android-application" },
   });
   const androidEvidence = parseEvidence(android.structuredContent);
+  const retainedAndroid = await client.callTool({
+    name: "project_android_application_graph",
+    arguments: {
+      inventory_evidence: apkSources.map(({ evidence_id }) => ({
+        kind: "retained-evidence",
+        evidence_id,
+      })),
+    },
+  });
+  expect(retainedAndroid.isError, JSON.stringify(retainedAndroid)).not.toBe(
+    true,
+  );
+  expect(parseEvidence(retainedAndroid.structuredContent)).toEqual(
+    androidEvidence,
+  );
   const androidBundle = await client.callTool({
     name: "get_evidence_bundle",
     arguments: {},
@@ -155,6 +159,18 @@ it("advertises and executes Android and Apple inventory projections", async () =
     operation: "project_apple_application_graph",
     provider: { id: "rea-apple-application" },
   });
+  const retainedApple = await client.callTool({
+    name: "project_apple_application_graph",
+    arguments: {
+      inventory_evidence: [
+        { kind: "retained-evidence", evidence_id: ipaInventory.evidence_id },
+      ],
+    },
+  });
+  expect(retainedApple.isError, JSON.stringify(retainedApple)).not.toBe(true);
+  expect(parseEvidence(retainedApple.structuredContent)).toEqual(
+    parseEvidence(apple.structuredContent),
+  );
 });
 
 it("projects a single inventory page as partial and links only that source", async () => {
@@ -219,6 +235,16 @@ it("projects a single inventory page as partial and links only that source", asy
   expect(unresolved).toContain(dex.artifact_format);
   expect(unresolved).toContain("unknown");
   expect(projection.evidence_links).toEqual([page.evidence_id]);
+  const retained = await client.callTool({
+    name: "project_android_application_graph",
+    arguments: {
+      inventory_evidence: [
+        { kind: "retained-evidence", evidence_id: page.evidence_id },
+      ],
+    },
+  });
+  expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+  expect(parseEvidence(retained.structuredContent)).toEqual(projection);
   const bundle = await client.callTool({
     name: "get_evidence_bundle",
     arguments: {},
@@ -379,6 +405,16 @@ it.each([
       ],
       coverage: { status: "partial", inventory_complete: true },
     });
+    const retained = await client.callTool({
+      name: operation,
+      arguments: {
+        inventory_evidence: [
+          { kind: "retained-evidence", evidence_id: inventory.evidence_id },
+        ],
+      },
+    });
+    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+    expect(parseEvidence(retained.structuredContent)).toEqual(evidence);
     const bundle = await client.callTool({
       name: "get_evidence_bundle",
       arguments: {},

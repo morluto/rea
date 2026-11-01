@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "58"
+  version: "59"
 ---
 
 # REA
@@ -409,9 +409,18 @@ call `analyze_javascript_application` or `inspect_binary_layout` with
 a flag: its default reply is the summary, and the complete dossier stays
 retained under `parent_evidence_id` for facet paging. Pass that ID as a
 `retained-evidence` reference to `compare_functions`, or inside
-`match_native_functions` `left_observations`/`right_observations`; request
-`"detail": "complete"` only when the dossier must travel inline, as
-`build_call_path` requires.
+`match_native_functions` `left_observations`/`right_observations` or
+`build_call_path.functions`; request `"detail": "complete"` only when the
+dossier must travel inline.
+Use the same exact-reference form in other advertised logical Evidence inputs,
+including optional sources, arrays and nested sources across domains. Each
+source can independently be inline or retained; preserve its source identity,
+coverage, partial facts and unknowns. A summary or inspection page has its own
+Evidence ID: use `normalized_result.parent_evidence_id` when the consumer needs
+the complete source. For portable CLI follow-ups, commands advertising
+`--evidence-bundle` resolve references from that selected exported bundle.
+See [Evidence composition](references/evidence-workflows.md) for scope and
+recovery; file selectors are supported only where explicitly advertised.
 Page module identities and select the returned `node_id` before requesting an
 item; a single file path can represent several graph roles. Do not repeat an
 identical analysis or rejected call without a changed input or resolved blocker.
@@ -513,4 +522,8 @@ as complete while required questions remain open.
 Explain findings in plain language and tie them to returned evidence. When the
 user asks to build something, use normal coding tools and separate observed
 behavior from design choices. Close an opened native session with
-`close_binary` when the investigation is complete.
+`close_binary` when its engine is no longer needed. Evidence references and Unknown
+history remain in memory on the same MCP connection. End the investigation with
+`reset_investigation`; supply `save_path` to checkpoint the complete bundle before
+clearing. Import the saved bundle to restore original references and Unknown
+history in a new process. Retention is bounded and is not automatic persistence.

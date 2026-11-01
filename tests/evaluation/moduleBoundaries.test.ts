@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { inspectModuleBoundaries } from "../../scripts/lib/module-boundaries.mjs";
+import { projectForTest } from "../../scripts/lib/test-projects.mjs";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { writeRepositoryOxlintConfiguration } from "../fixtures/oxlintConfiguration.js";
 
@@ -62,6 +63,113 @@ describe("binary production construction ownership", () => {
         process.cwd(),
       ),
     ).toMatchObject([{ boundary: "application-composition" }]);
+  });
+});
+
+describe("live capability constructor ownership", () => {
+  it.each([
+    "frida/FridaInstrumentationManager.js",
+    "cutter/CutterBridgeClient.js",
+    "cutter/CutterBridgeService.js",
+    "gdb/GdbSessionManager.js",
+    "rizin/RizinDebugSessionManager.js",
+  ])(
+    "keeps %s values in composition while accepting injected type ports",
+    (owner) => {
+      const source = `import { Constructor as Alias } from "../${owner}";`;
+      const types = `import type { Port } from "../${owner}";`;
+      for (const file of ["src/application/probe.ts", "src/server/probe.ts"]) {
+        expect(
+          inspectModuleBoundaries(file, source, process.cwd()),
+        ).toMatchObject([{ boundary: "provider-construction" }]);
+        expect(inspectModuleBoundaries(file, types, process.cwd())).toEqual([]);
+      }
+      expect(
+        inspectModuleBoundaries(
+          "src/composition/probe.ts",
+          source,
+          process.cwd(),
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it.each([
+    [
+      'import { Constructor as Alias } from "../frida/FridaInstrumentationManager.js";',
+      false,
+    ],
+    [
+      'import * as Owner from "../frida/FridaInstrumentationManager.js";',
+      false,
+    ],
+    [
+      'import { type Port, Constructor } from "../frida/FridaInstrumentationManager.js";',
+      false,
+    ],
+    [
+      'import { type Port as Alias } from "../frida/FridaInstrumentationManager.js";',
+      false,
+    ],
+    ['import "../frida/FridaInstrumentationManager.js";', false],
+    [
+      'export { Constructor as Alias } from "../frida/FridaInstrumentationManager.js";',
+      false,
+    ],
+    [
+      'export { type Port as Alias } from "../frida/FridaInstrumentationManager.js";',
+      false,
+    ],
+    ['export type * from "../frida/FridaInstrumentationManager.js";', true],
+    ['export * from "../frida/FridaInstrumentationManager.js";', false],
+    [
+      'type Port = import("../frida/FridaInstrumentationManager.js").Port;',
+      true,
+    ],
+    ['const owner = import("../frida/FridaInstrumentationManager.js");', false],
+    ["const owner = import(`../frida/FridaInstrumentationManager.js`);", false],
+    [
+      'import owner = require("../frida/FridaInstrumentationManager.js");',
+      false,
+    ],
+    [
+      'import type Owner = require("../frida/FridaInstrumentationManager.js");',
+      true,
+    ],
+    [
+      'import { Constructor } from "../domain/../frida/FridaInstrumentationManager.js";',
+      false,
+    ],
+    [
+      'const owner = import("../%66rida/FridaInstrumentationManager.js?view=one#part");',
+      false,
+    ],
+  ])("checks type/value ownership in %s", (source, allowed) => {
+    const violations = inspectModuleBoundaries(
+      "src/server/probe.ts",
+      source,
+      process.cwd(),
+    );
+    if (allowed) expect(violations).toEqual([]);
+    else
+      expect(violations).toMatchObject([{ boundary: "provider-construction" }]);
+  });
+
+  it("does not broaden the new guard to other provider-owned policy helpers", () => {
+    expect(
+      inspectModuleBoundaries(
+        "src/server/probe.ts",
+        'import { policy } from "../frida/fridaCaptureLimits.js";',
+        process.cwd(),
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([
+    "src/frida/FridaInstrumentationManager.test.ts",
+    "src/frida/nested/FutureProvider.test.ts",
+  ])("assigns %s to the adapter test project", (path) => {
+    expect(projectForTest(path).name).toBe("adapters");
   });
 });
 

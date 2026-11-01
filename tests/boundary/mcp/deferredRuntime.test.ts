@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { resolve, join, dirname } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
@@ -45,8 +46,10 @@ const connect = async (
     { versionNegotiation: { mode } },
   );
   onTestFinished(async () => {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   });
   await client.connect(transport);
   return { client, stderr: () => stderr };
@@ -197,9 +200,10 @@ it.each([
       client.callTool({ name: "list_unknowns", arguments: { limit: 1 } }),
     ]);
     expect(results.every((result) => result.isError !== true)).toBe(true);
-    expect(results[0]?.structuredContent).toEqual({
-      result: { items: [], total: 0, offset: 0, next_offset: null },
-    });
+    expect(results.map((result) => result.structuredContent)).toEqual([
+      { result: { items: [], total: 0, offset: 0, next_offset: null } },
+      { result: { items: [], total: 0, offset: 0, next_offset: null } },
+    ]);
     expect(await client.listTools()).toEqual(before);
     const invalid = await client.callTool({
       name: "list_unknowns",

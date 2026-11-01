@@ -47,10 +47,8 @@ import { isProfilelessNativeDispatchSnapshot } from "../../../src/application/bi
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  CAPABILITIES as GHIDRA_CAPABILITIES,
-  GHIDRA_PROVIDER_IDENTITY,
-} from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { CAPABILITIES as GHIDRA_CAPABILITIES } from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderMetadata.js";
 import { nativeInventoryRowsSchemas } from "../../../src/domain/native/nativeInventory.js";
 import { APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE } from "../../../src/native/NativeMacOSProviderMetadata.js";
 
@@ -591,6 +589,8 @@ const verifyWindowsSnapshotAdmission = async (
 };
 
 it.each([
+  { tool: "binary_overview", arguments: {}, priorRevision: 5 },
+  // Revision 4 overviews predate inventory_coverage and must not replay.
   { tool: "binary_overview", arguments: {}, priorRevision: 4 },
   {
     tool: "inspect_native_api",
@@ -647,6 +647,7 @@ it.each([
     expect(refreshed.limitations).toEqual(
       expect.arrayContaining(first.limitations),
     );
+    expect(refreshed.analysis_profile?.digest).toEqual(expect.any(String));
     expect(refreshed.analysis_profile?.digest).not.toBe(priorProfile.digest);
     expect(refreshed.normalized_result).toEqual(first.normalized_result);
     const starts = [...fixture.starts];

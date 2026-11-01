@@ -368,13 +368,31 @@ it("shares completed factory control flow across repeated loads within one analy
     },
   });
   expect(results).toHaveLength(64);
-  expect(
-    results.every((result) =>
-      symbolicVariants(result).every(
-        (variant, index) => variant === symbolicVariants(results[0]!)[index],
+  const variants = symbolicVariants(results[0]!);
+  expect(variants).toHaveLength(2);
+  expect(variants).toEqual(
+    expect.arrayContaining(
+      [true, false].map((positive) =>
+        expect.objectContaining({
+          kind: "namespace",
+          conditions: expect.arrayContaining([
+            {
+              node: expect.objectContaining({
+                type: "Identifier",
+                name: "flag",
+              }),
+              positive,
+            },
+          ]),
+        }),
       ),
     ),
-  ).toBe(true);
+  );
+  for (const result of results) {
+    const actual = symbolicVariants(result);
+    expect(actual).toHaveLength(variants.length);
+    actual.forEach((variant, index) => expect(variant).toBe(variants[index]));
+  }
   expect(
     evaluated.mock.calls.filter(([node]) =>
       t.isIdentifier(node, { name: "flag" }),

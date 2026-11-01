@@ -11,6 +11,7 @@ import {
 } from "../../../src/artifacts/fit/FitImage.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 
 // The compiled stdio fixture checks advertised schemas against their dialect and
 // validates actual tool responses, avoiding a second source server module graph.
@@ -48,11 +49,27 @@ it.each(["full", "compact"] as const)(
           kind: "inventory",
           collection: "occurrences",
           logical_paths: ["images/kernel.bin"],
-          fields: ["format_metadata"],
+          fields: ["logical_path", "format_metadata"],
         },
       });
       expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-      expect(JSON.stringify(retained.structuredContent)).toContain("fit-image");
+      const view = analysisViewResultSchema.parse(
+        parseEvidence(retained.structuredContent).normalized_result,
+      );
+      expect(view).toMatchObject({
+        kind: "inventory",
+        items: [
+          expect.objectContaining({
+            logical_path: "images/kernel.bin",
+            format_metadata: expect.objectContaining({
+              kind: "fit-image",
+              name: "kernel",
+              type: "kernel",
+              arch: "arm64",
+            }),
+          }),
+        ],
+      });
       const extracted = await call("extract_artifact", {});
       expect(extracted.isError, JSON.stringify(extracted)).not.toBe(true);
       const result = artifactExtractionResultSchema.parse(
@@ -72,9 +89,13 @@ it.each(["full", "compact"] as const)(
       await writeFile(path, corrupted);
       await call("open_binary", { path });
       const invalid = await call("inspect_artifact", {});
-      expect(JSON.stringify(parseMcpToolError(invalid))).toContain(
-        "FIT image kernel hash-1 crc32 does not match",
-      );
+      expect(parseMcpToolError(invalid).error).toMatchObject({
+        category: "integrity_mismatch",
+        details: {
+          reason: "integrity",
+          detail: expect.stringContaining("kernel hash-1 crc32"),
+        },
+      });
       await call("close_binary", {});
     } finally {
       if (outputRoot !== undefined)

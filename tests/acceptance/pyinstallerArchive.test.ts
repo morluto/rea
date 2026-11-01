@@ -482,8 +482,13 @@ it("extracts CArchive members through extract-artifact", async () => {
     hello?.bytes_written ?? 0,
   );
   expect(
-    await readFile(join(extracted.output_root, "PYZ.pyz", "app.pyc")),
-  ).toHaveLength(16 + Buffer.from("app-body").length);
+    (await readFile(join(extracted.output_root, "PYZ.pyz", "app.pyc"))).equals(
+      Buffer.concat([
+        Buffer.from("610d0d0a000000000000000000000000", "hex"),
+        Buffer.from("app-body"),
+      ]),
+    ),
+  ).toBe(true);
   expect(
     Buffer.compare(
       await readFile(join(extracted.output_root, "hello")),

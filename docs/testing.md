@@ -365,6 +365,36 @@ Do not report the warm result as a cold-suite improvement, and do not enable
 the cache in coverage or benchmark CI without first showing that its
 instrumentation remains equivalent.
 
+## CodeQL production scope
+
+[The production configuration](../.github/codeql/production.yml) excludes
+`tests/`, `scripts/fixtures/`, `*.test.*`, `*.fixture.*`, `test_*.py`, and `*_test.py` inputs
+during extraction. It retains the default queries and the existing `local`
+threat model. Production source, bridges, runtime scripts, installation and
+release controllers, and Actions remain in scope for the configured languages.
+Verification scripts remain included unless they match an explicit test path;
+excluding the entire `scripts/` directory would hide shipped entrypoints.
+These exclusions do not change which behavioral tests CI executes. CodeQL's
+JavaScript/TypeScript, Python, and Actions lanes do not add shell, Java, or Swift
+analysis; their existing checks remain responsible for those languages.
+
+[The production workflow](../.github/workflows/codeql.yml) is inactive until a
+repository administrator disables CodeQL **default setup** and sets the Actions
+repository variable `REA_CODEQL_ADVANCED` to `true`. Disable default setup first:
+it rejects advanced CodeQL uploads. Then enable the variable and manually run
+**CodeQL production** on `main`; verify all three analyses complete before
+relying on the new scope. While the variable is unset, the existing default
+setup continues scanning. Adding the configuration file alone does not change
+default setup in this user-owned repository.
+
+Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
+jobs run one at a time. Complete SARIF reports are retained for seven days.
+For a scope comparison, use the same source SHA, CodeQL bundle, default query
+suite, and `local` threat model on both runs. Change only `paths-ignore`, inspect
+the extracted-file inventory and diagnostics, and retain both complete reports.
+Alert counts do not establish a false-positive rate or a speedup. Report elapsed
+time, CPU time, and process-family memory with their measurement limits.
+
 ## Choose verification for the change
 
 `test:local` is fast source-level feedback. For the strongest practical
@@ -569,6 +599,27 @@ formerly failing size/depth and distinguish cold runs, warm builds, coverage,
 and toolchain conditions when comparing timings.
 
 ## Lifecycle regressions
+
+Investigation lifetime changes exercise public MCP target A/B switches, target-free
+close and close cleanup failure/retry, with exact retained IDs and complete Unknown
+revision histories. Verify engine replay/cache removal separately from retained
+facts. An explicit reset must preserve a healthy engine and existing metadata
+invalidation, drain an admitted signal-ignoring late result, block later work,
+and prevent stale replay/source bindings from restoring old facts. Cover checkpoint
+overwrite refusal, publication followed by cancellation or staging cleanup failure,
+cleanup retry, then fresh-process bundle import with identical original references
+and Unknown history. Capacity admission tests preserve the complete pre-state on
+failed record/import/Unknown transactions, count duplicates once, account for
+metadata size deltas and release budget on reset. Controlled providers and cleanup
+seams establish ordering and failure semantics; real application/provider runs are
+reported separately.
+
+Hold successful and error replies at the MCP transport boundary while reset
+queues behind their original admission. Verify checkpoint contents and publication
+order, including SDK output validation failure, handler failure and cancellation
+before or during send. Handler cleanup must settle even when the SDK suppresses
+the reply. An outgoing server request with the same numeric ID as an incoming
+tool request must not acknowledge that tool's response.
 
 For changes to resource acquisition, readiness, cancellation, or cleanup, select
 the affected owners and applicable scenarios below. Include temporary snapshots
@@ -1545,8 +1596,9 @@ real-provider coverage.
 For source-identity boundaries that a normal single-file import cannot create,
 `tests/conformance/ghidra/ReaFileOffsetSourceProbe.java` exercises the production
 bridge against real Ghidra `FileBytes`. It rejects auxiliary and partial sources,
-checks the original target's round trip, and retains ambiguity when duplicate
-target bytes have distinct loaded mappings. Injected decompiler failures and
+keeps distinct outcome codes for uninitialized and unmapped addresses, checks
+the original target's round trip, and retains ambiguity when duplicate target
+bytes have distinct loaded mappings. Injected decompiler failures and
 cancellation verify that completed source/function resolution facts and backend
 failure codes survive; these injections do not establish natural engine failures.
 On Windows, after creating the
