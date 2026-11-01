@@ -85,10 +85,11 @@ contracts and documentation. Choose representative tasks and their nearest REA
 and native alternatives rather than counting upstream commands.
 
 For those tasks, inspect relevant rendered MCP prompts, guided workflows and
-packaged skill advice as well. Follow the suggested producer-to-consumer handoff
-against the live contracts, including source identity, session lifetime and
-available alternatives. Matching text between two renderers does not establish
-that their shared advice is correct or that an agent selected the workflow.
+packaged skill advice in the versions actually in use. Follow the suggested
+producer-to-consumer handoff against the live contracts, including source
+identity, session lifetime and available alternatives. Matching text between
+two renderers does not establish that their shared advice is correct or that an
+agent selected the workflow.
 
 Exercise the selected public workflows, including the steps before and after a
 tool call. Check task selection, input choices, returned facts and their source,
