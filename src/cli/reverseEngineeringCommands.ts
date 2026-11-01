@@ -459,18 +459,25 @@ export const registerReverseEngineeringCommands = (
                 : err(executed.error);
             },
             service: {
-              close: () =>
-                closeDebuggerCommandSession(
-                  manager,
-                  sessionId,
-                  "gdb",
-                  "gdb_console",
-                  (cleanup) =>
-                    logger.error(
-                      { command: CLI_COMMANDS.debugWithGdb, cleanup },
-                      "GDB cleanup failed after collecting command output",
-                    ),
-                ),
+              close: async () => {
+                try {
+                  await closeDebuggerCommandSession(
+                    manager,
+                    sessionId,
+                    "gdb",
+                    "gdb_console",
+                    (cleanup) =>
+                      logger.error(
+                        { command: CLI_COMMANDS.debugWithGdb, cleanup },
+                        "GDB cleanup failed after collecting command output",
+                      ),
+                  );
+                } catch (cause) {
+                  retainedGdbManagers.add(manager);
+                  retryRetainedGdbCleanup();
+                  throw cause;
+                }
+              },
             },
           });
         }),

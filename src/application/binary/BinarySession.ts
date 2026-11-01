@@ -972,10 +972,15 @@ export class BinarySession
       if (this.#externalMutationOwnerPending)
         return err(this.#externalMutationStillActive("close_binary"));
       await this.#drainCalls(admittedThrough);
-      return this.#offerCleanupRetry(
-        await this.#closeActive(options),
-        options.cleanupRetry,
-      );
+      const closed = await this.#closeActive(options);
+      if (!closed.ok)
+        return this.#offerCleanupRetry(closed, options.cleanupRetry);
+      if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
+        return this.#offerCleanupRetry(
+          err(this.#externalMutationCleanupFailure),
+          options.cleanupRetry,
+        );
+      return closed;
     });
   }
 
@@ -1009,9 +1014,21 @@ export class BinarySession
         await this.#closeActive(options),
         options.cleanupRetry,
       );
-      return closed.ok
-        ? ok(receipt)
-        : err(retainSavedAnalysisSnapshot(closed.error, receipt));
+      if (!closed.ok)
+        return err(retainSavedAnalysisSnapshot(closed.error, receipt));
+      if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true) {
+        const failure = this.#offerCleanupRetry(
+          err(this.#externalMutationCleanupFailure),
+          options.cleanupRetry,
+        );
+        return err(
+          retainSavedAnalysisSnapshot(
+            failure.ok ? this.#externalMutationCleanupFailure : failure.error,
+            receipt,
+          ),
+        );
+      }
+      return ok(receipt);
     });
   }
 
@@ -1025,7 +1042,11 @@ export class BinarySession
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
       const closed = await this.#closeActive(options);
-      if (closed.ok) this.disposeInvestigationRecords();
+      if (closed.ok) {
+        if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
+          return err(this.#externalMutationCleanupFailure);
+        this.disposeInvestigationRecords();
+      }
       return closed;
     });
   }

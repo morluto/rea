@@ -106,9 +106,9 @@ export const registerCloseLifecycleTool = ({
     const resources = resourceClose.value;
     const reverse = reverseCleanup.value;
     const failures: AnalysisError[] = [
+      ...(reverse.ok ? [] : [reverse.error]),
       ...(closed.ok ? [] : [closed.error]),
       ...(resources.ok ? [] : [resources.error]),
-      ...(reverse.ok ? [] : [reverse.error]),
     ];
     if (failures.length === 0) return closed;
     let combined = failures[0]!;
