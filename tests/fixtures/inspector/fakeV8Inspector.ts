@@ -96,6 +96,11 @@ export const startFakeV8Inspector = async (
     response.statusCode = 404;
     response.end("{}");
   });
+  // In-process callers can block this event loop for seconds (the MCP client
+  // compiles a tool output schema on its first call). Node's 5s keep-alive
+  // default then retires the pooled discovery socket while a later caller still
+  // holds it, surfacing as ECONNRESET instead of the fixture's real outcome.
+  http.keepAliveTimeout = 120_000;
   const webSockets = new WebSocketServer({ noServer: true });
   http.on("upgrade", (request, socket, head) => {
     if (request.url !== `/${targetId}` && request.url !== `/${otherTargetId}`) {
