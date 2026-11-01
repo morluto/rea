@@ -932,10 +932,16 @@ export class ReverseEngineeringService {
       sha256 = await this.#digest(lookup.path, signal, this.#stat, timeoutMs);
     } catch (cause) {
       const code = commandFailureCode(cause);
+      // A hash that ends the call keeps the path the lookup found.
+      const diagnostics = {
+        phase: "executable_digest",
+        provider_executable_path: lookup.path,
+      };
       if (preflightCancelled(signal, cause, code))
         return err(
           new AnalysisCancelledError(operation, {
             cause: callerCancellationCause(signal, cause),
+            diagnostics,
           }),
         );
       // Hashing past the deadline ends the call, as the lookup's deadline does.
@@ -943,7 +949,7 @@ export class ReverseEngineeringService {
         return err(
           new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
-            diagnostics: { phase: "executable_digest" },
+            diagnostics,
             ...reverseCommandTimeoutGuidance(timeoutMs),
           }),
         );

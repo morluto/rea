@@ -581,9 +581,9 @@ posix(
   },
 );
 
-posix(
-  "ends the call without running anything when hashing the executable reaches the deadline",
-  async () => {
+posix.each(["deadline", "cancellation"] as const)(
+  "ends the call without running anything when hashing the executable meets its %s, keeping the path found",
+  async (interruption) => {
     const { executable, path } = await rizinExecutableFixture();
     const digestStarted = gate();
     const release = gate();
@@ -601,25 +601,35 @@ posix(
         return stat(target);
       },
     });
+    const caller = new AbortController();
     try {
-      const result = await within(
-        service.executeRizinCommand({
+      const call = service.executeRizinCommand(
+        {
           path,
           command: "iI",
-          command_timeout_ms: 50,
-        }),
-        "call past the digest deadline",
+          ...(interruption === "deadline" ? { command_timeout_ms: 50 } : {}),
+        },
+        { signal: caller.signal },
       );
       await within(digestStarted.opened, "executable digest");
-      if (result.ok) throw new Error("Expected the digest deadline to end it");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisTimeoutError",
-        timeoutMs: 50,
+      if (interruption === "cancellation") caller.abort("stop the digest");
+      const result = await within(call, "interrupted digest");
+      if (result.ok) throw new Error("Expected the digest to end the call");
+      expect(result.error._tag).toBe(
+        interruption === "deadline"
+          ? "AnalysisTimeoutError"
+          : "AnalysisCancelledError",
+      );
+      if (interruption === "cancellation")
+        expect(result.error.cause).toBe("stop the digest");
+      expect(result.error.diagnostics).toEqual({
+        phase: "executable_digest",
+        provider_executable_path: executable,
       });
-      expect(result.error.diagnostics).toEqual({ phase: "executable_digest" });
       expect(run).not.toHaveBeenCalled();
     } finally {
       release.open();
+      caller.abort("test cleanup");
     }
   },
 );
