@@ -638,6 +638,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Hermes             | `hermes`         |
 | Qoder              | `qoder`          |
 | Factory Droid      | `droid`          |
+| ggcode             | `ggcode`         |
 | Trae               | `trae`           |
 | WorkBuddy          | `workbuddy`      |
 | ZCode              | `zcode`          |

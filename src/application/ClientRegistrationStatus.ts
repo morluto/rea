@@ -255,7 +255,9 @@ export const readClientRegistrationInspections = async (
               configPaths: [configPath],
               format: "zcode_fallback",
             }
-          : client;
+          : parsed.dialect === "ggcode" && configPath !== client.configPath
+            ? { ...client, configPath, configPaths: [configPath] }
+            : client;
       const parsedRegistration = parseClientRegistration(raw, effectiveClient);
       if (!parsedRegistration.ok) {
         record({

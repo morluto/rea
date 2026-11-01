@@ -178,7 +178,12 @@ export const parseClientRegistration = (
   }
   const parsed = registrationSchema.safeParse(value);
   if (!parsed.success) return err(registrationError(parsed.error));
-  const registration = parsed.data;
+  // ggcode treats an empty `type` as stdio; normalize before the checks so an
+  // explicit empty marker stays aligned with a stdio registration.
+  const registration =
+    client.format === "ggcode" && parsed.data.type === ""
+      ? { ...parsed.data, type: "stdio" }
+      : parsed.data;
   const transportInvalid =
     ((client.format === "kimi" || client.format === "commandcode") &&
       registration.transport !== undefined &&
@@ -189,7 +194,8 @@ export const parseClientRegistration = (
       registration.type !== "stdio") ||
     ((client.format === "kimi" ||
       client.format === "omp" ||
-      client.format === "pi") &&
+      client.format === "pi" ||
+      client.format === "ggcode") &&
       registration.type !== undefined &&
       registration.type !== "stdio");
   if (transportInvalid || typeInvalid)

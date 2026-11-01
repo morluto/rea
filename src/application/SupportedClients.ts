@@ -34,6 +34,17 @@ export interface SetupClient {
   readonly configPathError?: string;
   /** Same-scope fallback ZCode stops loading after its first native server. */
   readonly zcodeFallbackPath?: string;
+  /**
+   * Legacy same-scope file whose servers a freshly created write target
+   * supersedes; setup seeds the new file with them instead of dropping them.
+   */
+  readonly supersededConfigPath?: string;
+  /**
+   * Legacy file the client honors only while configPath is absent; a
+   * read-only fallback layer for status and uninstall, never a merge layer
+   * or a setup write target.
+   */
+  readonly fallbackConfigPath?: string;
   readonly markerPath?: string;
   /**
    * Registration storage shared with other products. Its presence never proves
@@ -60,6 +71,7 @@ export interface SetupClient {
     | "pi"
     | "kimi"
     | "hermes"
+    | "ggcode"
     | "zcode_fallback"
     | "zcode"
     | "dsh"
@@ -114,6 +126,8 @@ interface ClientDefinitionBase {
   readonly format: NonNullable<SetupClient["format"]>;
   readonly quitBeforeSetup?: boolean;
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
+  readonly supersededConfigPath?: ClientPath;
+  readonly fallbackConfigPath?: ClientPath;
   readonly skillPath?: ClientPath;
   readonly configPaths?: (context: ClientPathContext) => readonly string[];
   readonly geminiSettings?: (
@@ -199,6 +213,10 @@ const qoderDirectory = ({ home, env }: ClientPathContext): string =>
 /** Droid's override selects the home containing .factory, including personal skills. */
 const factoryDirectory = ({ home, env }: ClientPathContext): string =>
   join(env.FACTORY_HOME_OVERRIDE || home, ".factory");
+
+/** ggcode keeps its configuration in ~/.ggcode; there is no home override. */
+const ggcodeDirectory = ({ home }: ClientPathContext): string =>
+  join(home, ".ggcode");
 
 /** Match Qwen Code's home override, including tilde and cwd-relative paths. */
 const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
@@ -712,6 +730,22 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "json",
   },
   {
+    name: "ggcode",
+    displayName: "ggcode",
+    skillPath: (context: ClientPathContext) =>
+      join(ggcodeDirectory(context), "skills"),
+    configPath: (context: ClientPathContext) =>
+      join(ggcodeDirectory(context), "mcp_servers.yaml"),
+    // ggcode honors an in-main mcp_servers section only while the standalone
+    // file is absent; keep it a read-only fallback, never a merge layer.
+    fallbackConfigPath: (context: ClientPathContext) =>
+      join(ggcodeDirectory(context), "ggcode.yaml"),
+    supersededConfigPath: (context: ClientPathContext) =>
+      join(ggcodeDirectory(context), "ggcode.yaml"),
+    markerPath: ggcodeDirectory,
+    format: "ggcode",
+  },
+  {
     name: "zcode",
     zcodeFallbackPath: ({ home }: ClientPathContext) =>
       join(home, ".agents", "mcp.json"),
@@ -771,7 +805,11 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
 export const clientEvidencePaths = (
   client: Pick<
     SetupClient,
-    "configPath" | "configPaths" | "markerPath" | "discoveryPaths"
+    | "configPath"
+    | "configPaths"
+    | "fallbackConfigPath"
+    | "markerPath"
+    | "discoveryPaths"
   >,
 ): readonly string[] => [
   ...new Set(
@@ -779,6 +817,7 @@ export const clientEvidencePaths = (
       client.discoveryPaths ?? [
         client.configPath,
         ...(client.configPaths ?? []),
+        client.fallbackConfigPath,
         client.markerPath,
       ]
     ).filter((path): path is string => path !== undefined && path.length > 0),
@@ -882,6 +921,26 @@ export const supportedClients = (
         ...(definition.zcodeFallbackPath === undefined
           ? {}
           : { zcodeFallbackPath: definition.zcodeFallbackPath(context) }),
+        ...(definition.supersededConfigPath === undefined
+          ? {}
+          : (() => {
+              const resolved = resolvePath(
+                definition.supersededConfigPath,
+                context,
+              );
+              return resolved.ok
+                ? { supersededConfigPath: resolved.value }
+                : {};
+            })()),
+        ...(definition.fallbackConfigPath === undefined
+          ? {}
+          : (() => {
+              const resolved = resolvePath(
+                definition.fallbackConfigPath,
+                context,
+              );
+              return resolved.ok ? { fallbackConfigPath: resolved.value } : {};
+            })()),
         markerPath,
         ...(msixPackage === undefined ? {} : { msixPackage }),
         ...(definition.quitBeforeSetup === true
