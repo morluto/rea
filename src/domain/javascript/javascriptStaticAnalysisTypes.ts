@@ -44,6 +44,12 @@ interface JavaScriptStaticReferenceState {
   readonly module_runtime?: string;
   /** Source-relative filename selected by a proven createRequire factory. */
   readonly resolution_base_path?: string;
+  /**
+   * Which loader produced this reference. A `factory-loader` specifier is a
+   * recovered bundle module key, so it names a module inside the artifact even
+   * when it reads like a package name.
+   */
+  readonly loader?: "commonjs-loader" | "factory-loader" | "create-require";
   readonly location: JavaScriptSourceRange;
 }
 

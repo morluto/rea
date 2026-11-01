@@ -277,21 +277,42 @@ it("does not count a resolve-only Electron reference as coverage", async () => {
   expect(limitations).not.toContain(EMPTY_COVERAGE);
 });
 
-it("does not count a bundle-local module key as an Electron load", async () => {
-  // A Webpack/Rspack factory can name a local module `"electron"`; the static
-  // producer records a loaded `require` reference whose specifier is that key.
-  const bundled = (consumer: string) =>
-    `(()=>{var m={"electron":(e,t,n)=>{"use strict";e.exports={local:1}},100:(e,t,n)=>{"use strict";${consumer}}},c={};` +
+it("classifies a bundle module by its loader, not by its name", async () => {
+  // A Webpack/Rspack factory can name a local module `"electron"`. A
+  // `factory-loader` reference names that module key, while a real external load
+  // keeps its `commonjs-loader` identity even in the same file.
+  const shell = (modules: string, consumer: string) =>
+    `(()=>{var m={${modules}},c={};` +
     `function n(t){var r=c[t];if(void 0!==r)return r.exports;var o=c[t]={exports:{}};` +
-    `return m[t](o,o.exports,n),o.exports}n(100);})();`;
-  const local = await graphFor(bundled(`const s=n("electron");s.local`));
+    `return m[t](o,o.exports,n),o.exports}${consumer}})();`;
+
+  const local = await graphFor(
+    shell(
+      `"electron":(e,t,n)=>{"use strict";e.exports={local:1}},` +
+        `100:(e,t,n)=>{"use strict";const s=n("electron");s.local}`,
+      `n(100);`,
+    ),
+  );
   expect(local.electronSemantics).toBeUndefined();
   expect(local.limitations).not.toContain(EMPTY_COVERAGE);
-  // The same factory really loading the package is still observed.
+
   const external = await graphFor(
-    `(()=>{var m={45840:e=>{"use strict";e.exports=require("electron")},100:(e,t,n)=>{"use strict";const s=n(45840);s.ipcMain.handle("ping",()=>1)}},c={};` +
-      `function n(t){var r=c[t];if(void 0!==r)return r.exports;var o=c[t]={exports:{}};` +
-      `return m[t](o,o.exports,n),o.exports}n(100);})();`,
+    shell(
+      `45840:e=>{"use strict";e.exports=require("electron")},` +
+        `100:(e,t,n)=>{"use strict";const s=n(45840);s.ipcMain.handle("x",()=>1)}`,
+      `n(100);`,
+    ),
   );
   expect(external.electronSemantics).toBe("recovered");
+
+  // A factory keyed `"electron"` whose body loads the real package is still a
+  // real load, so the name alone must not suppress it.
+  const externalUnderKey = await graphFor(
+    shell(
+      `"electron":(e,t,n)=>{"use strict";e.exports=require("electron")},` +
+        `100:(e,t,n)=>{"use strict";const s=n("electron");s.ipcMain.handle("x",()=>1)}`,
+      `n(100);`,
+    ),
+  );
+  expect(externalUnderKey.electronSemantics).toBe("recovered");
 });

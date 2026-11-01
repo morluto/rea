@@ -103,6 +103,9 @@ export const inspectCall = (
       ...(requireCall.resolutionBasePath === undefined
         ? {}
         : { resolutionBasePath: requireCall.resolutionBasePath }),
+      ...(requireCall.loader === undefined
+        ? {}
+        : { loader: requireCall.loader }),
     });
   const chunkLoad = chunkLoadSpecifier(node, bindings, context);
   if (chunkLoad !== null)
@@ -281,6 +284,7 @@ const requireCallSpecifier = (
   readonly specifier: string | undefined;
   readonly operation: "load" | "resolve";
   readonly resolutionBasePath?: string;
+  readonly loader?: "commonjs-loader" | "factory-loader" | "create-require";
 } | null => {
   const call = semanticRequireCallAt(
     node,
@@ -305,6 +309,13 @@ const requireCallSpecifier = (
     ...(call.sourceRelativePath === undefined
       ? {}
       : { resolutionBasePath: call.sourceRelativePath }),
+    // `factory-loader` names a bundle factory require, so its specifier is a
+    // recovered module key rather than a package specifier.
+    ...(call.loader === "commonjs-loader" ||
+    call.loader === "factory-loader" ||
+    call.loader === "create-require"
+      ? { loader: call.loader }
+      : {}),
   };
 };
 
@@ -981,6 +992,7 @@ export const addReference = (
       ...(input.resolutionBasePath === undefined
         ? {}
         : { resolution_base_path: input.resolutionBasePath }),
+      ...(input.loader === undefined ? {} : { loader: input.loader }),
       module_key: null,
       location: range(input.node),
     },
