@@ -211,9 +211,11 @@ const finalizeStaticAnalysis = (
       value.operation === "load" &&
       ELECTRON_REFERENCE_KINDS.has(value.kind) &&
       ELECTRON_MODULE.test(value.specifier) &&
-      // A `require` whose specifier is a recovered bundle module key loads a
-      // module inside the artifact; `"electron"` may be that module's local ID.
-      !accumulator.moduleRangeIndex.hasKey(value.specifier),
+      // A `factory-loader` reference names a recovered bundle module, so its
+      // specifier is a module key inside the artifact rather than a package. A
+      // real external load in the same file keeps its `commonjs-loader`
+      // identity, so it is still counted.
+      value.loader !== "factory-loader",
   );
   const resourceLimits = [...bindings.valueResourceLimits].sort();
   const coverage: JavaScriptStaticCoverage = {
