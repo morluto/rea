@@ -269,7 +269,10 @@ const nodeBuiltinTimerMethod = (
  * exists. Only literals the analyzer can read exactly are decided; an identifier
  * or call may still be a function at runtime.
  */
-const schedulesWithNonFunctionCallback = (node: t.Node): boolean => {
+const schedulesWithNonFunctionCallback = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
   const argument = node.arguments[0];
@@ -290,9 +293,19 @@ const schedulesWithNonFunctionCallback = (node: t.Node): boolean => {
     t.isObjectExpression(value)
   )
     return true;
+  // `undefined`, `NaN` and `Infinity` are unmodified globals, and none is a
+  // function. A shadowed binding may still hold one, so only the global counts.
+  if (
+    t.isIdentifier(value) &&
+    ["undefined", "NaN", "Infinity"].includes(value.name) &&
+    isUnmodifiedGlobalReference(value, state, value.name)
+  )
+    return true;
   // A class passes Node's own typeof check; invoking it is a separate failure,
-  // so the schedule itself still happens.
-  return t.isUnaryExpression(value) && value.operator === "void";
+  // so the schedule itself still happens. Every other unary operator (including
+  // `void`, `!`, `~`, `typeof` and `delete`) yields a primitive, never a
+  // function.
+  return t.isUnaryExpression(value);
 };
 
 const collectTimer = (input: TimerCollectionInput): void => {
@@ -302,7 +315,7 @@ const collectTimer = (input: TimerCollectionInput): void => {
   if (
     TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method) &&
     nodeBuiltinTimerMethod(node.callee, state) !== null &&
-    schedulesWithNonFunctionCallback(node)
+    schedulesWithNonFunctionCallback(node, input.state)
   )
     return;
   const kind = TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method)

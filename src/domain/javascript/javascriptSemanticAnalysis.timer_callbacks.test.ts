@@ -74,3 +74,52 @@ it("keeps a cancellation whose handle is a real timer", () => {
   expect(operations.map(({ kind }) => kind)).toEqual(["schedule", "cancel"]);
   expect(operations[1]?.resolution).toBe("complete");
 });
+
+/**
+ * `undefined`, `NaN` and `Infinity` are unmodified globals and none is a
+ * function, and every unary operator yields a primitive rather than a function.
+ * Node rejects each before creating a handle:
+ *
+ *   setTimeout(undefined) -> THREW ERR_INVALID_ARG_TYPE
+ *   setTimeout(NaN)       -> THREW ERR_INVALID_ARG_TYPE
+ *   setTimeout(Infinity)  -> THREW ERR_INVALID_ARG_TYPE
+ *   setTimeout(!0)        -> THREW ERR_INVALID_ARG_TYPE
+ *   setTimeout(-1)        -> THREW ERR_INVALID_ARG_TYPE
+ *   setTimeout(typeof 1)  -> THREW ERR_INVALID_ARG_TYPE
+ *   --- still scheduled ---
+ *   setTimeout(() => {})  -> ok
+ *   setTimeout(class {})  -> ok, a class passes Node's typeof check
+ */
+it.each([
+  ["an undefined callback", `setTimeout(undefined)`],
+  ["a NaN callback", `setTimeout(NaN)`],
+  ["an Infinity callback", `setTimeout(Infinity)`],
+  ["a void callback", `setTimeout(void 0)`],
+  ["a logical-not callback", `setTimeout(!0)`],
+  ["a bitwise-not callback", `setTimeout(~0)`],
+  ["a negated callback", `setTimeout(-1)`],
+  ["a unary-plus callback", `setTimeout(+"1")`],
+  ["a typeof callback", `setTimeout(typeof 1)`],
+  ["a NaN immediate callback", `setImmediate(NaN)`],
+  ["an Infinity interval callback", `setInterval(Infinity)`],
+] as const)("emits no timer for %s", (_name, call) => {
+  expect(nodeTimersCalls(call)).toEqual([]);
+});
+
+it.each([
+  ["an arrow callback", `setTimeout(() => {})`, "setTimeout"],
+  ["an identifier callback", `setTimeout(handler)`, "setTimeout"],
+  ["a class callback", `setTimeout(class {})`, "setTimeout"],
+  ["an immediate arrow callback", `setImmediate(() => {})`, "setImmediate"],
+] as const)("keeps the timer for %s", (_name, call, method) => {
+  expect(nodeTimersCalls(call)).toEqual([{ kind: "schedule", method }]);
+});
+
+it("keeps the timer when a local binding shadows the global", () => {
+  expect(nodeTimersCalls(`const NaN = () => {}; setTimeout(NaN)`)).toEqual([
+    { kind: "schedule", method: "setTimeout" },
+  ]);
+  expect(
+    nodeTimersCalls(`const undefined = () => {}; setTimeout(undefined)`),
+  ).toEqual([{ kind: "schedule", method: "setTimeout" }]);
+});
