@@ -984,7 +984,7 @@ it.runIf(!unsupportedHost).each(["directory", "missing-interpreter"])(
     });
     if (scenario === "directory")
       expect(result.error).toMatchObject({
-        reason: "prlimit_not_file",
+        reason: expect.stringContaining("absolute executable regular file"),
         diagnostics: {
           limiter_path: limiter,
           code: "prlimit_not_file",
