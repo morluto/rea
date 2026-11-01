@@ -21,6 +21,7 @@ afterEach(async () => {
 
 const runVerifier = async (
   settings: {
+    args?: string[];
     closeFails?: boolean;
     thrown?: "undefined" | "null";
     removal?: "fails" | "leaves_probe";
@@ -63,7 +64,8 @@ const runVerifier = async (
   await writeFile(
     join(root, "dist", "composition", "adb.js"),
     `import { writeFile } from "node:fs/promises";
-export const createAdbDeviceAnalysisProvider = () => ({
+import { writeFileSync } from "node:fs";
+export const createAdbDeviceAnalysisProvider = () => (writeFileSync(process.env.REA_ADB_CREATE_MARKER, "created"), {
   async close() {
     await writeFile(process.env.REA_ADB_CLOSE_MARKER, "closed");
     if (process.env.REA_ADB_CLOSE_FAIL === "1") {
@@ -112,16 +114,18 @@ export class AdbDeviceAnalysisService {
 }\n`,
   );
   const marker = join(root, "provider-closed");
+  const createdMarker = join(root, "provider-created");
   const adbLog = join(root, "adb.log");
   const run = spawnSync(
     process.execPath,
-    [join(root, "scripts", "verify-adb.mjs")],
+    [join(root, "scripts", "verify-adb.mjs"), ...(settings.args ?? [])],
     {
       encoding: "utf8",
       timeout: 10_000,
       env: {
         ...process.env,
         REA_ADB_CLOSE_MARKER: marker,
+        REA_ADB_CREATE_MARKER: createdMarker,
         REA_ADB_CLOSE_FAIL: settings.closeFails ? "1" : "0",
         REA_FAKE_ADB: adb,
         REA_FAKE_ADB_LOG: adbLog,
@@ -135,11 +139,12 @@ export class AdbDeviceAnalysisService {
     },
   );
   const closed = await readFile(marker, "utf8").catch(() => null);
+  const created = await readFile(createdMarker, "utf8").catch(() => null);
   const adbCalls = await readFile(adbLog, "utf8").then(
     (text) => text.trim().split("\n"),
     () => [],
   );
-  return { ...run, closed, adbCalls, deviceFiles: await readdir(device) };
+  return { ...run, created, closed, adbCalls, deviceFiles: await readdir(device) };
 };
 
 // The fake adb client is a POSIX shell script.
@@ -251,3 +256,18 @@ it("reports both an unexpected verifier throw and provider cleanup failure", asy
   expect(result.stderr).toContain("fixture/private-root");
   expect(result.closed).toBe("closed");
 });
+
+
+it.each([["--install-apk", "/tmp/unrelated.apk"], ["--install-apk"]])(
+  "rejects %s before contacting the device or acquiring provider resources",
+  async (...args) => {
+    const result = await runVerifier({ args });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("APK identity and device cleanup ownership cannot be established safely");
+    expect(result.created).toBeNull();
+    expect(result.closed).toBeNull();
+    expect(result.adbCalls).toEqual([]);
+    expect(result.deviceFiles).toEqual([]);
+  },
+);
