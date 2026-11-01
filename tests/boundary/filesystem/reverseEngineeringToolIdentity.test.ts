@@ -446,6 +446,32 @@ posix(
   },
 );
 
+posix(
+  "skips a PATH entry too long for a spawned search's path buffer, but stops at an over-long component",
+  async () => {
+    const { executable } = await rizinExecutableFixture();
+    const directory = dirname(executable);
+    const cwd = () => process.cwd();
+    // Longer than PATH_MAX on Linux (4,096 bytes) and macOS (1,024 bytes).
+    const longEntry = `/${"a".repeat(4_999)}`;
+    await expect(
+      lookupExecutable("rizin", cwd, `${longEntry}${delimiter}${directory}`),
+    ).resolves.toEqual({ status: "found", path: executable });
+    // Within PATH_MAX, a 300-byte component fails as a launch by name does.
+    const longComponent = `/${"a".repeat(300)}`;
+    await expect(
+      lookupExecutable(
+        "rizin",
+        cwd,
+        `${longComponent}${delimiter}${directory}`,
+      ),
+    ).resolves.toEqual({
+      status: "missing",
+      checked: [`${longComponent}/rizin (ENAMETOOLONG)`],
+    });
+  },
+);
+
 posix.each(["cancellation", "deadline"] as const)(
   "stops a stalled executable lookup on its %s without running anything",
   async (interruption) => {
