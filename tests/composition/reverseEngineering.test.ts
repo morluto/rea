@@ -586,59 +586,97 @@ it("shares one preflight deadline across stat and digest", async () => {
   expect(performance.now() - started).toBeLessThan(280);
 });
 
+/**
+ * A stream whose open stalls, as on an unresponsive mount, until the test
+ * returns it. `release` returns the open, even after a failed assertion, and
+ * joins the stream's close within a bound.
+ */
+const stalledOpen = () => {
+  let held: (() => void) | undefined;
+  const stream = new Readable({
+    construct(callback) {
+      held = callback;
+    },
+    read() {},
+  });
+  const returnOpen = (): void => {
+    const callback = held;
+    held = undefined;
+    callback?.();
+  };
+  const release = async (): Promise<void> => {
+    returnOpen();
+    stream.destroy();
+    if (stream.closed) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        new Promise<void>((resolve) => stream.once("close", () => resolve())),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("the stalled open's stream did not close")),
+            1_000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  return { stream, returnOpen, release };
+};
+
 it.each(["deadline", "cancellation"] as const)(
   "ends a digest on its %s while the file's open is still pending",
   async (interruption) => {
     const controller = new AbortController();
     const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
-    // A stream whose open never returns, as on a stalled mount.
-    let stream: Readable | undefined;
+    let stalled: ReturnType<typeof stalledOpen> | undefined;
     const open = () => {
-      stream = new Readable({ construct() {}, read() {} });
-      return stream as unknown as ReturnType<
+      stalled = stalledOpen();
+      return stalled.stream as unknown as ReturnType<
         typeof import("node:fs").createReadStream
       >;
     };
-    const digest = digestFile(
-      "/tmp/rea-stalled-open",
-      controller.signal,
-      stat,
-      interruption === "deadline" ? 50 : 10_000,
-      open,
-    ).catch((cause: unknown) => cause);
-    if (interruption === "cancellation")
-      setTimeout(() => controller.abort("stop the digest"), 20);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const failure = await Promise.race([
-      digest,
-      new Promise((resolve) => {
-        timer = setTimeout(() => resolve("still waiting"), 1_000);
-      }),
-    ]);
-    clearTimeout(timer);
-    expect(failure).toMatchObject(
-      interruption === "deadline"
-        ? { code: "ETIMEDOUT" }
-        : { _tag: "AnalysisCancelledError", cause: "stop the digest" },
-    );
-    expect(stream?.destroyed).toBe(true);
+    try {
+      const digest = digestFile(
+        "/tmp/rea-stalled-open",
+        controller.signal,
+        stat,
+        interruption === "deadline" ? 50 : 10_000,
+        open,
+      ).catch((cause: unknown) => cause);
+      if (interruption === "cancellation")
+        setTimeout(() => controller.abort("stop the digest"), 20);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const failure = await Promise.race([
+        digest,
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve("still waiting"), 1_000);
+        }),
+      ]);
+      clearTimeout(timer);
+      expect(failure).toMatchObject(
+        interruption === "deadline"
+          ? { code: "ETIMEDOUT" }
+          : { _tag: "AnalysisCancelledError", cause: "stop the digest" },
+      );
+      expect(stalled?.stream.destroyed).toBe(true);
+    } finally {
+      await stalled?.release();
+    }
   },
 );
 
 it("makes a hash wait for an earlier open of the same path that has not returned", async () => {
   const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
-  let returnOpen: (() => void) | undefined;
+  let stalled: ReturnType<typeof stalledOpen> | undefined;
   const opened: Readable[] = [];
   // The first open stalls until the test returns it; a later one reads "x".
   const open = () => {
     const stream =
       opened.length === 0
-        ? new Readable({
-            construct(callback) {
-              returnOpen = () => callback();
-            },
-            read() {},
-          })
+        ? (stalled = stalledOpen()).stream
         : Readable.from([Buffer.from("x")]);
     opened.push(stream);
     return stream as unknown as ReturnType<
@@ -646,17 +684,21 @@ it("makes a hash wait for an earlier open of the same path that has not returned
     >;
   };
   const path = "/tmp/rea-unreturned-open";
-  for (const _attempt of [1, 2])
-    await expect(
-      digestFile(path, undefined, stat, 50, open),
-    ).rejects.toMatchObject({ code: "ETIMEDOUT" });
-  // The second hash waited for the first open instead of starting another.
-  expect(opened).toHaveLength(1);
-  returnOpen?.();
-  await expect(digestFile(path, undefined, stat, 1_000, open)).resolves.toBe(
-    createHash("sha256").update("x").digest("hex"),
-  );
-  expect(opened).toHaveLength(2);
+  try {
+    for (const _attempt of [1, 2])
+      await expect(
+        digestFile(path, undefined, stat, 50, open),
+      ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+    // The second hash waited for the first open instead of starting another.
+    expect(opened).toHaveLength(1);
+    stalled?.returnOpen();
+    await expect(digestFile(path, undefined, stat, 1_000, open)).resolves.toBe(
+      createHash("sha256").update("x").digest("hex"),
+    );
+    expect(opened).toHaveLength(2);
+  } finally {
+    await stalled?.release();
+  }
 });
 
 it("shares a stalled stat between hashes of the same path", async () => {
