@@ -1,5 +1,15 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { nativeDispatchMetadataInputSchema } from "../domain/native/objcSwiftMetadata.js";
+import { nativeValueTraceInputSchema } from "../domain/native/nativeValueTrace.js";
 import { z } from "incur";
+import {
+  bytePatternFields,
+  validateBytePattern,
+  MAX_BYTE_SEARCH_MATCHES,
+} from "../domain/native/bytePattern.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { localPathStringSchema } from "../domain/localPath.js";
+
 import {
   addressOrProcedureGuidance,
   equalSelectorGuidance,
@@ -16,6 +26,17 @@ import {
   snapshotSelectionOption,
 } from "./options.js";
 import type { CliInstance } from "./types.js";
+import { withCommandCancellation } from "./commandCancellation.js";
+import {
+  analysisEvidenceDeliveryOptions,
+  cliEvidenceDeliveryInputError,
+  publishCliAnalysisEvidence,
+} from "./analysisEvidenceDelivery.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+
+const bytePatternInputSchema = z
+  .object(bytePatternFields)
+  .superRefine(validateBytePattern);
 
 /** Register native load-image, memory, and annotation CLI commands. */
 export const registerCoreNativeCommands = (
@@ -27,11 +48,11 @@ export const registerCoreNativeCommands = (
   cli.command(CLI_COMMANDS.searchBytes, {
     description: "Find masked byte patterns in initialized provider memory",
     args: z.object({
-      path: z.string().describe("Local executable path"),
-      pattern: z.string().describe("Hexadecimal byte pairs with ?? wildcards"),
+      path: localPathStringSchema.describe("Local executable path"),
+      pattern: bytePatternFields.pattern,
     }),
     options: z.object({
-      mask: z.string().optional().describe("Equal-length hexadecimal bit mask"),
+      mask: bytePatternFields.mask,
       start: z.string().optional().describe("Inclusive start address"),
       end: z.string().optional().describe("Inclusive end address"),
       cursor: z
@@ -42,49 +63,80 @@ export const registerCoreNativeCommands = (
         .number()
         .int()
         .min(1)
-        .max(1000)
+        .max(MAX_BYTE_SEARCH_MATCHES)
         .default(100)
         .describe("Maximum matches on this page"),
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.searchBytes, () =>
-        runDirectAnalysis(
+      logCliCommand(logger, CLI_COMMANDS.searchBytes, async () => {
+        const selection = {
+          pattern: args.pattern,
+          ...(options.mask === undefined ? {} : { mask: options.mask }),
+        };
+        const parsed = bytePatternInputSchema.safeParse(selection);
+        if (!parsed.success)
+          return projectAnalysisError(
+            analysisInputErrorFromIssues(
+              "search_bytes",
+              parsed.error.issues,
+              selection,
+              { cause: parsed.error },
+            ),
+          );
+        return runDirectAnalysis(
           args.path,
           "search_bytes",
           {
-            pattern: args.pattern,
+            pattern: parsed.data.pattern,
+            ...(parsed.data.mask === undefined
+              ? {}
+              : { mask: parsed.data.mask }),
             limit: options.limit,
-            ...(options.mask === undefined ? {} : { mask: options.mask }),
             ...(options.start === undefined ? {} : { start: options.start }),
             ...(options.end === undefined ? {} : { end: options.end }),
             ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
           },
           directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
+        ).then(projectCliAnalysisResult);
+      }),
   });
   cli.command(CLI_COMMANDS.inspectNativeLoadImage, {
     description:
-      "Verify loaded native bytes, source mappings, relocations and entry",
-    args: z.object({ path: z.string().describe("Local executable path") }),
+      "Inspect native load observations and supported snapshot verification",
+    args: z.object({
+      path: localPathStringSchema.describe("Local executable path"),
+    }),
     options: z.object({
+      ...analysisEvidenceDeliveryOptions,
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.inspectNativeLoadImage, () =>
-        runDirectAnalysis(
-          args.path,
-          "inspect_native_load_image",
-          {},
-          directAnalysisOptionsFromCli(logger, options),
-        ),
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.inspectNativeLoadImage, async () => {
+          const delivery = {
+            providerId: "auto",
+            operation: "inspect_native_load_image",
+            signal,
+            detail: options.detail,
+            evidenceOutput: options.evidence_output,
+          };
+          const invalid = cliEvidenceDeliveryInputError(delivery);
+          if (invalid !== undefined) return projectAnalysisError(invalid);
+          const complete = await runDirectAnalysis(
+            args.path,
+            "inspect_native_load_image",
+            {},
+            { ...directAnalysisOptionsFromCli(logger, options), signal },
+          );
+          return publishCliAnalysisEvidence(complete, delivery);
+        }),
       ),
   });
   cli.command(CLI_COMMANDS.readBytes, {
     description: "Read exact provider memory bytes at one analysis address",
     args: z.object({
-      path: z.string().describe("Local executable path"),
+      path: localPathStringSchema.describe("Local executable path"),
       address: z.string().describe("Exact provider memory address"),
     }),
     options: z.object({
@@ -103,13 +155,13 @@ export const registerCoreNativeCommands = (
           "read_bytes",
           { address: args.address, length: options.length },
           directAnalysisOptionsFromCli(logger, options),
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
   cli.command(CLI_COMMANDS.addressToFileOffset, {
     description: "Resolve an analysis address to its original file byte offset",
     args: z.object({
-      path: z.string().describe("Local executable path"),
+      path: localPathStringSchema.describe("Local executable path"),
       address: z.string().describe("Exact provider memory address"),
     }),
     options: z.object({
@@ -122,16 +174,18 @@ export const registerCoreNativeCommands = (
           "address_to_file_offset",
           { address: args.address },
           directAnalysisOptionsFromCli(logger, options),
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
   cli.command(CLI_COMMANDS.traceNativeValues, {
     description: "Trace bounded native def-use and call dependencies",
     args: z.object({
-      path: z.string().describe("Local native executable or app path"),
-      procedure: z
-        .string()
-        .describe("Explicit native procedure symbol or address"),
+      path: localPathStringSchema.describe(
+        "Local native executable or app path",
+      ),
+      procedure: nativeValueTraceInputSchema.shape.procedure.describe(
+        "Explicit native procedure symbol or address",
+      ),
     }),
     options: z.object({
       maxDepth: z
@@ -200,7 +254,7 @@ export const registerCoreNativeCommands = (
             limit: options.limit,
           },
           directAnalysisOptionsFromCli(logger, options),
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
   cli.command(CLI_COMMANDS.inspectNativeDataType, {
@@ -225,7 +279,7 @@ export const registerCoreNativeCommands = (
               : { address: options.address }),
           },
           directAnalysisOptionsFromCli(logger, options),
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
   for (const [command, operation] of [
@@ -238,7 +292,9 @@ export const registerCoreNativeCommands = (
           ? "Inspect one native instruction with decoded operand facts"
           : "Resolve one static native call site",
       args: z.object({
-        path: z.string().describe("Local native executable or app path"),
+        path: localPathStringSchema.describe(
+          "Local native executable or app path",
+        ),
         address: z.string().describe("Exact native address"),
       }),
       options: z.object({
@@ -251,7 +307,7 @@ export const registerCoreNativeCommands = (
             operation,
             { address: args.address },
             directAnalysisOptionsFromCli(logger, options),
-          ),
+          ).then(projectCliAnalysisResult),
         ),
     });
   }
@@ -268,7 +324,9 @@ const registerNativeDispatchMetadataCommand = (
   cli.command(CLI_COMMANDS.inspectNativeDispatchMetadata, {
     description: "Inspect typed Objective-C and Swift dispatch metadata",
     args: z.object({
-      path: z.string().describe("Target path used to bind the result evidence"),
+      path: localPathStringSchema.describe(
+        "Target path used to bind the result evidence",
+      ),
     }),
     options: z.object({
       maxRecords: nativeDispatchMetadataInputSchema.shape.max_records.describe(
@@ -292,7 +350,7 @@ const registerNativeDispatchMetadataCommand = (
               : { max_input_bytes: options.maxInputBytes }),
           },
           directAnalysisOptionsFromCli(logger, options),
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
 };
@@ -306,7 +364,9 @@ const registerNativeUiActionCommand = (
     description:
       "Trace a compiled UI action selector to its native handler and direct callees",
     args: z.object({
-      path: z.string().describe("Target path used to bind the result evidence"),
+      path: localPathStringSchema.describe(
+        "Target path used to bind the result evidence",
+      ),
       action: z
         .string()
         .min(1)
@@ -350,7 +410,7 @@ const registerNativeUiActionCommand = (
             max_edges: options.maxEdges,
           },
           directAnalysisOptionsFromCli(logger, options),
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
 };
@@ -363,7 +423,7 @@ const registerNativeApiCommand = (
   cli.command(CLI_COMMANDS.inspectNativeApi, {
     description: `Reconstruct one native function API boundary with evidence. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: localPathStringSchema.describe("App or program path"),
       address: z
         .string()
         .optional()
@@ -393,7 +453,7 @@ const registerNativeApiCommand = (
             ),
           },
           directAnalysisOptionsFromCli(logger, options),
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
 };
@@ -406,7 +466,7 @@ const registerAnnotationCommand = (
   cli.command(CLI_COMMANDS.annotateNativeFunction, {
     description: "Edit function annotations and return refreshed analysis",
     args: z.object({
-      path: z.string().describe("Local executable path"),
+      path: localPathStringSchema.describe("Local executable path"),
       procedure: z
         .string()
         .describe("Exact function entry address or unique name"),
@@ -439,7 +499,7 @@ const registerAnnotationCommand = (
               : { inline_comment: options["inline-comment"] }),
           },
           directAnalysisOptionsFromCli(logger, options),
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
 };

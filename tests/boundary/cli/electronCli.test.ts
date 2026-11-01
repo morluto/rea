@@ -1,13 +1,15 @@
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createTestCli, type CliResult } from "../../support/cli/cliFixture.js";
+import { createTestProcessRegistry } from "../../support/process/processFixture.js";
 
 import {
   startFakeCdpBrowser,
@@ -22,18 +24,24 @@ import {
 } from "../../fixtures/javascriptRuntimeReconciliation.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
 
-const execute = promisify(execFile);
+const cliProcesses = createTestProcessRegistry();
+const cli = createTestCli(cliProcesses);
 const INTEGRATION_TEST_TIMEOUT_MS = 20_000;
 const browsers: FakeCdpBrowser[] = [];
 const temporary: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map(async (path) => rm(path, { recursive: true, force: true })),
-  );
+  await closeVerifierResources([
+    () => cliProcesses.shutdown(),
+    ...browsers.map((browser) => async () => {
+      await browser.close();
+      browsers.splice(browsers.indexOf(browser), 1);
+    }),
+    ...temporary.map((path) => async () => {
+      await rm(path, { recursive: true, force: true });
+      temporary.splice(temporary.indexOf(path), 1);
+    }),
+  ]);
 });
 
 it(
@@ -116,8 +124,9 @@ it(
       ["list-electron-targets", "not a url", "--json"],
       process.env,
     );
+    expect(invalidTargetList.signal).toBeNull();
     expect(invalidTargetList.exitCode).toBe(1);
-    expect(invalidTargetList.result).toMatchObject({
+    expect(invalidTargetList.json).toMatchObject({
       error: "Electron analysis failed",
       code: "invalid_request",
       category: "invalid_input",
@@ -136,8 +145,9 @@ it(
       ["inspect-electron-page", "http://127.0.0.1:9222", "", "--json"],
       process.env,
     );
+    expect(invalidPageInspect.signal).toBeNull();
     expect(invalidPageInspect.exitCode).toBe(1);
-    expect(invalidPageInspect.result).toMatchObject({
+    expect(invalidPageInspect.json).toMatchObject({
       error: "Electron analysis failed",
       code: "invalid_request",
       category: "invalid_input",
@@ -260,7 +270,11 @@ it(
         summary: {
           browser_windows: 3,
           context_bridge_apis: 2,
-          ipc: { paired_renderer_transmissions: 4 },
+          ipc: {
+            paired_renderer_transmissions: 0,
+            ambiguous_renderer_transmissions: 7,
+            unpaired_literal_renderer_transmissions: 0,
+          },
         },
       },
     });
@@ -316,7 +330,13 @@ describe("Electron CLI artifact behavior", () => {
         normalized_result: {
           input_path: root,
           format: "directory",
-          summary: { ipc: { paired_renderer_transmissions: 4 } },
+          summary: {
+            ipc: {
+              paired_renderer_transmissions: 0,
+              ambiguous_renderer_transmissions: 7,
+              unpaired_literal_renderer_transmissions: 0,
+            },
+          },
         },
       });
     },
@@ -331,6 +351,7 @@ describe("Electron CLI runtime reconciliation input", () => {
       const rejected = await runCli(
         ["reconcile-javascript-runtime", "{}", "--json"],
         process.env,
+        1,
       );
       expect(rejected).toMatchObject({
         error: "Application workflow failed",
@@ -371,6 +392,7 @@ describe("Electron CLI runtime reconciliation", () => {
       const missing = await runCli(
         ["reconcile-javascript-runtime", missingPath, "--json"],
         process.env,
+        1,
       );
       expect(missing).toMatchObject({
         input_path: missingPath,
@@ -499,29 +521,19 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const runCliResult = async (
   arguments_: readonly string[],
   environment: NodeJS.ProcessEnv,
-): Promise<{ readonly exitCode: number; readonly result: unknown }> => {
-  try {
-    const { stdout } = await execute(
-      process.execPath,
-      ["scripts/rea.mjs", ...arguments_],
-      { cwd: process.cwd(), env: environment, maxBuffer: 16 * 1_024 * 1_024 },
-    );
-    return { exitCode: 0, result: JSON.parse(stdout) };
-  } catch (cause: unknown) {
-    if (
-      typeof cause === "object" &&
-      cause !== null &&
-      "stdout" in cause &&
-      typeof cause.stdout === "string" &&
-      "code" in cause &&
-      typeof cause.code === "number"
-    )
-      return { exitCode: cause.code, result: JSON.parse(cause.stdout) };
-    throw cause;
-  }
-};
+): Promise<CliResult> =>
+  cli.run({ arguments: arguments_, cwd: process.cwd(), environment });
 
 const runCli = async (
   arguments_: readonly string[],
   environment: NodeJS.ProcessEnv,
-): Promise<unknown> => (await runCliResult(arguments_, environment)).result;
+  expectedExitCode: 0 | 1 = 0,
+): Promise<unknown> => {
+  const result = await runCliResult(arguments_, environment);
+  expect(result.signal, result.stderr || result.stdout).toBeNull();
+  expect(result.exitCode, result.stderr || result.stdout).toBe(
+    expectedExitCode,
+  );
+  expect(result.json, result.stderr || result.stdout).toBeDefined();
+  return result.json;
+};

@@ -19,13 +19,16 @@ import {
 } from "./environmentStateRules.js";
 import { pagesOnly } from "./environmentStatePaging.js";
 
-/** A query as replay compares a call's: decoded values by name, in any order; undefined when it repeats a name with another value, which no call's arguments can carry. */
-const queryKey = (query: string | undefined): string | undefined => {
-  const values = singleQueryValues(query);
-  if (values === undefined) return undefined;
-  return compositeKey(
-    [...values].sort(([left], [right]) => compare(left, right)),
-  );
+/** A query's decoded values by name, in any order, as replay compares a call's. */
+export const queryValuesKey = (values: ReadonlyMap<string, string>): string =>
+  compositeKey([...values].sort(([left], [right]) => compare(left, right)));
+
+/** A query as replay compares a call's; undefined when it repeats a name with another value, which no call's arguments can carry. */
+export const queryKey = (
+  query: string | null | undefined,
+): string | undefined => {
+  const values = singleQueryValues(query ?? undefined);
+  return values === undefined ? undefined : queryValuesKey(values);
 };
 
 interface CheckedLine {

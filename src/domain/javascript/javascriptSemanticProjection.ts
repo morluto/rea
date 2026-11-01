@@ -16,10 +16,11 @@ import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   completeSemanticSteps,
-  traverseJavaScriptAstSteps,
+  traverseJavaScriptValueAstSteps,
 } from "./javascriptSemanticTraversal.js";
 import {
   evaluateSemanticBinding,
+  evaluateSemanticExpression,
   evaluateSemanticProvenance,
 } from "./javascriptSemanticValues.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
@@ -32,6 +33,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  isErasedJavaScriptDeclaration,
   isTypeOnlyExportDeclaration,
   isTypeOnlyExportSpecifier,
   isTypeOnlyImportDeclaration,
@@ -45,6 +47,7 @@ import {
   type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
+import { semanticComputedMethodKey } from "./javascriptSemanticEvaluationOrder.js";
 
 interface CollectCallableInput {
   readonly node: t.Node;
@@ -71,6 +74,12 @@ export const collectSemanticCallable = (input: CollectCallableInput): void => {
         ? null
         : bodyScope.scopeId,
     location: range(node),
+    computedKeyLocation:
+      "key" in node &&
+      t.isNode(node.key) &&
+      semanticComputedMethodKey(node, node.key)
+        ? range(node.key)
+        : null,
     returnSites: [],
     returnCoverage: {
       status: "partial",
@@ -90,6 +99,16 @@ export const collectSemanticModuleLink = (
     CommonJsExportReceiverEffect
   >,
 ): void => {
+  // Import/export declarations also describe erased type links. Their nested
+  // expressions do not establish runtime require or CommonJS export links.
+  if (
+    state.erasedSyntaxNodes.has(node) &&
+    !t.isTSImportEqualsDeclaration(node) &&
+    !t.isImportDeclaration(node) &&
+    !t.isExportNamedDeclaration(node) &&
+    !t.isExportAllDeclaration(node)
+  )
+    return;
   if (t.isTSImportEqualsDeclaration(node)) collectImportEquals(node, state);
   else if (t.isImportDeclaration(node)) collectImports(node, state);
   else if (t.isExportAllDeclaration(node))
@@ -110,7 +129,9 @@ export const collectSemanticModuleLink = (
     addModuleLink(
       state,
       {
-        kind: "export",
+        kind: isErasedJavaScriptDeclaration(node.declaration)
+          ? "type-import"
+          : "export",
         specifier: null,
         importedName: null,
         localName: defaultExportLocalName(node.declaration),
@@ -172,7 +193,7 @@ export function* collectSemanticReferencesSteps(
 ): Generator<void, JavaScriptSemanticReference[]> {
   const output: JavaScriptSemanticReference[] = [];
   const seen = new Set<string>();
-  yield* traverseJavaScriptAstSteps(program, {
+  yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
       if (
         !t.isIdentifier(node) ||
@@ -248,6 +269,17 @@ export const immutableSemanticBindings = (
       mutable: binding.mutable,
       definitions: binding.definitions,
       value: evaluateSemanticBinding(binding, state),
+      ...(binding.memberWrites.length > 0 &&
+      binding.initializers.length === 1 &&
+      binding.initializers[0]?.projection.length === 0
+        ? {
+            initializerValue: evaluateSemanticExpression(
+              binding.initializers[0].node,
+              state,
+              binding.initializers[0].node,
+            ),
+          }
+        : {}),
       provenance: evaluateSemanticProvenance(binding, state),
     }))
     .sort((left, right) =>

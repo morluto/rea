@@ -43,7 +43,7 @@ describe("core-only NT_FILE authority", () => {
       expect(result.ok).toBe(
         ["/usr/bin/app", "//usr/lib/libc.so", "/a/.../b"].includes(path),
       );
-      expect(bytes).toEqual(original);
+      expect(Buffer.compare(bytes, original)).toBe(0);
       if (!result.ok)
         expect(result.error).toMatchObject({
           _tag: "AnalysisCapabilityUnavailableError",

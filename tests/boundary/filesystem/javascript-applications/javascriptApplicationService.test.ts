@@ -20,7 +20,8 @@ import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javasc
 import { createJavaScriptSourceAnalysis } from "../../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
-import { buildJavaScriptArtifactGraph } from "../../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
+import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
+import type { JavaScriptApplicationGraph } from "../../../../src/domain/javascript/javascriptApplicationGraph.js";
 import { writeFixtureFiles } from "../../../support/javascriptApplicationFixture.js";
 
 describe("JavaScript source selection cancellation boundary", () => {
@@ -175,7 +176,7 @@ it("resolves lazy package and JSON facts without completing their skipped observ
       ),
     ).toBe(false);
 
-    const graph = buildJavaScriptArtifactGraph(
+    const graph = await immutableArtifactGraph(
       snapshot,
       files,
       outcome.analysis,
@@ -226,7 +227,7 @@ it("resolves lazy package and JSON facts without completing their skipped observ
 });
 
 const unknownScopeObservation = (
-  graph: ReturnType<typeof buildJavaScriptArtifactGraph>,
+  graph: JavaScriptApplicationGraph,
   path: string,
 ) =>
   graph.nodes
@@ -235,7 +236,7 @@ const unknownScopeObservation = (
     .find(({ properties }) => properties.path === path);
 
 const expectSkippedStructuredSource = (
-  graph: ReturnType<typeof buildJavaScriptArtifactGraph>,
+  graph: JavaScriptApplicationGraph,
   path: string,
   operation: string,
 ): void => {

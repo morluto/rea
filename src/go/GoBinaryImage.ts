@@ -11,7 +11,7 @@ import {
 } from "../native/metadata/BinaryContainer.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import type { GoModuleMetadata } from "../domain/go/goBinary.js";
-import { parseGoModuleBytes, parseGoModuleText } from "./GoModuleText.js";
+import { parseGoModuleBytes } from "./GoModuleText.js";
 import {
   goBuildInfoSearch,
   type GoBuildInfoSearchRange,
@@ -212,10 +212,7 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
       module_bytes_base64: module.bytes.toString("base64"),
       version_location: version.location,
       module_location: module.location,
-      module:
-        moduleText === null
-          ? parseGoModuleBytes(moduleBody)
-          : parseGoModuleText(moduleText),
+      module: parseGoModuleBytes(moduleBody),
     },
     ...(sectionNamesLimitation === undefined
       ? {}
@@ -261,9 +258,11 @@ const inlineDataEnd = (
 
 const observedText = (bytes: Buffer): string | null => {
   try {
-    return observedUtf8(bytes, "Go build string");
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      bytes,
+    );
   } catch (cause) {
-    if (cause instanceof BinaryFormatFailure) return null;
+    if (cause instanceof TypeError) return null;
     throw cause;
   }
 };
@@ -393,17 +392,3 @@ const readOptionalModuleString = (
   isZeroFilledSpan(mappings, zeroFills, address, (pointerBits / 8) * 2)
     ? { bytes: Buffer.alloc(0), location: { offset: pointerField, bytes: 0 } }
     : readPointerString(reader, mappings, zeroFills, address, pointerBits);
-
-/** Decode metadata text without replacing invalid bytes or stripping an initial BOM. */
-export const observedUtf8 = (bytes: Buffer, label: string): string => {
-  try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
-  } catch (cause) {
-    throw new BinaryFormatFailure(
-      "malformed",
-      `${label} contains malformed UTF-8: ${String(cause)}`,
-    );
-  }
-};

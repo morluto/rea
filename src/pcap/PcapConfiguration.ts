@@ -1,12 +1,16 @@
 import { accessSync, constants, statSync } from "node:fs";
-import { delimiter, isAbsolute, join } from "node:path";
+import { delimiter, isAbsolute } from "node:path";
+
+import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisArtifactChangedError,
+} from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
 
 export interface WiresharkExecutableIdentity {
   readonly bytes: number;
@@ -144,7 +148,7 @@ export const locateWiresharkTool = (
     return selection.command;
   for (const directory of (environment.PATH ?? "").split(delimiter)) {
     if (!isAbsolute(directory)) continue;
-    const candidate = join(directory, selection.command);
+    const candidate = appendCallerPath(directory, selection.command);
     try {
       accessSync(candidate, constants.X_OK);
       if (statSync(candidate).isFile()) return candidate;

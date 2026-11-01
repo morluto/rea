@@ -8,6 +8,7 @@ import {
   AnalysisCancelledError,
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import { KunaDocumentError } from "./KunaDocumentError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -18,6 +19,7 @@ import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import {
   copyAndHash,
   runKunaCommand,
+  type KunaInputPrefix,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
 import type { KunaDeadline } from "./KunaConfiguration.js";
@@ -38,6 +40,15 @@ interface WorkspaceRoot {
 }
 interface Workspace extends WorkspaceRoot {
   readonly input: string;
+  readonly bytes: number;
+  /** Leading bytes of the input kept while it was copied and hashed. */
+  readonly prefix: Buffer;
+}
+
+/** The private input's size and the leading bytes kept from its verified copy. */
+export interface KunaInputHead {
+  readonly bytes: number;
+  readonly prefix: Buffer;
 }
 
 export interface KunaTargetCommandSnapshot extends ProviderProcessSnapshot {
@@ -75,6 +86,8 @@ export class KunaTargetCommands {
     private readonly lifetime: {
       readonly signal: AbortSignal;
       readonly launcher?: KunaProcessLauncher;
+      /** Leading bytes in-process readers need, kept while the copy is hashed. */
+      readonly inputPrefix?: KunaInputPrefix;
     },
   ) {}
 
@@ -99,6 +112,22 @@ export class KunaTargetCommands {
         workspace.ok ? ok(null) : workspace,
       ),
     );
+  }
+
+  /**
+   * The verified input's size and kept leading bytes, establishing the input
+   * first. They come from the stream that was hashed, so they are exactly
+   * the bytes Kuna analyzes, and reading them opens no file.
+   */
+  inputHead(operation: string): Promise<Result<KunaInputHead, AnalysisError>> {
+    if (this.#closing || this.lifetime.signal.aborted)
+      return Promise.resolve(err(new AnalysisCancelledError(operation)));
+    return this.#admit(operation, async () => {
+      const workspace = await this.#ensureWorkspace();
+      if (!workspace.ok) return workspace;
+      const { bytes, prefix } = workspace.value;
+      return ok({ bytes, prefix });
+    });
   }
 
   async #run(
@@ -135,7 +164,7 @@ export class KunaTargetCommands {
           const process = new AnalysisCleanupLease(async () => {
             const stopped = await outcome.owner?.stop();
             if (stopped === undefined || stopped.status === "incomplete")
-              throw new Error("Kuna process stop remains unproven");
+              throw new KunaDocumentError("stop_unproven");
             releaseRun?.();
           }, outcome.processResources);
           new AnalysisCleanupLeaseGroup(outcome.error, [
@@ -285,13 +314,14 @@ export class KunaTargetCommands {
         cleanup: new AnalysisCleanupLease(() => root.close(), [root.path]),
       };
       const input = join(root.path, basename(this.target.path));
-      const digest = await copyAndHash(
+      const copied = await copyAndHash(
         this.target.path,
         input,
         this.lifetime.signal,
+        this.lifetime.inputPrefix,
       );
-      if (digest !== this.target.sha256)
-        return this.#workspaceFailure(
+      if (copied.sha256 !== this.target.sha256)
+        return await this.#workspaceFailure(
           new AnalysisArtifactChangedError(
             "kuna:workspace",
             this.target.path,
@@ -300,7 +330,12 @@ export class KunaTargetCommands {
           owned,
         );
       await prepareProcessOwnershipInspection(this.lifetime.signal);
-      return ok({ ...owned, input: await realpath(input) });
+      return ok({
+        ...owned,
+        input: await realpath(input),
+        bytes: copied.bytes,
+        prefix: copied.prefix,
+      });
     } catch (cause: unknown) {
       const primary = new ProviderAdapterError(
         KUNA_PROVIDER_ID,

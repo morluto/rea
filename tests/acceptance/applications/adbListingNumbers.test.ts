@@ -6,7 +6,7 @@ import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const SERIAL = "listing-numbers-device";
 const UNSAFE = "9007199254740993";
@@ -27,7 +27,15 @@ const processRow = (
   pid: number,
   ppid: number | null,
   rss: number | null,
-) => ({ user: "shell", pid, ppid, rss, state: "S", name });
+) => ({
+  user: "shell",
+  pid,
+  ppid,
+  rss,
+  state: "S",
+  // The final NAME column retains the exact suffix emitted by processLine.
+  name: `${name}  \t`,
+});
 
 const processListing = (variant: Variant) => {
   const boundary = Number.MAX_SAFE_INTEGER;
@@ -212,10 +220,13 @@ process.stdout.write(require('node:fs').readFileSync(path));
       ] as const) {
         await writeFile(path, listing.stdout);
         const contract = toolContract(operation);
-        const output = await cli.run({
+        const invocation = {
           arguments: [operation.replaceAll("_", "-"), SERIAL, "--json"],
           environment,
-        });
+        };
+        const output = await (variant === "safe"
+          ? cli.run(invocation)
+          : runFileCli(cli, invocation));
         expect(output.exitCode, output.stderr).toBe(0);
         const evidence = contract.outputSchema.parse(output.json);
         expect(evidence.parameters).toMatchObject({ serial: SERIAL });

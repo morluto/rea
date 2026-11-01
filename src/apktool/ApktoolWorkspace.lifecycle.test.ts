@@ -192,11 +192,17 @@ it.each([false, true])(
     await fs.writeFile(path, Buffer.from([0xff]));
     vi.mocked(fs.open).mockImplementation(async (name, flags, mode) => {
       const handle = await actual.open(name, flags, mode);
+      const read = handle.read.bind(handle);
+      let readComplete = false;
+      handle.read = (async (...args: Parameters<typeof handle.read>) => {
+        const value = await read(...args);
+        if (value.bytesRead === 0) readComplete = true;
+        return value;
+      }) as typeof handle.read;
       const stat = handle.stat.bind(handle);
-      let calls = 0;
       handle.stat = ((...args: Parameters<typeof handle.stat>) =>
         stat(...args).then((value) => {
-          if (++calls === 3)
+          if (readComplete)
             controller.abort({ caller: "after bytes before interpretation" });
           return value;
         })) as typeof handle.stat;
@@ -452,3 +458,48 @@ it("classifies source state changes during snapshot copying as artifact changes"
     await commands.close();
   }
 });
+
+it.each(["EACCES", "EPERM", "EIO", "ENOENT"] as const)(
+  "preserves the %s acquisition failure classification before snapshot admission",
+  async (code) => {
+    const root = await PrivateRuntimeRoot.create({
+      prefix: "rea-apktool-admission-test-",
+    });
+    const commands = new ApktoolCommandCleanup();
+    const workspace = new ApktoolWorkspace(root, commands);
+    const input = join(root.path, "source.apk");
+    await fs.writeFile(input, "authored-apk");
+    const failure = Object.assign(new Error("authored source open failure"), {
+      code,
+    });
+    vi.mocked(fs.open).mockImplementation(async (path, flags, mode) => {
+      if (String(path) === input) throw failure;
+      return await actual.open(path, flags, mode);
+    });
+    try {
+      const result: unknown = await workspace
+        .snapshotInput(input, "decode_android_resources")
+        .catch((cause: unknown) => cause);
+      if (code === "EIO") expect(result).toBe(failure);
+      else
+        expect(result).toMatchObject({
+          _tag:
+            code === "ENOENT"
+              ? "AnalysisInputError"
+              : "AnalysisAccessDeniedError",
+          operation: "decode_android_resources",
+          cause: failure,
+          ...(code === "ENOENT" ? {} : { path: input, systemCode: code }),
+        });
+      expect(workspace.snapshot).toBeUndefined();
+      await expect(fs.stat(join(root.path, "input.apk"))).rejects.toMatchObject(
+        {
+          code: "ENOENT",
+        },
+      );
+    } finally {
+      await workspace.close();
+      await commands.close();
+    }
+  },
+);

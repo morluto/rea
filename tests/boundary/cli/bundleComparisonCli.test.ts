@@ -12,8 +12,17 @@ import {
   createEvidenceBundle,
   serializeEvidenceBundle,
 } from "../../../src/domain/evidenceBundle.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+cliTest("rejects the removed compare-bundles command", async ({ cli }) => {
+  const result = await cli.run({
+    arguments: ["compare-bundles", "left.json", "right.json", "--json"],
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout).toContain("COMMAND_NOT_FOUND");
+});
 
 cliTest(
   "compares Evidence bundles without unexplained display-only changes",
@@ -163,7 +172,7 @@ cliTest(
 );
 
 cliTest(
-  "accepts explicit record pairs from JSON files without inferring relationships",
+  "accepts explicit record pairs from JSON files without restoring removed alias",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-bundle-pairs-file-");
     const observe = (value: number) =>
@@ -204,7 +213,7 @@ cliTest(
     });
     const fromFile = await cli.run({
       arguments: [
-        "compare-bundles",
+        "compare",
         leftPath,
         rightPath,
         "--record_pairs",
@@ -279,11 +288,19 @@ cliTest(
         name: "compare_bundles",
         arguments: { left_bundle_path: left, right_bundle_path: right },
       });
-      expect(result.isError).toBe(true);
-      expect(result.content[0]).toMatchObject({
-        text: expect.stringContaining(
-          `${rejectedField}: must be an absolute local filesystem path`,
-        ),
+      expect(parseMcpToolError(result).error).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation: "compare_bundles",
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              path: [rejectedField],
+              reason: "invalid_format",
+              expected: "regex",
+            }),
+          ]),
+        },
       });
     }
 

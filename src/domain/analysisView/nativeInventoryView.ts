@@ -1,23 +1,21 @@
 import { z } from "zod";
-import { analysisStringSchema } from "../hopperValues.js";
-import { canBorrowParsedJsonSnapshot } from "../immutableJson.js";
+import { analysisStringSchema } from "../native/nativeString.js";
+import { inventoryDiscoveryCoverageSchema } from "../native/inventoryCoverage.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import {
   addressedValueSchema,
   isNativeInventoryOperation,
   nativeInventoryRowsSchemas,
 } from "../native/nativeInventory.js";
-import { digestSchema } from "../digests.js";
-import { providerSchema } from "../evidence.js";
-import { err, ok, type Result } from "../result.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -33,6 +31,7 @@ const inventoryRecordSchema = addressedValueSchema.extend({
     addressedValueSchema.shape.string,
   ]),
 });
+type InventoryRecord = z.infer<typeof inventoryRecordSchema>;
 const fieldSchema = inventoryRecordSchema.keyof();
 
 export const nativeInventoryViewRequestSchema = z.strictObject({
@@ -53,51 +52,25 @@ export const nativeInventoryViewRowSchema = z.strictObject({
   record: inventoryRecordSchema.partial().required({ address: true }),
 });
 
-export const nativeInventoryViewContext = {
-  source_provider: providerSchema.nullable(),
-  source_analysis_profile_digest: digestSchema.nullable(),
-  source_parameters: jsonValueSchema,
-};
-
 export const nativeInventorySummarySchema = z.strictObject({
   collection: z.enum(["procedures", "strings", "names"]),
   row_count: z.number().int().nonnegative(),
-  discovery_coverage: z.literal("unknown"),
+  discovery_coverage: inventoryDiscoveryCoverageSchema,
   selectable_fields: z.array(fieldSchema),
 });
 
-const checkedNames = new WeakSet<object>();
-const checkedStrings = new WeakSet<object>();
-type InventoryRecord = z.infer<typeof inventoryRecordSchema>;
-
-/** Cache only a successful, representation-preserving validation of owned immutable facts. */
-const readRows = (
-  parent: AnalysisViewParent,
-  strings: boolean,
-): Result<readonly InventoryRecord[], AnalysisError> => {
-  const checked = strings ? checkedStrings : checkedNames;
-  const source = parent.normalizedResult;
-  if (Array.isArray(source) && checked.has(source)) return ok(source);
-  const parsed = strings
-    ? parseAnalysisViewResult(nativeInventoryRowsSchemas.strings, parent)
-    : parseAnalysisViewResult(nativeInventoryRowsSchemas.names, parent);
-  if (!parsed.ok) return parsed;
-  if (
-    Array.isArray(source) &&
-    parent.sealedResult === true &&
-    canBorrowParsedJsonSnapshot(source, parsed.value)
-  ) {
-    checked.add(source);
-    return ok(source as readonly InventoryRecord[]);
-  }
-  return parsed;
-};
+const readNames = createAnalysisViewResultReader(
+  nativeInventoryRowsSchemas.names,
+);
+const readStrings = createAnalysisViewResultReader(
+  nativeInventoryRowsSchemas.strings,
+);
 
 /** Project already completed provider observations without another provider read or sort. */
 export const projectNativeInventoryView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (
     !isNativeInventoryOperation(parent.operation) ||
     (view.kind !== "summary" && view.kind !== "native-inventory")
@@ -112,19 +85,22 @@ export const projectNativeInventoryView = (
         },
       ]),
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof nativeInventoryViewRequestSchema>
+  >(view, "summary", "native-inventory");
   const strings =
     parent.operation === "list_strings" ||
     parent.operation === "search_strings";
-  const parsed = readRows(parent, strings);
+  const parsed = strings ? readStrings(parent) : readNames(parent);
   if (!parsed.ok) return parsed;
-  const rows = parsed.value;
+  const rows: readonly InventoryRecord[] = parsed.value;
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: parent.operation,
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
     source_provider: parent.provider ?? null,
-    source_analysis_profile_digest: parent.analysisProfileDigest ?? null,
+    source_analysis_profile_digest: parent.analysisProfile?.digest ?? null,
     source_parameters: jsonValueSchema.parse(parent.parameters ?? null),
     limitations: boundedViewMessages(
       parent.limitations,
@@ -141,16 +117,16 @@ export const projectNativeInventoryView = (
   if (view.kind === "summary")
     return ok({
       ...shared,
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary: {
         collection: strings
-          ? "strings"
+          ? ("strings" as const)
           : parent.operation === "list_names"
-            ? "names"
-            : "procedures",
+            ? ("names" as const)
+            : ("procedures" as const),
         row_count: rows.length,
-        discovery_coverage: "unknown",
+        discovery_coverage: "unknown" as const,
         selectable_fields: fieldSchema.options,
       },
       coverage: completeWithinViewCoverage(rows.length, rows.length),
@@ -165,7 +141,7 @@ export const projectNativeInventoryView = (
   const selected = rows.slice(view.offset, view.offset + view.limit);
   return ok({
     ...shared,
-    kind: "native-inventory",
+    kind: "native-inventory" as const,
     view,
     rows: selected.map((record, index) => ({
       source_index: view.offset + index,

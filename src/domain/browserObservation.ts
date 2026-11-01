@@ -207,7 +207,7 @@ export const listBrowserTargetsInputSchema = z.strictObject({
 
 const inspectWebPageInputFacts = {
   ...browserInput,
-  target_id: z.string().trim().min(1),
+  target_id: z.string().min(1),
   command_timeout_ms: webRuntimeCommandTimeoutSchema,
   observation_ms: z.int().min(0).default(500),
   include_accessibility_text: z.boolean().default(false),
@@ -274,32 +274,49 @@ export const sanitizedBrowserUrlSchema = z.object({
 });
 export type SanitizedBrowserUrl = z.infer<typeof sanitizedBrowserUrlSchema>;
 
-/** Preserve local URL data while removing only URL userinfo credentials. */
-export const sanitizeBrowserUrl = (value: string): SanitizedBrowserUrl => {
+/** Parsed URL syntax and sanitized transport data share one interpretation. */
+export type BrowserUrlObservation =
+  | { readonly kind: "malformed"; readonly source: string }
+  | {
+      readonly kind: "parsed";
+      readonly source: string;
+      readonly protocol: string;
+      readonly sanitized: SanitizedBrowserUrl;
+    };
+
+export const observeBrowserUrl = (value: string): BrowserUrlObservation => {
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch (cause: unknown) {
-    // Unparseable input is preserved verbatim in the sanitized result.
     void cause;
-    return {
-      url: value,
-      origin: null,
-      query_parameter_names: [],
-      redacted: false,
-    };
+    return { kind: "malformed", source: value };
   }
   const hadCredentials = parsed.username !== "" || parsed.password !== "";
-  const names = [...parseUrlQueryParameterNames(parsed.search)];
-  const sanitizedUrl = hadCredentials
-    ? removeUrlUserInfo(value, parsed)
-    : value;
   return {
-    url: sanitizedUrl,
-    origin: parsed.origin === "null" ? null : parsed.origin,
-    query_parameter_names: names,
-    redacted: hadCredentials,
+    kind: "parsed",
+    source: value,
+    protocol: parsed.protocol,
+    sanitized: {
+      url: hadCredentials ? removeUrlUserInfo(value, parsed) : value,
+      origin: parsed.origin === "null" ? null : parsed.origin,
+      query_parameter_names: [...parseUrlQueryParameterNames(parsed.search)],
+      redacted: hadCredentials,
+    },
   };
+};
+
+/** Preserve local URL data while removing only URL userinfo credentials. */
+export const sanitizeBrowserUrl = (value: string): SanitizedBrowserUrl => {
+  const observation = observeBrowserUrl(value);
+  return observation.kind === "parsed"
+    ? observation.sanitized
+    : {
+        url: observation.source,
+        origin: null,
+        query_parameter_names: [],
+        redacted: false,
+      };
 };
 
 const removeUrlUserInfo = (value: string, parsed: URL): string => {

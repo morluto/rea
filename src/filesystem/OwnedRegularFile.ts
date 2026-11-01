@@ -6,6 +6,7 @@ import {
   RegularFileAdmissionFailure,
   assertRegularFileActive,
   RegularFileOperationCancelled,
+  type StableRegularFileDescriptor,
 } from "./RegularFile.js";
 
 export type RegularFileOperationOutcome<Value> =
@@ -145,9 +146,9 @@ export interface OwnedRegularFileOptions extends OwnedFileOperationOptions {
 export const withOwnedRegularFile = async <Value>(
   path: string,
   options: OwnedRegularFileOptions,
-  operation: (handle: FileHandle) => Promise<Value>,
+  operation: (source: StableRegularFileDescriptor) => Promise<Value>,
 ): Promise<Value> => {
-  const handle = await openRegularFile(path, {
+  const source = await openRegularFile(path, {
     symlinks: options.symlinks ?? "follow",
     signal: options.signal,
   }).catch((cause: unknown) => {
@@ -163,9 +164,9 @@ export const withOwnedRegularFile = async <Value>(
   });
   return withOwnedFileHandle(
     path,
-    new OwnedFileHandle(handle),
+    new OwnedFileHandle(source.handle),
     options,
-    operation,
+    () => operation(source),
   );
 };
 

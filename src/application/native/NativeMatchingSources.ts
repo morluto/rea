@@ -1,7 +1,7 @@
 import type { MatchNativeFunctionsInput } from "../../contracts/native/functionMatchingContracts.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import type { Evidence } from "../../domain/evidence.js";
+import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
 import { readEvidence } from "../../domain/evidenceValidation.js";
 import { retainedEvidenceReferenceSchema } from "../../domain/evidenceReference.js";
 import {
@@ -34,18 +34,30 @@ export const resolveNativeMatchingSources = async (
   readonly sources: readonly Evidence[];
 }> => {
   const sources = new Map<string, Evidence>();
+  /**
+   * Charge only what matching copies. A retained immutable record is borrowed
+   * without cloning. When matching never parses its result, or charges the
+   * representation it derives from it (inventory rows), only its envelope is
+   * charged; walking the result would charge resident memory as if matching
+   * had allocated it.
+   */
   const resolve = async (
     input: unknown,
     path?: readonly (string | number)[],
+    borrowable = false,
   ): Promise<Evidence> => {
     const reference = retainedEvidenceReferenceSchema.safeParse(input);
-    let raw = input;
+    let raw = input,
+      borrowed: Evidence | undefined;
     if (reference.success) {
       const found = resolveEvidenceInput(reference.data, lookup);
       if (!found.ok) throw found.error;
       raw = found.value;
+      if (borrowable && isImmutableEvidence(found.value))
+        borrowed = found.value;
     }
-    await admission.admit(raw);
+    if (borrowed !== undefined) await admission.admitBorrowed(borrowed);
+    else await admission.admit(raw);
     const checked = readEvidence(raw);
     if (!checked.ok)
       throw path !== undefined && !reference.success
@@ -66,8 +78,9 @@ export const resolveNativeMatchingSources = async (
     raw: unknown,
     path: readonly (string | number)[],
     operations: readonly string[],
+    borrowable = false,
   ): Promise<Evidence> => {
-    const evidence = await resolve(raw, path);
+    const evidence = await resolve(raw, path, borrowable);
     if (
       evidence.predicate_type !== "rea.analysis" ||
       !operations.includes(evidence.operation) ||
@@ -82,8 +95,14 @@ export const resolveNativeMatchingSources = async (
     }
     return evidence;
   };
-  const left = await select(input.left, ["left"], INVENTORY_OPERATIONS);
-  const right = await select(input.right, ["right"], INVENTORY_OPERATIONS);
+  // readFunctionInventory charges each inventory row before parsing it.
+  const left = await select(input.left, ["left"], INVENTORY_OPERATIONS, true);
+  const right = await select(
+    input.right,
+    ["right"],
+    INVENTORY_OPERATIONS,
+    true,
+  );
   const observations = async (
     inputs: readonly unknown[],
     field: "left_observations" | "right_observations",
@@ -136,7 +155,12 @@ export const resolveNativeMatchingSources = async (
   for (const source of sources.values())
     for (const id of source.evidence_links)
       if (!sources.has(id))
-        await resolve({ kind: "retained-evidence", evidence_id: id });
+        // Closure records are only returned for retention, never parsed.
+        await resolve(
+          { kind: "retained-evidence", evidence_id: id },
+          undefined,
+          true,
+        );
   return {
     left,
     right,

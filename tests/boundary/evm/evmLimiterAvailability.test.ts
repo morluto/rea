@@ -1,11 +1,13 @@
 import { expect, it } from "vitest";
 
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { buildCapabilityInventory } from "../../../src/application/CapabilityInventory.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import {
   EVM_PRLIMIT_COMMAND_DEFAULT,
   evmLimiterAvailability,
 } from "../../../src/evm/EvmoleInterfaceProvider.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 const linux = { platform: "linux" as const, arch: "x64" };
 const status = { open: false, capabilities: [] };
@@ -82,8 +84,12 @@ it("rejects a relative override and non-file without probing an alternate comman
   );
   expect(relative).toMatchObject({
     status: "unavailable",
-    diagnostics: { limiter_path: "prlimit" },
-    reason: expect.stringContaining("absolute executable path"),
+    reason: "prlimit_not_absolute",
+    diagnostics: {
+      limiter_path: "prlimit",
+      code: "prlimit_not_absolute",
+      setting: "REA_EVM_PRLIMIT_COMMAND",
+    },
   });
 
   const directory = await evmLimiterAvailability(
@@ -98,7 +104,8 @@ it("rejects a relative override and non-file without probing an alternate comman
   );
   expect(directory).toMatchObject({
     status: "unavailable",
-    reason: expect.stringContaining("regular executable file"),
+    reason: "prlimit_not_file",
+    diagnostics: expect.objectContaining({ code: "prlimit_not_file" }),
   });
 });
 
@@ -143,15 +150,22 @@ it("yields the event loop while the filesystem owner probe is pending", async ()
       },
     },
   );
-  await started;
-  let timerRan = false;
-  setImmediate(() => {
-    timerRan = true;
-  });
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(timerRan).toBe(true);
-  release();
-  expect(await probe).toMatchObject({ status: "available" });
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(started, probe, "filesystem access");
+    let timerRan = false;
+    setImmediate(() => {
+      timerRan = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(timerRan).toBe(true);
+    release();
+    expect(await probe).toMatchObject({ status: "available" });
+  }, [
+    release,
+    async () => {
+      await probe;
+    },
+  ]);
 });
 
 it.each(["access", "stat"] as const)(
@@ -189,17 +203,20 @@ it.each(["access", "stat"] as const)(
       },
     );
 
-    try {
-      await started;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(started, probe, `${stage} filesystem probe`);
       controller.abort(abortReason);
       release();
       const error = await probe.catch((cause: unknown) => cause);
       expect(error).toBeInstanceOf(AnalysisCancelledError);
       expect(error).toMatchObject({ operation: "binary_session" });
       expect((error as AnalysisCancelledError).cause).toBe(abortReason);
-    } finally {
-      release();
-    }
+    }, [
+      release,
+      async () => {
+        await probe.catch(() => undefined);
+      },
+    ]);
   },
 );
 

@@ -7,10 +7,8 @@ import { expect, it, onTestFinished } from "vitest";
 
 import { compareProcessEvidenceFiles } from "../../../src/application/process/ProcessCli.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
-import {
-  EMPTY_PROCESS_CAPTURE_EXAMPLE,
-  FINALIZED_PROCESS_CAPTURE_EXAMPLE,
-} from "../../../src/domain/process/processCaptureExample.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
+import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCapture.fixture.js";
 import {
   capture,
   partialSpecification,
@@ -27,7 +25,7 @@ import {
   parseEvidence,
   type EvidenceProvider,
 } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import { digestProcessCommitment } from "../../../src/domain/process/processScenario.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -45,14 +43,14 @@ const captureEvidence = (
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { side },
-    result: jsonValueSchema.parse({
+    result: {
       ...observation,
       manifest: {
         ...observation.manifest,
         comparison_contract: comparisonContract,
         comparison_contract_sha256: digestProcessCommitment(comparisonContract),
       },
-    }),
+    },
     confidence: "observed",
     authority: "controlled-replay",
   });
@@ -66,8 +64,19 @@ const connect = async (
   session = createTestBinarySession(() => {
     throw new Error("Process comparison must not launch a provider");
   }),
+  maximumInputElements?: number,
 ) => {
-  const server = createServer({ kind: "session", session });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      environment: {
+        ...process.env,
+        ...(maximumInputElements === undefined
+          ? {}
+          : { REA_MCP_MAX_INPUT_ELEMENTS: String(maximumInputElements) }),
+      },
+    },
+  );
   const client = new Client({ name: "process-comparison-test", version: "1" });
   onTestFinished(async () => {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
@@ -436,7 +445,9 @@ it("rejects a deep trace cycle as an input error through CLI and MCP", async () 
     details: { issues: [issue] },
   });
 
-  const client = await connect();
+  // This 6,000-event graph intentionally exercises cycle validation beyond
+  // ordinary transport admission. Keep a finite explicit fixture allowance.
+  const client = await connect(undefined, 131_072);
   const response = await client.callTool({
     name: "compare_process_captures",
     arguments: { left: capture, right: capture, trace_spec: trace },
@@ -523,7 +534,7 @@ it("names the side and constraint when Evidence is not a usable capture", async 
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},
-      result: jsonValueSchema.parse(result),
+      result: result,
     });
     expect(parseEvidence(invalidResult)).toEqual(invalidResult);
     const malformed = await client.callTool({
@@ -565,7 +576,7 @@ it("keeps structural capture issues alongside semantic ones through MCP and the 
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: {},
-    result: jsonValueSchema.parse({
+    result: {
       ...rest,
       manifest,
       exit: {
@@ -577,7 +588,7 @@ it("keeps structural capture issues alongside semantic ones through MCP and the 
           ],
         },
       },
-    }),
+    },
   });
   const described =
     "(at manifest.completed_at: Invalid input: expected string, received undefined (1 more issues))";

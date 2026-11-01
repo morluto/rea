@@ -116,6 +116,7 @@ export const registerWebNetworkCaptureCommands = (
               signal,
               detail: options.detail,
               evidenceOutput: options.evidence_output,
+              sensitiveValues: options.sensitiveValue ?? [],
             });
           },
         ),

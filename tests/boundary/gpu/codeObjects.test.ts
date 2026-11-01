@@ -1021,7 +1021,9 @@ it("preserves standalone PTX BOM and trailing NUL bytes in the retained text art
   const bytes = Buffer.from("\uFEFF" + ptxFixture + "\0");
   const result = await inspect(bytes);
   if (!result.ok) throw result.error;
-  expect(Buffer.from(result.value.ptx_artifacts[0]!.text)).toEqual(bytes);
+  expect(
+    Buffer.compare(Buffer.from(result.value.ptx_artifacts[0]!.text), bytes),
+  ).toBe(0);
   expect(result.value.ptx_artifacts[0]!.byte_length).toBe(bytes.length);
 });
 it("rejects a changed full-file identity before applying positional object selection", async () => {
@@ -1079,6 +1081,32 @@ it("retains an embedded CCOB with a corrupted signature as unsupported", async (
     }),
   );
 });
+it.each([
+  ["unknown COFF machine", 0xffff],
+  ["x86 machine with a PE32+ optional header", 0x14c],
+] as const)(
+  "discovers PE GPU sections with %s",
+  async (_description, machine) => {
+    const bytes = peGpuFixture();
+    const pe = bytes.readUInt32LE(60);
+    bytes.writeUInt16LE(machine, pe + 4);
+    const result = await inspect(bytes);
+    if (!result.ok) throw result.error;
+    expect(result.value.format).toBe("pe");
+    expect(result.value.artifact.sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(result.value.coverage).toMatchObject({
+      discovery: "complete",
+      payloads: "complete",
+    });
+    expect(result.value.kernels.map(({ name }) => name)).toEqual([
+      "add_one",
+      "add_one",
+    ]);
+    expect(result.value.ptx_artifacts[0]!.text).toBe(ptxFixture);
+  },
+);
 it("does not dispatch a high-bit-corrupted DOS signature to the PE parser", async () => {
   const bytes = peGpuFixture(Buffer.from(ptxFixture));
   bytes[0] = bytes[0]! | 0x80;

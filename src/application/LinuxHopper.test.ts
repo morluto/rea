@@ -13,12 +13,12 @@ import {
   LinuxHopperTemporaryCleanupOwner,
   systemLinuxHopperInstallHost,
   type LinuxDistribution,
-  type LinuxHopperDownload,
   type LinuxHopperInstallHost,
   type LinuxHopperLauncherStatus,
   type LinuxPackageInstallFailure,
   type LinuxPackageInstallOutcome,
 } from "./LinuxHopper.js";
+import type { HopperDownload } from "./HopperDownload.js";
 import { err, ok } from "../domain/result.js";
 import {
   type LinuxPackageFamily,
@@ -74,7 +74,7 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
     Promise.resolve(this.distributionValue);
   release = (family: LinuxPackageFamily) =>
     Promise.resolve(ok(releasesFor(new Uint8Array([1, 2, 3]))[family]));
-  download = (url: string): Promise<LinuxHopperDownload> => {
+  download = (url: string): Promise<HopperDownload> => {
     this.downloads.push(url);
     return Promise.resolve({ ok: this.archiveOk, bytes: this.archive });
   };
@@ -275,6 +275,32 @@ describe("Linux Hopper installation", () => {
           args: expect.arrayContaining([executable, "/tmp/Hopper package"]),
         }),
       );
+    },
+  );
+
+  it.each([true, false])(
+    "keeps installed apt dependencies at their versions while Hopper may upgrade (root: %s)",
+    (isRoot) => {
+      const prefix = isRoot ? [] : ["pkexec"];
+      expect(
+        linuxPackageManagerCommands("deb", "/tmp/Hopper package", isRoot).map(
+          ({ executable, args }) => [executable, ...args],
+        ),
+      ).toEqual([
+        [
+          ...prefix,
+          "apt-get",
+          "install",
+          "-y",
+          "--no-upgrade",
+          "xvfb",
+          "xauth",
+          "python3",
+          "libx11-6",
+          "libxtst6",
+        ],
+        [...prefix, "apt-get", "install", "-y", "/tmp/Hopper package"],
+      ]);
     },
   );
 });
@@ -504,7 +530,10 @@ describe("Linux Hopper temporary cleanup ownership", () => {
         attempts += 1;
         throw new Error("still busy");
       }),
-    ).toContain("/tmp/rea-hopper");
+    ).toMatchObject({
+      reason: expect.stringContaining("/tmp/rea-hopper"),
+      resources: ["/tmp/rea-hopper"],
+    });
     expect(
       await owner.retry(async () => {
         attempts += 1;

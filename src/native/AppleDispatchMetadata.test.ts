@@ -336,8 +336,13 @@ const swiftExternalSwiftBindingImage = (
   bytes.writeBigUInt64LE(0n, 0xb00); // Bound slot has no in-image pointer.
   bytes.writeUInt32LE(16, 0xc00);
   bytes.writeInt32LE(0x1f8, 0xc08);
+  bytes.writeInt32LE(0xc40 - 0xc04, 0xc04);
+  bytes.writeUInt32LE(0, 0xc40);
+  bytes.writeInt32LE(0xe40 - 0xc48, 0xc48);
+  bytes.write("FixtureModule\0", 0xe40);
   if (boundField !== "protocol") {
     bytes.writeUInt32LE(3, 0xd00);
+    bytes.writeInt32LE(0xc40 - 0xd04, 0xd04);
     bytes.writeInt32LE(0xf8, 0xd08);
     bytes.write("Equatable\0", 0xe00);
   } else {
@@ -399,6 +404,7 @@ const swiftBoundWitnessSlotImage = () => {
   bytes.writeInt32LE(0xec0 - 0xc48, 0xc48);
   bytes.write("FixtureModule\0", 0xec0);
   bytes.writeUInt32LE(3, 0xd00);
+  bytes.writeInt32LE(0xc40 - 0xd04, 0xd04);
   bytes.writeInt32LE(0x148, 0xd08);
   bytes.writeUInt32LE(0, 0xd0c);
   bytes.writeUInt32LE(1, 0xd10);
@@ -740,6 +746,10 @@ describe("Swift conformance type-reference kinds", () => {
       bytes.writeInt32LE(0xdc, 0x224); // Indirect class cell at 0x300.
       bytes.writeUInt32LE(3 << 3, 0x22c);
       bytes.writeUInt32LE(3, 0x260); // Protocol context descriptor.
+      bytes.writeInt32LE(0x320 - 0x264, 0x264); // Parent module context.
+      bytes.writeUInt32LE(0, 0x320);
+      bytes.writeInt32LE(0x340 - 0x328, 0x328);
+      bytes.write("FixtureModule\0", 0x340);
       bytes.writeInt32LE(0x18, 0x268);
       bytes.write("FixtureProtocol\0", 0x280);
       bytes.writeBigUInt64LE(target, 0x300);
@@ -1412,6 +1422,62 @@ describe("Apple dispatch coverage ownership", () => {
     ).toMatchObject({
       status: "partial",
       reason: expect.stringContaining("category_decode_failed"),
+    });
+  });
+});
+
+describe("Objective-C category class references without a class name", () => {
+  const categoryCoverage = (bytes: Buffer) => {
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_categories).toMatchObject([
+      {
+        name: "FixtureCategory",
+        class_name: null,
+        class_source: "unresolved",
+        decode: { status: "partial", reason: "category_class_unresolved" },
+      },
+    ]);
+    return result.coverage.find(
+      ({ facet }) => facet === "objc_properties_categories",
+    );
+  };
+
+  it("names a class reference bound to a Swift class metadata symbol", () => {
+    // swiftc emits a category for @objc members of another module's Swift
+    // class and binds its class field to `_$s…CN`, not `_OBJC_CLASS_$_`.
+    const bytes = fixture(false, "unmapped-class");
+    bytes.writeBigUInt64LE(0n, 0xb48);
+    // LC_DYLD_INFO_ONLY after the segment command binds the class field.
+    bytes.writeUInt32LE(2, 16);
+    bytes.writeUInt32LE(280, 20);
+    bytes.writeUInt32LE(0x80000022, 264);
+    bytes.writeUInt32LE(48, 268);
+    const bindings = Buffer.from([
+      0x40,
+      ...Buffer.from("_$s4Main3FooCN\0"),
+      0x70,
+      0xc8,
+      0x16,
+      0x90,
+      0x00,
+    ]);
+    bindings.copy(bytes, 0xc00);
+    bytes.writeUInt32LE(0xc00, 280);
+    bytes.writeUInt32LE(bindings.length, 284);
+    expect(categoryCoverage(bytes)).toMatchObject({
+      status: "partial",
+      reason:
+        "category_class_unresolved at 0x100000b48: Category FixtureCategory class reference is bound to _$s4Main3FooCN, which is not read as an Objective-C class name",
+    });
+  });
+
+  it("explains a null class reference", () => {
+    const bytes = fixture(false, "unmapped-class");
+    bytes.writeBigUInt64LE(0n, 0xb48);
+    expect(categoryCoverage(bytes)).toMatchObject({
+      status: "partial",
+      reason:
+        "category_class_unresolved at 0x100000b48: Category FixtureCategory class reference is null",
     });
   });
 });
@@ -2379,3 +2445,36 @@ it("retains the enclosing Swift type and module in a conformance owner", () => {
   });
   expect(result.swift_dispatch_slots[0]?.owner).toBe("Outer.Widget: Equatable");
 });
+
+it.each([false, true])(
+  "preserves a nested protocol identity and reports unread parent context (%s)",
+  (unreadParent) => {
+    const bytes = swiftBoundWitnessSlotImage();
+    // This identity regression uses a local executable witness, not an import.
+    bytes.writeUInt32LE(0, 280);
+    bytes.writeUInt32LE(0, 284);
+    bytes.writeBigUInt64LE(base + 0xb00n, 0xe08);
+    bytes.writeInt32LE(0xc20 - 0xd04, 0xd04);
+    bytes.writeUInt32LE(17, 0xc20);
+    bytes.writeInt32LE((unreadParent ? 0x5000 : 0xc40) - 0xc24, 0xc24);
+    bytes.writeInt32LE(0xea0 - 0xc28, 0xc28);
+    bytes.write("Outer\0", 0xea0);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.swift_conformances[0]).toMatchObject({
+      type_name: "Widget",
+      protocol_name: unreadParent ? "Equatable" : "Outer.Equatable",
+      module: "FixtureModule",
+      decode: { status: unreadParent ? "partial" : "decoded" },
+    });
+    expect(result.swift_dispatch_slots[0]).toMatchObject({
+      owner: unreadParent ? "Widget: Equatable" : "Widget: Outer.Equatable",
+      implementation_address: "0x100000b00",
+      decode: { status: "decoded" },
+    });
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "swift_conformances_static_witness_slots",
+      )?.status,
+    ).toBe(unreadParent ? "partial" : "complete");
+  },
+);

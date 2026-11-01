@@ -255,82 +255,120 @@ describe("Interface Builder dispatch joins", () => {
       );
     },
   );
+});
 
-  it("chooses an instance method and matches category-qualified owner names", () => {
-    const ui = buildInterfaceBuilderAnalysis({
-      targetSha256: "b".repeat(64),
-      toolVersion: "test",
-      documents: [
-        {
-          relativePath: "Main.nib",
-          archiveSha256: "c".repeat(64),
-          documentKind: "nib",
-          raw: {
-            "com.apple.ibtool.document.objects": {
-              controller: { customClass: "BuildViewController" },
-              button: { class: "UIButton" },
-            },
-            "com.apple.ibtool.document.connections": {
-              button: [
-                {
-                  type: "action",
-                  label: "buildTapped:",
-                  destinationId: "controller",
-                },
-              ],
+describe("Objective-C category ownership joins", () => {
+  it.each([
+    {
+      className: "BuildViewController",
+      category: "BuilderActions",
+      legacy: false,
+    },
+    {
+      className: "BuildViewController(Literal)",
+      category: undefined,
+      legacy: false,
+    },
+    { className: "BuildViewController", category: undefined, legacy: true },
+  ])(
+    "matches exact instance owner $className with category $category",
+    ({ className, category, legacy }) => {
+      const ui = buildInterfaceBuilderAnalysis({
+        targetSha256: "b".repeat(64),
+        toolVersion: "test",
+        documents: [
+          {
+            relativePath: "Main.nib",
+            archiveSha256: "c".repeat(64),
+            documentKind: "nib",
+            raw: {
+              "com.apple.ibtool.document.objects": {
+                controller: { customClass: className },
+                button: { class: "UIButton" },
+              },
+              "com.apple.ibtool.document.connections": {
+                button: [
+                  {
+                    type: "action",
+                    label: "buildTapped:",
+                    destinationId: "controller",
+                  },
+                ],
+              },
             },
           },
-        },
-      ],
-      limits: interfaceBuilderLimitsSchema.parse({}),
-    });
-    const metadata = {
-      objc_classes: [],
-      objc_protocols: [],
-      objc_categories: [],
-      swift_decls: [],
-      objc_ivars: [],
-      objc_protocol_records: [],
-      objc_dispatch_implementations: [
-        {
-          class_name: "BuildViewController",
-          selector: "buildTapped:",
-          method_type: "class" as const,
-          implementation_address: "0x9999",
-          location: { address: "0x9999", file_offset: 0 },
-          decode: { status: "decoded" as const, reason: null },
-          evidence,
-        },
-        {
-          class_name: "BuildViewController(BuilderActions)",
-          selector: "buildTapped:",
-          method_type: "instance" as const,
-          implementation_address: "0x1000",
-          location: { address: "0x1000", file_offset: 0 },
-          decode: { status: "decoded" as const, reason: null },
-          evidence,
-        },
-      ],
-      swift_conformances: [],
-      swift_dispatch_slots: [],
-      swift_symbols: [],
-      relative_pointers: [],
-      coverage: [],
-      db_save_result: null,
-    };
+        ],
+        limits: interfaceBuilderLimitsSchema.parse({}),
+      });
+      const metadata = {
+        objc_classes: [],
+        objc_protocols: [],
+        objc_categories: [],
+        swift_decls: [],
+        objc_ivars: [],
+        objc_protocol_records: [],
+        objc_dispatch_implementations: [
+          {
+            class_name: "BuildViewController",
+            selector: "buildTapped:",
+            method_type: "class" as const,
+            implementation_address: "0x9999",
+            location: { address: "0x9999", file_offset: 0 },
+            decode: { status: "decoded" as const, reason: null },
+            evidence,
+          },
+          {
+            class_name: legacy ? `${className}(BuilderActions)` : className,
+            ...(category === undefined ? {} : { category }),
+            selector: "buildTapped:",
+            method_type: "instance" as const,
+            implementation_address: "0x1000",
+            location: { address: "0x1000", file_offset: 0 },
+            decode: legacy
+              ? { status: "partial" as const, reason: "symbol_name_only" }
+              : { status: "decoded" as const, reason: null },
+            evidence: legacy
+              ? [
+                  {
+                    ...evidence[0]!,
+                    kind: "symbol" as const,
+                    description: `Provider symbol -[${className}(BuilderActions) buildTapped:]`,
+                  },
+                ]
+              : evidence,
+          },
+          {
+            // A historical or binary class identity does not declare a category.
+            class_name: `${className}(Legacy)`,
+            selector: "buildTapped:",
+            method_type: "instance" as const,
+            implementation_address: "0x2000",
+            location: { address: "0x2000", file_offset: 0 },
+            decode: { status: "partial" as const, reason: "symbol_name_only" },
+            evidence,
+          },
+        ],
+        swift_conformances: [],
+        swift_dispatch_slots: [],
+        swift_symbols: [],
+        relative_pointers: [],
+        coverage: [],
+        db_save_result: null,
+      };
 
-    const joined = joinInterfaceBuilderDispatch(ui.graph, metadata);
-    expect(joined.edges).toContainEqual(
-      expect.objectContaining({
-        relation: "objc_dispatch",
-        resolution: "resolved",
-        to: "native:function:0x1000",
-      }),
-    );
-    expect(joined.edges).not.toContainEqual(
-      expect.objectContaining({ to: "native:function:0x9999" }),
-    );
-  });
+      const joined = joinInterfaceBuilderDispatch(ui.graph, metadata);
+      expect(joined.edges).toContainEqual(
+        expect.objectContaining({
+          relation: "objc_dispatch",
+          resolution: legacy ? "inferred" : "resolved",
+          to: "native:function:0x1000",
+        }),
+      );
+      expect(joined.edges).not.toContainEqual(
+        expect.objectContaining({ to: "native:function:0x9999" }),
+      );
+    },
+  );
 });
 
 describe("placeholder dispatch joins", () => {
@@ -454,4 +492,16 @@ it("counts an authored action with an unresolved receiver in dispatch coverage",
       reason: "authored_action_receiver_unresolved",
     }),
   );
+});
+
+it("keeps all own Interface Builder attributes through the graph schema", () => {
+  const attributes = JSON.parse(
+    '{"__proto__":{"recorded":true},"constructor":"authored","prototype":null}',
+  );
+  const projected = nativeInvestigationGraphSchema.parse({
+    ...graph,
+    nodes: graph.nodes.map((node) => ({ ...node, attributes })),
+  });
+  expect(projected.nodes[0]?.attributes).toEqual(attributes);
+  expect(Object.hasOwn(projected.nodes[0]!.attributes, "__proto__")).toBe(true);
 });

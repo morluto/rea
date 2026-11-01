@@ -1,4 +1,5 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
@@ -109,8 +110,8 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         normalized_result: { rows: { columns: ["id"], returned_rows: 3 } },
       });
       expect(await closing).toMatchObject({ ok: true });
-      // Closing a binding clears its ledger after the admitted recording succeeds.
-      expect(session.evidenceById(evidenceId)).toBeUndefined();
+      // Engine cleanup waits for admission but preserves the completed fact.
+      expect(session.evidenceById(evidenceId)?.evidence_id).toBe(evidenceId);
       expect(closed).toBe(true);
     } finally {
       release.resolve();
@@ -208,9 +209,7 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         arguments: {},
       });
       expect(bundle.isError).not.toBe(true);
-      expect(JSON.stringify(bundle.structuredContent)).toContain(
-        error.details.partial_observation.evidence_id,
-      );
+      expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(retained);
     } finally {
       removalAllowed = true;
       await client.close();

@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { inspectPacketFieldsInputSchema } from "../domain/captures/packetFields.js";
 import { z } from "incur";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
@@ -13,6 +14,7 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 export const registerCaptureCommands = (
@@ -62,7 +64,7 @@ export const registerCaptureCommands = (
             "tshark-capture",
             "inspect_packet_fields",
             signal,
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });
@@ -103,7 +105,8 @@ export const registerCaptureCommands = (
     run: ({ args, options: { all_matches, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectPacketCapture, async () => {
-          return finishAnalysisCommand(
+          return finishCliEvidenceCommand(
+            args.path,
             () =>
               service.inspect(
                 {
@@ -117,7 +120,7 @@ export const registerCaptureCommands = (
             "tshark-capture",
             "inspect_packet_capture",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

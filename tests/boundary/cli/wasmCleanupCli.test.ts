@@ -3,18 +3,18 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { expect, it } from "vitest";
+import { expect } from "vitest";
 
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { runCliJson } from "../../fixtures/cliJsonProcess.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const canDenyCleanup = process.platform !== "win32" && process.getuid?.() !== 0;
 
-it.runIf(canDenyCleanup)(
+cliTest.runIf(canDenyCleanup)(
   "retains wasm evidence and primary diagnostics when real scratch cleanup is denied",
-  async () => {
+  async ({ cli }) => {
     const directory = await createTestTempDirectory("rea-wasm-cleanup-cli-");
     const tools = join(directory, "tools");
     const artifact = join(directory, "module.wasm");
@@ -63,9 +63,12 @@ it.runIf(canDenyCleanup)(
       TEMP: directory,
     };
     const invoke = (extra: NodeJS.ProcessEnv = {}) =>
-      runCliJson(["inspect-wasm-artifact", artifact, "--format", "json"], {
-        ...environment,
-        ...extra,
+      cli.run({
+        arguments: ["inspect-wasm-artifact", artifact, "--format", "json"],
+        environment: {
+          ...environment,
+          ...extra,
+        },
       });
     const restoreDeniedDirectories = async () => {
       let paths: string[] = [];
@@ -84,11 +87,22 @@ it.runIf(canDenyCleanup)(
     };
 
     try {
-      const control = parseEvidence(await invoke());
+      const controlInvocation = await invoke();
+      expect(controlInvocation.exitCode, controlInvocation.stderr).toBe(0);
+      expect(controlInvocation.signal).toBeNull();
+      const control = parseEvidence(controlInvocation.json);
       expect(control.normalized_result).toMatchObject({ validation: "valid" });
 
+      const completedThenCleanupFailsInvocation = await invoke({
+        REA_DENY_CLEANUP: "1",
+      });
+      expect(
+        completedThenCleanupFailsInvocation.exitCode,
+        completedThenCleanupFailsInvocation.stderr,
+      ).toBe(1);
+      expect(completedThenCleanupFailsInvocation.signal).toBeNull();
       const completedThenCleanupFails = analysisErrorProjectionSchema.parse(
-        await invoke({ REA_DENY_CLEANUP: "1" }),
+        completedThenCleanupFailsInvocation.json,
       );
       expect(completedThenCleanupFails).toMatchObject({
         code: "cleanup_incomplete",
@@ -102,8 +116,16 @@ it.runIf(canDenyCleanup)(
 
       await restoreDeniedDirectories();
       await writeFile(locked, "");
+      const primaryAndCleanupFailInvocation = await invoke({
+        REA_PRIMARY_FAILURE: "1",
+      });
+      expect(
+        primaryAndCleanupFailInvocation.exitCode,
+        primaryAndCleanupFailInvocation.stderr,
+      ).toBe(1);
+      expect(primaryAndCleanupFailInvocation.signal).toBeNull();
       const primaryAndCleanupFail = analysisErrorProjectionSchema.parse(
-        await invoke({ REA_PRIMARY_FAILURE: "1" }),
+        primaryAndCleanupFailInvocation.json,
       );
       expect(primaryAndCleanupFail).toMatchObject({
         code: "cleanup_incomplete",

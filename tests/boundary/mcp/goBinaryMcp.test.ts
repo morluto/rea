@@ -4,6 +4,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -26,6 +27,7 @@ import {
   createGoBinaryPathFailureFixture,
 } from "../../fixtures/go/image.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
@@ -39,14 +41,17 @@ const goMcpTest = mcpTest.extend<{
     const session = createTestBinarySession(() => {
       throw new Error("Go metadata must not start a deep provider");
     });
-    try {
+    await withVerifierCleanup(async () => {
       const client = await mcp.connect(
         createServer({ kind: "session", session }),
       );
       await use({ client, session });
-    } finally {
-      await session.close();
-    }
+    }, [
+      async () => {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   },
 });
 
@@ -65,6 +70,7 @@ mcpTest(
     const provider = new GoBinaryProvider();
     const session = createTestBinarySession(createCacheProvider([]));
     const service = new GoBinaryService({
+      close: () => provider.close(),
       identity: provider.identity,
       inspect: async (input, options) => {
         const result = await provider.inspect(input, options);
@@ -73,7 +79,9 @@ mcpTest(
         return result;
       },
     });
-    try {
+    let inspection: ReturnType<Client["callTool"]> | undefined;
+    let closing: ReturnType<Client["callTool"]> | undefined;
+    await withVerifierCleanup(async () => {
       const client = await mcp.connect(
         createServer({ kind: "session", session }, { goBinary: service }),
       );
@@ -85,17 +93,21 @@ mcpTest(
       client.setNotificationHandler("notifications/progress", () => {
         closeStarted.resolve();
       });
-      const inspection = client.callTool({
+      inspection = client.callTool({
         name: "inspect_go_binary",
         arguments: { path },
       });
-      await entered.promise;
-      const closing = client.callTool({
+      await awaitAcknowledgement(entered.promise, inspection, "Go inspection");
+      closing = client.callTool({
         name: "close_binary",
         arguments: { snapshot_path: snapshotPath },
         _meta: { progressToken: "go-close-race" },
       });
-      await closeStarted.promise;
+      await awaitAcknowledgement(
+        closeStarted.promise,
+        closing,
+        "Go snapshot close",
+      );
       release.resolve();
       const inspected = await inspection;
       expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(
@@ -115,11 +127,26 @@ mcpTest(
       const snapshot = await readAnalysisSnapshot(snapshotPath);
       if (!snapshot.ok) throw snapshot.error;
       expect(snapshot.value.evidence_bundle.records).toContainEqual(evidence);
+      expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
+      const reset = await client.callTool({
+        name: "reset_investigation",
+        arguments: {},
+      });
+      expect(reset.isError, JSON.stringify(reset.content)).not.toBe(true);
       expect(session.evidenceById(evidence.evidence_id)).toBeUndefined();
-    } finally {
-      release.resolve();
-      await session.close();
-    }
+    }, [
+      () => release.resolve(),
+      async () => {
+        await Promise.allSettled([
+          ...(inspection === undefined ? [] : [inspection]),
+          ...(closing === undefined ? [] : [closing]),
+        ]);
+      },
+      async () => {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   },
 );
 
@@ -190,7 +217,6 @@ goMcpTest(
         name: "inspect_go_binary",
         arguments: { path },
       });
-      expect(response.isError).toBe(true);
       expect(parseMcpToolError(response)).toMatchObject({
         error: {
           code: fixture.code,
@@ -236,14 +262,21 @@ goMcpTest(
     expect(
       ajv.validate(inputSchema, { path: "/artifacts/program", execute: true }),
     ).toBe(false);
-    expect(ajv.validate(inputSchema, { path: "/artifacts/\0program" })).toBe(
-      false,
-    );
     expect(advertised.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
+    });
+    const nulPath = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: "/artifacts/\0program" },
+    });
+    expect(parseMcpToolError(nulPath)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+      },
     });
     const root = await createTestTempDirectory("rea-go-mcp-");
     const path = join(root, "application");
@@ -278,7 +311,6 @@ goMcpTest(
       name: "inspect_go_binary",
       arguments: { path: "relative.bin" },
     });
-    expect(invalid.isError).toBe(true);
     expect(parseMcpToolError(invalid)).toMatchObject({
       error: {
         code: "invalid_request",

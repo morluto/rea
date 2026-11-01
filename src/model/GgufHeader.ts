@@ -429,6 +429,15 @@ export class GgufHeader {
       storage_validation:
         tensor.byte_length === null ? "unknown" : "consistent",
     }));
+    const intervals = completeTensors
+      .filter((row) => row.byte_length !== null)
+      .sort((a, b) => a.file_offset - b.file_offset);
+    let end = tensor_data_offset;
+    for (const row of intervals) {
+      if (row.file_offset < end && row.byte_length !== 0)
+        rejectModel(`Overlapping tensor byte ranges at ${row.name}`);
+      end = Math.max(end, row.file_offset + (row.byte_length ?? 0));
+    }
     return {
       version,
       byte_order: this.#little ? "little" : "big",

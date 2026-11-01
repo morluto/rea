@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
+import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 import { traceSourceMap } from "../../../src/javascript/sourceMaps/TraceSourceMap.js";
 
@@ -335,7 +335,7 @@ it.each(cases)(
         expect(point.matches).toHaveLength(1);
       }
     }
-    const result = await fetchWebSourceMaps(
+    const result = await fetchWebSourceMapsOk(
       [{ scriptKey: "scr_" + "1".repeat(64), declaredUrl: url, fetchUrl: url }],
       analyzeWebBundleInputSchema.parse({
         cdp_endpoint: "http://127.0.0.1:9222",
@@ -415,7 +415,7 @@ it("rejects a source mapping that crosses an indexed section boundary", async ()
     fetchUrl: url,
   };
   const fetchMap = (map: ReturnType<typeof makeMap>) =>
-    fetchWebSourceMaps([request], input, undefined, {
+    fetchWebSourceMapsOk([request], input, undefined, {
       fetch: () =>
         Promise.resolve(new Response(JSON.stringify(map), { status: 200 })),
     });

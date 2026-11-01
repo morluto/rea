@@ -3,8 +3,7 @@ import { createInspectionResources } from "../../tests/fixtures/inspectionResour
 import { missingJavaProbe } from "./GhidraInstallation.fixture.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { err } from "../domain/result.js";
-import { ok as javaProbeOk } from "../domain/result.js";
+import { err, ok as javaProbeOk } from "../domain/result.js";
 import {
   parseGhidraJavaOutput,
   type GhidraJavaObservation,
@@ -918,7 +917,7 @@ describe("Ghidra malformed property admission", () => {
           name: "version",
           status: "failed",
           code: "version_unresolved",
-          detail: expect.stringContaining("Malformed Unicode escape"),
+          detail: expect.stringContaining("malformed_unicode_escape"),
         }),
         expect.objectContaining({
           name: "java",
@@ -980,7 +979,7 @@ describe("Ghidra installation version admission", () => {
     },
     {
       name: "different Ghidra line",
-      readText: () => "application.version=12.2.0\napplication.java.min=21\n",
+      readText: () => "application.version=13.0.0\napplication.java.min=21\n",
       probeJava: () => javaProbeOk<GhidraJavaObservation>(JAVA),
       failed: "version",
       code: "unsupported_version",
@@ -1025,7 +1024,7 @@ describe("Ghidra installation version admission", () => {
     );
     expect(result.status).toBe("unavailable");
     if (result.status !== "unavailable") return;
-    expect(result.rejection.reason).toContain("12.1.x");
+    expect(result.rejection.reason).toContain("12.x (>=12.1)");
     expect(result.rejection.reason).toContain(SUPPORTED_GHIDRA_VERSION);
     expect(result.checks.find(({ name }) => name === "java")).toMatchObject({
       status: "failed",
@@ -1056,6 +1055,41 @@ describe("Ghidra installation version admission", () => {
       ),
     ).toMatchObject({ status: "available", javaVersion: "17.0.20.1" });
   });
+
+  it.each([21, 25])(
+    "admits Ghidra 12.2 independently of its declared Java 25 minimum (JDK %s)",
+    async (major) => {
+      const result = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: {},
+          installDir: INSTALL,
+          platform: "linux",
+          architecture: "x64",
+        },
+        host({
+          readText: () => "application.version=12.2\napplication.java.min=25\n",
+          probeJava: () =>
+            javaProbeOk<GhidraJavaObservation>({
+              ...JAVA,
+              major,
+              version: `${String(major)}.0.5`,
+              home: `/usr/lib/jvm/jdk-${String(major)}`,
+            }),
+        }),
+      );
+      expect(result.providerVersion).toBe("12.2");
+      expect(
+        result.checks.find(({ name }) => name === "version"),
+      ).toMatchObject({
+        status: "passed",
+      });
+      expect(result.checks.find(({ name }) => name === "java")).toMatchObject({
+        status: major === 25 ? "passed" : "failed",
+      });
+      expect(result.status).toBe(major === 25 ? "available" : "unavailable");
+    },
+  );
 });
 
 describe("Ghidra configuration paths", () => {
@@ -1715,7 +1749,7 @@ it("explains the macOS keg-only JDK case without probing an unselected installat
       },
     }),
   );
-  expect(probed).toEqual(["java"]);
+  expect(probed).toEqual(["/usr/bin/java"]);
   expect(inspection.checks.find(({ name }) => name === "java")).toMatchObject({
     status: "failed",
     code: "runtime_missing",
@@ -1814,8 +1848,8 @@ it.each([
       scenario === "explicit home"
         ? ["/selected-jdk/bin/java"]
         : scenario === "PATH succeeds"
-          ? ["java"]
-          : ["java", keg],
+          ? ["/usr/bin/java"]
+          : ["/usr/bin/java", keg],
     );
     expect(inspection.status).toBe(
       scenario === "PATH succeeds" || scenario === "keg succeeds"
@@ -1826,19 +1860,21 @@ it.each([
       expect(ghidraInstallationDiagnostics(inspection)).toMatchObject({
         java_discovery_failures: expect.arrayContaining([
           {
-            command: "java",
+            command: "/usr/bin/java",
             code: "runtime_missing",
             detail: expect.any(String),
           },
         ]),
       });
     }
-    if (scenario === "both fail") expect(inspection.javaCommand).toBe("java");
+    if (scenario === "both fail")
+      expect(inspection.javaCommand).toBe("/usr/bin/java");
   },
 );
 
 it.each([
-  ["darwin", undefined, "/selected-bin/java", "java"],
+  ["darwin", undefined, "/selected-bin/java", "/selected-bin/java"],
+  ["darwin", undefined, "/linked/../jdk/java", "/linked/../jdk/java"],
   ["darwin", "/selected-jdk", undefined, "/selected-jdk/bin/java"],
   ["linux", undefined, undefined, "java"],
   ["win32", undefined, undefined, "java.exe"],
@@ -1850,7 +1886,9 @@ it.each([
     const inspection = await inspectGhidraInstallation(
       {
         resourceOwner: inspectionResources.owner,
-        environment: { PATH: "/selected-bin" },
+        environment: {
+          PATH: `:relative-bin:${pathJava === undefined ? "/selected-bin" : pathJava.slice(0, -"/java".length)}`,
+        },
         installDir: INSTALL,
         platform,
         architecture: "arm64",

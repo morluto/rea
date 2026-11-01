@@ -4,7 +4,11 @@ import { connect } from "node:net";
 import type { AddressInfo } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { toWebRequest, writeWebResponse } from "./nodeHttpBridge.js";
+import {
+  toWebRequest,
+  writeWebResponse,
+  type WebResponseOptions,
+} from "./nodeHttpBridge.js";
 
 const servers: Server[] = [];
 const encoder = new TextEncoder();
@@ -20,6 +24,7 @@ afterEach(async () => {
 /** Serve a web handler through the bridge on an ephemeral loopback port. */
 const serve = async (
   handle: (request: Request) => Response | Promise<Response>,
+  options: WebResponseOptions = {},
 ): Promise<string> => {
   const server = createServer();
   servers.push(server);
@@ -30,7 +35,7 @@ const serve = async (
     void (async () => {
       try {
         const webRequest = toWebRequest(request, response, origin);
-        await writeWebResponse(await handle(webRequest), response);
+        await writeWebResponse(await handle(webRequest), response, options);
       } catch {
         response.destroy();
       }
@@ -267,17 +272,34 @@ it("aborts the web Request and cancels its response body when the client leaves"
   });
 });
 
-it("preserves every Set-Cookie header of a composed route", async () => {
-  const origin = await serve(() => {
-    const headers = new Headers({ "x-one": "1" });
-    headers.append("set-cookie", "session=a; Path=/; HttpOnly");
-    headers.append("set-cookie", "csrf=b; Path=/");
-    return new Response("ok", { headers });
-  });
-  const response = await fetch(`${origin}/cookies`);
-  expect(response.headers.get("x-one")).toBe("1");
-  expect(response.headers.getSetCookie()).toEqual([
-    "session=a; Path=/; HttpOnly",
-    "csrf=b; Path=/",
-  ]);
-});
+it.each([false, true])(
+  "preserves legal field names and separate cookies with closeConnection=%s",
+  async (closeConnection) => {
+    const origin = await serve(
+      () => {
+        const headers = new Headers([
+          ["x-one", "1"],
+          ["__proto__", "source-value"],
+          ["constructor", "ordinary-field"],
+          ["connection", "keep-alive"],
+        ]);
+        headers.append("set-cookie", "session=a; Path=/; HttpOnly");
+        headers.append("set-cookie", "csrf=b; Path=/");
+        return new Response("ok", { headers });
+      },
+      { closeConnection },
+    );
+    const response = await fetch(`${origin}/cookies`);
+    expect(response.headers.get("x-one")).toBe("1");
+    expect(response.headers.get("__proto__")).toBe("source-value");
+    expect(response.headers.get("constructor")).toBe("ordinary-field");
+    expect(response.headers.get("connection")).toBe(
+      closeConnection ? "close" : "keep-alive",
+    );
+    expect(response.headers.getSetCookie()).toEqual([
+      "session=a; Path=/; HttpOnly",
+      "csrf=b; Path=/",
+    ]);
+    await expect(response.text()).resolves.toBe("ok");
+  },
+);

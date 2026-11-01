@@ -1,10 +1,11 @@
+import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js";
 import type { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { normalizeArtifactPath } from "./ArtifactPaths.js";
-import { lstat, type FileHandle } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 
 import type { PyInstallerMetadata } from "../domain/artifactFormatMetadata.js";
 import {
@@ -12,13 +13,7 @@ import {
   scriptPythonMagic,
 } from "./pyinstaller/PyInstallerMetadata.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import {
-  RegularFileAdmissionFailure,
-  openRegularFile,
-  sameRegularFileState,
-  type StableRegularFileDescriptor,
-} from "../filesystem/RegularFile.js";
+import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   ArtifactReaderFailure,
   sameArtifactEntry,
@@ -27,10 +22,9 @@ import {
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
-import { abortIfNeeded, hashReadable } from "./ArtifactHash.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
+import { abortIfNeeded } from "./ArtifactHash.js";
+import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
 import { parseMzHeaderEvidence } from "../domain/dosMz.js";
 import {
   readFatContainerHeader,
@@ -40,7 +34,7 @@ import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "./ArtifactClassificationPr
 import { PyInstallerPyzStore } from "./pyinstaller/PyInstallerPyzStore.js";
 import { pyInstallerMemberStream } from "./pyinstaller/PyInstallerMemberStream.js";
 import {
-  findPyInstallerCookie,
+  observePyInstallerCookie,
   readCArchiveToc,
   type CArchiveEntry,
   type PyInstallerCookie,
@@ -57,7 +51,6 @@ import {
 } from "./pyinstaller/CArchiveMembers.js";
 import { readPyzArchive } from "./pyinstaller/PyzArchive.js";
 import type { PyInstallerFailure } from "./pyinstaller/PyInstallerFailure.js";
-import { pyInstallerFileAdmissionFailure } from "./pyinstaller/PyInstallerFileAdmission.js";
 import { readPyInstallerBytes } from "./pyinstaller/PyInstallerBytes.js";
 
 const MAX_PARSED_FACT_BYTES = 32 * 1024 * 1024;
@@ -117,13 +110,12 @@ interface LoadedArchive {
  */
 export class PyInstallerArtifactReader implements ArtifactReader {
   readonly format = "pyinstaller" as const;
-  #source: StableRegularFileDescriptor | undefined;
-  #opening: Promise<FileHandle> | undefined;
+  readonly #source: ArtifactFileSource;
+  #admission: PyInstallerAdmission | undefined;
   #closed = false;
   readonly #scope = new ArtifactResourceScope();
   readonly #cleanup = new ArtifactResourceScope();
   readonly #lifecycle = new AbortController();
-  #boundSha256: string | undefined;
   #loaded: Promise<LoadedArchive> | undefined;
   #budget = 0;
   #charged = 0;
@@ -135,14 +127,24 @@ export class PyInstallerArtifactReader implements ArtifactReader {
   readonly #openedPyzSizes = new Map<string, number>();
 
   constructor(
-    private readonly path: string,
-    source?: StableRegularFileDescriptor,
+    path: string,
+    source?: StableRegularFileDescriptor | PyInstallerAdmission,
   ) {
-    this.#source = source;
+    if (source !== undefined && "kind" in source) {
+      this.#admission = source;
+      this.#source = new ArtifactFileSource(path, "PyInstaller", source.source);
+    } else {
+      this.#source = new ArtifactFileSource(path, "PyInstaller", source);
+    }
     this.#cleanup.retain({
       kind: "lease",
       resource: "PyInstaller private PYZ images",
       lease: { release: () => this.#pyzStore.close() },
+    });
+    this.#cleanup.retain({
+      kind: "lease",
+      resource: path,
+      lease: { release: () => this.#source.close() },
     });
   }
 
@@ -156,31 +158,8 @@ export class PyInstallerArtifactReader implements ArtifactReader {
   ): Promise<void> {
     const active = this.#signal(signal);
     await this.#scope.run(async () => {
-      const handle = await this.#openHandle(active);
-      await this.#verifySource();
-      const observed =
-        this.#boundSha256 ??
-        (
-          await hashReadable(
-            readArtifactFileChunks(handle, { signal: active }),
-            active,
-          )
-        ).sha256;
-      await this.#verifySource();
-      abortIfNeeded(active);
-      if (observed !== expectedSha256)
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "PyInstaller carrier changed after inventory",
-          undefined,
-          artifactIntegrityDetails(
-            ".",
-            { algorithm: "sha256", digest: expectedSha256 },
-            observed,
-            false,
-          ),
-        );
-      this.#boundSha256 = observed;
+      await this.#openHandle(active);
+      await this.#source.bindSelectedPathSha256(expectedSha256, active);
     });
   }
 
@@ -191,7 +170,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     const active = this.#signal(signal);
     const loaded = await this.#scope.run(async () => {
       const value = await this.#load(active);
-      await this.#verifySource();
+      await this.#source.readSelectedPath();
       this.#members.clear();
       return value;
     });
@@ -229,7 +208,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
           "format",
           `PyInstaller entry has no readable bytes: ${entry.path}`,
         );
-      await this.#verifySource();
+      const { handle } = await this.#source.readSelectedPath();
       const knownSize =
         read.kind === "pyz"
           ? (read.uncompressedSize ??
@@ -237,11 +216,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
           : undefined;
       if (read.kind === "pyz" && knownSize === undefined)
         this.#charge(read.header?.length ?? 0);
-      const parts = await this.#pyzStore.memberSource(
-        read,
-        this.#source?.handle,
-        active,
-      );
+      const parts = await this.#pyzStore.memberSource(read, handle, active);
       if (active.aborted) {
         parts.source.destroy();
         await finished(parts.source, { cleanup: true }).catch(() => undefined);
@@ -273,7 +248,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
         complete: async (bytes) => {
           try {
             await parts.verify?.();
-            await this.#verifySource();
+            await this.#source.readSelectedPath();
             abortIfNeeded(active);
           } catch (cause: unknown) {
             await closeSource(cause);
@@ -320,9 +295,9 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     this.#lifecycle.abort(closing);
     await this.#scope.close();
     await this.#cleanup.close();
-    this.#source = undefined;
     this.#closed = true;
     this.#loaded = undefined;
+    this.#admission = undefined;
     this.#members.clear();
     this.#openedPyzSizes.clear();
   }
@@ -345,11 +320,14 @@ export class PyInstallerArtifactReader implements ArtifactReader {
   }
 
   async #parse(signal?: AbortSignal): Promise<LoadedArchive> {
-    const handle = await this.#openHandle(signal);
-    await this.#verifySource();
-    const size = (await handle.stat()).size;
-    const pathDialect = await carrierPathDialect(handle, size, signal);
-    const cookie = await this.#cookie(handle, size, signal);
+    await this.#openHandle(signal);
+    const { handle, initial } = await this.#source.readSelectedPath();
+    const size = initial.size;
+    const pathDialect =
+      this.#admission?.carrierPathDialect ??
+      (await carrierPathDialect(handle, size, signal));
+    const cookie =
+      this.#admission?.cookie ?? (await this.#cookie(handle, size, signal));
     this.#budget = artifactExpansionBudgetBytes(cookie.packageLength);
     const toc = await this.#toc(handle, cookie, signal);
     for (const entry of toc) {
@@ -374,7 +352,8 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     for (const member of members)
       if (member.read?.kind === "carchive")
         this.#charge(member.read.header?.length ?? 0);
-    await this.#verifySource();
+    await this.#source.readSelectedPath();
+    this.#admission = undefined;
     this.#metadata = cookieMetadata(cookie, toc, encrypted);
     let opaqueImages = 0;
     for (const image of images.values())
@@ -400,13 +379,11 @@ export class PyInstallerArtifactReader implements ArtifactReader {
         "unavailable",
         "PyInstaller archive is closed",
       );
-    if (this.#source !== undefined) return this.#source.handle;
     // Admission belongs to the reader. A departing caller cannot cancel a peer
     // or replace a late descriptor owner; every caller joins the same admission.
-    this.#opening ??= this.#admit();
     let handle: FileHandle;
     try {
-      handle = await this.#opening;
+      ({ handle } = await this.#source.read(this.#lifecycle.signal));
     } catch (cause: unknown) {
       if (
         cause instanceof ArtifactReaderFailure &&
@@ -424,39 +401,22 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     return handle;
   }
 
-  async #admit(): Promise<FileHandle> {
-    try {
-      const handle = await openRegularFile(this.path, {
-        symlinks: "reject",
-        signal: this.#lifecycle.signal,
-      });
-      this.#retainCarrier(new OwnedFileHandle(handle));
-      this.#source = { handle, initial: await handle.stat() };
-      return handle;
-    } catch (cause: unknown) {
-      if (cause instanceof RegularFileAdmissionFailure)
-        this.#retainCarrier(cause.owner);
-      throw pyInstallerFileAdmissionFailure(this.path, cause);
-    }
-  }
-
-  #retainCarrier(handle: OwnedFileHandle): void {
-    this.#cleanup.retain({ kind: "file-handle", resource: this.path, handle });
-  }
-
   async #cookie(
     handle: FileHandle,
     size: number,
     signal?: AbortSignal,
   ): Promise<PyInstallerCookie> {
-    const found = await findPyInstallerCookie(handle, size, signal);
-    if (found === undefined)
+    const found = await observePyInstallerCookie(handle, size, signal);
+    if (!found.ok) throw failure(found.error);
+    const observed = found.value;
+    if (observed.state === "absent")
       throw new ArtifactReaderFailure(
         "format",
         "PyInstaller CArchive cookie was not found",
       );
-    if (!found.ok) throw failure(found.error);
-    return found.value;
+    if (observed.state === "rejected-candidates")
+      throw failure(observed.failure);
+    return observed.cookie;
   }
 
   async #toc(
@@ -480,13 +440,12 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     this.#pyzStore.reserveImages(
       toc.reduce(
         (count, entry) =>
-          count +
-          (entry.typeCode === "z" && entry.compressionFlag === 1 ? 1 : 0),
+          count + (entry.role === "pyz" && entry.compressionFlag === 1 ? 1 : 0),
         0,
       ),
     );
     for (const entry of toc) {
-      if (entry.typeCode !== "z") continue;
+      if (entry.role !== "pyz") continue;
       abortIfNeeded(signal);
       const spooled =
         entry.compressionFlag === 0
@@ -541,6 +500,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       this.#reserveMetadata(
         {
           path: entry.path,
+          source_path: entry.sourcePath ?? null,
           adapter_key: entry.adapterKey,
           format_metadata: entry.formatMetadata ?? null,
           limitations: [...entry.limitations],
@@ -552,7 +512,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     for (const entry of toc) {
       if (members.length % 256 === 0) await setImmediate();
       abortIfNeeded(signal);
-      const image = entry.typeCode === "z" ? images.get(entry) : undefined;
+      const image = entry.role === "pyz" ? images.get(entry) : undefined;
       if (image === undefined) {
         const bytecode = await this.#pyzStore.bytecodeHeader(
           handle,
@@ -591,7 +551,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
             encrypted,
             image.archive.pythonMagic,
             pathDialect,
-            item.namespace || encrypted
+            item.role === "namespace" || encrypted
               ? undefined
               : {
                   handle: image.handle,
@@ -603,27 +563,6 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       }
     }
     return members;
-  }
-
-  async #verifySource(): Promise<void> {
-    const source = this.#source;
-    if (source === undefined)
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "PyInstaller archive is closed",
-      );
-    const [opened, currentPath] = await Promise.all([
-      source.handle.stat(),
-      lstat(this.path),
-    ]);
-    if (
-      !sameRegularFileState(source.initial, opened) ||
-      !sameRegularFileState(source.initial, currentPath)
-    )
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `PyInstaller source changed during reading: ${this.path}`,
-      );
   }
 
   #reservePathComponents(path: string): void {

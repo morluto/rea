@@ -58,7 +58,7 @@ const expectUnsignedZip64 = async (
       runtime_execution: "not-performed",
     });
   }
-  expect(await readFile(path)).toEqual(Buffer.from(bytes));
+  expect(Buffer.compare(await readFile(path), Buffer.from(bytes))).toBe(0);
 };
 
 const expectRefusal = async (
@@ -75,7 +75,7 @@ const expectRefusal = async (
   const mcpError = parseMcpToolError(response).error;
   expect(mcpError).toMatchObject(expected);
   expect(mcpError.message).toBe(cliError.message);
-  expect(await readFile(path)).toEqual(Buffer.from(bytes));
+  expect(Buffer.compare(await readFile(path), Buffer.from(bytes))).toBe(0);
 };
 
 cliTest(

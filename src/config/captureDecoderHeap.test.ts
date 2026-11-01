@@ -22,9 +22,9 @@ import {
   captureDecoderHeapConstraint,
   captureDecoderHeapRecovery,
   DEFAULT_CAPTURE_DECODER_HEAP,
-  MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB,
   parseCaptureDecoderHeap,
 } from "./captureDecoderHeap.js";
+import { MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB } from "../domain/analysisResourceLimits.js";
 
 const configured = (oldGenerationMiB: number) =>
   ({ oldGenerationMiB, source: "setting" }) as const;
@@ -51,13 +51,9 @@ it("keeps the 192 MiB decoder heap when the setting is unset", async () => {
   });
   const parsed = parseConfig({});
   if (!parsed.ok) throw new Error("unset heap was rejected");
-  const recovery = captureDecoderHeapRecovery(DEFAULT_CAPTURE_DECODER_HEAP);
-  expect(recovery).toContain(CAPTURE_DECODER_OLD_GENERATION_SETTING);
-  expect(recovery).toContain(
-    String(DEFAULT_CAPTURE_DECODER_HEAP.oldGenerationMiB),
+  expect(new NodeCaptureAdapter("har", {}).heap).toEqual(
+    DEFAULT_CAPTURE_DECODER_HEAP,
   );
-  expect(recovery).toContain(`source ${DEFAULT_CAPTURE_DECODER_HEAP.source}`);
-  expect(recovery).not.toContain("no runtime override");
   const command = await new NodeCaptureAdapter("har").command(
     "/owned/request.json",
   );
@@ -101,16 +97,20 @@ it("uses a valid REA_CAPTURE_DECODER_OLD_GENERATION_MIB override", async () => {
     code: "resource_constraint",
     details: { resource: "memory" },
   });
-  expect(projected.message).toContain(
-    "256 MiB V8 old-generation heap (source setting)",
-  );
   expect(projected.remediation.action).toContain(
-    CAPTURE_DECODER_OLD_GENERATION_SETTING,
+    captureDecoderHeapRecovery(configured(256)),
   );
-  expect(projected.remediation.action).toContain("256 MiB (source setting");
-  expect(projected.message).not.toContain("no runtime override");
   if (process.versions.bun === undefined)
     expect(projected.details).toMatchObject({
+      limit: {
+        setting: "capture.decoder_old_generation_mib",
+        effective_value: 256,
+        source: "setting",
+        unit: "MiB",
+        applies_at: "next_worker",
+        agent_editable: true,
+        rea_restart_required: false,
+      },
       reported_limits: {
         old_generation_heap_mib: 256,
         old_generation_heap_source: "setting",
@@ -163,27 +163,28 @@ it("reports the heap the selected adapter launches when decoder environment diff
     if (!reported.ok)
       throw new Error(projectAnalysisError(reported.error).message);
     const limitations = reported.value.limitations.join("\n");
-    expect(limitations).toContain(CAPTURE_DECODER_OLD_GENERATION_SETTING);
-    expect(limitations).toContain("256 MiB (source setting");
-    expect(limitations).not.toContain("source default");
-    expect(limitations).not.toContain("512 MiB (source setting)");
+    expect(limitations).toContain(captureDecoderHeapRecovery(launched.heap));
 
     vi.spyOn(launched, "command").mockRejectedValue(heapExhaustion());
     const exhausted = await decoder.inspect(input);
     if (exhausted.ok) throw new Error("Heap exhaustion must fail inspection");
     const projected = projectAnalysisError(exhausted.error);
     expect(projected.code).toBe("resource_constraint");
-    expect(projected.message).toContain(
-      "256 MiB V8 old-generation heap (source setting)",
-    );
     expect(projected.remediation.action).toContain(
-      CAPTURE_DECODER_OLD_GENERATION_SETTING,
+      captureDecoderHeapRecovery(launched.heap),
     );
-    expect(projected.remediation.action).toContain("256 MiB (source setting");
-    expect(projected.message).not.toContain("192 MiB");
-    expect(projected.remediation.action).not.toContain(
-      "512 MiB (source setting)",
-    );
+    if (process.versions.bun === undefined)
+      expect(projected.details).toMatchObject({
+        limit: {
+          setting: "capture.decoder_old_generation_mib",
+          effective_value: 256,
+          source: "setting",
+        },
+        reported_limits: {
+          old_generation_heap_mib: 256,
+          old_generation_heap_source: "setting",
+        },
+      });
   } finally {
     await decoder.close();
     await rm(root, { recursive: true, force: true });

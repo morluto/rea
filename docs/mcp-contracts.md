@@ -26,6 +26,23 @@ can be passed directly to `compare_functions`, and `inspect_artifact` Evidence
 to `compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
 retained session history or an explicit bundle for transfer.
 
+`compare_artifacts` does not need that Evidence sent back. Name each side once
+with a source that `inspect_analysis_view` also accepts:
+`{"kind": "retained-evidence", "evidence_id": "<id>"}` for a record retained in
+this session, or `{"kind": "evidence-file", "path": "/absolute/evidence.json"}`
+for a saved record or bundle. Add `evidence_id` to select one record from a
+bundle that holds more than one. Complete inline Evidence is still accepted as
+the third form. The comparison cites the records that the sources resolve to,
+so all three forms give the same comparison Evidence. A retained reference that
+the session cannot resolve is refused with `evidence_integrity_mismatch` and
+`details.reason: "missing"`.
+
+`compare_artifacts` can also resolve an artifact summary to its exact retained
+parent in the session, or from the authenticated bundle containing a file-selected
+summary. File-local records take precedence over the session lookup. Unrelated
+records are not retained by the file resolver. Supported historical summaries keep their original
+Evidence identity and omissions; a missing or mismatched parent is rejected.
+
 `analyze_function` does not deliver its complete record by default. Without
 `detail`, it retains the complete dossier in the session and returns
 `inspect_analysis_view` summary Evidence whose
@@ -36,8 +53,9 @@ reject the summary record. Give `compare_functions` the retained dossier as
 `{"kind": "retained-evidence", "evidence_id": "<parent_evidence_id>"}`; give
 `match_native_functions` the same reference inside `left_observations` or
 `right_observations`, since its `left` and `right` take `list_procedures`
-Evidence. Request `detail: "complete"` for `build_call_path`, which accepts
-only inline complete dossiers.
+Evidence. `build_call_path.functions` also accepts retained references to the
+complete dossiers. Request `detail: "complete"` only when the record must travel
+inline.
 
 Saved records from the pre-6.6 identity projection that omitted
 `relationship_coverage: null` from its digest remain incompatible, even when
@@ -52,13 +70,16 @@ the same Evidence authentication failures: an admitted source that fails
 authentication is `evidence_integrity_mismatch`, while an authenticated source with an unsupported
 workflow role or invalid selector is `invalid_request`.
 
-Ghidra inventories and function replies use `raw_result: null` when their facts
-are already preserved in `normalized_result`, limitations, locations and
-relationship coverage. Distinct overview details, measured load-image
-observations, file-offset selection roles and database types supplemented with
-derived metadata keep their upstream representation. Read function results from
-`normalized_result`; older retained Evidence keeps its original representation
-and identity.
+Ghidra inventories, measured load-image observations and function replies use
+`raw_result: null` when their useful facts are already preserved in
+`normalized_result`, limitations, locations and relationship coverage. Distinct
+overview details, file-offset selection roles and database types supplemented
+with derived metadata keep their upstream representation. When a Ghidra naming
+edit is not applied, `raw_result` keeps the bridge's `failures` and shared
+`conflicts` table without a second copy of the result booleans. Native load-image
+attestation continues to use the bridge reply locally before Evidence
+projection. Read function results from `normalized_result`; older retained
+Evidence keeps its original representation and identity.
 
 Artifact source-map filename relationships require a unique, identified regular
 file at the sibling path. A known directory cannot be the mapped file; the map
@@ -68,11 +89,14 @@ byte correspondence or decode the map's original source paths.
 Artifact inventories declare `coverage.scope` (`root` or `container-entries`)
 and `coverage.status` (`complete` or `unknown`) independently of diagnostic
 wording. Comparison requires matching scopes, complete graph members and complete
-traversal coverage before concluding equality. A fully observed root without
-container children can be `unchanged`; its scope notice stays in `limitations`
-without creating a gap. Content and executable metadata changes still produce
-root deltas. Missing graph members yield `truncated`; unknown traversal coverage
-or unavailable occurrence hashes retain uncertainty. Integrity mismatches remain
+traversal coverage before concluding equality. Fully observed roots can be
+`unchanged` within root scope; their scope notice stays in `limitations` without
+creating a gap. Root-scoped equality establishes equality of the observed root
+bytes. Child-container presence and unexamined format details remain unresolved,
+including when the root format is `unknown`. Content and executable metadata
+changes still produce root deltas. Missing graph members yield `truncated`;
+unknown traversal coverage or unavailable occurrence hashes retain uncertainty.
+Integrity mismatches remain
 contradictions. Static artifact equality does not establish unchanged runtime
 behavior.
 Source-map relation deltas include the content identity of the mapped source,
@@ -137,7 +161,9 @@ for the error code, target details, partial observations, remediation, and the
 optional bounded `recovery` next step. `recovery.kind=inspect_input_contract`
 names the rejected operation: re-read that operation's advertised input schema
 (call `tools/list` if the catalog may be stale), correct the listed fields, and
-do not repeat the unchanged call. `recovery.kind=inspect_timeout_state` names
+do not repeat the unchanged call. A well-formed request the selected target
+cannot answer, such as an address without one exact file offset, omits this
+hint; follow its `remediation.action`. `recovery.kind=inspect_timeout_state` names
 the operation and the REA server/provider deadline. Inspect partial Evidence
 and reported cleanup state, then follow the returned remediation. Change a
 request field or REA_* setting only when the returned remediation explicitly
@@ -147,6 +173,9 @@ recommendation to change it. When it names no setting, reduce supported work;
 do not invent one. Raising only the MCP
 client's deadline cannot extend this budget. These hints never include the
 complete catalog or caller arguments.
+`recovery.kind=retry_cleanup` appears only on a `close_binary`
+`cleanup_incomplete` error whose retained resources the session will retry; see
+[retained cleanup](#retained-cleanup-retry).
 Failures omit `structuredContent`, since each advertised `outputSchema`
 describes successful results. Successful replies retain their schema-validated
 structured data and matching text projection. Oversized errors are retained
@@ -156,8 +185,13 @@ if retention is unavailable or fails, the diagnostic reports that reason.
 SDK-generated input validation failures are normalized into the same canonical
 `invalid_request` text when the bounded diagnostic fits the response budget.
 The complete field/type diagnostic is preserved when normalization fits the
-response budget, including request-specific rejected fields and reasons. Oversized
-SDK diagnostics keep the existing retained-Evidence recovery path. An unknown
+response budget, including request-specific rejected fields and reasons. Zod
+input issues retain their field paths and available type and range constraints.
+SDK diagnostic parts may be distributed between field issues and the main
+message so each retained explanation appears once.
+If their conservative projection allowance is exhausted, the response states
+that field-level detail was omitted and retains the original SDK diagnostic.
+Oversized SDK diagnostics keep the existing retained-Evidence recovery path. An unknown
 tool remains an MCP JSON-RPC `-32602` error, but its message directs the caller
 to `tools/list` and an advertised operation instead of repeating the unknown
 name.
@@ -176,8 +210,13 @@ unresolved relationship reads. Cancellation remains a tool error.
 
 `trace_feature` validates each reference's containing-procedure resolution using
 the same contract as navigation context. Explicit absence remains a successful
-negative observation; malformed provider replies return `unreadable_output`
-for `resolve_containing_procedure` before successful-result projection.
+negative observation. If the provider reports a non-retryable capability refusal
+attributed to the owner lookup without incomplete cleanup, the reference remains visible
+with `containing_procedure.status: "unavailable"` and a residual unknown. That
+unknown does not imply references were truncated.
+Malformed provider replies return `unreadable_output` for
+`resolve_containing_procedure` before successful-result projection;
+cancellation and incomplete cleanup remain errors.
 
 REA prepares complete MCP results within the pinned stdio client's 10 MiB
 receive-buffer budget, including both text and structured representations and
@@ -239,6 +278,36 @@ to `/absolute/view-request.json`, then run
 `rea inspect-analysis-view /absolute/view-request.json --json`. This also reads
 pre-summary source records without changing their identity; no live provider is started.
 
+`procedure_address`, `procedure_callees`, `procedure_callers`,
+`resolve_containing_procedure` and `get_call_graph` also accept `detail: "summary"`
+(complete remains the default). The summary includes the first 64 recorded
+observations, exact source parameters and provider/profile identity, relationship
+coverage where recorded, and the retained complete parent's ID. Continue with
+`view: {"kind":"native-observation","offset":64,"limit":64}`. Array positions
+retain `source_index`; graph rows additionally retain their original `level`.
+Graph pages order levels by Unicode code point and keep original row order within
+each level. A recorded empty level is a `status: "empty-level"` row with
+`source_index: null`; observation counts include these markers. Graph diagnostic,
+limitation and reason IDs index that page's `items.messages` dictionary. Expand
+those references to recover exact text, repeated messages, and absent versus
+empty optional fields. Failed nodes retain their original error.
+
+These views reference complete source context through `source_context.digest`
+and caveat counts. Read it using the same parent with
+`view: {"kind":"native-context","facet":"overview"}`. The other facets are
+`analysis-profile`, `limitations` and `result-limitations`; all accept `offset`
+and `limit`. Overview includes source subject, provider, authority, execution
+environment and profile digest. Full profiles and caveat text remain accessible
+without repeating them in every fact response. Context digests follow Evidence's
+semantic subject identity, so caller-selected path aliases preserve context
+identity while responses retain the selected display path. A null profile means
+unavailable; null result-limitations means not applicable to a primitive and
+is distinct from an observed empty graph limitation list. Until the source
+caveats have been inspected, interpretations beyond the returned facts remain
+unknown. Exhausted pages describe the recorded observations and do not establish
+complete native discovery. The same views work through the CLI with historical
+Evidence files or bundles and require no live provider.
+
 For oversized native function Evidence, `details.reported_limits.continuation`
 contains a ready-to-call `inspect_analysis_view` request for the retained
 pseudocode's first page. Use its `name` and `arguments` directly, then follow
@@ -264,6 +333,15 @@ unknown metadata. Missing omission counts remain null. Summary output carries
 every matching record; actual transport admission still applies. Omitted
 `detail` preserves complete canonical bundle delivery; filters require summary.
 
+Residual-unknown mutations reject missing Evidence or unknown references and
+unproven verified resolutions with nonretryable `invalid_request` diagnostics.
+`details.constraint` carries the validator's `kind`, owning `unknown_id`, and
+missing `evidence_id` or `related_unknown_id` where applicable. Correct the
+reported input or supply the required retained Evidence; unchanged retries do
+not repair these constraints. Rejected mutations leave retained state unchanged.
+Revision conflicts remain retryable `revision_conflict`; broken revision histories
+remain `evidence_integrity_mismatch`.
+
 `list_unknowns` returns every matching current head by default. For a smaller
 inline response, supply `offset` and `limit`, then follow `next_offset` until it
 is null. `total` counts all matching heads; each page preserves complete records
@@ -283,8 +361,11 @@ When `record_unknown` or `update_unknown` commits but its complete reply exceeds
 the response budget, `details.reported_limits.committed_unknown` identifies the
 exact unknown ID, committed revision and mutation Evidence IDs. Its retained
 Evidence reference remains available on the same connection. Export the bundle
-or page `list_unknowns` to recover the result; do not repeat the committed
-mutation. A delivery failure does not undo that revision.
+to recover the result; do not repeat the committed mutation. A single unknown
+may be too large for a `list_unknowns` page. A delivery failure does not undo
+that revision. If a list response overflows, retry on the same connection with
+the same filters and offset and a smaller limit; export if one head still cannot
+fit.
 
 For a portable exported bundle, the CLI shares this projection:
 `rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"}}' --format json`.
@@ -304,6 +385,38 @@ that buffer. It does not raise REA's reserved single-string limit, which is
 1024 UTF-16 code units below Node's single-string ceiling, and it does not
 raise that Node ceiling. It does not change analysis coverage or retained
 content. Ordinary responses keep their existing complete result contract.
+
+### Input validation resource allowance
+
+Both HTTP and stdio admit at most 1,024 combined array elements and object
+members in one tool's arguments by default. The pinned SDK counts them before
+canonical schema validation or lazy runtime materialization. Oversized calls
+return a bounded, nonretryable `resource_constraint` with resource `transport`
+and `reported_limits.max_input_elements`; the full element count is not claimed.
+No provider or tool handler starts for a refused call. Subsequent calls remain
+usable.
+
+Set `REA_MCP_MAX_INPUT_ELEMENTS` to a positive decimal safe integer and restart
+REA to select another allowance for a larger complete observation or batch.
+Where a tool supports retained-Evidence or Evidence-file selectors, prefer
+those selectors to resending large inline records. Admission never truncates
+the caller's selected input or removes retained Evidence.
+This is a configurable transport admission policy, not a per-array `maxItems`
+contract or an exact heap guarantee. Missing required fields can amplify one
+input element into many issues: on the pinned Evidence array schema,
+1,024 empty objects produced 16,384 issues and about 26 MiB heapUsed delta
+before SDK formatting. The default therefore admits at most 1,023 such objects
+plus the root member, rather than extrapolating the scalar case to larger batches;
+actual memory also depends on schema branches, runtime state and concurrent
+work. HTTP's separate request-byte limit and the client's receive limit still
+apply.
+
+Canonical schemas and CLI/application analysis semantics remain shared and
+unchanged. Admitted arguments retain the same values and ordinary validation
+diagnostics. SDK embedders can select `maxToolInputElements` in the server
+options; the common REA MCP server supplies the finite default to eager and
+deferred registrations alike. This does not impose the separate semantic
+batch-workload limit tracked in issue #5930.
 
 ### Error recovery and deadline ownership
 
@@ -340,10 +453,12 @@ result's `_meta`, whether the call succeeded or failed:
 ```
 
 The marker is declared once per tool contract (`returnsTargetContent`) and is
-on by default: only `export_evidence_bundle` and `record_unknown`, whose
-results and errors contain only REA session state or caller-supplied values,
-omit it. Tools whose results or errors can include provider, launcher, or
-device output stay marked, including `binary_session` (provider failure
+on by default: `export_evidence_bundle`, `record_unknown`, `search_guidance`,
+and `read_guidance_section` omit it. The first two contain only REA session
+state or caller-supplied values; the guidance tools return REA's own installed
+documentation, not text from an analysis target. Tools whose results or errors
+can include provider, launcher, or device output stay marked, including
+`binary_session` (provider failure
 reasons and availability diagnostics), `close_binary` (provider cleanup
 diagnostics with captured launcher output), `inspect_adb_client` and
 `inspect_apktool_client` (version output and stderr excerpts), and
@@ -380,6 +495,9 @@ session retention refuses summary detail with `capability_unavailable`;
 For `inspect_artifact`, omission also keeps the original request parameters and
 complete output shape. Delivery selection never reaches the inventory engine;
 the complete inspection and its atomic inventory Evidence remain retained.
+A view is never more certain than its parent: a summary or other view of
+`inferred` Evidence is `inferred`. Other views are `derived`, unless the
+view kind itself infers, as described below.
 
 `inspect_analysis_view` also accepts `api-surface` for retained HAR capture Evidence,
 grouping request lines by method, origin and format-rule path template. Templated
@@ -495,10 +613,12 @@ reach WABT or change the original source Evidence ID.
 Completed `inspect_macho` Evidence supports a summary and
 `view: {kind: "macho", facet: "exports", offset: 0, limit: 64}`. Facets are
 `entrypoints`, `architectures`, `build_metadata`, `load_commands`,
-`dependencies`, `imports`, `exports`, `segments`, and `provenance`; pages return
-the original rows. The summary keeps the selected slice, header fields and UUID,
-and replaces each collection with its returned count, reported total and
-`exhaustive` flag. Each page repeats the paged collection's `source_total` and
+`dependencies`, `imports`, `exports`, `segments`, `encryption`, and
+`provenance`; pages return the original rows. Evidence retained before
+`encryption` was reported pages no encryption rows and reports that collection
+as non-exhaustive with an unknown status. The summary keeps the selected
+slice, header fields and UUID, and replaces each collection with its returned
+count, reported total and `exhaustive` flag. Each page repeats the paged collection's `source_total` and
 `source_exhaustive`; exhausting a non-exhaustive collection does not establish
 that unreturned symbols are absent. Large frameworks return megabytes of
 symbols (Electron Framework: 2.5 MB of imports and exports, 3.3 KB as a
@@ -516,10 +636,24 @@ counts, and whether the decoded graph is incomplete. Each page repeats
 budget (XLD.app: 6.7 MB), so select `detail: "summary"` on the first call.
 Delivery detail never reaches the decoder or changes the source Evidence ID.
 
-`trace_application_feature`, `trace_javascript_semantics`,
-`compare_application_versions`, `compare_source_to_bundle`, and
-`compare_javascript_export_shapes` accept complete inline application Evidence
-or an exact reference to a record already retained by the current connection:
+Logical Evidence source fields share one input contract across domains:
+complete inline Evidence or an exact reference to a record already retained by
+the current connection. This applies to individual sources, optional sources,
+arrays and nested sources declared by the tool's input schema:
+
+| Workflows                                                                                                   | Retained-reference inputs                                                                                             |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `compare_functions`, `compare_process_captures`, `compare_wasm_interfaces`                                  | `left`, `right`                                                                                                       |
+| `match_native_functions`                                                                                    | `left`, `right`, `left_observations[]`, `right_observations[]`                                                        |
+| `trace_application_feature`, `trace_javascript_semantics`, `compare_source_to_bundle`                       | `application`; feature tracing also accepts `native_observations[]`                                                   |
+| `compare_application_versions`, `compare_javascript_export_shapes`                                          | `left`, `right`; version comparison also accepts both native-observation arrays                                       |
+| `reconcile_javascript_runtime`                                                                              | `static_layers[].analysis`, `runtime_observations[]`                                                                  |
+| `compare_managed_members`, `verify_managed_native_boundaries`, `import_managed_reconstruction`              | Comparison `left`/`right`; verification `managed_boundaries`/`native_observations[]`; reconstruction `static_members` |
+| `project_managed_application_graph`                                                                         | `managed_artifact`, `managed_members`, `managed_native_boundaries`                                                    |
+| `project_android_application_graph`, `project_apple_application_graph`, `project_harmony_application_graph` | `inventory_evidence[]`                                                                                                |
+| `build_call_path`, `find_changed_behavior`, `correlate_static_and_runtime`                                  | `functions[]`, `comparisons[]`, or `static_comparisons[]`/`runtime_comparisons[]`, respectively                       |
+
+For example:
 
 ```json
 {
@@ -535,27 +669,46 @@ or an exact reference to a record already retained by the current connection:
 ```
 
 Use the `evidence_id` returned by `analyze_javascript_application` (or another
-compatible application-graph producer). Comparisons accept this form in `left`
-and `right`; each side can independently be inline or retained. Native
-observation arrays continue to take complete inline Evidence. Results and their
-Evidence remain complete inline, and both input forms pass the same semantic,
-identity, authority, and provenance checks without running the producer again.
+compatible application-graph producer). When the producer returned a summary
+or inspection page, use its `normalized_result.parent_evidence_id` to select
+the complete source, rather than the view's own `evidence_id`. Each source can
+independently be inline or retained, including within one array. Both forms use
+the same application workflow and owner validation, preserve exact source
+identity, provenance, authority, coverage and partial or unknown facts, and do
+not run the producer again. A reference cannot supply facts absent from that
+record. Workflows that follow source links also require those linked records
+in the ledger. File references are accepted only where the tool explicitly
+advertises a file selector; a retained ID does not authorize a file read.
 
 References belong to the current connection's Evidence ledger. Opening another
 target or restarting the current target preserves retained records, including
 when provider cleanup fails; records remain available for export and retry.
-`close_binary` clears them, even when no binary is active. A fresh connection
-has its own ledger. A missing reference reports its exact ID and
+`close_binary` releases the engine and replay cache while preserving these records,
+even when no binary is active or cleanup fails. `reset_investigation` explicitly
+clears all records and Unknown revisions after draining earlier work; a healthy
+active engine remains open. Its optional absolute `save_path` saves a complete
+canonical bundle before clearing. Failed save, cancellation observed before clearing or incomplete cleanup
+preserves records, and a published file is reported even if later cleanup fails.
+A fresh connection has its own in-memory ledger; import the saved bundle to restore
+original Evidence IDs and complete Unknown history. A missing reference reports its exact ID and
 `details.reason: "missing"`; the server cannot infer
 whether it was never recorded, cleared, or retained by another connection.
 Supply complete inline Evidence, repeat its producer, or import an exported
-Evidence bundle before referencing that imported record. Export a bundle before
-closing if the investigation needs it later.
+Evidence bundle before referencing that imported record. Export a bundle or use
+`reset_investigation(save_path)` before ending the process if the investigation
+needs it later. Retention has no automatic persistence or silent eviction.
+`binary_session.investigation` reports record/revision/head counts, estimated
+retained representation bytes and the fixed allowance derived from initial V8
+heap headroom. A capacity refusal preserves the existing investigation; checkpoint
+and reset it, or start with a larger Node heap. These byte estimates are not RSS.
 
-CLI application workflows continue to read portable inline Evidence from files
-and run the same analysis workflows; a standalone CLI invocation cannot resolve
-another MCP connection's retained records. No additional lookup call, provider
-selection, or approval step is required for a same-session follow-up.
+CLI workflows that advertise `--evidence-bundle` can resolve the same reference
+JSON from one explicitly selected local bundle, including an MCP export. They
+also accept portable inline Evidence and use the same application workflows.
+A standalone CLI invocation cannot resolve another MCP connection's ledger
+without that exported bundle. See [CLI Evidence reuse](cli.md#import-export-and-compare-evidence)
+for the supported commands. No additional lookup call, provider selection, or
+approval step is required for a same-session follow-up.
 CLI `inspect-artifact` continues to return complete portable Evidence. Save that
 JSON to a file and use `inspect-analysis-view` with inline source Evidence for
 later inventory summaries or pages; a one-shot CLI session cannot retain a
@@ -580,11 +733,22 @@ capabilities. The default result contains the complete inventory in groups that
 share status facts. `tool_availability.client_requirements` is the baseline for
 each group; a group's optional `client_requirements` replaces that baseline for
 the group's tools. Expand each group's `names` into one tool entry, carrying its
-surface, availability, reason, remediation, default-mode status, modes, and
-client requirements. Compare the union of group names with `tools/list` when
-checking that a client received the full catalog. An operation absent from all
-groups is missing from the complete inventory; it is not an implicit
-unavailable entry.
+availability, reason, remediation, default-mode status, modes, and client
+requirements. Compare the union of group names with `tools/list` when checking
+that a client received the full catalog. An operation absent from all groups is
+missing from the complete inventory; it is not an implicit unavailable entry.
+
+`detail` selects the projection and the result echoes it. The default
+`summary` keeps open state, target identity, the binding, current-route
+`capabilities`, run, activity and health status, and each provider candidate's
+identity, selection, and availability and target-support `status`, `code`, and
+`reason`. It lists the fields it leaves out in `omitted_fields`: provider
+`diagnostics`, candidate `capabilities`, and each tool group's static `surface`,
+`effects`, and `annotations`. Omitted fields are not empty or false.
+`detail: "complete"` returns them inline, groups tools by those flags too, and
+has no `omitted_fields`. The output schema keys each result's candidate,
+tool-group and omission fields by its `detail`. CLI `capabilities` and
+`providers` always return complete provider facts.
 
 `get_call_graph` and `trace_call_path` report `forward` and `backward` modes.
 Each requires `procedure_address` plus `procedure_callees` or `procedure_callers`,
@@ -597,8 +761,8 @@ finish without reading relationships, even when neither traversal mode is
 available. Discovery does not block that direct invocation or replace its typed
 partial/error outcomes.
 
-The `effects` and `annotations` arrays list the true members of their fixed
-vocabularies. A known member omitted from either array is false. This applies
+With complete detail, the `effects` and `annotations` arrays list the true
+members of their fixed vocabularies. A known member omitted from either array is false. This applies
 only to these closed flag sets; it does not make an omitted tool, provider, mode,
 or limitation false. Keep availability reasons, remediation, client-feature
 requirements, and mode facts inline with the grouped tool names. The optional
@@ -629,7 +793,8 @@ identity, availability, reason, rejection code, effects, and ordered
 limitations.
 
 `binary_session.analysis_provider_candidates` is authoritative for deep-engine
-discovery. Each candidate's capability sets describe that possible provider;
+discovery. Each candidate's capability sets, returned with complete detail,
+describe that possible provider;
 they do not select it. The top-level `capabilities` describe the current route,
 while `analysis_provider_binding` identifies the concrete selected route. These
 fields are not interchangeable. Target-free discovery is sorted by provider ID,
@@ -641,6 +806,37 @@ concrete version, selection source, and complete analysis profile through
 `analysis_provider_binding`. Ambiguity and unknown, unavailable, or unsupported
 choices return typed selection details. A selected provider is never replaced
 automatically after a runtime failure.
+
+`open_binary` resolves an Apple bundle directory (`.app`, `.appex`,
+`.framework`, `.xpc`, `.systemextension`, `.bundle` or `.plugin`, compared
+case-insensitively) to the program file its `Info.plist` names in
+`CFBundleExecutable`; the Evidence subject is that program file. It reads the
+macOS `Contents/` layout or the flat root layout. A framework with `Versions/`
+may instead keep `Info.plist` in `Versions/Current/Resources/` with its program
+file in `Versions/Current/`; a flattened framework without `Versions/`, as
+Electron and Gecko apps ship it, keeps `Resources/Info.plist` beside its
+program file. An app keeps its iOS-on-Mac `Wrapper` resolution. For the
+other types, exactly one layout may declare the bundle, and its `Info.plist`,
+program directory and program file must stay inside the bundle. Resolution
+never guesses a program file. Each refusal reports one `details.constraint`:
+
+- `bundle_info_plist_missing`, with `probed_paths` listing every layout's
+  `Info.plist`.
+- `bundle_layout_ambiguous`, with `probed_paths` listing the `Info.plist`
+  files found.
+- `bundle_current_version_missing`, with `probed_paths` naming
+  `Versions/Current`.
+- `bundle_path_escapes`, with `probed_paths` naming the path that resolved
+  outside the bundle.
+- `bundle_executable_undeclared`, with `info_plist`.
+- `bundle_program_missing`, with `info_plist` and `probed_paths` naming the
+  declared program file.
+
+An unreadable or malformed `Info.plist` keeps its reason without a bundle
+constraint, and `details.path` names that file. A `.dext`, `.kext`,
+`.qlgenerator` or `.mdimporter` directory reports `bundle_type_unsupported`. A
+resource root reports its `layout` as `contents`, `root`,
+`versioned-framework` or `flattened-framework`.
 
 `open_bundle_resources` selects a separate read-only app resource session
 without resolving `CFBundleExecutable`, including when it is absent or
@@ -683,6 +879,36 @@ File cleanup can also remain after snapshot publication or after profile
 inspection fails or is cancelled before a provider client exists. If no client
 remains, no provider run or health observation is available; follow the cleanup
 error's reported resources.
+
+### Retained cleanup retry
+
+A `close_binary` that retires the target clears engine replay state while
+retaining investigation Evidence and Unknown history, including when cleanup fails. When the session keeps every reported owner for the next
+`close_binary` on the same connection, its `cleanup_incomplete` error carries
+`recovery: {"kind": "retry_cleanup", "operation": "close_binary"}`.
+Keep the connection open, let the reported condition settle or resolve it, call
+`close_binary` without `snapshot_path`, and check the result. The retry does not
+rerun the failed analysis and can report `cleanup_incomplete` again.
+`retryable` still describes the failed operation and stays `false`. A failed
+`snapshot_path` save returns before retirement, keeps the target open and has
+no `retry_cleanup` hint. `open_binary`, analysis tools and one-shot CLI commands
+do not report this hint either, even when their cleanup remains pending.
+
+## Initial target at startup
+
+MCP normally starts without a target; use `open_binary` to select one during the
+session. To open a target before serving MCP, set `HOPPER_TARGET_PATH` to the
+selected path in REA's launch environment. `HOPPER_TARGET_KIND` accepts
+`executable` (the default) or `database`. Despite the names, these are initial
+session settings; the configured provider still determines how the target is
+opened. If the initial open fails, REA reports the failure and exits with code 1
+without serving MCP. Shutdown during startup cancels and cleans up the open as
+described below.
+
+The source-checkout helper `node scripts/print-mcp-config.mjs /path/to/target`
+prints a registration containing these settings; `--kind database` selects the
+database kind. The helper is not part of the installed npm package. `rea setup`
+does not copy these one-shot target settings into generated registrations.
 
 ## Transports
 
@@ -772,7 +998,12 @@ the bound address is local; names are added only after classifying the actual IP
 On such a bind, requests whose `Host` header is outside the SDK loopback allowlist plus
 the configured name and the bound address are refused with `403`, and a browser
 `Origin` outside that allowlist is refused the same way (a missing `Origin`
-passes); a non-loopback bind relaxes both checks and logs the relaxation. A reply sent before a request body was read (a refused `Host` or `Origin`, an unknown route, the startup `503`) closes the connection after the reply, so an unread upload cannot keep a socket open. Request targets are taken verbatim as origin-form paths (`//host/path` is a path, not another origin); an absolute-form target, a target containing a raw fragment delimiter (`#`), or one whose path URL parsing would rewrite (dot segments such as `/public/../mcp`), is refused with `400`, and a method Fetch does not support with `405`. Percent-encoded `%23` remains valid query data. Only an `initialize` object can replace an open session. A sessionless array containing initialize, including a one-element array, is refused with HTTP `400` before session creation or handover. Scoped
+passes). A non-loopback bind requires `MCP_ALLOWED_HOSTS`, or
+`--allowed-hosts` for `rea mcp --http`, listing every client host name or IP
+address. Configuration validates and canonicalizes complete tokens once;
+URLs, ports and empty entries are refused. Both Host and Origin checks remain
+active on that declared list. The announced URL uses the bound hostname if
+admitted, otherwise the first declared hostname, with the actual bound port. A reply sent before a request body was read (a refused `Host` or `Origin`, an unknown route, the startup `503`) closes the connection after the reply, so an unread upload cannot keep a socket open. Request targets are taken verbatim as origin-form paths (`//host/path` is a path, not another origin); an absolute-form target, a target containing a raw fragment delimiter (`#`), or one whose path URL parsing would rewrite (dot segments such as `/public/../mcp`), is refused with `400`, and a method Fetch does not support with `405`. Percent-encoded `%23` remains valid query data. Only an `initialize` object can replace an open session. A sessionless array containing initialize, including a one-element array, is refused with HTTP `400` before session creation or handover. Scoped
 IPv6 literals (`fe80::1%eth0`) are refused before binding, because no URL can
 name them. Listener errors reach the runtime's connection-loss handler only
 after a successful bind; a bind failure prints the listen-failure message alone. Request bodies are bounded by the SDK's
@@ -923,11 +1154,39 @@ mapping. A successful start-address mapping does not establish that an entire
 range is contiguous in the original file, or that its bytes equal analysis
 memory after loader fixups. Uninitialized, missing, and ambiguous mappings fail
 explicitly; preserve the reported failure rather than guessing an offset.
+For Ghidra, such a well-formed address returns `invalid_request` whose message
+states the bridge's reason and whose remediation points to
+`inspect_native_load_image`. It carries no `inspect_input_contract` recovery.
+`details.issues[0].observed` keeps the caller's exact `address` and a
+`file_mapping` outcome: `unmapped` (outside every memory block),
+`uninitialized`, `absent` (no authoritative target-file source), `ambiguous`,
+or `unrepresentable` (beyond the exact JSON integer range). Initialization, not
+the loaded flag, decides whether source bytes can exist, so an initialized
+file-backed overlay still maps.
 
 For constructor-populated pointer or resource slots, a static zero is not proof
 of a later null value. Inspect the slot's `xrefs` and the writer's assembly or
 pseudocode, retaining uncertainty about execution order and runtime values.
 These operations inspect static evidence and do not execute the target.
+
+## Editable analysis settings
+
+Agents can call `update_analysis_settings` to raise a curated admission,
+timeout or worker heap default on a connected server, then retry the same
+request. Errors carry `details.limit` with the setting and bounds when the
+failing owner supports runtime recovery; `inspect_analysis_settings` is optional
+when those facts are supplied. Updates are atomic, apply to new work, survive
+target close/open, and vanish when REA exits. Explicit per-call arguments take
+precedence. Neither tool changes host deadlines or resolves retained cleanup.
+See [runtime settings and recovery](design/limits-and-recovery.md#runtime-settings-through-mcp)
+for the full setting list, reset/revision semantics and ASAR retry example.
+For implementation ownership, accepted-operation snapshots, provider wiring,
+and extension guidance, see the
+[maintainer design](design/limits-and-recovery.md#ownership-and-data-flow).
+
+Ghidra and Hopper startup updates apply to the next startup attempt without
+restarting REA. Ghidra decompile timeout updates apply on the existing Program.
+An operation already accepted retains its original budgets.
 
 ## Ghidra first-query deadlines and recovery
 
@@ -936,6 +1195,12 @@ A successful MCP initialize handshake establishes the REA connection.
 that Ghidra has finished importing the target. The first Ghidra-backed query,
 such as `binary_overview`, starts the engine and waits for import, default
 auto-analysis, bridge connection, and health readiness before returning analysis.
+With `REA_GHIDRA_PROJECT_PATH`, shared CLI/MCP configuration instead selects an
+[existing project copy](installation.md#reuse-an-existing-ghidra-project), whose
+content fingerprint is committed into the profile. Import, auto-analysis and
+repair scripts are skipped; original analysis completeness/settings stay unknown,
+and bridge database edits are unavailable. The same startup/client deadlines
+still cover copy verification, engine launch and the authenticated handshake.
 
 These deadlines have different owners:
 
@@ -1020,21 +1285,23 @@ If the client timed out or cancelled during startup, the pending query may have
 been interrupted. Reissuing `open_binary` for the same active target can reuse
 the current client, so it is not a fresh-start recovery. On the same connection:
 
-1. Keep any useful inline Evidence, or export a bundle before closing if retained
-   records are needed. `binary_session` can show the selected binding and its
+1. Keep useful inline Evidence or use the retained investigation references;
+   export a bundle before ending the process to resume later. `binary_session` can show the selected binding and its
    recorded state; target selection alone does not prove engine readiness.
 2. Call `close_binary` and check its result. It drains owned work, closes the
-   provider, and clears retained session records. A `cleanup_incomplete` result
+   provider and engine replay state while preserving investigation Evidence and Unknown history. A `cleanup_incomplete` result
    must be addressed according to its reported owned resources before retrying.
 3. Call `open_binary` with the same caller-selected path and
    `provider_id: "ghidra"`, then retry the first query with an appropriate client
    deadline. The connection and selected provider do not need to change.
 
-If REA's provider startup allowance also needs raising, preserve Evidence and
-close as above, then update `REA_GHIDRA_STARTUP_TIMEOUT_MS` in REA's launch
-environment and restart the server. Reconnect the MCP client before reopening
-the target. Configuration is read at process startup; close/reopen on the same
-connection cannot apply a changed environment. See the
+If REA's provider startup allowance also needs raising, set
+`ghidra.startup_timeout_ms` through `update_analysis_settings` before the next
+startup attempt. This needs no REA restart and does not change accepted work,
+clear cleanup blockers, or extend the client's deadline. Alternatively, change
+`REA_GHIDRA_STARTUP_TIMEOUT_MS` in REA's launch environment and restart the
+server, preserving Evidence and closing as above. Close/reopen on the same
+connection cannot apply a changed launch environment. See the
 [CLI retry example](installation.md#ghidra).
 
 This close/reopen flow was exercised on one real Linux stdio connection after a
@@ -1119,17 +1386,36 @@ bytes and returns the `integrity_contradictions` records for the extracted
 files. An active ASAR unpacked entry whose companion file is absent cannot be
 materialized; extraction fails as `unavailable` with that logical path.
 
+A container can also declare a checksum over its own bytes; today that is the
+DFU suffix CRC of a DfuSe file. A mismatch is a contradiction of the root
+occurrence (logical path `.`), recorded as a `dfu-crc32` pair. Under
+`record-and-continue` the root becomes `mismatched` while its elements stay
+listed and extractable as observed-untrusted bytes, and `extract_artifact`
+returns the root record with the extracted files' records.
+
 If native DMG child traversal is unavailable after carrier identification,
 the typed failure retains a revalidated root-only inventory under
 `details.partial_observation.inventory`, with unknown child coverage and the
 producer's diagnostics/provenance. It does not borrow or detach an existing
 attachment. Native checksum verification failures still refuse traversal;
-`record-and-continue` recovery applies to structured entry contradictions.
+`record-and-continue` recovery applies to structured entry and container
+contradictions.
 
 Occurrences use normalized logical paths for identity and lookup. Optional
 `source_path` retains the original path within the owning reader when Unicode
 NFC or reader admission changes its spelling; it is source evidence, not an
-output destination. POSIX letter-colon names such as `a:b` remain valid logical
+output destination. New ASAR file occurrences explicitly record the boolean
+`unpacked`: `true` identifies a companion file and `false` identifies a packed
+entry. This field describes archive storage, independently of whether the bytes
+were available or passed integrity verification. Older occurrences may omit it;
+omission remains unknown and must not be defaulted to `false`. Consumers that
+previously accepted only literal `true` must also accept `false`, while retaining
+support for omitted historical values.
+`compare_artifacts` reports a metadata change when both storage values are
+known and differ. If only one value is known, storage comparison is unknown;
+when both are omitted, storage is not compared.
+
+POSIX letter-colon names such as `a:b` remain valid logical
 names; Windows extraction refuses names its filesystem cannot materialize.
 
 Extraction materializes regular files exposed by the active archive reader.
@@ -1156,10 +1442,21 @@ failures for such entries name this cause and the operation to rerun with
 Advertised input and output schemas contain no reachable recursive references.
 Input schemas inline repeated definitions before applying the selected
 presentation profile. Both `full` and `compact` start from this self-contained
-projection; output schemas can share schema-local definitions. Full inputs
-retain nested fields, descriptions and valid literal examples. The compatibility
+projection; output schemas can share schema-local definitions. Analyst-authored
+full inputs retain nested fields, descriptions and valid literal examples. The compatibility
 projections below can relax advertised constraints; canonical runtime validation
 still enforces the complete input contract.
+
+`compare_web_captures` declares its complete producer observations as object
+operands instead of repeating their full output schemas in the input catalog.
+Pass the original `inspect_web_page` normalized result in `before.inspection`
+and `after.inspection`, optional complete `discover_webmcp_tools` results in
+`webmcp`, or complete `capture_browser_scenario` results in the scenario fields.
+Do not construct partial observations from the abbreviated declaration: the
+server still validates every canonical field before comparison. Input groups
+and analyst-authored normalization rules remain explicit. This presentation
+changes no capture bytes, identity, completeness, or comparison semantics and
+does not reduce `inspect_analysis_view` selectors or other tools' declarations.
 
 When a host forwards input schemas to the model, their examples consume context.
 REA's advertised examples therefore never copy complete producer Evidence.
@@ -1229,6 +1526,32 @@ Kimi-K3 backend, not the WorkBuddy MCP client. Set the profile on REA's
 registration in the actual MCP host; the host's name alone does not identify
 the downstream model or its schema constraints.
 
+The compact profile also protects strict Anthropic-compatible gateways from
+known schema-translation failures reported in [#3800](https://github.com/morluto/rea/issues/3800):
+primitive `enum` properties without a sibling `type`, and `oneOf`/`allOf`
+inside a property listed in `required`. Affected schemas use the same reduced
+first-level projection described below, so the gateway receives a plain object
+shape while REA continues to validate the complete canonical contract locally.
+This is a compatibility projection, not a claim that the gateway reproduces
+the full union semantics.
+
+For array items expressed as an untyped `oneOf`/`anyOf`, the compact profile
+adds a type when every branch has the same type. Mixed-type item unions use the
+reduced projection; selecting one branch's type would exclude valid calls.
+This addresses the emitted shape reported through a Gemini-backed gateway in
+[#5201](https://github.com/morluto/rea/issues/5201). Gateway conversion and
+live provider acceptance have not been verified for this projection.
+
+Gemini function declarations accept `items` only beside the single `array`
+type. Reduced array properties therefore advertise the element types their
+canonical item schemas accept, such as `{"type": "object"}` for a union of
+object actions, instead of an any-value type list with nested `items`. An
+element whose type is unknown, a tuple, or an array alongside other types uses
+the empty item schema, and a property that may be an array or another type
+lists typed `anyOf` branches. A boundary test rejects any compact
+advertisement that places `items` beside another type or uses an untyped item
+union.
+
 The compact profile renders the same tool set, output schemas, annotations,
 and canonical server-side validation. It changes only the advertised input
 JSON Schema:
@@ -1260,6 +1583,82 @@ Boundary tests pin every advertised compact schema to the budget, keep them
 valid JSON Schema that still accepts every canonical example. Client verification
 also checks provider-facing sizes and canonical examples after conversion by
 the actual Kimi Code CLI; local captures do not establish Moonshot acceptance.
+The SDK catalog test checks that full-profile schemas retain nested ADB extra,
+managed selection, and WASM timeout and detail restrictions. Path-contract tests
+check full-profile local-path rules. Compact MCP workflow tests verify canonical
+rejection of invalid inputs before provider work, independent of how much detail
+the selected advertisement retains.
+
+### Tool family advertising scope
+
+Agents pay context for every advertised tool schema, and clients that send
+catalog payloads with each request (see the Claude Code measurements above)
+can spend more context on tool definitions than on the investigation. Setting
+the server's `REA_MCP_TOOL_FAMILIES` environment variable to a comma-separated
+subset of the catalog's tool-family ids (the `tools.families` entries in the
+product catalog) restricts the registration to those families. A selection
+outside the published family ids fails server startup with the complete id
+list; the setting is read at startup, so restart the server to apply changes.
+
+Out-of-scope tools stay registered but disabled: `tools/list` omits their
+names and schemas entirely, and a direct call fails with the SDK's
+`Tool ... disabled` invalid-params error rather than disappearing silently.
+`binary_session.tool_availability` and the provider `capabilities` sets on the
+same report, including `analysis_provider_candidates`, list only operations
+whose tools the registration advertises; an operation omitted from those
+projections because of the scope is not callable through this registration,
+and `tools/list` remains the canonical catalog. Availability is derived from
+the complete provider facts before those sets are narrowed, so hiding a direct
+tool does not report an advertised composed tool as unavailable. Guided
+prompts follow the scope too: a workflow is advertised only when every tool in
+its suggested steps belongs to a selected family, so a partially available
+workflow is omitted from `prompts/list` instead of rendering a disabled call;
+`prompts/get` reports it as not found. A scope can omit all guided prompts;
+doctor treats a server without the prompts capability as an empty inventory.
+Recovery instructions recommend runtime settings tools only when `application`
+is advertised; otherwise they explain launch settings and how to widen the scope.
+The server identity digest and
+`rea mcp doctor` tool and prompt inventory derive from the
+same selected scope, so a scoped server reports itself healthy; a scope
+without the `session` family cannot serve `binary_session`, and doctor says
+so explicitly instead of reporting a mismatch. Canonical server-side
+validation and Evidence semantics are unchanged for
+the tools that remain advertised. The default (unset) advertises the complete
+catalog exactly as before. Saved registrations with an invalid selection
+report `invalid` in status instead of starting a server that fails.
+
+`rea setup --client <id> --tool-families <ids>` writes the same selection
+into the `env` object of that client's `rea` entry, so the scope travels with
+the registration; rerunning setup with a different selection refreshes it.
+
+#### Choosing families for common workflows
+
+Every investigation that opens a local binary still needs the `session`
+family: it owns `open_binary`, `binary_session`, the evidence-bundle and
+comparison tools, and the unknown ledger, so include it whenever the workflow
+touches a binary. The `tools.families` entries in the product catalog list
+each family's current inventory; the groupings below describe what a scope
+covers, not a frozen tool count.
+
+Include `application` when a workflow pages retained summaries through
+`inspect_analysis_view` or changes analysis settings. `session` owns Evidence
+bundle import/export; it does not include those view and settings tools.
+
+| Workflow                                          | Scope                                                     | Coverage                                                                                                                                                     |
+| ------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Firmware extraction and analysis                  | `firmware,session,direct`                                 | extract firmware regions, open the extracted image, inspect it with the proxied disassembly tools                                                            |
+| Web investigation                                 | `browser,pcap,session,javascript-runtime`                 | page, bundle and session inspection, packet captures, JS runtime observation, evidence workflow                                                              |
+| Android application analysis                      | `android,adb,apktool,session`                             | class and method inspection, device bridge, resource decoding; add `frida` for dynamic instrumentation, `jeb` for JEB projects, `flutter` for Flutter builds |
+| Native macOS or iOS binary                        | `native,artifact,session`                                 | Mach-O, signature and property-list inspection plus container extraction                                                                                     |
+| Managed .NET assembly                             | `managed,session`                                         | managed member comparison and reconstruction against the evidence workflow                                                                                   |
+| Electron or browser-hosted JavaScript application | `browser,electron,application,javascript-runtime,session` | runtime targets, live page inspection, bundle and capture tools, feature tracing, JavaScript semantics and reconstruction obligations                        |
+| Evidence bookkeeping only                         | `session`                                                 | open and close binaries, bundles, comparisons, unknown tracking                                                                                              |
+
+Scopes are additive and start narrow: begin with the families the workflow
+names, then add one when a call fails with the SDK's `Tool ... disabled`
+error. The error names the disabled tool; `tools.families` in the product
+catalog maps it back to the family that would re-enable it, and the server
+restarts with the wider scope through the same setup flag.
 
 ### Output schemas
 
@@ -1270,21 +1669,39 @@ identity. Explicit schema IDs and relative external reference bases are
 preserved. This keeps every tool and validation rule in discovery and does not
 change the SDK's catalog invalidation or availability checks.
 
-The server identity's tool-schema digest includes both the canonical output
-contracts and the selected output-schema profile. `full` and `off` therefore
-have distinct identities even though `off` keeps the same canonical output
-validation on the server.
+The server identity's tool-schema digest includes the selected output-schema
+profile and the advertised form that profile produces. `full`, `compact`, and
+`off` therefore have distinct identities. The `compact` digest covers the
+bounded schemas clients receive; `off` keeps the canonical output contracts in
+the digest while advertising nothing.
 
 Some stdio hosts reject a complete `tools/list` frame before they load any
-tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=off` setting omits `outputSchema`
-from the advertised catalog for hosts with a small frame limit (the measured
-pi-web-ui failure and catalog breakdown are in [#2512](https://github.com/morluto/rea/issues/2512)).
-The default `full` profile is unchanged. With `off`, REA validates successful
-structured results against the same named canonical tool contract before
-delivery; it still returns complete `structuredContent` and text results.
-Only client-side schema discovery and validation are omitted, so hosts using
-this profile should rely on REA's validation and retain their usual response
-size limits.
+tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` setting bounds every
+advertised output schema to 4,096 bytes; `off` omits `outputSchema` entirely
+(the measured pi-web-ui failure and catalog breakdown are in
+[#2512](https://github.com/morluto/rea/issues/2512)). The default `full` profile
+is unchanged. Both settings keep the same named canonical tool contract for
+server-side result validation, and both still return complete
+`structuredContent` and text results.
+
+`compact` keeps the complete validation structure when it fits the budget.
+Otherwise it advertises the root property shape, first-level reference-resolved
+types, first-level guidance, and the root's `required`/`additionalProperties`
+constraints, with nested validation detail elided. Local references are inlined
+within the budget, so the advertised form is self-contained and omits the
+canonical contract's content-bound `$id`. The projection only widens: a valid
+canonical result still satisfies the advertised schema, but a client validating
+against it can accept a result the canonical contract rejects. REA still
+validates every result before delivery. On catalogs large enough that full
+input schemas alone approach the frame limit, keep the input profile at its
+`compact` default as well; with full input schemas the advertisement is
+dominated by the input side.
+The full input profile has no one-megabyte catalog-frame guarantee, including
+when output schemas are omitted.
+
+Only client-side schema discovery and validation are reduced or omitted, so
+hosts using these profiles should rely on REA's validation and retain their
+usual response size limits.
 
 ### Function comparison limitations
 

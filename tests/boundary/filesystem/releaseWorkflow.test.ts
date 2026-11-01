@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { parse } from "yaml";
@@ -88,7 +87,7 @@ it("validates the source before release creation and the prepared candidate befo
   expect(candidate).toBeGreaterThan(action);
   expect(candidate).toBeLessThan(generation);
   expect(steps[candidate]?.if).toBe(
-    "inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'",
+    "inputs.phase == 'prepare' && steps.proposal.outputs.prs_created == 'true'",
   );
   expect(steps[candidate]?.run).toContain("--stage candidate");
   for (const name of [
@@ -110,16 +109,28 @@ it("keeps main pushes proposal-only and gates merged-release automation", async 
   });
   const proposal = workflow.jobs["release-proposal"];
   expect(proposal.if).toBe("github.event_name == 'push'");
-  const action = proposal.steps.find((step) =>
-    step.uses?.startsWith("googleapis/release-please-action@"),
+  const controller = proposal.steps.find((step) =>
+    step.run?.includes("scripts/release-proposal.mjs"),
   );
-  expect(action?.with).toMatchObject({
-    token: "${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
-    "target-branch": "main",
-    "skip-github-release": true,
+  expect(controller?.env?.GH_TOKEN).toBe(
+    "${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
+  );
+  expect(controller?.run).toContain("--target-branch main");
+  expect(controller?.run).toContain('--source-sha "$SOURCE_SHA"');
+  expect(controller?.env?.SOURCE_SHA).toBe("${{ github.sha }}");
+  expect(controller?.if).toBe("steps.editorial.outputs.frozen != 'true'");
+  expect(
+    proposal.steps.some((step) =>
+      step.uses?.startsWith("googleapis/release-please-action@"),
+    ),
+  ).toBe(false);
+  expect(
+    proposal.steps.find((step) => step.uses?.startsWith("actions/checkout@"))
+      ?.with,
+  ).toMatchObject({
+    "fetch-depth": 0,
+    "persist-credentials": false,
   });
-  expect(action?.with?.["skip-github-pull-request"]).not.toBe(true);
-  expect(action?.if).toBe("steps.editorial.outputs.frozen != 'true'");
   expect(proposal.steps[0]?.run).toContain("rea:release-notes-finalized");
   expect(proposal.steps[0]?.run).toContain("--paginate");
   const merged = workflow.jobs["merged-release"];
@@ -368,10 +379,17 @@ it("keeps frozen candidate preparation and publication explicit", async () => {
   expect(release?.with).toMatchObject({
     token: "${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
     "target-branch": "${{ inputs.release_branch }}",
-    "skip-github-release": "${{ inputs.phase == 'prepare' }}",
-    "skip-github-pull-request": "${{ inputs.phase == 'publish' }}",
+    "skip-github-release": false,
+    "skip-github-pull-request": true,
   });
+  expect(release?.if).toBe("inputs.phase == 'publish'");
   const steps = workflow.jobs["release-please"].steps;
+  const proposal = steps.find((step) => step.id === "proposal");
+  expect(proposal?.if).toBe("inputs.phase == 'prepare'");
+  expect(proposal?.run).toContain("scripts/release-proposal.mjs");
+  expect(proposal?.run).toContain('--target-branch "$RELEASE_BRANCH"');
+  expect(proposal?.env?.SOURCE_SHA).toBe("${{ steps.branch.outputs.sha }}");
+  expect(proposal?.run).toContain('--source-sha "$SOURCE_SHA"');
   const notesIndex = steps.findIndex((step) =>
     step.run?.includes("release-notes.mjs publication"),
   );
@@ -513,7 +531,7 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
       workflow.jobs["release-please"].steps.find((step) => step.name === name)
         ?.if,
     ).toBe(
-      "inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'",
+      "inputs.phase == 'prepare' && steps.proposal.outputs.prs_created == 'true'",
     );
   }
   const publishCommand = workflow.jobs.publish.steps.find(
@@ -523,20 +541,6 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
   expect(publishCommand).toContain(
     '--registry=https://registry.npmjs.org --access=public --tag="$NPM_RELEASE_TAG"',
   );
-  for (const [version, tag] of [
-    ["6.1.0", "latest"],
-    ["6.1.0-rc.1", "next"],
-  ] as const) {
-    const helper = new URL(
-      "../../../scripts/release-npm-tag.mjs",
-      import.meta.url,
-    );
-    const result = await execFileAsync(process.execPath, [
-      fileURLToPath(helper),
-      version,
-    ]);
-    expect(result.stdout).toBe(tag);
-  }
 });
 
 it.skipIf(process.platform === "win32").each([

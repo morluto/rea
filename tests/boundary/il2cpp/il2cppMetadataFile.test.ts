@@ -6,10 +6,12 @@ import { describe, expect, it } from "vitest";
 import {
   il2cppIndexWidth,
   il2cppMetadataRecordBytes,
-  readIl2cppMetadata,
-  readIl2cppMetadataForLinking,
   readIl2cppMetadataSteps,
 } from "../../../src/il2cpp/Il2cppMetadataFile.js";
+import {
+  readIl2cppMetadata,
+  readIl2cppMetadataForLinking,
+} from "../../fixtures/il2cpp/readers.js";
 import {
   createIl2cppMetadataFixture,
   FIXTURE_IMAGES,
@@ -281,6 +283,41 @@ describe("rejected IL2CPP global-metadata", () => {
       "type-index-width",
     );
   });
+});
+
+describe("IL2CPP generic-container linking facts", () => {
+  it.each([31, 39] as const)(
+    "retains type argument counts and version %i container admission",
+    (version) => {
+      const fixture = createIl2cppMetadataFixture({
+        version,
+        genericOwners: true,
+      });
+      const { link } = readIl2cppMetadataForLinking(fixture.bytes);
+      expect(link.genericTypeArgumentCounts[3]).toBe(1);
+      expect(link.methodGenericContainer(4)).toBe(2);
+      expect(link.typeGenericContainer(3)).toBe(version === 39 ? undefined : 0);
+      expect(link.genericContainer(0)).toEqual(
+        version === 39 ? undefined : { count: 1, parameterStart: 0 },
+      );
+      expect(link.typeGenericContainer(-1)).toBeUndefined();
+      expect(link.genericContainer(-1)).toBeUndefined();
+    },
+  );
+
+  it.each([31, 39] as const)(
+    "keeps negative argument counts admissible to inventory but refuses version %i linking",
+    (version) => {
+      const bytes = createIl2cppMetadataFixture({
+        version,
+        genericTypeArgumentCounts: { 3: -1 },
+      }).bytes;
+      expect(readIl2cppMetadata(bytes).types[3]?.name).toBe("Größe");
+      const rejected = failure(bytes, readIl2cppMetadataForLinking);
+      expect(rejected.reason).toBe("index-out-of-range");
+      expect(rejected.message).toContain("negative argument count -1");
+    },
+  );
 });
 
 describe("IL2CPP generic-container extents", () => {

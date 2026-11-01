@@ -23,9 +23,11 @@ import {
 
 import {
   resolveSemanticBindingState,
+  semanticBindingLookupAt,
   type JavaScriptBindingIndex,
   type JavaScriptSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
 import {
   clearSemanticValueCaches,
@@ -61,6 +63,7 @@ import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedRe
 import {
   semanticMutationInitializers,
   semanticBindingAtRead,
+  semanticCaptureOrderingIdentity,
   semanticScopeExitEffect,
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticCoercionOperands } from "./javascriptSemanticLanguageInvocations.js";
@@ -80,7 +83,7 @@ import {
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
-  traverseJavaScriptAstSteps,
+  traverseJavaScriptValueAstSteps,
   childNodes,
 } from "./javascriptSemanticTraversal.js";
 import {
@@ -520,6 +523,53 @@ export function* collectSemanticMemberMutationsSteps(
     effects.push({ path: effectPath, node, kind: effect });
     state.requiredModuleEffects.set(identity.specifier, effects);
   };
+  // Traversal states that differ only in coverage fields a record never
+  // stores, such as the origin, owner initializer or getter widening, reach the
+  // same binding fact. Each later receiver query scans every record, so retain
+  // one record per fact. Nodes and initializers compare by identity.
+  const objectIdentities = new WeakMap<object, number>();
+  let objectIdentityCount = 0;
+  const objectIdentity = (value: object | undefined): number | undefined => {
+    if (value === undefined) return undefined;
+    let identity = objectIdentities.get(value);
+    if (identity === undefined) {
+      identity = objectIdentityCount++;
+      objectIdentities.set(value, identity);
+    }
+    return identity;
+  };
+  const recordedBindingEffects = new WeakMap<
+    JavaScriptSemanticMemberEffect[],
+    Set<string>
+  >();
+  const recordBindingEffect = (
+    records: JavaScriptSemanticMemberEffect[],
+    effect: JavaScriptSemanticMemberEffect,
+  ): void => {
+    const fields: {
+      readonly [Field in keyof JavaScriptSemanticMemberEffect]-?: unknown;
+    } = {
+      path: effect.path,
+      node: objectIdentity(effect.node),
+      assignedSources: effect.assignedSources?.map((source) =>
+        objectIdentity(source),
+      ),
+      receiverInitializers: effect.receiverInitializers?.map((initializer) =>
+        objectIdentity(initializer),
+      ),
+      receiverIdentity: effect.receiverIdentity,
+      receiverAt: objectIdentity(effect.receiverAt),
+    };
+    const key = JSON.stringify(fields);
+    let recorded = recordedBindingEffects.get(records);
+    if (recorded === undefined) {
+      recorded = new Set();
+      recordedBindingEffects.set(records, recorded);
+    }
+    if (recorded.has(key)) return;
+    recorded.add(key);
+    records.push(effect);
+  };
   // Ambient indexing owns aliases of global objects. Consume its canonical
   // writes instead of reparsing qualified or aliased process assignments.
   for (const { path, node } of state.ambientWriteEffects)
@@ -551,6 +601,26 @@ export function* collectSemanticMemberMutationsSteps(
     resolvedBindings.set(node, resolved ?? null);
     return resolved;
   };
+  const nodeIdentities = new WeakMap<t.Node, number>();
+  let nextNodeIdentity = 0;
+  const nodeIdentity = (node: t.Node | undefined): number | null => {
+    if (node === undefined) return null;
+    const prior = nodeIdentities.get(node);
+    if (prior !== undefined) return prior;
+    const identity = nextNodeIdentity++;
+    nodeIdentities.set(node, identity);
+    return identity;
+  };
+  const captureIdentity = ({ at, ownEnumerable }: SemanticCapturedSelection) =>
+    ownEnumerable ? at : semanticCaptureOrderingIdentity(at, parents);
+  const capturedSelectionKey = (
+    captures: readonly SemanticCapturedSelection[] | undefined,
+  ) =>
+    captures?.map((capture) => [
+      nodeIdentity(captureIdentity(capture)),
+      capture.depth,
+      capture.ownEnumerable === true,
+    ]);
   // One capture tuple recurs across every alias it reaches. Re-encoding it
   // would rebuild the same long key and force a fresh string hash per lookup.
   const captureKeys = new WeakMap<
@@ -611,12 +681,7 @@ export function* collectSemanticMemberMutationsSteps(
       reference.originAt?.end,
       reference.memberReadAt?.start,
       reference.memberReadAt?.end,
-      reference.capturedSelections?.map(({ at, depth, ownEnumerable }) => [
-        at.start,
-        at.end,
-        depth,
-        ownEnumerable,
-      ]),
+      capturedSelectionKey(reference.capturedSelections),
       reference.iterationOnly,
       reference.widenedGetterResult === true,
       reference.definiteReceiver === true,
@@ -688,16 +753,6 @@ export function* collectSemanticMemberMutationsSteps(
     const exactProjections = new Map<string, Set<string>>();
     let additionalAlternatives = 0;
     let projectionsWidened = false;
-    const nodeIdentities = new WeakMap<t.Node, number>();
-    let nextNodeIdentity = 0;
-    const nodeIdentity = (node: t.Node | undefined): number | null => {
-      if (node === undefined) return null;
-      const prior = nodeIdentities.get(node);
-      if (prior !== undefined) return prior;
-      const identity = nextNodeIdentity++;
-      nodeIdentities.set(node, identity);
-      return identity;
-    };
     const enqueue = (candidate: PendingValue): void => {
       // A capture deeper than this projection is no longer applicable. Keep
       // the canonical context before indexing or scheduling alias histories.
@@ -718,6 +773,20 @@ export function* collectSemanticMemberMutationsSteps(
         pending.push(value);
         return;
       }
+      const observablePath = observablePaths.normalize(
+        binding.bindingId,
+        value.path,
+        effect,
+      );
+      // Join unobserved suffixes within their exact prefix. Joining distinct
+      // prefixes first could invent a wildcard reaching unrelated siblings.
+      // Keep the raw path for capture, cycle and stored-source selection.
+      const unobservedPrefix =
+        observablePath === null
+          ? value.path
+          : observablePath !== value.path
+            ? observablePath.slice(0, -1)
+            : undefined;
       const context = JSON.stringify([
         binding.bindingId,
         nodeIdentity(value.originAt),
@@ -726,16 +795,11 @@ export function* collectSemanticMemberMutationsSteps(
         value.definiteReceiver,
         value.path.length,
         value.widenedGetterResult === true,
+        unobservedPrefix,
       ]);
-      const captures = value.capturedSelections?.map(
-        ({ at, depth, ownEnumerable }) => [
-          nodeIdentity(at),
-          depth,
-          ownEnumerable === true,
-        ],
-      );
-      // Capture vectors are additional precise states, but distinct captured
-      // reads keep separate may-projection joins after the budget is reached.
+      const captures = capturedSelectionKey(value.capturedSelections);
+      // Distinct selection times remain distinct; syntactic histories with
+      // the same unknown ordering in one repeating loop share a context.
       const key = JSON.stringify([context, captures]);
       if (!projectionsWidened) {
         const exact = exactProjections.get(context) ?? new Set<string>();
@@ -827,7 +891,11 @@ export function* collectSemanticMemberMutationsSteps(
         continue;
       }
       if (t.isIdentifier(expression)) {
-        const binding = resolveBinding(expression, expression.name);
+        let binding = resolveBinding(expression, expression.name);
+        const lookup =
+          binding === undefined
+            ? semanticBindingLookupAt(state, expression, expression.name)
+            : undefined;
         if (binding === undefined) {
           for (const path of ambientPaths(
             expression,
@@ -862,20 +930,18 @@ export function* collectSemanticMemberMutationsSteps(
               arrayPrototypeIterationMayChange(current.path.slice(2)))
           )
             state.arrayIterationUnknown = true;
-          continue;
+          if (lookup?.kind !== "uncertain-binding") continue;
+          binding = lookup.binding;
         }
+        const definiteReceiver =
+          current.definiteReceiver && lookup?.kind !== "uncertain-binding";
         // An alias restored from a saved reference can revisit the same binding
         // at an earlier capture or a shorter getter-receiver path. Only a
         // repeated capture and path closes a cycle.
         const captureSelectionIdentity = JSON.stringify([
           current.memberReadAt?.start,
           current.memberReadAt?.end,
-          current.capturedSelections?.map(({ at, depth, ownEnumerable }) => [
-            at.start,
-            at.end,
-            depth,
-            ownEnumerable,
-          ]),
+          capturedSelectionKey(current.capturedSelections),
         ]);
         // Ancestry closes repeated source identities before recursively selected
         // copy vectors grow; independent contexts remain distinct in coverage.
@@ -886,42 +952,6 @@ export function* collectSemanticMemberMutationsSteps(
         ]);
         const lifetime = lifetimeKey(captureKey, current.path);
         if (current.bindings.has(lifetime)) continue;
-        // A self alias such as `node = node[key]` revisits its capture with the
-        // same prefix added on every cycle, so exact paths never repeat. When
-        // that prefix can never be pruned, escaping it once covers every longer
-        // effect, including writes below shared children.
-        // Only a capture already on this alias chain can repeat a prefix.
-        const revisited = current.bindings.has(captureKey);
-        let repeatedPrefix: PropertyPath | undefined;
-        for (
-          let start = 1;
-          revisited && start <= current.path.length;
-          start++
-        ) {
-          const suffix = current.path.slice(start);
-          if (!current.bindings.has(lifetimeKey(captureKey, suffix))) continue;
-          repeatedPrefix = current.path.slice(0, start);
-          break;
-        }
-        if (
-          repeatedPrefix !== undefined &&
-          observablePaths.repeatsUnpruned(binding.bindingId, repeatedPrefix)
-        ) {
-          markValue(
-            current.node,
-            repeatedPrefix,
-            new Set(),
-            "escape",
-            mutation,
-            current.originAt,
-            current.ownerInitializer,
-            widenedGetterResult,
-            undefined,
-            undefined,
-            current,
-          );
-          continue;
-        }
         // Union compatible copied-slot selections at each binding. Carrying every
         // combination of exclusions through branch diamonds is exponential.
         // Preserve paths that can change observed slots or Array prototype
@@ -981,6 +1011,96 @@ export function* collectSemanticMemberMutationsSteps(
                   current.originAt,
                   parents,
                 );
+        // Keep an antichain of exact paths. Widening distinct member keys would
+        // also invalidate unrelated siblings that never reach this effect.
+        // This map is local to the file scan. Escaping the binding id keeps a
+        // field separator injective while avoiding a fresh JSON array encode.
+        const pathState = `${JSON.stringify(binding.bindingId)}\u0001${
+          effect
+        }\u0001${
+          // Short writes stop at owned literal slots, whereas longer writes
+          // reach shared children. Only equal-depth writes cover one another.
+          effect === "write" ? path.length : -1
+        }\u0001${mutation?.start ?? -1}\u0001${mutation?.end ?? -1}\u0001${
+          current.originAt?.start ?? -1
+        }\u0001${current.originAt?.end ?? -1}\u0001${
+          current.ownerInitializer?.start ?? -1
+        }\u0001${current.ownerInitializer?.end ?? -1}\u0001${widenedGetterResult}\u0001${definiteReceiver}\u0001${assignedSources?.[0]?.target?.start ?? -1}\u0001${current.memberReadAt?.start ?? -1}\u0001${current.memberReadAt?.end ?? -1}`;
+        let covering = coveringPaths.get(pathState);
+        if (covering === undefined) {
+          covering = new SemanticPropertyPathCoverage();
+          coveringPaths.set(pathState, covering);
+        }
+        // Captures belong to their projected slots. A shorter escape prefix
+        // covers a longer path only when the receiver captures along that
+        // prefix agree; deeper capture history cannot split the same fact.
+        const captures = semanticNormalizeCapturedSelections(
+          current.capturedSelections,
+          path.length,
+        );
+        let captureIndex = 0;
+        const captureContexts = captures?.length
+          ? path.map((_, index) => {
+              while ((captures[captureIndex]?.depth ?? Infinity) < index + 1)
+                captureIndex++;
+              const capture = captures[captureIndex];
+              if (capture === undefined) return undefined;
+              return JSON.stringify([
+                nodeIdentity(captureIdentity(capture)),
+                capture.depth === index + 1 && capture.ownEnumerable === true,
+              ]);
+            })
+          : undefined;
+        // An active normalized prefix owns its closure before nested traversals.
+        if (!covering.retain(path, captureContexts)) continue;
+        // A self alias such as `node = node[key]` revisits its capture with the
+        // same prefix added on every cycle, so exact paths never repeat. A self
+        // store such as `s.c = s.c.p` adds its segment after the stored key
+        // instead. When that segment can never be pruned, escaping through it
+        // once covers every longer effect, including writes below shared
+        // children. Only a capture already on this alias chain can repeat.
+        const revisited = current.bindings.has(captureKey);
+        let repeatedPrefix: PropertyPath | undefined;
+        let repeatedBase = 0;
+        repeat: for (
+          let base = 0;
+          revisited && base < current.path.length;
+          base++
+        )
+          for (let end = base + 1; end <= current.path.length; end++) {
+            const shorter =
+              base === 0
+                ? current.path.slice(end)
+                : [...current.path.slice(0, base), ...current.path.slice(end)];
+            if (!current.bindings.has(lifetimeKey(captureKey, shorter)))
+              continue;
+            repeatedPrefix = current.path.slice(0, end);
+            repeatedBase = base;
+            break repeat;
+          }
+        if (
+          repeatedPrefix !== undefined &&
+          observablePaths.repeatsUnpruned(
+            binding.bindingId,
+            repeatedPrefix.slice(0, repeatedBase),
+            repeatedPrefix.slice(repeatedBase),
+          )
+        ) {
+          markValue(
+            current.node,
+            repeatedPrefix,
+            new Set(),
+            "escape",
+            mutation,
+            current.originAt,
+            current.ownerInitializer,
+            widenedGetterResult,
+            undefined,
+            undefined,
+            current,
+          );
+          continue;
+        }
         // Invoking a setter exposes the receiver, including shared children.
         // Preserve the explicit target write separately; deleting never invokes it.
         if (
@@ -1014,27 +1134,6 @@ export function* collectSemanticMemberMutationsSteps(
               current,
             );
         }
-        // Keep an antichain of exact paths. Widening distinct member keys would
-        // also invalidate unrelated siblings that never reach this effect.
-        // This map is local to the file scan. Escaping the binding id keeps a
-        // field separator injective while avoiding a fresh JSON array encode.
-        const pathState = `${JSON.stringify(binding.bindingId)}\u0001${
-          effect
-        }\u0001${
-          // Short writes stop at owned literal slots, whereas longer writes
-          // reach shared children. Only equal-depth writes cover one another.
-          effect === "write" ? path.length : -1
-        }\u0001${mutation?.start ?? -1}\u0001${mutation?.end ?? -1}\u0001${
-          current.originAt?.start ?? -1
-        }\u0001${current.originAt?.end ?? -1}\u0001${
-          current.ownerInitializer?.start ?? -1
-        }\u0001${current.ownerInitializer?.end ?? -1}\u0001${widenedGetterResult}\u0001${current.definiteReceiver}\u0001${assignedSources?.[0]?.target?.start ?? -1}\u0001${captureSelectionIdentity}`;
-        let covering = coveringPaths.get(pathState);
-        if (covering === undefined) {
-          covering = new SemanticPropertyPathCoverage();
-          coveringPaths.set(pathState, covering);
-        }
-        if (!covering.retain(path)) continue;
         // A recorded write invalidates the binding to a non-primitive value, so
         // only its first write can target a primitive. Re-evaluating it would
         // replay every earlier write and make repeated writes superlinear.
@@ -1089,7 +1188,7 @@ export function* collectSemanticMemberMutationsSteps(
           // Initializer origins retain the normalized mutation traversal below.
           retainsInitializers = receiver?.retainsOrigin !== false;
           if (effect === "escape")
-            binding.escapedPaths.push({
+            recordBindingEffect(binding.escapedPaths, {
               path,
               node: mutation,
               receiverInitializers,
@@ -1098,10 +1197,8 @@ export function* collectSemanticMemberMutationsSteps(
                 : { receiverAt: current.memberReadAt ?? current.originAt }),
             });
           else
-            binding.memberWrites.push({
-              receiverIdentity: current.definiteReceiver
-                ? "definite"
-                : "possible",
+            recordBindingEffect(binding.memberWrites, {
+              receiverIdentity: definiteReceiver ? "definite" : "possible",
               path,
               node: mutation,
               receiverInitializers,
@@ -1140,7 +1237,7 @@ export function* collectSemanticMemberMutationsSteps(
               path: [...initializer.projection, ...path],
               bindings: nested,
               definiteReceiver:
-                current.definiteReceiver &&
+                definiteReceiver &&
                 origins.initializers.length +
                   origins.referenceInitializers.length ===
                   1,
@@ -1166,7 +1263,7 @@ export function* collectSemanticMemberMutationsSteps(
             path: copiedPath,
             bindings: nested,
             definiteReceiver:
-              current.definiteReceiver &&
+              definiteReceiver &&
               origins.initializers.length +
                 origins.referenceInitializers.length ===
                 1 &&
@@ -1482,7 +1579,7 @@ export function* collectSemanticMemberMutationsSteps(
         );
   };
   const writeOnlyMembers = new WeakSet<t.Node>();
-  yield* traverseJavaScriptAstSteps(program, {
+  yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
       const writeTarget = semanticWriteSiteTarget(node);
       if (writeTarget !== null && !semanticWriteSiteReadsFirst(node))
@@ -1943,7 +2040,8 @@ const observableMutationPaths = (
   ) => PropertyPath | null;
   readonly repeatsUnpruned: (
     bindingId: string,
-    prefix: PropertyPath,
+    base: PropertyPath,
+    segment: PropertyPath,
   ) => boolean;
 } => {
   const ambientPaths = createAmbientPathResolver(state, false);
@@ -2008,8 +2106,8 @@ const observableMutationPaths = (
   for (const binding of state.bindingsById.values()) {
     const observer = bindingNodes.get(binding.bindingId);
     if (observer === undefined) continue;
-    // Imported values are external objects with observable member slots even
-    // when their syntax has no local object-allocation node (for example a
+    // Parameters, caught values and imports can have observable member slots
+    // without a local object-allocation node (for example a
     // CommonJS namespace from `require("node:fs")`). Keep those writes at their
     // exact member paths instead of widening the first path to a wildcard.
     const hasParsedRequireOrigin = binding.initializers.some(
@@ -2018,6 +2116,8 @@ const observableMutationPaths = (
         hasSemanticCreateRequireFactoryOrigin(node, state),
     );
     if (
+      binding.kind === "parameter" ||
+      binding.kind === "catch" ||
       binding.directOrigins.length > 0 ||
       hasParsedRequireOrigin ||
       binding.hostOrigin !== undefined
@@ -2203,9 +2303,10 @@ const observableMutationPaths = (
   ): PropertyPath | null => {
     let observer = bindingNodes.get(bindingId);
     if (observer === undefined) return path;
-    if (path.some((key) => key !== null && typeof key === "object"))
-      return path;
-    if (effect === "escape") {
+    if (
+      effect === "escape" &&
+      !path.some((key) => key !== null && typeof key === "object")
+    ) {
       observer = project(observer, path);
       settle();
       const origins = observer.origins;
@@ -2220,6 +2321,9 @@ const observableMutationPaths = (
     for (let offset = 0; offset < path.length; offset++) {
       const key = path[offset];
       if (key === undefined) break;
+      // Copied-slot masks remain symbolic. An unobserved exact prefix before
+      // the mask still ends a growing path; do not skip that prefix entirely.
+      if (key !== null && typeof key === "object") break;
       observer = project(observer, [key]);
       settle();
       if ((observer.origins?.size ?? 0) === 0 && offset + 1 < path.length)
@@ -2228,22 +2332,28 @@ const observableMutationPaths = (
     return path;
   };
   // A projection's origins depend only on its source origins and key. Once
-  // repeating a prefix revisits an origin set, every longer repetition stays
-  // observable and normalization can never prune it. The answer depends only
-  // on the binding and prefix, so every revisit of a long chain shares it.
+  // repeating a segment after its base revisits an origin set, every longer
+  // repetition stays observable and normalization can never prune it. The
+  // answer depends only on the binding, base and segment, so every revisit of
+  // a long chain shares it.
   const repeated = new Map<string, boolean>();
   const repeatsUnpruned = (
     bindingId: string,
-    prefix: PropertyPath,
+    base: PropertyPath,
+    segment: PropertyPath,
   ): boolean => {
-    const key = JSON.stringify([bindingId, prefix]);
+    const key = JSON.stringify([bindingId, base, segment]);
     const cached = repeated.get(key);
     if (cached !== undefined) return cached;
     let observer = bindingNodes.get(bindingId);
+    if (observer !== undefined && base.length > 0) {
+      observer = project(observer, base);
+      settle();
+    }
     const signatures = new Set<string>();
     let result = false;
-    while (observer !== undefined && prefix.length > 0) {
-      observer = project(observer, prefix);
+    while (observer !== undefined && segment.length > 0) {
+      observer = project(observer, segment);
       settle();
       if ((observer.origins?.size ?? 0) === 0) break;
       const signature = JSON.stringify(

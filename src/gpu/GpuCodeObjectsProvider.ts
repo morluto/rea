@@ -102,7 +102,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
             input.path,
             this.#resources,
             options?.signal,
-            (file) =>
+            ({ handle: file }) =>
               this.#read(file, input, options?.signal, (value) => {
                 progress = value;
               }),

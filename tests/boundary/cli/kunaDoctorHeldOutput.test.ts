@@ -33,6 +33,7 @@ fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({
   leaderPid: process.pid,
   descendantPid: child.pid,
   runId: process.env.REA_PROCESS_RUN_ID,
+  probeReadyAt: Date.now(),
 }));
 process.stdout.write("kuna 1.833\\n");
 process.stderr.write("probe stderr\\n");
@@ -42,6 +43,7 @@ process.exit(0);
     );
     await chmod(executable, 0o700);
 
+    const commandStartedAt = Date.now();
     const pending = cli.run({
       arguments: ["doctor", "--provider", "kuna", "--json"],
       environment: {
@@ -67,7 +69,6 @@ process.exit(0);
       },
     );
     let ownership: OwnedProcessGroup | undefined;
-    const startedAt = Date.now();
     try {
       let markerContents: string | undefined;
       for (;;) {
@@ -90,13 +91,13 @@ process.exit(0);
         await delay(50);
       }
       if (markerContents === undefined) {
-        const markerWaitMs = Date.now() - startedAt;
+        const markerWaitMs = Date.now() - commandStartedAt;
         const result = await pending;
         expect(
           markerContents,
           `Kuna probe marker was absent when the CLI settled: ${JSON.stringify({
             markerWaitMs,
-            cliElapsedMs: Date.now() - startedAt,
+            cliElapsedMs: Date.now() - commandStartedAt,
             ...result,
           })}`,
         ).toBeDefined();
@@ -106,6 +107,7 @@ process.exit(0);
           leaderPid: z.number().int().positive(),
           descendantPid: z.number().int().positive(),
           runId: z.string().min(1),
+          probeReadyAt: z.number().int().positive(),
         })
         .parse(JSON.parse(markerContents!));
       ownership = {
@@ -114,8 +116,10 @@ process.exit(0);
         runId: observed.runId,
       };
 
+      // Time the producer's ready phase, including any marker-observation
+      // delay. The existing command deadline separately bounds CLI startup.
       const result = await pending;
-      expect(Date.now() - startedAt).toBeLessThan(16_000);
+      expect(Date.now() - observed.probeReadyAt).toBeLessThan(16_000);
       expect(result.exitCode, result.stderr).toBe(1);
       expect(result.json).toMatchObject({
         providerInspections: expect.arrayContaining([

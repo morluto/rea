@@ -11,7 +11,6 @@ import {
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -62,13 +61,16 @@ export class AndroidAnalysisService {
         execution.provider,
         {
           operation,
-          parameters: jsonObjectSchema.parse(request.data.input),
+          parameters: request.data.input,
           result: execution.result,
           rawResult: execution.rawResult,
           limitations: execution.limitations,
           locations: execution.locations,
           confidence:
-            operation === "inspect_android_method" ? "derived" : "observed",
+            operation === "inspect_android_method" ||
+            operation === "inspect_android_jni_bindings"
+              ? "derived"
+              : "observed",
         },
       ),
       options?.signal,

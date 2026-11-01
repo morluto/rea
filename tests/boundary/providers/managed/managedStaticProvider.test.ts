@@ -24,6 +24,144 @@ import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourc
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import * as boundedFileBytes from "../../../../src/process/BoundedFileBytes.js";
+import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
+
+it.each(
+  [false, true].flatMap((warm) =>
+    [false, true].flatMap((changed) =>
+      [false, true].map((failedClose) => ({ warm, changed, failedClose })),
+    ),
+  ),
+)(
+  "preserves selected managed identity through finalization (cached=$warm, changed=$changed, failedClose=$failedClose)",
+  async ({ warm, changed, failedClose }) => {
+    const root = await createTestTempDirectory(
+      "rea-managed-selected-identity-",
+    );
+    const path = join(root, "fixture.dll");
+    const bytes = buildManagedPeFixture();
+    await writeFile(path, bytes);
+    const target = await parseBinaryTarget(path);
+    if (!target.ok) throw target.error;
+    const client = new ManagedStaticProvider().createClient(target.value);
+    if (warm)
+      expect((await client.execute("inspect_managed_artifact", {})).ok).toBe(
+        true,
+      );
+    const observed = Buffer.from(bytes);
+    if (changed) {
+      observed[observed.length - 1] =
+        observed.readUInt8(observed.length - 1) ^ 1;
+      await writeFile(path, observed);
+    }
+    const controller = new AbortController();
+    const reason = { source: "selected managed finalization" };
+    let blocked = failedClose;
+    const owners = new Set<OwnedFileHandle>();
+    const nativeClose = OwnedFileHandle.prototype.close;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        owners.add(this);
+        controller.abort(reason);
+        if (blocked) throw new Error("managed source close denied");
+        await nativeClose.call(this);
+      });
+    try {
+      const result = await client.execute(
+        "inspect_managed_artifact",
+        {},
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected source finalization failure");
+      const primary = primaryAnalysisError(result.error);
+      expect(primary._tag).toBe(
+        changed ? "AnalysisArtifactChangedError" : "AnalysisCancelledError",
+      );
+      if (changed)
+        expect(primary.diagnostics).toMatchObject({
+          expected_sha256: target.value.sha256,
+          observed_sha256: createHash("sha256").update(observed).digest("hex"),
+        });
+      else expect(primary.cause).toBe(reason);
+      const receipt = {
+        kind: "file-snapshot-hash",
+        path,
+        sha256: createHash("sha256").update(observed).digest("hex"),
+        bytes: observed.length,
+      };
+      expect(result.error.partialObservation).toEqual(receipt);
+      expect(result.error.cleanupIncomplete).toBe(failedClose);
+      if (failedClose) expect((await client.close()).ok).toBe(false);
+      blocked = false;
+      expect((await client.close()).ok).toBe(true);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect([...owners].every((owner) => owner.handle.fd === -1)).toBe(true);
+      expect(result.error.partialObservation).toEqual(receipt);
+    } finally {
+      blocked = false;
+      await client.close();
+      close.mockRestore();
+    }
+  },
+);
+
+it.each([false, true])(
+  "preserves physical managed read failure before close cancellation (failedClose=%s)",
+  async (failedClose) => {
+    const root = await createTestTempDirectory(
+      "rea-managed-physical-finalization-",
+    );
+    const path = join(root, "fixture.dll");
+    await writeFile(path, buildManagedPeFixture());
+    const target = await parseBinaryTarget(path);
+    if (!target.ok) throw target.error;
+    const client = new ManagedStaticProvider().createClient(target.value);
+    const controller = new AbortController();
+    const reason = { source: "after failed managed read" };
+    const physical = Object.assign(new Error("physical managed read denied"), {
+      code: "EIO",
+    });
+    const originalRead = boundedFileBytes.readBoundedFileBytes;
+    const read = vi
+      .spyOn(boundedFileBytes, "readBoundedFileBytes")
+      .mockImplementation((handle, ...args) => {
+        vi.spyOn(handle, "read").mockRejectedValueOnce(physical);
+        return originalRead(handle, ...args);
+      });
+    const nativeClose = OwnedFileHandle.prototype.close;
+    let blocked = failedClose;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        controller.abort(reason);
+        if (blocked) throw new Error("managed descriptor close denied");
+        await nativeClose.call(this);
+      });
+    try {
+      const result = await client.execute(
+        "inspect_managed_artifact",
+        {},
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected physical read failure");
+      expect(primaryAnalysisError(result.error)).toMatchObject({
+        _tag: "BinaryTargetError",
+        cause: physical,
+      });
+      expect(result.error.partialObservation).toBeUndefined();
+      expect(result.error.cleanupIncomplete).toBe(failedClose);
+      blocked = false;
+      expect((await client.close()).ok).toBe(true);
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      blocked = false;
+      await client.close();
+      close.mockRestore();
+      read.mockRestore();
+    }
+  },
+);
 
 it("classifies a source changed during managed snapshot acquisition as artifact_changed", async () => {
   const directory = await createTestTempDirectory("rea-managed-source-change-");
@@ -103,6 +241,75 @@ describe("managed static snapshot capacity failure", () => {
       close.mockRestore();
     }
   });
+});
+
+describe("managed static completed snapshot cancellation", () => {
+  for (const warm of [false, true]) {
+    for (const retryClose of [false, true]) {
+      it.each([null, "stop after read", { caller: "stop after read" }])(
+        `retains completed facts after confirmed close (cached=${String(warm)}, retry=${String(retryClose)}): %s`,
+        async (reason) => {
+          const directory = await createTestTempDirectory(
+            "rea-managed-completed-close-",
+          );
+          const path = join(directory, "fixture.dll");
+          const bytes = buildManagedPeFixture();
+          await writeFile(path, bytes);
+          const parsed = await parseBinaryTarget(path);
+          if (!parsed.ok) throw parsed.error;
+          const client = new ManagedStaticProvider().createClient(parsed.value);
+          if (warm) {
+            const initial = await client.execute(
+              "inspect_managed_artifact",
+              {},
+            );
+            if (!initial.ok) throw initial.error;
+          }
+          const controller = new AbortController();
+          const nativeClose = OwnedFileHandle.prototype.close;
+          const owners: OwnedFileHandle[] = [];
+          const close = vi
+            .spyOn(OwnedFileHandle.prototype, "close")
+            .mockImplementation(async function (this: OwnedFileHandle) {
+              owners.push(this);
+              controller.abort(reason);
+              if (retryClose && owners.length === 1)
+                throw new Error("controlled transient close denial");
+              await nativeClose.call(this);
+            });
+          try {
+            const result = await client.execute(
+              "inspect_managed_artifact",
+              {},
+              { signal: controller.signal },
+            );
+            if (result.ok) throw new Error("Expected cancellation after read");
+            expect(result.error._tag).toBe("AnalysisCancelledError");
+            expect(result.error.cause).toBe(reason);
+            expect(result.error.cleanupIncomplete).toBe(false);
+            const observation = {
+              kind: "file-snapshot-hash",
+              path,
+              bytes: bytes.length,
+              sha256: parsed.value.sha256,
+            };
+            expect(result.error.partialObservation).toEqual(observation);
+            expect(projectAnalysisError(result.error)).toMatchObject({
+              code: "cancelled",
+              details: { partial_observation: observation },
+            });
+            expect(owners).toHaveLength(retryClose ? 2 : 1);
+            expect(owners.every((owner) => owner.handle.fd === -1)).toBe(true);
+            if (retryClose) expect(owners[0]).toBe(owners[1]);
+            expect(await client.close()).toEqual({ ok: true, value: null });
+          } finally {
+            close.mockRestore();
+            await client.close();
+          }
+        },
+      );
+    }
+  }
 });
 
 describe("managed static snapshot cancellation", () => {

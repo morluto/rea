@@ -38,9 +38,7 @@ const SOURCE_PATHS = {
   cliCommandNames: "dist/cliCommandNames.js",
   cli: "dist/cli.js",
   toolContracts: "dist/contracts/toolContracts.js",
-  officialContracts: "dist/contracts/officialToolContracts.js",
-  enhancedContracts: "dist/contracts/enhancedToolContracts.js",
-  sessionContracts: "dist/contracts/sessionToolContracts.js",
+  toolFamilies: "dist/contracts/toolFamilies.js",
   binaryDiagnosticsContracts:
     "dist/contracts/native/binaryDiagnosticsToolContracts.js",
   cutterContracts: "dist/contracts/cutterToolContracts.js",

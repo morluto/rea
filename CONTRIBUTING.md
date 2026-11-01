@@ -25,6 +25,18 @@ acquiring targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
 boundaries are checked by `npm run verify:module-boundaries`, included in lint.
 
+Before retiring an alias or facade, trace runtime registration, dynamic imports,
+JavaScript verifiers, subprocess scripts, and packaged entrypoints as well as
+TypeScript references. Tests may be the last consumers of a superseded internal
+path; migrate their distinct assertions to the current production path before
+removing it. Preserve validation, lazy loading, caller policy, and resource
+acquisition and cleanup supplied by the old boundary. Published APIs, persisted
+formats, and independently versioned bridges require an explicit compatibility
+decision; an internal representation alone does not establish that obligation.
+See [interpreting boundary facts once](docs/tool-design.md#interpret-boundary-facts-once)
+for admission ownership and the distinction between repeated validation and
+independent checks.
+
 For analysis workflows and agent interfaces, follow the
 [performance priorities](AGENTS.md#performance). Explain the selected output
 scope, reuse/cache decisions, and relevant before/after measurements when these
@@ -35,7 +47,9 @@ compare equivalent real tasks before claiming an improvement.
 
 When adding or changing an MCP tool, follow the [tool design guide](docs/tool-design.md) and preserve the canonical contracts and generated catalog.
 When adding or changing an admission ceiling, budget, or deadline, follow
-[admission limits and recovery](docs/design/limits-and-recovery.md).
+[analysis settings, limits, and recovery](docs/design/limits-and-recovery.md)
+for ownership, operation snapshots, provider integration, and the steps for
+adding a runtime setting.
 
 ## Reporting issues
 
@@ -89,7 +103,11 @@ Human ownership and review remain required when CI or an automated reviewer
 reports success. Readiness requests maintainer review; it does not grant scope
 approval or permission to merge.
 
-Draft PRs may request early feedback with open questions and incomplete checks.
+Draft status is optional. Draft PRs may request early feedback with open questions
+and incomplete checks. Agents preserve the current draft status unless asked to
+change it; missing readiness declarations or later updates do not require a PR
+to become a draft.
+
 Leave the readiness declaration unchecked until the human owner has completed
 it. The declaration records initial readiness; later pushes do not invalidate
 it or require another human sign-off. Keep the PR description and affected
@@ -214,6 +232,8 @@ Use the development toolchain pinned in `.nvmrc` and
 `package.json#packageManager`. Run `nvm use` before installing dependencies;
 installed-package runtime support is documented in
 [installation](docs/installation.md#start-setup).
+Use Node.js and npm for source builds and verifier scripts; the installed
+package's Bun runtime support does not extend to those development scripts.
 
 ```bash
 npm ci
@@ -227,6 +247,15 @@ CLI or MCP server; it compiles the runtime and bundles the authored skill.
 catalogs, documentation projections, or managed verification evidence. Turbo
 caches deterministic builds and static checks across Git worktrees. After a package, lockfile, or managed-skill version change, run
 `npm run metadata:generate` before building.
+
+Dependabot proposes updates for the npm lockfiles, website Python requirements,
+and GitHub Actions. Review dependency changes and run the checks relevant to
+their consumers. For dependencies maintained outside Dependabot, including
+`third_party/` and the HTTP/3 lab's pinned requirements, the maintainer should
+review upstream security advisories when updating or using them. Preserve source
+and version provenance, update license notices when needed, and report which
+verification was actually repeated. The lab requirements describe a recorded
+environment; a dependency update does not verify the revised environment.
 
 Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
 protocols in adapters and shared CLI/MCP workflows in the application layer.
@@ -254,7 +283,10 @@ The general source suite (`npm run test:fast`, `npm run test:changed`, and
 On a Windows checkout, some source tests fail because fixtures use POSIX paths,
 `#!/bin/sh` tool stubs, or POSIX rename semantics. Compare failures against the
 base revision, or run the suite on Linux or WSL, before attributing them to a
-change. See [testing](docs/testing.md#developer-commands) for command scopes
+change. The embedded-artifact parent-swap tests exercise the selected-path
+replacement when the rename succeeds; if Windows refuses it while the admitted
+file is open, they instead verify the refusal and cleanup. See
+[testing](docs/testing.md#developer-commands) for command scopes
 and lane selection.
 
 `git submodule update --init --recursive` fails at the pinned Unblob submodule
@@ -368,9 +400,17 @@ Real-provider execution is uncached.
 ### Temporary files and diagnostics
 
 Tests use `createTestTempDirectory` from `tests/fixtures/temporaryDirectory.ts`
-for exact-path, awaited cleanup, including failures and timeouts.
+for exact-path, awaited cleanup, including failures and timeouts. It registers
+deletion with Vitest's `onTestFinished`; do not also add its result to a roots
+array or an `afterEach` removal. `createTestWorkspace` from
+`tests/support/workspace/workspaceFixture.ts` leaves cleanup with its caller,
+which must await `removeTestWorkspace`. Keep explicit resource teardown before
+directory deletion, using the case's `finally` or `afterEach`; Vitest runs
+`afterEach` before `onTestFinished` and awaits finish hooks in reverse
+registration order.
 `npm run verify:test-temp-hygiene` runs the suite under a fresh `TMPDIR` and
-rejects remaining REA-owned paths. Never glob-clean shared `/tmp/rea-*` content.
+rejects remaining REA-owned paths. It cannot detect duplicate deletion owners or
+prove resource-close ordering. Never glob-clean shared `/tmp/rea-*` content.
 
 `REA_LOG_LEVEL` selects `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or
 `silent`. Logs go to stderr: MCP defaults to `info`, and one-shot CLI logging

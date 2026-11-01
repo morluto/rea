@@ -7,18 +7,20 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
-  isUnshadowedGlobal,
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
-import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
-import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
+import {
+  isUnshadowedGlobal,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 const exportInvocations = new WeakMap<
@@ -441,154 +443,158 @@ export function* indexCommonJsExportReceiversSteps(
     if (exportsWrite) exportsIdentity = selected;
   };
 
-  yield* traverseJavaScriptAstSteps(state.program, {
-    enter: (node, parent) => {
-      const outer = execution.at(-1) ?? "ordered";
-      const mode: Execution =
-        outer === "deferred" || t.isFunction(node) || t.isClass(node)
-          ? "deferred"
-          : outer === "conditional" ||
-              // Mark the whole operation: a later tree-visited RHS must not
-              // restore certainty after an earlier tree-visited pattern write.
-              hasDestructuringEvaluationOrder(node) ||
-              t.isIfStatement(node) ||
-              t.isSwitchStatement(node) ||
-              t.isLoop(node) ||
-              t.isTryStatement(node) ||
-              t.isObjectPattern(node) ||
-              t.isArrayPattern(node) ||
-              (t.isLogicalExpression(parent) && parent.right === node) ||
-              (t.isAssignmentPattern(parent) && parent.right === node) ||
-              (t.isAssignmentExpression(parent) &&
-                ["&&=", "||=", "??="].includes(parent.operator) &&
-                parent.right === node) ||
-              t.isOptionalCallExpression(parent) ||
-              (t.isOptionalMemberExpression(parent) &&
-                parent.property === node) ||
-              (t.isConditionalExpression(parent) && parent.test !== node)
-            ? "conditional"
-            : "ordered";
-      execution.push(mode);
-      if (
-        t.isAssignmentExpression(node) &&
-        commonJsExportName(node.left, state) !== undefined &&
-        !isCommonJsModuleExports(node.left, state)
-      ) {
-        const receiver =
-          t.isMemberExpression(node.left) ||
-          t.isOptionalMemberExpression(node.left)
-            ? node.left.object
-            : null;
-        captures.set(
-          node,
-          mode !== "ordered"
-            ? null
-            : receiver !== null &&
-                isUnshadowedGlobal(receiver, state, "exports")
-              ? exportsIdentity
-              : publicIdentity,
-        );
-      }
-      const descriptor = commonJsDefinedExport(node, state);
-      if (descriptor !== undefined) {
-        const receiver = isUnshadowedGlobal(
-          descriptor.receiver,
-          state,
-          "exports",
-        )
-          ? exportsIdentity
-          : publicIdentity;
-        const names = describedFields.get(receiver) ?? new Set<string>();
-        names.add(descriptor.exportedName);
-        describedFields.set(receiver, names);
-      }
-      const defined = descriptor ?? commonJsAssignedExports(node, state);
-      if (defined !== undefined && t.isCallExpression(node))
-        captures.set(
-          node,
-          mode !== "ordered"
-            ? null
-            : isUnshadowedGlobal(defined.receiver, state, "exports")
-              ? exportsIdentity
-              : publicIdentity,
-        );
-    },
-    exit: (node) => {
-      const mode = execution.pop() ?? "conditional";
-      if (publicCallWrites.has(node)) {
-        if (mode === "deferred") deferredReplacement = true;
-        else publicIdentity = null;
-      }
-      if (t.isAssignmentExpression(node)) {
-        const left = unwrapJavaScriptExpression(node.left).node;
-        const identity =
-          node.operator === "=" &&
-          (t.isIdentifier(left) ||
-            t.isMemberExpression(left) ||
-            t.isOptionalMemberExpression(left))
-            ? valueOf(node.right)
-            : null;
-        for (const target of semanticWriteTargets(node.left))
-          write(target, identity, mode);
-        values.set(node, identity);
-      } else if (t.isVariableDeclarator(node) && node.init != null) {
-        for (const target of semanticWriteTargets(node.id))
-          write(
-            target,
-            t.isIdentifier(node.id) ? valueOf(node.init) : null,
-            mode,
+  yield* traverseJavaScriptValueAstSteps(
+    state.program,
+    state.erasedSyntaxNodes,
+    {
+      enter: (node, parent) => {
+        const outer = execution.at(-1) ?? "ordered";
+        const mode: Execution =
+          outer === "deferred" || t.isFunction(node) || t.isClass(node)
+            ? "deferred"
+            : outer === "conditional" ||
+                // Mark the whole operation: a later tree-visited RHS must not
+                // restore certainty after an earlier tree-visited pattern write.
+                hasDestructuringEvaluationOrder(node) ||
+                t.isIfStatement(node) ||
+                t.isSwitchStatement(node) ||
+                t.isLoop(node) ||
+                t.isTryStatement(node) ||
+                t.isObjectPattern(node) ||
+                t.isArrayPattern(node) ||
+                (t.isLogicalExpression(parent) && parent.right === node) ||
+                (t.isAssignmentPattern(parent) && parent.right === node) ||
+                (t.isAssignmentExpression(parent) &&
+                  ["&&=", "||=", "??="].includes(parent.operator) &&
+                  parent.right === node) ||
+                t.isOptionalCallExpression(parent) ||
+                (t.isOptionalMemberExpression(parent) &&
+                  parent.property === node) ||
+                (t.isConditionalExpression(parent) && parent.test !== node)
+              ? "conditional"
+              : "ordered";
+        execution.push(mode);
+        if (
+          t.isAssignmentExpression(node) &&
+          commonJsExportName(node.left, state) !== undefined &&
+          !isCommonJsModuleExports(node.left, state)
+        ) {
+          const receiver =
+            t.isMemberExpression(node.left) ||
+            t.isOptionalMemberExpression(node.left)
+              ? node.left.object
+              : null;
+          captures.set(
+            node,
+            mode !== "ordered"
+              ? null
+              : receiver !== null &&
+                  isUnshadowedGlobal(receiver, state, "exports")
+                ? exportsIdentity
+                : publicIdentity,
           );
-      } else if (t.isForOfStatement(node) || t.isForInStatement(node)) {
-        if (!t.isVariableDeclaration(node.left))
-          for (const target of semanticWriteTargets(node.left))
-            write(target, null, mode);
-      } else if (
-        t.isUpdateExpression(node) ||
-        t.isUnaryExpression(node, { operator: "delete" })
-      ) {
-        if (t.isUnaryExpression(node, { operator: "delete" })) {
-          const name = commonJsExportName(node.argument, state);
-          if (
-            name !== undefined &&
-            !isCommonJsModuleExports(node.argument, state) &&
-            (t.isMemberExpression(node.argument) ||
-              t.isOptionalMemberExpression(node.argument))
-          ) {
-            const receiver = isUnshadowedGlobal(
-              node.argument.object,
-              state,
-              "exports",
-            )
-              ? exportsIdentity
-              : publicIdentity;
-            const fields = deletions.get(receiver) ?? new Map();
-            fields.set(name, {
-              node,
-              mode: name === "*" && mode === "ordered" ? "conditional" : mode,
-            });
-            deletions.set(receiver, fields);
-          }
         }
-        write(node.argument, null, mode);
-      } else if (isUnshadowedGlobal(node, state, "exports")) {
-        values.set(node, exportsIdentity);
-      } else if (isCommonJsModuleExports(node, state)) {
-        values.set(node, publicIdentity);
-      } else if (
-        t.isObjectExpression(node) ||
-        t.isArrayExpression(node) ||
-        t.isFunctionExpression(node) ||
-        t.isArrowFunctionExpression(node) ||
-        t.isClassExpression(node)
-      ) {
-        values.set(node, node);
-        fresh.add(node);
-      } else if (t.isSequenceExpression(node)) {
-        const last = node.expressions.at(-1);
-        values.set(node, last === undefined ? null : valueOf(last));
-      }
+        const descriptor = commonJsDefinedExport(node, state);
+        if (descriptor !== undefined) {
+          const receiver = isUnshadowedGlobal(
+            descriptor.receiver,
+            state,
+            "exports",
+          )
+            ? exportsIdentity
+            : publicIdentity;
+          const names = describedFields.get(receiver) ?? new Set<string>();
+          names.add(descriptor.exportedName);
+          describedFields.set(receiver, names);
+        }
+        const defined = descriptor ?? commonJsAssignedExports(node, state);
+        if (defined !== undefined && t.isCallExpression(node))
+          captures.set(
+            node,
+            mode !== "ordered"
+              ? null
+              : isUnshadowedGlobal(defined.receiver, state, "exports")
+                ? exportsIdentity
+                : publicIdentity,
+          );
+      },
+      exit: (node) => {
+        const mode = execution.pop() ?? "conditional";
+        if (publicCallWrites.has(node)) {
+          if (mode === "deferred") deferredReplacement = true;
+          else publicIdentity = null;
+        }
+        if (t.isAssignmentExpression(node)) {
+          const left = unwrapJavaScriptExpression(node.left).node;
+          const identity =
+            node.operator === "=" &&
+            (t.isIdentifier(left) ||
+              t.isMemberExpression(left) ||
+              t.isOptionalMemberExpression(left))
+              ? valueOf(node.right)
+              : null;
+          for (const target of semanticWriteTargets(node.left))
+            write(target, identity, mode);
+          values.set(node, identity);
+        } else if (t.isVariableDeclarator(node) && node.init != null) {
+          for (const target of semanticWriteTargets(node.id))
+            write(
+              target,
+              t.isIdentifier(node.id) ? valueOf(node.init) : null,
+              mode,
+            );
+        } else if (t.isForOfStatement(node) || t.isForInStatement(node)) {
+          if (!t.isVariableDeclaration(node.left))
+            for (const target of semanticWriteTargets(node.left))
+              write(target, null, mode);
+        } else if (
+          t.isUpdateExpression(node) ||
+          t.isUnaryExpression(node, { operator: "delete" })
+        ) {
+          if (t.isUnaryExpression(node, { operator: "delete" })) {
+            const name = commonJsExportName(node.argument, state);
+            if (
+              name !== undefined &&
+              !isCommonJsModuleExports(node.argument, state) &&
+              (t.isMemberExpression(node.argument) ||
+                t.isOptionalMemberExpression(node.argument))
+            ) {
+              const receiver = isUnshadowedGlobal(
+                node.argument.object,
+                state,
+                "exports",
+              )
+                ? exportsIdentity
+                : publicIdentity;
+              const fields = deletions.get(receiver) ?? new Map();
+              fields.set(name, {
+                node,
+                mode: name === "*" && mode === "ordered" ? "conditional" : mode,
+              });
+              deletions.set(receiver, fields);
+            }
+          }
+          write(node.argument, null, mode);
+        } else if (isUnshadowedGlobal(node, state, "exports")) {
+          values.set(node, exportsIdentity);
+        } else if (isCommonJsModuleExports(node, state)) {
+          values.set(node, publicIdentity);
+        } else if (
+          t.isObjectExpression(node) ||
+          t.isArrayExpression(node) ||
+          t.isFunctionExpression(node) ||
+          t.isArrowFunctionExpression(node) ||
+          t.isClassExpression(node)
+        ) {
+          values.set(node, node);
+          fresh.add(node);
+        } else if (t.isSequenceExpression(node)) {
+          const last = node.expressions.at(-1);
+          values.set(node, last === undefined ? null : valueOf(last));
+        }
+      },
     },
-  });
+  );
   const effects = new Map<CommonJsExportSite, CommonJsExportReceiverEffect>();
   for (const [node, receiver] of captures) {
     const status: ReceiverStatus =

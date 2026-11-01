@@ -92,6 +92,7 @@ function registerRuntimeParameterContract(
     for (const [target_id, runtime_kind, expectedPath] of [
       ["example-v8-target", "node", "runtime_kind"],
       ["different-target", "electron-main", "target_id"],
+      [" example-v8-target ", "electron-main", "target_id"],
       ["example-v8-target", "electron-main", null],
     ] as const) {
       const evidence = createJavaScriptRuntimeObservationEvidence(
@@ -226,6 +227,18 @@ function registerRetainedRuntimeEvidence(
         targets: [{ target_id: inspector.targetId }],
       },
     });
+    const paddedTarget = await client.callTool({
+      name: "observe_javascript_runtime",
+      arguments: {
+        inspector_endpoint: inspector.endpoint,
+        target_id: ` ${inspector.targetId} `,
+        observation_ms: 0,
+      },
+    });
+    expect(parseMcpToolError(paddedTarget).error).toMatchObject({
+      code: "target_unavailable",
+    });
+    expect(inspector.commands).toEqual([]);
     const observedRuntime = await client.callTool({
       name: "observe_javascript_runtime",
       arguments: {

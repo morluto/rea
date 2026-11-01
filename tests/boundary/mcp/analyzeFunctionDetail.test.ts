@@ -7,12 +7,20 @@ import { registerEnhancedTools } from "../../../src/server/registerEnhancedTools
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
-import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { parseGhidraFunctionInput } from "../../../src/ghidra/GhidraFunctionValues.js";
+import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
+import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
 
 const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
 const partialCallees = {
@@ -23,27 +31,37 @@ const partialCallees = {
 
 // A fixed provider that returns the fixture dossier for any analyze_function
 // call, after validating the request exactly as the production Ghidra client does.
-const connect = async (retain = true, result = dossier) => {
-  const ledger = new Map<string, Evidence>();
-  const record = (evidence: Evidence) => {
-    ledger.set(evidence.evidence_id, evidence);
-    return ok("added" as const);
-  };
-  const lookup = (id: string) => ledger.get(id);
+const connect = async (
+  retain = true,
+  result = dossier,
+  path = () => "/fixtures/native.exe",
+  sources: readonly Evidence[] = [],
+) => {
+  const ledger = new EvidenceLedger();
+  const record = (evidence: Evidence) => ledger.record(evidence);
+  const lookup = (id: string) => ledger.forAnalysis(id);
   const execute = vi.fn(
     async (operation: string, parameters: Record<string, JsonValue>) => {
-      if (operation !== "analyze_function")
-        throw new Error(`Unexpected operation: ${operation}`);
-      const input = parseGhidraFunctionInput(operation, parameters);
-      if (!input.ok) return input;
+      let observed: JsonValue = result;
+      if (operation === "analyze_function") {
+        const input = parseGhidraFunctionInput(operation, parameters);
+        if (!input.ok) return input;
+      } else if (operation === "list_procedures") {
+        observed = [{ address: "0x401000", value: "main" }];
+      } else if (operation === "procedure_info") {
+        observed = null;
+      } else if (operation === "procedure_pseudo_code") {
+        observed = "int main(void) { return 0; }";
+      } else throw new Error(`Unexpected operation: ${operation}`);
       return ok({
-        result,
+        result: observed,
         rawResult: null,
         provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
         limitations: [],
         locations: [],
+        sourceEvidence: sources,
         subject: {
-          path: "/fixtures/native.exe",
+          path: path(),
           format: "pe" as const,
           sha256: "a".repeat(64),
         },
@@ -70,6 +88,12 @@ const connect = async (retain = true, result = dossier) => {
     allowsSnapshotReplay: undefined,
     recordWorkflowSnapshot: undefined,
   });
+  registerAnalysisViewTool(
+    server,
+    pino({ enabled: false }),
+    retain ? lookup : undefined,
+    retain ? record : undefined,
+  );
   const client = new Client({ name: "fn-detail-client", version: "1" });
   onTestFinished(async () => {
     await client.close();
@@ -81,6 +105,104 @@ const connect = async (retain = true, result = dossier) => {
   await client.connect(clientTransport);
   return { client, ledger, execute };
 };
+
+it.each(["analyze_function", "decompile_all"] as const)(
+  "retains plain-port source records before delivering %s links",
+  async (operation) => {
+    const source = createEvidence(
+      undefined,
+      { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+      {
+        operation: "health",
+        parameters: { facet: "historical-report" },
+        result: { origin: "caller-project" },
+      },
+      { immutable: true },
+    );
+    const { client, ledger } = await connect(true, dossier, undefined, [
+      source,
+    ]);
+    const parent = await createTestTempDirectory("rea-plain-source-");
+    const reply = await client.callTool({
+      name: operation,
+      arguments:
+        operation === "analyze_function"
+          ? { procedure: "main", detail: "complete" }
+          : { output_directory: join(parent, "out") },
+    });
+    expect(reply.isError).not.toBe(true);
+    const evidence = parseEvidence(reply.structuredContent);
+    expect(evidence.evidence_links).toContain(source.evidence_id);
+    expect(JSON.stringify(reply)).not.toContain("caller-project");
+    expect(ledger.forAnalysis(source.evidence_id)).toEqual(source);
+    expect(
+      ledger
+        .immutableBundle()
+        .records.filter((record) => record.evidence_id === source.evidence_id),
+    ).toHaveLength(1);
+  },
+);
+
+it("refuses source links when a plain-port adapter has no retention owner", async () => {
+  const source = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "health",
+      parameters: {},
+      result: "historical",
+    },
+  );
+  const { client } = await connect(false, dossier, undefined, [source]);
+  const reply = await client.callTool({
+    name: "analyze_function",
+    arguments: { procedure: "main", detail: "complete" },
+  });
+  expect(reply.isError).toBe(true);
+  expect(JSON.stringify(reply)).toContain("retains provider source Evidence");
+});
+
+it("keeps complete and summary delivery on the current observed path despite retained same-ID history", async () => {
+  let selected = "/old/native.exe";
+  const { client, ledger } = await connect(true, dossier, () => selected);
+  const call = async (detail: "complete" | "summary") => {
+    const reply = await client.callTool({
+      name: "analyze_function",
+      arguments: { procedure: "main", detail },
+    });
+    expect(reply.isError).not.toBe(true);
+    return parseEvidence(reply.structuredContent);
+  };
+  const old = await call("complete");
+  selected = "/selected/native.exe";
+  const complete = await call("complete");
+  expect(complete.evidence_id).toBe(old.evidence_id);
+  expect(complete.subject?.local_path).toBe(selected);
+  const summary = await call("summary");
+  expect(summary.evidence_links).toEqual([complete.evidence_id]);
+  expect(summary.subject?.local_path).toBe(complete.subject?.local_path);
+  expect(summary.normalized_result).toMatchObject({
+    artifact: { path: selected },
+  });
+  expect(summary.locations).toContainEqual({
+    kind: "artifact-path",
+    path: selected,
+  });
+  expect(ledger.get(complete.evidence_id)?.subject?.local_path).toBe(
+    "/old/native.exe",
+  );
+  const historicalReply = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "retained-evidence", evidence_id: complete.evidence_id },
+      view: { kind: "summary" },
+    },
+  });
+  expect(historicalReply.isError).not.toBe(true);
+  expect(
+    parseEvidence(historicalReply.structuredContent).subject?.local_path,
+  ).toBe("/old/native.exe");
+});
 
 it("defaults to a retained summary and strips delivery detail before the provider", async () => {
   const { client, ledger, execute } = await connect();

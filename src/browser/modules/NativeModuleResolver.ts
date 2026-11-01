@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type {
@@ -78,10 +79,14 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
   #closePromise: Promise<void> | undefined;
   #pendingCleanup: AnalysisCleanupLease | undefined;
 
+  readonly environment: Readonly<Record<string, string | undefined>>;
+
   constructor(
-    readonly environment: Readonly<Record<string, string | undefined>>,
+    environment: Readonly<Record<string, string | undefined>>,
     readonly launcher: ModuleResolverLauncher = launch,
-  ) {}
+  ) {
+    this.environment = snapshotEnvironment(environment);
+  }
 
   resolve(
     input: Parameters<WebModuleResolutionPort["resolve"]>[0],
@@ -114,10 +119,15 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
         new AnalysisCapabilityUnavailableError(
           "native-module-resolver",
           OPERATION,
-          "missing_browser_executable",
+          executable === undefined
+            ? "missing_browser_executable"
+            : "invalid_browser_executable",
           {
             userMessage:
               "Provide an absolute REA_BROWSER_EXECUTABLE for a caller-supplied Chromium browser supporting import.meta.resolve. REA installs no browser.",
+            ...(executable === undefined
+              ? {}
+              : { diagnostics: { executable } }),
           },
         ),
       );
@@ -180,6 +190,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
       const browser = await observe(() =>
         this.launcher({
           executablePath: executable,
+          env: this.environment,
           headless: true,
           timeout: Math.max(1, deadline.remainingMs()),
           handleSIGINT: false,

@@ -81,12 +81,29 @@ jobs:
             echo "frozen=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+      - name: Check out proposal controller and complete Git history
+        if: steps.editorial.outputs.frozen != 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         if: steps.editorial.outputs.frozen != 'true'
         with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          target-branch: main
-          skip-github-release: true
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Install proposal controller dependencies
+        if: steps.editorial.outputs.frozen != 'true'
+        run: npm ci
+
+      - name: Update release proposal
+        if: steps.editorial.outputs.frozen != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: node scripts/release-proposal.mjs --target-branch main --source-sha "$SOURCE_SHA"
 
   merged-release:
     name: Release reviewed main merge
@@ -259,15 +276,25 @@ jobs:
           node scripts/release-notes.mjs publication --repository "$GH_REPO" \
             --source "$SOURCE_SHA"
 
-      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
-        id: release
-        with:
+      - name: Prepare checkpoint release proposal
+        if: inputs.phase == 'prepare'
+        id: proposal
+        env:
           # A dedicated credential starts PR CI automatically; the built-in
           # token creates approval-required PR runs for maintainers to approve.
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+          SOURCE_SHA: ${{ steps.branch.outputs.sha }}
+        run: node scripts/release-proposal.mjs --target-branch "$RELEASE_BRANCH" --source-sha "$SOURCE_SHA"
+
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        if: inputs.phase == 'publish'
+        id: release
+        with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           target-branch: ${{ inputs.release_branch }}
-          skip-github-release: ${{ inputs.phase == 'prepare' }}
-          skip-github-pull-request: ${{ inputs.phase == 'publish' }}
+          skip-github-release: false
+          skip-github-pull-request: true
 
       - name: Require a merged release PR for publication
         if: inputs.phase == 'publish' && steps.release.outputs.release_created != 'true'
@@ -287,26 +314,26 @@ jobs:
           fi
 
       - name: Check out release pull request
-        if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
+        if: inputs.phase == 'prepare' && steps.proposal.outputs.prs_created == 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          ref: ${{ fromJSON(steps.proposal.outputs.pr).headBranchName }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js for generated documentation
-        if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
+        if: inputs.phase == 'prepare' && steps.proposal.outputs.prs_created == 'true'
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Install dependencies
-        if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
+        if: inputs.phase == 'prepare' && steps.proposal.outputs.prs_created == 'true'
         run: npm ci
 
       - name: Validate prepared release version and migration notes
-        if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
+        if: inputs.phase == 'prepare' && steps.proposal.outputs.prs_created == 'true'
         env:
           RELEASE_BRANCH: ${{ inputs.release_branch }}
           SOURCE_SHA: ${{ steps.branch.outputs.sha }}
@@ -316,11 +343,11 @@ jobs:
           --source-sha "$SOURCE_SHA"
 
       - name: Regenerate release documentation
-        if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
+        if: inputs.phase == 'prepare' && steps.proposal.outputs.prs_created == 'true'
         run: npm run docs:generate
 
       - name: Validate generated release documentation
-        if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
+        if: inputs.phase == 'prepare' && steps.proposal.outputs.prs_created == 'true'
         run: npm run docs:check && git diff --exit-code
 
   qualification:

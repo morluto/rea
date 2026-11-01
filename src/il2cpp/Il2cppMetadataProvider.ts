@@ -24,6 +24,7 @@ import type { Il2cppMetadataPort } from "../application/il2cpp/Il2cppMetadataPor
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createIl2cppMetadataAdmission } from "./Il2cppMetadataAdmission.js";
+import { hexAddress as hex } from "./Il2cppBinaryImage.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
   AnalysisAccessDeniedError,
@@ -66,6 +67,11 @@ const INPUT_BYTES = 256 * 1024 * 1024;
 const BINARY_BYTES = 1024 * 1024 * 1024;
 // A 12.9 MB Unity 6000.4 file with 112,232 methods serializes to 7.8 MB.
 const OUTPUT_BYTES = 64 * 1024 * 1024;
+/** Instruction form the module-array fallback matched, per architecture. */
+const inferredReferenceForm = (architecture: string) =>
+  architecture === "arm64"
+    ? "an adjacent ADRP+ADD pair"
+    : "RIP-relative LEA/MOV";
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,
   path: string,
@@ -208,8 +214,6 @@ const failureFor = (
   return error;
 };
 
-const hex = (value: bigint) => `0x${value.toString(16)}`;
-
 /** Report fields for a linked binary, with addresses as exact hexadecimal strings. */
 const binaryReport = (
   link: Il2cppBinaryLink,
@@ -230,13 +234,35 @@ const binaryReport = (
       address: hex(module.address),
       method_pointer_count: module.method_pointer_count,
     })),
-    types_field: hex(link.types_field),
+    types_field: link.types_field === null ? null : hex(link.types_field),
     types_count: link.types_count,
+    generic_methods:
+      link.generic_methods === null
+        ? null
+        : {
+            generic_method_pointers_field:
+              link.generic_methods.generic_method_pointers_field === null
+                ? null
+                : hex(link.generic_methods.generic_method_pointers_field),
+            generic_method_pointers_count:
+              link.generic_methods.generic_method_pointers_count,
+            generic_method_table: hex(
+              link.generic_methods.generic_method_table,
+            ),
+            generic_method_table_count:
+              link.generic_methods.generic_method_table_count,
+            generic_method_table_stride:
+              link.generic_methods.generic_method_table_stride,
+            method_specs_count: link.generic_methods.method_specs_count,
+            generic_insts_count: link.generic_methods.generic_insts_count,
+            issues: link.generic_methods.issues,
+          },
   },
   return_types: link.return_types,
   field_types: link.field_types,
   parameter_types: link.parameter_types,
   method_addresses: link.method_addresses,
+  generic_method_instances: link.generic_methods?.instances ?? null,
 });
 
 /**
@@ -269,6 +295,7 @@ const metadataSourceEvidence = (
     | {
         path: string;
         architecture?: string;
+        genericInstances?: boolean;
         artifact?: Il2cppMetadata["artifact"];
       }
     | undefined = undefined,
@@ -293,6 +320,9 @@ const metadataSourceEvidence = (
               ...(binary.architecture === undefined
                 ? {}
                 : { binary_architecture: binary.architecture }),
+              ...(binary.genericInstances === true
+                ? { generic_instances: true }
+                : {}),
             }),
       },
       result: {
@@ -421,6 +451,9 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             ...(input.binary_architecture === undefined
               ? {}
               : { architecture: input.binary_architecture }),
+            ...(input.generic_instances === true
+              ? { genericInstances: true }
+              : {}),
             ...(observed.binary === undefined
               ? {}
               : { artifact: observed.binary }),
@@ -474,12 +507,14 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
           | "return_types"
           | "field_types"
           | "parameter_types"
+          | "generic_method_instances"
         > = {
           binary: null,
           method_addresses: [],
           return_types: [],
           field_types: [],
           parameter_types: [],
+          generic_method_instances: null,
         };
         if (binaryPath !== undefined) {
           if (link === undefined)
@@ -502,7 +537,10 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               decoded,
               link,
               input.binary_architecture,
-              admission,
+              {
+                ...admission,
+                genericInstances: input.generic_instances === true,
+              },
             );
             let linkStep = linking.next();
             while (!linkStep.done) {
@@ -540,7 +578,12 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             "Only unencrypted global-metadata.dat versions 24, 27, 29, 31 and 39 are decoded; names, counts and string literals are observed file content, not runtime behavior.",
             binaryPath === undefined
               ? "Native code addresses and IL2CPP binary registration are not recovered without binary_path."
-              : "Method addresses come from the binary's code-generation module methodPointers, matched by module name, method count and metadata token; generic method instances, adjustor thunks and invokers are not linked, no-body means an observed zero slot, and unknown means no module claimed the method or its slot has an unresolved relocation.",
+              : `Method addresses come from the binary's code-generation module methodPointers, matched by module name, method count and metadata token; ${input.generic_instances === true ? "" : "generic method instances (see generic_instances), "}adjustor thunks and invokers are not linked, no-body means an observed zero slot, and unknown means no module claimed the method or its slot has an unresolved relocation.`,
+            ...(binaryPath !== undefined && input.generic_instances === true
+              ? [
+                  "Generic method instances come from genericMethodTable, methodSpecs, genericInsts and genericMethodPointers, with names following Il2CppDumper's GetMethodSpecName (namespace on the declaring type, nested types joined with '.', arity cut, IntPtr/UIntPtr, no byref mark). The CodeRegistration layout is the only one of the known 27.0 to 31 layouts whose counts bound every genericMethodTable row; metadata versions 24 and 39 and builds without a static CodeRegistration are refused. A generic row is no-body for an observed zero pointer slot and unknown, with no address, exactly when an issue names its row: a contradicting method spec (its name is then null), a shared method spec, an unmapped or non-executable pointer, or an unresolved relocation.",
+                ]
+              : []),
             binaryPath === undefined
               ? "Field, parameter and return types are not recovered without binary_path; type indices refer to the native binary."
               : decoded.metadata_version === 27
@@ -549,7 +592,12 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             ...(linked.binary !== null &&
             linked.binary.code_gen_modules_field === null
               ? [
-                  "The static CodeRegistration pair was not resolved. The module array is inferred from executable bytes consistent with RIP-relative LEA/MOV referencing one array candidate; instruction boundaries and runtime use were not verified.",
+                  `The static CodeRegistration pair was not resolved. The module array is inferred from executable bytes consistent with ${inferredReferenceForm(linked.binary.architecture)} referencing one array candidate; instruction boundaries and runtime use were not verified.`,
+                ]
+              : []),
+            ...(linked.binary !== null && linked.binary.types_field === null
+              ? [
+                  `No static MetadataRegistration had the type-definition counts. The type table is inferred from executable bytes consistent with ${inferredReferenceForm(linked.binary.architecture)} referencing the one run of Il2CppType-shaped pointers long enough for every referenced type index; types_count is that run's length, at least every referenced type index but not an observed typesCount, and instruction boundaries and runtime use were not verified.`,
                 ]
               : []),
             ...(binaryPath === undefined

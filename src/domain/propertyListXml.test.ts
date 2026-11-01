@@ -185,7 +185,7 @@ it("decodes a signed integer zero as zero and a negative-zero real with its sign
   ]);
 });
 
-it("interprets failures in omitted entries before reporting partial evidence", () => {
+it("validates values under every dictionary key", () => {
   expect(() =>
     parseXmlPropertyList(
       "<plist><dict><key>__proto__</key><unsupported/></dict></plist>",
@@ -335,3 +335,16 @@ it("expands real references outside CDATA without changing scalar source policy"
     false,
   ]);
 });
+
+it.each(["__proto__", "constructor", "ordinary"])(
+  "retains %s key elements used as scalar values",
+  (value) => {
+    expect(
+      parseXmlPropertyList(`<plist><key>${value}</key></plist>`).value,
+    ).toBe(value);
+    expect(
+      parseXmlPropertyList(`<plist><array><key>${value}</key></array></plist>`)
+        .value,
+    ).toEqual([value]);
+  },
+);

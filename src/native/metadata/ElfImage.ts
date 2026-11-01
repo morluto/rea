@@ -10,11 +10,13 @@ import {
   type ZeroFillMapping,
 } from "./BinaryContainer.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
-import { readNativeDirectoryFromBuffer } from "./NativeSectionDirectory.js";
+import { readElfDirectoryFromBuffer } from "./NativeSectionDirectory.js";
 
 /** Read ELF sections and file-backed program mappings without interpreting language metadata. */
-export const readElfImage = (bytes: Buffer): BinaryContainer => {
-  const directory = readNativeDirectoryFromBuffer(bytes, "elf");
+export const readElfImage = (
+  bytes: Buffer,
+): Extract<BinaryContainer, { format: "elf" }> => {
+  const directory = readElfDirectoryFromBuffer(bytes);
   const { bits } = directory;
   const reader = new BinaryReader(bytes, directory.little);
   const mappings: FileMapping[] = [];
@@ -86,7 +88,11 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
   }
   return {
     format: "elf",
-    elf: { machine: directory.machine, dynamicSegments },
+    elf: {
+      machine: directory.machine,
+      type: directory.elf_type,
+      dynamicSegments,
+    },
     architecture: architectureForElfMachine(directory.machine),
     bits,
     byte_order: reader.little ? "little" : "big",

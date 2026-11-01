@@ -27,6 +27,7 @@ const DATA = { $plist_type: "data", base64: "3q2+7w==" };
 
 class PlistSourceRunner extends NativeFixtureRunner {
   constructor(
+    private readonly path: string,
     description: string,
     private readonly xmlFallback: boolean,
     private readonly convertedXml: string = XML,
@@ -36,8 +37,23 @@ class PlistSourceRunner extends NativeFixtureRunner {
 
   override async run(tool: string, arguments_: readonly string[]) {
     const result = await super.run(tool, arguments_);
-    if (!result.ok || tool !== "plutil" || !this.xmlFallback) return result;
-    const json = arguments_.includes("json");
+    if (!result.ok || tool !== "plutil") return result;
+    if (arguments_[0] === "-lint") {
+      expect(arguments_).toEqual(["-lint", "--", this.path]);
+      return ok({ ...result.value, stdout: "", stdoutBytes: 0 });
+    }
+    const format = arguments_[1];
+    expect(["json", "xml1"]).toContain(format);
+    expect(arguments_).toEqual([
+      "-convert",
+      format,
+      "-o",
+      "-",
+      "--",
+      this.path,
+    ]);
+    if (!this.xmlFallback) return result;
+    const json = format === "json";
     const stdout = json ? "" : this.convertedXml;
     return ok({
       ...result.value,
@@ -68,6 +84,7 @@ it.for<PlistSourceCase>([
     contents: JSON.stringify(VALUE),
     expected: "json",
     xmlFallback: false,
+    expectedTools: ["file"],
   },
   ...["<deadbeef>\n", "<de ad\nbe ef>\n", "<>\n"].map((contents) => ({
     description: "ASCII text\n",
@@ -86,12 +103,16 @@ it.for<PlistSourceCase>([
     contents: `﻿ \n${XML}`,
     expected: "xml",
     xmlFallback: true,
+    expectedTools: ["file", "plutil"],
+    expectedLimitations: [],
   },
   {
     description: "ASCII text\n",
     contents: `<!-- source plist -->\n${XML}`,
     expected: "xml",
     xmlFallback: true,
+    expectedTools: ["file", "plutil"],
+    expectedLimitations: [],
   },
   ...[false, true].map((bigEndian) => ({
     description: `Unicode text, UTF-16, ${bigEndian ? "big" : "little"}-endian text\n`,
@@ -100,6 +121,8 @@ it.for<PlistSourceCase>([
       : Buffer.from(`\uFEFF${XML}`, "utf16le"),
     expected: "xml",
     xmlFallback: true,
+    expectedTools: ["file", "plutil"],
+    expectedLimitations: [],
   })),
   { description: "ASCII text\n", expected: "unknown", xmlFallback: true },
   {
@@ -109,14 +132,20 @@ it.for<PlistSourceCase>([
   },
   {
     description: "XML 1.0 document text, ASCII text\n",
+    contents: XML,
     expected: "xml",
     xmlFallback: false,
+    expectedValue: { ...VALUE, Blob: DATA },
+    expectedTools: ["file", "plutil"],
   },
   {
     description:
       "XML 1.0 document text, Unicode text, UTF-16, big-endian text\n",
+    contents: Buffer.from("\uFEFF" + XML, "utf16le").swap16(),
     expected: "xml",
     xmlFallback: true,
+    expectedTools: ["file", "plutil"],
+    expectedLimitations: [],
   },
   {
     description: "Apple binary property list\n",
@@ -149,6 +178,8 @@ it.for<PlistSourceCase>([
     xmlFallback: true,
     convertedXml:
       "<plist><dict><key>nel</key><string>a\u0085b</string><key>ls</key><string>a\u2028b</string><key>ps</key><string>a\u2029b</string><key>lf</key><string>a\nb</string><key>payload</key><data>AA==</data></dict></plist>",
+    expectedTools: ["file", "plutil"],
+    expectedLimitations: [],
     expectedValue: {
       nel: "a\u0085b",
       ls: "a\u2028b",
@@ -177,7 +208,7 @@ it.for<PlistSourceCase>([
     await writeFile(path, contents);
     const client = new NativeMacOSProvider(
       {},
-      new PlistSourceRunner(description, xmlFallback, convertedXml),
+      new PlistSourceRunner(path, description, xmlFallback, convertedXml),
       "darwin",
     ).createClient(nativeMachoTarget(join(root, "target")));
     onTestFinished(async () => {

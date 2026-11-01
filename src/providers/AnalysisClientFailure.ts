@@ -59,6 +59,7 @@ export const analysisClientFailureContext = (
         };
   return {
     cause,
+    ...(cause.limit === undefined ? {} : { limit: cause.limit }),
     ...(cause.cleanupPrimary === undefined
       ? {}
       : {
@@ -174,6 +175,9 @@ export const analysisClientFailureForOperation = (
       {
         ...outcomeContext,
         operation,
+        ...(cause.completedObservation === undefined
+          ? {}
+          : { completedObservation: cause.completedObservation }),
         ...(cause.remediationAction === undefined
           ? {}
           : { remediationAction: cause.remediationAction }),

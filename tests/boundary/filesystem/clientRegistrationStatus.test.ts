@@ -6,11 +6,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
-import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
+import {
+  readClientRegistrationInspections,
+  readClientRegistrationStatuses,
+} from "../../../src/application/ClientRegistrationStatus.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
-import { classifyClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+import {
+  currentClientRegistrationCommand,
+  classifyClientRegistrationCommand,
+} from "../../../src/application/ClientRegistrationIdentity.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
+import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
+import { err } from "../../../src/domain/result.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => {
@@ -18,7 +27,7 @@ afterEach(() => {
 });
 
 describe("client registration status", () => {
-  it("discovers Claude Code from its config file without a marker directory", async () => {
+  it("discovers a stale legacy Claude Code registration without a marker directory", async () => {
     const home = await createTestTempDirectory("rea-claude-config-only-");
     await writeFile(
       join(home, ".claude.json"),
@@ -38,8 +47,8 @@ describe("client registration status", () => {
       expect.objectContaining({
         client: "claude_code",
         config_path: join(home, ".claude.json"),
-        state: "aligned",
-        remediation: null,
+        state: "stale",
+        remediation: expect.stringMatching(/\S/u),
       }),
     ]);
   });
@@ -50,6 +59,10 @@ describe("client registration status", () => {
     const foreignEntry = join(home, "foreign-rea.mjs");
     await writeFile(currentEntry, "// current dispatcher\n");
     await writeFile(foreignEntry, "// different dispatcher\n");
+    const currentCommand = currentClientRegistrationCommand({
+      entrypointPath: currentEntry,
+      environment: {},
+    });
     await Promise.all([
       mkdir(join(home, ".codex")),
       mkdir(join(home, ".cursor")),
@@ -58,7 +71,7 @@ describe("client registration status", () => {
     ]);
     await writeFile(
       join(home, ".codex/config.toml"),
-      `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n`,
+      `[mcp_servers.rea]\ncommand = ${JSON.stringify(currentCommand[0])}\nargs = ${JSON.stringify(currentCommand.slice(1))}\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n`,
     );
     await writeFile(
       join(home, ".cursor/mcp.json"),
@@ -82,19 +95,19 @@ describe("client registration status", () => {
           client: "cursor",
           state: "stale",
           command: [foreignEntry, "mcp"],
-          remediation: expect.any(String),
+          remediation: expect.stringMatching(/\S/u),
         }),
         expect.objectContaining({
           client: "gemini_cli",
           state: "invalid",
           command: [],
-          remediation: expect.any(String),
+          remediation: expect.stringMatching(/\S/u),
         }),
         expect.objectContaining({
           client: "claude_code",
           state: "missing",
           command: [],
-          remediation: expect.any(String),
+          remediation: expect.stringMatching(/\S/u),
         }),
       ]),
     );
@@ -119,6 +132,73 @@ describe("client registration status", () => {
       ]);
     },
   );
+});
+
+describe("client registration environment validation", () => {
+  it("reports an otherwise aligned registration invalid for a bad tool-family scope", async () => {
+    const home = await createTestTempDirectory("rea-registration-env-");
+    await mkdir(join(home, ".cursor"));
+    await writeFile(
+      join(home, ".cursor/mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "npx",
+            args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+            env: { REA_MCP_TOOL_FAMILIES: "session,typo" },
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, "/current/rea");
+
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        client: "cursor",
+        state: "invalid",
+        command: [],
+        remediation: expect.stringContaining("REA_MCP_TOOL_FAMILIES"),
+      }),
+    ]);
+  });
+
+  it("resolves provider budgets only for Kimi/Codex registrations", async () => {
+    const home = await createTestTempDirectory("rea-registration-budget-");
+    await mkdir(join(home, ".cursor"));
+    await mkdir(join(home, ".codex"));
+    const entry = {
+      command: "npx",
+      args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+    };
+    await writeFile(
+      join(home, ".cursor/mcp.json"),
+      JSON.stringify({ mcpServers: { rea: entry } }),
+    );
+    await writeFile(
+      join(home, ".codex/config.toml"),
+      `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\n`,
+    );
+    const resolveProviderRequestBudget = async () =>
+      err(new ConfigurationError("budget unavailable"));
+
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      {
+        resolveProviderRequestBudget,
+      },
+    );
+
+    const byClient = new Map(statuses.map((status) => [status.client, status]));
+    // The failing resolver must not invalidate non-Kimi/Codex registrations.
+    expect(byClient.has("cursor")).toBe(true);
+    expect(byClient.get("cursor")?.state).not.toBe("invalid");
+    expect(byClient.get("codex")).toMatchObject({
+      state: "invalid",
+      remediation: expect.stringContaining("budget unavailable"),
+    });
+  });
 });
 
 describe("client registration launcher identity", () => {
@@ -165,12 +245,11 @@ describe("client registration launcher identity", () => {
     const home = await createTestTempDirectory("rea-registration-unknown-");
     await mkdir(join(home, ".cursor"));
     const command = ["/opt/rea/bin/rea", "mcp"];
-    await writeFile(
-      join(home, ".cursor/mcp.json"),
-      JSON.stringify({
-        mcpServers: { rea: { command: command[0], args: [command[1]] } },
-      }),
-    );
+    const config = join(home, ".cursor/mcp.json");
+    const original = JSON.stringify({
+      mcpServers: { rea: { command: command[0], args: [command[1]] } },
+    });
+    await writeFile(config, original);
 
     const [status] = await readClientRegistrationStatuses(home, "");
 
@@ -178,8 +257,18 @@ describe("client registration launcher identity", () => {
       client: "cursor",
       command,
       state: "unknown",
-      remediation: expect.stringContaining("registration was retained"),
+      config_path: config,
+      remediation: expect.stringMatching(/\S/u),
     });
+    expect(status).not.toHaveProperty("commandIdentity");
+    expect(await readClientRegistrationInspections(home, "")).toEqual([
+      expect.objectContaining({
+        status,
+        activation: "enabled",
+        commandIdentity: "unknown",
+      }),
+    ]);
+    expect(await readFile(config, "utf8")).toBe(original);
   });
 
   it("does not use the REA process cwd to resolve a client's relative launcher path", async () => {
@@ -230,7 +319,9 @@ describe("client registration launcher identity", () => {
       state: "unknown",
     });
   });
+});
 
+describe("client registration package version identity", () => {
   it.each([
     ["4.1.0", true],
     ["v4.1.0", false],
@@ -417,7 +508,8 @@ describe("Ghidra multi-function deadline registration advice", () => {
     async ({ provider, timeout, hasBatchScope }) => {
       const home = await createTestTempDirectory("rea-codex-decompile-scope-");
       await mkdir(join(home, ".codex"));
-      const entry = resolve("scripts/rea.mjs");
+      const entry = CURRENT_ENTRYPOINT_PATH;
+      if (entry === undefined) throw new Error("missing current entrypoint");
       const configPath = join(home, ".codex/config.toml");
       // Two 600-second Ghidra decompiles plus startup/headroom would need an
       // estimated 1650 seconds. A caller's shorter or longer choice stays theirs.
@@ -488,8 +580,8 @@ describe("Node-wrapped registration policy", () => {
     });
   });
 
-  it.each([1, 30])(
-    "checks Grok Build startup timeout %d independently of launcher",
+  it.each([1, 30, 90])(
+    "accepts Grok Build caller-selected startup timeout %d independently of launcher",
     async (timeout) => {
       const home = await createTestTempDirectory("rea-grok-registration-");
       await mkdir(join(home, ".grok"));
@@ -504,7 +596,7 @@ describe("Node-wrapped registration policy", () => {
       expect(statuses).toEqual([
         expect.objectContaining({
           client: "grok_build",
-          state: timeout === 30 ? "aligned" : "stale",
+          state: "aligned",
         }),
       ]);
     },
@@ -576,6 +668,78 @@ describe("Node-wrapped registration policy", () => {
   );
 });
 
+describe("explicit client selection", () => {
+  // A regular file where the shared directory belongs fails every access
+  // probe (ENOTDIR on POSIX, ENOENT on Windows), which is the shape an ACL
+  // failure takes for automatic discovery.
+  const unreachableSharedParent = async (): Promise<string> => {
+    const home = await createTestTempDirectory("rea-selected-unreachable-");
+    await writeFile(join(home, ".agents"), "not a directory");
+    return home;
+  };
+
+  it("inspects a selected client whose config location cannot be probed", async () => {
+    const home = await unreachableSharedParent();
+
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      {
+        environment: {},
+        selectedClientIds: ["freebuff"],
+      },
+    );
+
+    // Before explicit selection authorised the read, every probe failed and
+    // the client was omitted, so doctor reported "not detected" instead.
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        client: "freebuff",
+        config_path: join(home, ".agents", "mcp.json"),
+        command: [],
+      }),
+    ]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "reports an unreadable selected config instead of omitting the client",
+    async () => {
+      const home = await unreachableSharedParent();
+
+      const statuses = await readClientRegistrationStatuses(
+        home,
+        "/current/rea",
+        {
+          environment: {},
+          selectedClientIds: ["freebuff"],
+        },
+      );
+
+      expect(statuses).toEqual([
+        expect.objectContaining({
+          client: "freebuff",
+          state: "invalid",
+          remediation: expect.stringContaining("could not be read"),
+        }),
+      ]);
+    },
+  );
+
+  it("keeps automatic discovery probing when no client is selected", async () => {
+    const home = await unreachableSharedParent();
+
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      {
+        environment: {},
+      },
+    );
+
+    expect(statuses.map(({ client }) => client)).not.toContain("freebuff");
+  });
+});
+
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "reports an inaccessible configuration target instead of omitting its registration",
   async () => {
@@ -605,7 +769,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
         config_path: path,
         state: "invalid",
         command: [],
-        remediation: expect.any(String),
+        remediation: expect.stringMatching(/\S/u),
       });
       expect(
         (await existingMaintenanceScope(home, "/current/rea", process.env))

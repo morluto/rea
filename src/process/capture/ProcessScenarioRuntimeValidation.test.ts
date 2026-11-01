@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
 import {
   chmod,
   mkdir,
   mkdtemp,
   rm,
+  realpath,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -43,17 +45,20 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("preserves the caller-selected executable symlink for process invocation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-process-executable-alias-"));
-  try {
-    const alias = join(root, "chosen-node");
-    await symlink(process.execPath, alias);
+it.skipIf(process.platform === "win32")(
+  "preserves the caller-selected executable symlink for process invocation",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-process-executable-alias-"));
+    try {
+      const alias = join(root, "chosen-node");
+      await symlink(process.execPath, alias);
 
-    await expect(resolveExecutable(alias, root, "")).resolves.toBe(alias);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+      await expect(resolveExecutable(alias, root, "")).resolves.toBe(alias);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 it("resolves a Windows executable through the canonical PATH spelling", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-process-path-"));
@@ -118,6 +123,34 @@ it("reports a working-directory file as invalid input", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it.skipIf(process.platform === "win32")(
+  "preserves the caller-selected working-directory symlink when pointing to a regular file",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-cwd-symlink-");
+    const targetFile = join(root, "target-file");
+    const aliasFile = join(root, "alias-file");
+    await writeFile(targetFile, "not a directory");
+    await symlink(targetFile, aliasFile);
+    const failure = await runtimePathFailure({
+      executable: process.execPath,
+      working_directory: aliasFile,
+    });
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "capture_process_scenario",
+        issues: [
+          {
+            path: ["working_directory"],
+            reason: "invalid_value",
+            message: `working directory is not a directory: ${aliasFile}`,
+          },
+        ],
+      },
+    });
+  },
+);
 
 it("reports an executable directory as invalid input", async () => {
   const root = await mkdtemp(
@@ -304,3 +337,75 @@ const runtimePathFailure = async (
     throw new Error("Selected runtime path should be invalid input");
   return failure;
 };
+
+it.skipIf(process.platform === "win32").each(["absolute", "relative", "PATH"])(
+  "preserves native symlink/.. traversal for a %s executable",
+  async (selection) => {
+    const root = await createTestTempDirectory("rea-process-native-path-");
+    const intended = join(root, "intended");
+    await mkdir(join(intended, "nested"), { recursive: true });
+    await symlink(join(intended, "nested"), join(root, "alias"));
+    for (const [directory, text] of [
+      [root, "decoy"],
+      [intended, "intended"],
+    ] as const)
+      await writeFile(
+        join(directory, "probe"),
+        `#!/bin/sh\nprintf '${text}'\n`,
+        { mode: 0o755 },
+      );
+    const command =
+      selection === "absolute"
+        ? `${root}/alias/../probe`
+        : selection === "relative"
+          ? "alias/../probe"
+          : "probe";
+    const executable = await resolveExecutable(command, root, "alias/..");
+    expect(await realpath(executable)).toBe(join(intended, "probe"));
+    expect(execFileSync(executable, { encoding: "utf8", timeout: 2000 })).toBe(
+      "intended",
+    );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "distinguishes an unset PATH from empty and relative PATH selections",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-absent-path-");
+    const localShell = join(root, "sh");
+    await writeFile(localShell, "#!/bin/sh\nprintf local-shell\n", {
+      mode: 0o755,
+    });
+    const scenario = processScenarioSchema.parse({
+      executable: "sh",
+      working_directory: root,
+    });
+    const unset = await resolveProcessScenarioRuntimePaths(scenario, {});
+    expect(unset.executable).not.toBe(localShell);
+    expect(
+      execFileSync(unset.executable, ["-c", "printf system-shell"], {
+        env: {},
+        encoding: "utf8",
+        timeout: 2000,
+      }),
+    ).toBe("system-shell");
+    for (const environment of [{ PATH: "" }, { PATH: "." }]) {
+      const selected = await resolveProcessScenarioRuntimePaths(
+        { ...scenario, environment },
+        { PATH: "/usr/bin:/bin" },
+      );
+      expect(selected.executable).toBe(localShell);
+    }
+    const inheritedEmpty = await resolveProcessScenarioRuntimePaths(scenario, {
+      PATH: "",
+    });
+    expect(inheritedEmpty.executable).toBe(localShell);
+    await rm(localShell);
+    await expect(
+      resolveProcessScenarioRuntimePaths(
+        { ...scenario, environment: { PATH: "" } },
+        {},
+      ),
+    ).rejects.toBeInstanceOf(AnalysisInputError);
+  },
+);

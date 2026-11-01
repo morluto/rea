@@ -20,15 +20,13 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type {
-  ExecutionOptions,
-  ProviderAvailability,
-} from "../application/AnalysisProvider.js";
-import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import {
+  type ExecutionOptions,
+  type ProviderAvailability,
   createAnalysisExecution,
   type AnalysisExecution,
 } from "../application/AnalysisProvider.js";
+import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   apktoolResultSchemas,
@@ -57,8 +55,8 @@ import {
 } from "../process/OwnedCommand.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { WindowsBatchCommandError } from "../process/WindowsBatchCommand.js";
+import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
 import {
-  APKTOOL_COMMAND_ENV,
   ApktoolConfigurationFailure,
   apktoolConfigurationAvailability,
   apktoolInvocation,
@@ -293,15 +291,7 @@ export class ApktoolProvider {
   }
 
   private operationEnvironment(): Readonly<NodeJS.ProcessEnv> {
-    const ambient = snapshotEnvironment(process.env);
-    if (this.selectedEnvironment === undefined) return ambient;
-    // Child inheritance is sampled per operation. An explicit map keeps its
-    // launcher choice authoritative, including an omitted command selecting PATH.
-    return snapshotEnvironment({
-      ...ambient,
-      ...this.selectedEnvironment,
-      [APKTOOL_COMMAND_ENV]: this.selectedEnvironment[APKTOOL_COMMAND_ENV],
-    });
+    return this.selectedEnvironment ?? snapshotEnvironment(process.env);
   }
 
   /** Probe the selected apktool launcher; decodes nothing. */
@@ -361,6 +351,8 @@ export class ApktoolProvider {
       if (cause instanceof ApktoolConfigurationFailure) {
         return apktoolConfigurationAvailability(cause);
       }
+      const prerequisite = ownedProcessPrerequisiteAvailability(cause);
+      if (prerequisite !== undefined) return prerequisite;
       throw cause;
     }
   }

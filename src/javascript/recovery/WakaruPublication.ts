@@ -109,7 +109,7 @@ export const publishWakaruArtifacts = async (
       id: "wakaru",
       version: context.admitted.version,
       executable: {
-        path: context.engine.command,
+        path: context.engine.command.resolvedPath,
         sha256: context.engine.sha256,
         bytes: context.engine.bytes,
       },

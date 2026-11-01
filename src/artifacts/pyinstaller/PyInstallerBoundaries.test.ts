@@ -1,8 +1,8 @@
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { createHash, randomBytes } from "node:crypto";
-import { writeFile, type FileHandle } from "node:fs/promises";
+import { rename, unlink, writeFile, type FileHandle } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { deflateSync } from "node:zlib";
 import { setImmediate } from "node:timers/promises";
@@ -10,6 +10,8 @@ import { expect, it, vi } from "vitest";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "../ArtifactHash.js";
+import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
 import { PyInstallerPyzStore } from "./PyInstallerPyzStore.js";
 import {
@@ -278,6 +280,59 @@ it("binds materialization to the inventoried digest and checks cached carrier fr
     });
   });
 });
+
+it.each(["ENOENT", "ENOTDIR"] as const)(
+  "retains changed-source evidence when an admitted carrier becomes unaddressable (%s)",
+  async (code) => {
+    const body = Buffer.from("observed before the source moved");
+    const bytes = archive(body);
+    await withPyInstallerReader(bytes, async (reader, handle, path) => {
+      await reader.prepareContainer(hash(bytes));
+      const [entry] = await members(reader);
+      if (entry === undefined) throw new Error("Missing original member");
+      const observed = await hashReadable(await reader.open(entry));
+      expect(observed).toMatchObject({
+        sha256: hash(body),
+        bytes: body.length,
+      });
+      const moved = code === "ENOENT" ? path : dirname(path);
+      await rename(moved, `${moved}.moved`);
+      if (code === "ENOTDIR") await writeFile(moved, "replaced ancestor");
+      try {
+        const attempts = [
+          () => reader.prepareContainer(hash(bytes)),
+          () => members(reader),
+          () => reader.open(entry),
+        ];
+        for (const attempt of attempts) {
+          const cause = await attempt().then(
+            () => undefined,
+            (failure: unknown) => failure,
+          );
+          expect(cause).toMatchObject({
+            reason: "integrity",
+            message: `PyInstaller source identity changed: ${path}`,
+          });
+          expect(
+            projectAnalysisError(
+              translateArtifactFailure("extract_artifact", cause),
+            ),
+          ).toMatchObject({
+            category: "integrity_mismatch",
+            details: {
+              reason: "integrity",
+              detail: `PyInstaller source identity changed: ${path}`,
+            },
+          });
+        }
+        expect(handle.fd).toBeGreaterThanOrEqual(0);
+      } finally {
+        if (code === "ENOTDIR") await unlink(moved);
+        await rename(`${moved}.moved`, moved);
+      }
+    });
+  },
+);
 
 it("bounds descriptor reads while hashing a selected stored member", async () => {
   const payload = Buffer.alloc(2 * 1024 * 1024, 0x61);
@@ -656,7 +711,9 @@ for (const cancel of [false, true]) {
           } else {
             expect(result.ok).toBe(true);
             if (!result.ok) throw result.cause;
-            expect(result.value.subarray(16)).toEqual(Buffer.from("body"));
+            expect(
+              Buffer.compare(result.value.subarray(16), Buffer.from("body")),
+            ).toBe(0);
           }
           await reader.close();
           expect(attempts).toBe(failClose ? 2 : 1);
@@ -744,18 +801,20 @@ it.each([false, true])(
           release = deferred();
         const handles = new Set<FileHandle>();
         const stat = borrowed.stat;
+        const prototype: Pick<FileHandle, "stat"> =
+          Object.getPrototypeOf(borrowed);
         const spy = vi
-          .spyOn(Object.getPrototypeOf(borrowed), "stat")
+          .spyOn(prototype, "stat")
           .mockImplementation(async function (
             this: FileHandle,
-            ...args: unknown[]
+            ...args: Parameters<FileHandle["stat"]>
           ) {
             if (this !== borrowed) {
               handles.add(this);
               entered.resolve();
               await release.promise;
             }
-            return Reflect.apply(stat, this, args);
+            return stat.call(this, ...args);
           });
         const caller = new AbortController(),
           reason = new Error("one admission waiter leaves");

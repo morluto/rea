@@ -43,6 +43,11 @@ const browserScenarioLimitations = (
       : []),
     "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
     "Storage values are hashed only after declared-secret redaction.",
+    ...(scenario.actions.some(({ action }) => action === "request")
+      ? [
+          "Request steps sent their declared requests through the page's own fetch with its cookies and session, following no redirects; they are REA-initiated, not user-interface activity, and header values of at least 8 characters they read from page cookies or local storage are redacted like declared secrets from records made after they were read.",
+        ]
+      : []),
     ...(scenario.storage.local_storage.length === 0 &&
     scenario.storage.session_storage.length === 0
       ? []

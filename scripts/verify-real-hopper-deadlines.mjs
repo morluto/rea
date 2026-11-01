@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { firstProcedureAddress } from "../dist/application/RealHopperAssertions.js";
+import { firstProcedureAddress } from "./lib/real-hopper-assertions.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
