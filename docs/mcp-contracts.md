@@ -1059,6 +1059,22 @@ Those raw observations are not recorded in the Evidence bundle. If the SDK
 suppresses the error reply after client cancellation, Evidence tools cannot
 recover them. An empty bundle does not prove that no partial work or side
 effect occurred; output receipts and cleanup observations remain distinct.
+If an authenticated Evidence record exceeds the investigation's retention
+allowance, the refusal carries it inline as
+`details.partial_observation: {kind: "unretained-evidence", evidence: ...}`
+when it fits the response budget. Its ID identifies the supplied content; it
+is not a retained-session reference. If authentication itself failed or lacked
+headroom, no authenticated Evidence is claimed. When the completed record does
+not fit the MCP response, the original retention error carries
+`details.partial_observation_omitted` with the response constraint if the
+remaining error fits; the observation remains unretained. Otherwise the usual
+oversized-error recovery applies.
+When an atomic derived-Evidence and Unknown write exceeds the allowance after
+authentication, the completed Evidence is returned the same way if absent from
+the investigation. If that exact Evidence was already present, the error
+instead carries `{kind: "retained-evidence", evidence_id: ...}` for the current
+session. The refused write adds neither a record nor an Unknown revision; a
+previously retained record or Unknown remains available.
 The broader retention decision is tracked in
 [#4276](https://github.com/morluto/rea/issues/4276).
 
@@ -1340,11 +1356,20 @@ cursor outside a procedure is represented as
 procedure resolution returns typed unreadable output; provider errors never
 become absence from their message text. `inspect_address_context` requires an explicit address and
 returns name, procedure, comment, inline-comment, and bookmark facets;
-unsupported facets are local `unavailable` outcomes. A facet whose input is
-rejected includes its canonical `error` projection, including any structured
-issues, alongside the other facet outcomes. Use `current_document`,
+unsupported facets are local `unavailable` outcomes. A facet rejected for
+invalid input or a resource constraint includes its canonical `error`
+projection, including structured issues or reported limits and recovery,
+alongside the other facet outcomes. Use `current_document`,
 `current_address`, and `current_procedure` for direct single-field lookups; use
 the aggregate tools when you need related context together.
+
+If unretained facet Evidence makes the context response exceed an MCP delivery
+limit, REA omits those partial records in estimated size order until the reply
+fits. Each affected facet identifies its unretained omission and the delivery
+constraint; other facets and partials remain in the response when they fit. The
+size estimate is used only for ordering and can omit more records than a perfect
+wire-size ordering would. If the remaining context still cannot fit, call the
+needed address operations individually and follow their delivery diagnostics.
 
 ## Integrity attribution and reconstruction claims
 

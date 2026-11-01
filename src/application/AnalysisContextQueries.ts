@@ -8,8 +8,10 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import {
+  omitUnretainedEvidenceFromError,
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
@@ -20,6 +22,7 @@ import { analysisBookmarkSchema } from "../domain/native/nativeInventory.js";
 import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
 import { nativeAddressCoordinateInputSchema } from "../domain/native/nativeAddress.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
+import { estimateJsonStorage } from "./JsonAuthenticationHeadroom.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 type Facet =
@@ -30,6 +33,16 @@ type Facet =
       readonly remediation: string;
       readonly error?: AnalysisErrorProjection;
     };
+
+type AddressContext = {
+  readonly address: string;
+  readonly document: string;
+  readonly name: Facet;
+  readonly procedure: Facet;
+  readonly comment: Facet;
+  readonly inline_comment: Facet;
+  readonly bookmarks: Facet;
+};
 
 const parameters = (
   document: string | undefined,
@@ -89,12 +102,55 @@ export const getNavigationContext = async (
   });
 };
 
+/** Preserve other facets and smaller partials if unretained Evidence cannot fit. */
+export function* omitContextEvidenceForDelivery(
+  context: AddressContext,
+  limit: {
+    readonly constraint: "receive-buffer" | "string-length";
+    readonly bytesAtLeast: number;
+  },
+  budgetBytes: number,
+): Generator<AddressContext> {
+  const names = [
+    "name",
+    "procedure",
+    "comment",
+    "inline_comment",
+    "bookmarks",
+  ] as const;
+  const candidates = names.flatMap((name) => {
+    const facet = context[name];
+    if (facet.state !== "unavailable" || facet.error === undefined) return [];
+    const compact = omitUnretainedEvidenceFromError(facet.error, limit);
+    if (compact === undefined) return [];
+    const partial = facet.error.details?.partial_observation;
+    const size = estimateJsonStorage(partial, {
+      maximumValueBytes: budgetBytes,
+      includeSerialized: false,
+    }).valueBytes;
+    return [{ name, facet, compact, size }];
+  });
+  candidates.sort((left, right) => right.size - left.size);
+  let current = context;
+  for (const { name, facet, compact } of candidates) {
+    current = {
+      ...current,
+      [name]: {
+        ...facet,
+        remediation: compact.remediation.action,
+        error: compact,
+      },
+    };
+    yield current;
+  }
+}
+
 /** Inspect bounded provider-neutral facets at one explicit reproducible address. */
 export const inspectAddressContext = async (
   analysis: AnalysisOperationPort,
   input: { readonly address: string; readonly document?: string | undefined },
   signal?: AbortSignal,
-): Promise<Result<JsonValue, AnalysisError>> => {
+): Promise<Result<AddressContext, AnalysisError>> => {
   const document = await resolveAnalysisDocument(
     analysis,
     input.document,
@@ -182,9 +238,15 @@ const unavailableFacet = (
   error: AnalysisError | undefined,
   operation: AnalysisOperation,
 ): Facet => {
-  if (error instanceof AnalysisInputError) {
+  if (
+    error instanceof AnalysisInputError ||
+    error instanceof AnalysisResourceConstraintError
+  ) {
     const projected = projectAnalysisError(error);
-    if (projected.code === "invalid_request")
+    if (
+      projected.code === "invalid_request" ||
+      projected.code === "resource_constraint"
+    )
       return {
         state: "unavailable",
         reason: projected.message,

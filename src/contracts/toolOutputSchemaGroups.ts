@@ -94,6 +94,7 @@ import { decompileDirectoryManifestSchema } from "./decompileDirectory.js";
 import {
   analysisErrorProjectionSchema,
   analysisInputErrorProjectionSchema,
+  analysisResourceErrorProjectionSchema,
 } from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
@@ -114,13 +115,17 @@ import {
 
 import { processCaptureSchema } from "../domain/process/processCapture.js";
 import { electronFuseReportSchema } from "../domain/electron/electronFuses.js";
+const contextFacetErrorSchema = z.discriminatedUnion("code", [
+  analysisInputErrorProjectionSchema,
+  analysisResourceErrorProjectionSchema,
+]);
 const contextFacetSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("available"), value: jsonValueSchema }),
   z.object({
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
-    error: analysisInputErrorProjectionSchema.optional(),
+    error: contextFacetErrorSchema.optional(),
   }),
 ]);
 const bookmarkFacetSchema = z.discriminatedUnion("state", [
@@ -132,7 +137,7 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
-    error: analysisInputErrorProjectionSchema.optional(),
+    error: contextFacetErrorSchema.optional(),
   }),
 ]);
 
