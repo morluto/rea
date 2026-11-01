@@ -46,6 +46,7 @@ const parentFor = (operation: string, report: unknown): AnalysisViewParent => {
   return {
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
+    predicateType: evidence.predicate_type,
     subject: evidence.subject,
     normalizedResult: structuredClone(report),
     limitations: evidence.limitations,
@@ -734,6 +735,7 @@ it("refuses a CycloneDX view of a parent that is neither Go nor Rust", () => {
     {
       evidenceId: evidence.evidence_id,
       operation: evidence.operation,
+      predicateType: evidence.predicate_type,
       normalizedResult: evidence.normalized_result,
       limitations: [],
     },
@@ -1046,6 +1048,7 @@ it("names the parent input path when CycloneDX has no artifact path", () => {
     {
       evidenceId: evidence.evidence_id,
       operation: evidence.operation,
+      predicateType: evidence.predicate_type,
       normalizedResult: evidence.normalized_result,
       limitations: [],
     },
