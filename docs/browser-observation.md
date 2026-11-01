@@ -122,7 +122,10 @@ correspondence merely from their different retained registrations.
 - Every surface has equivalent CLI and MCP contracts and returns Evidence provenance.
 - MCP tools return complete results inline and include the Evidence ID. Session evidence can be exported with `export_evidence_bundle`.
 
-Target discovery returns the complete in-scope target array in one result.
+Target discovery returns the complete eligible target array in one result.
+Browser pages must have a supported HTTP(S) URL, match any requested exact-origin
+filter, and have a validated CDP transport. Otherwise allowed pages without a
+validated transport are excluded and reported in the result limitations.
 
 ## Screenshot comparison memory budget
 
