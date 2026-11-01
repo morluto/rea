@@ -4,7 +4,6 @@ import { createAnalysisExecution } from "../../../src/application/AnalysisProvid
 import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import {
   analysisViewResultSchema,
   inspectAnalysisViewInputSchema,
@@ -159,60 +158,89 @@ it.each(["rows", "unavailable", "not-recorded"] as const)(
   90_000,
 );
 
-it("bounds a page with an oversized reference while leaving the parent and other collection available", async () => {
+it("recovers the complete parent when a single reference exceeds the page budget", async () => {
   const oversized = { ...row, type: "x".repeat(1024 * 1024) };
   const parent = createEvidence(undefined, provider, {
     operation: "inspect_native_instruction",
     parameters: { address: "0x1000" },
     result: { ...instruction("rows"), incoming_references: [row, oversized] },
   });
-  const source = { kind: "inline" as const, evidence: parent };
-  const first = await inspectAnalysisView({
-    source,
-    view: {
-      kind: "native-instruction-references",
-      collection: "incoming_references",
-      offset: 0,
-      limit: 2,
-    },
+  const session = createTestBinarySession(() => ({
+    execute: async () => ok(createAnalysisExecution(null, provider)),
+    close: async () => ok(null),
+  }));
+  const retained = session.recordEvidence(parent);
+  if (!retained.ok) throw retained.error;
+  const server = createServer({ kind: "session", session });
+  const client = new Client({
+    name: "oversized-instruction-reference",
+    version: "1",
   });
-  expect(first.ok).toBe(true);
-  if (!first.ok) return;
-  expect(first.value.normalized_result).toMatchObject({
-    items: { state: "available", rows: [{ source_index: 0, value: row }] },
-    byte_limited: true,
-    coverage: { total: 2, next_offset: 1, exhausted: false },
-  });
-  const stopped = await inspectAnalysisView({
-    source,
-    view: {
-      kind: "native-instruction-references",
-      collection: "incoming_references",
-      offset: 1,
-      limit: 1,
-    },
-  });
-  expect(stopped).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisResourceConstraintError" },
-  });
-  const other = await inspectAnalysisView({
-    source,
-    view: {
-      kind: "native-instruction-references",
-      collection: "references",
-      offset: 0,
-      limit: 1,
-    },
-  });
-  expect(other.ok).toBe(true);
-  if (other.ok)
-    expect(other.value.normalized_result).toMatchObject({
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const source = {
+      kind: "retained-evidence",
+      evidence_id: parent.evidence_id,
+    };
+    const view = async (collection: string, offset: number, limit: number) =>
+      client.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source,
+          view: {
+            kind: "native-instruction-references",
+            collection,
+            offset,
+            limit,
+          },
+        },
+      });
+    const first = await view("incoming_references", 0, 2);
+    expect(first.isError, JSON.stringify(first.content)).not.toBe(true);
+    expect(
+      parseEvidence(first.structuredContent).normalized_result,
+    ).toMatchObject({
+      items: { state: "available", rows: [{ source_index: 0, value: row }] },
+      byte_limited: true,
+      coverage: { total: 2, next_offset: 1, exhausted: false },
+    });
+    const stopped = await view("incoming_references", 1, 1);
+    expect(parseMcpToolError(stopped).error).toMatchObject({
+      code: "resource_constraint",
+      details: { reported_limits: { parent_evidence_id: parent.evidence_id } },
+    });
+    const other = await view("references", 0, 1);
+    expect(other.isError).not.toBe(true);
+    expect(
+      parseEvidence(other.structuredContent).normalized_result,
+    ).toMatchObject({
       items: { state: "available", rows: [] },
       coverage: { total: 0, exhausted: true },
     });
-  expect(
-    (parent.normalized_result as { incoming_references: unknown[] })
-      .incoming_references,
-  ).toHaveLength(2);
+    const bundle = await client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {
+        detail: "records",
+        filters: { evidence_id: parent.evidence_id },
+      },
+    });
+    expect(bundle.isError, JSON.stringify(bundle.content)).not.toBe(true);
+    expect(bundle.structuredContent).toMatchObject({
+      result: {
+        records: [
+          {
+            evidence_id: parent.evidence_id,
+            normalized_result: { incoming_references: [row, oversized] },
+          },
+        ],
+      },
+    });
+  } finally {
+    await Promise.all([client.close(), server.close()]);
+    const closed = await session.close();
+    if (!closed.ok) throw closed.error;
+  }
 }, 90_000);
