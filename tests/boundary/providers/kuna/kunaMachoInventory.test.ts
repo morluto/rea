@@ -172,6 +172,38 @@ it("resolves a data symbol's name for xrefs, which accept data addresses", async
   }
 });
 
+it("guides valid ambiguous and missing procedure selectors without schema repair", async () => {
+  const { open } = await machoSession("rea-kuna-procedure-recovery-");
+  const client = open();
+  try {
+    for (const [procedure, expected] of [
+      ["puts", "address"],
+      ["missing_procedure", "search_procedures"],
+    ] as const) {
+      const result = await client.execute("procedure_address", { procedure });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected unresolved procedure");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.recovery).toBeUndefined();
+      expect(projected.remediation.action).toContain(expected);
+      expect(projected.details?.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ observed: { procedure } }),
+        ]),
+      );
+      if (procedure === "puts") {
+        expect(projected.message).toContain("0x100000480");
+        expect(projected.message).toContain("0x100004000");
+      }
+    }
+    expect(
+      (await run(client, "procedure_address", { procedure: "helper" })).result,
+    ).toBe("0x100000440");
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
 it("reports missing and ambiguous xref names within Kuna's inventory", async () => {
   const { open } = await machoSession("rea-kuna-macho-xref-recovery-");
   const client = open();

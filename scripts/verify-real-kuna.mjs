@@ -344,6 +344,17 @@ const verifyKuna = async (
       );
       assert.ok(missing.message.includes("rea_missing_xref_inventory_name"));
       assert.equal(missing.recovery, undefined);
+      const procedure = await cold.callError("procedure_address", {
+        procedure: "rea_missing_procedure_name",
+      });
+      assert.equal(procedure.code, "invalid_request");
+      assert.equal(procedure.recovery, undefined);
+      assert.match(procedure.remediation.action, /search_procedures/u);
+      assert.ok(
+        procedure.details.issues.some(
+          (issue) => issue.observed?.procedure === "rea_missing_procedure_name",
+        ),
+      );
     }
     for (const [name, address] of functions) {
       assert.ok(
