@@ -243,6 +243,10 @@ export const existingProjectCapabilities = (
         available: false,
         reason: "Existing Ghidra project sessions are read-only.",
         availabilityCode: "open_options_invalid",
+        userMessage:
+          "This Ghidra project session is read-only; the requested edit was not applied.",
+        remediationAction:
+          "Continue inspecting the selected project. To make session-only edits, start a separate REA session with REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME unset, then open a fresh Ghidra import. It is a separate ephemeral analysis and does not preserve the selected project's state.",
       };
     return { ...capability, limitations };
   });

@@ -258,6 +258,9 @@ type CapabilityAvailability =
       readonly available: false;
       readonly reason: string;
       readonly availabilityCode?: ProviderRejectionCode;
+      /** Provider-owned explanation and recovery for an attempted operation. */
+      readonly userMessage?: string;
+      readonly remediationAction?: string;
     };
 
 export type CapabilityDescriptor = CapabilityAvailability & {

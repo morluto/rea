@@ -28,6 +28,7 @@ import { err, ok } from "../../../src/domain/result.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { existingProjectCapabilities } from "../../../src/ghidra/GhidraProviderCapabilities.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { BINARY_SESSION_SUMMARY_OMITTED_FIELDS } from "../../../src/contracts/sessionStatusContract.js";
@@ -780,6 +781,62 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
   result.isError === true
     ? parseMcpToolError(result)
     : z.record(z.string(), z.unknown()).parse(result.structuredContent);
+
+it("preserves a selected Ghidra project's read-only guidance when an edit is requested", async () => {
+  const directory = await createTestTempDirectory("rea-project-refusal-mcp-");
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const starts: string[] = [];
+  const base = candidate("ghidra", starts);
+  const projectCapabilities = existingProjectCapabilities("linux");
+  const annotation = projectCapabilities.find(
+    (entry) => entry.operation === "annotate_native_function",
+  );
+  if (annotation === undefined || annotation.available)
+    throw new Error("Expected read-only annotation capability");
+  expect(annotation.userMessage).toBeDefined();
+  expect(annotation.remediationAction).toBeDefined();
+  const provider = {
+    ...base,
+    capabilities: () =>
+      projectCapabilities.map((entry) => ({
+        ...entry,
+        provider: base.identity(),
+      })),
+  };
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([provider]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "project-refusal", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  expect(
+    (await mcp.callTool({ name: "open_binary", arguments: { path: target } }))
+      .isError,
+  ).not.toBe(true);
+
+  const refused = await mcp.callTool({
+    name: "annotate_native_function",
+    arguments: { procedure: "fixture", comment: "must not be applied" },
+  });
+  expect(refused.isError).toBe(true);
+  expect(parseMcpToolError(refused)).toMatchObject({
+    error: {
+      code: "capability_unavailable",
+      message: annotation.userMessage,
+      details: { reason: "Existing Ghidra project sessions are read-only." },
+      remediation: { action: annotation.remediationAction },
+    },
+  });
+  expect(starts).toEqual([]);
+});
 
 it("retains attributed mixed profile cleanup through registered MCP calls and partial retry", async () => {
   directory = await createTestTempDirectory("rea-profile-completion-mcp-");
