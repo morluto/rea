@@ -10,6 +10,7 @@ import { access, readFile, readdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
+import { GHIDRA_ANNOTATIONS_RETAINED } from "../../dist/ghidra/GhidraProviderClient.js";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
@@ -534,12 +535,10 @@ export async function verifyGhidraBoundaries(
     regexError.remediation.action,
     /literal mode or simplify the regex/u,
   );
-  // The retry advice lives in the remediation; the reason states that the
-  // session survived the overflow.
-  assert.match(
-    regexError.details.reason,
-    /exhausted its stack.*session and annotations remain available/u,
-  );
+  // The producer reason describes the failure; continuing-session guidance
+  // is projected separately and the following live calls verify it.
+  assert.match(regexError.details.reason, /stack while matching pattern/u);
+  assert.ok(regexError.message.includes(GHIDRA_ANNOTATIONS_RETAINED));
   rejectedCalls++;
   const nestedPattern = "(".repeat(12000) + "a" + ")".repeat(12000);
   const compileFailure = await client.callTool(
