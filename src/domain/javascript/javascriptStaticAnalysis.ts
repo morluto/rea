@@ -203,9 +203,12 @@ const finalizeStaticAnalysis = (
   // A `worker` or `service-worker` reference records a URL relative to the
   // importing source, so `new Worker(new URL("electron", import.meta.url))` is
   // not an Electron module. Read the same kinds the Electron boundary owner uses.
+  // Only a loaded module establishes Electron applicability: `require.resolve`
+  // locates the module without loading it, so no boundary fact is expected.
   const electronObserved = accumulator.references.some(
     ({ value }) =>
       value.specifier !== null &&
+      value.operation === "load" &&
       ELECTRON_REFERENCE_KINDS.has(value.kind) &&
       ELECTRON_MODULE.test(value.specifier),
   );
