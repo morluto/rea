@@ -23,7 +23,9 @@ import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { basename, dirname } from "node:path";
 import {
   defaultKunaCacheDirectory,
+  hasParentTraversal,
   sameLexicalDirectory,
+  withinLexicalDirectory,
 } from "../config/kunaCacheDirectory.js";
 import { defaultDarwinHelperCacheDirectory } from "../process/DarwinHelperCache.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
@@ -1144,10 +1146,11 @@ const purgeSelectedData = async (
 ): Promise<readonly UninstallItem[]> => {
   const items: UninstallItem[] = [];
   const directories: string[] = [];
+  let custom: string | undefined;
   if (platform === "darwin" || platform === "linux") {
     const defaultCache = defaultKunaCacheDirectory(home, environment, platform);
     directories.push(defaultCache);
-    const custom = environment.REA_KUNA_CACHE_DIR;
+    custom = environment.REA_KUNA_CACHE_DIR;
     // Lexical spellings identify the default namespace for reporting.
     // Removal still uses the owned-path checks below. Other selections
     // remain separately reported without resolving symbolic links.
@@ -1163,6 +1166,7 @@ const purgeSelectedData = async (
           `Caller-selected Kuna cache ${custom} was retained because purge does not establish ownership of that entire directory.`,
         ),
       );
+    else custom = undefined;
   }
   // The ownership helper cache has no caller-selected location to retain.
   if (platform === "darwin")
@@ -1173,20 +1177,83 @@ const purgeSelectedData = async (
     else items.push(item("hopper-releases", "failed", hopper.error.message));
   }
   // Resolve selections before a managed namespace removal can delete cwd.
-  // Keep the existing result and removal order after planning those facts.
-  items.unshift(
-    ...(await purgeManagedData(appendCallerPath(home, ".rea"), fileSystem, [
-      "cache",
-      "state",
-    ])),
-  );
-  for (const directory of directories)
-    items.push(
-      ...(await purgeManagedData(dirname(directory), fileSystem, [
-        basename(directory),
-      ])),
+  // A namespace that contains the caller-selected cache is kept whole, so
+  // the retained report is true.
+  const reaRoot = appendCallerPath(home, ".rea");
+  // A spelling with `..` is judged only where the filesystem resolves it,
+  // because collapsing it lexically is wrong after a symbolic link.
+  // `undefined` means the location could not be established.
+  const resolve = async (path: string): Promise<string[] | undefined> => {
+    const resolved = await existingRealpath(fileSystem, path);
+    return resolved === undefined
+      ? undefined
+      : [...(hasParentTraversal(path) ? [] : [path]), ...resolved];
+  };
+  const selections = custom === undefined ? [] : await resolve(custom);
+  const purge = async (root: string, names: readonly string[]) => {
+    const kept: { readonly name: string; readonly unknown: boolean }[] = [];
+    for (const name of names) {
+      const targets = await resolve(appendCallerPath(root, name));
+      // An unestablished selection or namespace may contain the selection,
+      // so it is kept rather than treated as absent.
+      const contains =
+        custom !== undefined &&
+        (selections === undefined ||
+          targets === undefined ||
+          targets.some((target) =>
+            selections.some((selection) =>
+              withinLexicalDirectory(selection, target, platform),
+            ),
+          ));
+      if (contains)
+        kept.push({
+          name,
+          unknown: selections === undefined || targets === undefined,
+        });
+    }
+    const keptItems = kept.map(({ name, unknown }) =>
+      item(
+        name,
+        "retained",
+        unknown
+          ? `${appendCallerPath(root, name)} was retained because purge could not establish whether it contains the caller-selected Kuna cache ${custom}.`
+          : `${appendCallerPath(root, name)} was retained because it contains the caller-selected Kuna cache ${custom}, which purge does not remove.`,
+      ),
     );
+    const owned = names.filter(
+      (name) => !kept.some((entry) => entry.name === name),
+    );
+    return async () => [
+      ...keptItems,
+      ...(await purgeManagedData(root, fileSystem, owned)),
+    ];
+  };
+  const reaPlan = await purge(reaRoot, ["cache", "state"]);
+  const plans: (() => Promise<readonly UninstallItem[]>)[] = [];
+  for (const directory of directories)
+    plans.push(await purge(dirname(directory), [basename(directory)]));
+  items.unshift(...(await reaPlan()));
+  for (const plan of plans) items.push(...(await plan()));
   return items;
+};
+
+/**
+ * Canonical spelling of an existing path, nothing when the path is absent,
+ * or `undefined` when its location cannot be established (for example an
+ * inaccessible parent, or `..` without a realpath to judge it).
+ */
+const existingRealpath = async (
+  fileSystem: UninstallFileSystem,
+  path: string,
+): Promise<string[] | undefined> => {
+  if (fileSystem.realpath === undefined)
+    return hasParentTraversal(path) ? undefined : [];
+  try {
+    return [await fileSystem.realpath(path)];
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? [] : undefined;
+  }
 };
 
 const purgeManagedData = async (
