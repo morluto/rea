@@ -2735,16 +2735,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 .add(matcher.group(1).replaceAll("\\s+", " ").trim());
         }
         if (rendered.isEmpty()) return warnings;
-        // Each rendered caller-authored warning line accounts for one match at its
-        // address. Matching by address rather than text keeps the accounting right
-        // when Ghidra wraps a long comment line and the rendered text is cut short.
+        // Discount only caller warnings that actually match a rendered occurrence.
+        // A displayed listing comment may be wrapped or omitted; subtracting a
+        // different same-address warning would hide genuine decompiler evidence.
         Map<Address, List<String>> callerWarnings = callerAuthoredJumpTableWarnings(function);
         for (Map.Entry<Address, List<String>> entry : rendered.entrySet()) {
             List<String> remaining = new ArrayList<>(entry.getValue());
             for (String authored : callerWarnings.getOrDefault(entry.getKey(), List.of())) {
                 if (remaining.isEmpty()) break;
                 int index = remaining.indexOf(authored);
-                remaining.remove(index >= 0 ? index : remaining.size() - 1);
+                if (index >= 0) remaining.remove(index);
             }
             if (!remaining.isEmpty()) warnings.put(entry.getKey(), remaining.get(0));
         }

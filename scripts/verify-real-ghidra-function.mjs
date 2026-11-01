@@ -730,6 +730,27 @@ export async function verifyIndirectBranches(client) {
     throw new Error(
       `A stored copy of the warning hid the genuine jump-table warning at ${branchAddress} (${String(renderedWarnings)} rendered): ${JSON.stringify(kept)}`,
     );
+  // A long stored warning can wrap or be truncated by the decompiler.
+  // That must not consume a separate real warning at the same branch.
+  const verbose = `WARNING: ${warningText} ${"padding ".repeat(100)}`;
+  const afterVerboseComment = await functionCall(
+    client,
+    "annotate_native_function",
+    { procedure: computed.address, comment: verbose },
+  );
+  const preserved = afterVerboseComment.dossier.native_api?.unresolved_indirect_branches?.find(
+    (branch) => branch.branch_address === branchAddress,
+  );
+  if (
+    afterVerboseComment.annotations.comment !== verbose ||
+    preserved?.decompiler_outcome !== "jump_table_recovery_failed" ||
+    !preserved.evidence.some(
+      (evidence) => evidence.source === "ghidra-decompiler-warning",
+    )
+  )
+    throw new Error(
+      `Long caller comment hid a real decompiler warning at ${branchAddress}: ${JSON.stringify(preserved)}`,
+    );
   // The tail call's classification depends on Ghidra's own heuristics, so it
   // is recorded rather than asserted.
   const tailCall = requireProcedure(names, "rea_indirect_tail_call");
