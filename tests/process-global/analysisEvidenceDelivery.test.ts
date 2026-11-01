@@ -1,6 +1,6 @@
-import { readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { publishCliAnalysisEvidence } from "../../src/cli/analysisEvidenceDelivery.js";
 import { createEvidence } from "../../src/domain/evidence.js";
@@ -15,17 +15,8 @@ vi.mock("node:v8", () => ({
   }),
 }));
 
-const roots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true })),
-  );
-});
-
 it("publishes CLI Evidence without re-authenticating the complete graph", async () => {
   const root = await createTestTempDirectory("rea-cli-evidence-");
-  roots.push(root);
   const destination = join(root, "bundle.json");
   const evidence = createEvidence(
     undefined,
@@ -35,6 +26,7 @@ it("publishes CLI Evidence without re-authenticating the complete graph", async 
       parameters: { payload_bytes: 4_000_000 },
       result: { payload: "x".repeat(4_000_000) },
     },
+    { immutable: true },
   );
 
   const output = await publishCliAnalysisEvidence(ok(evidence), {
@@ -52,4 +44,30 @@ it("publishes CLI Evidence without re-authenticating the complete graph", async 
   expect(bundle.records.map((record) => record.evidence_id)).toContain(
     evidence.evidence_id,
   );
+});
+
+it("keeps the writer heap check for mutable source Evidence", async () => {
+  const root = await createTestTempDirectory("rea-cli-mutable-evidence-");
+  const destination = join(root, "bundle.json");
+  const evidence = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "fixture",
+      parameters: { payload_bytes: 1_000 },
+      result: { payload: "x".repeat(1_000) },
+    },
+  );
+  const mutable = JSON.parse(JSON.stringify(evidence)) as typeof evidence;
+
+  const output = await publishCliAnalysisEvidence(ok(evidence), {
+    providerId: "fixture",
+    operation: "fixture",
+    signal: new AbortController().signal,
+    detail: "complete",
+    evidenceOutput: destination,
+    sourceEvidence: [mutable],
+  });
+
+  expect(output).toMatchObject({ code: "resource_constraint" });
 });
