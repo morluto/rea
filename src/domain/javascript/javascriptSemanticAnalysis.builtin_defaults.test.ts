@@ -718,3 +718,17 @@ it("invalidates promise-based configuration file reads after mutation", () => {
   );
   expect(ir.configurationOperations).toEqual([]);
 });
+
+it.each([
+  "const { readFileSync } = require('fs/promises'); readFileSync('config.json');",
+  "const { readFileSync } = require('node:fs/promises'); readFileSync('config.json');",
+  "import { readFileSync } from 'node:fs/promises'; readFileSync('config.json');",
+  "import fs from 'node:fs/promises'; fs.readFileSync('config.json');",
+  "const fs = require('node:fs'); fs.promises.readFileSync('config.json');",
+])(
+  "does not treat nonexistent readFileSync on promise-based fs as configuration read: %s",
+  (source) => {
+    const ir = analyzeCommonJsSemanticFixture(source);
+    expect(ir.configurationOperations).toEqual([]);
+  },
+);
