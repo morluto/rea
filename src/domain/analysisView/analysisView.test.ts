@@ -1519,6 +1519,8 @@ it.each(["partial", "unknown"] as const)(
     ] as const) {
       const result = projectAnalysisView(parent, view);
       if (!result.ok) throw result.error;
+      if (result.value.coverage === null)
+        throw new Error("Expected known coverage");
       expect(result.value.coverage.exhausted).toBe(true);
       if (result.value.kind === "javascript")
         expect(result.value.source_coverage).toMatchObject({

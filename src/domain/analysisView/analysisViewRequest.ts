@@ -2,6 +2,7 @@ import {
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,
 } from "./nativeObservationSchemas.js";
+import { nativeInstructionReferencesRequestSchema } from "./nativeInstructionReferencesView.js";
 import { devicetreeViewRequestSchema } from "./devicetreeView.js";
 import { apkSignatureViewRequestSchema } from "../apkSignature/apkSignatureQuery.js";
 import { erlangBeamViewRequestSchema } from "./erlangBeamView.js";
@@ -57,6 +58,7 @@ import {
 } from "./analysisViewShape.js";
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
+  nativeInstructionReferencesRequestSchema,
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,
   devicetreeViewRequestSchema,

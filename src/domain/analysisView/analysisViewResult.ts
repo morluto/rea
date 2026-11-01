@@ -1,5 +1,10 @@
 import { analysisViewCoverageSchema } from "./analysisViewCoverage.js";
 import {
+  nativeInstructionReferencesRequestSchema,
+  nativeInstructionReferenceItemsSchema,
+  nativeInstructionReferenceContextSchema,
+} from "./nativeInstructionReferencesView.js";
+import {
   javaScriptRouteInventorySourceSchema,
   javaScriptRouteInventorySchema,
 } from "../javascript/javascriptRouteInventory.js";
@@ -1020,6 +1025,18 @@ const machoPageViewResultSchema = z
 
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...viewResultBase,
+    ...nativeViewSourceContext,
+    kind: z.literal("native-instruction-references"),
+    parent_operation: z.literal("inspect_native_instruction"),
+    artifact: artifactSchema.nullable(),
+    view: nativeInstructionReferencesRequestSchema,
+    instruction: nativeInstructionReferenceContextSchema,
+    items: nativeInstructionReferenceItemsSchema,
+    coverage: analysisViewCoverageSchema.nullable(),
+    byte_limited: z.boolean(),
+  }),
   nativeObservationPageViewResultSchema,
   nativeContextViewResultSchema,
   javaScriptRoutesViewResultSchema,
