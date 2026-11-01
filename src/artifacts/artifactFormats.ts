@@ -40,6 +40,7 @@ import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
+import { UnityWebDataArtifactReader } from "./UnityWebDataArtifactReader.js";
 import { ZipArtifactReader } from "./ZipArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
@@ -285,6 +286,16 @@ const NON_ZIP_FORMATS = {
       "UnityFS inventory establishes packaged bytes and metadata; serialized objects, textures, meshes and runtime asset behavior were not decoded. LZMA-compressed members are unsupported.",
     createReader: (path, options) =>
       new UnityFsArtifactReader(path, sourceOf(options)),
+  }),
+  "unity-web-data": container("unity-web-data", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Unity WebGL data inventory establishes stored member bytes and names; nested UnityFS bundles, SerializedFiles and runtime asset behavior were not decoded.",
+    createReader: (path, options) =>
+      new UnityWebDataArtifactReader(path, sourceOf(options)),
   }),
   uimage: container("uimage", {
     roleContainer: true,

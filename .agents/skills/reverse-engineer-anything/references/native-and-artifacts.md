@@ -707,6 +707,15 @@ cache one decoded block and support retained filtered/paged views. No
 decryption or SerializedFile object decoding is provided. See
 [UnityFS](https://github.com/morluto/rea/blob/main/docs/unityfs.md).
 
+Unity WebGL `.data` files (`UnityWebData1.0`, often saved as `Build.data.gz`
+already decompressed) are containers too: extract them, then extract the nested
+`data.unity3d` UnityFS bundle. Use `inspect_unity_assets` on one extracted
+SerializedFile (`level0`, `sharedassets0.assets`, `CAB-*`) for class counts,
+Mesh/Texture2D/Material names and root GameObjects. Fields come from fixed
+Unity 5.5+ layouts; null fields and partial coverage mark objects outside them.
+`submesh_vertex_extent` is derived, not the vertex buffer count. See
+[Unity assets](https://github.com/morluto/rea/blob/main/docs/unity-assets.md).
+
 U-Boot legacy uImages use the same inspection/extraction workflows. Prefer a
 retained summary and selected inventory views for header facts or component
 IDs. Header addresses/CPU/OS are declarations; payloads remain as stored.

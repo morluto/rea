@@ -41,6 +41,10 @@ export default defineConfig({
           { text: "CPython pyc files", link: "/python-pyc" },
           { text: "Erlang BEAM", link: "/erlang-beam" },
           {
+            text: "Unity WebGL data and SerializedFiles",
+            link: "/unity-assets",
+          },
+          {
             text: "JavaScript and Electron",
             link: "/javascript-artifact-reconstruction",
           },

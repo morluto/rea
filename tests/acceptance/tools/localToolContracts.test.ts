@@ -239,6 +239,7 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["inspect_native_exports", { path: nul }],
   ["inspect_elf_notes", { path: nul }],
   ["inspect_apple_ips", { path: nul }],
+  ["inspect_unity_assets", { path: nul }],
   ["inspect_devicetree", { path: nul }],
   ["inspect_kernel_module", { path: nul }],
   ["inspect_pe_load_config", { path: nul }],

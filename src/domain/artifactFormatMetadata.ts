@@ -63,6 +63,25 @@ export const unityFsEntryMetadataSchema = z.strictObject({
   flags: uint32,
 });
 
+/** Parsed directory facts owned by the Unity WebGL `.data` adapter. */
+export const unityWebDataMetadataSchema = z.strictObject({
+  kind: z.literal("unity-web-data"),
+  signature: z.string(),
+  directory_end: uint32,
+  member_count: uint32,
+});
+export type UnityWebDataMetadata = z.infer<typeof unityWebDataMetadataSchema>;
+
+export const unityWebDataEntryMetadataSchema = z.strictObject({
+  kind: z.literal("unity-web-data-entry"),
+  index: uint32,
+  source_path: z.string(),
+  declared_offset: uint32,
+});
+export type UnityWebDataEntryMetadata = z.infer<
+  typeof unityWebDataEntryMetadataSchema
+>;
+
 /** Source cookie fields and derived directory counts without Python execution. */
 export const pyInstallerMetadataSchema = z.strictObject({
   kind: z.literal("pyinstaller"),
@@ -829,6 +848,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckEntryMetadataSchema,
   unityFsMetadataSchema,
   unityFsEntryMetadataSchema,
+  unityWebDataMetadataSchema,
+  unityWebDataEntryMetadataSchema,
   pyInstallerMetadataSchema,
   pyInstallerEntryMetadataSchema,
   dotnetBundleEntryMetadataSchema,

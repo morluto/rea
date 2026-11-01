@@ -2,6 +2,7 @@ import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
 import { hasUImageMagic } from "../../domain/uimageFormat.js";
 import { hasUnityFsHeader } from "../../domain/unityfsFormat.js";
+import { hasUnityWebDataHeader } from "../../domain/unityWebDataFormat.js";
 import { detectHexRecordEncoding } from "../../domain/firmware/hexRecords.js";
 import { recognizeEspImage } from "../../domain/firmware/espImage.js";
 import { hasUf2Block } from "../../domain/firmware/uf2.js";
@@ -604,6 +605,7 @@ export const classifyArtifactBytes = (
   if (hasZipSignature(prefix)) return "zip";
   if (hasGodotPckHeader(prefix)) return "godot-pck";
   if (hasUnityFsHeader(prefix)) return "unityfs";
+  if (hasUnityWebDataHeader(prefix)) return "unity-web-data";
   if (hasUImageMagic(prefix)) return "uimage";
   const hexRecords = detectHexRecordEncoding(prefix);
   if (hexRecords !== undefined) return hexRecords;

@@ -50,6 +50,7 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_python_pyc:
     "states that it does not execute bytecode or invoke CPython",
   inspect_erlang_beam: "states that it does not execute bytecode",
+  inspect_unity_assets: "states that it does not run the player",
   inspect_sqlite_database:
     "uses a trusted inspector worker without executing application code or caller SQL",
   inspect_binary_layout:

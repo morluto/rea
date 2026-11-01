@@ -474,6 +474,7 @@ const workflowAvailabilityFor = ({
     name === "inspect_python_pyc" ||
     name === "inspect_apple_ips" ||
     name === "inspect_erlang_beam" ||
+    name === "inspect_unity_assets" ||
     name === "inspect_electron_fuses"
   )
     return { reason: "available", remediation: null };

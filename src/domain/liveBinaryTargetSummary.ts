@@ -73,6 +73,7 @@ export const liveBinaryTargetSummaryVariants = [
       "ines",
       "godot-pck",
       "unityfs",
+      "unity-web-data",
       "uimage",
       "dmg",
       "pkg",

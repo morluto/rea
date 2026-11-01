@@ -293,6 +293,7 @@ export type BinaryTarget =
           | "ines"
           | "godot-pck"
           | "unityfs"
+          | "unity-web-data"
           | "uimage"
           | "dmg"
           | "pkg"
