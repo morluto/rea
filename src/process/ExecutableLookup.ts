@@ -19,7 +19,7 @@ export type ExecutableLookup =
       readonly cause: unknown;
     }
   | { readonly status: "missing"; readonly checked: readonly string[] }
-  /** A relative command or PATH entry needed the working directory, which could not be read. */
+  /** A relative command, or a relative PATH entry with no later match, needed the working directory, which could not be read. */
   | { readonly status: "no-working-directory"; readonly cause: unknown }
   /** The caller's signal or deadline ended the lookup before it finished. */
   | {
@@ -40,9 +40,12 @@ export interface ExecutableLookupBounds {
  * contains a path separator is the selected path; PATH search continues past
  * denied directories, and an existing file without execute permission is not
  * a match. The working directory is read only when the search reaches a
- * relative command or PATH entry, since it may have been removed. A
- * file-system call cannot itself be cancelled, so an interrupted lookup stops
- * waiting for it and lets it settle unobserved.
+ * relative command or PATH entry, since it may have been removed. When that
+ * read fails, the search skips the relative entry, as a spawned search finds
+ * nothing under a removed directory, and reports the unread working directory
+ * only if no later entry matches. A file-system call cannot itself be
+ * cancelled, so an interrupted lookup stops waiting for it and lets it settle
+ * unobserved.
  */
 export const lookupExecutable = async (
   command: string,
@@ -72,6 +75,9 @@ export const lookupExecutable = async (
   const interruption = lookupInterruption(signal, timeoutMs);
   try {
     const checked: string[] = [];
+    // A relative PATH entry skipped because the working directory could not
+    // be read; without a later match, the command is not known to be missing.
+    let skipped: { readonly cause: unknown } | undefined;
     for (const entry of entries) {
       // Resolved only when reached: a match in an earlier entry never needs
       // the working directory that a later relative entry would read.
@@ -81,7 +87,13 @@ export const lookupExecutable = async (
           ? located(entry)
           : appendCallerPath(located(entry), command);
       } catch (cause) {
-        return { status: "no-working-directory", cause };
+        // An explicit relative command has no other candidate.
+        if (explicit) return { status: "no-working-directory", cause };
+        skipped ??= { cause };
+        checked.push(
+          `${appendCallerPath(entry === "" ? "." : entry, command)} (working directory unreadable)`,
+        );
+        continue;
       }
       const metadata = await interruption.race(stat(candidate));
       if (metadata.status === "interrupted") return metadata;
@@ -111,7 +123,9 @@ export const lookupExecutable = async (
         `${candidate}${systemErrorSuffix(systemErrorCode(executable.cause))}`,
       );
     }
-    return { status: "missing", checked };
+    return skipped === undefined
+      ? { status: "missing", checked }
+      : { status: "no-working-directory", cause: skipped.cause };
   } finally {
     interruption.release();
   }

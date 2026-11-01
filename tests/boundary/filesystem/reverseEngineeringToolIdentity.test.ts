@@ -363,7 +363,7 @@ posix(
 );
 
 posix(
-  "reads the working directory only when the PATH search reaches a relative entry",
+  "reads the working directory only when the PATH search reaches a relative entry, and skips that entry when the read fails",
   async () => {
     const { executable } = await rizinExecutableFixture();
     const directory = dirname(executable);
@@ -376,8 +376,12 @@ posix(
     expect(workingDirectory).not.toHaveBeenCalled();
     await expect(
       lookupExecutable("rizin", workingDirectory, `.${delimiter}${directory}`),
-    ).resolves.toMatchObject({ status: "no-working-directory" });
+    ).resolves.toEqual({ status: "found", path: executable });
     expect(workingDirectory).toHaveBeenCalledOnce();
+    // Without a later match, the unread entry leaves the command unknown.
+    await expect(
+      lookupExecutable("rizin", workingDirectory, "."),
+    ).resolves.toMatchObject({ status: "no-working-directory" });
   },
 );
 

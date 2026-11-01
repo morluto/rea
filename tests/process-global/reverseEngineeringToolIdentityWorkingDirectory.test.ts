@@ -47,9 +47,12 @@ posix(
   },
 );
 
-posix(
-  "identifies a PATH match before a relative entry without reading the working directory",
-  async () => {
+posix.each([
+  ["before", false],
+  ["after", true],
+] as const)(
+  "identifies a PATH match %s a relative entry whose working directory cannot be read",
+  async (_order, relativeFirst) => {
     const { executable, path } = await rizinExecutableFixture();
     const run = versionProbeRunner(() => "rizin 0.9.1 @ linux-x86-64");
     const service = new TestReverseEngineeringService({
@@ -57,7 +60,9 @@ posix(
       lookup: lookupExecutable,
       environment: {
         REA_RIZIN_COMMAND: "rizin",
-        PATH: `${dirname(executable)}${delimiter}.`,
+        PATH: relativeFirst
+          ? `.${delimiter}${dirname(executable)}`
+          : `${dirname(executable)}${delimiter}.`,
       },
     });
     const cwd = unreadableWorkingDirectory();
@@ -69,7 +74,8 @@ posix(
         provider_executable_path: executable,
         provider_identity: "banner",
       });
-      expect(cwd).not.toHaveBeenCalled();
+      // A relative entry before the match is reached and skipped.
+      expect(cwd).toHaveBeenCalledTimes(relativeFirst ? 1 : 0);
     } finally {
       cwd.mockRestore();
     }
