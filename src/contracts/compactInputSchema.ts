@@ -2,6 +2,7 @@ import {
   COMPACT_SCHEMA_MAX_DEPTH,
   hasGatewayIncompatibleShape,
   inlineWithinBudget,
+  isSchemaObject,
   reduceToShallowProperties,
   schemaDepth,
   serializedBytes,
@@ -28,6 +29,34 @@ export interface CompactedInputSchema {
 const INPUT_REDUCED_ANNOTATION =
   "Advertised in reduced form by the compact input schema profile; the server still validates complete canonical inputs.";
 
+// `detail` selects between complete Evidence and a bounded summary. Without
+// its guidance, callers default to complete replies that can exceed context.
+const retainedRootPropertyDescriptions = ["detail"];
+
+/** Restore the description of root properties whose choice bounds the reply. */
+const retainRootPropertyGuidance = (
+  schema: Record<string, unknown>,
+  stripped: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (
+    !isSchemaObject(schema.properties) ||
+    !isSchemaObject(stripped.properties)
+  )
+    return stripped;
+  const properties = { ...stripped.properties };
+  for (const name of retainedRootPropertyDescriptions) {
+    const source = schema.properties[name];
+    const kept = properties[name];
+    if (
+      isSchemaObject(source) &&
+      isSchemaObject(kept) &&
+      typeof source.description === "string"
+    )
+      properties[name] = { ...kept, description: source.description };
+  }
+  return { ...stripped, properties };
+};
+
 /**
  * Render an advertised input schema within a per-schema byte budget for
  * providers that validate the literal serialized schema size. Validation
@@ -41,7 +70,9 @@ export const compactAdvertisedInputSchema = (
 ): CompactedInputSchema => {
   const expanded = inlineWithinBudget(stripAnnotations(schema), budgetBytes);
   const inline =
-    expanded === undefined ? undefined : typeArrayItemUnions(expanded);
+    expanded === undefined
+      ? undefined
+      : typeArrayItemUnions(retainRootPropertyGuidance(schema, expanded));
   if (
     inline !== undefined &&
     serializedBytes(inline) <= budgetBytes &&

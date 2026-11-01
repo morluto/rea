@@ -1635,7 +1635,9 @@ JSON Schema:
 
 - Annotation prose leaves the advertised form: nested property descriptions,
   literal examples, defaults, and titles are dropped. The root keeps its
-  description because it states the accepted input groups.
+  description because it states the accepted input groups. A root `detail`
+  property keeps its description because it selects between complete Evidence
+  and a bounded summary.
 - Schema-local references are inlined within the budget. Kimi Code expands
   references before sending provider requests, so sharing definitions cannot
   establish the provider-facing size. Expansion stops at the budget before
