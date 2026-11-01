@@ -97,6 +97,7 @@ import { normalizeKunaAddress } from "./KunaAddress.js";
 import {
   ambiguousKunaNameMessage,
   KUNA_PROCEDURE_AMBIGUOUS_NAME_REMEDIATION,
+  KUNA_PROCEDURE_MISSING_ADDRESS_REMEDIATION,
   KUNA_PROCEDURE_MISSING_NAME_REMEDIATION,
   KUNA_XREF_AMBIGUOUS_NAME_REMEDIATION,
   KUNA_XREF_MISSING_NAME_REMEDIATION,
@@ -1048,9 +1049,23 @@ export class KunaSessionClient implements AnalysisClient {
       const entry = index.byAddress.get(address);
       if (entry === undefined)
         return err(
-          new AnalysisInputError(operation, {
-            userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
-          }),
+          new AnalysisInputError(
+            operation,
+            {
+              userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
+              remediationAction: KUNA_PROCEDURE_MISSING_ADDRESS_REMEDIATION,
+              conformsToInputContract: true,
+            },
+            [
+              {
+                path: [field],
+                reason: "invalid_value",
+                message:
+                  "The address was not found in Kuna's procedure inventory.",
+                observed: { [field]: selector },
+              },
+            ],
+          ),
         );
       return refused(entry) ? dataRefusal(entry) : selected(entry);
     }

@@ -355,6 +355,17 @@ const verifyKuna = async (
           (issue) => issue.observed?.procedure === "rea_missing_procedure_name",
         ),
       );
+      const missingAddress = await cold.callError("procedure_address", {
+        procedure: "0x00000001",
+      });
+      assert.equal(missingAddress.code, "invalid_request");
+      assert.equal(missingAddress.recovery, undefined);
+      assert.match(missingAddress.remediation.action, /list_procedures/u);
+      assert.ok(
+        missingAddress.details.issues.some(
+          (issue) => issue.observed?.procedure === "0x00000001",
+        ),
+      );
     }
     for (const [name, address] of functions) {
       assert.ok(

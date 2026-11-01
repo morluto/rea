@@ -179,6 +179,7 @@ it("guides valid ambiguous and missing procedure selectors without schema repair
     for (const [procedure, expected] of [
       ["puts", "address"],
       ["missing_procedure", "search_procedures"],
+      ["0x00000001", "list_procedures"],
     ] as const) {
       const result = await client.execute("procedure_address", { procedure });
       expect(result.ok).toBe(false);

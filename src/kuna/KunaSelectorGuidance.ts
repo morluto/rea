@@ -9,6 +9,9 @@ export const KUNA_XREF_AMBIGUOUS_NAME_REMEDIATION =
 export const KUNA_PROCEDURE_MISSING_NAME_REMEDIATION =
   "Use search_procedures or list_procedures to inspect Kuna's current inventory. An absent name does not establish that the function is absent from the target.";
 
+export const KUNA_PROCEDURE_MISSING_ADDRESS_REMEDIATION =
+  "Use list_procedures or search_procedures to inspect Kuna's current inventory and verify the selected address. An absent entry does not establish that the function is absent from the target.";
+
 export const KUNA_PROCEDURE_AMBIGUOUS_NAME_REMEDIATION =
   "Select one of the reported procedure addresses and retry the operation.";
 
