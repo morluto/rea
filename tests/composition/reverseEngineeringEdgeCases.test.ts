@@ -842,7 +842,15 @@ it("retains a capability failure when its injected owned runner also reports inc
     if (first.ok) throw new Error("Expected the capability failure");
     expect(first.error._tag).toBe("AnalysisCapabilityUnavailableError");
     expect(first.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
-    expect(first.error.diagnostics).toEqual({ source: "owned-runner" });
+    // The selected executable, as the command port resolves it here.
+    const selected = createReverseEngineeringCommandPort(process.env).rizin({
+      path,
+      command: "iI",
+    }).executable;
+    expect(first.error.diagnostics).toEqual({
+      source: "owned-runner",
+      provider_executable: selected,
+    });
     expect(first.error.cleanupIncomplete).toBe(true);
     expect(first.error.cleanup).toMatchObject({
       reason: "owned descendant remains",

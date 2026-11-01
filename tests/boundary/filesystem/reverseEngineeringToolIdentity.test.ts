@@ -418,7 +418,7 @@ posix.each(["cancellation", "deadline"] as const)(
             return stat(target);
           },
         }),
-      environment: { REA_RIZIN_COMMAND: executable },
+      environment: { REA_RIZIN_COMMAND: "rizin", PATH: dirname(executable) },
     });
     const caller = new AbortController();
     const pending: Promise<unknown>[] = [];
@@ -451,6 +451,7 @@ posix.each(["cancellation", "deadline"] as const)(
       expect(result.error.diagnostics).toEqual({
         phase: "executable_lookup",
         executable_lookup_candidate: executable,
+        provider_executable: "rizin",
       });
       expect(run).not.toHaveBeenCalled();
       // Closing does not wait for the abandoned file-system call.
@@ -497,6 +498,7 @@ posix(
     expect(result.error.diagnostics).toMatchObject({
       phase: "version_probe",
       provider_executable_path: executable,
+      provider_executable: executable,
       provider_executable_sha256: await digest(),
     });
     expect(run).toHaveBeenCalledOnce();
@@ -608,7 +610,7 @@ posix.each(["deadline", "cancellation"] as const)(
     const service = new TestReverseEngineeringService({
       run,
       lookup: lookupExecutable,
-      environment: { REA_RIZIN_COMMAND: executable },
+      environment: { REA_RIZIN_COMMAND: "rizin", PATH: dirname(executable) },
       // Only the executable's digest stalls, past the call's deadline.
       stat: async (target) => {
         if (target === executable) {
@@ -648,6 +650,7 @@ posix.each(["deadline", "cancellation"] as const)(
       expect(result.error.diagnostics).toEqual({
         phase: "executable_digest",
         provider_executable_path: executable,
+        provider_executable: "rizin",
       });
       expect(run).not.toHaveBeenCalled();
     } finally {

@@ -483,7 +483,11 @@ export class ReverseEngineeringService {
       signal,
       timeoutMs,
     );
-    if (!identified.ok) return identified;
+    // An error before Evidence exists keeps the executable the caller selected.
+    if (!identified.ok)
+      return err(
+        identified.error.retainDiagnostics({ provider_executable: command }),
+      );
     const identification = identified.value;
     let stdout = "";
     let stderr = "";
@@ -693,15 +697,18 @@ export class ReverseEngineeringService {
       }
     }
     if (earlyFailure !== undefined) {
-      // Without command output there is no Evidence to carry what the lookup,
-      // hash and probe observed, so the failure keeps it beside the
-      // executable the caller selected.
-      if (identification.observed)
-        earlyFailure.retainDiagnostics({
-          provider: identification.identity,
-          provider_executable: command,
-          ...identification.parameters,
-        });
+      // Without command output there is no Evidence to carry the selected
+      // executable and what the lookup, hash and probe observed, so the
+      // failure keeps them.
+      earlyFailure.retainDiagnostics(
+        identification.observed
+          ? {
+              provider: identification.identity,
+              provider_executable: command,
+              ...identification.parameters,
+            }
+          : { provider_executable: command },
+      );
       return err(this.#registerCleanupFailure(earlyFailure, cleanupOwner));
     }
     if (failure !== undefined && cleanupOwner !== undefined)
