@@ -174,6 +174,10 @@ main() {
   [ "$installed_version" = "$version" ] || fail "installed version $installed_version does not match $version. Reinstall the requested version, then retry."
 
   printf 'REA %s is installed.\n' "$version"
+  if ! command -v rea >/dev/null 2>&1; then
+    printf 'NOTE: the installed command is not on PATH: %s\n' "$install_bin"
+    printf 'Add %s to PATH to run rea without a path.\n' "$(dirname "$install_bin")"
+  fi
   if [ "$start_setup" = true ] && [ -r /dev/tty ] && [ -w /dev/tty ] && [ -t 1 ] && [ -t 2 ]; then
     printf 'Starting REA setup...\n'
     "$install_bin" setup </dev/tty >/dev/tty
