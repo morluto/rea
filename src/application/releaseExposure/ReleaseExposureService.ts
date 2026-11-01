@@ -209,6 +209,13 @@ export class ReleaseExposureService {
           reason: OWNER_NOT_RUN,
         }),
       );
+    const family = fuseImagesRuleOutElectron(
+      desktop.family,
+      prepared.scan,
+      fuseImages,
+    )
+      ? ({ family: "not_electron", reason: null } as const)
+      : desktop;
     const goImages: MetadataImageFact[] = [];
     const rustImages: MetadataImageFact[] = [];
     for (const image of prepared.scan.native_images) {
@@ -227,8 +234,8 @@ export class ReleaseExposureService {
               limitations: [...prepared.scan.limitations, OWNER_NOT_RUN],
             },
       facts: {
-        electron_family: desktop.family,
-        electron_family_reason: desktop.reason,
+        electron_family: family.family,
+        electron_family_reason: family.reason,
         electron_executable_included: prepared.electronExecutableIncluded,
         fuse_images: fuseImages,
         go_images: goImages,
@@ -265,7 +272,7 @@ export class ReleaseExposureService {
           archivePaths: [],
         });
       }
-      return ok(desktopFamily(result.value));
+      return ok(desktopFamily(result.value, scan.target.kind));
     } catch (cause) {
       if (cause instanceof AnalysisCancelledError) return err(cause);
       return ok({
@@ -561,7 +568,15 @@ interface DesktopFamilyFact {
   readonly archivePaths: readonly string[];
 }
 
-const desktopFamily = (evidence: Evidence): DesktopFamilyFact => {
+/**
+ * The desktop owner names Electron only from an ASAR layout, so an `asar: false`
+ * build has no candidate. Having none leaves the family undecided, except for an
+ * app bundle with no Electron Framework: the fuses have nowhere to live.
+ */
+const desktopFamily = (
+  evidence: Evidence,
+  targetKind: ReleaseExposureScan["target"]["kind"],
+): DesktopFamilyFact => {
   const report = desktopApplicationSchema.safeParse(evidence.normalized_result);
   if (!report.success)
     return {
@@ -591,8 +606,38 @@ const desktopFamily = (evidence: Evidence): DesktopFamilyFact => {
       reason: "Desktop application coverage is partial.",
       archivePaths: [],
     };
-  return { family: "not_electron", reason: null, archivePaths: [] };
+  if (
+    targetKind === "app" &&
+    !report.data.files.some(
+      (file) => desktopPathConventions(file.path).electronFramework,
+    )
+  )
+    return { family: "not_electron", reason: null, archivePaths: [] };
+  return {
+    family: "unknown",
+    reason:
+      "No ASAR layout was found, and no fuse read has ruled out an asar: false Electron build.",
+    archivePaths: [],
+  };
 };
+
+/**
+ * A directory is not Electron only when every native image in it was read and
+ * none holds a fuse sentinel. An unread image could be the Electron executable.
+ */
+const fuseImagesRuleOutElectron = (
+  family: DesktopFamilyFact["family"],
+  scan: ReleaseExposureScan,
+  images: readonly FuseImageFact[],
+): boolean =>
+  family === "unknown" &&
+  scan.target.kind === "directory" &&
+  scan.coverage === "complete" &&
+  images.length > 0 &&
+  !scan.omitted.some((item) => item.subject === "native images") &&
+  images.every(
+    (image) => image.kind === "report" && image.implications?.length === 0,
+  );
 
 const limitNativeSample = (
   scan: ReleaseExposureScan,

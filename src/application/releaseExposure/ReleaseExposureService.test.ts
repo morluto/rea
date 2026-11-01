@@ -745,6 +745,143 @@ describe("ReleaseExposureService fuse sampling", () => {
   });
 });
 
+describe("ReleaseExposureService Electron applicability", () => {
+  const directoryScan = (paths: readonly string[]) => {
+    const images = paths.map((path) => ({ path, format: "elf" as const }));
+    return scan({
+      target: {
+        selected_path: "/work/app",
+        kind: "directory",
+        format: "directory",
+        sha256: null,
+      },
+      subject: { path: "/work/app", sha256: SHA, format: "directory" },
+      native_images: images,
+      fuse_candidates: images.map((image) => ({
+        path: image.path,
+        role: "native-image" as const,
+      })),
+    });
+  };
+  const appScan = scan({
+    target: {
+      selected_path: "/work/App.app",
+      kind: "app",
+      format: "directory",
+      sha256: null,
+    },
+    fuse_candidates: [{ path: "/work/App.app", role: "app-bundle" }],
+  });
+  const frameworkDesktopReport = () => ({
+    ...nativeDesktopReport(),
+    files: [
+      {
+        ...electronDesktopReport().files[0],
+        path: "Contents/Frameworks/Electron Framework.framework/Electron Framework",
+        local_path:
+          "/work/App.app/Contents/Frameworks/Electron Framework.framework/Electron Framework",
+      },
+    ],
+  });
+  const runAsNode = async (
+    service: ReleaseExposureService,
+    path = "/work/app",
+  ) => {
+    const result = await service.inspect({ path });
+    if (!result.ok) throw result.error;
+    return releaseExposureReportSchema
+      .parse(result.value.normalized_result)
+      .checks.find((check) => check.id === "electron.run_as_node");
+  };
+  const noSentinel = ok(evidence(fuseReport([slice(0, { sentinels: 0 })])));
+  const unreadable = err(new AnalysisInputError("inspect_electron_fuses"));
+
+  it("reads safe fuses on an asar: false directory instead of ruling Electron out", async () => {
+    const { service, electronFuses } = owners(
+      directoryScan(["/work/app/electron"]),
+    );
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("not_observed");
+  });
+
+  it("does not hide a failed fuse read behind a missing ASAR hint", async () => {
+    const { service, electronFuses } = owners(
+      directoryScan(["/work/app/electron"]),
+    );
+    electronFuses.inspect.mockResolvedValue(unreadable);
+    expect(await runAsNode(service)).toMatchObject({
+      status: "unknown",
+      observation: {
+        samples: expect.arrayContaining([
+          expect.stringContaining("asar: false"),
+        ]),
+      },
+    });
+  });
+
+  it("rules out Electron once every native image was read without a sentinel", async () => {
+    const { service, electronFuses } = owners(
+      directoryScan(["/work/app/one", "/work/app/two"]),
+    );
+    electronFuses.inspect.mockResolvedValue(noSentinel);
+    expect((await runAsNode(service))?.status).toBe("not_applicable");
+  });
+
+  it.each([
+    ["an image past the sample", { omit: true, coverage: "complete" }],
+    ["unknown inventory coverage", { omit: false, coverage: "unknown" }],
+  ] as const)("does not rule out Electron with %s", async (_, input) => {
+    const paths = ["a", "b", "c", "d", ...(input.omit ? ["e"] : [])];
+    const { service, electronFuses } = owners({
+      ...directoryScan(paths.map((name) => `/work/app/${name}`)),
+      coverage: input.coverage,
+    });
+    electronFuses.inspect.mockResolvedValue(noSentinel);
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
+
+  it("does not rule out Electron when one image could not be read", async () => {
+    const { service, electronFuses } = owners(
+      directoryScan(["/work/app/one", "/work/app/two"]),
+    );
+    electronFuses.inspect
+      .mockResolvedValueOnce(noSentinel)
+      .mockResolvedValueOnce(unreadable);
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
+
+  it("does not treat a directory with no native image as proof", async () => {
+    const { service, electronFuses } = owners(directoryScan([]));
+    expect((await runAsNode(service))?.status).toBe("unknown");
+    expect(electronFuses.inspect).not.toHaveBeenCalled();
+  });
+
+  it("rules out Electron on an app bundle with no Electron Framework", async () => {
+    const { service, electronFuses } = owners(appScan);
+    electronFuses.inspect.mockResolvedValue(unreadable);
+    expect((await runAsNode(service, "/work/App.app"))?.status).toBe(
+      "not_applicable",
+    );
+  });
+
+  it.each([
+    ["a sentinel-free", noSentinel],
+    ["an unreadable", unreadable],
+  ] as const)(
+    "keeps the checks unknown on an asar: false bundle with %s framework",
+    async (_, read) => {
+      const { service, desktop, electronFuses } = owners(appScan);
+      desktop.inspect.mockResolvedValue(ok(evidence(frameworkDesktopReport())));
+      electronFuses.inspect.mockResolvedValue(read);
+      expect((await runAsNode(service, "/work/App.app"))?.status).toBe(
+        "unknown",
+      );
+    },
+  );
+});
+
 describe("ReleaseExposureService scanners and selected archives", () => {
   it("leaves fuse checks unknown on a selected ASAR because they were not read", async () => {
     const { service, desktop, electronFuses } = owners(
