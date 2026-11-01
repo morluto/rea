@@ -210,7 +210,8 @@ export const browserScenarioEventSchema = z
     z.strictObject({
       ...networkEventShape,
       kind: z.literal("response"),
-      status: z.int().min(100).max(599),
+      // Preserve nonstandard three-digit statuses reported by the browser.
+      status: z.int().min(100).max(999),
       failure: z.null(),
     }),
     z.strictObject({
