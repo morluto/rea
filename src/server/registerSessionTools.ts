@@ -1,3 +1,4 @@
+import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvailability.js";
 import { parseEspFlashAddress } from "../domain/firmware/espFlashSelection.js";
 import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
@@ -34,10 +35,7 @@ import {
   registerEvidenceTools,
   registerUnknownTools,
 } from "./registerSessionRecordTools.js";
-import {
-  registerSessionStatusTool,
-  type SessionAvailabilityProbes,
-} from "./registerSessionStatusTool.js";
+import { registerSessionStatusTool } from "./registerSessionStatusTool.js";
 import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -150,7 +148,7 @@ const registerProcessTools = ({
   );
 };
 
-export interface LifecycleToolRegistration extends SessionAvailabilityProbes {
+export interface LifecycleToolRegistration extends CapabilityAvailabilityProbes {
   readonly server: EvidenceMcpServer;
   readonly session: BinarySessionPort;
   readonly logger: Logger;
@@ -245,7 +243,7 @@ const registerOpenLifecycleTool = ({
 };
 
 /** Register MCP-only target lifecycle operations on a long-lived session. */
-export interface SessionToolOptions extends Partial<SessionAvailabilityProbes> {
+export interface SessionToolOptions extends Partial<CapabilityAvailabilityProbes> {
   readonly artifactResources: ArtifactResourceScope;
   /** Server environment snapshot that process capture resolves and inherits. */
   readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -460,7 +458,8 @@ export const registerSessionTools = (
 const missingAndroidAvailability = async (): Promise<ProviderAvailability> => ({
   status: "unavailable",
   code: "not_configured",
-  reason:
+  reason: "No Android JADX analysis provider is configured.",
+  remediation:
     "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp 0.7.1 JAR and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
   diagnostics: { configured: false },
 });

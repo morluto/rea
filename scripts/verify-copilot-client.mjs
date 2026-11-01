@@ -12,6 +12,7 @@ import {
 import { advertisedInputJsonSchema } from "../dist/contracts/toolSchemaMetadata.js";
 import { presentAdvertisedInputSchema } from "../dist/contracts/compactInputSchema.js";
 import { compactPresentationForMcpInputSchemaProfile } from "../dist/config/mcpInputSchemaProfile.js";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
@@ -300,8 +301,8 @@ await withVerifierCleanup(async () => {
             parsed.plannedActions.every(
               (a) =>
                 a.target === configPath ||
-                a.target === skillDirectory ||
-                a.target.startsWith(skillDirectory + "/"),
+                (isAbsolute(a.target) &&
+                  isPathWithinRoot(skillDirectory, a.target)),
             ),
           );
         }

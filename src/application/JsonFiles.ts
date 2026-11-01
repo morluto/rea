@@ -20,7 +20,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   JsonInputPhysicalReadFailure,
@@ -170,7 +170,7 @@ const readJsonFileInput = async <Value>(
         cleanupPrimary: primary,
         ...(primary === undefined
           ? {}
-          : { diagnostics: { primary_error: projectAnalysisError(primary) } }),
+          : childFailureDiagnostics({ primary_error: { error: primary } })),
       });
       bindRegularFileCleanup(cause, error);
       return err(error);
@@ -272,7 +272,7 @@ const jsonFileCleanupError = <Value>(
     ),
     cleanupPrimary: primary,
     cleanup: cleanup.cleanup,
-    diagnostics: { primary_error: projectAnalysisError(primary) },
+    ...childFailureDiagnostics({ primary_error: { error: primary } }),
   }).bindCleanupDependencies([primary, cleanup]);
 };
 

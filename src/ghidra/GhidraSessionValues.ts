@@ -5,11 +5,9 @@ import { z } from "zod";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  GHIDRA_INVENTORY_OPERATIONS,
-  GHIDRA_NAMING_OPERATIONS,
-} from "./GhidraInventoryValues.js";
-import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
+import { GHIDRA_NAMING_OPERATIONS } from "./GhidraInventoryValues.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
+import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
 import {

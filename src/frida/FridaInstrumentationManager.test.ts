@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished } from "vitest";
-import { createDeferred } from "../../../tests/fixtures/binarySession.js";
+import { createDeferred } from "../../tests/fixtures/binarySession.js";
 
 import type {
   Device,
@@ -10,18 +10,18 @@ import type {
   Session,
   Signal,
 } from "frida";
-import { jsonObjectSchema } from "../../domain/jsonValue.js";
-import { FridaScriptLoadCancelledError } from "./FridaInstrumentationPort.js";
+import { jsonObjectSchema } from "../domain/jsonValue.js";
+import { FridaScriptLoadCancelledError } from "../application/frida/FridaInstrumentationPort.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisTimeoutError,
-} from "../../domain/analysisErrorCore.js";
-import { FridaInstrumentationManager } from "../../frida/FridaInstrumentationManager.js";
-import { fridaCaptureLimitations } from "../../frida/fridaCaptureLimits.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { FridaInstrumentationService } from "./FridaInstrumentationService.js";
+} from "../domain/analysisErrorCore.js";
+import { FridaInstrumentationManager } from "./FridaInstrumentationManager.js";
+import { fridaCaptureLimitations } from "./fridaCaptureLimits.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 
 const signal = <Handler extends (...args: never[]) => void>() => {
   let connected: Handler | undefined;

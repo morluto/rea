@@ -1,3 +1,4 @@
+import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { nativeSearchFields } from "../domain/native/nativeSearch.js";
 import { nativeSymbolMetadataSchema } from "../domain/native/nativeSymbol.js";
 import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
@@ -29,30 +30,6 @@ import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-
-/**
- * Direct inventory operations admitted by the Ghidra adapter. All are reads
- * except the naming operations, which edit the ephemeral session database.
- */
-export const GHIDRA_INVENTORY_OPERATIONS = [
-  "read_binary_inventory_summary",
-  "inspect_native_load_image",
-  "read_bytes",
-  "search_bytes",
-  "address_to_file_offset",
-  "address_name",
-  "list_documents",
-  "list_names",
-  "list_procedures",
-  "list_segments",
-  "list_strings",
-  "procedure_address",
-  "resolve_containing_procedure",
-  "search_procedures",
-  "search_strings",
-  "set_address_name",
-  "set_addresses_names",
-] as const;
 
 /** Inventory operations that write analyst names into the session database. */
 export const GHIDRA_NAMING_OPERATIONS = [
@@ -223,6 +200,10 @@ const addressedItem = z
   .object({ ...baseItem, symbol: symbolFacts.exactOptional() })
   .strict();
 const procedureItem = addressedItem.extend({ procedure: procedureFacts });
+/** Other symbols at the exact entry that matched; value stays the primary name. */
+const procedureMatchItem = addressedItem.extend({
+  matched_aliases: z.array(z.string().min(1)).min(1).exactOptional(),
+});
 const stringItem = z.object({ ...baseItem, string: stringFacts }).strict();
 
 const availablePermissions = z
@@ -482,7 +463,7 @@ const resultSchemas = {
   list_strings: z.array(stringItem),
   procedure_address: nativeAddressObservationSchema,
   resolve_containing_procedure: containingProcedure,
-  search_procedures: z.array(addressedItem),
+  search_procedures: z.array(procedureMatchItem),
   search_strings: z.array(addressedItem),
 } satisfies Readonly<
   Record<Exclude<GhidraInventoryOperation, GhidraNamingOperation>, z.ZodType>

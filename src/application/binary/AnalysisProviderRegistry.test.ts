@@ -93,6 +93,7 @@ it("uses one owner readiness snapshot for candidate availability and capabilitie
           status: "unavailable",
           code: "runtime_unavailable",
           reason: "native inspection failed",
+          remediation: "Repair the fixture provider.",
           diagnostics: { failure_stage: "self-test" },
         },
         capabilities: [capability(base.identity())],
@@ -462,6 +463,7 @@ describe("analysis provider registry: rejection origins", () => {
           status: "unavailable",
           code: "open_options_invalid",
           reason: "Configured registration is invalid",
+          remediation: "Repair the fixture provider.",
           diagnostics: { registration_path: "/configured/alpha.json" },
         }),
       },
@@ -727,6 +729,7 @@ const candidate = (
             status: "unavailable",
             code: options.unconfigured ? "not_configured" : "runtime_missing",
             reason: `${id} runtime is unavailable`,
+            remediation: "Repair the fixture provider.",
             diagnostics: { executable_path: `/opt/${id}/bin/analyze` },
           },
     inspectTargetSupport: (target): ProviderTargetSupport =>
