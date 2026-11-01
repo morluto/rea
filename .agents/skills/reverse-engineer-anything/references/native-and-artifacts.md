@@ -352,8 +352,9 @@ the complete tool inventory grouped by current status. Expand each group's
 overrides them; availability, reasons, remediation, and modes remain inline.
 Provider candidates keep availability and target-support status, code, and
 reason. `omitted_fields` names what the summary leaves out; `{"detail":
-"complete"}` adds provider diagnostics, candidate capability sets, and tool
-surface, `effects`, and `annotations`. Those arrays name true flags from fixed
+"complete"}` adds each unavailable candidate's `remediation`, provider
+diagnostics, candidate capability sets, and tool surface, `effects`, and
+`annotations`. Those arrays name true flags from fixed
 vocabularies, so an omitted known flag is false. `tools/list` remains the
 canonical source for full tool schemas when target or provider state changes.
 

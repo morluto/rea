@@ -264,6 +264,24 @@ const handleRequest = (socket, server, request, state) => {
       return;
     }
   }
+  // The bridge's per-procedure deadline: only this request fails.
+  if (
+    state.mode === "decompile_timed_out" &&
+    request.method === "procedure_pseudo_code"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "decompile_timed_out",
+          message:
+            "Ghidra decompilation of 0x1000 exceeded the 1-second configured decompilation limit (ghidra.decompile_timeout_seconds; launch seed REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)",
+        },
+      })}\n`,
+    );
+    return;
+  }
   if (request.method === "address_to_file_offset") {
     socket.write(
       `${JSON.stringify({ id: request.id, ...fileOffsetReply(request.params.address) })}\n`,

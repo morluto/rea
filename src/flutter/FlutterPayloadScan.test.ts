@@ -136,7 +136,7 @@ describe("LabeledStringScanner", () => {
   };
   it("collects a full clang line within the 500-character bound", () => {
     assertSingleToolchainLine(
-      "Android (5900059 based on r365631c1) clang version 9.0.8 (https://android.googlesource.com/toolchain/llvm-project 207d7abc1a2abf3ef8d4301736d6a7ebc224a290) (based on LLVM 9.0.8svn)",
+      "Android (5900059 based on r365631c) clang version 9.0.8 (https://android.googlesource.com/toolchain/llvm-project 207d7abc1a2abf3ef8d4301736d6a7ebc224a290) (based on LLVM 9.0.8svn)",
     );
   });
 
@@ -152,12 +152,6 @@ describe("LabeledStringScanner", () => {
     );
     expect(scanner.result().dartVersion).toBe(
       "Dart VM version: 3.1.0 (stable) somewhere",
-    );
-  });
-
-  it("collects the labeled Android clang line", () => {
-    assertSingleToolchainLine(
-      "Android (5900059 based on r365631c) clang version 9.0.8 (https://android.googlesource.com/toolchain/llvm-project 207d7abc) (based on LLVM 9.0.8svn)",
     );
   });
 

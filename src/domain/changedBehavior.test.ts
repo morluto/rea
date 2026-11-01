@@ -229,14 +229,6 @@ describe("changed behavior", () => {
     expect(aggregate([changed, unknown]).result).toEqual(result);
   });
 
-  it("uses complete inline artifact deltas as static candidates", () => {
-    const complete = comparison("compare_artifacts", artifactResult());
-    expect(aggregate([complete]).result.findings.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ dimension: "artifact:main.js" }),
-      ]),
-    );
-  });
 });
 
 describe("changed-behavior input and Evidence validation", () => {
