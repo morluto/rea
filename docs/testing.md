@@ -742,9 +742,14 @@ membership changes, a cached lineage token is read again on the next refresh, an
 a group that reappears after it was processed is revalidated once, a further
 reappearance stays unresolved, lineage publishes one row per PID, and lineage does not publish a
 verified empty descendant list while that row remains unexamined. A readable token with unavailable
-identity stays unresolved. Native UID facts, rather than an earlier process-table
+identity stays unresolved. Both the sweep and the pre-signal group check re-read
+an unreadable live token a bounded number of times. The sweep classifies the
+PID's current process; the pre-signal re-read stays bound to the first observed
+generation, so a reused PID stays unresolved there. A token that stays
+unreadable fails closed with the native name, parent, group and identity that
+bracketed it. Native UID facts, rather than an earlier process-table
 row, determine whether a token denial concerns another user. Darwin tests compile
-the helper and exercise snapshot growth, absence, lifecycle, and UID observations;
+the helper and exercise snapshot growth, absence, lifecycle, name and UID observations;
 controlled Linux procfs tests do not establish real Linux exit or PID-reuse behavior.
 
 For atomic writes, exercise cancellation on both sides of the documented commit

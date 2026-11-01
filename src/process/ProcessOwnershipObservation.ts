@@ -1063,6 +1063,87 @@ export const readProcessOwnershipFacts = async (
   return facts;
 };
 
+/** Re-reads after a live fact's run token was unavailable. */
+export const TOKEN_READ_RETRY_ATTEMPTS = 3;
+/** Delay before each re-read. */
+export const TOKEN_READ_RETRY_DELAY_MS = 40;
+
+/**
+ * Re-read facts whose token was unavailable while their process was neither
+ * exited nor exiting. Darwin KERN_PROCARGS2 samples the argument length and
+ * stack top separately from its address-space read, and exec publishes the
+ * new length before it copies the new strings out (xnu sysctl_procargsx,
+ * exec_copyout_strings). A read during exec can therefore see a zero-filled or
+ * stale strings area, and exec keeps the PID and start time that bracket the
+ * read. Each attempt is a complete identity/token/identity read. A fact that
+ * stays unreadable keeps its observation and its caller fails closed.
+ *
+ * `current` classifies whichever process now holds each PID, as a sweep does.
+ * `first-observed` keeps a pre-signal check on the generation it first read:
+ * a re-read that sees another generation marks that fact's identity changed,
+ * because a reused PID is not proof that the unreadable generation exited.
+ */
+export const reobserveUnavailableTokenFacts = async (
+  facts: readonly ProcessOwnershipFact[],
+  host: ProcessOwnershipHost,
+  exitSettlement: ProcessExitSettlementBudget,
+  generation: "current" | "first-observed",
+): Promise<readonly ProcessOwnershipFact[]> => {
+  let current = facts;
+  const changed = new Set<number>();
+  for (let attempt = 0; attempt < TOKEN_READ_RETRY_ATTEMPTS; attempt += 1) {
+    const pending = current
+      .filter(
+        ({ process, state, token, identityAfter }) =>
+          token.state === "unavailable" &&
+          !processIdentityHasExited(identityAfter) &&
+          !processIdentityIsExiting(identityAfter) &&
+          (generation === "current" ||
+            (state !== "replaced" && !changed.has(process.pid))),
+      )
+      .map(({ process }) => process);
+    if (pending.length === 0) break;
+    await delay(TOKEN_READ_RETRY_DELAY_MS);
+    const reread = new Map(
+      (
+        await readProcessOwnershipFacts(pending, host, undefined, {
+          exitSettlement,
+        })
+      ).map((fact) => [fact.process.pid, fact]),
+    );
+    current = current.map((fact): ProcessOwnershipFact => {
+      const next = reread.get(fact.process.pid);
+      if (next === undefined || generation === "current") return next ?? fact;
+      const first =
+        fact.state === "same-generation" &&
+        fact.identityAfter.state === "readable"
+          ? fact.identityAfter.identity
+          : undefined;
+      // An unbound first read has no generation to keep, and absence ends it.
+      if (first === undefined || next.identityAfter.state === "absent")
+        return next;
+      if (
+        [next.identityBefore, next.identityAfter].some(
+          (identity) =>
+            identity.state === "readable" && identity.identity !== first,
+        )
+      ) {
+        changed.add(fact.process.pid);
+        return {
+          ...fact,
+          state: "unavailable",
+          identityAfter: {
+            state: "unavailable",
+            reason: "process_identity_changed_during_token_reread",
+          },
+        };
+      }
+      return next.state === "same-generation" ? next : fact;
+    });
+  }
+  return current;
+};
+
 const isExpectedAbort = (
   cause: unknown,
   signal: AbortSignal | undefined,
@@ -1179,6 +1260,7 @@ export const createSystemProcessOwnershipHost = (
               ) => ({
                 state: "readable" as const,
                 identity: `linux-starttime:${facts.startTime}`,
+                ...(facts.name === "" ? {} : { name: facts.name }),
                 ...(effectiveUid === undefined ? {} : { effectiveUid }),
                 ...(environmentRestriction === undefined
                   ? {}

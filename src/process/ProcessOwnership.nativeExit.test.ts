@@ -643,7 +643,8 @@ it("does not signal a stale group after its last member exits during revalidatio
       host,
     ),
   ).toEqual({ cleaned: true, signaled: false });
-  expect(tokenReads).toBe(2);
+  // The unreadable pre-signal token is read once more before exit settles it.
+  expect(tokenReads).toBe(3);
   expect(signalGroup).not.toHaveBeenCalled();
 });
 
