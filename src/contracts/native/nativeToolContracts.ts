@@ -100,7 +100,7 @@ export const NATIVE_TOOL_CONTRACTS = [
   ),
   native(
     "inspect_macho",
-    "Inspect Mach-O slices, load commands, imports, exports, dependencies, build metadata, segments, sections, permissions, and exact command provenance without launching Hopper. Large frameworks return megabytes of symbols; detail summary retains the complete Evidence and returns slice identity with per-collection counts, then page rows with inspect_analysis_view kind macho. native_command_timeout_ms is each Xcode command's wall clock (omitted means 60000 ms, range 1..2147483647, next call) and is distinct from objdump/rizin command_timeout_ms. It does not raise the fixed 67108864-byte output allowance.",
+    "Inspect Mach-O slices, load commands, imports, exports, dependencies, build metadata, segments, sections, permissions, and exact command provenance without launching Hopper. Normalized entrypoint, segment, and section file offsets are relative to the selected Mach-O slice; selected_architecture.container_file_offset and Evidence locations are relative to the original input Mach-O container. Do not use a slice-relative offset as an input-file offset. Large frameworks return megabytes of symbols; detail summary retains the complete Evidence and returns slice identity with per-collection counts, then page rows with inspect_analysis_view kind macho. native_command_timeout_ms is each Xcode command's wall clock (omitted means 60000 ms, range 1..2147483647, next call) and is distinct from objdump/rizin command_timeout_ms. It does not raise the fixed 67108864-byte output allowance.",
     z.object({
       detail: analysisDetailSchema
         .unwrap()
