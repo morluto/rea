@@ -3,6 +3,15 @@
 These source-owned fixtures are compiled at verification time; generated
 binaries and Ghidra projects are never committed.
 
+The optional `ReaIndirectBranchEvidenceProbe.java` and
+`scripts/verify-real-ghidra-warning-attribution.mjs` are a **source-address
+attribution investigation** from draft #5137. They exercise source-owned
+AArch64, AVR and MIPS instruction/markup controls, including overlay
+coordinates and negative warning-provenance cases. They are not a production
+contract or verified result until rerun against the selected REA/Ghidra
+revision. Do not equate text-derived warning coordinates with typed Ghidra
+source addresses without independent evidence.
+
 - `../c/riscv.c` and `riscv-probe.S` produce source-owned RV32/RV64 ELF images
   with double-float ABI declarations and an independently known instruction.
   `../c/riscv-float-abi.c`, `riscv-probe.S` and `riscv-isa-probe.S` produce
