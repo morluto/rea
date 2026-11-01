@@ -600,6 +600,7 @@ export const createGhidraProviderClient = (input: {
         ghidraRiscvLoadPreparationFailure(
           riscvLoadPreparation,
           info.elf_load_preparation,
+          info.target.default_address_space,
         ) ??
         ghidraMipsSoftFloatFailure(softFloat, info.mips_soft_float_storage) ??
         ghidraRiscvCallingConventionFailure(

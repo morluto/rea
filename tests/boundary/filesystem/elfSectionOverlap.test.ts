@@ -306,6 +306,17 @@ describe("ELF section overlap refusals", () => {
       [code, reservation, { ...rodata, address: 0x42000040 }],
       `${CODE} and \`.flash.rodata\` (0x42000040, 0x10 bytes)`,
     ],
+    // ESP-IDF v5.5.2's C5 and C61 builds also reserve the code and rodata for external RAM.
+    [
+      "a second reservation over the code and rodata",
+      [
+        code,
+        reservation,
+        rodata,
+        { ...reservation, name: ".ext_ram.dummy", size: 0x200 },
+      ],
+      `${CODE} and \`.ext_ram.dummy\` (NOBITS, 0x42000020, 0x200 bytes)`,
+    ],
     [
       "a second code reservation",
       [

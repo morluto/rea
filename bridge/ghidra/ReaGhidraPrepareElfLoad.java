@@ -110,7 +110,9 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
             moved = swap(code, reservation, file, codeOffset, committed);
         }
         catch (Exception failure) {
-            // A failed swap can leave the program half moved: REA must not analyze it.
+            // A failed swap can leave the program half moved: REA must not analyze it. If Ghidra
+            // rolls back the failed script's changes, the refusal goes too, and the missing report
+            // refuses the session instead (not tested).
             refuse("Ghidra failed while moving the committed " + committed + ": " + detail(failure));
             throw failure;
         }
@@ -213,7 +215,8 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
         currentProgram.renameOverlaySpace(overlayName, reservationName);
         canonical.setName(codeName);
         AddressSpace overlay = displaced.getStart().getAddressSpace();
-        // The reservation holds no code, so its labels mark no entry points.
+        // The reservation holds no code, so its labels mark no entry points. An entry mark the
+        // loader gave one of them stays at its default-space address (docs/ghidra-riscv.md).
         for (Label label : labels) {
             symbols.createLabel(overlay.getAddress(label.offset()), label.name(), label.namespace(), label.source());
         }

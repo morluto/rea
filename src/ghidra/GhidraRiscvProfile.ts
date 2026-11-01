@@ -194,7 +194,9 @@ const ghidraRiscvIsaRefusal = (
 };
 
 const sectionLabel = (extent: ElfSectionExtent): string =>
-  extent.name === null ? `section [${extent.index}]` : `\`${extent.name}\``;
+  extent.name === null || extent.name === ""
+    ? `section [${extent.index}]`
+    : `\`${extent.name}\``;
 
 const witnessLabel = (witness: ElfSectionWitness): string =>
   `${sectionLabel(witness)} (${[
@@ -433,32 +435,50 @@ export const ghidraRiscvCallingConventionLimitations = (
   ];
 };
 
-/** The first echoed coordinate that differs from the committed section. */
+/** Where a prepared block must be, before and after the pre-analysis script. */
+type PreparedSpaces = readonly [
+  before: "default" | "overlay",
+  after: "default" | "overlay",
+];
+
+/** The first echoed coordinate or space that differs from the committed section's. */
 const preparedMismatch = (
   committed: ElfSectionExtent & { readonly offset?: string },
   block: GhidraPreparedBlock & { readonly file_offset?: string },
+  [before, after]: PreparedSpaces,
+  defaultSpace: string,
 ): string | undefined => {
-  // An unreadable section name leaves the block name unchecked.
-  const differing = (
+  // Block names are display only, as section names are, so they are not compared.
+  const coordinate = (
     [
-      ["name", committed.name, block.name],
       ["address", committed.address, block.address],
       ["size", committed.size, block.size],
       ["file offset", committed.offset, block.file_offset],
     ] as const
   ).find(
-    ([, expected, reported]) =>
-      expected !== null && expected !== undefined && expected !== reported,
+    ([, expected, reported]) => expected !== undefined && expected !== reported,
   );
-  return differing === undefined
+  if (coordinate !== undefined)
+    return `${sectionLabel(committed)}: Ghidra's block reports ${coordinate[0]} ${String(coordinate[2])}, not ${coordinate[1]}`;
+  const space = (
+    [
+      ["before", before, block.space_before],
+      ["after", after, block.space_after],
+    ] as const
+  ).find(
+    ([, expected, reported]) =>
+      (reported === defaultSpace) !== (expected === "default"),
+  );
+  return space === undefined
     ? undefined
-    : `${sectionLabel(committed)}: Ghidra's block reports ${differing[0]} ${String(differing[2])}, not ${String(differing[1])}`;
+    : `${sectionLabel(committed)}: Ghidra's block reports space \`${space[2]}\` ${space[0]} the preparation, not ${space[1] === "default" ? `the default space \`${defaultSpace}\`` : "an overlay space"}`;
 };
 
 /** Fail closed unless the pre-analysis script applied exactly the committed preparation. */
 export const ghidraRiscvLoadPreparationFailure = (
   expected: GhidraRiscvLoadPreparation | undefined,
   report: GhidraRiscvLoadPreparationReport | undefined,
+  defaultSpace: string,
 ): string | undefined => {
   if (expected === undefined)
     return report === undefined
@@ -470,11 +490,27 @@ export const ghidraRiscvLoadPreparationFailure = (
     return `REA could not prepare Ghidra's memory map for ${sectionLabel(expected.code)}: ${report.refused}`;
   if (report.policy !== expected.policy)
     return `The Ghidra session did not report the committed RISC-V load preparation ${expected.policy}.`;
+  // A moved code block and its reservation trade spaces; canonical code stays put.
   const mismatch =
-    preparedMismatch(expected.code, report.code) ??
-    (report.outcome === "moved"
-      ? preparedMismatch(expected.reservation, report.reservation)
-      : undefined);
+    report.outcome === "moved"
+      ? (preparedMismatch(
+          expected.code,
+          report.code,
+          ["overlay", "default"],
+          defaultSpace,
+        ) ??
+        preparedMismatch(
+          expected.reservation,
+          report.reservation,
+          ["default", "overlay"],
+          defaultSpace,
+        ))
+      : preparedMismatch(
+          expected.code,
+          report.code,
+          ["default", "default"],
+          defaultSpace,
+        );
   return mismatch === undefined
     ? undefined
     : `The RISC-V load preparation did not act on the committed sections. ${mismatch}.`;

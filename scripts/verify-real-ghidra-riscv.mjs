@@ -611,13 +611,13 @@ try {
     ),
     "Initialized executable code remains in an overlay",
   );
-  // Only the moved block maps the code's file bytes.
+  // Only the moved block maps any of the code's file bytes.
   assert.deepEqual(
     espImage.observations.mappings
       .filter(
         (value) =>
           value.file_offset !== null &&
-          value.file_offset <= text.file_offset &&
+          value.file_offset < text.file_offset + text.length &&
           text.file_offset < value.file_offset + value.length,
       )
       .map((value) => value.block),

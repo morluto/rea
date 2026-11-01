@@ -24,6 +24,7 @@ import {
   ghidraRiscvLimitations,
   ghidraRiscvLoadPreparation,
   ghidraRiscvLoadPreparationFailure,
+  ghidraRiscvLoadPreparationLimitations,
   ghidraRiscvSupportLane,
   ghidraRiscvUnsupportedReason,
   type GhidraRiscvCallingConventionReport,
@@ -876,7 +877,9 @@ describe("RISC-V load preparation admission", () => {
       ghidraRiscvUnsupportedReason(uninspected(ilp32(`${C3_ARCH}_zcb1p0`))),
     ).toContain("outside the set this lane decodes: zcb");
   });
+});
 
+describe("RISC-V load preparation report check", () => {
   it.each([
     ["the committed outcome", true, moved, undefined],
     ["a canonical outcome", true, canonical, undefined],
@@ -898,9 +901,49 @@ describe("RISC-V load preparation admission", () => {
       true,
       {
         ...moved,
-        reservation: { ...moved.reservation, name: ".flash.rodata" },
+        reservation: { ...moved.reservation, size: "0x10000" },
       },
-      "`.flash_rodata_dummy`: Ghidra's block reports name .flash.rodata, not .flash_rodata_dummy",
+      "`.flash_rodata_dummy`: Ghidra's block reports size 0x10000, not 0x18000",
+    ],
+    [
+      "blocks that Ghidra names differently",
+      true,
+      {
+        ...moved,
+        code: { ...movedCode, name: "section.15" },
+        reservation: { ...moved.reservation, name: "section.16" },
+      },
+      undefined,
+    ],
+    [
+      "moved code left outside the default space",
+      true,
+      { ...moved, code: { ...movedCode, space_after: ".flash.text" } },
+      "`.flash.text`: Ghidra's block reports space `.flash.text` after the preparation, not the default space `ram`",
+    ],
+    [
+      "moved code that was already in the default space",
+      true,
+      { ...moved, code: { ...movedCode, space_before: "ram" } },
+      "`.flash.text`: Ghidra's block reports space `ram` before the preparation, not an overlay space",
+    ],
+    [
+      "a reservation left in the default space",
+      true,
+      {
+        ...moved,
+        reservation: { ...moved.reservation, space_after: "ram" },
+      },
+      "`.flash_rodata_dummy`: Ghidra's block reports space `ram` after the preparation, not an overlay space",
+    ],
+    [
+      "canonical code in an overlay",
+      true,
+      {
+        ...canonical,
+        code: { ...movedCode, space_after: ".flash.text" },
+      },
+      "`.flash.text`: Ghidra's block reports space `.flash.text` before the preparation, not the default space `ram`",
     ],
     [
       "a missing report",
@@ -919,9 +962,27 @@ describe("RISC-V load preparation admission", () => {
     const reason = ghidraRiscvLoadPreparationFailure(
       planned ? ghidraRiscvLoadPreparation(esp()) : undefined,
       reported,
+      "ram",
     );
     if (failure === undefined) expect(reason).toBeUndefined();
     else expect(reason).toContain(failure);
+  });
+
+  it("prepares unnamed sections by their coordinates", () => {
+    const unnamed = esp({
+      sectionOverlap: {
+        ...espOverlap,
+        code: { ...espOverlap.code, name: "" },
+        reservation: { ...espOverlap.reservation, name: "" },
+      },
+    });
+    const prepared = ghidraRiscvLoadPreparation(unnamed);
+    expect(ghidraRiscvLoadPreparationFailure(prepared, moved, "ram")).toBe(
+      undefined,
+    );
+    expect(ghidraRiscvLoadPreparationLimitations(prepared, moved)[0]).toContain(
+      "NOBITS section section [16] reserves the addresses of executable section section [15]",
+    );
   });
 });
 

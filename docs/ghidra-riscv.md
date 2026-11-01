@@ -289,18 +289,28 @@ reservation an uninitialized overlay instead:
   ESP-IDF's section-relative `_etext` just past the code's last byte. Ghidra
   pins absolute ELF symbols such as `_text_start`; they keep their addresses.
 - Labels in the reservation, such as `_flash_rodata_dummy_start`, move into its
-  overlay. They mark no entry points, because the reservation holds no code.
+  overlay. They mark no entry points, because the reservation holds no code. An
+  entry mark that Ghidra's loader gave such a label stays at its default-space
+  address. Inside the code, Ghidra could start a function at that mark; REA
+  neither removes nor checks it. No surveyed image has such a mark
+  (source-derived).
 - Flash code therefore has its ELF address, for example `0x42002ab6` rather than
   `.flash.text:0x42002ab6`.
 
 Before it reports `moved`, the script checks that no symbol or reference
 remains in the code's old overlay space. It reports `canonical` when Ghidra
 already loaded the code in the default space, which happens when the reservation
-comes first in the section table. Both reports echo the blocks the script left:
-names, addresses, sizes, the code's file offset and each block's address space
-before and after. REA closes the session unless those blocks are the committed
-sections. Any other memory map, and any failure during the move, is refused with
-the mismatch or failure. Session Evidence states the preparation and its
+comes first in the section table. The `moved` report echoes both blocks the
+script left, and `canonical` the code block: name, address, size, the code's
+file offset, and the address space before and after. REA closes the session
+unless each address, size and file offset is the committed section's, and the
+spaces agree with the outcome: moved code goes from an overlay into the default
+space and the reservation out of it, and canonical code stays in the default
+space. Block names are display only and are not compared. The script refuses
+any other memory map, and REA refuses the session with the mismatch. If Ghidra
+fails during the move, the session is also refused. Ghidra probably rolls back
+the failed script's changes, its refusal included, so the reason may be missing
+(inferred; not tested). Session Evidence states the preparation and its
 outcome.
 
 The lane refuses any other overlap that involves executable code. Examples are
@@ -310,6 +320,18 @@ third section that overlaps the reservation, and a second reservation such as
 with their ranges. Overlaps between data sections only are outside this check,
 and so are images without a section table, which Ghidra loads from their
 program headers.
+
+ESP-IDF v5.5.2's C5 and C61 builds declare `.ext_ram.dummy`, so this lane
+refuses them. To analyze such a build, make a transformed copy without that
+section header:
+
+```sh
+llvm-objcopy --remove-section=.ext_ram.dummy app.elf app-no-ext-ram-dummy.elf
+```
+
+The copy has the prepared shape. REA admitted and prepared such a copy of a
+v5.5.2 C5 `hello_world` build; C61 copies were not tried. Evidence identifies
+the copy, not the original image.
 
 ## Evidence
 
