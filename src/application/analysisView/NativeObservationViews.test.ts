@@ -249,6 +249,13 @@ it("keeps absent profile and inapplicable result caveats distinct from observed 
   ).toMatchObject({
     source_context: { result_limitation_count: null },
     items: { rows: null },
+    coverage: {
+      status: "unavailable",
+      examined: 0,
+      total: null,
+      next_offset: null,
+      exhausted: false,
+    },
     unknowns: expect.arrayContaining([
       expect.stringContaining("not applicable"),
     ]),
