@@ -193,6 +193,8 @@ export const isGhidraInputFailureCode = (code: string | undefined): boolean =>
   code === "not_found" ||
   code === "procedure_not_found" ||
   code === "file_offset_unmapped" ||
+  code === "procedure_ambiguous" ||
+  code === "file_offset_ambiguous" ||
   code === "ambiguous";
 
 /** Bind session-failure construction to its causal diagnostic scope. */

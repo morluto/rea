@@ -1364,16 +1364,34 @@ describe("Ghidra procedure lookup projection", () => {
       message:
         "Unknown Ghidra procedure name or address: Unresolved_Selected_Name",
       remedy: "list_procedures",
+      qualification: "does not prove",
     },
     {
       code: "file_offset_unmapped",
       selector: "file-offset:0xdeadbeef",
       message: "File offset 0xdeadbeef has no loaded source mapping",
       remedy: "inspect_native_load_image",
+      qualification: "does not prove",
+    },
+    {
+      code: "procedure_ambiguous",
+      selector: "overloaded",
+      message:
+        "Ghidra procedure name is ambiguous: overloaded; select an exact entry address from [0x1000, 0x2000]",
+      remedy: "entry address",
+      qualification: "reported candidates",
+    },
+    {
+      code: "file_offset_ambiguous",
+      selector: "file-offset:0x100",
+      message:
+        "File offset 0x100 has multiple loaded mappings: [0x1000, 0x2000]",
+      remedy: "analysis address",
+      qualification: "does not select one automatically",
     },
   ])(
     "reports $code without schema repair",
-    async ({ code, selector, message, remedy }) => {
+    async ({ code, selector, message, remedy, qualification }) => {
       const client = await createElfClient(remoteFailure(code, message));
       try {
         const result = await client.execute("procedure_pseudo_code", {
@@ -1396,7 +1414,7 @@ describe("Ghidra procedure lookup projection", () => {
         });
         expect(projected).not.toHaveProperty("recovery");
         expect(projected.remediation.action).toContain(remedy);
-        expect(projected.remediation.action).toContain("does not prove");
+        expect(projected.remediation.action).toContain(qualification);
         expect(projected.remediation.action).not.toContain(
           "REA_GHIDRA_PROJECT_PATH",
         );

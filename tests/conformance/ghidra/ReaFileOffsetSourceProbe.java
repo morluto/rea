@@ -49,7 +49,8 @@ public final class ReaFileOffsetSourceProbe extends HeadlessScript {
         var entry = address.add(0x910);
         currentProgram.getFunctionManager().createFunction("foreign_only", entry,
             new AddressSet(entry), SourceType.USER_DEFINED);
-        rejected(resolve, bridge, "no loaded source mapping", "file-offset:0x910", new JsonObject());
+        rejectedCode(resolve, bridge, "file_offset_unmapped", "no loaded source mapping",
+            "file-offset:0x910", new JsonObject());
         rejectedCode(reverse, bridge, "file_mapping_absent",
             "has no authoritative mapping to the admitted target file", reverseInput("0x140100910"));
 
@@ -100,7 +101,8 @@ public final class ReaFileOffsetSourceProbe extends HeadlessScript {
         var duplicate = memory.createFileBytes("duplicate.bin", 0, bytes.length,
             new ByteArrayInputStream(bytes), monitor);
         memory.createInitializedBlock("duplicate", toAddr(0x140201000L), duplicate, 0x200, 0x200, false);
-        rejected(resolve, bridge, "multiple loaded mappings", "file-offset:0x210", new JsonObject());
+        rejectedCode(resolve, bridge, "file_offset_ambiguous", "multiple loaded mappings",
+            "file-offset:0x210", new JsonObject());
         println("REA_FILE_OFFSET_SOURCE_OK foreign/partial/uninitialized/unmapped rejected; original round trip; duplicate ambiguity; injected backend failure context retained");
     }
 

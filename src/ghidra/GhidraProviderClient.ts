@@ -1134,22 +1134,38 @@ const projectPrimarySessionError = (
   if (
     failure.kind === "remote" &&
     (failure.remoteCode === "procedure_not_found" ||
-      failure.remoteCode === "file_offset_unmapped")
+      failure.remoteCode === "file_offset_unmapped" ||
+      failure.remoteCode === "procedure_ambiguous" ||
+      failure.remoteCode === "file_offset_ambiguous")
   ) {
-    const selectedProject = limits.ghidraExistingProject !== undefined;
-    const unmappedOffset = failure.remoteCode === "file_offset_unmapped";
+    let recovery: string;
+    switch (failure.remoteCode) {
+      case "file_offset_unmapped":
+        recovery =
+          "Use inspect_native_load_image (CLI: `rea inspect-native-load-image <path> --provider ghidra --json`) to inspect the admitted file's loaded mappings, then select an offset with an observed mapping. A missing mapping does not prove the file contains no relevant data.";
+        break;
+      case "file_offset_ambiguous":
+        recovery =
+          "Choose an explicit analysis address from the reported mappings. Use inspect_native_load_image to inspect the loaded mappings; REA does not select one automatically.";
+        break;
+      case "procedure_ambiguous":
+        recovery =
+          "Choose an explicit procedure entry address from the reported candidates. Use list_procedures or search_procedures to inspect the current Ghidra inventory.";
+        break;
+      default:
+        recovery =
+          "Use list_procedures or search_procedures (CLI: `rea search <path> <pattern> --kind procedures --provider ghidra --json`) to inspect the current Ghidra inventory and choose an observed name or address. An absent entry does not prove the function is absent from the artifact." +
+          (limits.ghidraExistingProject !== undefined
+            ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME; that analysis will not include the selected project's annotations."
+            : "");
+    }
     return new AnalysisInputError(
       operation,
       {
         ...context,
         userMessage: failure.message,
         conformsToInputContract: true,
-        remediationAction: unmappedOffset
-          ? "Use inspect_native_load_image (CLI: `rea inspect-native-load-image <path> --provider ghidra --json`) to inspect the admitted file's loaded mappings, then select an offset with an observed mapping. A missing mapping does not prove the file contains no relevant data."
-          : "Use list_procedures or search_procedures (CLI: `rea search <path> <pattern> --kind procedures --provider ghidra --json`) to inspect the current Ghidra inventory and choose an observed name or address. An absent entry does not prove the function is absent from the artifact." +
-            (selectedProject
-              ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME; that analysis will not include the selected project's annotations."
-              : ""),
+        remediationAction: recovery,
       },
       [
         {
