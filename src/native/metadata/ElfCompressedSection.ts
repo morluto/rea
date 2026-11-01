@@ -10,6 +10,8 @@ export type ElfCompressedSectionResult =
       readonly bytes: Buffer;
       readonly compressed: boolean;
       readonly compression: "none" | "zlib" | "zstd";
+      /** Larger of decoded output and compressed input read; 0 when stored. */
+      readonly inflatedBytes: number;
     }
   | { readonly state: "unsupported"; readonly compressionType: number }
   | {
@@ -42,6 +44,7 @@ export const decodeElfCompressedSection = (
       bytes,
       compressed: false,
       compression: "none",
+      inflatedBytes: 0,
     };
 
   const headerBytes = bits === 64 ? 24 : 12;
@@ -137,5 +140,11 @@ const inflateDeclared = (
       message: `${subject} size is inconsistent`,
       inflatedBytes: Math.max(expected, payload.length),
     };
-  return { state: "available", bytes: decoded, compressed: true, compression };
+  return {
+    state: "available",
+    bytes: decoded,
+    compressed: true,
+    compression,
+    inflatedBytes: Math.max(decoded.length, payload.length),
+  };
 };

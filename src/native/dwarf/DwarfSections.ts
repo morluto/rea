@@ -255,7 +255,7 @@ const admitDecoded = (
   }
   if (decoded.state === "unsupported")
     return unread(name, role, "unreadable", unsupported);
-  budget.used += decoded.bytes.length;
+  budget.used += decoded.inflatedBytes;
   return {
     name,
     role,

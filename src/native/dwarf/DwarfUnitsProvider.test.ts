@@ -59,7 +59,6 @@ it("reads a little-endian ELF unit and refuses architecture on a thin file", asy
   const named = namedUnit({ name: "main.c", dwoName: "main.dwo" });
   const image = elfDebugImage(named);
   const read = await inspect(image);
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value).toMatchObject({
     format: "elf",
@@ -93,7 +92,6 @@ it("reads a big-endian ELF unit", async () => {
   const read = await inspect(
     elfDebugImage(named, { little: false, machine: 20 }),
   );
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value).toMatchObject({
     byte_order: "big",
@@ -104,7 +102,6 @@ it("reads a big-endian ELF unit", async () => {
 
 it("reports absent debug info for this file and names a present .gnu_debuglink", async () => {
   const plain = await inspect(elfImage());
-  expect(plain.ok).toBe(true);
   if (!plain.ok) throw plain.error;
   expect(plain.value.coverage.status).toBe("no_debug_info");
   expect(plain.value.coverage.reason).toContain("does not establish");
@@ -118,7 +115,6 @@ it("reports absent debug info for this file and names a present .gnu_debuglink",
       ],
     }),
   );
-  expect(linked.ok).toBe(true);
   if (!linked.ok) throw linked.error;
   expect(linked.value.coverage.status).toBe("no_debug_info");
   expect(linked.value.limitations.join("\n")).toContain(
@@ -173,7 +169,6 @@ it("refuses a decompression bomb before inflation and reads zlib, zstd, and GNU 
       { infoName: ".zdebug_info" },
     ),
   );
-  expect(gnu.ok).toBe(true);
   if (!gnu.ok) throw gnu.error;
   expect(gnu.value.sections[0]).toMatchObject({
     name: ".zdebug_info",
@@ -193,7 +188,6 @@ it("reads PE long names and a Mach-O __debug_str_offs section", async () => {
       { name: ".debug_str_offsets", body: sample.strOffsets },
     ]),
   );
-  expect(pe.ok).toBe(true);
   if (!pe.ok) throw pe.error;
   expect(pe.value.format).toBe("pe");
   expect(pe.value.units[0]?.name.value).toBe("hello.c");
@@ -208,7 +202,6 @@ it("reads PE long names and a Mach-O __debug_str_offs section", async () => {
       ],
     }),
   );
-  expect(macho.ok).toBe(true);
   if (!macho.ok) throw macho.error;
   expect(macho.value).toMatchObject({
     format: "macho",
@@ -231,7 +224,6 @@ it("reads a GNU base64 COFF long section name", async () => {
   const sections = pe + 24 + image.readUInt16LE(pe + 20);
   image.write("//AAAAAE", sections, "latin1");
   const read = await inspect(image);
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value.units[0]?.name.value).toBe("base64.c");
 });
@@ -247,7 +239,6 @@ it("decodes a shared PE long name once, including at the per-name allowance", as
   const decode = vi.spyOn(Buffer.prototype, "toString");
   try {
     const read = await inspect(image);
-    expect(read.ok).toBe(true);
     if (!read.ok) throw read.error;
     expect(read.value.coverage.status).toBe("no_debug_info");
     expect(
@@ -332,12 +323,10 @@ it("selects one universal Mach-O slice", async () => {
       ],
     });
   const selected = await inspect(fat, { architecture: "arm64" });
-  expect(selected.ok).toBe(true);
   if (!selected.ok) throw selected.error;
   expect(selected.value.selected_slice?.cpu_type).toBe(CPU_ARM64);
   expect(selected.value.units[0]?.name.value).toBe("arm.c");
   const other = await inspect(fat, { architecture: "x86_64" });
-  expect(other.ok).toBe(true);
   if (!other.ok) throw other.error;
   expect(other.value.coverage.status).toBe("no_debug_info");
   expect(other.value.units).toEqual([]);
@@ -359,7 +348,6 @@ it("does not inflate a duplicate section and caps decompressed bytes across role
       },
     ),
   );
-  expect(duplicate.ok).toBe(true);
   if (!duplicate.ok) throw duplicate.error;
   expect(duplicate.value.units[0]?.name.value).toBe("kept.c");
   expect(
@@ -410,6 +398,29 @@ it("charges failed decompression attempts against the shared allowance", () => {
   }
 });
 
+it("charges valid empty streams against the shared allowance", () => {
+  const empty = elfCompressedBody(Buffer.alloc(0), "zlib");
+  const blocks = Buffer.alloc(5 * 2048);
+  for (let at = 0; at < blocks.length; at += 5)
+    blocks.set([0, 0, 0, 0xff, 0xff], at);
+  const body = Buffer.concat([
+    empty.subarray(0, 26),
+    blocks,
+    empty.subarray(26),
+  ]);
+  const payloadLength = body.length - 24;
+  const image = elfImage({
+    sections: Array.from({ length: 3 }, () => ({
+      name: ".debug_info",
+      body,
+      flags: 0x800n,
+    })),
+  });
+  expect(() => locateDwarfSections(image, payloadLength * 2)).toThrow(
+    DwarfSectionAllowanceFailure,
+  );
+});
+
 it("charges zero-output streams with bad checksums against the shared allowance", () => {
   const empty = elfCompressedBody(Buffer.alloc(0), "zlib");
   // Insert non-final empty stored blocks after the ELF and zlib headers.
@@ -450,7 +461,6 @@ it("keeps the inflate allowance after a truncated optional section header", asyn
       ],
     }),
   );
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value.units[0]?.name.value).toBe("kept.c");
   expect(read.value.omissions).toContainEqual(
@@ -478,7 +488,6 @@ it("keeps units after a corrupt optional compressed stream", async () => {
       ],
     }),
   );
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value.units[0]?.name.value).toBe("kept.c");
 });
@@ -494,7 +503,6 @@ it("reads a populated .debug_info that follows an empty copy", async () => {
       ],
     }),
   );
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value.units[0]?.name.value).toBe("second.c");
   expect(read.value.coverage.status).toBe("complete");
@@ -516,7 +524,6 @@ it("keeps units when an optional compressed section cannot be read", async () =>
       },
     ),
   );
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value.units[0]?.name.value).toBe("kept.c");
   expect(read.value.omissions).toContainEqual(
@@ -612,7 +619,6 @@ it("keeps a section that stores no bytes as no_debug_info for this file", async 
       sections: [{ name: ".debug_info", body: Buffer.alloc(0), type: 8 }],
     }),
   );
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value.coverage).toMatchObject({
     status: "no_debug_info",
@@ -626,7 +632,6 @@ it("keeps an empty PROGBITS .debug_info as no_debug_info", async () => {
       sections: [{ name: ".debug_info", body: Buffer.alloc(0), type: 1 }],
     }),
   );
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value.coverage.status).toBe("no_debug_info");
   expect(read.value.sections).toEqual([]);
@@ -650,7 +655,6 @@ it("reads units from an unmapped Mach-O __DWARF segment", async () => {
   bytes.writeUInt32LE(0, 32 + 56);
   bytes.writeUInt32LE(0, 32 + 60);
   const read = await inspect(bytes);
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value.coverage.status).toBe("complete");
   expect(read.value.units[0]?.name.value).toBe("unmapped.c");
@@ -663,7 +667,6 @@ it("reports unread .debug_info copies as partial and groups repeated omissions",
   const read = await inspect(
     elfDebugImage(first, { extra: [repeated, repeated, repeated] }),
   );
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value.units.map((unit) => unit.name.value)).toEqual(["first.c"]);
   expect(read.value.coverage).toEqual({
@@ -707,7 +710,6 @@ it("reads Mach-O compressed line strings under the 16-byte name and only from __
       ],
     }),
   );
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value.sections).toContainEqual(
     expect.objectContaining({
@@ -723,7 +725,6 @@ it("reads Mach-O compressed line strings under the 16-byte name and only from __
       sections: [{ name: "__debug_info", body: info, segment: "__TEXT" }],
     }),
   );
-  expect(foreign.ok).toBe(true);
   if (!foreign.ok) throw foreign.error;
   expect(foreign.value.coverage.status).toBe("no_debug_info");
   expect(foreign.value.limitations.join("\n")).not.toContain(".gnu_debuglink");
@@ -734,7 +735,6 @@ it("does not read .debug_* spellings across container formats", async () => {
   const elf = await inspect(
     elfImage({ sections: [{ name: "__debug_info", body: named.info }] }),
   );
-  expect(elf.ok).toBe(true);
   if (!elf.ok) throw elf.error;
   expect(elf.value.coverage.status).toBe("no_debug_info");
   const macho = await inspect(
@@ -743,7 +743,6 @@ it("does not read .debug_* spellings across container formats", async () => {
       sections: [{ name: ".debug_info", body: named.info }],
     }),
   );
-  expect(macho.ok).toBe(true);
   if (!macho.ok) throw macho.error;
   expect(macho.value.coverage.status).toBe("no_debug_info");
 });
@@ -752,7 +751,6 @@ it("names a .gnu_debuglink section in a PE image", async () => {
   const read = await inspect(
     peImage([{ name: ".gnu_debuglink", body: Buffer.from("other.debug\0") }]),
   );
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value.coverage.status).toBe("no_debug_info");
   expect(read.value.limitations.join("\n")).toContain(
@@ -770,7 +768,6 @@ it("treats .crel debug sections as unapplied relocations and lists each name onc
   const read = await inspect(
     elfDebugImage(namedUnit(), { extra: [repeated, repeated] }),
   );
-  expect(read.ok).toBe(true);
   if (!read.ok) throw read.error;
   expect(read.value.limitations.join("\n")).toContain(
     "debug relocations were not applied (.crel.debug_info).",
@@ -801,7 +798,6 @@ it.each([4, 9, 20, 0x40000014])(
         extra: [{ name: ".renamed", body: Buffer.alloc(24), type, info: 1 }],
       }),
     );
-    expect(read.ok).toBe(true);
     if (!read.ok) throw read.error;
     expect(read.value.units[0]?.name).toEqual({
       state: "unresolved",
@@ -825,7 +821,6 @@ it.each([4, 9, 20, 0x40000014])(
         ],
       }),
     );
-    expect(unrelated.ok).toBe(true);
     if (!unrelated.ok) throw unrelated.error;
     expect(unrelated.value.units[0]?.name).toEqual({
       state: "present",
@@ -863,7 +858,6 @@ it("reports unapplied ET_REL debug relocations instead of a string at offset zer
       },
     ),
   );
-  expect(relocatable.ok).toBe(true);
   if (!relocatable.ok) throw relocatable.error;
   expect(relocatable.value.units[0]?.name).toEqual({
     state: "unresolved",
@@ -888,7 +882,6 @@ it("reports unapplied ET_REL debug relocations instead of a string at offset zer
       },
     ),
   );
-  expect(linked.ok).toBe(true);
   if (!linked.ok) throw linked.error;
   expect(linked.value.units[0]?.name).toEqual({
     state: "present",
@@ -916,7 +909,6 @@ it("does not report DWARF 5 strx strings from unrelocated ET_REL str offsets", a
   const relocatable = await inspect(
     elfDebugImage(sections, { extra: [relocation] }),
   );
-  expect(relocatable.ok).toBe(true);
   if (!relocatable.ok) throw relocatable.error;
   expect(relocatable.value.units[0]?.name).toEqual({
     state: "unresolved",
@@ -931,7 +923,6 @@ it("does not report DWARF 5 strx strings from unrelocated ET_REL str offsets", a
   const linked = await inspect(
     elfDebugImage(sections, { type: 2, extra: [relocation] }),
   );
-  expect(linked.ok).toBe(true);
   if (!linked.ok) throw linked.error;
   expect(linked.value.units[0]?.name).toEqual({
     state: "present",
@@ -947,7 +938,6 @@ it("decompresses GNU zdebug sections in PE and Mach-O", async () => {
       { name: ".debug_abbrev", body: named.abbrev },
     ]),
   );
-  expect(pe.ok).toBe(true);
   if (!pe.ok) throw pe.error;
   expect(pe.value.sections[0]).toMatchObject({
     name: ".zdebug_info",
@@ -964,7 +954,6 @@ it("decompresses GNU zdebug sections in PE and Mach-O", async () => {
       ],
     }),
   );
-  expect(macho.ok).toBe(true);
   if (!macho.ok) throw macho.error;
   expect(macho.value.coverage.status).not.toBe("no_debug_info");
   expect(macho.value.sections).toContainEqual(
@@ -984,28 +973,22 @@ it("names PE and Mach-O architectures from their shared owners", async () => {
     if (!arm.ok) throw arm.error;
     expect(arm.value.architecture).toBe("arm");
     const disagreed = await inspect(peImage([], machine));
-    expect(disagreed.ok).toBe(true);
     if (!disagreed.ok) throw disagreed.error;
     expect(disagreed.value.architecture).toBeNull();
   }
   const wideIa32 = await inspect(peImage([], 0x014c));
-  expect(wideIa32.ok).toBe(true);
   if (!wideIa32.ok) throw wideIa32.error;
   expect(wideIa32.value.architecture).toBeNull();
   const ia32 = await inspect(peImage([], 0x014c, 0x10b));
-  expect(ia32.ok).toBe(true);
   if (!ia32.ok) throw ia32.error;
   expect(ia32.value.architecture).toBe("x86");
   const i386 = await inspect(macho64({ cpuType: 7 }));
-  expect(i386.ok).toBe(true);
   if (!i386.ok) throw i386.error;
   expect(i386.value.architecture).toBe("x86");
   const ppc = await inspect(macho64({ cpuType: 18 }));
-  expect(ppc.ok).toBe(true);
   if (!ppc.ok) throw ppc.error;
   expect(ppc.value.architecture).toBe("powerpc");
   const amd64 = await inspect(macho64({ cpuType: 0x01000007 }));
-  expect(amd64.ok).toBe(true);
   if (!amd64.ok) throw amd64.error;
   expect(amd64.value.architecture).toBe("x86_64");
 });
