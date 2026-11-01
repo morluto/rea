@@ -4,7 +4,10 @@ import type {
   AnalysisOperationPort,
 } from "./AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { analysisBookmarkSchema } from "../domain/native/nativeInventory.js";
 import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
@@ -118,8 +121,12 @@ export const inspectAddressContext = async (
   const procedure: Facet = resolution?.ok
     ? { state: "available", value: resolution.value }
     : unavailableFacet(resolution?.error, operations[1]);
-  const comment = facet(results[2], operations[2]);
-  const inlineComment = facet(results[3], operations[3]);
+  const commentRecovery =
+    resolution?.ok && resolution.value.found
+      ? 'If analyze_function and inspect_analysis_view are available and analyze_function uses the same document, analyze result.procedure.value.procedure.address (summary), then page view {kind:"native", facet:"comments"} using normalized_result.parent_evidence_id. Match result.procedure.value.query_address and kind; respect coverage and limitations.'
+      : undefined;
+  const comment = facet(results[2], operations[2], commentRecovery);
+  const inlineComment = facet(results[3], operations[3], commentRecovery);
   const bookmarks = facet(results[4], operations[4]);
   return ok({
     address: input.address,
@@ -141,18 +148,25 @@ export const inspectAddressContext = async (
 const facet = (
   result: Result<AnalysisExecution, AnalysisError> | undefined,
   operation: AnalysisOperation,
+  capabilityRecovery?: string,
 ): Facet =>
   result?.ok === true
     ? { state: "available", value: result.value.result }
-    : unavailableFacet(result?.error, operation);
+    : unavailableFacet(result?.error, operation, capabilityRecovery);
 
 const unavailableFacet = (
   error: AnalysisError | undefined,
   operation: AnalysisOperation,
+  capabilityRecovery?: string,
 ): Facet => ({
   state: "unavailable",
   reason: error?.message ?? `${operation} returned no result`,
-  remediation: `Call ${operation} directly to inspect provider availability and diagnostics.`,
+  remediation:
+    error instanceof AnalysisCapabilityUnavailableError && !error.retryable
+      ? (error.remediationAction ??
+        capabilityRecovery ??
+        "Check binary_session for other available operations. This facet remains unknown.")
+      : `Call ${operation} directly to inspect provider availability and diagnostics.`,
 });
 
 const isRequestLevelFailure = (error: AnalysisError): boolean =>
