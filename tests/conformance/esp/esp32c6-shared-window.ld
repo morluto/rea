@@ -17,12 +17,14 @@ SECTIONS
 {
   .iram0.text 0x40800000 : { *(.iram0.text) } :iram
   .dram0.data 0x40810000 : { *(.sdata .sdata.* .data .data.* .sbss .sbss.* .bss .bss.*) } :dram
-  /* ESP-IDF's absolute text bounds: Ghidra pins absolute symbols. */
+  /* ESP-IDF's text bounds: Ghidra pins the absolute ones; _etext is past the
+     section's last byte. */
   .flash.text 0x42000020 :
   {
     _text_start = ABSOLUTE(.);
     *(.flash.text) *(.text .text.*)
     _text_end = ABSOLUTE(.);
+    _etext = .;
   } :irom
   .flash_rodata_dummy 0x42000020 (NOLOAD) :
   {

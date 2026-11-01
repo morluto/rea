@@ -263,11 +263,11 @@ and H4, flash text and rodata share one virtual window from `0x42000020`, and
 the linker script reserves the text's addresses in the rodata segment with the
 NOBITS section `.flash_rodata_dummy`. For C5 and C61, a second NOBITS section,
 `.ext_ram.dummy`, also reserves the text and rodata addresses for external RAM.
-Ghidra 12.1.4's ELF loader resolves
-overlapping sections in favour of the later one: the reservation takes the
-default address space and `.flash.text` goes into an overlay space. Ghidra's
-DWARF importer, its call-frame (FDE) processing and references from other code
-and data resolve ELF virtual addresses in the default space only. Without
+Ghidra 12.1.4's ELF loader resolves overlapping sections in favour of the later
+one: the reservation takes the default address space and `.flash.text` goes
+into an overlay space. Ghidra's DWARF importer, its call-frame (FDE) processing
+and references from other code and data resolve ELF virtual addresses in the
+default space only. Without
 preparation, code in that overlay gets no DWARF signature, local variables or
 `DW_AT_noreturn` flag, each of its functions gets a one-byte shadow function in
 the reservation, and pseudocode continues past calls to no-return functions
@@ -285,15 +285,16 @@ reservation an uninitialized overlay instead:
   keeps one address.
 - The loader's symbols and functions move with the code, and so do the
   references into it: its entry points and the loader's section-header
-  reference. Ghidra pins absolute ELF symbols such as `_text_start`; they keep
-  their addresses.
+  reference. So does everything else in the code's overlay space, such as
+  ESP-IDF's section-relative `_etext` just past the code's last byte. Ghidra
+  pins absolute ELF symbols such as `_text_start`; they keep their addresses.
 - Labels in the reservation, such as `_flash_rodata_dummy_start`, move into its
   overlay. They mark no entry points, because the reservation holds no code.
 - Flash code therefore has its ELF address, for example `0x42002ab6` rather than
   `.flash.text:0x42002ab6`.
 
 Before it reports `moved`, the script checks that no symbol or reference
-remains in the code's old overlay range. It reports `canonical` when Ghidra
+remains in the code's old overlay space. It reports `canonical` when Ghidra
 already loaded the code in the default space, which happens when the reservation
 comes first in the section table. Both reports echo the blocks the script left:
 names, addresses, sizes, the code's file offset and each block's address space
@@ -358,8 +359,8 @@ assembly sources:
   `-march=rv32imac_zicsr_zifencei -mabi=ilp32`, linked with
   `tests/conformance/esp/esp32c6-shared-window.ld`. As ESP-IDF does, it places
   `.flash.text` and the NOBITS `.flash_rodata_dummy` at `0x42000020`, with the
-  absolute `_text_start` and `_text_end` and the reservation's
-  `_flash_rodata_dummy_start`.
+  absolute `_text_start` and `_text_end`, the section-relative `_etext` and the
+  reservation's `_flash_rodata_dummy_start`.
 - The same objects linked with `esp32c6-reservation-first.ld`, which puts the
   reservation before the code in the section table.
 
@@ -395,8 +396,9 @@ For the ESP layout build the lane checks:
   maps the code's file bytes, and a `file-offset:` selector reaches the flash
   function at that offset.
 - No entry point has an overlay address, and each flash function keeps its
-  entry mark. `_text_start` and `_text_end` keep their addresses, and
-  `_flash_rodata_dummy_start` is in the reservation's overlay.
+  entry mark. `_text_start` and `_text_end` keep their addresses, `_etext` is
+  at the code's end in the default space, and `_flash_rodata_dummy_start` is in
+  the reservation's overlay.
 - Every procedure keeps its ELF address, which selects it. The pseudocode of a
   flash function that ends by calling a `noreturn` function stops at that call.
   A flash function's pseudocode names its DWARF parameters, and an IRAM

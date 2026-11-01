@@ -98,6 +98,13 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
                 : " in the default space beside a reservation block"));
             return;
         }
+        // The code's whole overlay space moves with it and then becomes the reservation's.
+        for (MemoryBlock block : memory.getBlocks()) {
+            if (block != code && block.getStart().getAddressSpace().equals(code.getStart().getAddressSpace())) {
+                refuse("Ghidra placed block " + block.getName() + " in the overlay space of the committed " + committed);
+                return;
+            }
+        }
         JsonObject moved;
         try {
             moved = swap(code, reservation, file, codeOffset, committed);
@@ -125,8 +132,11 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
         long reservationSize = reservation.getSize();
         String codeName = code.getName();
         String reservationName = reservation.getName();
-        String overlayName = code.getStart().getAddressSpace().getName();
-        AddressSet old = range(code);
+        AddressSpace overlaySpace = code.getStart().getAddressSpace();
+        String overlayName = overlaySpace.getName();
+        // Everything in the code's overlay space belongs to the code, including labels past its
+        // end, such as ESP-IDF's section-relative _etext.
+        AddressSet old = new AddressSet(overlaySpace.getMinAddress(), overlaySpace.getMaxAddress());
         List<Label> labels = new ArrayList<>();
         for (Symbol symbol : symbols.getSymbols(range(reservation), SymbolType.LABEL, true)) {
             // Ghidra pins absolute ELF symbols: they keep their default-space address.
@@ -172,6 +182,14 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
                     reference.getReferenceType(), reference.getSource(), reference.getOperandIndex()),
                     reference.isPrimary());
             }
+        }
+        // The move covers the block; labels outside it are created again at the same offsets.
+        List<Symbol> outside = new ArrayList<>();
+        for (Symbol symbol : symbols.getSymbols(old, SymbolType.LABEL, true)) outside.add(symbol);
+        for (Symbol symbol : outside) {
+            symbols.createLabel(space.getAddress(symbol.getAddress().getOffset()), symbol.getName(),
+                symbol.getParentNamespace(), symbol.getSource());
+            symbol.delete();
         }
         // Any other kind of reference stays behind, as would a symbol the move missed: refuse both.
         boolean symbolsLeft = symbols.getPrimarySymbolIterator(old, true).hasNext();

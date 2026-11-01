@@ -550,6 +550,7 @@ try {
   // ESP-IDF's text bounds are absolute; the reservation's label is not.
   assert.equal(esp.linkerSymbols._text_start?.section, "ABS");
   assert.equal(esp.linkerSymbols._text_end?.section, "ABS");
+  assert.equal(esp.linkerSymbols._etext?.section, code.index);
   assert.equal(
     esp.linkerSymbols._flash_rodata_dummy_start?.section,
     reservation.index,
@@ -657,6 +658,8 @@ try {
     esp.linkerSymbols._text_end.address,
     `0x${codeEnd.toString(16)}`,
   );
+  // A label past the code's last byte leaves the code's overlay space too.
+  assert.deepEqual(nameAt("_etext"), [esp.linkerSymbols._text_end.address]);
   assert.deepEqual(nameAt("_flash_rodata_dummy_start"), [
     `${reservation.name}:${reservation.address}`,
   ]);
