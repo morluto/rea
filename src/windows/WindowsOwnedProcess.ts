@@ -73,9 +73,6 @@ export const quoteWindowsProcessArgument = (value: string): string => {
   return `"${value.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, "$1$1")}"`;
 };
 
-// Back off after a failed native poll instead of retrying at the idle cadence.
-const POLL_RETRY_MS = 250;
-
 /** Process events and streams backed by a retained native Job Object. */
 export class WindowsOwnedProcess extends EventEmitter {
   readonly stdout = new PassThrough();
@@ -419,6 +416,9 @@ export class WindowsOwnedProcess extends EventEmitter {
       } else this.#schedule(idle ? 25 : 0);
     } catch (cause: unknown) {
       const failure = cause instanceof Error ? cause : new Error(String(cause));
+      // Native polling is not atomic: it may drain one stream before a later
+      // read (stderr or job state) fails. Retrying cannot recover those bytes.
+      this.#outputIncomplete = true;
       const repeated = this.#failure !== undefined;
       this.#failure = failure.message;
       // Native lifecycle failures belong to the error/cleanup channels, never
@@ -426,11 +426,17 @@ export class WindowsOwnedProcess extends EventEmitter {
       // consecutive failures is reported once.
       if (!repeated && this.listenerCount("error") > 0)
         this.emit("error", failure);
-      // Poll failures keep the job for another observation. Without one, a
-      // single failed poll would stop output and exit delivery for the rest of
-      // the process lifetime. A process_close failure leaves #releasePending so
-      // cleanup retries that close alone.
-      this.#schedule(POLL_RETRY_MS);
+      // Observation never terminates the job. Back off to a low-frequency
+      // referenced retry so naturally exiting descendants can still settle.
+      this.#consecutivePollFailures = Math.min(
+        this.#consecutivePollFailures + 1,
+        6,
+      );
+      this.#schedule(
+        Math.min(5_000, 250 * 2 ** (this.#consecutivePollFailures - 1)),
+      );
+      // Poll failures keep the job for another observation. A process_close
+      // failure leaves #releasePending so cleanup retries that close alone.
     }
   }
 

@@ -120,7 +120,7 @@ export const readLinuxProcessStartTime: ProcessStartTimeReader = async (
       typeof cause === "object" &&
       cause !== null &&
       "code" in cause &&
-      cause.code === "ENOENT"
+      (cause.code === "ENOENT" || cause.code === "ESRCH")
     )
       return null;
     throw cause;

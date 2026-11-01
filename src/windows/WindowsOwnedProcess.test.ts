@@ -692,14 +692,14 @@ describe("Windows output poll failure", () => {
       child.once("close", () => (closed = true));
       const polls = () =>
         calls.filter((call) => call.operation === "process_poll").length;
-      // Failed polls back off 250 ms instead of retrying at the idle cadence.
+      // Consecutive failed polls exponentially back off from 250 ms.
       await vi.advanceTimersByTimeAsync(25);
       expect(polls()).toBe(1);
       await vi.advanceTimersByTimeAsync(249);
       expect(polls()).toBe(1);
       await vi.advanceTimersByTimeAsync(1);
       expect(polls()).toBe(2);
-      await vi.advanceTimersByTimeAsync(249);
+      await vi.advanceTimersByTimeAsync(499);
       expect(polls()).toBe(2);
       await vi.advanceTimersByTimeAsync(1);
       expect(polls()).toBe(3);
