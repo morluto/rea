@@ -370,6 +370,37 @@ describe("release exposure fuse sampling", () => {
     );
     expect(statusOf(included, "electron.run_as_node")).toBe("not_observed");
   });
+
+  it("does not treat incomplete inventory as an absent fuse", () => {
+    const fuseFacts = {
+      electron_family: "electron" as const,
+      fuse_images: [
+        {
+          kind: "report" as const,
+          role: "native-image" as const,
+          implications: [
+            { subject: "electron_run_as_node", outcome: "not_honored" },
+          ],
+        },
+      ],
+    };
+    const incomplete = scan({ coverage: "unknown" });
+    expect(
+      statusOf(
+        reportFor(incomplete, owners(fuseFacts)),
+        "electron.run_as_node",
+      ),
+    ).toBe("unknown");
+    expect(
+      statusOf(
+        reportFor(
+          incomplete,
+          owners({ ...fuseFacts, electron_executable_included: true }),
+        ),
+        "electron.run_as_node",
+      ),
+    ).toBe("not_observed");
+  });
 });
 
 describe("release exposure package checks", () => {

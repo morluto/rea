@@ -562,10 +562,13 @@ const fuseCheck = (
       : [],
   );
   const failed = images.some((image) => image.kind === "failed");
-  const partialFuseSample =
+  const unreadImagePossible =
+    scan.coverage === "unknown" ||
     scan.omitted.some(
       (item) => item.subject === "native images" && item.count > 0,
-    ) && owners.electron_executable_included !== true;
+    );
+  const partialFuseSample =
+    unreadImagePossible && owners.electron_executable_included !== true;
   let status: Status;
   if (outcomes.includes(spec.exposed)) status = "exposed";
   else if (owners.electron_family === "not_electron") status = "not_applicable";

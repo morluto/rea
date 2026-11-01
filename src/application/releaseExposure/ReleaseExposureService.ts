@@ -662,7 +662,11 @@ const limitNativeSample = (
   const electronExecutableIncluded =
     scan.target.kind === "app" ||
     scan.fuse_candidates.some((candidate) => candidate.role === "app-bundle") ||
-    kept.some((image) => preferredPaths.has(image.path));
+    kept.some(
+      (image) =>
+        preferredPaths.has(image.path) ||
+        image.path === scan.target.selected_path,
+    );
   return {
     electronExecutableIncluded,
     scan: {

@@ -745,24 +745,36 @@ describe("ReleaseExposureService fuse sampling", () => {
   });
 });
 
+const directoryScan = (paths: readonly string[]) => {
+  const images = paths.map((path) => ({ path, format: "elf" as const }));
+  return scan({
+    target: {
+      selected_path: "/work/app",
+      kind: "directory",
+      format: "directory",
+      sha256: null,
+    },
+    subject: { path: "/work/app", sha256: SHA, format: "directory" },
+    native_images: images,
+    fuse_candidates: images.map((image) => ({
+      path: image.path,
+      role: "native-image" as const,
+    })),
+  });
+};
+
+const runAsNode = async (
+  service: ReleaseExposureService,
+  path = "/work/app",
+) => {
+  const result = await service.inspect({ path });
+  if (!result.ok) throw result.error;
+  return releaseExposureReportSchema
+    .parse(result.value.normalized_result)
+    .checks.find((check) => check.id === "electron.run_as_node");
+};
+
 describe("ReleaseExposureService Electron applicability", () => {
-  const directoryScan = (paths: readonly string[]) => {
-    const images = paths.map((path) => ({ path, format: "elf" as const }));
-    return scan({
-      target: {
-        selected_path: "/work/app",
-        kind: "directory",
-        format: "directory",
-        sha256: null,
-      },
-      subject: { path: "/work/app", sha256: SHA, format: "directory" },
-      native_images: images,
-      fuse_candidates: images.map((image) => ({
-        path: image.path,
-        role: "native-image" as const,
-      })),
-    });
-  };
   const appScan = scan({
     target: {
       selected_path: "/work/App.app",
@@ -783,22 +795,55 @@ describe("ReleaseExposureService Electron applicability", () => {
       },
     ],
   });
-  const runAsNode = async (
-    service: ReleaseExposureService,
-    path = "/work/app",
-  ) => {
-    const result = await service.inspect({ path });
-    if (!result.ok) throw result.error;
-    return releaseExposureReportSchema
-      .parse(result.value.normalized_result)
-      .checks.find((check) => check.id === "electron.run_as_node");
-  };
   const noSentinel = ok(evidence(fuseReport([slice(0, { sentinels: 0 })])));
   const unreadable = err(new AnalysisInputError("inspect_electron_fuses"));
 
   it("reads safe fuses on an asar: false directory instead of ruling Electron out", async () => {
     const { service, electronFuses } = owners(
       directoryScan(["/work/app/electron"]),
+    );
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("not_observed");
+  });
+
+  it("keeps safe fuses unknown when inventory may have missed the executable", async () => {
+    const { service, electronFuses } = owners({
+      ...directoryScan(["/work/app/helper"]),
+      coverage: "unknown",
+    });
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
+
+  it("keeps safe fuses decided when inventory stopped after the hinted executable", async () => {
+    const { service, desktop, electronFuses } = owners({
+      ...directoryScan(["/work/app/MyApp.exe"]),
+      coverage: "unknown",
+    });
+    desktop.inspect.mockResolvedValue(ok(evidence(electronDesktopReport())));
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("not_observed");
+  });
+
+  it("keeps safe fuses decided on a selected executable with unknown inventory", async () => {
+    const { service, electronFuses } = owners(
+      scan({
+        target: {
+          selected_path: "/work/app",
+          kind: "executable",
+          format: "elf",
+          sha256: SHA,
+        },
+        native_images: [{ path: "/work/app", format: "elf" }],
+        fuse_candidates: [{ path: "/work/app", role: "native-image" }],
+        coverage: "unknown",
+      }),
     );
     electronFuses.inspect.mockResolvedValue(
       ok(evidence(fuseReport([slice(0)]))),
