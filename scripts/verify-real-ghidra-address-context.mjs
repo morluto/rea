@@ -178,6 +178,21 @@ try {
   assert.match(missingNameError.remediation.action, /list_procedures/u);
   assert.match(missingNameError.remediation.action, /does not prove/u);
   assert.equal(missingNameError.recovery, undefined);
+  const unmappedOffset = await client.callTool(
+    {
+      name: "procedure_pseudo_code",
+      arguments: { procedure: "file-offset:0x1fffffffffffff" },
+    },
+    { timeout: 240000 },
+  );
+  assert.equal(unmappedOffset.isError, true);
+  const unmappedError = JSON.parse(
+    unmappedOffset.content.find((item) => item.type === "text").text,
+  ).error;
+  assert.equal(unmappedError.code, "invalid_request");
+  assert.match(unmappedError.message, /no loaded source mapping/u);
+  assert.match(unmappedError.remediation.action, /inspect_native_load_image/u);
+  assert.equal(unmappedError.recovery, undefined);
   const missingAddress = "ram:0xffffffff";
   const rejected = await client.callTool(
     { name: "procedure_pseudo_code", arguments: { procedure: missingAddress } },

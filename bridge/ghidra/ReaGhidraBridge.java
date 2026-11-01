@@ -1040,7 +1040,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 " has multiple loaded mappings: " + candidates.stream().map(ReaGhidraBridge::canonicalAddress).toList() +
                 "; select an explicit analysis address");
         if (candidates.isEmpty())
-            throw new RequestFailure("not_found", "File offset " + coordinate +
+            throw new RequestFailure("file_offset_unmapped", "File offset " + coordinate +
                 " has no loaded source mapping for the admitted target file; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Inspect mappings with rea inspect-native-load-image <path> --provider ghidra --json or MCP inspect_native_load_image.");
         Address mapped = candidates.get(0);

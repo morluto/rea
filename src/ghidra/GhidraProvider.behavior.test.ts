@@ -1357,41 +1357,54 @@ const remoteFailure = (remoteCode: string, message: string) =>
   }));
 
 describe("Ghidra procedure lookup projection", () => {
-  it("reports a missing procedure as an inventory lookup rather than a schema error", async () => {
-    const selector = "Unresolved_Selected_Name";
-    const message = `Unknown Ghidra procedure name or address: ${selector}`;
-    const client = await createElfClient(
-      remoteFailure("procedure_not_found", message),
-    );
-    try {
-      const result = await client.execute("procedure_pseudo_code", {
-        procedure: selector,
-      });
-      if (result.ok) throw new Error("Expected a missing procedure");
-      const projected = projectAnalysisError(result.error);
-      expect(projected).toMatchObject({
-        code: "invalid_request",
-        message,
-        details: {
-          issues: [
-            {
-              path: ["procedure"],
-              observed: { procedure: selector },
-            },
-          ],
-          diagnostics: { remote_code: "procedure_not_found" },
-        },
-      });
-      expect(projected).not.toHaveProperty("recovery");
-      expect(projected.remediation.action).toContain("list_procedures");
-      expect(projected.remediation.action).toContain("does not prove");
-      expect(projected.remediation.action).not.toContain(
-        "REA_GHIDRA_PROJECT_PATH",
-      );
-    } finally {
-      await client.close();
-    }
-  });
+  it.each([
+    {
+      code: "procedure_not_found",
+      selector: "Unresolved_Selected_Name",
+      message:
+        "Unknown Ghidra procedure name or address: Unresolved_Selected_Name",
+      remedy: "list_procedures",
+    },
+    {
+      code: "file_offset_unmapped",
+      selector: "file-offset:0xdeadbeef",
+      message: "File offset 0xdeadbeef has no loaded source mapping",
+      remedy: "inspect_native_load_image",
+    },
+  ])(
+    "reports $code without schema repair",
+    async ({ code, selector, message, remedy }) => {
+      const client = await createElfClient(remoteFailure(code, message));
+      try {
+        const result = await client.execute("procedure_pseudo_code", {
+          procedure: selector,
+        });
+        if (result.ok) throw new Error("Expected a missing procedure");
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
+          code: "invalid_request",
+          message,
+          details: {
+            issues: [
+              {
+                path: ["procedure"],
+                observed: { procedure: selector },
+              },
+            ],
+            diagnostics: { remote_code: code },
+          },
+        });
+        expect(projected).not.toHaveProperty("recovery");
+        expect(projected.remediation.action).toContain(remedy);
+        expect(projected.remediation.action).toContain("does not prove");
+        expect(projected.remediation.action).not.toContain(
+          "REA_GHIDRA_PROJECT_PATH",
+        );
+      } finally {
+        await client.close();
+      }
+    },
+  );
 
   it("offers an explicit fresh import when the missing procedure came from a selected project", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-missing-procedure-"));
