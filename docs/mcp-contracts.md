@@ -308,6 +308,17 @@ unknown. Exhausted pages describe the recorded observations and do not establish
 complete native discovery. The same views work through the CLI with historical
 Evidence files or bundles and require no live provider.
 
+For retained `inspect_native_instruction` Evidence, use
+`view: {"kind":"native-instruction-references","collection":"incoming_references","offset":0,"limit":64}`
+to page typed references to the exact code or data address. Select `references`
+for outgoing instruction references. Rows preserve their original indices and
+provider-reported kind and provenance. `items.state` distinguishes available,
+unavailable, and not-recorded collections; coverage is null in the latter two
+cases. The fixed 1 MiB page projection allowance leaves room for Evidence and
+MCP encoding. An oversized single row remains in the complete parent, which
+can be exported. Page exhaustion describes retained rows, not discovery or
+runtime access.
+
 For oversized native function Evidence, `details.reported_limits.continuation`
 contains a ready-to-call `inspect_analysis_view` request for the retained
 pseudocode's first page. Use its `name` and `arguments` directly, then follow
