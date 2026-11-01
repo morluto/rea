@@ -222,6 +222,7 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Pachete și resurse                  | Inventare de fișiere, hash-uri, fișiere plist, structura pachetelor de aplicație Apple și resurse extrase                     | [Ghidul artefactelor și JavaScript](../javascript-artifact-reconstruction.md), [aplicații Apple](../apple-application-analysis.md)     |
 | Comportamentul proceselor           | Ieșirea în terminal, interacțiuni, observații despre terminarea proceselor și sistemul de fișiere și comparații între rulări  | Linux/macOS cu un PTY nativ; [capturarea proceselor](../process-capture.md)                                                            |
 | Executabile PyInstaller             | Membri CArchive, versiunea Python, scripturi de intrare și bytecode extras                                                    | Fără cerințe suplimentare (doar analiză statică); [aplicații Python împachetate](../python-packaged-applications.md)                   |
+| Deno compile binaries               | Virtual files, entry point, recorded options, npm snapshot length                                                             | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                   |
 
 Inspectarea statică JavaScript și .NET citește fișierele furnizate fără a rula
 aplicația. Capturarea în timpul execuției rulează ținta selectată sau interacționează

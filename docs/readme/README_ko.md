@@ -182,6 +182,7 @@ REA에는 Node.js 22.x(>=22.23.4), 24.x(>=24.22.1) 또는 26+ (>=26.12.1)와 npm
 | 패키지 및 리소스       | 파일 목록, 다이제스트, plist, Apple 번들 구조, 추출한 리소스                  | [아티팩트 및 JavaScript 가이드](../javascript-artifact-reconstruction.md), [Apple 애플리케이션](../apple-application-analysis.md) |
 | 프로세스 동작          | 터미널 출력, 상호작용, 종료 및 파일 시스템 관찰 결과, 실행 비교               | 네이티브 PTY를 지원하는 Linux/macOS; [프로세스 캡처](../process-capture.md)                                                       |
 | PyInstaller            | CArchive, PYZ, Python bytecode                                                | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                             |
+| Deno compile binaries  | Virtual files, entry point, recorded options, npm snapshot length             | Static inspection; [Deno compile executables](../deno-standalone.md)                                                              |
 | GPU 코드 객체          | CUDA/HIP 대상, 선택한 커널 매개변수와 자원, 보존된 PTX 텍스트                 | 내장 정적 검사 ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                             |
 | 모델 파일              | GGUF / safetensors 메타데이터, 텐서 선언과 계산한 합계                        | 헤더 검사; 전체 파일 해시는 선택 사항; [GGUF / safetensors](../model-artifacts.md)                                                |
 | IL2CPP 메타데이터      | Unity global-metadata.dat 어셈블리 이미지, 형식·메서드 이름과 인덱스 범위     | 버전 24, 27, 29, 31, 39 정적 디코딩; Unity 불필요                                                                                 |

@@ -169,6 +169,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | 数据包捕获            | 端点、DNS、TLS SNI、协议分布和 HTTP 请求                                     | 调用方提供的 tshark 和 capinfos；[pcap 指南](../pcap-analysis.md)                                                  |
 | .NET 程序集           | 元数据、CIL 指令、声明的原生依赖和构建对比                                   | 静态检查；[托管代码指南](../managed-code-analysis.md)                                                              |
 | PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                              |
+| Deno compile binaries | Virtual files, entry point, recorded options, npm snapshot length            | Static inspection; [Deno compile executables](../deno-standalone.md)                                               |
 | Android APK           | 清单声明、类、反编译的方法和引用                                             | Linux/macOS/Windows x64 上的无界面 JADX 和完整 JDK；[Android 指南](../android-analysis.md)                         |
 | Android 设备          | 设备、软件包、进程、日志、转储、屏幕截图以及 APK/文件传输                    | 调用方提供的 adb（模拟器或实体设备）；[ADB 指南](../adb-device-analysis.md)                                        |
 | JEB 项目              | 引擎支持的项目单元、工件摘要和类型/方法的伪代码                              | 由调用方启动、提供 MCP 的 JEB 客户端，通过 REA_JEB_MCP_URL 选择；[JEB 指南](../jeb-analysis.md)                    |

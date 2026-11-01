@@ -777,3 +777,20 @@ Layout labels describe record shapes, not a detected compiler version; unknown
 or ambiguous layouts are unsupported. Bytecode is retained, not decoded, and the
 executable is never run. See
 [Bun standalone executables](https://github.com/morluto/rea/blob/main/docs/bun-standalone.md).
+
+## Deno compile executables
+
+A `deno compile` executable stores its application in a Mach-O `__SUI,d3n0l4nd`
+section, an Intel Mach-O `<~sui-data~>` trailer, an ELF `SUI` note of type
+`0x53554901`, or a PE `RT_RCDATA` resource named `D3N0L4ND`.
+`open_binary` then `inspect_artifact` reports root format `deno-standalone`
+with the carrier, entry point, recorded options, and one occurrence per virtual
+file, including size and SHA-256. Transpiled output, CJS export analysis, and
+source maps are child occurrences. Symlink targets stay recorded path parts.
+Environment-file values and CA certificate bytes are retained in local Evidence
+with their counts and byte lengths. The npm snapshot length is reported and not
+decoded. `extract-artifact` writes
+stored files through the safe output tree; route extracted JavaScript to
+`analyze_javascript_application`. Other layouts are unsupported, and the
+executable is never run. See
+[Deno compile executables](https://github.com/morluto/rea/blob/main/docs/deno-standalone.md).

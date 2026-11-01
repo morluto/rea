@@ -116,7 +116,7 @@ it.each(["directory", "symlink"] as const)(
   },
 );
 
-it.each(["directory", "zip", "node-sea"] as const)(
+it.each(["directory", "zip", "node-sea", "deno-standalone"] as const)(
   "omits false storage declarations for %s readers",
   (sourceFormat) => {
     const occurrence = createOccurrence(

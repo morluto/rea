@@ -4,7 +4,10 @@ import {
   inspectPeResourcesInputSchema,
   peResourcesSchema,
 } from "../../domain/native/peResources.js";
-import { hasPeResourceName } from "./PeResourceLayout.js";
+import {
+  hasPeResourceName,
+  locatePeResourcePayloads,
+} from "./PeResourceLayout.js";
 import { parsePeResources } from "./PeResourceParser.js";
 import { peResourceFixture } from "./PeResources.fixture.js";
 
@@ -574,6 +577,53 @@ const probeSeaName = (bytes: Buffer) =>
     "NODE_SEA_BLOB",
     4096,
   );
+
+const payloadsOf = (bytes: Buffer, name = "NODE_SEA_BLOB") =>
+  locatePeResourcePayloads(
+    bytes,
+    bytes.length,
+    async (offset, length) =>
+      offset < 0 || length > bytes.length - offset
+        ? undefined
+        : bytes.subarray(offset, offset + length),
+    10,
+    name,
+    4096,
+  );
+
+it("locates every language payload of a named resource with the bounded walk", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+    {
+      type: 10,
+      name: "NODE_SEA_BLOB",
+      language: 2,
+      payload: Buffer.from("bc"),
+    },
+    { type: 10, name: "OTHER", language: 1, payload: Buffer.from("d") },
+  ]);
+  const report = await parse(fixture.bytes);
+  const expected = report.resources
+    .filter(
+      (resource) =>
+        resource.name.kind === "name" && resource.name.name === "NODE_SEA_BLOB",
+    )
+    .map(({ payload }) => payload.location);
+  expect(await payloadsOf(fixture.bytes)).toEqual(
+    expected.map(({ offset, bytes }) => ({ offset, bytes })),
+  );
+  expect(await payloadsOf(fixture.bytes, "ABSENT")).toEqual([]);
+});
+
+it("reports a named resource that cannot resolve to a payload as malformed", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+  ]);
+  fixture.bytes.writeUInt32LE(0xffff_fff0, fixture.dataOffsets[0]!);
+  await expect(payloadsOf(fixture.bytes)).rejects.toMatchObject({
+    reason: "format",
+  });
+});
 
 it("matches resource names by their exact UTF-16 bytes without losing source identity", async () => {
   const fixture = peResourceFixture(false, [

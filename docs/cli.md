@@ -1322,3 +1322,9 @@ Bun standalone executables use the existing `inspect-artifact` and
 `extract-artifact` commands to inventory and materialize embedded source,
 sourcemaps and bytecode without running the executable. See
 [Bun standalone executables](bun-standalone.md) for layout coverage and limits.
+
+Deno compile executables use the same commands to inventory and materialize the
+embedded virtual filesystem, remote modules, and recorded options. Environment-file
+values and certificate bytes are counted and not copied. The npm snapshot length
+is reported and not decoded, and the executable is not run. See
+[Deno compile executables](deno-standalone.md).
