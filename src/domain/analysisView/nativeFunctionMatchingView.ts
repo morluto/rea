@@ -369,8 +369,8 @@ export const projectNativeFunctionMatchingView = (
             retryable: false,
             remediationAction:
               source === undefined
-                ? "Narrow the selection or export the complete Evidence bundle."
-                : "Retrieve the selected source Evidence by ID or export the complete Evidence bundle; use next_offset to continue after the oversized source.",
+                ? "Narrow the selection or inspect the original matching Evidence."
+                : "Inspect the original matching Evidence, or export it if retained; use next_offset to continue after the oversized source.",
           },
         ),
       );

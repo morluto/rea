@@ -54,9 +54,9 @@ distinguishes, for example, Ghidra initialized-memory bytes from file bytes.
 Identical overlapping reads retain the selected covering source, not every
 corroborating read. Pages preserve the original source limitations and may end
 early when the response budget is reached. If one source is too large for a
-page, the error identifies its Evidence and the next offset; retrieve that
-source or export the bundle, then resume at that offset. Older matching Evidence
-may not record this source selection.
+page, the error identifies its Evidence and the next offset; inspect the
+original matching Evidence or export it if retained, then resume at that
+offset. Older matching Evidence may not record this source selection.
 
 This first slice reuses existing range observations. Stripped builds can require
 many lightweight range queries when those facts are not retained yet. Matching

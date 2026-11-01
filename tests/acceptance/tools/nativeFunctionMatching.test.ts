@@ -895,3 +895,69 @@ cliTest(
     );
   },
 );
+
+cliTest(
+  "oversized inline matching Evidence points back to the caller's original record",
+  { timeout: 60000 },
+  async () => {
+    const left = nativeMatchingInventory("1", [
+      { address: "0x10", value: "left" },
+    ]);
+    const right = nativeMatchingInventory("2", [
+      { address: "0x20", value: "right" },
+    ]);
+    const [info] = nativeMatchingDetails("1", "0x10", "c3");
+    if (info === undefined) throw new Error("Missing synthetic body");
+    const read = createEvidence(
+      nativeMatchingTarget("1"),
+      nativeMatchingProvider,
+      {
+        operation: "read_bytes",
+        parameters: { address: "0x10", length: 1 },
+        result: {
+          address: "0x10",
+          requested_bytes: 1,
+          returned_bytes: 1,
+          bytes_hex: "c3",
+          complete: true,
+        },
+        limitations: ["x".repeat(1_100_000)],
+      },
+    );
+    const { call } = await connectLocalToolsMcp();
+    const match = await call("match_native_functions", {
+      left,
+      right,
+      left_observations: [info, read],
+      detail: "complete",
+    });
+    expect(match.isError, JSON.stringify(match)).not.toBe(true);
+    const matchingEvidence = parseEvidence(match.structuredContent);
+    const offline = await connectLocalToolsMcp();
+    const page = await offline.call("inspect_analysis_view", {
+      source: { kind: "inline", evidence: matchingEvidence },
+      view: { kind: "function-matches", collection: "byte-sources" },
+    });
+    const error = parseMcpToolError(page).error;
+    expect(error).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        reported_limits: {
+          source_evidence_id: read.evidence_id,
+          next_offset: 1,
+        },
+      },
+    });
+    expect(error.remediation?.action).toContain("original matching Evidence");
+    expect(error.remediation?.action).toContain("if retained");
+    const lookup = await offline.call("get_evidence_bundle", {
+      detail: "records",
+      filters: { evidence_id: read.evidence_id },
+    });
+    expect(lookup.isError, JSON.stringify(lookup)).not.toBe(true);
+    expect(
+      (lookup.structuredContent as { result: { records: unknown[] } }).result
+        .records,
+    ).toEqual([]);
+  },
+);
