@@ -7,6 +7,7 @@ import {
   MachoLoadCommandCursor,
   readMachoHeaderDeclarations,
   readMachoCommandStringBytes,
+  readMachoLinkeditDataCommand,
   type MachoCommandStringFailure,
 } from "../../domain/apple/machoLoadCommands.js";
 import {
@@ -771,8 +772,7 @@ const decodeCommand = (
     return;
   }
   if (command === LC_CODE_SIGNATURE) {
-    // linkedit_data_command: cmd, cmdsize, dataoff, datasize.
-    if (body.byteLength < 16)
+    if (readMachoLinkeditDataCommand(body, true) === null)
       throw new MachoFormatIssue(
         "malformed",
         `load command ${index} is too short for LC_CODE_SIGNATURE`,

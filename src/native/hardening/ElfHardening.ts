@@ -2,6 +2,8 @@ import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
+import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
+import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {
   readElfGnuHashSymbolCount,
   readElfHashSymbolCount,
@@ -39,6 +41,7 @@ import {
   ELF_PT_GNU_STACK,
   ELF_PT_INTERP,
   ELF_PT_NOTE,
+  assertElfDeclaredRangesFromBuffer,
   readElfDirectoryFromBuffer,
   type ElfProgramDeclaration,
   type NativeSection,
@@ -161,12 +164,25 @@ export const readElfHardening = (
 ): BinaryHardeningImage => {
   assertArtifactReadActive(signal);
   const directory = readElfDirectoryFromBuffer(bytes);
+  // A report needs every declared payload, not only the tables that name them.
+  assertElfDeclaredRangesFromBuffer(bytes);
   const { bits, little, machine, programs, sections } = directory;
   const headerWidth = bits === 64 ? 56 : 32;
   const symbolWidth = bits === 64 ? 24 : 16;
   const dynamicWidth = bits === 64 ? 16 : 8;
   const propertyAlign = bits === 64 ? 8 : 4;
   const loads = programs.filter(isSpan).filter((program) => program.type === 1);
+  for (const load of loads) {
+    const admitted = admitElfLoadSegment(
+      {
+        virtualAddress: load.virtual_address,
+        memorySize: load.memory_size,
+        fileSize: load.file_size,
+      },
+      bits,
+    );
+    if (!admitted.ok) malformed(admitted.error.message);
+  }
   const mapVa: MapVa = (va, size) => mapVirtualAddress(loads, va, size);
   const one = (
     type: SpanProgram["type"],
@@ -182,6 +198,7 @@ export const readElfHardening = (
   if (dynamicPrograms.length > 1)
     malformed("ELF image has more than one PT_DYNAMIC");
   const interp = one(ELF_PT_INTERP, "PT_INTERP");
+  if (interp !== null) admitInterp(bytes, interp);
   const stack = one(ELF_PT_GNU_STACK, "PT_GNU_STACK");
   const relro = one(ELF_PT_GNU_RELRO, "PT_GNU_RELRO");
   const propertyProgram = one(ELF_PT_GNU_PROPERTY, "PT_GNU_PROPERTY");
@@ -203,7 +220,6 @@ export const readElfHardening = (
       sections,
       dynamic,
       little,
-      symbolWidth,
       mapVa,
       bits,
       signal,
@@ -212,7 +228,7 @@ export const readElfHardening = (
     // One import table above the entry budget must not drop PIE, NX, or RELRO.
     // The import rows stay unknown.
     if (!(cause instanceof BinaryResourceFailure)) throw cause;
-    symbols = { state: "budget", reason: cause.message, names: [] };
+    symbols = { state: "unresolved", reason: cause.message, names: [] };
   }
   const features = readFeatureNotes(
     bytes,
@@ -295,6 +311,13 @@ export const readElfHardening = (
     slice: null,
     rows,
   };
+};
+
+/** PIE reads this header's presence, so it must name a loadable path. */
+const admitInterp = (bytes: Buffer, interp: SpanProgram): void => {
+  const end = exact(interp.file_offset + interp.file_size, "PT_INTERP range");
+  if (interp.file_size < 2n || bytes[end - 1] !== 0)
+    malformed("ELF PT_INTERP is not a NUL-terminated path");
 };
 
 const mapVirtualAddress = (
@@ -403,24 +426,28 @@ type SymbolName = {
   readonly offset: number;
   readonly bytes: number;
 };
-/** `budget` keeps the names read so far. A sign among them still counts. */
+/** `unresolved` keeps the names read so far. A sign among them still counts. */
 type SymbolScan =
   | {
       readonly state: "absent" | "scanned";
       readonly names: readonly SymbolName[];
     }
   | {
-      readonly state: "budget";
+      readonly state: "unresolved";
       readonly reason: string;
       readonly names: readonly SymbolName[];
     };
 
+/**
+ * The loader reads DT_SYMTAB and DT_STRTAB, so section headers cannot declare
+ * imports. An SHT_DYNSYM section only supplies a count DT_HASH and DT_GNU_HASH
+ * leave open, and only while it names the same tables.
+ */
 const readSymbols = (
   bytes: Buffer,
   sections: readonly NativeSection[],
   dynamic: DynamicTable | null,
   little: boolean,
-  width: number,
   mapVa: MapVa,
   bits: 32 | 64,
   signal?: AbortSignal,
@@ -428,18 +455,33 @@ const readSymbols = (
   const dynsym = sections.filter((section) => section.type === SHT_DYNSYM);
   if (dynsym.length > 1) malformed("ELF image has more than one SHT_DYNSYM");
   const section = dynsym[0];
-  if (section !== undefined)
-    return namesFromSection(bytes, sections, section, little, width);
-  if (dynamic === null) return { state: "absent", names: [] };
-  const symtab = dynamic.entries.get(DT_SYMTAB);
-  if (symtab === undefined) return { state: "absent", names: [] };
+  const symtab = dynamic?.entries.get(DT_SYMTAB);
+  if (dynamic === null || symtab === undefined)
+    return section === undefined
+      ? { state: "absent", names: [] }
+      : {
+          state: "unresolved",
+          reason:
+            "An SHT_DYNSYM section exists, but no DT_SYMTAB declares it, so its names are not established as imports.",
+          names: [],
+        };
+  const width = bits === 64 ? 24 : 16;
   const syment = dynamic.entries.get(DT_SYMENT);
   if (syment !== undefined && syment.value !== BigInt(width))
     malformed("ELF DT_SYMENT does not match the ELF class symbol width");
   if (dynamic.strings === null || dynamic.stringFileOffset === null)
     malformed("ELF DT_SYMTAB is present without a dynamic string table");
-  const count = symbolCount(bytes, dynamic, bits, little, mapVa, signal);
-  if (count === null) return { state: "absent", names: [] };
+  const count =
+    symbolCount(bytes, dynamic, bits, little, mapVa, signal) ??
+    agreeingSectionCount(sections, section, dynamic, symtab, width, mapVa);
+  if (count === null)
+    return {
+      state: "unresolved",
+      reason: dynamic.entries.has(DT_GNU_HASH)
+        ? "DT_GNU_HASH has no hashed symbols and no agreeing SHT_DYNSYM section gives the count, so the dynamic symbol table could not be read."
+        : "Neither DT_HASH nor DT_GNU_HASH is present and no agreeing SHT_DYNSYM section gives the count, so the dynamic symbol table could not be read.",
+      names: [],
+    };
   budget(count, "ELF dynamic symbol table");
   const base = mapVa(symtab.value, BigInt(count * width)).offset;
   if (count * width > bytes.length - base)
@@ -448,20 +490,31 @@ const readSymbols = (
     bytes,
     base,
     count,
-    width,
+    bits,
     little,
     dynamic.strings,
     dynamic.stringFileOffset,
   );
 };
 
-const namesFromSection = (
-  bytes: Buffer,
+/** The SHT_DYNSYM count, or null unless it names the dynamic tables' bytes. */
+const agreeingSectionCount = (
   sections: readonly NativeSection[],
-  dynsym: NativeSection,
-  little: boolean,
+  dynsym: NativeSection | undefined,
+  dynamic: DynamicTable,
+  symtab: DynamicEntry,
   width: number,
-): SymbolScan => {
+  mapVa: MapVa,
+): number | null => {
+  if (dynsym === undefined) return null;
+  const strings = sections[dynsym.link];
+  if (
+    dynsym.address !== symtab.value ||
+    strings?.address !== dynamic.entries.get(DT_STRTAB)?.value ||
+    strings?.size !== dynamic.entries.get(DT_STRSZ)?.value ||
+    strings?.offset !== BigInt(dynamic.stringFileOffset ?? -1)
+  )
+    return null;
   const entry = dynsym.entry_size === 0n ? BigInt(width) : dynsym.entry_size;
   if (entry !== BigInt(width))
     malformed("ELF SHT_DYNSYM entry size does not match the ELF class");
@@ -470,50 +523,34 @@ const namesFromSection = (
     malformed("ELF SHT_DYNSYM size is not a whole number of symbols");
   const count = size / width;
   budget(count, "ELF dynamic symbol table");
-  if (!dynsym.file_backed) malformed("ELF SHT_DYNSYM is not file-backed");
-  const offset = exact(dynsym.offset, "SHT_DYNSYM offset");
-  const strings = sections[dynsym.link];
-  if (strings === undefined || !strings.file_backed)
-    malformed("ELF SHT_DYNSYM string table is not file-backed");
-  const stringOffset = exact(strings.offset, "dynamic string table offset");
-  const stringSize = exact(strings.size, "dynamic string table size");
-  if (stringSize > bytes.length - stringOffset)
-    malformed("ELF dynamic string table extends outside the file");
-  return readSymbolNames(
-    bytes,
-    offset,
-    count,
-    width,
-    little,
-    bytes.subarray(stringOffset, stringOffset + stringSize),
-    stringOffset,
-  );
+  return mapVa(symtab.value, dynsym.size).offset ===
+    exact(dynsym.offset, "SHT_DYNSYM offset")
+    ? count
+    : null;
 };
 
 const readSymbolNames = (
   bytes: Buffer,
   offset: number,
   count: number,
-  width: number,
+  bits: 32 | 64,
   little: boolean,
   strings: Buffer,
   stringFileOffset: number,
 ): SymbolScan => {
+  const width = bits === 64 ? 24 : 16;
   const names: SymbolName[] = [];
   let scanned = 0;
   let unterminated = false;
   for (let index = 0; index < count; index += 1) {
     const at = offset + index * width;
-    if (at > bytes.length - width) malformed("ELF symbol entry is truncated");
-    const nameOffset = little ? bytes.readUInt32LE(at) : bytes.readUInt32BE(at);
+    const symbol = readElfSymbol(bytes.subarray(at, at + width), bits, little);
+    if (!symbol.ok) malformed(symbol.error.message);
+    const nameOffset = symbol.value.name_offset;
     if (nameOffset === 0) continue;
     // SHN_UNDEF is an import. A defined export of the same name is not a sign
     // that this image references the protector.
-    const shndxAt = width === 24 ? 6 : 14;
-    const shndx = little
-      ? bytes.readUInt16LE(at + shndxAt)
-      : bytes.readUInt16BE(at + shndxAt);
-    if (shndx !== 0) continue;
+    if (symbol.value.section_index !== 0) continue;
     const observed = observeElfStringTableEntry(
       strings,
       nameOffset,
@@ -522,7 +559,7 @@ const readSymbolNames = (
     scanned += observed.examinedBytes;
     if (scanned > MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES)
       return {
-        state: "budget",
+        state: "unresolved",
         reason: `ELF symbol name scans examined more than the ${String(MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES)}-byte structural budget, so this import sign is unknown.`,
         names,
       };
@@ -541,7 +578,7 @@ const readSymbolNames = (
   }
   return unterminated
     ? {
-        state: "budget",
+        state: "unresolved",
         reason: `An undefined dynamic symbol name has no NUL within the string table or the ${String(MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES)}-byte name budget, so this import sign is unknown.`,
         names,
       }
@@ -968,7 +1005,7 @@ const symbolRow = (
       location: { offset: found.offset, bytes: found.bytes },
     });
   const reason =
-    symbols.state === "budget"
+    symbols.state === "unresolved"
       ? symbols.reason
       : symbols.state === "absent"
         ? absent

@@ -11,7 +11,10 @@ import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { readPeCoffHeader } from "../../domain/peCoffHeader.js";
 import { readPeSectionHeader } from "../../domain/peSectionHeader.js";
-import { readElfTableDeclarations } from "../../domain/elfDeclaredRanges.js";
+import {
+  readElfTableDeclarations,
+  validateElfDeclaredRanges,
+} from "../../domain/elfDeclaredRanges.js";
 import { readPeOptionalHeaderStructure } from "../../domain/peOptionalHeader.js";
 import {
   BinaryFormatFailure,
@@ -417,15 +420,29 @@ export function* readPeSectionDirectory(
   };
 }
 
-/** Borrow ELF bytes; file drivers satisfy the identical requests without loading payloads. */
-export const readElfDirectoryFromBuffer = (
+const driveFromBuffer = <T>(
   bytes: Buffer,
-): ElfSectionDirectory => {
-  const steps = readElfSectionDirectory(bytes.length);
+  steps: Generator<NativeReadRequest, T, Buffer>,
+): T => {
   let next = steps.next();
   while (!next.done) {
     const { offset, size } = next.value;
     next = steps.next(bytes.subarray(offset, offset + size));
   }
   return next.value;
+};
+
+/** Borrow ELF bytes; file drivers satisfy the identical requests without loading payloads. */
+export const readElfDirectoryFromBuffer = (
+  bytes: Buffer,
+): ElfSectionDirectory =>
+  driveFromBuffer(bytes, readElfSectionDirectory(bytes.length));
+
+/** Reject a program or section payload the declared tables place outside these bytes. */
+export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {
+  const checked = driveFromBuffer(
+    bytes,
+    validateElfDeclaredRanges(bytes.subarray(0, 64), bytes.length),
+  );
+  if (!checked.ok) reject(checked.error);
 };

@@ -1023,3 +1023,284 @@ it("keeps a parsed fat slice when another slice is empty or past EOF", async () 
     expect.stringContaining("extends beyond the file"),
   );
 });
+
+/** Locate the 64-bit little-endian program header of a given type. */
+const elfProgramAt = (bytes: Buffer, type: number): number => {
+  const phoff = Number(bytes.readBigUInt64LE(32));
+  for (let index = 0; index < bytes.readUInt16LE(56); index += 1) {
+    const at = phoff + index * 56;
+    if (bytes.readUInt32LE(at) === type) return at;
+  }
+  throw new Error(`Missing program type ${String(type)}`);
+};
+
+const elfSectionAt = (bytes: Buffer, type: number): number => {
+  const shoff = Number(bytes.readBigUInt64LE(40));
+  for (let index = 0; index < bytes.readUInt16LE(60); index += 1) {
+    const at = shoff + index * 64;
+    if (bytes.readUInt32LE(at + 4) === type) return at;
+  }
+  throw new Error(`Missing section type ${String(type)}`);
+};
+
+const elfDynamicEntryAt = (bytes: Buffer, tag: bigint): number => {
+  const start = Number(bytes.readBigUInt64LE(elfProgramAt(bytes, 2) + 8));
+  for (let at = start; bytes.readBigUInt64LE(at) !== 0n; at += 16)
+    if (bytes.readBigUInt64LE(at) === tag) return at;
+  throw new Error(`Missing dynamic tag ${tag.toString()}`);
+};
+
+const PT_LOAD = 1;
+const PT_INTERP = 3;
+const SHT_DYNSYM = 11;
+const SHT_STRTAB = 3;
+const DT_HASH = 4n;
+const DT_GNU_HASH = 0x6ffffef5n;
+const DT_SYMTAB = 6n;
+
+/** Grow the image so its only PT_LOAD maps `extra`, returning where it landed. */
+const appendMapped = (
+  image: Buffer,
+  extra: Buffer,
+): { readonly bytes: Buffer; readonly at: number } => {
+  const bytes = Buffer.concat([image, extra]);
+  const load = elfProgramAt(bytes, PT_LOAD);
+  bytes.writeBigUInt64LE(BigInt(bytes.length), load + 32);
+  bytes.writeBigUInt64LE(BigInt(bytes.length), load + 40);
+  return { bytes, at: image.length };
+};
+
+/** Replace DT_HASH with a DT_GNU_HASH whose only bucket is empty. */
+const withEmptyGnuHash = (image: Buffer): Buffer => {
+  const words = Buffer.alloc(32);
+  [1, 1, 1, 0, 0, 0, 0, 0].forEach((word, index) =>
+    words.writeUInt32LE(word, index * 4),
+  );
+  const { bytes, at } = appendMapped(image, words);
+  const entry = elfDynamicEntryAt(bytes, DT_HASH);
+  bytes.writeBigUInt64LE(DT_GNU_HASH, entry);
+  bytes.writeBigUInt64LE(BigInt(at), entry + 8);
+  return bytes;
+};
+
+it.each([
+  ["PT_LOAD past EOF", PT_LOAD, 8, 0n, /program 0/u],
+  ["PT_INTERP past EOF", PT_INTERP, 8, 1n << 40n, /program 1/u],
+] as const)("rejects a %s", (_label, type, field, value, message) => {
+  const bytes = elfHardeningFixture({ interp: true, bindNow: true });
+  const at = elfProgramAt(bytes, type);
+  if (value !== 0n) bytes.writeBigUInt64LE(value, at + field);
+  else bytes.writeBigUInt64LE(BigInt(bytes.length + 1), at + 32);
+  if (value === 0n) bytes.writeBigUInt64LE(BigInt(bytes.length + 1), at + 40);
+  expect(() => readElfHardening(bytes)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: expect.stringMatching(message),
+    }),
+  );
+});
+
+it("rejects a section payload past EOF and impossible load sizes", () => {
+  const section = elfHardeningFixture();
+  section.writeBigUInt64LE(
+    BigInt(section.length + 1),
+    elfSectionAt(section, 2) + 32,
+  );
+  expect(() => readElfHardening(section)).toThrow(/truncated ELF section/u);
+  const larger = elfHardeningFixture();
+  larger.writeBigUInt64LE(1n, elfProgramAt(larger, PT_LOAD) + 40);
+  expect(() => readElfHardening(larger)).toThrow(
+    /load segment sizes or addresses/u,
+  );
+  const wrapped = elfHardeningFixture();
+  wrapped.writeBigUInt64LE(
+    0xffffffffffffffffn,
+    elfProgramAt(wrapped, PT_LOAD) + 16,
+  );
+  expect(() => readElfHardening(wrapped)).toThrow(
+    /load segment sizes or addresses/u,
+  );
+});
+
+it.each([
+  ["empty", 0n, null],
+  ["unterminated", null, 0x41],
+] as const)("rejects an %s PT_INTERP", (_label, size, last) => {
+  const bytes = elfHardeningFixture({ interp: true });
+  const at = elfProgramAt(bytes, PT_INTERP);
+  if (size !== null) bytes.writeBigUInt64LE(size, at + 32);
+  if (last !== null)
+    bytes[
+      Number(bytes.readBigUInt64LE(at + 8)) +
+        Number(bytes.readBigUInt64LE(at + 32)) -
+        1
+    ] = last;
+  expect(() => readElfHardening(bytes)).toThrow(/PT_INTERP/u);
+});
+
+it("reads imports from DT_SYMTAB when section metadata names other symbols", () => {
+  // The section names a protector the dynamic table does not declare.
+  const donor = elfHardeningFixture({ stackChk: true, fortify: true });
+  const donorSymbols = elfSectionAt(donor, SHT_DYNSYM);
+  const donorStrings = elfSectionAt(donor, SHT_STRTAB);
+  const slice = (header: number): Buffer => {
+    const offset = Number(donor.readBigUInt64LE(header + 24));
+    return donor.subarray(
+      offset,
+      offset + Number(donor.readBigUInt64LE(header + 32)),
+    );
+  };
+  const { bytes, at } = appendMapped(
+    elfHardeningFixture(),
+    Buffer.concat([slice(donorSymbols), slice(donorStrings)]),
+  );
+  const symbols = elfSectionAt(bytes, SHT_DYNSYM);
+  const strings = elfSectionAt(bytes, SHT_STRTAB);
+  const symbolBytes = slice(donorSymbols).length;
+  bytes.writeBigUInt64LE(BigInt(at), symbols + 16);
+  bytes.writeBigUInt64LE(BigInt(at), symbols + 24);
+  bytes.writeBigUInt64LE(BigInt(symbolBytes), symbols + 32);
+  bytes.writeBigUInt64LE(BigInt(at + symbolBytes), strings + 16);
+  bytes.writeBigUInt64LE(BigInt(at + symbolBytes), strings + 24);
+  bytes.writeBigUInt64LE(BigInt(slice(donorStrings).length), strings + 32);
+  const rows = readElfHardening(bytes).rows;
+  expect(findRow(rows, "stack_protector").state).toBe("unknown");
+  expect(findRow(rows, "fortify").state).toBe("unknown");
+  // The reverse lie cannot hide a declared import.
+  const declared = elfHardeningFixture({ stackChk: true });
+  declared.writeBigUInt64LE(0n, elfSectionAt(declared, SHT_DYNSYM) + 32);
+  expect(
+    findRow(readElfHardening(declared).rows, "stack_protector").state,
+  ).toBe("enabled");
+});
+
+it("does not treat SHT_DYNSYM names as imports without DT_SYMTAB", () => {
+  const bytes = elfHardeningFixture({ stackChk: true });
+  bytes.writeBigUInt64LE(0x60000000n, elfDynamicEntryAt(bytes, DT_SYMTAB));
+  expect(
+    findRow(readElfHardening(bytes).rows, "stack_protector"),
+  ).toMatchObject({
+    state: "unknown",
+    note: expect.stringContaining("DT_SYMTAB"),
+  });
+});
+
+it("sizes an empty DT_GNU_HASH table only from an agreeing SHT_DYNSYM", () => {
+  const agreeing = withEmptyGnuHash(elfHardeningFixture({ stackChk: true }));
+  expect(
+    findRow(readElfHardening(agreeing).rows, "stack_protector"),
+  ).toMatchObject({ state: "enabled" });
+  const moved = Buffer.from(agreeing);
+  const section = elfSectionAt(moved, SHT_DYNSYM);
+  moved.writeBigUInt64LE(
+    moved.readBigUInt64LE(section + 16) + 8n,
+    section + 16,
+  );
+  const offset = Buffer.from(agreeing);
+  offset.writeBigUInt64LE(
+    offset.readBigUInt64LE(section + 24) + 8n,
+    section + 24,
+  );
+  const strings = Buffer.from(agreeing);
+  strings.writeBigUInt64LE(
+    strings.readBigUInt64LE(elfSectionAt(strings, SHT_STRTAB) + 32) - 1n,
+    elfSectionAt(strings, SHT_STRTAB) + 32,
+  );
+  for (const bytes of [moved, offset, strings])
+    expect(
+      findRow(readElfHardening(bytes).rows, "stack_protector"),
+    ).toMatchObject({
+      state: "unknown",
+      note: expect.stringContaining("DT_GNU_HASH"),
+    });
+});
+
+it("keeps an unresolved symbol count distinct from an absent table", () => {
+  const image = readElfHardening(
+    withEmptyGnuHash(elfHardeningFixture({ sections: false, stackChk: true })),
+  );
+  for (const property of ["stack_protector", "fortify"] as const) {
+    const row = findRow(image.rows, property);
+    expect(row).toMatchObject({
+      state: "unknown",
+      note: expect.stringContaining("DT_GNU_HASH"),
+    });
+    expect(row.basis).not.toContain("absent");
+  }
+  const noHash = elfHardeningFixture({ sections: false, stackChk: true });
+  noHash.writeBigUInt64LE(0x60000000n, elfDynamicEntryAt(noHash, DT_HASH));
+  expect(findRow(readElfHardening(noHash).rows, "fortify")).toMatchObject({
+    state: "unknown",
+    note: expect.stringContaining("DT_HASH"),
+  });
+  const absent = readElfHardening(elfHardeningFixture({ dynamic: false }));
+  expect(findRow(absent.rows, "fortify").basis).toContain("absent");
+});
+
+const machoCommand = (command: number, size: number, ...words: number[]) => {
+  const body = Buffer.alloc(size);
+  body.writeUInt32LE(command, 0);
+  body.writeUInt32LE(size, 4);
+  words.forEach((word, index) => body.writeUInt32LE(word, 8 + index * 4));
+  return body;
+};
+
+const LC_CODE_SIGNATURE = 0x1d;
+const LC_SEGMENT_64 = 0x19;
+const CPU_ARM64 = 0x0100000c;
+
+it.each([
+  [
+    "an eight-byte LC_CODE_SIGNATURE",
+    { codeSignature: false },
+    machoCommand(LC_CODE_SIGNATURE, 8),
+    /too short for LC_CODE_SIGNATURE/u,
+  ],
+  [
+    "a LC_CODE_SIGNATURE range outside the slice",
+    {},
+    machoCommand(LC_CODE_SIGNATURE, 16, 0xfffffff0, 0x1000),
+    /LC_CODE_SIGNATURE.*outside/u,
+  ],
+  [
+    "a truncated segment after __RESTRICT",
+    { restrict: true },
+    machoCommand(LC_SEGMENT_64, 8),
+    /segment header is truncated/u,
+  ],
+] as const)("rejects %s", async (_label, options, command, message) => {
+  const bytes = machoHardeningFixture({
+    ...options,
+    extraCommands: [command],
+  });
+  await expect(readMachoHardening(bytes)).rejects.toMatchObject({
+    kind: "malformed",
+    message: expect.stringMatching(message),
+  });
+  const images = await readMachoHardening(
+    fatMachoHardeningFixture([
+      { bytes: machoHardeningFixture(), cpuType: CPU_ARM64, cpuSubtype: 0 },
+      { bytes, cpuType: CPU_ARM64, cpuSubtype: 0 },
+    ]),
+  );
+  expect(images.map((image) => image.status)).toEqual(["parsed", "malformed"]);
+  expect(images[1]?.reason).toMatch(message);
+  expect(images[1]?.rows).toEqual([]);
+});
+
+it("reads facts past a large table of unrelated Mach-O commands", async () => {
+  const filler = Array.from({ length: 200_000 }, () => machoCommand(0x7fff, 8));
+  const image = (
+    await readMachoHardening(
+      machoHardeningFixture({
+        extraCommands: [...filler, machoCommand(LC_CODE_SIGNATURE, 16)],
+        stackChk: true,
+      }),
+    )
+  )[0];
+  expect(image?.status).toBe("parsed");
+  expect(findRow(image?.rows ?? [], "code_signature_present").state).toBe(
+    "enabled",
+  );
+  expect(findRow(image?.rows ?? [], "stack_protector").state).toBe("enabled");
+});

@@ -140,6 +140,19 @@ export class MachoLoadCommandCursor {
   }
 }
 
+/** `linkedit_data_command`: cmd, cmdsize, dataoff, datasize. Null when truncated. */
+export const readMachoLinkeditDataCommand = (
+  body: Uint8Array,
+  littleEndian: boolean,
+): { readonly dataOffset: number; readonly dataSize: number } | null => {
+  if (body.byteLength < 16) return null;
+  const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+  return {
+    dataOffset: view.getUint32(8, littleEndian),
+    dataSize: view.getUint32(12, littleEndian),
+  };
+};
+
 export type MachoCommandStringFailure =
   | {
       readonly _tag: "InvalidMachoCommandString";

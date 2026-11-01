@@ -1,3 +1,4 @@
+import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
 import {
   declaredFileRange,
   BinaryFormatFailure,
@@ -39,11 +40,12 @@ export const readElfImage = (
       file_size: size,
       memory_size: memorySize,
     } = program;
-    if (size > memorySize || address + memorySize > 1n << BigInt(bits))
-      throw new BinaryFormatFailure(
-        "malformed",
-        "ELF load segment sizes or addresses are invalid",
-      );
+    const admitted = admitElfLoadSegment(
+      { virtualAddress: address, memorySize, fileSize: size },
+      bits,
+    );
+    if (!admitted.ok)
+      throw new BinaryFormatFailure("malformed", admitted.error.message);
     const mapping = {
       ...(size === 0n
         ? { offset: 0, size: 0 }

@@ -25,7 +25,10 @@ a missing header is `unknown` and the architecture default is only noted), RELRO
 (`PT_GNU_RELRO` plus `BIND_NOW`), stack protector and FORTIFY undefined dynamic
 imports, CET and AArch64 BTI/PAC GNU property notes, `DT_RPATH`, `DT_RUNPATH`, and
 whether a `SHT_SYMTAB` section is present. Only an undefined dynamic import
-counts. A missing `__stack_chk_fail` or fortify import is `unknown`. That
+counts. Imports come from the table `DT_SYMTAB` declares. A `SHT_DYNSYM` section
+only supplies the symbol count when `DT_HASH` and `DT_GNU_HASH` leave it open,
+and only if it names the same symbol and string tables. Without that count the
+import rows are `unknown` and give the reason. A missing `__stack_chk_fail` or fortify import is `unknown`. That
 absence does not establish that the protection was left out of a static or
 stripped build. A present import is a sign that some code uses the protection,
 not proof that all code does. NX, RELRO, `DT_RPATH`, and `DT_RUNPATH` are
@@ -50,8 +53,8 @@ The report states presence of build-time features. It does not state
 exploitability. `inspect_binary_layout` is unchanged.
 
 The default read budget is 64 MiB (`max_file_bytes`, ceiling 512 MiB). A changed
-file is refused. A malformed header returns no partial report, except that one
-bad slice in a universal Mach-O leaves the other slices. A symbol table or
+file is refused. A malformed header, or a program or section payload declared
+outside the file, returns no partial report, except that one bad slice in a universal Mach-O leaves the other slices. A symbol table or
 symbol name over its budget leaves the import rows `unknown` and keeps the
 header rows. A GNU property note over its budget, or a compressed note section
 that may hold one, leaves the CET and BTI/PAC rows `unknown` and keeps the header

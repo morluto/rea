@@ -6,6 +6,7 @@ import {
 } from "../binaryTarget.js";
 import {
   readMachoHeaderDeclarations,
+  readMachoLinkeditDataCommand,
   readMachoLoadCommandDeclarations,
   readMachoLoadCommandTableHeader,
 } from "./machoLoadCommands.js";
@@ -109,3 +110,14 @@ it.each([
     });
   },
 );
+
+it("reads linkedit data fields and refuses a truncated command", () => {
+  const body = Buffer.alloc(16);
+  body.writeUInt32LE(0x1234, 8);
+  body.writeUInt32LE(0x56, 12);
+  expect(readMachoLinkeditDataCommand(body, true)).toEqual({
+    dataOffset: 0x1234,
+    dataSize: 0x56,
+  });
+  expect(readMachoLinkeditDataCommand(body.subarray(0, 15), true)).toBeNull();
+});

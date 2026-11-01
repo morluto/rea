@@ -1,6 +1,9 @@
 import { validateFatSliceIdentity } from "../../domain/apple/machoContainer.js";
 import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
-import { MACHO_HEADER_FLAGS_OFFSET } from "../../domain/apple/machoLoadCommands.js";
+import {
+  MACHO_HEADER_FLAGS_OFFSET,
+  readMachoLinkeditDataCommand,
+} from "../../domain/apple/machoLoadCommands.js";
 import type { MachoSliceEncryption } from "../../domain/apple/machoEncryption.js";
 import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
 import { machoBinaryArchitecture } from "../../domain/binaryTarget.js";
@@ -264,16 +267,9 @@ const readSliceImage = async (
     if (identity !== null)
       return failedImage(ref, "malformed", identity, header);
   }
-  const commands: MachoLoadCommand[] = [];
-  const framed = frameLoadCommands(table, (command) => {
-    commands.push(command);
-  });
-  if (framed.status !== "framed") {
-    if (ref.thin) throw new BinaryFormatFailure("malformed", framed.reason);
-    return failedImage(ref, "malformed", framed.reason, header);
-  }
   try {
-    const rows = buildRows(bytes, ref, header, commands, encrypted);
+    const facts = readCommandFacts(table, header.wide, ref.size);
+    const rows = buildRows(bytes, ref, header, facts, encrypted);
     return {
       format: "mach-o",
       status: "parsed",
@@ -296,11 +292,59 @@ const readSliceImage = async (
   }
 };
 
+/** Facts the rows need. A load command table can hold millions of small frames. */
+type CommandFacts = {
+  /** Table-relative offset of the first `__RESTRICT` segment command. */
+  restrict: number | null;
+  /** Table-relative offset of the first `LC_CODE_SIGNATURE` command. */
+  signature: number | null;
+  symtab: MachoLoadCommand | null;
+};
+
+/** Check every relevant command before any row exists, retaining only facts. */
+const readCommandFacts = (
+  table: Parameters<typeof frameLoadCommands>[0],
+  wide: boolean,
+  sliceSize: number,
+): CommandFacts => {
+  const facts: CommandFacts = { restrict: null, signature: null, symtab: null };
+  const framed = frameLoadCommands(table, (command) => {
+    if (segmentName(command, wide) === "__RESTRICT")
+      facts.restrict ??= command.offset;
+    if (command.command === LC_CODE_SIGNATURE) {
+      admitCodeSignature(command, sliceSize);
+      facts.signature ??= command.offset;
+    } else if (command.command === LC_SYMTAB) {
+      if (facts.symtab !== null)
+        malformed("Mach-O slice has more than one LC_SYMTAB");
+      facts.symtab = command;
+    }
+  });
+  if (framed.status !== "framed") malformed(framed.reason);
+  return facts;
+};
+
+const admitCodeSignature = (
+  { body, index }: MachoLoadCommand,
+  sliceSize: number,
+): void => {
+  const data = readMachoLinkeditDataCommand(body, true);
+  if (data === null)
+    return malformed(
+      `load command ${index} is too short for LC_CODE_SIGNATURE`,
+    );
+  // Both fields are 32-bit, so their sum is a safe integer.
+  if (data.dataOffset + data.dataSize > sliceSize)
+    malformed(
+      `load command ${index} LC_CODE_SIGNATURE data is outside the slice`,
+    );
+};
+
 const buildRows = (
   bytes: Buffer,
   ref: SliceRef,
   header: MachoSliceHeader,
-  commands: readonly MachoLoadCommand[],
+  { restrict, signature, symtab }: CommandFacts,
   encrypted: MachoSliceEncryption,
 ): BinaryHardeningRow[] => {
   const flagLocation = {
@@ -320,14 +364,6 @@ const buildRows = (
       flagLocation,
     );
   };
-  const restrict = commands.find(
-    (command) => segmentName(command, header.wide) === "__RESTRICT",
-  );
-  const signature = commands.find(
-    (command) => command.command === LC_CODE_SIGNATURE,
-  );
-  const symtabs = commands.filter((command) => command.command === LC_SYMTAB);
-  if (symtabs.length > 1) malformed("Mach-O slice has more than one LC_SYMTAB");
   const architecture = machoArchitectureName(header.cpuType, header.cpuSubtype);
   const pie =
     header.fileType === MH_DYLIB || header.fileType === MH_BUNDLE
@@ -355,13 +391,13 @@ const buildRows = (
       "MH_ALLOW_STACK_EXECUTION",
     ),
     bit("no_heap_execution", MH_NO_HEAP_EXECUTION, "MH_NO_HEAP_EXECUTION"),
-    restrict === undefined
+    restrict === null
       ? row("restrict_segment", "disabled", "No segment is named __RESTRICT.")
       : row("restrict_segment", "enabled", "A segment is named __RESTRICT.", {
-          offset: ref.offset + header.headerSize + restrict.offset + 8,
+          offset: ref.offset + header.headerSize + restrict + 8,
           bytes: 16,
         }),
-    signature === undefined
+    signature === null
       ? row(
           "code_signature_present",
           "disabled",
@@ -372,13 +408,13 @@ const buildRows = (
           "enabled",
           "LC_CODE_SIGNATURE is present. This is presence, not validity.",
           {
-            offset: ref.offset + header.headerSize + signature.offset,
-            bytes: Math.min(16, signature.body.byteLength),
+            offset: ref.offset + header.headerSize + signature,
+            bytes: 16,
           },
         ),
     encryptionRow(encrypted),
     arm64Row(header.cpuType, architecture, ref.offset),
-    stackRow(bytes, ref, header.wide, symtabs[0]),
+    stackRow(bytes, ref, header.wide, symtab),
     row(
       "hardened_runtime",
       "unknown",
@@ -468,9 +504,9 @@ const stackRow = (
   bytes: Buffer,
   ref: SliceRef,
   wide: boolean,
-  symtab: MachoLoadCommand | undefined,
+  symtab: MachoLoadCommand | null,
 ): BinaryHardeningRow => {
-  if (symtab === undefined)
+  if (symtab === null)
     return row(
       "stack_protector",
       "unknown",

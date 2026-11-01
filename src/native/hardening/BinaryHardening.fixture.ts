@@ -191,7 +191,7 @@ const elfSymbolPayload = (
       if (little) dynsym.writeUInt32LE(signAt, 2 * symbolWidth);
       else dynsym.writeUInt32BE(signAt, 2 * symbolWidth);
     }
-    const hash = Buffer.alloc(8);
+    const hash = Buffer.alloc(8 + 4 * (1 + symbolCount));
     if (little) {
       hash.writeUInt32LE(1, 0);
       hash.writeUInt32LE(symbolCount, 4);
@@ -1010,6 +1010,8 @@ export interface MachoHardeningFixtureOptions {
   readonly longSymbolName?: boolean;
   /** N_SECT|N_EXT instead of an undefined external. */
   readonly definedSymbol?: boolean;
+  /** Raw load commands placed after the segments. */
+  readonly extraCommands?: readonly Buffer[];
 }
 
 const MH_EXECUTE = 2;
@@ -1100,6 +1102,7 @@ export const machoHardeningFixture = (
   if (options.restrict === true) commands.push(segment("__RESTRICT"));
   if (options.restrictName !== undefined)
     commands.push(segment(options.restrictName));
+  for (const command of options.extraCommands ?? []) commands.push(command);
   const { wantSymtab, strings, declaredSymbols, symbolBytes } =
     machoSymbolPayload(options, wide);
   const commandSize = commands.reduce(

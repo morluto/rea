@@ -22,6 +22,10 @@ const { peHardeningImage } = await importVerifierSource(
   "../src/native/hardening/BinaryHardening.fixture.ts",
   import.meta.url,
 );
+const { hasMachoMagic } = await importVerifierSource(
+  "../src/domain/apple/machoContainer.ts",
+  import.meta.url,
+);
 
 const which = (command) => {
   const result = spawnSync("which", [command], { encoding: "utf8" });
@@ -222,6 +226,7 @@ async function verifyElf(directory, cFile, output) {
       let buildId = observed.buildId;
       if (readelf !== null) {
         const dumped = run(readelf, [
+          "--wide",
           "-h",
           "-l",
           "-d",
@@ -307,9 +312,9 @@ async function compileTwoNeeded(compiler, directory, binary) {
     "-dynamic",
     "-L",
     directory,
+    mainSource,
     "-la",
     "-lb",
-    mainSource,
     "-o",
     binary,
   ]);
@@ -483,6 +488,14 @@ async function verifyMacho(directory, cFile, output) {
     return;
   }
   const bytes = await readFile(binary);
+  // A compiler that ignores -arch can succeed while emitting another format.
+  if (!hasMachoMagic(bytes)) {
+    output.unavailable.push({
+      kind: "mach-o",
+      reason: "cc did not emit a Mach-O image.",
+    });
+    return;
+  }
   const images = await readMachoHardening(bytes);
   assert.ok(images.length >= 1);
   const pie = statesOf(images[0].rows).pie;
@@ -530,7 +543,15 @@ async function verifyMacho(directory, cFile, output) {
     });
     return;
   }
-  const fatImages = await readMachoHardening(await readFile(fat));
+  const fatBytes = await readFile(fat);
+  if (!hasMachoMagic(fatBytes)) {
+    output.unavailable.push({
+      kind: "mach-o-universal",
+      reason: "cc did not emit a universal Mach-O image.",
+    });
+    return;
+  }
+  const fatImages = await readMachoHardening(fatBytes);
   assert.equal(fatImages.length, 2);
   assert.ok(
     fatImages.every(
