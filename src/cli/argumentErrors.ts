@@ -2,6 +2,7 @@ import { Errors } from "incur";
 import { z } from "zod";
 
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { encodeMarkdownTableCell } from "./cliOutputFormatter.js";
 import type { CliInstance } from "./types.js";
 import { visitRegisteredCommands } from "./visitRegisteredCommands.js";
 
@@ -39,6 +40,37 @@ export const presentCliArgumentErrors = (cli: CliInstance): void => {
           // the original error separately, without copying it into the message.
           Object.defineProperty(failure, "cause", { value: cause });
           throw failure;
+        }
+      },
+      ...(command.middleware ?? []),
+    ];
+  });
+};
+
+/** Encode only at the final Markdown presentation boundary, after redaction. */
+export const encodeCliArgumentErrors = (cli: CliInstance): void => {
+  visitRegisteredCommands(cli, (command) => {
+    command.middleware = [
+      async (context, next) => {
+        try {
+          await next();
+        } catch (error: unknown) {
+          if (
+            context.format === "md" &&
+            error instanceof Errors.ValidationError
+          ) {
+            error.fieldErrors = error.fieldErrors.map((field) => ({
+              ...field,
+              ...(field.code === undefined
+                ? {}
+                : { code: encodeMarkdownTableCell(field.code) }),
+              path: encodeMarkdownTableCell(field.path),
+              expected: encodeMarkdownTableCell(field.expected),
+              received: encodeMarkdownTableCell(field.received),
+              message: encodeMarkdownTableCell(field.message),
+            }));
+          }
+          throw error;
         }
       },
       ...(command.middleware ?? []),
