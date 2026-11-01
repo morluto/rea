@@ -303,6 +303,67 @@ export const createCli = (
         )(1);
         return Promise.resolve();
       }
+      // Incur's `mcp add` silently skips a valued option with no value and
+      // swallows the next flag as the value: the registration succeeds without
+      // the requested agent or command. Reject a trailing --agent/--command/-c,
+      // a value position occupied by another flag, and an empty `--flag=` form
+      // up front.
+      const valued = ["--agent", "--command", "-c"];
+      let missingValue: string | undefined;
+      for (let index = 0; index < command.length; index += 1) {
+        const next = command[index + 1];
+        if (
+          valued.includes(command[index]!) &&
+          (next === undefined || next.startsWith("-"))
+        ) {
+          missingValue = command[index];
+          break;
+        }
+      }
+      const emptyValue = command.find(
+        (token) =>
+          (token.startsWith("--agent=") ||
+            token.startsWith("--command=") ||
+            token.startsWith("-c=")) &&
+          token.length === token.indexOf("=") + 1,
+      );
+      if (missingValue !== undefined || emptyValue !== undefined) {
+        const flag = missingValue ?? emptyValue!;
+        const message = `Missing value for flag: ${flag.replace(/=.*$/, "")}`;
+        const field =
+          flag.includes("command") || flag === "-c" || flag.startsWith("-c=")
+            ? "command"
+            : "agent";
+        const output = parseCliOutputArguments(normalized);
+        if (!output.validation.ok)
+          write(renderCliOutputArgumentError(output.validation));
+        else
+          write(
+            renderCliDocument(
+              {
+                code: "VALIDATION_ERROR",
+                message,
+                fieldErrors: [
+                  {
+                    code: "invalid_value",
+                    missing: false,
+                    path: field,
+                    message,
+                  },
+                ],
+              },
+              output.format,
+              process.stdout.isTTY === true,
+            ),
+          );
+        (
+          options?.exit ??
+          ((code: number) => {
+            process.exitCode = code;
+          })
+        )(1);
+        return Promise.resolve();
+      }
       // Incur's mcp add parser only understands spaced `--agent amp` forms; an
       // equals form like `--agent=amp` is silently ignored, which would drop
       // the requested agent and register against the default target. Normalize
