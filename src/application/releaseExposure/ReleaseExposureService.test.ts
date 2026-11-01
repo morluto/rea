@@ -1019,7 +1019,7 @@ describe("ReleaseExposureService cleanup", () => {
   });
 });
 
-describe("ReleaseExposureService Go UNC paths", () => {
+describe("ReleaseExposureService Go Windows paths", () => {
   it("reports UNC roots retained in Go flags", async () => {
     const module = (value: string) => ({
       path: "github.com/acme/app",
@@ -1044,6 +1044,25 @@ describe("ReleaseExposureService Go UNC paths", () => {
     expect(
       await goStatus(module(String.raw`-DNAME=\\ -DHOST=\\buildhost`)),
     ).toBe("not_observed");
+  });
+
+  it.each([
+    [String.raw`-I..\sdk\include`, String.raw`..\sdk\include`],
+    [String.raw`-O2 -I.\sdk`, String.raw`.\sdk`],
+    [String.raw`"-isystem ..\my sdk\include"`, String.raw`..\my sdk\include`],
+  ])("reports the backslash-relative path in %s", async (value, path) => {
+    const report = await goReport({
+      path: "github.com/acme/app",
+      main: null,
+      dependencies: [],
+      settings: [{ key: "CGO_CFLAGS", value }],
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    });
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual([path]);
   });
 });
 

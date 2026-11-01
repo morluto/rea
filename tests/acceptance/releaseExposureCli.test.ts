@@ -44,7 +44,7 @@ cliTest(
     expect(
       report.checks.find((check) => check.id === "electron.run_as_node")
         ?.status,
-    ).toBe("not_applicable");
+    ).toBe("unknown");
     expect(
       report.checks.find((check) => check.id === "native.pdb_path")?.status,
     ).toBe("not_applicable");
