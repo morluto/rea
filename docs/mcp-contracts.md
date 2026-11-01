@@ -352,10 +352,18 @@ Automatically retained workflow questions include their immutable result
 Evidence ID. Distinct results retain independent questions and source links;
 repeating the same result does not create another unknown. Workflow Evidence
 keeps the original residual question text. Explicit `record_unknown` requests
-keep caller-selected identity and reject duplicate creation.
+keep caller-selected identity and reject duplicate creation. Explicit creation
+uses the active binary analysis target digest as `scope_digest`, or null when
+there is no active target. Supporting Evidence does not select the scope. Scope
+contributes to the stable unknown ID, so the same question can have different
+IDs under different scopes. Check the active target before recording a
+target-scoped unknown; creating one in a target-free session does not infer a
+target from its supporting Evidence.
 Duplicate creation is a nonretryable `invalid_request`; use the existing head
 or update it with its current `expected_revision`. A stale update remains a
-retryable `revision_conflict`.
+retryable `revision_conflict`. An `update_unknown` revision keeps the unknown’s
+original `scope_digest`. Its mutation Evidence subject is the active binary
+analysis target, or null without one, so it can differ from the unknown’s scope.
 
 When `record_unknown` or `update_unknown` commits but its complete reply exceeds
 the response budget, `details.reported_limits.committed_unknown` identifies the
