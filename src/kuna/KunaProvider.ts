@@ -45,6 +45,7 @@ import { KUNA_PROVIDER_IDENTITY } from "./KunaProviderMetadata.js";
 import {
   KUNA_COMMAND_REMEDIATION,
   KUNA_PROVIDER_ID,
+  KUNA_RELEASE_VERIFICATION_EXPLANATION,
   KUNA_UNVERIFIED_VERSION_REMEDIATION,
   KUNA_VERIFIED_VERSION,
 } from "./KunaRelease.js";
@@ -275,8 +276,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
         basis: "reported_version" as const,
         reported_version: value.version,
         verified_version: KUNA_VERIFIED_VERSION,
-        explanation:
-          "At selection, REA compared the reported version with its baseline, checked on macOS arm64. This does not authenticate or recheck the executable or guarantee support or results on this host.",
+        explanation: KUNA_RELEASE_VERIFICATION_EXPLANATION,
         remediation: value.verified
           ? null
           : KUNA_UNVERIFIED_VERSION_REMEDIATION,
