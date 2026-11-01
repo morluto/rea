@@ -25,11 +25,13 @@ describe("macOS Hopper setup failure projection", () => {
 describe("Linux package-manager setup failure projection", () => {
   it("quotes the failing command and a sanitized bounded diagnostic", () => {
     const result = setupInstallFailure("authorization_or_package_manager", {
-      command: 'pkexec pacman -U "/tmp/hopper package.pkg.tar.xz"',
-      exitCode: 1,
-      stdout: "",
-      stderr: "\u001b[31merror:\u001b[0m package conflict\nrefused",
-      outputTruncated: false,
+      packageFailure: {
+        command: 'pkexec pacman -U "/tmp/hopper package.pkg.tar.xz"',
+        exitCode: 1,
+        stdout: "",
+        stderr: "\u001b[31merror:\u001b[0m package conflict\nrefused",
+        outputTruncated: false,
+      },
     });
     expect(result).toMatchObject({
       status: "failed",
@@ -55,11 +57,13 @@ describe("Linux package-manager setup failure projection", () => {
 
   it("keeps truncated package output within its excerpt budget", () => {
     const result = setupInstallFailure("authorization_or_package_manager", {
-      command: "pacman -U hopper.pkg.tar.xz",
-      exitCode: 1,
-      stdout: "",
-      stderr: `${"warning ".repeat(100)}final package conflict`,
-      outputTruncated: true,
+      packageFailure: {
+        command: "pacman -U hopper.pkg.tar.xz",
+        exitCode: 1,
+        stdout: "",
+        stderr: `${"warning ".repeat(100)}final package conflict`,
+        outputTruncated: true,
+      },
     });
     if (result.status !== "failed") throw new Error("expected failure");
     const excerpt = result.remediation

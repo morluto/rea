@@ -243,6 +243,53 @@ describe("optional Hopper installation failures", () => {
     expect(result.remediation).toContain("injected skill write failure");
     expect(host.skillInstalls).toBe(1);
   });
+
+  it("returns the failed Hopper request facts beside its code, including after a later failure", async () => {
+    const download = {
+      request: "package",
+      url: "https://www.hopperapp.com:443/downloader/public/Hopper-demo.dmg",
+      kind: "http_status",
+      httpStatus: 503,
+    } as const;
+    const ready = new FakeSetupHost();
+    ready.hopperInstallSucceeds = false;
+    ready.hopperInstallFailure = {
+      status: "failed",
+      code: "download_failed",
+      remediation: "Package returned HTTP 503.",
+      download,
+    };
+    expect(await runSetup(options(true, true), ready)).toMatchObject({
+      status: "needs_human",
+      code: "download_failed",
+      remediation: "Package returned HTTP 503.",
+      download,
+    });
+
+    const skillFailure = new FakeSetupHost();
+    skillFailure.hopperInstallSucceeds = false;
+    skillFailure.hopperInstallFailure = ready.hopperInstallFailure;
+    skillFailure.skill = "failed";
+    skillFailure.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+    expect(
+      await runSetup(
+        {
+          ...options(true, true),
+          clientIds: ["cursor"],
+          skillClientIds: ["cursor"],
+        },
+        skillFailure,
+      ),
+    ).toMatchObject({ code: "skill_install_failed", download });
+  });
+
+  it("omits request facts when the Hopper failure observed none", async () => {
+    const host = new FakeSetupHost();
+    host.hopperInstallSucceeds = false;
+    expect(await runSetup(options(true, true), host)).not.toHaveProperty(
+      "download",
+    );
+  });
 });
 
 describe("configured Linux Hopper selection", () => {

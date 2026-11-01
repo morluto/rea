@@ -1,6 +1,7 @@
 import { expect, it as test } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { kunaTimeoutRecovery } from "../../../../src/kuna/KunaCommand.js";
 
 import {
   fakeKunaCalls,
@@ -311,6 +312,14 @@ it("names the setting that owns a single-function deadline", async () => {
       },
       details: { timeout_ms: 300 },
     });
+    // A finished invocation cannot read a later export from this session.
+    const recovery = kunaTimeoutRecovery("REA_KUNA_TIMEOUT_MS", "decompile");
+    expect(
+      projectAnalysisError(result.error, "invocation").remediation.action,
+    ).toBe(recovery.remediationAction);
+    expect(projectAnalysisError(result.error).remediation.action).toBe(
+      recovery.continuingCallerGuidance?.remediationAction,
+    );
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }
