@@ -13,7 +13,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { createEvidenceBundle } from "../domain/evidenceBundle.js";
+import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
 import { publishEvidenceDelivery } from "../application/EvidenceBundleCommands.js";
 import { inspectAnalysisViewValidated } from "../application/analysisView/AnalysisViewService.js";
 import { localPathStringSchema } from "../domain/localPath.js";
@@ -206,8 +206,11 @@ export const publishCliAnalysisEvidence = async (
       : delivered.value;
   const inspectionSources = analysisEvidenceSources(complete);
   if (!inspectionSources.ok) return projectFailure(inspectionSources.error);
+  // These records were authenticated in this process. Seal the bundle so
+  // publication does not clone and authenticate the complete analyzed graph
+  // again on top of the analysis's own retained heap.
   const published = await publishEvidenceDelivery({
-    bundle: createEvidenceBundle([
+    bundle: createImmutableEvidenceBundle([
       ...new Map(
         [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
           (record) => [record.evidence_id, record],
