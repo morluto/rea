@@ -880,7 +880,11 @@ analysis client. `open_binary.provider_id` accepts a concrete provider ID or
 concrete version, selection source, and complete analysis profile through
 `analysis_provider_binding`. Ambiguity and unknown, unavailable, or unsupported
 choices return typed selection details. A selected provider is never replaced
-automatically after a runtime failure.
+automatically after a runtime failure. When the bound route does not declare an
+operation, its error points to `binary_session` with `detail: "complete"` for
+candidate capabilities and an explicit `open_binary` provider choice. A
+candidate's availability does not guarantee support for the selected target;
+switching may discard provider session edits, and retained Evidence does not restore them.
 
 `open_binary` resolves an Apple bundle directory (`.app`, `.appex`,
 `.framework`, `.xpc`, `.systemextension`, `.bundle` or `.plugin`, compared
