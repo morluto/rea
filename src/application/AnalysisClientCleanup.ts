@@ -2,6 +2,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, type Result } from "../domain/result.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisClient } from "./AnalysisProvider.js";
+import { isCompletedCloseFailure } from "../domain/analysisCloseCompletedError.js";
 
 /** Close one provider client and normalize unexpected adapter rejection. */
 export const closeAnalysisClient = async (
@@ -14,6 +15,7 @@ export const closeAnalysisClient = async (
   // for clients that only return or reject with their cleanup failure.
   const reported = new Set<AnalysisError>();
   const report = (failure: AnalysisError): void => {
+    if (isCompletedCloseFailure(failure)) return;
     if (reported.has(failure)) return;
     reported.add(failure);
     options.onCleanupFailure?.(failure);

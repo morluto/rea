@@ -37,6 +37,7 @@ export type GhidraDiagnostic =
 export interface GhidraClientOptions {
   readonly launcher: GhidraLauncher;
   readonly runId?: string;
+  readonly diagnosticsDir?: string;
   readonly targetPath: string;
   readonly targetSha256: string;
   readonly existingProject?: boolean;

@@ -28,6 +28,7 @@ export interface AppConfig {
   readonly ghidraLanguageOverride?: GhidraLanguageOverride;
   readonly ghidraDisabledAnalyzers?: readonly string[];
   readonly ghidraSeedFile?: string;
+  readonly ghidraDiagnosticsDir?: string;
   readonly ghidraExistingProject?: GhidraProjectSelection;
   readonly ghidraNativeAotJar?: string;
   readonly ilspyCmdPath: string | undefined;
