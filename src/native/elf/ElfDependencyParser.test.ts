@@ -373,18 +373,14 @@ it("fails cyclic GNU version requirement chains without a complete inventory", (
   );
 });
 
-it("keeps a NUL-terminated dynamic string longer than 64 KiB", () => {
+it("reports a dynamic string past the scan limit as a limit, not unterminated", () => {
   const soname = `lib${"s".repeat(70000)}.so`;
   const report = parse(elfDependencyFixture({ soname }));
-  expect(report.dynamic.soname?.name).toBe(soname);
-  expect(report.issues).toEqual([]);
-});
-
-it("fails a dynamic string past the shared text budget as a limit", () => {
-  const runpath = `/opt/${"r".repeat(70000)}`;
-  expect(() => parse(elfDependencyFixture({ runpath }))).toThrow(
-    /ELF dependency text exceeds/u,
-  );
+  expect(report.dynamic.soname?.name).toBeNull();
+  expect(report.coverage.status).toBe("partial");
+  const issue = report.issues.find((entry) => entry.code === "name_unreadable");
+  expect(issue?.message).toMatch(/65536-byte string scan limit/u);
+  expect(issue?.message).not.toMatch(/unterminated/u);
 });
 
 it("reports GNU version tables with an unsupported revision as unreadable", () => {

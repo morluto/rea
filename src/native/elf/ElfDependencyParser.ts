@@ -251,7 +251,18 @@ interface CString {
   readonly name: string | null;
   readonly truncated: boolean;
   readonly outside: boolean;
+  /** No NUL within the scan window; the string may continue past it. */
+  readonly limited: boolean;
 }
+
+/** Longest dynamic string scanned for its terminator. */
+const DYNAMIC_STRING_SCAN_BYTES = 65536;
+
+/** Why an unreadable string has no name, short of being outside or empty. */
+const unreadString = (observed: CString): string =>
+  observed.limited
+    ? `has no terminator within the ${String(DYNAMIC_STRING_SCAN_BYTES)}-byte string scan limit`
+    : "is unterminated";
 
 /**
  * Dynamic string table reads share one scan and retained-text budget fixed by
@@ -292,25 +303,29 @@ class DynamicStrings {
       this.retain(cached.name);
       return cached;
     }
-    // Scan up to the remaining shared budget, plus one byte so a string that
-    // outgrows it fails as a limit instead of reading as unterminated.
     const observed = observeElfStringTableEntry(
       this.table,
       offset,
-      this.limit - this.#scanned + 1,
+      DYNAMIC_STRING_SCAN_BYTES,
     );
     this.#charge("scanned", observed.examinedBytes);
     let entry: CString;
     if (observed.state === "outside")
-      entry = { name: null, truncated: false, outside: true };
+      entry = { name: null, truncated: false, outside: true, limited: false };
     else if (observed.state === "truncated")
-      entry = { name: null, truncated: true, outside: false };
+      entry = {
+        name: null,
+        truncated: true,
+        outside: false,
+        limited: observed.examinedBytes === DYNAMIC_STRING_SCAN_BYTES,
+      };
     else {
       this.#charge("retained", observed.contentBytes);
       entry = {
         name: elfStringTableText(observed),
         truncated: false,
         outside: false,
+        limited: false,
       };
     }
     this.#cache.set(offset, entry);
@@ -335,7 +350,7 @@ const searchPath = (
       location,
       message: observed.outside
         ? "Search-path string offset is outside the dynamic string table"
-        : "Search-path string is unterminated in the dynamic string table",
+        : `Search-path string ${unreadString(observed)} in the dynamic string table`,
     });
     return null;
   }
@@ -794,7 +809,7 @@ export const parseElfDependencies = (
           message: observed.outside
             ? `DT_NEEDED string offset ${String(name_offset)} is outside the dynamic string table`
             : observed.truncated || observed.name === null
-              ? `DT_NEEDED string at offset ${String(name_offset)} is unterminated`
+              ? `DT_NEEDED string at offset ${String(name_offset)} ${unreadString(observed)}`
               : `DT_NEEDED string at offset ${String(name_offset)} is empty`,
         });
       return { index, name, name_offset };
@@ -989,7 +1004,7 @@ const namedString = (
       message: observed.outside
         ? `${label} string offset is outside the dynamic string table`
         : observed.truncated || observed.name === null
-          ? `${label} string is unterminated in the dynamic string table`
+          ? `${label} string ${unreadString(observed)} in the dynamic string table`
           : `${label} string is empty`,
     });
     return null;
