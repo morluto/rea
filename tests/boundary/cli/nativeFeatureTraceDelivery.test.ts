@@ -29,16 +29,63 @@ const effects = {
   requiresRoot: false,
 };
 
+const verifyReplay = async (
+  cli: ReturnType<typeof Cli.create>,
+  path: string,
+  snapshot: string,
+  root: string,
+  originalBundle: ReturnType<typeof parseEvidenceBundle>,
+  traceId: string | undefined,
+) => {
+  const output = join(root, "replay-evidence.json");
+  let stdout = "";
+  await cli.serve(
+    [
+      "trace",
+      path,
+      "goal",
+      "--provider",
+      "fixture",
+      "--snapshot",
+      snapshot,
+      "--detail",
+      "summary",
+      "--evidence_output",
+      output,
+      "--json",
+    ],
+    {
+      env: {},
+      stdout: (text) => {
+        stdout += text;
+      },
+      exit: () => undefined,
+    },
+  );
+  const response = JSON.parse(stdout);
+  expect(response, JSON.stringify(response)).toHaveProperty("summary");
+  const bundle = parseEvidenceBundle(
+    JSON.parse(await readFile(output, "utf8")),
+  );
+  expect(response.summary.normalized_result.parent_evidence_id).toBe(traceId);
+  expect(bundle.records.map((record) => record.evidence_id).sort()).toEqual(
+    originalBundle.records.map((record) => record.evidence_id).sort(),
+  );
+};
+
 it.each([
   { detail: "summary", missing: false },
   { detail: "complete", missing: false },
   { detail: "summary", missing: true },
+  { detail: "summary", missing: false, replay: true },
 ])(
-  "publishes $detail trace only when its source closure is available (missing=$missing)",
-  async ({ detail, missing }) => {
+  "publishes $detail trace only when its source closure is available (missing=$missing, replay=$replay)",
+  async ({ detail, missing, replay }) => {
     const root = await createTestTempDirectory("rea-native-trace-cli-source-");
     const path = join(root, "fixture.hop");
     const output = join(root, "evidence.json");
+    const snapshot = join(root, "snapshot.json");
+    let allowProvider = true;
     await writeFile(path, "synthetic analysis database");
     const history = createEvidence(undefined, identity, {
       operation: "health",
@@ -62,37 +109,41 @@ it.each([
           operation,
           available: true,
           reason: null,
-          cachePolicy: "live",
+          cachePolicy: replay ? "snapshot" : "live",
           limitations: [],
           effects,
         })),
       resolveAnalysisProfile: async () =>
         ok({ profile: createAnalysisProfile(identity, { fixture: true }) }),
-      createClient: () => ({
-        execute: async (operation) => {
-          const value =
-            operation === "search_procedures"
-              ? [{ address: "0x1000", value: "goal" }]
-              : operation === "xrefs"
-                ? ["0x1010"]
-                : operation === "resolve_containing_procedure"
-                  ? {
-                      query_address: "0x1010",
-                      found: false,
-                      procedure: null,
-                      reason: "not_in_procedure",
-                    }
-                  : operation === "search_strings"
-                    ? []
-                    : null;
-          return ok(
-            createAnalysisExecution(value, identity, {
-              sourceEvidence: [history],
-            }),
-          );
-        },
-        close: async () => ok(null),
-      }),
+      createClient: () => {
+        if (!allowProvider)
+          throw new Error("Snapshot replay reopened the provider");
+        return {
+          execute: async (operation) => {
+            const value =
+              operation === "search_procedures"
+                ? [{ address: "0x1000", value: "goal" }]
+                : operation === "xrefs"
+                  ? ["0x1010"]
+                  : operation === "resolve_containing_procedure"
+                    ? {
+                        query_address: "0x1010",
+                        found: false,
+                        procedure: null,
+                        reason: "not_in_procedure",
+                      }
+                    : operation === "search_strings"
+                      ? []
+                      : null;
+            return ok(
+              createAnalysisExecution(value, identity, {
+                sourceEvidence: [history],
+              }),
+            );
+          },
+          close: async () => ok(null),
+        };
+      },
     };
     const createSession = () => createTestBinarySession(provider);
     const dependencies: DirectAnalysisDependencies = {
@@ -119,6 +170,7 @@ it.each([
         "goal",
         "--provider",
         "fixture",
+        ...(replay ? ["--snapshot", snapshot] : []),
         "--detail",
         detail,
         "--evidence_output",
@@ -158,6 +210,17 @@ it.each([
           (record) => record.evidence_id === history.evidence_id,
         ),
       ).toBe(true);
+      if (replay) {
+        allowProvider = false;
+        await verifyReplay(
+          cli,
+          path,
+          snapshot,
+          root,
+          bundle,
+          trace?.evidence_id,
+        );
+      }
     }
   },
 );
