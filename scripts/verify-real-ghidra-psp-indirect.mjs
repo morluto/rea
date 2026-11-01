@@ -340,9 +340,15 @@ try {
   if (stderr.length > 0) console.error(stderr);
   throw error;
 } finally {
-  if (client !== undefined) await client.close();
-  if (transport !== undefined) await transport.close();
-  await rm(workspace, { recursive: true, force: true });
+  try {
+    if (client !== undefined) await client.close();
+  } finally {
+    try {
+      if (transport !== undefined) await transport.close();
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }
 }
 const completed = await completeVerifierRun(run);
 assertVerifierCleanupComplete(completed.process_lineage);
