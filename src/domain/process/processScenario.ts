@@ -404,5 +404,3 @@ export const processScenarioPlanSchema = z.strictObject({
   }),
   ambient_environment: z.literal("inherited-at-run"),
 });
-
-export type ProcessScenarioPlan = z.infer<typeof processScenarioPlanSchema>;
