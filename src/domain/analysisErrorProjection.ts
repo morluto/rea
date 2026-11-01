@@ -206,16 +206,10 @@ export const omitUnretainedEvidenceFromError = (
         ? partial.retention
         : "unknown"
       : "unretained";
-  const omission =
-    retention === "unretained"
-      ? "The omitted observation was not retained and could not fit within MCP delivery limits."
-      : retention === "unknown"
-        ? "The omitted observation's retention is unknown, and it could not fit within MCP delivery limits."
-        : "The observation could not fit within MCP delivery limits.";
   return {
     ...projected,
     remediation: {
-      action: `${projected.remediation.action} ${omission}`,
+      action: `${projected.remediation.action} ${recoveryOmissionRemediation(retention)}`,
     },
     details: {
       ...details,
@@ -232,6 +226,14 @@ export const omitUnretainedEvidenceFromError = (
     },
   };
 };
+
+/** Explain the delivered omission without inferring ledger membership. */
+export const recoveryOmissionRemediation = (retention: string): string =>
+  retention === "unretained"
+    ? "The omitted observation was not retained and could not fit within MCP delivery limits."
+    : retention === "unknown"
+      ? "The omitted observation's retention is unknown, and it could not fit within MCP delivery limits."
+      : "The observation could not fit within MCP delivery limits.";
 
 const projectError = (
   error: AnalysisError,

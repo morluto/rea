@@ -11,6 +11,7 @@ import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExam
 import { JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { compareApplicationVersionsEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { recoveryOmissionRemediation } from "../../../src/domain/analysisErrorProjection.js";
 
 it("preserves the source when an inline result with unknown retention exceeds delivery", async () => {
   const session = new BinarySession(
@@ -28,7 +29,9 @@ it("preserves the source when an inline result with unknown retention exceeds de
     arguments: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   });
   const error = parseMcpToolError(response).error;
-  expect(error.remediation.action).toContain("retention is unknown");
+  expect(error.remediation.action).toContain(
+    recoveryOmissionRemediation("unknown"),
+  );
   expect(error).toMatchObject({
     code: "resource_constraint",
     details: {
