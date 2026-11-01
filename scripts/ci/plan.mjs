@@ -12,6 +12,7 @@ import { planTestSelection } from "./test-selection.mjs";
 // Actionlint validates workflow syntax only. The semantic suite asserts these
 // workflows' release, publication and self-hosted runner safeguards.
 const GUARDED_WORKFLOWS = new Set([
+  ".github/workflows/codeql.yml",
   ".github/workflows/pr-title.yml",
   ".github/workflows/pr-readiness.yml",
   ".github/workflows/ci-full-pr.yml",
@@ -275,10 +276,12 @@ if (tier === "reused") {
       for (const owner of owners) selected[owner] = true;
       if (
         file.startsWith(".github/workflows/") ||
+        file.startsWith(".github/codeql/") ||
         file === ".github/actionlint.yaml"
       ) {
         selected.workflows = true;
-        if (GUARDED_WORKFLOWS.has(file)) selected.code = true;
+        if (GUARDED_WORKFLOWS.has(file) || file.startsWith(".github/codeql/"))
+          selected.code = true;
         if (file !== ".github/workflows/ci.yml") continue;
       }
       // The Notes example is also the source-owned agent evaluation fixture.

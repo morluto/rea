@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { expect, it, onTestFinished } from "vitest";
 import { PwntoolsLayoutProvider } from "../../../src/native/pwntools/PwntoolsLayoutProvider.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsProviderIdentity.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";

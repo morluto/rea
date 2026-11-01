@@ -459,8 +459,8 @@ export class BinarySession
       current: this.#active,
       target,
       options,
-      stagedSnapshotMatches: (target, profile) =>
-        this.matchesSnapshot(target, profile),
+      stagedSnapshotMismatch: (target, profile) =>
+        this.snapshotMismatch(target, profile),
     }).then((resolved) =>
       resolved.ok && isAborted(options.signal)
         ? err(
@@ -488,8 +488,8 @@ export class BinarySession
           current: this.#active,
           path,
           options: admitted,
-          stagedSnapshotMatches: (target, profile) =>
-            this.matchesSnapshot(target, profile),
+          stagedSnapshotMismatch: (target, profile) =>
+            this.snapshotMismatch(target, profile),
         }),
       options,
     );
@@ -507,8 +507,8 @@ export class BinarySession
             ...resolved,
             current: this.#active,
             options,
-            stagedSnapshotMatches: (target, profile) =>
-              this.matchesSnapshot(target, profile),
+            stagedSnapshotMismatch: (target, profile) =>
+              this.snapshotMismatch(target, profile),
           }),
         ),
       options,
