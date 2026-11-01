@@ -2701,48 +2701,67 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * warning is accepted only when its whole span is comment text or
      * whitespace, so code tokens such as string literals never contribute.
      */
+    /**
+     * Match complete decompiler comment tokens and retain their typed source
+     * coordinates. Printed warning addresses lose overlay and address-unit identity.
+     */
     private Map<Address, String> decompilerJumpTableWarnings(
         Function function,
         List<ClangNode> tokens
     ) throws Exception {
+        Map<Address, List<String>> rendered = new LinkedHashMap<>();
+        Address source = null;
         StringBuilder text = new StringBuilder();
-        java.util.BitSet commentText = new java.util.BitSet();
-        boolean sawComment = false;
         for (ClangNode node : tokens) {
-            int start = text.length();
-            if (node instanceof ClangBreak) {
-                text.append('\n');
-                commentText.set(start);
+            monitor.checkCancelled();
+            if (!(node instanceof ClangCommentToken comment)) {
+                if (node instanceof ClangBreak ||
+                    (node instanceof ClangToken token && token.getText() != null && token.getText().isBlank()))
+                    continue;
+                source = null;
+                text.setLength(0);
                 continue;
             }
-            if (!(node instanceof ClangToken token)) continue;
-            String value = token.getText();
-            if (value == null || value.isEmpty()) continue;
-            text.append(value);
-            boolean comment = token instanceof ClangCommentToken;
-            sawComment |= comment;
-            if (comment || value.isBlank()) commentText.set(start, text.length());
+            String fragment = comment.getText();
+            if (fragment == null) {
+                source = null;
+                text.setLength(0);
+                continue;
+            }
+            if (fragment.startsWith("/*")) {
+                source = comment.getMinAddress();
+                text.setLength(0);
+                fragment = fragment.substring(2);
+            }
+            if (source == null || !source.isMemoryAddress() ||
+                !source.equals(comment.getMinAddress()) || !source.equals(comment.getMaxAddress())) {
+                source = null;
+                text.setLength(0);
+                continue;
+            }
+            boolean complete = fragment.endsWith("*/");
+            if (complete) fragment = fragment.substring(0, fragment.length() - 2);
+            if (!fragment.isBlank()) {
+                if (text.length() > 0) text.append(' ');
+                text.append(fragment.strip());
+            }
+            if (complete) {
+                java.util.regex.Matcher matcher = DECOMPILER_JUMP_TABLE_FAILURE.matcher(text);
+                if (matcher.find() && matcher.start() == 0)
+                    rendered.computeIfAbsent(source, ignored -> new ArrayList<>())
+                        .add(matcher.group(1).replaceAll("\\s+", " ").trim());
+                source = null;
+                text.setLength(0);
+            }
         }
         Map<Address, String> warnings = new HashMap<>();
-        if (!sawComment) return warnings;
-        Map<Address, List<String>> rendered = new LinkedHashMap<>();
-        java.util.regex.Matcher matcher = DECOMPILER_JUMP_TABLE_FAILURE.matcher(text);
-        while (matcher.find()) {
-            if (commentText.nextClearBit(matcher.start()) < matcher.end()) continue;
-            Address address = warningAddress(matcher.group(2));
-            if (address == null) continue;
-            rendered.computeIfAbsent(address, ignored -> new ArrayList<>())
-                .add(matcher.group(1).replaceAll("\\s+", " ").trim());
-        }
         if (rendered.isEmpty()) return warnings;
-        // Discount only caller warnings that actually match a rendered occurrence.
-        // A displayed listing comment may be wrapped or omitted; subtracting a
-        // different same-address warning would hide genuine decompiler evidence.
+        // Discount only an exact rendered caller warning at its typed source.
+        // An unmatched authored line cannot consume a genuine warning.
         Map<Address, List<String>> callerWarnings = callerAuthoredJumpTableWarnings(function);
         for (Map.Entry<Address, List<String>> entry : rendered.entrySet()) {
             List<String> remaining = new ArrayList<>(entry.getValue());
             for (String authored : callerWarnings.getOrDefault(entry.getKey(), List.of())) {
-                if (remaining.isEmpty()) break;
                 int index = remaining.indexOf(authored);
                 if (index >= 0) remaining.remove(index);
             }
@@ -2751,18 +2770,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return warnings;
     }
 
-    /** Parse a decompiler-printed address in the program's own address syntax. */
-    private Address warningAddress(String text) {
-        AddressFactory factory = currentProgram.getAddressFactory();
-        Address address = factory.getAddress(text);
-        if (address == null && (text.startsWith("0x") || text.startsWith("0X"))) {
-            address = factory.getAddress(text.substring(2));
-        }
-        return address != null && address.isMemoryAddress() ? address : null;
-    }
-
     /**
-     * Caller-authored warnings Ghidra would render, keyed by the address they name.
+     * Caller-authored warnings Ghidra would render, keyed by their listing source.
      * Count occurrences rather than excluding every matching string: an
      * identical decompiler warning is a separate observation.
      */
@@ -2793,9 +2802,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     comment.replace("\r", "").replace('\t', ' ')
                 );
                 while (matcher.find()) {
-                    Address named = warningAddress(matcher.group(2));
-                    if (named == null) continue;
-                    authored.computeIfAbsent(named, ignored -> new ArrayList<>())
+                    authored.computeIfAbsent(address, ignored -> new ArrayList<>())
                         .add(matcher.group(1).replaceAll("\\s+", " ").trim());
                 }
             }
