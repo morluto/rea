@@ -273,6 +273,17 @@ it.each([
     coverage: { status: "complete" } as RelationshipCoverage,
     providerLimitations: ["The provider version identity is unavailable."],
     dossierLimitations: ["The dossier has no native value-flow observation."],
+    status: "unknown",
+    exhaustive: true,
+  },
+  {
+    label: "complete discovery",
+    coverage: {
+      status: "complete",
+      discovery: { callees: { status: "complete" } },
+    } as RelationshipCoverage,
+    providerLimitations: [],
+    dossierLimitations: [],
     status: "not_found",
     exhaustive: true,
   },
@@ -313,7 +324,7 @@ it.each([
     coverage: undefined,
     providerLimitations: [],
     dossierLimitations: [],
-    status: "not_found",
+    status: "unknown",
     exhaustive: true,
   },
 ])(
@@ -428,7 +439,7 @@ it.each([
         });
         expect(rejected.isError, JSON.stringify(rejected)).toBe(true);
       }
-      if (scenario.exhaustive)
+      if (scenario.status !== "unknown")
         expect(session.listUnknowns({ domain: "call-path" })).toEqual([]);
       else
         expect(session.listUnknowns({ domain: "call-path" })).toMatchObject([

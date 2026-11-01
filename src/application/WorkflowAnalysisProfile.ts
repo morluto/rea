@@ -21,5 +21,7 @@ export const workflowAnalysisProfile = (
           ? { workflow_revision: 4 }
           : operation === "get_call_graph"
             ? { workflow_revision: 3 }
-            : { workflow_revision: 1 }),
+            : operation === "trace_call_path"
+              ? { workflow_revision: 2 }
+              : { workflow_revision: 1 }),
   });

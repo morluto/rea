@@ -125,7 +125,11 @@ before proposing another issue, and avoid treating lack of API parity as a bug.
   provider-observed direct relationship set. `complete` means that set was
   returned without a known read limit; it does not claim every possible runtime
   edge. Provider and execution caveats stay in `limitations` and do not imply
-  incomplete relationship coverage. Missing coverage remains `unknown`.
+  incomplete relationship coverage. Directional `discovery` separately describes
+  whether applicable static relationships could have been missed by discovery;
+  missing discovery is unknown. Preserve paths supported by observed edges,
+  and qualify negative and shortest-path claims by discovery scope. Missing
+  relationship coverage remains `unknown`.
 - Declare process, filesystem, network, UI, and mutation effects truthfully;
   enforce the requested target and lifecycle.
 - Add limits only for real format, protocol, authority, or measured resource

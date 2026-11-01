@@ -20,7 +20,18 @@ export const combineFunctionRelationshipCoverage = (
   const diagnostics = uniqueSorted(
     reads.flatMap(({ coverage }) => coverage?.diagnostics ?? []),
   );
-  const details = diagnostics.length > 0 ? { diagnostics } : {};
+  const discovery = {
+    ...(callers?.discovery?.callers === undefined
+      ? {}
+      : { callers: callers.discovery.callers }),
+    ...(callees?.discovery?.callees === undefined
+      ? {}
+      : { callees: callees.discovery.callees }),
+  };
+  const details = {
+    ...(diagnostics.length > 0 ? { diagnostics } : {}),
+    ...(Object.keys(discovery).length === 0 ? {} : { discovery }),
+  };
   const callersLimited = callers?.status !== "complete";
   const calleesLimited = callees?.status !== "complete";
   const limited_directions: Extract<

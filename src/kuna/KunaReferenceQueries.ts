@@ -172,6 +172,18 @@ export class KunaReferenceQueries {
           },
         };
       });
+    const calleeDiscovery =
+      node.kind === "data"
+        ? {
+            discovery: {
+              callees: {
+                status: "partial" as const,
+                reason:
+                  "Kuna classifies this graph node as data and does not analyze it as a function body.",
+              },
+            },
+          }
+        : {};
     return ok({
       callers: identities(graph.callers.get(address) ?? []),
       callees: identities(graph.callees.get(address) ?? []),
@@ -191,8 +203,9 @@ export class KunaReferenceQueries {
             limitations: [
               "Kuna reports indirect calls in this function without every target; additional callees remain unknown.",
             ],
+            ...calleeDiscovery,
           }
-        : { status: "complete" },
+        : { status: "complete", ...calleeDiscovery },
       source: this.#source(graph, node),
     });
   }
@@ -208,6 +221,7 @@ export class KunaReferenceQueries {
       has_indirect_calls: graph.hasIndirectCalls,
       function: {
         address: node.address,
+        kind: node.kind,
         has_indirect_calls: node.hasIndirectCalls,
         forwards_to: node.forwardsTo,
         forwarding_target_in_graph:

@@ -196,7 +196,15 @@ describe("call path reconstruction", () => {
   });
 
   it("only reports not_found for exhaustive closure", () => {
-    const notFound = run([observe("0x1000", []), observe("0x4000", [])]);
+    const notFound = run([
+      observe("0x1000", [], "rea-workflow", {
+        relationshipCoverage: {
+          status: "complete",
+          discovery: { callees: { status: "complete" } },
+        },
+      }),
+      observe("0x4000", []),
+    ]);
     expect(notFound.status).toBe("not_found");
     expect(
       callPathResultSchema.safeParse({
@@ -227,12 +235,6 @@ describe("call path reconstruction", () => {
     );
   });
 
-  it("searches the complete supplied graph", () => {
-    expect(
-      run([observe("0x1000", ["0x2000"]), observe("0x2000", [])]).status,
-    ).toBe("not_found");
-  });
-
   it("returns all shortest paths inline without paging", () => {
     const result = run([
       observe("0x1000", ["0x2000", "0x3000"]),
@@ -243,6 +245,19 @@ describe("call path reconstruction", () => {
       "0x2000",
       "0x3000",
     ]);
+  });
+});
+
+it("keeps an exhaustive supplied graph distinct from unknown discovery", () => {
+  expect(
+    run([observe("0x1000", ["0x2000"]), observe("0x2000", [])]),
+  ).toMatchObject({
+    status: "unknown",
+    search_scope: {
+      exhaustive: true,
+      discovery: "unknown",
+      observed_status: "not_found",
+    },
   });
 });
 
@@ -430,6 +445,7 @@ describe("directional call relationship coverage", () => {
         status: "partial",
         limitations: [limitation],
         limited_directions: directions,
+        discovery: { callees: { status: "complete" } },
       };
       const result = run([
         observe("0x1000", ["0x2000"], "rea-workflow", { relationshipCoverage }),
@@ -514,14 +530,14 @@ describe("call path search extent", () => {
       label: "expanded cycle without the goal",
       graph: { "0x1000": ["0x2000"], "0x2000": ["0x1000", "0x2000"] },
       goal: "0x4000",
-      status: "not_found",
+      status: "unknown",
       explored: { nodes: 2, edges: 3, depth_reached: 1 },
     },
     {
       label: "unreachable goal with its own dossier",
       graph: { "0x1000": ["0x2000"], "0x2000": [], "0x4000": ["0x5000"] },
       goal: "0x4000",
-      status: "not_found",
+      status: "unknown",
       explored: { nodes: 2, edges: 1, depth_reached: 1 },
     },
     {
@@ -630,10 +646,18 @@ describe("explicit call relationship coverage", () => {
       "Callers: Upstream xrefs do not establish direct caller relationships.";
     const result = run([
       observe("0x1000", ["0x2000"], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          discovery: { callees: { status: "complete" } },
+        },
       }),
       observe("0x2000", [], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          discovery: { callees: { status: "complete" } },
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -683,7 +707,10 @@ describe("explicit call relationship coverage", () => {
     const reason = "An unrelated function's callees were not observed.";
     const result = run([
       observe("0x1000", [], "rea-workflow", {
-        relationshipCoverage: { status: "complete" },
+        relationshipCoverage: {
+          status: "complete",
+          discovery: { callees: { status: "complete" } },
+        },
       }),
       observe("0x2000", ["0x5000"], "rea-workflow", {
         relationshipCoverage: { status: "unknown", reason },
@@ -732,7 +759,11 @@ describe("call path evidence admission", () => {
       run([observe("0x001000", [])], {
         start: { address: "0X00001000" },
       }),
-    ).toMatchObject({ status: "not_found", start: "0x1000" });
+    ).toMatchObject({
+      status: "unknown",
+      start: "0x1000",
+      search_scope: { observed_status: "not_found" },
+    });
     expect(() =>
       run([observe("0x1000", [])], { start: { address: "1000" } }),
     ).toThrow();

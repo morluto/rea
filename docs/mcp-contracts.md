@@ -202,11 +202,18 @@ relationship coverage and read-specific `limitations`, alongside observed
 `calls`. When a provider does not classify its caveats, they remain on that
 node and coverage is `unknown`. An empty call list with partial or unknown
 coverage is not proof that the function has no calls.
-`trace_call_path` reports each limited expansion in `residual_unknowns` and
-sets `truncated: true`; any path already supported by observed edges remains
-visible. When a requested goal is not reached but an expansion is unresolved,
-`goal_status` is `unknown`; `not_reached` means traversal exhausted without
-unresolved relationship reads. Cancellation remains a tool error.
+`trace_call_path` reports limited relationship reads in `residual_unknowns` and
+sets `truncated: true`; any path supported by observed edges remains visible.
+`search_scope.observed_goal_status` describes the search of the provider-observed
+graph, while `search_scope.discovery` describes whether discovery of applicable
+direct relationships is established. A missing goal is `unknown` when either
+discovery or a relationship read is unestablished. A found path is shortest
+within the observed graph; undiscovered calls may produce a shorter path.
+`truncated` describes relationship reads, not unestablished discovery.
+`build_call_path` applies the same distinction to supplied function Evidence:
+its `search_scope.exhaustive` describes the supplied graph and
+`search_scope.observed_status` preserves that graph's result. Evidence without
+discovery metadata has unknown discovery. Cancellation remains a tool error.
 
 `trace_feature` validates each reference's containing-procedure resolution using
 the same contract as navigation context. Explicit absence remains a successful
