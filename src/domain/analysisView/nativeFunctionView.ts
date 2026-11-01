@@ -185,6 +185,11 @@ const summarizeDossier = (dossier: FunctionDossier) => {
       swift_string_literal_omissions: recorded(
         dossier.swift_string_literal_omissions,
       ),
+      prototype_conflicts: recorded(
+        dossier.native_api?.available
+          ? dossier.native_api.prototype_conflicts
+          : undefined,
+      ),
       // Value-flow rows are unknown, not zero, when value flow was not recorded
       // or the provider declared it unavailable; parentFields names which.
       value_flow_operations: flow?.operations.length ?? null,

@@ -9,9 +9,9 @@ import { GhidraProvider } from "./GhidraProvider.js";
 // Digests commit to the current shared policy, including the instruction status
 // revision that prevents reuse of snapshots with the previous ambiguous result.
 const RAW_DIGESTS = {
-  "6502": "8e33776d1cc5c5d77d32923d5978c05ec2d989d00920dd458cc2dafb4c9c0cad",
+  "6502": "9ebeb98ec460fa0b2d7505f19b63396031453687f540884fdc80a80589bfd38c",
   "x86-disabled-analyzer":
-    "d17bddc8ac110c891d30fb989fc7906df421bd9bea5df4aac05a950f50c7bdaf",
+    "8ab14655a783c7c25de79521be2482a355b20c69d32f995d26c8a49206f53eb7",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {

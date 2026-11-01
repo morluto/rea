@@ -46,6 +46,12 @@ jobs:
           java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
           test -n "${!java_home_variable}"
           JAVA_HOME="${!java_home_variable}" npm run verify:ghidra:bridge-sources -- --verified-sdk
+      - name: Check native prototype conflict decoding and frame paths
+        shell: bash
+        run: |
+          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          export JAVA_HOME="${!java_home_variable}"
+          node scripts/verify-ghidra-prototype-conflicts.mjs
       - name: Inspect real ARM and Thumb instruction context through the bridge
         shell: bash
         run: |
