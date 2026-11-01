@@ -598,7 +598,11 @@ export const sessionOutputSchemas = {
     }),
   ),
   capture_process_scenario: evidenceResultOf(
-    z.union([processCaptureSchema, processScenarioPlanSchema]),
+    z
+      .union([processCaptureSchema, processScenarioPlanSchema])
+      .describe(
+        `A capture, or the plan a dry run produced without launching a process. ${processCaptureSchema.description ?? ""}`,
+      ),
   ),
   compare_process_captures: evidenceResultOf(processCaptureComparisonSchema),
   compare_artifacts: evidenceResultOf(artifactComparisonResultSchema),
