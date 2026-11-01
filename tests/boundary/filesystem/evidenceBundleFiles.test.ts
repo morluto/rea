@@ -50,7 +50,10 @@ import {
   DuplicateEvidenceRecordError,
   isImmutableEvidenceBundle,
 } from "../../../src/domain/evidenceBundle.js";
-import { analysisViewLayoutEvidence } from "../../fixtures/analysisView.js";
+import {
+  analysisViewJavaScriptEvidence,
+  analysisViewLayoutEvidence,
+} from "../../fixtures/analysisView.js";
 import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
@@ -218,6 +221,224 @@ it("preserves tagged refusal JSON without interpreting Evidence-shaped fields", 
   );
   expect(delivered).toBe(refusal);
   expect(await readdir(root)).toEqual([]);
+});
+
+it("publishes partial Evidence bundle on failure when evidenceOutput is provided", async () => {
+  const root = await createTestTempDirectory("rea-partial-delivery-");
+  const partial = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    { operation: "health", parameters: {}, result: { partial: true } },
+  );
+  const failure = {
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    category: "timeout",
+    message: "Analysis timed out",
+    retryable: true,
+    details: {
+      operation: "analyze_javascript_application",
+      partial_observation: partial,
+    },
+  };
+  const outputPath = join(root, "partial.json");
+  const delivered = await publishCliAnalysisEvidence(
+    { ok: false, error: failure },
+    {
+      providerId: "fixture",
+      operation: "analyze_javascript_application",
+      signal: new AbortController().signal,
+      detail: "complete",
+      evidenceOutput: outputPath,
+    },
+  );
+  expect(delivered).toMatchObject({
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    details: {
+      operation: "analyze_javascript_application",
+      evidence_bundle: {
+        path: outputPath,
+        bytes: expect.any(Number),
+      },
+    },
+  });
+  const saved = await readEvidenceBundle(outputPath);
+  if (!saved.ok) throw saved.error;
+  expect(saved.value.records).toHaveLength(1);
+  expect(saved.value.records[0]?.evidence_id).toBe(partial.evidence_id);
+});
+
+it("publishes partial Evidence bundle on failure with summary detail", async () => {
+  const root = await createTestTempDirectory("rea-partial-summary-");
+  const partial = withEvidenceCallerInputPath(
+    analysisViewJavaScriptEvidence(),
+    "./src/index.js",
+  );
+  const failure = {
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    category: "timeout",
+    message: "Analysis timed out",
+    retryable: true,
+    details: {
+      operation: "analyze_javascript_application",
+      partial_observation: partial,
+    },
+  };
+  const outputPath = join(root, "summary.json");
+  const delivered = await publishCliAnalysisEvidence(
+    { ok: false, error: failure },
+    {
+      providerId: "rea-javascript-application",
+      operation: "analyze_javascript_application",
+      signal: new AbortController().signal,
+      detail: "summary",
+      evidenceOutput: outputPath,
+    },
+  );
+  expect(delivered).toMatchObject({
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    details: {
+      operation: "analyze_javascript_application",
+      evidence_bundle: {
+        path: outputPath,
+        bytes: expect.any(Number),
+      },
+      partial_observation: {
+        caller_input_path: "./src/index.js",
+      },
+    },
+  });
+  expect(
+    (
+      delivered as {
+        details: { partial_observation: { predicate_type: string } };
+      }
+    ).details.partial_observation.predicate_type,
+  ).toBe("rea.analysis-view");
+  const saved = await readEvidenceBundle(outputPath);
+  if (!saved.ok) throw saved.error;
+  expect(saved.value.records).toHaveLength(1);
+  expect(saved.value.records[0]?.evidence_id).toBe(partial.evidence_id);
+  expect(saved.value.records[0]?.caller_input_path).toBe("./src/index.js");
+  expect(saved.value.records[0]?.predicate_type).toBe(
+    "rea.javascript-application-analysis",
+  );
+});
+
+it("retains the analysis error and attaches publication_error when partial bundle save fails", async () => {
+  const root = await createTestTempDirectory("rea-partial-exists-");
+  const partial = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    { operation: "health", parameters: {}, result: { partial: true } },
+  );
+  const failure = {
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    category: "timeout",
+    message: "Analysis timed out",
+    retryable: true,
+    details: {
+      operation: "analyze_javascript_application",
+      partial_observation: partial,
+    },
+  };
+  const outputPath = join(root, "existing.json");
+  await writeFile(outputPath, "already exists");
+  const delivered = await publishCliAnalysisEvidence(
+    { ok: false, error: failure },
+    {
+      providerId: "fixture",
+      operation: "analyze_javascript_application",
+      signal: new AbortController().signal,
+      detail: "complete",
+      evidenceOutput: outputPath,
+    },
+  );
+  expect(delivered).toMatchObject({
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    details: {
+      operation: "analyze_javascript_application",
+      publication_error: {
+        code: "invalid_request",
+        message: expect.stringContaining("already exists"),
+      },
+    },
+  });
+  expect(
+    (
+      delivered as {
+        details: {
+          publication_error: { details?: { partial_observation?: unknown } };
+        };
+      }
+    ).details.publication_error.details?.partial_observation,
+  ).toBeUndefined();
+});
+
+it("redacts sensitive path from committed receipt on late cleanup interrupt", async () => {
+  const root = await createTestTempDirectory("rea-partial-sensitive-");
+  const partial = analysisViewJavaScriptEvidence();
+  const failure = {
+    error: "JavaScript application analysis failed",
+    code: "provider_timeout",
+    category: "timeout",
+    message: "Analysis timed out",
+    retryable: true,
+    details: {
+      operation: "analyze_javascript_application",
+      partial_observation: partial,
+    },
+  };
+  const secret = "supersecret";
+  const outputPath = join(root, `${secret}.json`);
+  const controller = new AbortController();
+  const close = OwnedStagedOutput.prototype.close;
+  const seam = vi
+    .spyOn(OwnedStagedOutput.prototype, "close")
+    .mockImplementationOnce(async function (this: OwnedStagedOutput) {
+      await close.call(this);
+      controller.abort(new Error("cleanup interrupted"));
+    });
+  try {
+    const delivered = await publishCliAnalysisEvidence(
+      { ok: false, error: failure },
+      {
+        providerId: "rea-javascript-application",
+        operation: "analyze_javascript_application",
+        signal: controller.signal,
+        detail: "complete",
+        evidenceOutput: outputPath,
+        sensitiveValues: [secret],
+      },
+    );
+    expect(delivered).toMatchObject({
+      error: "JavaScript application analysis failed",
+      code: "provider_timeout",
+      details: {
+        operation: "analyze_javascript_application",
+        publication_error: {
+          code: "cancelled",
+        },
+        evidence_bundle: {
+          bytes: expect.any(Number),
+        },
+      },
+    });
+    expect(
+      (
+        delivered as {
+          details: { evidence_bundle?: { path?: string } };
+        }
+      ).details.evidence_bundle?.path,
+    ).toBeUndefined();
+  } finally {
+    seam.mockRestore();
+  }
 });
 
 it("preserves direct duplicate rejection and CLI identity merging for repeated inspection sources", async () => {
