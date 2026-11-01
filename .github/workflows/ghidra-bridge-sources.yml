@@ -1,6 +1,8 @@
 name: Ghidra bridge source compilation
 
 on:
+  push:
+    branches: ["codex/rea-5137-typed-warning-proof-20261101"]
   workflow_dispatch:
   workflow_call:
 
@@ -95,3 +97,14 @@ jobs:
           decode cortex ARM:LE:32:Cortex mrs/4/msp bx/2/lr
           decode v8m ARM:LE:32:v8-m mrs/4/msplim bx/2/lr
           decode xtensa Xtensa:LE:32:default entry/3/a1 retw.n/2
+      # Fork-only validation of the existing #5137 typed-warning probe.
+      # Not intended for upstream integration.
+      - name: Verify typed indirect-warning provenance on real Ghidra
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          export JAVA_HOME="${!java_home_variable}"
+          npm ci
+          npm run build:cached
+          node scripts/verify-real-ghidra-warning-attribution.mjs
