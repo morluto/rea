@@ -16,7 +16,7 @@ const sha256 = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 const address = (offset: number): string => `0x${offset.toString(16)}`;
 const limitations = [
-  "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Mapping ends are inclusive.",
+  "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Ghidra relocation symbol names are retained observations, not independently verified. Mapping ends are inclusive.",
   "Appended overlay bytes are identified by file extent and included in FileBytes identity; they must not be mapped as initialized header/module memory. Uninitialized allocations are reported but their contents and DOS runtime behavior are not verified.",
   "The fixed load segment 0x1000 describes Ghidra's analysis image, not a running DOS process. Verified import does not establish original source ownership or recovered program behavior.",
   "A mismatching memory digest identifies the reported source range; it does not locate the first differing byte inside that range.",

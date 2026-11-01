@@ -286,7 +286,6 @@ try {
     ? await verifyGhidraRelocationSymbols({
         clang,
         lld,
-        workspace: fixtureRoot,
         env: process.env,
       })
     : null;

@@ -22,11 +22,15 @@ it("retains the provider symbol without claiming DOS verification of it", () => 
     fixture.sha256,
     fixture.observation,
   );
-  expect(result.ok).toBe(true);
   if (!result.ok) throw new Error(result.error);
   expect(result.value.status).toBe("verified");
   expect(result.value.observations.relocations[0]?.symbol).toBe(
     "provider_name",
+  );
+  expect(result.value.limitations).toContainEqual(
+    expect.stringContaining(
+      "relocation symbol names are retained observations, not independently verified",
+    ),
   );
 });
 
