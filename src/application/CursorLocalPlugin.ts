@@ -9,6 +9,7 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { readSkillFile } from "./SetupSkill.js";
 import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
 import type { PluginInspection } from "./SetupPluginClient.js";
+import { throwIfSetupCancelled } from "./SetupCancellation.js";
 import {
   SetupPluginCommands,
   pluginCommandFailure,
@@ -222,8 +223,10 @@ export class CursorLocalPlugin extends SetupPluginCommands {
   async install(
     _installed: boolean,
     checkDirectRegistration: () => Promise<string | undefined>,
+    signal?: AbortSignal,
   ): Promise<string | undefined> {
     try {
+      throwIfSetupCancelled(signal);
       const current = await this.inspect();
       if (current.status !== "available") return current.remediation;
       if (current.installed) return undefined;
@@ -247,6 +250,7 @@ export class CursorLocalPlugin extends SetupPluginCommands {
           throw new Error(pluginCommandFailure(result));
       }
       const configuration = await this.configuration(staged);
+      throwIfSetupCancelled(signal);
       await mkdir(join(staged, ".cursor-plugin"));
       await writeFile(
         join(staged, ".cursor-plugin", "plugin.json"),
@@ -268,6 +272,7 @@ export class CursorLocalPlugin extends SetupPluginCommands {
       if (beforePublish.installed) return undefined;
       const registrationChange = await checkDirectRegistration();
       if (registrationChange !== undefined) return registrationChange;
+      throwIfSetupCancelled(signal);
       await rename(staged, join(parent, "rea"));
       const verified = await this.inspect();
       return verified.status === "available" && verified.installed

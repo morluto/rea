@@ -8,7 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -21,6 +21,7 @@ import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
 import { withPluginSetup } from "./SetupPluginHost.js";
+import { CursorLocalPlugin } from "./CursorLocalPlugin.js";
 
 const writeDownloadedPackage = async (
   prefix: string,
@@ -161,8 +162,17 @@ const fixture = async () => {
     target,
     downloads,
     setupOptions,
-    host: (cursorPlugin = true) =>
-      withPluginSetup(base, {}, { preferPlugins: true, cursorPlugin }, launch),
+    host: (cursorPlugin = true, signal?: AbortSignal) =>
+      withPluginSetup(
+        base,
+        {},
+        {
+          preferPlugins: true,
+          cursorPlugin,
+          ...(signal === undefined ? {} : { signal }),
+        },
+        launch,
+      ),
     fail: () => {
       fail = true;
     },
@@ -392,6 +402,50 @@ it("preserves a direct registration created during download without publishing a
   );
   expect(await readdir(f.local)).toEqual([]);
   expect(f.base.configurations + f.base.skillInstalls).toBe(0);
+});
+
+it("stops Cursor publication when cancellation arrives during the final file checks", async () => {
+  const f = await fixture();
+  const controller = new AbortController();
+  const inspect = f.base.inspectClientConfiguration;
+  f.base.inspectClientConfiguration = async (...args) => {
+    const state = await inspect(...args);
+    if (f.downloads.length > 0) controller.abort("cancel before publication");
+    return state;
+  };
+  await expect(
+    runSetup(
+      { ...f.setupOptions, signal: controller.signal },
+      f.host(true, controller.signal),
+    ),
+  ).rejects.toBeInstanceOf(AnalysisCancelledError);
+  expect(f.downloads).toHaveLength(1);
+  expect(await readdir(f.local)).toEqual([]);
+  expect(f.base.configurations + f.base.skillInstalls).toBe(0);
+});
+
+it("does not start direct registration when cancellation arrives during Cursor inventory", async () => {
+  const f = await fixture();
+  const controller = new AbortController();
+  const inspect = CursorLocalPlugin.prototype.inspect;
+  let reads = 0;
+  const spy = vi
+    .spyOn(CursorLocalPlugin.prototype, "inspect")
+    .mockImplementation(async function (this: CursorLocalPlugin) {
+      const state = await inspect.call(this);
+      if (++reads === 2) controller.abort("cancel direct handoff");
+      return state;
+    });
+  onTestFinished(() => spy.mockRestore());
+  await expect(
+    runSetup(
+      { ...f.setupOptions, signal: controller.signal },
+      f.host(false, controller.signal),
+    ),
+  ).rejects.toBeInstanceOf(AnalysisCancelledError);
+  expect(reads).toBe(2);
+  expect(f.base.configurations + f.base.skillInstalls).toBe(0);
+  await expect(access(f.config)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("keeps ordinary Cursor setup direct without opting in to a plugin", async () => {

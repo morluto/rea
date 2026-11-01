@@ -8,11 +8,11 @@ const SPLIT_GAP_BYTES = 0x200;
 export const peImportFixtureOffset = (rva: number): number =>
   rva - SECTION_RVA + SECTION_OFFSET;
 
-export type PeImportFixtureFunction =
+type PeImportFixtureFunction =
   | { readonly name: string; readonly hint?: number }
   | { readonly ordinal: number };
 
-export interface PeImportFixtureDll {
+interface PeImportFixtureDll {
   readonly name: string;
   readonly functions: readonly PeImportFixtureFunction[];
 }

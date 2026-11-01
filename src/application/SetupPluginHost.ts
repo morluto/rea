@@ -3,6 +3,8 @@ import { CursorLocalPlugin } from "./CursorLocalPlugin.js";
 import { ok } from "../domain/result.js";
 import { explicitSetupRegistrationEnvironment } from "./SetupRegistrationEnvironment.js";
 import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
+import { throwIfSetupCancelled } from "./SetupCancellation.js";
+import { launchPluginCommand } from "./SetupPluginCommands.js";
 import type { DoctorCheck } from "./Doctor.js";
 import type { SetupHost, SetupAction } from "./SetupTypes.js";
 import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
@@ -13,6 +15,7 @@ import {
 } from "./SetupPluginClient.js";
 
 interface PluginSetupOptions {
+  readonly signal?: AbortSignal;
   readonly preferPlugins: boolean;
   readonly cursorPlugin?: boolean;
 }
@@ -33,6 +36,7 @@ type ClientRoute =
 
 /** Keep approval, ownership and recovery in setup; delegate plugin state to its client. */
 class PluginSetupHost {
+  private readonly launch: SetupPluginCommandLauncher;
   private readonly resources = new ArtifactResourceScope();
   private readonly cleanup = new SetupCleanupOwner([
     { close: async () => this.host.close?.() },
@@ -46,8 +50,20 @@ class PluginSetupHost {
     private readonly host: SetupHost,
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
     private readonly options: PluginSetupOptions,
-    private readonly launch?: SetupPluginCommandLauncher,
-  ) {}
+    launch?: SetupPluginCommandLauncher,
+  ) {
+    this.launch = async (command, args, invocation) => {
+      throwIfSetupCancelled(this.options.signal);
+      const result = await (launch ?? launchPluginCommand)(command, args, {
+        ...invocation,
+        ...(this.options.signal === undefined
+          ? {}
+          : { signal: this.options.signal }),
+      });
+      throwIfSetupCancelled(this.options.signal);
+      return result;
+    };
+  }
   private directRegistrationMissing = async (id: string): Promise<boolean> => {
     const report = await this.host.doctor({
       clients: [id],
@@ -249,8 +265,10 @@ class PluginSetupHost {
     command,
   ) => {
     const selected = await this.route(client.name);
+    throwIfSetupCancelled(this.options.signal);
     if (selected.mode === "direct") {
       const change = await this.directPluginChange(selected);
+      throwIfSetupCancelled(this.options.signal);
       return change === undefined
         ? this.host.configureClient(client, settings, command)
         : { status: "failed", reason: "plugin", detail: change };
@@ -262,14 +280,18 @@ class PluginSetupHost {
         detail: selected.remediation,
       };
     const checkDirectRegistration = async (): Promise<string | undefined> => {
+      throwIfSetupCancelled(this.options.signal);
       const current = await this.host.inspectClientConfiguration(
         client,
         settings,
         command,
       );
-      return current.status === "invalid" ||
+      const changed =
+        current.status === "invalid" ||
         current.status === "already_current" ||
-        !(await this.directRegistrationMissing(client.name))
+        !(await this.directRegistrationMissing(client.name));
+      throwIfSetupCancelled(this.options.signal);
+      return changed
         ? "Client configuration changed after the plugin plan was approved. Rerun setup to avoid adding a duplicate server."
         : undefined;
     };
@@ -296,6 +318,7 @@ class PluginSetupHost {
               ? await selected.manager.install(
                   state.installed,
                   checkDirectRegistration,
+                  this.options.signal,
                 )
               : await selected.manager.install(state.installed);
     return failure === undefined
@@ -333,6 +356,7 @@ class PluginSetupHost {
     ids,
   ) => {
     const direct = await this.directSkillClients(ids);
+    throwIfSetupCancelled(this.options.signal);
     return ids.length > 0 && direct.length === 0
       ? ok("unchanged")
       : this.host.installSkill(direct);

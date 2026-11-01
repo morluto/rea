@@ -17,6 +17,7 @@ import {
 import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
 import { projectWebBundleView } from "./webBundleView.js";
 import { projectSourceToBundleView } from "./sourceToBundleView.js";
+import { projectFeatureTraceView } from "./featureTraceView.js";
 import { projectGpuCodeObjectsView } from "./gpuCodeObjectsView.js";
 import { projectModelArtifactView } from "./modelArtifactView.js";
 import { projectCommandObservationView } from "./commandObservationView.js";
@@ -147,6 +148,8 @@ import {
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  featureTraceSummaryViewResultSchema,
+  featureTraceViewResultSchema,
   analysisViewResultSchema,
   type AnalysisViewResult,
   type UnsignedAnalysisView,
@@ -211,6 +214,8 @@ export {
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  featureTraceSummaryViewResultSchema,
+  featureTraceViewResultSchema,
   analysisViewResultSchema,
   type AnalysisViewResult,
   type UnsignedAnalysisView,
@@ -327,6 +332,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_gpu_code_objects", projectGpuCodeObjectsView),
   retain("match_native_functions", projectNativeFunctionMatchingView),
   retain("compare_source_to_bundle", projectSourceToBundleView),
+  retain("trace_application_feature", projectFeatureTraceView),
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),

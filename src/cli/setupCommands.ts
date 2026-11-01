@@ -106,11 +106,12 @@ const registerSetupCommand = (
     }),
     alias: { yes: "y" },
     run: ({ options, formatExplicit }) =>
-      withCommandCancellation(() =>
+      withCommandCancellation((signal) =>
         logCliCommand(
           logger,
           CLI_COMMANDS.setup,
-          () => runSetupCommand({ options, formatExplicit }, environment),
+          () =>
+            runSetupCommand({ options, formatExplicit }, environment, signal),
           isSetupFailure,
         ),
       ),
@@ -231,6 +232,7 @@ const runSetupCommand = async (
     readonly formatExplicit: boolean;
   },
   environment: Readonly<NodeJS.ProcessEnv>,
+  signal: AbortSignal,
 ) => {
   const { options } = input;
   const interactive = setupIsInteractive(options, input.formatExplicit);
@@ -247,9 +249,9 @@ const runSetupCommand = async (
     import("../application/SetupPluginHost.js"),
   ]);
   const result = await runSetup(
-    setupRunOptions(input, interactive, hasExplicitScope),
+    { ...setupRunOptions(input, interactive, hasExplicitScope), signal },
     withPluginSetup(
-      systemSetupHost(createSystemDoctorHost(environment), environment),
+      systemSetupHost(createSystemDoctorHost(environment, signal), environment),
       environment,
       {
         preferPlugins:
@@ -257,6 +259,7 @@ const runSetupCommand = async (
           options.skillClient.length === 0 &&
           options.toolFamilies === undefined,
         cursorPlugin: options.cursorPlugin,
+        signal,
       },
     ),
     interactive

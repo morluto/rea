@@ -561,6 +561,14 @@ be verified. See [MCP contracts](mcp-contracts.md) for session lifecycle and
 [Ghidra first-query deadlines](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for import, client timeouts and recovery.
 
+A one-shot command releases its provider session and REA runtime before it
+prints a failure, so it omits the same-session reuse and
+`update_analysis_settings` guidance an MCP connection receives. Its
+`details.limit` reports `scope: "rea-invocation"` and
+`applies_at: "next_invocation"`; set the named `environment` (or the per-call
+`parameter`) for a new invocation and rerun. For example, a Ghidra decompile
+deadline names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`.
+
 If one-shot analysis fails and closing its session also fails, the original
 error details remain inline and `details.cleanup_error` describes the later
 close failure. Each diagnostic retains its own reported resources; the later

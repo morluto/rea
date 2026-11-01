@@ -1,6 +1,6 @@
 # Kuna provider
 
-[Kuna](https://github.com/Noelo-Lab/kuna) is an Apache-2.0 decompiler distributed as one `kuna` executable. For a new installation, use Kuna 1.986, REA's recommended verified release. REA uses a `kuna` you supply; it does not download, install, update or bundle Kuna. REA accepts other releases, which it reports as unverified in `rea doctor` and in each analysis profile. The 1.986 real-provider checks ran on macOS arm64; Linux and other hosts have not been verified with that release.
+[Kuna](https://github.com/Noelo-Lab/kuna) is an Apache-2.0 decompiler distributed as one `kuna` executable. For a new installation, use Kuna 1.988, REA's recommended verified release. REA uses a `kuna` you supply; it does not download, install, update or bundle Kuna. REA accepts other releases, which it reports as unverified in `rea doctor` and in each analysis profile. The verified-release flag compares the reported version; it does not authenticate the executable. The 1.988 real-provider checks ran on macOS arm64; Linux and other hosts have not been verified with that release.
 
 Kuna is static: it reads the selected image and never executes it.
 
@@ -46,6 +46,8 @@ Windows is not supported yet. Supported targets are ELF and thin Mach-O executab
 | `list_strings`, `search_strings`                            | Typed string candidates from one cached, reference-free scan; exact-address, literal and ECMAScript regex selection              |
 | `xrefs`                                                     | Exact-address incoming reference sites, with forwarding aliases filtered explicitly                                              |
 | `analyze_function`                                          | Pseudocode and assembly from the export, plus call relationships; typed references, comments, strings and CFG remain unavailable |
+
+Kuna's inventory gives some entries aliases, such as ELF versioned-symbol names and generated `sub_` names. Name selectors accept an alias that names one entry and list every entry a shared alias names. `search_procedures` matches aliases too: each entry appears once under its primary name, with the matching aliases in `matched_aliases`. `list_procedures` shows primary names only.
 
 Typed procedure references, basic blocks, raw-memory tools, annotations and type recovery are not available from this provider. Use another provider for those operations.
 

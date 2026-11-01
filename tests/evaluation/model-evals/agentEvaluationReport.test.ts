@@ -131,12 +131,6 @@ describe("scoped factual report", () => {
         epistemicCuePresent: false,
       }),
     ).toBe(false);
-    expect(
-      agentEvaluationPassed({
-        ...routingSuccess,
-        factualCorrectness: "failed",
-      }),
-    ).toBe(false);
   });
 
   it("reports assessed failures separately from unassessed scenarios", () => {

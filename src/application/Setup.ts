@@ -32,9 +32,14 @@ import {
   type AnalysisCleanupObservation,
 } from "../domain/analysisErrorBase.js";
 import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { SetupSkillInstallError } from "./SetupSkill.js";
 import type { SetupHopperInstallFailure } from "./SetupInstallFailure.js";
+import {
+  throwIfSetupCancelled,
+  withSetupCancellation,
+} from "./SetupCancellation.js";
 
 /** Discover, approve, and apply setup actions idempotently. */
 export const runSetup = async (
@@ -46,7 +51,13 @@ export const runSetup = async (
   let primaryFailure: unknown;
   let threw = false;
   try {
-    result = await runSetupWorkflow(options, host, confirm);
+    throwIfSetupCancelled(options.signal);
+    result = await runSetupWorkflow(
+      options,
+      withSetupCancellation(host, options.signal),
+      confirm,
+    );
+    throwIfSetupCancelled(options.signal);
   } catch (cause: unknown) {
     threw = true;
     primaryFailure = cause;
@@ -60,6 +71,12 @@ export const runSetup = async (
     cleanup = setupCleanupError(cause);
   }
   if (cleanup !== undefined && !cleanup.cleanupIncomplete) cleanup = undefined;
+  if (!threw && options.signal?.aborted) {
+    threw = true;
+    primaryFailure = new AnalysisCancelledError("setup", {
+      cause: options.signal.reason,
+    });
+  }
   if (threw) {
     if (cleanup === undefined) throw primaryFailure;
     if (primaryFailure instanceof AnalysisError)
@@ -374,6 +391,7 @@ const runSetupWorkflow = async (
           remediation:
             combineRemediation(hopperFailure.remediation, result.remediation) ??
             hopperFailure.remediation,
+          ...hopperDownload(hopperFailure),
         };
   if (clientFailure !== undefined)
     return withHopperFailure(await fail(clientFailure));
@@ -409,9 +427,16 @@ const runSetupWorkflow = async (
     doctor,
     clientStates,
     ...(remediation === undefined ? {} : { remediation }),
-    ...(hopperFailure === undefined ? {} : { code: hopperFailure.code }),
+    ...(hopperFailure === undefined
+      ? {}
+      : { code: hopperFailure.code, ...hopperDownload(hopperFailure) }),
   };
 };
+
+const hopperDownload = (
+  failure: SetupHopperInstallFailure,
+): Pick<SetupResult, "download"> =>
+  failure.download === undefined ? {} : { download: failure.download };
 
 const installHopperAction = async (input: {
   readonly host: SetupHost;

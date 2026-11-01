@@ -12,6 +12,7 @@ import {
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { ownedCommandResources } from "../process/OwnedCommand.js";
 import { BoundedOutputExcerpt } from "../process/BoundedOutputExcerpt.js";
+import { throwIfSetupCancelled } from "./SetupCancellation.js";
 
 const PLUGIN_COMMAND_CAPTURE_LIMIT = 64 * 1024;
 
@@ -40,6 +41,7 @@ export type SetupPluginCommandLauncher = (
     readonly timeoutMs: number;
     readonly platform: NodeJS.Platform;
     readonly resources: ArtifactResourceScope;
+    readonly signal?: AbortSignal;
     readonly launcher?: typeof spawnOwnedProviderProcess;
     readonly windowsVerbatimArguments?: boolean;
   },
@@ -53,9 +55,13 @@ export const launchSetupPluginCommand: SetupPluginCommandLauncher = (
 ) => {
   const environment = snapshotEnvironment(options.env, options.platform);
   return options.resources.run(async () => {
+    throwIfSetupCancelled(options.signal);
     const stdout = new BoundedOutputExcerpt(PLUGIN_COMMAND_CAPTURE_LIMIT);
     const stderr = new BoundedOutputExcerpt(PLUGIN_COMMAND_CAPTURE_LIMIT);
     const controller = new AbortController();
+    const cancel = () => controller.abort(options.signal?.reason);
+    options.signal?.addEventListener("abort", cancel, { once: true });
+    if (options.signal?.aborted) cancel();
     let timedOut = false;
     let spawnError: string | undefined;
     let cleanupFailure: string | undefined;
@@ -142,7 +148,9 @@ export const launchSetupPluginCommand: SetupPluginCommandLauncher = (
       }
       for (const [signal, handler] of signalHandlers)
         process.removeListener(signal, handler);
+      options.signal?.removeEventListener("abort", cancel);
     }
+    throwIfSetupCancelled(options.signal);
     const exit = supervisor?.observedExit();
     return {
       exitCode: exit?.code ?? exit?.signal ?? null,

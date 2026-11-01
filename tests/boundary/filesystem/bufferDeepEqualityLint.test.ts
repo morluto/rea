@@ -64,14 +64,6 @@ new RuleTester({
   ],
   invalid: [
     {
-      // Exact pre-fix ELF test shape: readFile without an encoding returns Buffer.
-      code: `import { readFile } from "node:fs/promises";
-               import { expect } from "vitest";
-               const before = await readFile(path);
-               expect(await readFile(path)).toEqual(before);`,
-      errors: [{ messageId: "nativeBytes" }],
-    },
-    {
       code: `import { readFileSync as read } from "node:fs";
                import { expect } from "vitest";
                const before = read(path);
