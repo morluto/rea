@@ -714,6 +714,42 @@ JSON to a file and use `inspect-analysis-view` with inline source Evidence for
 later inventory summaries or pages; a one-shot CLI session cannot retain a
 parent for another invocation.
 
+## Update notices
+
+MCP release checks are offline by default. Set `REA_MCP_UPDATE_CHECK=1` in
+REA's server environment to opt in; unset it or use `0` to disable checks.
+On a tool request, the server starts a background HTTPS lookup of the public
+`rea-agents` dist-tags at `registry.npmjs.org`. No target, Evidence, client,
+configuration, or session data is sent. Redirects are refused. The lookup has
+a five-second deadline and a 16 KiB metadata ceiling; a refusal or failed lookup
+silently backs off for 24 hours and never changes the analysis result.
+
+The cache is in memory per connection (including failures), refreshed on the
+next tool request after 24 hours. Reconnecting starts a fresh cache. During
+revalidation, an unannounced release observation remains available with its
+original observation time; it does not establish the registry's current state.
+Failed or invalid refreshes retain that observation. A successful current lookup
+replaces it or clears it when no newer release is reported. Once ready,
+a newer release is announced as an independent MCP `notifications/message`
+with level `notice` and logger `rea.update`, alongside the next successful tool
+response. Its complete notification must fit the configured receive budget.
+Analysis results, their target-content provenance markers, Evidence and catalog
+schemas stay unchanged; the server-authored notification is outside that marker.
+Clients may filter logging notices or omit them from the AI context; delivery
+does not establish that an AI or user saw the notice. MCP logging is deprecated
+in protocol 2026-07-28 but remains supported by the pinned SDK during its
+compatibility window. Discovery alone does not start a lookup. A connection
+attempts each version notice at most once, including when filtered by the client
+or when transport delivery fails; uncertain delivery is not retried.
+
+The notice compares the running version with a published release, not the
+installation on disk. It suggests `rea update` for global installations and
+caller-owned updates for source or pinned package-runner installations. No
+installation, configuration write or automatic reconnection occurs. Restart or
+reconnect the MCP client after updating. Existing `binary_session` expected
+identity comparison separately reports `mcp_server_restart_required` for an
+observed mismatch; absent expected identity stays unknown.
+
 ## Identity and discovery
 
 `binary_session` reports the active package, server, SDK, and negotiated
