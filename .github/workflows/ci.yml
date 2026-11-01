@@ -196,7 +196,7 @@ jobs:
           key: ${{ steps.static-cache.outputs.cache-primary-key }}
       - name: Upload complete static diagnostics
         if: always() && needs.changes.outputs.code == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: static-check-reports
           path: .cache/static-checks/
@@ -262,7 +262,7 @@ jobs:
           key: ${{ steps.knip-cache.outputs.cache-primary-key }}
       - name: Upload complete deep static diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: static-deep-check-reports
           path: .cache/static-checks/
@@ -310,7 +310,7 @@ jobs:
         run: npm run test:fast -- --reporter=default --reporter=blob
         env:
           VITEST_BLOB_LABEL: source
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: vitest-report-source
@@ -359,7 +359,7 @@ jobs:
         env:
           VITEST_BLOB_LABEL: built
           REA_CI_TEST_HISTORY: .cache/ci-test-history/test-results.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: vitest-report-built-${{ strategy.job-index }}
@@ -393,7 +393,7 @@ jobs:
           npx --no-install stryker run stryker.semantics.config.mjs --dryRunOnly
       - name: Retain available reverse tools diagnostics
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: reverse-tools-quality-${{ needs.changes.outputs.tier }}-${{ github.run_attempt }}
           path: |
@@ -461,7 +461,7 @@ jobs:
           run-id: ${{ steps.history.outputs.run-id }}
           github-token: ${{ github.token }}
           path: .cache/ci-test-history
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rea-test-runtime
           path: |
@@ -483,7 +483,7 @@ jobs:
         run: |
           # A new Turbo dry run can evict the entries this build just used.
           node scripts/ci/portable-build-cache.mjs snapshot < .cache/ci-build-plan.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rea-build-cache
           path: .cache/ci-build-cache/
@@ -576,7 +576,7 @@ jobs:
           CI_TEST_SELECTION: ${{ needs.changes.outputs.test_selection }}
           CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci/test-report.mjs
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: needs.changes.outputs.code == 'true' && !cancelled() && hashFiles('test-results.json') != ''
         with:
           name: test-results
@@ -602,7 +602,7 @@ jobs:
           ) &&
           github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
           (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-timings-${{ needs.changes.outputs.tier }}
           path: .cache/ci-test-history/test-results.json
@@ -658,7 +658,7 @@ jobs:
       - run: npm run build:windows-native
       - run: npm run verify:windows-native:artifact
       - run: node scripts/build-windows-native.mjs --inspection-fixture
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-native-inspection-fixture
           path: .cache/windows-native-inspection-fixture/
@@ -673,12 +673,12 @@ jobs:
           x86_64-w64-mingw32-g++ -municode -std=c++17 -O2 -static -Wall -Wextra \
             -o .cache/windows-process-boundary/process-boundary.exe \
             tests/fixtures/windows/processBoundary.cc -ladvapi32
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-process-boundary-fixture
           path: .cache/windows-process-boundary/
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-native-controls
           path: native/windows/build/
@@ -741,7 +741,7 @@ jobs:
         run: npm run verify:inspector
       - name: Retain the exact qualified release package
         if: needs.changes.outputs.tier == 'full' && matrix.platform == 'linux' && matrix.architecture == 'x64'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: verified-release-package
           path: .cache/verified-package/
@@ -840,7 +840,7 @@ jobs:
         run: |
           set -o pipefail
           npm run verify:readiness | tee readiness-summary.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: reconstruction-readiness
@@ -991,7 +991,7 @@ jobs:
           tests/boundary/filesystem/javascriptPackagePrecedence.test.ts
           tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
           tests/boundary/process/sourceMapUncHosts.test.ts
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: windows-capabilities
@@ -1018,7 +1018,7 @@ jobs:
         run: npm run docs:build
       - name: Generation leaves authored files unchanged
         run: git diff --exit-code
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: generated-docs
           path: |
@@ -1217,7 +1217,7 @@ jobs:
         run: node scripts/ci/required.mjs
       - name: Upload full qualification receipt artifact
         if: needs.changes.outputs.tier == 'full' && success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.gate.outputs.receipt_name }}
           path: ${{ steps.gate.outputs.receipt_path }}
