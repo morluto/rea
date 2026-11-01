@@ -3,9 +3,10 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { err, ok } from "../domain/result.js";
-import type {
-  HopperDownload,
-  HopperDownloadFailure,
+import {
+  HOPPER_METADATA_TIMEOUT_MS,
+  type HopperDownload,
+  type HopperDownloadFailure,
 } from "./HopperDownload.js";
 import {
   installMacHopper,
@@ -33,8 +34,13 @@ class FakeMacHopperHost implements MacHopperInstallHost {
   installs = 0;
   opens = 0;
   replaces = false;
+  downloads: Array<{ url: string; timeoutMs: number | undefined }> = [];
 
-  download = (url: string): Promise<HopperDownload> => {
+  download = (
+    url: string,
+    options?: { readonly timeoutMs?: number },
+  ): Promise<HopperDownload> => {
+    this.downloads.push({ url, timeoutMs: options?.timeoutMs });
     const feed = url.includes("files-api");
     if (!feed) this.packageDownloads += 1;
     const failure = feed ? this.feedFailure : this.packageFailure;
@@ -123,6 +129,21 @@ describe("macOS Hopper installation", () => {
     expect(host.opens).toBe(1);
     expect(host.unmounts).toBe(1);
     expect(host.cleanups).toBe(1);
+  });
+
+  it("bounds the release feed by the metadata limit and the package by the download bounds", async () => {
+    const host = new FakeMacHopperHost();
+    await installMacHopper({}, host);
+    expect(host.downloads).toEqual([
+      {
+        url: expect.stringContaining("request=releases"),
+        timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
+      },
+      {
+        url: "https://www.hopperapp.com:443/downloader/public/Hopper-demo.dmg",
+        timeoutMs: undefined,
+      },
+    ]);
   });
 
   it("preserves installation when macOS cannot open the installed app", async () => {
@@ -342,7 +363,9 @@ it.each(["feed", "package"] as const)(
     const failure = {
       url: "https://fixture.invalid/request",
       kind: "timeout",
-      timeoutMs: 120_000,
+      limit: "stalled",
+      timeoutMs: 30_000,
+      receivedBytes: 0,
     } as const;
     if (stage === "feed") host.feedFailure = failure;
     else host.packageFailure = failure;

@@ -20,6 +20,7 @@ import { macDeveloperIdRequirement } from "../process/MacCodeSignature.js";
 import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
 import {
   downloadHopperPackage,
+  HOPPER_METADATA_TIMEOUT_MS,
   type HopperDownload,
   type HopperRequestFailure,
 } from "./HopperDownload.js";
@@ -108,7 +109,10 @@ export type MacHopperInstallResult =
 
 /** External effects used by the bounded macOS Hopper installer. */
 export interface MacHopperInstallHost {
-  download(url: string): Promise<HopperDownload>;
+  download(
+    url: string,
+    options?: { readonly timeoutMs?: number },
+  ): Promise<HopperDownload>;
   createTemporaryDirectory(): Promise<string>;
   createMountDirectory(path: string): Promise<void>;
   writePackage(path: string, bytes: Uint8Array): Promise<void>;
@@ -147,7 +151,9 @@ export const installMacHopper = async (
   let result: MacHopperInstallResult;
   try {
     result = await (async (): Promise<MacHopperInstallResult> => {
-      const metadata = await host.download(HOPPER_RELEASES_URL);
+      const metadata = await host.download(HOPPER_RELEASES_URL, {
+        timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
+      });
       if (!metadata.ok)
         return {
           status: "failed",
