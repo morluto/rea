@@ -3,6 +3,7 @@ import {
   localPathStringSchema,
 } from "../../domain/localPath.js";
 import { sourceToBundleViewRequestSchema } from "../../domain/analysisView/sourceToBundleView.js";
+import { featureTraceViewRequestSchema } from "../../domain/analysisView/featureTraceView.js";
 import { z } from "zod";
 
 import { evidenceInputSchema } from "../../domain/evidenceReference.js";
@@ -24,6 +25,20 @@ export const traceApplicationFeatureRequestSchema = z.strictObject({
   ...traceApplicationFeatureFacts,
   application: evidenceInputSchema,
 });
+
+/** MCP trace request; a selected view retains the complete trace and returns only those facts. */
+export const traceApplicationFeatureToolRequestSchema =
+  traceApplicationFeatureRequestSchema.extend({
+    view: z
+      .union([
+        z.strictObject({ kind: z.literal("summary") }),
+        featureTraceViewRequestSchema,
+      ])
+      .optional()
+      .describe(
+        "Omitted returns the complete trace. summary or a feature-trace page retains the complete trace in this session first; query it again with inspect_analysis_view and the returned parent_evidence_id.",
+      ),
+  });
 
 /** Semantic trace request accepting inline or same-session application Evidence. */
 export const traceJavaScriptSemanticsRequestSchema =
