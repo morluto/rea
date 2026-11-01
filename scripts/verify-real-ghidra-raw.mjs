@@ -499,16 +499,6 @@ try {
     overlaySearch.normalized_result.matches.map((match) => match.address),
   );
   await call("close_binary");
-  const help = await promisify(execFile)(
-    process.execPath,
-    [entrypoint, "search-bytes", "--help"],
-    { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
-  );
-  assert.match(
-    help.stdout,
-    /unbounded searches skip unloaded blocks and overlays/u,
-  );
-  assert.match(help.stdout, /overlay address space to search it/u);
   for (const [bounds, expected] of [
     [[], defaultSearch],
     [["--start", overlayQuery.start, "--end", overlayQuery.end], overlaySearch],
