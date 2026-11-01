@@ -48,6 +48,12 @@ async function expectRemoteFailure(client, operation, parameters, code) {
 
 async function verifyBridgeRejections(client) {
   return {
+    unknownProcedure: await expectRemoteFailure(
+      client,
+      "procedure_address",
+      { document: null, procedure: "rea_missing_procedure_fixture" },
+      "procedure_not_found",
+    ),
     unknownDocument: await expectRemoteFailure(
       client,
       "list_segments",

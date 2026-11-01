@@ -161,6 +161,23 @@ try {
     fromNumericOffset.normalized_result,
     fromOffset.normalized_result,
   );
+  const missingProcedure = "rea_missing_procedure_fixture";
+  const missingName = await client.callTool(
+    {
+      name: "procedure_pseudo_code",
+      arguments: { procedure: missingProcedure },
+    },
+    { timeout: 240000 },
+  );
+  assert.equal(missingName.isError, true);
+  const missingNameError = JSON.parse(
+    missingName.content.find((item) => item.type === "text").text,
+  ).error;
+  assert.equal(missingNameError.code, "invalid_request");
+  assert.match(missingNameError.message, /rea_missing_procedure_fixture/u);
+  assert.match(missingNameError.remediation.action, /list_procedures/u);
+  assert.match(missingNameError.remediation.action, /does not prove/u);
+  assert.equal(missingNameError.recovery, undefined);
   const missingAddress = "ram:0xffffffff";
   const rejected = await client.callTool(
     { name: "procedure_pseudo_code", arguments: { procedure: missingAddress } },

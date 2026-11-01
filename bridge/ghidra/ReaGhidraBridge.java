@@ -1009,7 +1009,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             } catch (RequestFailure failure) {
                 // Existing names/addresses win. Only an unresolved numeric input
                 // can fall back to source coordinates; ambiguity never falls back.
-                if (!failure.code.equals("not_found") || !selector.matches("0x[0-9a-fA-F]+"))
+                if (!failure.code.equals("procedure_not_found") || !selector.matches("0x[0-9a-fA-F]+"))
                     throw failure;
             }
         }
@@ -2432,11 +2432,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // Retain legacy bare-hex address input only when no symbol matches.
         Address address = explicitAddress ? parseReaAddress(value) : tryParseAddress(value);
         if (address == null)
-            throw new RequestFailure("not_found", "Unknown Ghidra procedure name or address: " + value);
+            throw new RequestFailure("procedure_not_found", "Unknown Ghidra procedure name or address: " + value);
         Function function = functionAtOrContaining(address);
         if (function == null)
             // Other procedure operations retain their analysis-address semantics.
-            throw new RequestFailure("not_found", "No procedure exists at the requested address: " + value +
+            throw new RequestFailure("procedure_not_found", "No procedure exists at the requested address: " + value +
                 "; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Choose an observed analysis address. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra --json; " +
                 "MCP: list_procedures. Inspect the loaded base and source mappings with CLI rea analyze <path> --provider ghidra --json " +

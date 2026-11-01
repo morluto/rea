@@ -1393,6 +1393,13 @@ they are not interpreted as overrides applied by this session.
 Project content participates in snapshot identity, so different project states
 cannot reuse the same profile's cached observations.
 
+If a function selector is missing, use `list_procedures` or `search_procedures`
+to inspect the selected project's observed inventory. A missing entry does not
+prove the function is absent from the executable. To explicitly compare with a
+fresh import, start another REA process without `REA_GHIDRA_PROJECT_PATH` and
+`REA_GHIDRA_PROGRAM_NAME`; the fresh analysis will not include the selected
+project's annotations.
+
 To prepare a new project explicitly, use your existing Ghidra installation in a
 new directory you own (this writes that project; REA does not save it for you):
 

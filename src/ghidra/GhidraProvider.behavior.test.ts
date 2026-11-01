@@ -1339,24 +1339,122 @@ describe("Ghidra result projection", () => {
   });
 });
 
-describe("Ghidra file-offset outcome projection", () => {
-  const remoteFailure = (remoteCode: string, message: string) =>
-    provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () =>
-        Promise.resolve(
+const remoteFailure = (remoteCode: string, message: string) =>
+  provider(installationHost(), () => ({
+    start: () => Promise.resolve(ok(sessionInfo())),
+    callTool: () =>
+      Promise.resolve(
+        err(
+          new GhidraSessionError(
+            "remote",
+            message,
+            { remote_code: remoteCode },
+            { remoteCode },
+          ),
+        ),
+      ),
+    close: () => Promise.resolve(ok(null)),
+  }));
+
+describe("Ghidra procedure lookup projection", () => {
+  it("reports a missing procedure as an inventory lookup rather than a schema error", async () => {
+    const selector = "Unresolved_Selected_Name";
+    const message = `Unknown Ghidra procedure name or address: ${selector}`;
+    const client = await createElfClient(
+      remoteFailure("procedure_not_found", message),
+    );
+    try {
+      const result = await client.execute("procedure_pseudo_code", {
+        procedure: selector,
+      });
+      if (result.ok) throw new Error("Expected a missing procedure");
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        message,
+        details: {
+          issues: [
+            {
+              path: ["procedure"],
+              observed: { procedure: selector },
+            },
+          ],
+          diagnostics: { remote_code: "procedure_not_found" },
+        },
+      });
+      expect(projected).not.toHaveProperty("recovery");
+      expect(projected.remediation.action).toContain("list_procedures");
+      expect(projected.remediation.action).toContain("does not prove");
+      expect(projected.remediation.action).not.toContain(
+        "REA_GHIDRA_PROJECT_PATH",
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("offers an explicit fresh import when the missing procedure came from a selected project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-missing-procedure-"));
+    await mkdir(join(root, "selected.rep"));
+    await writeFile(join(root, "selected.gpr"), "marker");
+    const message = "Unknown Ghidra procedure name or address: missing";
+    const ghidra = provider(
+      installationHost(),
+      () => ({
+        start: async () =>
+          ok({
+            ...sessionInfo(),
+            read_only: true,
+            existing_project: true as const,
+            analysis_complete: null,
+            capabilities: GHIDRA_SESSION_CAPABILITIES.filter(
+              (name) => !GHIDRA_MUTATING_OPERATIONS.has(name),
+            ),
+          }),
+        callTool: async () =>
           err(
             new GhidraSessionError(
               "remote",
               message,
-              { remote_code: remoteCode },
-              { remoteCode },
+              {},
+              {
+                remoteCode: "procedure_not_found",
+              },
             ),
           ),
-        ),
-      close: () => Promise.resolve(ok(null)),
-    }));
+        close: async () => ok(null),
+      }),
+      { REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr") },
+    );
+    try {
+      const client = await createElfClient(ghidra);
+      try {
+        const result = await client.execute("procedure_address", {
+          procedure: "missing",
+        });
+        if (result.ok) throw new Error("Expected a missing procedure");
+        const projected = projectAnalysisError(result.error);
+        expect(projected).not.toHaveProperty("recovery");
+        expect(projected.remediation.action).toContain(
+          "REA_GHIDRA_PROJECT_PATH",
+        );
+        expect(projected.remediation.action).toContain(
+          "completeness is unknown",
+        );
+        expect(projected.remediation.action).toContain(
+          "will not include the selected project's annotations",
+        );
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await ghidra.closeOwnedResources();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
+describe("Ghidra file-offset outcome projection", () => {
   it.each([
     [
       "address_unmapped",
