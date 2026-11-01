@@ -32,6 +32,7 @@ type RelationshipCall = (
 export interface CallPathTraceInput {
   readonly start: string;
   readonly goal?: string | undefined;
+  readonly goals?: readonly string[] | undefined;
   readonly direction: CallRelationshipDirection;
 }
 
@@ -59,6 +60,7 @@ interface TraceState {
   readonly residual: Set<string>;
   readonly limitations: Set<string>;
   readonly relationshipCoverage: Map<string, RelationshipCoverage>;
+  readonly roots: Set<string>;
   queueIndex: number;
   traversalPath: string[];
 }
@@ -77,7 +79,7 @@ interface DiscoveredEdge {
   readonly discoveryDepth: number;
 }
 
-/** Trace direct caller/callee relationships until the graph is exhausted or the goal is reached. */
+/** Batch goals share an exhaustive breadth-first traversal; legacy goal retains its early stop. */
 export const traceCallPath = async (
   call: AnalysisCall,
   callRelationship: RelationshipCall,
@@ -92,9 +94,22 @@ export const traceCallPath = async (
     if (!resolved.ok) return resolved;
     goal = resolved.value;
   }
+  const goals: string[] = [];
+  const resolvedSelectors = new Map([[input.start, start.value]]);
+  for (const selector of input.goals ?? []) {
+    let address = resolvedSelectors.get(selector);
+    if (address === undefined) {
+      const resolved = await resolveProcedureAddress(call, selector, signal);
+      if (!resolved.ok) return resolved;
+      address = resolved.value;
+      resolvedSelectors.set(selector, address);
+    }
+    goals.push(address);
+  }
   const resolvedInput = {
     start: start.value,
     ...(goal === undefined ? {} : { goal }),
+    ...(input.goals === undefined ? {} : { goals }),
     direction: input.direction,
   };
   if (isAborted(signal))
@@ -143,6 +158,7 @@ const createTraceState = (input: CallPathTraceInput): TraceState => ({
   residual: new Set(),
   limitations: new Set(),
   relationshipCoverage: new Map(),
+  roots: new Set(),
   queueIndex: 0,
   traversalPath: input.goal === input.start ? [input.start] : [],
 });
@@ -204,6 +220,12 @@ const expandAddress = async (
     state.residual.add(
       `Call relationship coverage is unknown for ${address}: ${coverage.reason}`,
     );
+  if (
+    input.direction === "backward" &&
+    coverage.status === "complete" &&
+    related.value.length === 0
+  )
+    state.roots.add(address);
   for (const relatedAddress of sortedUniqueAddresses(related.value)) {
     recordEdge(input, state, {
       address,
@@ -226,8 +248,8 @@ const expandAddress = async (
   return ok(false);
 };
 
-/** Only the selected goal needs a path; each discovered node owns one parent link. */
-const reconstructPath = (goal: TraceNode): string[] => {
+/** Reconstruct requested paths from parent links; unreached goals have no path. */
+const reconstructPath = (goal: TraceNode | undefined): string[] => {
   const path: string[] = [];
   for (let node: TraceNode | undefined = goal; node; node = node.parent)
     path.push(node.address);
@@ -264,6 +286,18 @@ const projectTrace = (input: CallPathTraceInput, state: TraceState) => ({
         : state.residual.size > 0
           ? "unknown"
           : "not_reached",
+  goal_results: (
+    input.goals ?? (input.goal === undefined ? [] : [input.goal])
+  ).map((goal) => ({
+    goal,
+    goal_status: state.visited.has(goal)
+      ? "reached"
+      : state.residual.size > 0
+        ? "unknown"
+        : "not_reached",
+    traversal_path: reconstructPath(state.visited.get(goal)),
+  })),
+  roots: [...state.roots].sort(compareAddress),
   nodes: [...state.visited.entries()]
     .map(([address, { depth }]) => ({ address, depth }))
     .sort(

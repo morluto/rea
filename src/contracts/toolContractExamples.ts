@@ -51,7 +51,11 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   analyze_swift_types: { category: "classes", pattern: "Account" },
   inspect_native_api: { procedure: "main" },
   trace_feature: { query: "license" },
-  trace_call_path: { start: "0x1000", goal: "0x1100" },
+  trace_call_path: {
+    start: "0x1000",
+    goals: ["0x1100", "0x1200"],
+    direction: "backward",
+  },
   trace_native_ui_action: { action: "buildTapped:" },
   decompile_all: { output_directory: "/tmp/decompile-out" },
   open_binary: { path: "/tmp/fixture" },

@@ -57,14 +57,26 @@ export const enhancedInputSchemas = {
   analyze_function: nativeProcedureInputSchema,
   inspect_native_api: nativeProcedureInputSchema,
   trace_feature: traceLiteralInputSchema,
-  trace_call_path: z.strictObject({
-    start: z.string().describe("A starting procedure symbol or address"),
-    goal: z
-      .string()
-      .describe("An optional destination procedure symbol or address")
-      .optional(),
-    direction: callRelationshipDirectionSchema,
-  }),
+  trace_call_path: z
+    .strictObject({
+      start: z.string().describe("A starting procedure symbol or address"),
+      goal: z
+        .string()
+        .describe("An optional destination procedure symbol or address")
+        .optional(),
+      goals: z
+        .array(z.string().min(1))
+        .min(1)
+        .describe(
+          "Destination selectors decided in one exhaustive traversal; mutually exclusive with goal",
+        )
+        .optional(),
+      direction: callRelationshipDirectionSchema,
+    })
+    .refine((input) => input.goal === undefined || input.goals === undefined, {
+      message: "Supply goal or goals, not both",
+      path: ["goals"],
+    }),
   trace_native_ui_action: nativeInvestigationTraceLimitsSchema.extend({
     action: z
       .string()
