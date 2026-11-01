@@ -62,6 +62,40 @@ const singleImage = (properties: Record<string, Buffer>): Buffer =>
   });
 
 describe("FIT image facts", () => {
+  it("preserves a leading U+FEFF in string facts and configuration references", () => {
+    const structure = read(
+      fitFixture({
+        images: [kernel({ description: dtString("\uFEFFkernel description") })],
+        configurations: {
+          name: "configurations",
+          properties: { default: dtString("\uFEFFconf-1") },
+          children: [
+            {
+              name: "conf-1",
+              properties: {
+                kernel: dtString("\uFEFFkernel"),
+                loadables: dtString("kernel\0\uFEFFkernel"),
+              },
+            },
+          ],
+        },
+      }),
+    );
+    expect(structure.images[0]?.metadata.description).toBe(
+      "\uFEFFkernel description",
+    );
+    expect(structure.metadata.default_configuration).toBe("\uFEFFconf-1");
+    expect(structure.metadata.configurations[0]).toMatchObject({
+      name: "conf-1",
+      kernel: ["\uFEFFkernel"],
+      loadables: ["kernel", "\uFEFFkernel"],
+      unresolved_reference_count: 2,
+    });
+    expect(structure.limitations).toContain(
+      "/configurations: default \uFEFFconf-1 names no configuration",
+    );
+  });
+
   it("decodes embedded root and image facts with property ranges", () => {
     const structure = read(FIT_EMBEDDED);
     expect(structure.metadata).toMatchObject({

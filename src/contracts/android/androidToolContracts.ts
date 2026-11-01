@@ -167,7 +167,7 @@ export const ANDROID_TOOL_CONTRACTS = [
     name: "trace_android_references",
     ...toolContractMetadata("trace_android_references"),
     description:
-      "Trace incoming static using nodes to an exact Android class or selected method overload. The total counts containing nodes, not individual invoke instructions. Use inspect_android_class to choose an overload_index when names collide. Source lines and the containing node dex_offset remain unknown. direct_invokes carries exact DEX code-unit instruction offsets when available; direct_invokes_exhaustive false marks byte-bounded partial instruction evidence, and null means coverage is unknown. Using-node coverage remains separate; no runtime calls are inferred.",
+      "Trace incoming static using nodes to an exact Android class or selected method overload. A method target may be an external class directly named by DEX invokes: target_definition external and reference_scope direct_dex_invokes identify this narrower inventory, without inventing a class definition or body. Ambiguous external requests list observed DEX prototypes; select overload_index explicitly. For APK-defined targets use inspect_android_class. The total counts containing nodes, not individual invokes. External callers include source_selector for inspect_android_method. Source lines and the containing node dex_offset remain unknown. direct_invokes carries exact DEX code-unit offsets when available; direct_invokes_exhaustive false marks byte-bounded partial instruction evidence, and null means unknown. No reflection, JNI or runtime dispatch is inferred.",
     kind: "android-provider",
     inputSchema: androidInputSchemas.trace_android_references,
     outputSchema: evidenceResultOf(
@@ -177,6 +177,15 @@ export const ANDROID_TOOL_CONTRACTS = [
       {
         title: "Find references to a class",
         input: { path: "/tmp/Example.apk", class_name: "example.MainActivity" },
+      },
+      {
+        title: "Find APK callers of an observed external API prototype",
+        input: {
+          path: "/tmp/Example.apk",
+          class_name: "android.app.NotificationManager",
+          method_name: "notify",
+          overload_index: 0,
+        },
       },
     ],
   },

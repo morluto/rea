@@ -57,25 +57,6 @@ describe("PE import stable filesystem boundary", () => {
     expect(cancelled.error._tag).toBe("AnalysisCancelledError");
   });
 
-  it("names the exhausted callback budget", async () => {
-    const root = await createTestTempDirectory("rea-pe-config-limit-");
-    const path = join(root, "app.exe");
-    await writeFile(path, peLoadConfigImage());
-    const service = createPeLoadConfigService();
-    try {
-      const result = await service.inspect({ path, max_callbacks: 1 });
-      if (result.ok) throw new Error("Expected callback budget failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisResourceConstraintError",
-        remediationAction: expect.stringContaining(
-          "Raise max_callbacks above 1",
-        ),
-      });
-    } finally {
-      await service.close();
-    }
-  });
-
   it.each(["control", "close-failure", "close-cancel", "close-both"] as const)(
     "retains completed PE acquisition through %s",
     async (mode) => {

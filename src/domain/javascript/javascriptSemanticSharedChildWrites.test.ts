@@ -202,12 +202,14 @@ it.each([
         : (child: { loader: unknown }) => {
             if (!preserveHost) child.loader = {};
           };
+      let thrown: unknown;
       try {
         runInNewContext(source, { module, external });
       } catch (error) {
-        expect(error).toMatchObject({ name: "TypeError" });
-        expect(preserveHost).toBe(false);
+        thrown = error;
       }
+      if (preserveHost) expect(thrown).toBeUndefined();
+      else expect(thrown).toMatchObject({ name: "TypeError" });
       expect(calls).toEqual(preserveHost ? ["./uncertain.cjs"] : []);
     }
   },

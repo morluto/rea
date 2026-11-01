@@ -2,12 +2,18 @@
 export interface GuideSection {
   readonly guide: string;
   readonly heading: string;
+  /** The complete section, including every subsection. */
   readonly content: string;
+  /** Heading and body before the first subsection, where terms co-occur. */
+  readonly ownContent: string;
   readonly ordinal: number;
+  /** Enclosing section of the same guide; top-level headings have none. */
+  readonly parent: GuideSection | undefined;
 }
 
 // The shipped bundle has tens of headings. These ceilings bound object count
 // and UTF-16 text retained by a complete index before allocating section text.
+// Own text needs no ceiling of its own: each code unit has exactly one owner.
 const MAX_SECTIONS = 4096;
 // ATX has at most six enclosing levels over the admitted 4 MiB bundle.
 const MAX_EXPANDED_CHARACTERS = 6 * 4_194_304;
@@ -34,6 +40,8 @@ interface Heading {
   readonly level: number;
   readonly title: string;
   readonly start: number;
+  readonly ordinal: number;
+  readonly parent: number | undefined;
   end: number;
 }
 
@@ -82,7 +90,13 @@ const readHeadings = (
           const parent = enclosing.pop();
           if (parent !== undefined) parent.end = start;
         }
-        const heading = { ...parsed, start, end: content.length };
+        const heading = {
+          ...parsed,
+          start,
+          end: content.length,
+          ordinal: headings.length,
+          parent: enclosing.at(-1)?.ordinal,
+        };
         headings.push(heading);
         enclosing.push(heading);
       }
@@ -92,7 +106,10 @@ const readHeadings = (
   return headings;
 };
 
-/** Bound the whole bundle before materializing an expanded section index. */
+/**
+ * Bound the whole bundle before materializing an expanded section index.
+ * Sections are returned in document order, so subsections follow their parent.
+ */
 export const parseGuidanceSections = (
   files: ReadonlyMap<string, string>,
 ): readonly GuideSection[] | undefined => {
@@ -111,13 +128,26 @@ export const parseGuidanceSections = (
     documents.push({ guide, content, headings });
   }
   const sections: GuideSection[] = [];
-  for (const { guide, content, headings } of documents)
-    for (const [ordinal, heading] of headings.entries())
-      sections.push({
+  for (const { guide, content, headings } of documents) {
+    const guideSections: GuideSection[] = [];
+    for (const [ordinal, heading] of headings.entries()) {
+      // The next heading of any level ends this section's own text: it is
+      // either the first subsection or the end of the whole section.
+      const ownEnd = headings[ordinal + 1]?.start ?? heading.end;
+      const section = {
         guide,
         ordinal,
         heading: heading.title,
         content: content.slice(heading.start, heading.end).trim(),
-      });
+        ownContent: content.slice(heading.start, ownEnd).trim(),
+        parent:
+          heading.parent === undefined
+            ? undefined
+            : guideSections[heading.parent],
+      };
+      guideSections.push(section);
+      sections.push(section);
+    }
+  }
   return sections;
 };

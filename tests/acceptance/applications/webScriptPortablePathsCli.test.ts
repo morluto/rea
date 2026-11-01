@@ -38,6 +38,9 @@ cliTest(
     const manifest = webScriptExportManifestSchema.parse(
       JSON.parse(await readFile(join(output, "manifest.json"), "utf8")),
     );
+    expect(manifest.scripts.map(({ url }) => url)).toEqual(
+      scripts.map(({ url }) => url),
+    );
     for (const [index, record] of manifest.scripts.entries()) {
       expect(record.content.state).toBe("exported");
       if (record.content.state !== "exported")

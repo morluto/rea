@@ -42,7 +42,10 @@ spec.loader.exec_module(bridge)
 def _frame(connection):
     data = bytearray()
     while b"\n" not in data:
-        data.extend(connection.recv(4096))
+        chunk = connection.recv(4096)
+        if not chunk:
+            raise EOFError("connection closed before a complete test frame")
+        data.extend(chunk)
         if len(data) > bridge.MAX_FRAME_BYTES:
             raise AssertionError("oversized test frame")
     line, remainder = bytes(data).split(b"\n", 1)
@@ -477,7 +480,7 @@ class ProtocolProducerTest(unittest.TestCase):
                 rejected.settimeout(1)
                 try:
                     observed = rejected.recv(16)
-                except OSError:
+                except (ConnectionResetError, ConnectionAbortedError):
                     observed = b""
                 self.assertEqual(observed, b"")
             finally:
@@ -514,7 +517,7 @@ class ProtocolProducerTest(unittest.TestCase):
                 rejected.settimeout(1)
                 try:
                     observed = rejected.recv(16)
-                except OSError:
+                except (ConnectionResetError, ConnectionAbortedError):
                     observed = b""
                 self.assertEqual(observed, b"")
             finally:

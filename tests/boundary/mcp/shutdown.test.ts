@@ -9,6 +9,8 @@ import { createShutdown } from "../../../src/main/shutdown.js";
 import { registerProcessShutdown } from "../../../src/main/processShutdown.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
+import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import {
@@ -155,6 +157,45 @@ it("retries only failed cleanup owners after concurrent shutdown requests", asyn
   const [target] = await createBinarySessionTargets();
   if (target === undefined) throw new Error("Missing fixture target");
   expect((await session.open(target)).ok).toBe(true);
+  expect(
+    (
+      await session.execute("address_name", {
+        address: "0x1000",
+        document: "fixture",
+      })
+    ).ok,
+  ).toBe(true);
+  expect(
+    session.recordEvidence(
+      createEvidence(
+        undefined,
+        {
+          id: "fixture",
+          name: "Shutdown fixture",
+          version: "1",
+        },
+        {
+          operation: "retained_shutdown_fact",
+          parameters: {},
+          result: "owned observation",
+        },
+      ),
+    ).ok,
+  ).toBe(true);
+  const unknown = session.recordUnknown({
+    question: "Did every runtime cleanup owner finish?",
+    severity: "medium",
+    domain: "lifecycle",
+    supporting_evidence_ids: [],
+    contradicting_evidence_ids: [],
+    required_authority: "controlled-replay",
+    required_confidence: "observed",
+    required_environment: null,
+    recommended_probes: [],
+    relationships: [],
+  });
+  if (!unknown.ok) throw unknown.error;
+  const retained = session.exportEvidenceBundle();
   const lifecycle = createShutdown({
     handle: {
       close: async () => {
@@ -201,11 +242,18 @@ it("retries only failed cleanup owners after concurrent shutdown requests", asyn
   expect([handleCalls, androidCalls, sessionCalls, unregisterCount]).toEqual([
     1, 1, 1, 0,
   ]);
+  // Engine cleanup succeeded, but the transport and Android owners failed.
+  // Investigation history remains available until their exact retries settle.
+  expect(session.activeTarget()).toBeUndefined();
+  expect(session.exportEvidenceBundle()).toEqual(retained);
+  expect(session.listUnknowns()).toEqual([unknown.value]);
 
   await lifecycle.shutdown();
   expect([handleCalls, androidCalls, sessionCalls, unregisterCount]).toEqual([
     2, 2, 1, 1,
   ]);
+  expect(session.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
+  expect(session.listUnknowns()).toEqual([]);
   await lifecycle.shutdown();
   expect([handleCalls, androidCalls, sessionCalls, unregisterCount]).toEqual([
     2, 2, 1, 1,

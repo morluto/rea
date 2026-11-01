@@ -8,7 +8,6 @@ import {
 } from "../../domain/evidenceErrors.js";
 import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
   rebindEvidenceSubjectTargetPath,
   type Evidence,
@@ -21,8 +20,8 @@ import {
   createAnalysisSnapshotEntry,
   createAnalysisSnapshotWorkflowEntry,
   snapshotBinding,
+  snapshotBindingMismatch,
   snapshotMatchesProfile,
-  snapshotMatchesTarget,
   snapshotTarget,
   parseAnalysisSnapshot,
   immutableAnalysisSnapshot,
@@ -31,6 +30,7 @@ import {
   type AnalysisSnapshotWorkflowEntry,
   type AnalysisSnapshotBinding,
   type AnalysisSnapshotTarget,
+  type SnapshotBindingMismatch,
 } from "../../domain/analysisSnapshot.js";
 import type {
   AnalysisExecution,
@@ -140,6 +140,10 @@ export const requiresNativeSourceAdmissionBeforeReplay = (
   providerId: string | undefined,
 ): boolean => process.platform === "win32" && providerId === "ghidra";
 
+/** Limitation that marks every observation replayed from a snapshot. */
+export const SNAPSHOT_REPLAY_LIMITATION =
+  "Loaded from a local REA analysis snapshot; this call did not re-run the provider.";
+
 /** Bounded in-memory cache for one immutable binary identity. */
 export class AnalysisSnapshotCache {
   readonly #entries = new Map<string, AnalysisSnapshotEntry>();
@@ -155,13 +159,22 @@ export class AnalysisSnapshotCache {
     target: BinaryTarget,
     profile: AnalysisProfileCommitment | undefined,
   ): boolean {
-    return (
-      (this.#target === undefined && this.#binding === undefined) ||
-      (this.#target !== undefined &&
-        this.#binding !== undefined &&
-        profile !== undefined &&
-        snapshotMatchesTarget(this.#target, target) &&
-        snapshotMatchesProfile(this.#binding, profile))
+    return this.mismatch(target, profile) === undefined;
+  }
+
+  /** Explain staged mismatch without treating missing binding facts as absent. */
+  mismatch(
+    target: BinaryTarget,
+    profile: AnalysisProfileCommitment | undefined,
+  ): SnapshotBindingMismatch | undefined {
+    if (this.#target === undefined && this.#binding === undefined)
+      return undefined;
+    if (this.#target === undefined || this.#binding === undefined)
+      return { staged_binding: "incomplete" };
+    return snapshotBindingMismatch(
+      { target: this.#target, binding: this.#binding },
+      target,
+      profile,
     );
   }
 
@@ -373,9 +386,7 @@ export class AnalysisSnapshotCache {
           readonly profile: AnalysisProfileCommitment;
         }
       | undefined,
-    mergeEvidence: (
-      bundle: EvidenceBundle,
-    ) => Result<number, EvidenceIntegrityError | AnalysisInputError>,
+    mergeEvidence: (bundle: EvidenceBundle) => Result<number, AnalysisError>,
   ): Result<number, AnalysisError> {
     let validated: AnalysisSnapshot;
     try {
@@ -387,16 +398,20 @@ export class AnalysisSnapshotCache {
         }),
       );
     }
-    if (
-      active !== undefined &&
-      (!snapshotMatchesTarget(validated.target, active.target) ||
-        !snapshotMatchesProfile(validated.binding, active.profile))
-    )
-      return err(
-        new AnalysisSnapshotMismatchError(
-          "Analysis snapshot profile_mismatch: target, provider, or analysis profile does not match the active binary",
-        ),
+    if (active !== undefined) {
+      const mismatch = snapshotBindingMismatch(
+        validated,
+        active.target,
+        active.profile,
       );
+      if (mismatch !== undefined)
+        return err(
+          new AnalysisSnapshotMismatchError(
+            "Analysis snapshot target, provider, or analysis profile does not match the active binary",
+            mismatch,
+          ),
+        );
+    }
     const importedEvidence = mergeEvidence(validated.evidence_bundle);
     return importedEvidence.ok ? ok(this.stage(validated)) : importedEvidence;
   }
@@ -496,7 +511,7 @@ export class AnalysisSnapshotCache {
       analysisProfile: structuredClone(profile),
       limitations: [
         ...cached.execution.limitations,
-        "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+        SNAPSHOT_REPLAY_LIMITATION,
       ],
       ...(cached.execution.relationship_coverage === null &&
       RELATIONSHIP_OPERATIONS.has(operation)

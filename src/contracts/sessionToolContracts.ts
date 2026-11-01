@@ -3,7 +3,10 @@ import { matchNativeFunctionsInputSchema } from "./native/functionMatchingContra
 import { z } from "zod";
 
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
-import { callPathInputSchema } from "../domain/callPathSchemas.js";
+import {
+  callPathRequestSchema,
+  staticRuntimeCorrelationRequestSchema,
+} from "./investigationInputContracts.js";
 import { changedBehaviorInputSchema } from "../domain/changedBehavior.js";
 import { functionComparisonInputSchema } from "../domain/functionComparisonSchemas.js";
 import { processScenarioSchema } from "../domain/process/processScenario.js";
@@ -12,22 +15,22 @@ import {
   updateUnknownInputSchema,
 } from "../domain/residualUnknown.js";
 import { reconstructionVerificationInputSchema } from "../domain/reconstructionVerificationSchemas.js";
-import { staticRuntimeCorrelationInputSchema } from "../domain/staticRuntimeCorrelation.js";
 import { sessionOutputSchemas } from "./toolOutputSchemaGroups.js";
 import {
   closeBinaryInputSchema,
+  resetInvestigationInputSchema,
   openBundleResourcesInputSchema,
   openBinaryInputSchema,
 } from "./sessionLifecycleInputs.js";
 import { binarySessionInputSchema } from "./sessionStatusContract.js";
+import { processComparisonInputSchema } from "./processComparisonContracts.js";
+import { artifactComparisonInputSchema } from "./artifactComparisonContracts.js";
 import {
   addressContextInputSchema,
-  artifactComparisonInputSchema,
   bundleComparisonMcpInputSchema,
   importEvidenceBundleInputSchema,
   listUnknownsInputSchema,
   navigationContextInputSchema,
-  processComparisonInputSchema,
   getEvidenceBundleInputSchema,
   verifyUnknownResolutionInputSchema,
 } from "./sessionToolSchemas.js";
@@ -65,7 +68,7 @@ export const exportEvidenceBundleInputSchema = z.strictObject({
 export const SESSION_TOOL_CONTRACTS = [
   session(
     "open_binary",
-    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or analysis database after validation. format=dos-com explicitly interprets 1..65280 headerless bytes as a DOS COM analysis image. format=raw-binary interprets headerless bytes with a required architecture and entry_point; file offset 0 maps at that address. Omission preserves header-based detection. provider_id selects one deep provider or deterministic auto selection; the binding remains stable until close or an explicit switch, with no failure fallback. Reopening the same target and profile retains its active database and metadata edits. An optional analysis snapshot is imported atomically and must match the binary identity, concrete provider, and canonical analysis profile exactly; importing into a session with metadata mutations requires closing and reopening it first. Call close_binary when the investigation is finished.",
+    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or analysis database after validation. format=dos-com explicitly interprets 1..65280 headerless bytes as a DOS COM analysis image. format=raw-binary interprets headerless bytes with a required architecture and entry_point; file offset 0 maps at that address. Omission preserves header-based detection. provider_id selects one deep provider or deterministic auto selection; the binding remains stable until close or an explicit switch, with no failure fallback. Reopening the same target and profile retains its active database and metadata edits. An optional analysis snapshot is imported atomically and must match the binary identity, concrete provider, and canonical analysis profile exactly; importing into a session with metadata mutations requires closing and reopening it first. Switching targets preserves investigation records. Call close_binary to release engine resources; reset_investigation explicitly clears investigation records.",
     openBinaryInputSchema,
   ),
   session(
@@ -75,8 +78,13 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "close_binary",
-    "When the investigation is finished, drain earlier provider requests, optionally write a provider-neutral analysis snapshot atomically to the caller-supplied path, then close the active analysis session and every provider resource started for it. Resource-only app sessions have no binary snapshot binding, so close them without snapshot_path. Later provider requests wait until this lifecycle operation finishes. Existing files require explicit overwrite; a failed save leaves the session open so cached analysis is not lost. Metadata edits prevent immutable snapshot saves until the session is recreated; export_evidence_bundle preserves mutable observations before closing without a snapshot.",
+    "Drain earlier requests and release the active engine, replay cache and owned resources while retaining investigation Evidence references and complete Unknown history in memory. Optionally save a target-bound analysis snapshot before closing; resource-only sessions have no binary snapshot binding. Later requests wait for this transition. Existing files require overwrite; a failed snapshot save keeps the engine open. Metadata edits prevent snapshot saves until the engine is recreated. Use reset_investigation to clear records explicitly, optionally saving a complete cross-domain Evidence bundle for import in a new process. Closing does not automatically persist records.",
     closeBinaryInputSchema,
+  ),
+  session(
+    "reset_investigation",
+    "Explicitly clear all retained Evidence and Unknown revision history, including engine replay/source bindings, while keeping a healthy active engine open. Drain earlier admitted work and queue later requests. Optional save_path writes the complete canonical Evidence bundle with file sync and atomic publication before clearing; import_evidence_bundle restores its original IDs and Unknown history in another process. Cancellation, save failure or incomplete cleanup preserves records; a published checkpoint remains reported on a later failure. Without save_path this discards in-memory records. No automatic persistence or eviction occurs; binary_session reports the representation budget.",
+    resetInvestigationInputSchema,
   ),
   session(
     "binary_session",
@@ -115,7 +123,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_functions",
-    "Compare two explicit analyze_function Evidence records or exact retained session references across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
+    "Compare two explicit analyze_function Evidence records or exact retained session references across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. Authenticated same-artifact entry coordinates establish correspondence independently of renamed labels; metadata and text changes remain separate. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
     functionComparisonInputSchema,
   ),
   session(
@@ -125,18 +133,18 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "find_changed_behavior",
-    "Aggregate validated process, artifact, and function comparison Evidence. Runtime observations remain distinct from static behavior candidates; missing or incomplete comparisons produce unresolved findings, never causal claims. Returns every finding inline.",
+    "Aggregate validated process, artifact, and function comparison Evidence, supplied inline or by exact retained-evidence references from this session. Original records and their complete source closure remain authenticated; summaries do not substitute for comparisons. Runtime observations remain distinct from static behavior candidates; missing or incomplete comparisons produce unresolved findings, never causal claims. Returns every finding inline.",
     changedBehaviorInputSchema,
   ),
   session(
     "build_call_path",
-    "Build every shortest direct-callee path inline from complete analyze_function Evidence records using exact canonical addresses. Missing dossiers and provider mixing remain unknown; every node and edge cites source Evidence.",
-    callPathInputSchema,
+    "Build every shortest direct-callee path from complete analyze_function Evidence supplied inline or by exact retained-evidence references. References reuse the complete parent of an analyze_function summary without resending dossiers. Uses exact canonical addresses; missing dossiers and provider mixing remain unknown, and every node and edge cites source Evidence.",
+    callPathRequestSchema,
   ),
   session(
     "correlate_static_and_runtime",
-    "Evaluate every explicit caller-declared hypothesis between exact static comparison findings and runtime comparison dimensions. Similar names or paths are never auto-matched, consistent cochange never proves causality, and unknown or truncated inputs remain unresolved. Returns all correlations and their complete Evidence closure inline.",
-    staticRuntimeCorrelationInputSchema,
+    "Evaluate every explicit caller-declared hypothesis between static and runtime comparison Evidence supplied inline or by exact retained-evidence references. Similar names or paths are never auto-matched, consistent cochange never proves causality, and unknown or truncated inputs remain unresolved. Returns all correlations and their complete Evidence closure inline.",
+    staticRuntimeCorrelationRequestSchema,
   ),
   session(
     "verify_reconstruction",

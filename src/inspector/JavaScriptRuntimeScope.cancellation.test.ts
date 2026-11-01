@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { afterEach, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const fileAccess = vi.hoisted(() => ({
   path: undefined as string | undefined,
@@ -248,31 +250,43 @@ it("drains pending Electron discovery before shutdown cleanup completes", async 
   const listing = provider.listTargets(
     listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
   );
-  await started;
   let closed = false;
-  const closing = provider.close().then(() => {
-    closed = true;
-  });
-  const closedBeforeDiscovery = await Promise.race([
-    closing.then(() => true),
-    new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
-  ]);
-  expect(closedBeforeDiscovery).toBe(false);
-  expect(closed).toBe(false);
-  releaseDiscovery();
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(started, listing, "Electron discovery");
+    closing = provider.close().then(() => {
+      closed = true;
+    });
+    const closedBeforeDiscovery = await Promise.race([
+      closing.then(() => true),
+      new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
+    ]);
+    expect(closedBeforeDiscovery).toBe(false);
+    expect(closed).toBe(false);
+    releaseDiscovery();
 
-  const [listed] = await Promise.all([listing, closing]);
-  expect(closed).toBe(true);
-  expect(listed.ok).toBe(true);
-  expect(fileAccess.calls).toContain("stat");
-  const rejected = await provider.listTargets(
-    listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
-  );
-  expect(rejected.ok).toBe(false);
-  if (rejected.ok)
-    throw new Error("Expected closed provider admission failure");
-  expect(rejected.error.cleanupIncomplete).toBe(false);
-  expect(rejected.error.cleanupResources).toEqual([]);
+    const [listed] = await Promise.all([listing, closing]);
+    expect(closed).toBe(true);
+    expect(listed.ok).toBe(true);
+    expect(fileAccess.calls).toContain("stat");
+    const rejected = await provider.listTargets(
+      listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
+    );
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok)
+      throw new Error("Expected closed provider admission failure");
+    expect(rejected.error.cleanupIncomplete).toBe(false);
+    expect(rejected.error.cleanupResources).toEqual([]);
+  }, [
+    releaseDiscovery,
+    async () => {
+      await listing;
+    },
+    async () => {
+      await closing;
+    },
+    () => provider.close(),
+  ]);
 });
 
 it("keeps ordinary and malformed file-location authorization unchanged", async () => {

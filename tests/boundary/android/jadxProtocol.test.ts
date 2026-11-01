@@ -31,6 +31,24 @@ it("recognizes named bridge failures without reinterpreting arbitrary engine tex
     expect(parseJadxFailure(value)).toBeUndefined();
 });
 
+it("recognizes only complete external-reference allowance diagnostics", () => {
+  const failure = {
+    kind: "reference-output-limit",
+    stage: "caller_inventory",
+    limit_bytes: 1_048_448,
+  };
+  expect(parseJadxFailure(JSON.stringify(failure))).toEqual(failure);
+  for (const changed of [
+    { stage: "arbitrary" },
+    { limit_bytes: 0 },
+    { limit_bytes: 0.5 },
+    { extra: "unrelated" },
+  ])
+    expect(
+      parseJadxFailure(JSON.stringify({ ...failure, ...changed })),
+    ).toBeUndefined();
+});
+
 it("validates provider text envelopes and rejects unsupported content rather than dropping it", () => {
   expect(
     parseJadxEnvelope(

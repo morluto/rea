@@ -1,4 +1,6 @@
 import { expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 import { KunaQueryWork } from "../../../../src/kuna/KunaQueryWork.js";
 import { KunaRunSlots } from "../../../../src/kuna/KunaRunSlots.js";
@@ -36,11 +38,12 @@ it("does not materialize values for a cancelled queued regex query", async () =>
       return [`${"a".repeat(40)}!`];
     },
   });
-  try {
-    await ready;
-    const cancelled = new AbortController();
+  const cancelled = new AbortController();
+  let queued: ReturnType<typeof work.match> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(ready, slow, "regex worker admission");
     let materialized = false;
-    const queued = work.match({
+    queued = work.match({
       operation: "search_procedures",
       pattern: "value",
       caseSensitive: true,
@@ -61,9 +64,17 @@ it("does not materialize values for a cancelled queued regex query", async () =>
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
-  } finally {
-    lifetime.abort();
-    await slow;
-    expect(await commands.close()).toEqual({ ok: true, value: null });
-  }
+  }, [
+    () => cancelled.abort(),
+    () => lifetime.abort(),
+    async () => {
+      await queued;
+    },
+    async () => {
+      await slow;
+    },
+    async () => {
+      expect(await commands.close()).toEqual({ ok: true, value: null });
+    },
+  ]);
 });

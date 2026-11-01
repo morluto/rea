@@ -25,11 +25,11 @@ import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import type { PwntoolsFailureEvidence } from "./PwntoolsResourceLimits.js";
 import { nativeDeadlineRecovery } from "../../domain/native/nativeDeadlines.js";
 import {
-  PWNTOOLS_PROVIDER_IDENTITY,
   PWNTOOLS_LIMITS,
   PWNTOOLS_MEMORY_FAILURE_EXIT,
   PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 
 /** Operation identity supplied by each adapter sharing the pwntools boundary. */
 export interface PwntoolsFailureContext {

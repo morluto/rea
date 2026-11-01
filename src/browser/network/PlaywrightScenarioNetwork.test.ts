@@ -859,29 +859,37 @@ it("cancellation settles pending reads and preserves the cancelled reason", asyn
   );
 });
 
-it("records failures without attempting to read the failed body", async () => {
-  const { collector, events } = harness();
-  const request = new RequestFixture("failed");
-  const response = new ResponseFixture(request, "partial");
-  collector.request(request);
-  collector.response(response);
-  collector.failed(request);
-  await collector.finish();
-  expect(response.bodyReads).toBe(0);
-  expect(events).toContainEqual(
-    expect.objectContaining({
-      kind: "request-failed",
-      failure: "connection reset",
-    }),
-  );
-  expect(events).toContainEqual(
-    expect.objectContaining({
-      kind: "network-content",
-      phase: "response",
-      body: expect.objectContaining({ reason: "request-failed" }),
-    }),
-  );
-});
+it.each([false, true])(
+  "records failed requests without hiding header read gaps (headers fail: %s)",
+  async (headersFail) => {
+    const { collector, events } = harness();
+    const request = new RequestFixture("failed");
+    const response = new ResponseFixture(request, "partial");
+    if (headersFail)
+      vi.spyOn(response, "headersArray").mockRejectedValue(
+        new Error("Headers unavailable"),
+      );
+    collector.request(request);
+    collector.response(response);
+    collector.failed(request);
+    await collector.finish();
+    expect(response.bodyReads).toBe(0);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "request-failed",
+        failure: "connection reset",
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "network-content",
+        phase: "response",
+        body: expect.objectContaining({ reason: "request-failed" }),
+      }),
+    );
+    expect(collector.limitations()).toHaveLength(headersFail ? 1 : 0);
+  },
+);
 
 it("links observed redirect hops and leaves unseen predecessors unknown", async () => {
   const { collector, events } = harness();

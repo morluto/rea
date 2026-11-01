@@ -36,13 +36,12 @@ const exportedReturnFields = (value: unknown) => {
 /** Select complete return fields from a real JavaScript application result. */
 export type JavaScriptReturnFields = ReturnType<typeof exportedReturnFields>;
 
-/** Exercise identical return assertions through the compiled CLI and stdio MCP. */
-export const verifyJavaScriptReturnShapes = async (
+const analyzeReturnShapesThroughCli = async (
   cli: TestCli,
   source: string,
   check: (fields: JavaScriptReturnFields) => void,
-  fileName = "app.js",
-): Promise<void> => {
+  fileName: string,
+) => {
   const root = await createTestTempDirectory("rea-return-shapes-");
   await writeFile(join(root, fileName), source);
   const cliResponse = await cli.run({
@@ -58,6 +57,31 @@ export const verifyJavaScriptReturnShapes = async (
   const contract = toolContract("analyze_javascript_application");
   const cliEvidence = contract.outputSchema.parse(cliResponse.json);
   check(exportedReturnFields(cliEvidence.normalized_result));
+  return { root, contract, cliEvidence };
+};
+
+/** Exercise return assertions through the compiled CLI and its real worker. */
+export const verifyJavaScriptReturnShapesThroughCli = async (
+  cli: TestCli,
+  source: string,
+  check: (fields: JavaScriptReturnFields) => void,
+): Promise<void> => {
+  await analyzeReturnShapesThroughCli(cli, source, check, "app.js");
+};
+
+/** Exercise identical return assertions through the compiled CLI and stdio MCP. */
+export const verifyJavaScriptReturnShapes = async (
+  cli: TestCli,
+  source: string,
+  check: (fields: JavaScriptReturnFields) => void,
+  fileName = "app.js",
+): Promise<void> => {
+  const { root, contract, cliEvidence } = await analyzeReturnShapesThroughCli(
+    cli,
+    source,
+    check,
+    fileName,
+  );
   const client = new Client({ name: "return-shapes-e2e", version: "1" });
   const transport = new StdioClientTransport({
     command: process.execPath,

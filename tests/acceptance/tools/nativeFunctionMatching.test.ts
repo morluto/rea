@@ -327,11 +327,14 @@ cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
       "compare_functions",
     );
     await verifyPortableCli(cli, fixture, input, evidence.evidence_id);
+    const missingId = `ev_${"a".repeat(64)}`;
     const missing = await call("match_native_functions", {
-      left: reference(`ev_${"a".repeat(64)}`),
+      left: reference(missingId),
       right: reference(right.evidence_id),
     });
-    expect(missing.isError).toBe(true);
+    expect(parseMcpToolError(missing)).toMatchObject({
+      error: { details: { evidence_id: missingId, reason: "missing" } },
+    });
   },
 );
 

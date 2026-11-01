@@ -64,7 +64,11 @@ export const collectJavaScriptSemanticResources = (
     callableStack: [],
     ancestors: [],
   };
-  const acquisitions = collectAcquisitions(program, context);
+  const acquisitions = collectAcquisitions(program, context).filter(
+    (candidate) =>
+      !socketPortInFirstArgument(candidate) ||
+      !rejectsSocketPortLiteral(candidate.node, context),
+  );
   return [
     ...acquisitions.map(immutableAcquisition),
     ...collectReleases(program, context, acquisitions),
@@ -220,3 +224,56 @@ const acquisitionMethod = (
 };
 const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
+
+/**
+ * `net` and `tls` validate a numeric port before creating a socket, so a
+ * literal port outside `[0, 65535]`, a fractional, non-finite, BigInt, boolean
+ * or `null` first argument throws synchronously and no socket exists. A string
+ * is a Unix socket path and an object may carry a path, so only an exactly
+ * readable non-port literal is decided. `""` is a path with no length, which
+ * Node also rejects.
+ *
+ * `undefined` and an empty object throw `ERR_MISSING_ARGS`, but those are a
+ * missing option rather than a bad port, so they stay undecided here.
+ */
+const rejectsSocketPortLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const port = node.arguments[0];
+  if (port === undefined || t.isSpreadElement(port)) return false;
+  const value = unwrapJavaScriptExpression(port).node;
+  if (t.isStringLiteral(value)) return value.value.length === 0;
+  if (
+    t.isNullLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value)
+  )
+    return true;
+  if (t.isNumericLiteral(value))
+    return (
+      !Number.isInteger(value.value) || value.value < 0 || value.value > 65535
+    );
+  // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnmodifiedGlobalReference(value, context.state, value.name)
+  )
+    return true;
+  // `-1` and `-1.5` are unary expressions over numeric literals: always out of
+  // range because a port is never negative.
+  if (t.isUnaryExpression(value)) {
+    const operand = unwrapJavaScriptExpression(value.argument).node;
+    return (
+      t.isNumericLiteral(operand) &&
+      (value.operator === "-" || !Number.isInteger(operand.value))
+    );
+  }
+  return false;
+};
+
+/** Only `net`/`tls` sockets take a port in argument 0. */
+const socketPortInFirstArgument = (
+  candidate: Pick<AcquisitionReference, "specifier">,
+): boolean => candidate.specifier === "net" || candidate.specifier === "tls";

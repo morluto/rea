@@ -336,14 +336,16 @@ describe("CdpBrowserProvider: cancellation and session events", () => {
           url: `${browser.allowedOrigin}/reloaded?token=session-secret#spa-secret`,
         }),
         expect.objectContaining({
+          type: "redirect",
+          url: `${browser.allowedOrigin}/redirected?token=redirect-secret`,
+        }),
+        expect.objectContaining({
           type: "load_failed",
           detail: "net::ERR_CONNECTION_REFUSED",
         }),
       ]),
     );
     expect(result.value.completeness.status).toBe("attach_limited");
-    expect(JSON.stringify(result.value)).toContain("session-secret#spa-secret");
-    expect(JSON.stringify(result.value)).toContain("redirect-secret");
     expect(browser.commands.map(({ method }) => method)).toContain(
       "Target.detachFromTarget",
     );

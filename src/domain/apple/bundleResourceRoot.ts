@@ -5,7 +5,12 @@ export const bundleResourceRootSchema = z.strictObject({
   caller_path: z.string().min(1),
   canonical_path: z.string().min(1),
   info_plist_path: z.string().min(1),
-  layout: z.enum(["contents", "root"]),
+  layout: z.enum([
+    "contents",
+    "root",
+    "versioned-framework",
+    "flattened-framework",
+  ]),
   executable_sha256: z
     .string()
     .regex(/^[a-f0-9]{64}$/u)

@@ -16,12 +16,16 @@ import { abortIfNeeded } from "./ArtifactHash.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import {
   inspectDesktopFile,
+  RETAINED_FACT_BYTES,
+  retainedFactReferenceBytes,
+  retainedTextBytes,
   type DesktopReadBudget,
 } from "./DesktopFileInspection.js";
 import type { DesktopApplicationPort } from "../application/artifacts/DesktopApplicationPort.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type {
   DesktopApplication,
+  DesktopFact,
   DesktopFile,
   DesktopOmission,
   InspectDesktopApplicationInput,
@@ -42,6 +46,16 @@ import type {
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 
 const RETAINED_METADATA_BYTES = 32 * 1024 * 1024;
+/**
+ * Upper bound for one file row besides its texts, facts and ranges: the row
+ * and identity objects, file_id, identity strings, arrays, candidate and
+ * component basis IDs and short constant issues. Whole rows, paths included,
+ * measured 800–940 heap and 490–640 JSON bytes on real app bundles (64-bit
+ * Node; #8104).
+ */
+const RETAINED_ROW_BYTES = 1024;
+const RETAINED_OMISSION_BYTES = 512;
+const RETAINED_ISSUE_BYTES = 64;
 
 /** Stop traversal without discarding the preceding bounded observations. */
 class DesktopRepresentationLimit extends ArtifactReaderFailure {
@@ -225,13 +239,20 @@ const scanDirectory = async (
   const budget: DesktopReadBudget = {
     bytes: 0,
     maximum: input.max_probe_bytes,
-    retainedBytes: 1024 + (input.path.length + root.canonical_path.length) * 24,
+    retainedBytes:
+      RETAINED_ROW_BYTES +
+      retainedTextBytes(input.path) +
+      retainedTextBytes(root.canonical_path),
     maximumRetainedBytes: RETAINED_METADATA_BYTES,
   };
-  const reserve = (bytes: number) => {
+  const fits = (bytes: number): boolean => {
     if (bytes > budget.maximumRetainedBytes - budget.retainedBytes)
-      throw new DesktopRepresentationLimit();
+      return false;
     budget.retainedBytes += bytes;
+    return true;
+  };
+  const reserve = (bytes: number) => {
+    if (!fits(bytes)) throw new DesktopRepresentationLimit();
   };
   let entries = 0;
   let probed = 0;
@@ -256,7 +277,7 @@ const scanDirectory = async (
           entries++;
         }
         partial = true;
-        reserve(512 + omission.path.length * 24);
+        reserve(RETAINED_OMISSION_BYTES + retainedTextBytes(omission.path));
         const semantic = {
           root_namespace_id: namespaceId,
           path: omission.path,
@@ -277,18 +298,28 @@ const scanDirectory = async (
     })) {
       entries++;
       abortIfNeeded(signal);
-      // Reserve a conservative representation estimate before retaining path-dependent objects.
-      const reservation =
-        1024 + (entry.path.length + entry.adapterKey.length) * 24;
-      reserve(reservation);
+      const conventions =
+        entry.kind === "file" ? pathConventions(entry.path) : undefined;
+      // Reserve the row and every repeated path before retaining them: each
+      // convention fact copies the path and its probes copy the local path.
+      reserve(
+        RETAINED_ROW_BYTES +
+          retainedTextBytes(entry.path) +
+          retainedTextBytes(entry.adapterKey) +
+          (conventions?.facts.length ?? 0) *
+            (RETAINED_FACT_BYTES +
+              retainedTextBytes(entry.path) +
+              retainedFactReferenceBytes(entry.adapterKey)),
+      );
       const row = fileRow(entry, namespaceId);
       files.push(row);
       if (entry.kind === "symlink") {
         symlinks++;
         continue;
       }
-      if (entry.kind !== "file") continue;
-      const managedRoot = addPathFacts(row);
+      if (conventions === undefined) continue;
+      row.facts.push(...conventions.facts);
+      const managedRoot = conventions.unityManagedDirectory;
       if (!probeSelected(entry)) continue;
       if (budget.bytes >= budget.maximum) {
         row.read_status = "unavailable";
@@ -325,7 +356,11 @@ const scanDirectory = async (
         if (!(cause instanceof ArtifactReaderFailure)) throw cause;
         const probeIssueCount = row.issues.length;
         row.read_status = "unavailable";
-        row.issues.push(cause.message);
+        // Host failures name the absolute path; charge that copy too.
+        const issueRetained = fits(
+          RETAINED_ISSUE_BYTES + retainedTextBytes(cause.message),
+        );
+        if (issueRetained) row.issues.push(cause.message);
         partial = true;
         const completedRead = artifactFileCompletion(cause) !== undefined;
         if (completedRead)
@@ -341,6 +376,7 @@ const scanDirectory = async (
         }
         if (cause.cleanup !== undefined || cause.reason === "cancelled")
           throw cause;
+        if (!issueRetained) throw new DesktopRepresentationLimit();
       }
     }
   } catch (cause: unknown) {
@@ -451,27 +487,28 @@ const fileRow = (
   };
 };
 
-const addPathFacts = (row: DesktopFile): string | null => {
-  const conventions = desktopPathConventions(row.path);
+/** Path-convention facts of one file; each repeats the path as its value. */
+const pathConventions = (path: string) => {
+  const conventions = desktopPathConventions(path);
+  const facts: DesktopFact[] = [];
   if (conventions.electronArchive)
-    row.facts.push({
-      kind: "electron-asar-convention",
-      offset: null,
-      value: row.path,
-    });
+    facts.push({ kind: "electron-asar-convention", offset: null, value: path });
   if (conventions.unrealContainer)
-    row.facts.push({
+    facts.push({
       kind: "unreal-container-convention",
       offset: null,
-      value: row.path,
+      value: path,
     });
   if (conventions.il2cppLibrary)
-    row.facts.push({
+    facts.push({
       kind: "il2cpp-library-convention",
       offset: null,
-      value: row.path,
+      value: path,
     });
-  return conventions.unityManagedDirectory;
+  return {
+    facts,
+    unityManagedDirectory: conventions.unityManagedDirectory,
+  };
 };
 
 const probeSelected = (entry: DirectoryArtifactEntry): boolean =>

@@ -7,7 +7,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const PACKAGE_LINE = "package:/data/app/example/base.apk=com.example.app";
 const unrecognized = (count: number) =>
@@ -60,10 +60,13 @@ process.exit(91);
         ["resolve-adb-packages", "resolve_adb_packages", ["example"]],
         ["list-adb-packages", "list_adb_packages", []],
       ] as const) {
-        const output = await cli.run({
+        const invocation = {
           arguments: [command, "emulator-5554", ...tail, "--json"],
           environment,
-        });
+        };
+        const output = await (count === 0
+          ? cli.run(invocation)
+          : runFileCli(cli, invocation));
         expect(output.exitCode, output.stderr).toBe(0);
         const evidence = parseEvidence(output.json);
         expect(
@@ -76,20 +79,21 @@ process.exit(91);
             expect.stringContaining("unparsed_lines"),
           );
 
-        if (operation !== "resolve_adb_packages") continue;
-        expect(evidence.normalized_result).toMatchObject({
-          matches: [
-            {
-              package_name: "com.example.app",
-              base_apk_device_path: "/data/app/example/base.apk",
-            },
-          ],
-          exact_match: false,
-        });
-        const reply = await call(operation, {
-          serial: "emulator-5554",
-          query: "example",
-        });
+        const installedPackage = {
+          package_name: "com.example.app",
+          base_apk_device_path: "/data/app/example/base.apk",
+        };
+        expect(evidence.normalized_result).toMatchObject(
+          operation === "resolve_adb_packages"
+            ? { matches: [installedPackage], exact_match: false }
+            : { packages: [installedPackage], scope: "all" },
+        );
+        const reply = await call(
+          operation,
+          operation === "resolve_adb_packages"
+            ? { serial: "emulator-5554", query: "example" }
+            : { serial: "emulator-5554" },
+        );
         expect(reply.isError).not.toBe(true);
         const structured = toolContract(operation).outputSchema.parse(
           reply.structuredContent,

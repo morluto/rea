@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { InvestigationStatistics } from "../../domain/investigationLifecycle.js";
 import { artifactTargetRefusal } from "../../domain/apple/artifactTargetApplicability.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
@@ -26,6 +27,7 @@ import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js"
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 
 interface BinarySessionStatusInput {
+  readonly investigation: InvestigationStatistics;
   readonly target: BinaryTarget | undefined;
   readonly bundleResourceRoot?: ResolvedAppBundleResourceRoot;
   readonly resourceCapabilities?: readonly CapabilityDescriptor[];
@@ -46,6 +48,7 @@ interface BinarySessionStatusInput {
 
 /** Project internal provider routing state into the caller-visible session status. */
 export const binarySessionStatus = async ({
+  investigation,
   target,
   bundleResourceRoot,
   resourceCapabilities = [],
@@ -130,6 +133,7 @@ export const binarySessionStatus = async ({
               },
         );
   const common = {
+    investigation,
     cleanup_pending: cleanupPending,
     capabilities,
     analysis_provider_binding: analysisProviderBinding,

@@ -46,6 +46,18 @@ it("keeps identical source text in separate syntax trees distinct", () => {
   expect(semanticCallableResultExpressions(second)[0]?.node).toBe(second.body);
 });
 
+it("retains recovered yield syntax in a non-generator return", () => {
+  const parsed = parseJavaScriptSource("function f(){ return (yield 1); }");
+  expect(parsed?.errors.length).toBeGreaterThan(0);
+  const callable = parsed?.program.body[0];
+  if (!t.isFunctionDeclaration(callable))
+    throw new Error("Expected recovered callable fixture");
+  const results = semanticCallableResultExpressions(callable);
+  expect(results.map(({ kind }) => kind)).toEqual(["return", "yield"]);
+  expect(t.isYieldExpression(results[0]?.node)).toBe(true);
+  expect(t.isNumericLiteral(results[1]?.node, { value: 1 })).toBe(true);
+});
+
 it("retains empty results and bare return/yield source sites", () => {
   const empty = t.functionExpression(null, [], t.blockStatement([]));
   const emptyResult = semanticCallableResultExpressions(empty);

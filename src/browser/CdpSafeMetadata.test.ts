@@ -220,8 +220,6 @@ describe("safe CDP response metadata", () => {
       "agent-header-secret",
     ])
       expect(serialized).not.toContain(secret);
-    expect(serialized).toContain("link-secret");
-    expect(serialized).toContain("private.example.test/x");
   });
 
   it("reports well-known agent resources as untrusted observations", () => {

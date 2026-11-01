@@ -60,13 +60,13 @@ const reconciled = reconcileJavaScriptRuntimeEvidence({
   runtime_observations: runtimeObservations,
 });
 if (!reconciled.ok) throw reconciled.error;
-const result = reconciled.value.normalized_result;
+const result = reconciled.value.evidence.normalized_result;
 
 process.stdout.write(
   `${JSON.stringify({
     verifier_run: await completeVerifierRun(verifierRun),
     reconciliation_id: result.reconciliation_id,
-    evidence_id: reconciled.value.evidence_id,
+    evidence_id: reconciled.value.evidence.evidence_id,
     graph_id: result.graph.graph_id,
     layers: result.static_layers.map((layer) => ({
       role: layer.role,

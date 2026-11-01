@@ -2,8 +2,10 @@ import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
 import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
-import { projectManagedGraphEvidence } from "../../application/managed/ManagedApplicationGraphService.js";
-import { readManagedGraphProjection } from "../../domain/managed/managedApplicationGraph.js";
+import {
+  projectManagedGraphEvidence,
+  resolveManagedGraphEvidenceInput,
+} from "../../application/managed/ManagedApplicationGraphService.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
 import { logToolExecution } from "../toolLogging.js";
@@ -28,7 +30,11 @@ export const registerProjectManagedApplicationGraph = (
         graphContract.name,
         context.mcpReq.signal,
         async () => {
-          const request = readManagedGraphProjection(input);
+          const request = resolveManagedGraphEvidenceInput(
+            input,
+            options.session.evidenceForAnalysis.bind(options.session),
+            { signal: context.mcpReq.signal },
+          );
           if (!request.ok)
             return server.delivery.toCallToolResult(request, graphContract);
           const result = await logToolExecution(
