@@ -16,7 +16,7 @@ jobs:
   ghidra-bridge-sources:
     name: Compile packaged Ghidra bridge sources
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       GHIDRA_RELEASE_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
       GHIDRA_RELEASE_SHA256: ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
@@ -109,3 +109,4 @@ jobs:
           npm run build:cached
           node scripts/verify-real-ghidra-warning-attribution.mjs
           npm run test:focused -- src/ghidra/GhidraRawProfileDigest.test.ts src/ghidra/GhidraProvider.behavior.test.ts src/ghidra/GhidraSnapshotCache.test.ts
+          node scripts/verify-real-ghidra.mjs --aarch64-jump-table
