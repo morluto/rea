@@ -583,6 +583,33 @@ it("delivers a declared read-only recovery without changing the selected session
   expect(state(after)).toEqual(state(before));
 });
 
+it("preserves another provider's declared recovery without interpreting its wording", async () => {
+  const reason = "Fixture capability requires an explicit workspace.";
+  const remediation = "Set FIXTURE_WORKSPACE to a caller-selected directory.";
+  const calls: string[] = [];
+  const { client } = await connectScripted({
+    operations: ["set_address_name"],
+    declaredRefusals: { set_address_name: reason },
+    declaredRemediation: { set_address_name: remediation },
+    respond: {
+      current: (operation) => {
+        calls.push(operation);
+        return Promise.resolve(observed("unexpected"));
+      },
+    },
+  });
+  const reply = await client.callTool({
+    name: "set_address_name",
+    arguments: { address: "0x1000", name: "new_name" },
+  });
+  const error = parseMcpToolError(reply).error;
+  expect(error.code).toBe("capability_unavailable");
+  expect(error.message).toBe(reason);
+  expect(error.details?.reason).toBe(reason);
+  expect(error.remediation.action).toBe(remediation);
+  expect(calls).not.toContain("set_address_name");
+});
+
 it("returns provider-inferred siblings to declared availability after one success", async () => {
   let broken = false;
   const respond = {
