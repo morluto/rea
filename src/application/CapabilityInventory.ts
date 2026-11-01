@@ -1,6 +1,9 @@
 import { PCAP_CAPTURE_UNSUPPORTED_HOST_REASON } from "../domain/pcap/pcapAnalysis.js";
 import { DEFAULT_CALL_RELATIONSHIP_DIRECTION } from "../contracts/enhancedInputs.js";
-import { FIRMWARE_TOOL_REQUIREMENTS } from "../contracts/firmware/firmwareToolRequirements.js";
+import {
+  FIRMWARE_OPERATION_ENGINES,
+  FIRMWARE_TOOL_REQUIREMENTS,
+} from "../contracts/firmware/firmwareToolRequirements.js";
 import { CALL_RELATIONSHIP_TRAVERSALS } from "./CallRelationshipTraversal.js";
 import { NATIVE_DISPATCH_METADATA_SOURCES } from "./native/NativeDispatchMetadataInspection.js";
 import { NATIVE_UI_ACTION_OPERATIONS } from "./native/NativeUiActionTrace.js";
@@ -586,15 +589,19 @@ const workflowAvailabilityFor = ({
       "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
     );
   if (kind === "firmware-provider") {
-    const { binwalk, unblob } = FIRMWARE_TOOL_REQUIREMENTS;
     const inspection = name === "inspect_firmware_regions";
+    const operation = inspection
+      ? "inspect_firmware_regions"
+      : "extract_firmware";
+    const requirement =
+      FIRMWARE_TOOL_REQUIREMENTS[FIRMWARE_OPERATION_ENGINES[operation]];
     return hostRestrictedAvailability(
       policy,
       inspection ? "firmwareInspection" : "firmwareExtraction",
       inspection
         ? policy.firmwareInspectionEnabled
         : policy.firmwareExtractionEnabled,
-      `On Linux, provide an absolute ${binwalk.commandEnvironment} (${binwalk.name} ${binwalk.line}, verified with ${binwalk.version}) or ${unblob.commandEnvironment} (${unblob.name} ${unblob.line}, verified with ${unblob.version}) path and util-linux prlimit. Extraction also requires the selected format’s external extractor.`,
+      `On Linux, provide an absolute ${requirement.commandEnvironment} (${requirement.requirement}) path, util-linux prlimit and procps ps.${inspection ? "" : " Extraction also requires the selected format’s external extractor."}`,
     );
   }
   if (kind === "android-provider")

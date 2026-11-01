@@ -853,6 +853,62 @@ describe("trace_feature requirements", () => {
   });
 });
 
+describe("firmware operation recovery", () => {
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ])(
+    "keeps inspection=%s and extraction=%s independent",
+    (inspection, extraction) => {
+      const inventory = buildCapabilityInventory(status(), {
+        processCaptureEnabled: false,
+        firmwareInspectionEnabled: inspection,
+        firmwareExtractionEnabled: extraction,
+      });
+      for (const [name, enabled, command, otherCommand] of [
+        [
+          "inspect_firmware_regions",
+          inspection,
+          "REA_BINWALK_COMMAND",
+          "REA_UNBLOB_COMMAND",
+        ],
+        [
+          "extract_firmware",
+          extraction,
+          "REA_UNBLOB_COMMAND",
+          "REA_BINWALK_COMMAND",
+        ],
+      ] as const) {
+        const tool = inventory.find((candidate) => candidate.name === name);
+        expect(tool).toMatchObject({
+          available: enabled,
+          reason: enabled ? "available" : "provider_missing",
+        });
+        if (enabled) {
+          expect(tool?.remediation).toBeNull();
+        } else {
+          expect(tool?.remediation).toContain(command);
+          expect(tool?.remediation).not.toContain(otherCommand);
+          expect(tool?.remediation).toContain("prlimit");
+          expect(tool?.remediation).toContain("procps ps");
+          expect(tool?.remediation?.includes("external extractor")).toBe(
+            name === "extract_firmware",
+          );
+        }
+      }
+      const byName = (left: ToolAvailability, right: ToolAvailability) =>
+        left.name.localeCompare(right.name);
+      expect(
+        expandToolAvailability(compactToolAvailability(inventory)).toSorted(
+          byName,
+        ),
+      ).toEqual(inventory.toSorted(byName));
+    },
+  );
+});
+
 const HOST_RESTRICTED_TOOLS = [
   ["inspect_packet_capture", "packetCapture", "packetCaptureEnabled"],
   ["inspect_packet_fields", "packetCapture", "packetCaptureEnabled"],
