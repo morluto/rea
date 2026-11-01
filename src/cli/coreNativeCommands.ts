@@ -133,6 +133,51 @@ export const registerCoreNativeCommands = (
         }),
       ),
   });
+  cli.command(CLI_COMMANDS.procedureReferences, {
+    description:
+      "Inspect incoming or outgoing references for one native procedure",
+    args: z.object({
+      path: localPathStringSchema.describe("Local executable path"),
+      procedure: z
+        .string()
+        .min(1)
+        .describe("Procedure name or provider address"),
+    }),
+    options: z.object({
+      direction: z.enum(["incoming", "outgoing"]).default("outgoing"),
+      snapshot: snapshotSelectionOption,
+      ...analysisEvidenceDeliveryOptions,
+      ...nativeOpenOptionFields,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.procedureReferences, async () => {
+          const delivery = {
+            providerId: "auto",
+            operation: "procedure_references",
+            signal,
+            detail: options.detail,
+            evidenceOutput: options.evidence_output,
+          };
+          const invalid = cliEvidenceDeliveryInputError(delivery);
+          if (invalid !== undefined) return projectAnalysisError(invalid);
+          const result = await runDirectAnalysis(
+            args.path,
+            "procedure_references",
+            {
+              procedure: args.procedure,
+              direction: options.direction,
+            },
+            {
+              ...directAnalysisOptionsFromCli(logger, options),
+              signal,
+              includeEvidenceSources: options.evidence_output !== undefined,
+            },
+          );
+          return publishCliAnalysisEvidence(result, delivery);
+        }),
+      ),
+  });
   cli.command(CLI_COMMANDS.readBytes, {
     description: "Read exact provider memory bytes at one analysis address",
     args: z.object({

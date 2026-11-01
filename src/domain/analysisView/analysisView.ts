@@ -1,3 +1,4 @@
+import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import {
   isNativeObservationOperation,
   NATIVE_OBSERVATION_OPERATIONS,
@@ -145,6 +146,7 @@ import {
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
   nativeFeatureTraceSummaryViewResultSchema,
+  nativeProcedureReferencesSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
@@ -212,6 +214,7 @@ export {
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  nativeProcedureReferencesSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
@@ -304,6 +307,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
   ),
+  retain("procedure_references", projectNativeProcedureReferencesView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
   retain("inspect_native_exports", projectNativeExportsView),
