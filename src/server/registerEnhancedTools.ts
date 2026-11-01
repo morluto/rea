@@ -18,6 +18,7 @@ import {
   composedLimitationBudget,
   executeComposedWorkflow,
   createWorkflowEvidence,
+  retainPartialWorkflowEvidence,
   workflowSnapshotRecord,
   recordWorkflowUnknowns,
 } from "../application/WorkflowEvidence.js";
@@ -278,6 +279,12 @@ const executeEnhancedTool = async (
           composedLimitationBudget(name),
         ),
       );
+      const partialEvidence = retainPartialWorkflowEvidence(result, {
+        target: registration.activeTarget?.(),
+        operation: name,
+        parameters,
+        upstreamProfile: registration.analysisProfile?.(name),
+      });
       result = retainAnalysisResultSources(
         name,
         registration.recordEvidence,
@@ -341,7 +348,14 @@ const executeEnhancedTool = async (
             : recorded,
         );
       }
-      return registration.delivery.toCallToolResult(result, contract);
+      // A stopped workflow's admitted result is retained beside its failure.
+      return partialEvidence === undefined
+        ? registration.delivery.toCallToolResult(result, contract)
+        : registration.delivery.toPartialErrorToolResult(
+            result.error,
+            contract.returnsTargetContent,
+            registration.recordEvidence,
+          );
     },
   );
   return admitted.ok
