@@ -166,7 +166,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | JavaScript / Electron | 模組、匯入、source map、路由、IPC 和原生附加元件關係                         | Node.js 和 npm；[應用分析](../javascript-application-workflows.md); Linux: procps `ps`                             |
 | 網站                  | 頁面結構、腳本、網路觀察結果和按請求獲取的螢幕擷取畫面                       | Chrome 系瀏覽器；[瀏覽器分析](../browser-observation.md)                                                           |
 | 已保存的網路擷取      | 請求、回應、可訪問的酬載和來源位置                                           | HAR / Fiddler Everywhere SAZ；原生 mitmproxy 擷取需要 Linux 上的 mitmdump；[擷取指南](../web-network-captures.md)  |
-| 封包擷取              | 端點、DNS、TLS SNI、通訊協定分佈和 HTTP 請求                                 | 呼叫端提供的 tshark 和 capinfos；[pcap 指南](../pcap-analysis.md)                                                  |
+| 封包擷取              | 端點、DNS、TLS SNI、通訊協定分佈和 HTTP 請求                                 | 呼叫端提供的 tshark 和 capinfos （已在 Linux 驗證）；[pcap 指南](../pcap-analysis.md)                              |
 | .NET 程式集           | 中繼資料、CIL 指令、聲明的原生依賴和建置對比                                 | 靜態檢查；[托管程式碼指南](../managed-code-analysis.md)                                                            |
 | PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                              |
 | Android APK           | 清單聲明、類別、反編譯的方法和引用                                           | Linux/macOS/Windows x64 上的無界面 JADX 和完整 JDK；[Android 指南](../android-analysis.md)                         |
