@@ -24,6 +24,7 @@ import {
 import {
   EXISTING_PROJECT_READ_ONLY,
   EXISTING_PROJECT_READ_ONLY_REMEDIATION,
+  existingProjectCapabilities,
 } from "../../../src/ghidra/GhidraProviderCapabilities.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -543,11 +544,20 @@ const PROCEDURE = { procedure: "main" };
 
 it("delivers a declared read-only recovery without changing the selected session", async () => {
   const calls: string[] = [];
+  const descriptor = existingProjectCapabilities("darwin").find(
+    (capability) => capability.operation === "set_address_name",
+  );
+  if (
+    descriptor === undefined ||
+    descriptor.available ||
+    descriptor.remediation === undefined
+  )
+    throw new Error("Expected Ghidra's read-only descriptor and recovery");
   const { client } = await connectScripted({
     operations: ["address_name", "set_address_name"],
-    declaredRefusals: { set_address_name: EXISTING_PROJECT_READ_ONLY },
+    declaredRefusals: { set_address_name: descriptor.reason },
     declaredRemediation: {
-      set_address_name: EXISTING_PROJECT_READ_ONLY_REMEDIATION,
+      set_address_name: descriptor.remediation,
     },
     respond: {
       current: (operation) => {
