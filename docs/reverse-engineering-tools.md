@@ -102,7 +102,8 @@ since the cut could fall inside its version. The budget and the recorded banner
 cover the line as printed, surrounding whitespace included; only identification
 ignores that whitespace. These describe the file at that path when
 REA checked it; they cannot prove the exact bytes executed if the file changes
-before the launch. A different tool that accepts the same arguments, such as
+before the launch, and Evidence that records the SHA-256 says so in a limitation.
+A different tool that accepts the same arguments, such as
 radare2, still runs: its Evidence names that tool and adds a limitation. A probe
 that fails, times out, prints output that is not valid UTF-8 or prints an
 unrecognized banner leaves the version unknown, and the command still runs.

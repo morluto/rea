@@ -893,6 +893,9 @@ export class ReverseEngineeringService {
       identity: profile.identity,
       limitations: [
         `The executable version and supported formats are reported as unknown because ${reason}.`,
+        ...(observed?.provider_executable_sha256 === undefined
+          ? []
+          : [EXECUTABLE_DIGEST_TIMING]),
         ...(probe === undefined ? [] : [probe.assumedIdentity]),
       ],
       parameters:
@@ -1014,6 +1017,7 @@ export class ReverseEngineeringService {
       identity: identification.identity,
       limitations: [
         `The executable version comes from ${banner}; supported formats remain unknown.`,
+        EXECUTABLE_DIGEST_TIMING,
         ...identification.limitations,
       ],
       parameters: { ...bannerParameters, provider_identity: "banner" },
@@ -1165,6 +1169,10 @@ type VersionProbeOutcome =
     };
 
 /** Why a probe that read no usable banner leaves the version unknown. */
+/** A digest read before launch cannot bind the bytes that ran. */
+export const EXECUTABLE_DIGEST_TIMING =
+  "The executable's SHA-256 was read before the probe and the command launched, so it does not prove the bytes that ran.";
+
 export const VERSION_PROBE_FAILURE_REASONS = {
   failed: "did not complete successfully",
   "timed-out": "reached the command deadline",
