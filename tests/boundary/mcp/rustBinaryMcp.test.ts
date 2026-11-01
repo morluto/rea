@@ -1,3 +1,5 @@
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { rustBinarySchema } from "../../../src/domain/rust/rustBinary.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -72,6 +74,67 @@ mcpTest(
         rustBinarySchema.parse(absentEvidence.normalized_result)
           .auditable_metadata,
       ).toBeNull();
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "projects an embedded Rust dependency list as CycloneDX",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-rust-mcp-cyclonedx-");
+      const path = join(root, "sample.elf");
+      await writeFile(path, createRustImage({ format: "elf" }));
+      const inspected = await client.callTool({
+        name: "inspect_rust_binary",
+        arguments: { path },
+      });
+      expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(
+        true,
+      );
+      const parent = parseEvidence(inspected.structuredContent);
+      const viewed = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: parent.evidence_id,
+          },
+          view: { kind: "cyclonedx" },
+        },
+      });
+      expect(viewed.isError, JSON.stringify(viewed.content)).not.toBe(true);
+      const result = analysisViewResultSchema.parse(
+        parseEvidence(viewed.structuredContent).normalized_result,
+      );
+      if (result.kind !== "cyclonedx")
+        throw new Error("Expected a CycloneDX view");
+      const document = result.document;
+      expect(document).toMatchObject({
+        bomFormat: "CycloneDX",
+        specVersion: "1.6",
+        compositions: [{ aggregate: "unknown" }],
+      });
+      const documentText = JSON.stringify(document);
+      expect(documentText).toContain("pkg:cargo/itoa@1.0.18");
+      // sample is source "local". pkg:cargo names a crates.io package.
+      expect(documentText).not.toContain("pkg:cargo/sample@0.1.0");
+      const sample = document.components.find(
+        (component) => component.name === "sample",
+      );
+      expect(sample).toMatchObject({
+        name: "sample",
+        version: "0.1.0",
+        "bom-ref": "rust-package:1",
+      });
+      expect(sample).not.toHaveProperty("purl");
+      expect(documentText).toContain(
+        "Rust package sample 0.1.0 from source local has no Package URL " +
+          "because pkg:cargo names a crates.io package.",
+      );
     } finally {
       await session.close();
     }

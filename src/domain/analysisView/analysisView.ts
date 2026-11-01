@@ -13,6 +13,7 @@ import { projectByteEntropyView } from "./byteEntropyView.js";
 import {
   parseAnalysisViewResult,
   analysisViewResultInputError,
+  parentArtifactPath,
 } from "./analysisViewParent.js";
 import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
 import { projectWebBundleView } from "./webBundleView.js";
@@ -23,6 +24,7 @@ import { projectCommandObservationView } from "./commandObservationView.js";
 import { projectFridaSessionStatusView } from "./fridaSessionStatusView.js";
 import { projectGoBinaryView } from "./goBinaryView.js";
 import { projectRustBinaryView } from "./rustBinaryView.js";
+import { projectCycloneDxView } from "./cyclonedxView.js";
 import { projectNativeFunctionMatchingView } from "./nativeFunctionMatchingView.js";
 import { projectNativeInventoryView } from "./nativeInventoryView.js";
 import {
@@ -252,27 +254,6 @@ const unsupportedParent = (
     `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed Evidence from a supported parent operation with a compatible view. For a summary receipt, use its normalized_result.parent_evidence_id rather than the receipt's own evidence_id.`,
   );
 
-const parentArtifactPath = (parent: AnalysisViewParent): string => {
-  if (
-    typeof parent.normalizedResult === "object" &&
-    parent.normalizedResult !== null &&
-    "artifact" in parent.normalizedResult &&
-    typeof parent.normalizedResult.artifact === "object" &&
-    parent.normalizedResult.artifact !== null &&
-    "path" in parent.normalizedResult.artifact &&
-    typeof parent.normalizedResult.artifact.path === "string"
-  )
-    return parent.normalizedResult.artifact.path;
-  if (
-    typeof parent.normalizedResult === "object" &&
-    parent.normalizedResult !== null &&
-    "input_path" in parent.normalizedResult &&
-    typeof parent.normalizedResult.input_path === "string"
-  )
-    return parent.normalizedResult.input_path;
-  return parent.evidenceId;
-};
-
 /** Check a projector result against the result union before sealing it. */
 const sealProjected = (
   projected: Result<UnsignedAnalysisView, AnalysisError>,
@@ -444,6 +425,8 @@ export const projectAnalysisView = (
         },
       ]),
     );
+  if (view.kind === "cyclonedx")
+    return sealProjected(projectCycloneDxView(parent, view));
   if (view.kind === "javascript-routes") {
     const projected = projectJavaScriptRoutesView(parent, view);
     return sealProjected(projected);

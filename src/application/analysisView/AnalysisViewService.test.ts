@@ -22,6 +22,7 @@ import {
   rebindEvidenceToTargetPath,
 } from "../../domain/evidence.js";
 import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisView.js";
+import { goBinarySchema } from "../../domain/go/goBinary.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import {
@@ -1725,6 +1726,110 @@ describe("inspectAnalysisView scenario parents", () => {
     if (!fromFile.ok) throw fromFile.error;
     expect(fromFile.value.parameters).toMatchObject({
       parent_evidence_id: parent.evidence_id,
+    });
+  });
+});
+
+describe("inspectAnalysisView cyclonedx", () => {
+  const version = Buffer.from("go1.22.0");
+  const moduleText = Buffer.from("module");
+  const report = goBinarySchema.parse({
+    artifact: {
+      path: "/artifacts/program",
+      sha256: "c".repeat(64),
+      bytes: 256,
+    },
+    format: "elf",
+    architecture: "amd64",
+    bits: 64,
+    byte_order: "little",
+    limitations: [],
+    build_info: {
+      header_offset: 0,
+      encoding: "inline",
+      go_version: "go1.22.0",
+      go_version_bytes_base64: version.toString("base64"),
+      module_text: "module",
+      module_bytes_base64: moduleText.toString("base64"),
+      version_location: { offset: 32, bytes: version.length },
+      module_location: { offset: 48, bytes: moduleText.length },
+      module: {
+        path: "example.com/tool/cmd/tool",
+        main: {
+          path: "example.com/tool",
+          version: "v1.0.0",
+          sum: null,
+          replacement: null,
+        },
+        dependencies: [
+          {
+            path: "example.com/dep",
+            version: "v0.1.0",
+            sum: "h1:sum",
+            replacement: null,
+          },
+        ],
+        settings: [],
+        unparsed_lines: [],
+        unparsed_line_bytes_base64: [],
+        complete: true,
+      },
+    },
+  });
+
+  it("projects inline Go Evidence into one derived CycloneDX document", async () => {
+    const parent = createEvidence(
+      {
+        path: report.artifact.path,
+        sha256: report.artifact.sha256,
+        format: "elf",
+        architecture: "x86_64",
+      },
+      {
+        id: "go-build-info",
+        name: "REA Go build-information reader",
+        version: "1",
+      },
+      {
+        operation: "inspect_go_binary",
+        parameters: { path: report.artifact.path },
+        result: report,
+        confidence: "observed",
+      },
+    );
+    const projected = await inspectAnalysisView({
+      source: { kind: "inline", evidence: parent },
+      view: { kind: "cyclonedx" },
+    });
+    if (!projected.ok) throw projected.error;
+    expect(projected.value.confidence).toBe("derived");
+    expect(parseEvidence(projected.value).normalized_result).toMatchObject({
+      kind: "cyclonedx",
+      parent_evidence_id: parent.evidence_id,
+      parent_operation: "inspect_go_binary",
+      document: {
+        bomFormat: "CycloneDX",
+        specVersion: "1.6",
+        components: [
+          { purl: "pkg:golang/example.com/tool@v1.0.0" },
+          {
+            purl: "pkg:golang/example.com/dep@v0.1.0",
+            properties: [{ name: "rea:go:sum", value: "h1:sum" }],
+          },
+        ],
+        compositions: [{ aggregate: "unknown" }],
+      },
+    });
+  });
+
+  it("refuses CycloneDX for a parent that is neither Go nor Rust", async () => {
+    const refused = await inspectAnalysisView({
+      source: { kind: "inline", evidence: analysisViewLayoutEvidence() },
+      view: { kind: "cyclonedx" },
+    });
+    expect(refused).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisUnsupportedTargetError" },
     });
   });
 });

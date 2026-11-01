@@ -248,6 +248,19 @@ The shared CLI/MCP workflow reports compiler version, modules, replacements,
 build settings, original bytes and SHA-256. See [Go binaries](go-binaries.md)
 for supported containers and absent or malformed metadata.
 
+Project that Evidence, or Rust dependency Evidence, as CycloneDX. The command
+prints JSON on stdout:
+
+```bash
+rea inspect-go-binary /absolute/path/to/program --json > go-evidence.json
+cat > cyclonedx-view.json <<'JSON'
+{"source":{"kind":"evidence-file","path":"go-evidence.json"},"view":{"kind":"cyclonedx"}}
+JSON
+rea inspect-analysis-view cyclonedx-view.json --json | jq '.normalized_result.document' > sbom.cdx.json
+```
+
+See [CycloneDX dependencies](cyclonedx-view.md).
+
 Inspect a Godot PCK without running the game:
 
 ```sh
