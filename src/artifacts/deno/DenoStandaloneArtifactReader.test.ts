@@ -1291,3 +1291,47 @@ it("fails closed when a D3N0L4ND payload is not file-backed", async () => {
     failure: { reason: "format" },
   });
 });
+
+it("rejects a universal Deno image whose sibling slice cannot be read", async () => {
+  const armImage = denoMachO(sectionFor(Buffer.from("arm\n")));
+  // Pad the arm64 slice so the x64 slice starts on its 2^12 alignment.
+  const arm = Buffer.concat([
+    armImage,
+    Buffer.alloc(4096 - (armImage.length % 4096)),
+  ]);
+  const intel = denoIntelTrailer(sectionFor(Buffer.from("intel\n")));
+  const universal = (x64: Buffer): Buffer => {
+    const bytes = denoUniversal([arm, x64]);
+    bytes.writeUInt32BE(0x01000007, 8 + 20);
+    bytes.writeUInt32BE(3, 8 + 24);
+    return bytes;
+  };
+  const intact = universal(intel);
+  await expect(
+    locateDenoStandalone(bytesHandle(intact), intact.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("declared more than once"),
+    },
+  });
+  // Only the x64 sizeofcmds changes, so its load commands overrun the slice.
+  const overrun = Buffer.from(intel);
+  overrun.writeUInt32LE(overrun.length, 20);
+  const damaged = universal(overrun);
+  await expect(
+    locateDenoStandalone(bytesHandle(damaged), damaged.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("slice 1 cannot be read"),
+    },
+  });
+  // With no Deno section confirmed, the unreadable slice stays native.
+  const native = denoUniversal([denoMachO([]), overrun]);
+  await expect(
+    locateDenoStandalone(bytesHandle(native), native.length),
+  ).resolves.toEqual({ status: "absent" });
+});

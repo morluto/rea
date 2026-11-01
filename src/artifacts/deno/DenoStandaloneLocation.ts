@@ -95,6 +95,15 @@ interface OwnedRange {
   readonly end: bigint;
 }
 
+/**
+ * One slice's Deno ranges. `unread` names why part of the slice could not be
+ * examined, so a Deno section or trailer there remains unknown.
+ */
+interface SliceScan {
+  readonly found: SectionRange[];
+  readonly unread: string | null;
+}
+
 interface Carrier {
   readonly handle: FileHandle;
   readonly fileSize: number;
@@ -158,30 +167,54 @@ const locateMachO = async (carrier: Carrier): Promise<SectionRange[]> => {
   const container = await readMachoContainer(readAt, carrier.fileSize);
   if (container.kind !== "thin" && container.kind !== "fat") return [];
   if (container.kind === "thin")
-    return locateMachOSlice(carrier, readAt, 0, carrier.fileSize, null);
+    return (await locateMachOSlice(carrier, readAt, 0, carrier.fileSize, null))
+      .found;
   const found: SectionRange[] = [];
-  for (const [index, slice] of container.header.slices.entries()) {
-    if (container.header.rangeIssues[index] != null) continue;
-    found.push(
-      ...(await locateMachOSlice(
-        carrier,
-        readAt,
-        slice.offset,
-        slice.size,
-        slice.cpuType,
-      )),
+  const unread: string[] = [];
+  const scan = async (
+    label: string,
+    rangeIssue: string | null | undefined,
+    offset: number,
+    size: number,
+    cpuType: number,
+  ): Promise<void> => {
+    if (rangeIssue != null) {
+      unread.push(`${label} ${rangeIssue}`);
+      return;
+    }
+    const result = await locateMachOSlice(
+      carrier,
+      readAt,
+      offset,
+      size,
+      cpuType,
     );
-  }
+    found.push(...result.found);
+    if (result.unread !== null) unread.push(`${label} ${result.unread}`);
+  };
+  for (const [index, slice] of container.header.slices.entries())
+    await scan(
+      `slice ${String(index)}`,
+      container.header.rangeIssues[index]?.reason,
+      slice.offset,
+      slice.size,
+      slice.cpuType,
+    );
   const hidden = container.hidden;
-  if (hidden?.status === "declared" && hidden.rangeIssue === null)
-    found.push(
-      ...(await locateMachOSlice(
-        carrier,
-        readAt,
-        hidden.declaration.offset,
-        hidden.declaration.size,
-        hidden.declaration.cpuType,
-      )),
+  if (hidden?.status === "declared")
+    await scan(
+      "hidden slice",
+      hidden.rangeIssue,
+      hidden.declaration.offset,
+      hidden.declaration.size,
+      hidden.declaration.cpuType,
+    );
+  // A sibling that could not be examined may declare a different Deno
+  // application, so a section found elsewhere cannot stand for the whole
+  // universal image. With none found, the image stays with native inventory.
+  if (found.length > 0 && unread.length > 0)
+    throw denoCarrierFailure(
+      `universal Mach-O ${unread[0] ?? ""} beside a Deno section`,
     );
   return found;
 };
@@ -192,9 +225,10 @@ const locateMachOSlice = async (
   base: number,
   sliceSize: number,
   fatCpu: number | null,
-): Promise<SectionRange[]> => {
+): Promise<SliceScan> => {
   const table = await readSliceCommandTable(readAt, base, sliceSize);
-  if (table.status !== "read") return [];
+  if (table.status !== "read")
+    return { found: [], unread: `cannot be read: ${table.reason}` };
   const found: SectionRange[] = [];
   const owned: OwnedRange[] = [];
   let confirmed = false;
@@ -259,11 +293,17 @@ const locateMachOSlice = async (
   });
   if (confirmed && framed.status !== "framed")
     throw denoCarrierFailure("Mach-O load commands are truncated");
+  // Commands after a framing failure were not visited and may hold __SUI.
+  // Without every segment framed, a trailer's ownership cannot be shown
+  // either, so the image stays with native inventory.
+  if (framed.status !== "framed")
+    return {
+      found,
+      unread: `load commands cannot be framed: ${framed.reason}`,
+    };
   const cpu = fatCpu ?? table.header.cpuType;
-  if (found.length > 0 || cpu === CPU_TYPE_ARM64) return found;
-  // Without every segment framed, a trailer's ownership cannot be shown, so
-  // the image stays with native inventory.
-  if (framed.status !== "framed") return [];
+  if (found.length > 0 || cpu === CPU_TYPE_ARM64)
+    return { found, unread: null };
   return locateIntelTrailers(carrier, base, sliceSize, owned);
 };
 
@@ -295,7 +335,7 @@ const locateIntelTrailers = async (
   base: number,
   sliceSize: number,
   owned: readonly OwnedRange[],
-): Promise<SectionRange[]> => {
+): Promise<SliceScan> => {
   const overlap = INTEL_SENTINEL.length + 8;
   let position = base + sliceSize;
   let tail = Buffer.alloc(0);
@@ -310,7 +350,7 @@ const locateIntelTrailers = async (
     if (chunk === undefined) {
       if (trailers.length > 0)
         throw denoCarrierFailure("Intel Mach-O slice is truncated");
-      return [];
+      return { found: [], unread: "is truncated before its trailer search" };
     }
     const window = tail.length === 0 ? chunk : Buffer.concat([chunk, tail]);
     let searchFrom = chunk.length - 1;
@@ -320,7 +360,10 @@ const locateIntelTrailers = async (
       examined += 1;
       if (examined > MAX_DENO_INTEL_TRAILER_SENTINELS) {
         if (trailers.length > 0) throw denoIntelSentinelLimit();
-        return [];
+        return {
+          found: [],
+          unread: `has more than ${String(MAX_DENO_INTEL_TRAILER_SENTINELS)} trailer sentinels`,
+        };
       }
       const lengthAt = index + INTEL_SENTINEL.length;
       const sentinelStart = chunkStart + index;
@@ -374,7 +417,7 @@ const locateIntelTrailers = async (
     throw denoCarrierFailure(
       "Intel Mach-O Deno trailer is truncated and encloses another Deno trailer",
     );
-  return trailers;
+  return { found: trailers, unread: null };
 };
 
 interface ElfNoteTable {
