@@ -67,6 +67,62 @@ export const projectInputIssuesWithinBudget = (
   )?.flat();
 };
 
+/** Field diagnostics that fit a byte allowance, plus what was dropped. */
+export interface BoundedInputIssues {
+  readonly issues: readonly AnalysisInputIssue[];
+  /** Validator issues whose field diagnostics did not fit the allowance. */
+  readonly omittedIssueCount: number;
+}
+
+/**
+ * Project as many validator issues as fit, in one forward pass, and count the
+ * rest. A single pass keeps the returned group maximal: it stops exactly at the
+ * allowance instead of at a coarse fraction of the list, and a compound issue
+ * such as `unrecognized_keys` still charges every field diagnostic it expands
+ * into because the recursion goes through `projectIssue` per nested issue.
+ */
+export const projectInputIssuesBounded = (
+  issues: readonly z.core.$ZodIssue[],
+  input: unknown,
+  budgetBytes: number,
+): BoundedInputIssues => {
+  const budget = { remaining: budgetBytes };
+  const output: AnalysisInputIssue[] = [];
+  let index = 0;
+  try {
+    for (; index < issues.length; index += 1) {
+      const issue = issues[index];
+      if (issue === undefined) continue;
+      output.push(...projectIssue(issue, input, budget));
+    }
+  } catch (error) {
+    if (error !== projectionBudgetExceeded) throw error;
+    // The issue that crossed the allowance and every later one contribute at
+    // least one omitted field diagnostic each.
+    const omittedIssueCount = issues.length - index;
+    if (output.length > 0) return { issues: output, omittedIssueCount };
+    // One compound issue, such as `unrecognized_keys` naming hundreds of keys,
+    // can exceed the allowance on its own. Retain a diagnostic at its path so the
+    // caller keeps the location instead of only an omission notice.
+    const first = issues[0];
+    if (first === undefined) return { issues: output, omittedIssueCount };
+    const path = first.path.flatMap((part) =>
+      typeof part === "string" || typeof part === "number" ? [part] : [],
+    );
+    return {
+      issues: [
+        {
+          path,
+          reason: "invalid_value",
+          message: `${String(omittedIssueCount)} field diagnostics at this location were omitted because they do not fit the response budget.`,
+        },
+      ],
+      omittedIssueCount,
+    };
+  }
+  return { issues: output, omittedIssueCount: 0 };
+};
+
 /** Retain each projected issue's source through bounded SDK normalization. */
 export const projectInputIssueGroupsWithinBudget = (
   issues: readonly z.core.$ZodIssue[],
