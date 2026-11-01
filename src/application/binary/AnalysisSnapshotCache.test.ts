@@ -1277,19 +1277,19 @@ it("revises only inspect_native_api workflow snapshots for inventory semantics",
     createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
       upstream_analysis_profile: profile,
       source_limitations: "provider-operation-caveats-v1",
-      workflow_revision: 4,
+      workflow_revision: 5,
     }),
   );
-  for (const operation of [
-    "trace_feature",
-    "get_call_graph",
-    "batch_decompile",
+  for (const [operation, revision] of [
+    ["trace_feature", 4],
+    ["get_call_graph", 3],
+    ["batch_decompile", 4],
   ] as const)
     expect(workflowAnalysisProfile(profile, operation)).toEqual(
       createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
         upstream_analysis_profile: profile,
         source_limitations: "provider-operation-caveats-v1",
-        workflow_revision: 3,
+        workflow_revision: revision,
       }),
     );
   expect(
