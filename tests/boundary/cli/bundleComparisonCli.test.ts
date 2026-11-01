@@ -121,7 +121,14 @@ cliTest(
     ];
     const compareWithPairs = (value: string) =>
       cli.run({
-        arguments: ["compare", leftPath, changedPath, "--record_pairs", value, "--json"],
+        arguments: [
+          "compare",
+          leftPath,
+          changedPath,
+          "--record_pairs",
+          value,
+          "--json",
+        ],
       });
     const paired = await compareWithPairs(JSON.stringify(pairs));
     expect(paired.exitCode).toBe(0);
