@@ -274,7 +274,7 @@ export class ToolResultDelivery {
                   ? MCP_TRANSPORT_EVIDENCE_EXPORT
                   : MCP_TRANSPORT_EVIDENCE_DISCOVERY
                 : contract.name === "inspect_address_context"
-                  ? "Call address_name, resolve_containing_procedure, comment, inline_comment, or list_bookmarks individually for the needed facets, and follow their delivery diagnostics."
+                  ? "Call get_evidence_bundle with detail summary to discover retained facet observations, then export_evidence_bundle to inspect complete records. Some facets may not have been retained; a new analysis can differ."
                   : "Use complete CLI JSON output to consume the analysis.";
     const projected = mcpResponseOverflowProjection({
       completed: true,

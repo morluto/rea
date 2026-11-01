@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
@@ -213,62 +213,119 @@ it.each([
   },
 );
 
-it("gives a usable MCP recovery when a successful context facet itself is oversized", async () => {
-  const identity = {
-    id: "fixture",
-    name: "Fixture analysis provider",
-    version: "1",
-  };
-  const target = join(
-    await createTestTempDirectory("rea-context-oversize-success-"),
-    "fixture.com",
-  );
-  await writeFile(target, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
-  const router = createTestProviderRouter(() => ({
-    execute: async (operation) =>
-      operation === "health"
-        ? ok(createAnalysisExecution(null, identity))
-        : operation === "address_name"
-          ? ok(createAnalysisExecution("x".repeat(6 * 1024 * 1024), identity))
-          : err(
-              new AnalysisCapabilityUnavailableError(
-                identity.id,
-                operation,
-                "not provided",
-              ),
-            ),
-    close: async () => ok(null),
-  }));
-  const session = new BinarySession(router);
-  const server = createServer(
-    { kind: "session", session },
-    { environment: { ...process.env, REA_MCP_TOOL_FAMILIES: "session" } },
-  );
-  const client = new Client({ name: "context-oversize-success", version: "1" });
-  const [ct, st] = InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(st);
-    await client.connect(ct);
-    const opened = await client.callTool({
-      name: "open_binary",
-      arguments: { path: target, format: "dos-com" },
+it.each([true, false])(
+  "recovers retained context facets when possible (profile=%s)",
+  async (profile) => {
+    const identity = {
+      id: "fixture",
+      name: "Fixture analysis provider",
+      version: "1",
+    };
+    const target = join(
+      await createTestTempDirectory("rea-context-oversize-success-"),
+      "fixture.com",
+    );
+    await writeFile(target, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
+    const router = createTestProviderRouter(
+      () => ({
+        execute: async (operation) =>
+          operation === "health"
+            ? ok(createAnalysisExecution(null, identity))
+            : operation === "address_name"
+              ? ok(
+                  createAnalysisExecution(
+                    "x".repeat(6 * 1024 * 1024),
+                    identity,
+                  ),
+                )
+              : err(
+                  new AnalysisCapabilityUnavailableError(
+                    identity.id,
+                    operation,
+                    "not provided",
+                  ),
+                ),
+        close: async () => ok(null),
+      }),
+      profile
+        ? {
+            resolveAnalysisProfile: async () =>
+              ok({
+                profile: createAnalysisProfile(identity, { fixture: true }),
+              }),
+          }
+        : {},
+    );
+    const session = new BinarySession(router);
+    const server = createServer(
+      { kind: "session", session },
+      { environment: { ...process.env, REA_MCP_TOOL_FAMILIES: "session" } },
+    );
+    const client = new Client({
+      name: "context-oversize-success",
+      version: "1",
     });
-    expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
-    const result = await client.callTool({
-      name: "inspect_address_context",
-      arguments: { address: "0x100", document: "fixture" },
-    });
-    expect(result.isError).toBe(true);
-    const error = parseMcpToolError(result).error;
-    expect(error).toMatchObject({
-      code: "resource_constraint",
-      details: { reported_limits: { boundary: "mcp-response" } },
-    });
-    expect(error.remediation.action).toContain("individually");
-    expect(error.remediation.action).not.toContain("CLI");
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-  }
-});
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(st);
+      await client.connect(ct);
+      const opened = await client.callTool({
+        name: "open_binary",
+        arguments: { path: target, format: "dos-com" },
+      });
+      expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
+      const result = await client.callTool({
+        name: "inspect_address_context",
+        arguments: { address: "0x100", document: "fixture" },
+      });
+      expect(result.isError).toBe(true);
+      const error = parseMcpToolError(result).error;
+      expect(error).toMatchObject({
+        code: "resource_constraint",
+        details: { reported_limits: { boundary: "mcp-response" } },
+      });
+      expect(error.remediation.action).toContain("get_evidence_bundle");
+      expect(error.remediation.action).toContain("export_evidence_bundle");
+      expect(error.remediation.action).toContain("may not have been retained");
+      const advertised = new Set(
+        (await client.listTools()).tools.map((tool) => tool.name),
+      );
+      expect(advertised.has("get_evidence_bundle")).toBe(true);
+      expect(advertised.has("export_evidence_bundle")).toBe(true);
+      expect(advertised.has("address_name")).toBe(false);
+      const summary = await client.callTool({
+        name: "get_evidence_bundle",
+        arguments: {
+          detail: "summary",
+          filters: { operation: "address_name" },
+        },
+      });
+      expect(summary.isError).not.toBe(true);
+      expect(summary.structuredContent).toMatchObject({
+        result: { matching_records: profile ? 1 : 0 },
+      });
+      const path = join(
+        await createTestTempDirectory("rea-context-recover-"),
+        "evidence.json",
+      );
+      const exported = await client.callTool({
+        name: "export_evidence_bundle",
+        arguments: { path },
+      });
+      expect(exported.isError).not.toBe(true);
+      const bundle = JSON.parse(await readFile(path, "utf8")) as {
+        records: { operation: string; normalized_result: unknown }[];
+      };
+      const record = bundle.records.find(
+        (entry) => entry.operation === "address_name",
+      );
+      if (profile)
+        expect(record?.normalized_result).toBe("x".repeat(6 * 1024 * 1024));
+      else expect(record).toBeUndefined();
+    } finally {
+      await client.close();
+      await server.close();
+      await session.close();
+    }
+  },
+);
