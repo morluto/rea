@@ -46,12 +46,32 @@ async function expectRemoteFailure(client, operation, parameters, code) {
   return { operation, code };
 }
 
-async function verifyBridgeRejections(client) {
+async function verifyBridgeRejections(client, names) {
+  const global = names.find((item) =>
+    matchesSymbol(item.value, "rea_ghidra_inventory_global"),
+  );
+  if (global === undefined)
+    throw new Error("Ghidra initialized global probe is unavailable");
+  const mapping = await call(client, "address_to_file_offset", {
+    document: null,
+    address: global.address,
+  });
+  if (!Number.isSafeInteger(mapping.file_offset))
+    throw new Error("Ghidra initialized global has no exact file offset");
   return {
     unknownProcedure: await expectRemoteFailure(
       client,
       "procedure_address",
       { document: null, procedure: "rea_missing_procedure_fixture" },
+      "procedure_not_found",
+    ),
+    mappedDataOffset: await expectRemoteFailure(
+      client,
+      "procedure_pseudo_code",
+      {
+        document: null,
+        procedure: `file-offset:0x${mapping.file_offset.toString(16)}`,
+      },
       "procedure_not_found",
     ),
     unknownDocument: await expectRemoteFailure(
@@ -92,7 +112,7 @@ export async function verifyInventoryOperations({
     });
 
   const rejections =
-    variant === "debug" ? await verifyBridgeRejections(client) : null;
+    variant === "debug" ? await verifyBridgeRejections(client, names) : null;
   const stringSearch = await call(client, "search_strings", {
     pattern: String.raw`^REA_GHIDRA_(?:INVENTORY_ENTRY|LEAF_VALUE)$`,
     mode: "regex",
