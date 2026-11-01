@@ -1038,12 +1038,16 @@ export class ReverseEngineeringService {
           status: "undecodable",
           diagnostics: versionProbeDiagnostics(0, output),
         });
-      const line = output.stdout.split(/\r?\n/u, 1)[0]?.trim() ?? "";
-      const banner = boundedUtf8Text(line, VERSION_PROBE_TEXT_BYTES);
+      // The budget and the record cover the first line as printed; only
+      // identification reads it without surrounding whitespace.
+      const banner = boundedUtf8Text(
+        output.stdout.split(/\r?\n/u, 1)[0] ?? "",
+        VERSION_PROBE_TEXT_BYTES,
+      );
       // A cut banner identifies nothing: the cut could fall inside its version.
       const identification = banner.truncated
         ? undefined
-        : probe.identify(banner.text);
+        : probe.identify(banner.text.trim());
       return ok(
         identification === undefined
           ? {

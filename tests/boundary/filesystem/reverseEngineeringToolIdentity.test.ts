@@ -681,6 +681,31 @@ posix.each([
   },
 );
 
+posix.each([
+  ["beyond the budget", " ".repeat(2_049), true],
+  ["within the budget", "  ", false],
+] as const)(
+  "bounds a banner's leading whitespace %s as printed before identifying the tool",
+  async (_case, padding, truncated) => {
+    const { executable, path } = await rizinExecutableFixture();
+    const line = `${padding}rizin 0.9.1 @ linux-x86-64  `;
+    const run = versionProbeRunner(() => `${line}\n`);
+    const service = new TestReverseEngineeringService({
+      run,
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: executable },
+    });
+    const result = await service.executeRizinCommand({ path, command: "iI" });
+    if (!result.ok) throw result.error;
+    expect(result.value.provider.version).toBe(truncated ? null : "0.9.1");
+    expect(result.value.parameters).toMatchObject({
+      provider_version_banner: truncated ? " ".repeat(2_048) : line,
+      provider_version_banner_truncated: truncated,
+      provider_identity: truncated ? "assumed" : "banner",
+    });
+  },
+);
+
 posix(
   "cuts a failed probe's diagnostic streams within 2,048 UTF-8 bytes, between code points",
   async () => {

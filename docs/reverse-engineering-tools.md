@@ -98,7 +98,9 @@ records the tool and version as the provider name and version, and records the
 executable path, its SHA-256 and the banner in its parameters; a banner longer
 than 2,048 UTF-8 bytes is cut within that budget, between characters, and
 marked by `provider_version_banner_truncated`; a cut banner identifies no tool,
-since the cut could fall inside its version. These describe the file at that path when
+since the cut could fall inside its version. The budget and the recorded banner
+cover the line as printed, surrounding whitespace included; only identification
+ignores that whitespace. These describe the file at that path when
 REA checked it; they cannot prove the exact bytes executed if the file changes
 before the launch. A different tool that accepts the same arguments, such as
 radare2, still runs: its Evidence names that tool and adds a limitation. A probe
