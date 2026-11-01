@@ -8,6 +8,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -182,9 +183,15 @@ const unavailableFacet = (
   error: AnalysisError | undefined,
   operation: AnalysisOperation,
 ): Facet => {
-  if (error instanceof AnalysisInputError) {
+  if (
+    error instanceof AnalysisInputError ||
+    error instanceof AnalysisResourceConstraintError
+  ) {
     const projected = projectAnalysisError(error);
-    if (projected.code === "invalid_request")
+    if (
+      projected.code === "invalid_request" ||
+      projected.code === "resource_constraint"
+    )
       return {
         state: "unavailable",
         reason: projected.message,
