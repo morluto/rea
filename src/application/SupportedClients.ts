@@ -560,6 +560,16 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(env.GEMINI_CLI_HOME || home, ".gemini", "settings.json"),
     markerPath: ({ home, env }: ClientPathContext) =>
       join(env.GEMINI_CLI_HOME || home, ".gemini"),
+    // Antigravity creates the shared .gemini directory for its own config.
+    // Only Gemini CLI's own settings or runtime state establish applicability.
+    discoveryPaths: ({ home, env }: ClientPathContext) => {
+      const root = join(env.GEMINI_CLI_HOME || home, ".gemini");
+      return [
+        join(root, "tmp"),
+        env.GEMINI_CLI_TRUSTED_FOLDERS_PATH ||
+          join(root, "trustedFolders.json"),
+      ];
+    },
     skillPath: ({ home, env }: ClientPathContext) =>
       join(env.GEMINI_CLI_HOME || home, ".agents", "skills"),
     format: "json",
@@ -771,17 +781,21 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
 export const clientEvidencePaths = (
   client: Pick<
     SetupClient,
-    "configPath" | "configPaths" | "markerPath" | "discoveryPaths"
+    | "configPath"
+    | "configPaths"
+    | "markerPath"
+    | "discoveryPaths"
+    | "sharedRegistration"
   >,
 ): readonly string[] => [
   ...new Set(
-    (
-      client.discoveryPaths ?? [
-        client.configPath,
-        ...(client.configPaths ?? []),
-        client.markerPath,
-      ]
-    ).filter((path): path is string => path !== undefined && path.length > 0),
+    [
+      ...(client.sharedRegistration === true
+        ? []
+        : [client.configPath, ...(client.configPaths ?? [])]),
+      ...(client.discoveryPaths ??
+        (client.markerPath === undefined ? [] : [client.markerPath])),
+    ].filter((path): path is string => path !== undefined && path.length > 0),
   ),
 ];
 
