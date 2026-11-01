@@ -6,6 +6,10 @@ import {
 } from "../../domain/apple/machoLoadCommands.js";
 import type { MachoSliceEncryption } from "../../domain/apple/machoEncryption.js";
 import {
+  admitMachoSectionPayload,
+  readMachoSectionHeader,
+} from "../../domain/apple/machoSectionHeader.js";
+import {
   admitMachoSegmentCommand,
   readMachoSegmentHeader,
 } from "../../domain/apple/machoSegmentHeader.js";
@@ -456,6 +460,18 @@ const segmentName = (
     sliceSize,
   );
   if (!admitted.ok) malformed(admitted.error.message);
+  const sectionWidth = wide ? 80 : 68;
+  for (let index = 0; index < header.value.sectionCount; index += 1) {
+    const at = header.value.headerSize + index * sectionWidth;
+    const section = readMachoSectionHeader(
+      command.body.subarray(at, at + sectionWidth),
+      wide,
+      true,
+    );
+    if (!section.ok) malformed(section.error.message);
+    const payload = admitMachoSectionPayload(section.value, sliceSize);
+    if (!payload.ok) malformed(payload.error.message);
+  }
   // The fixed 16-byte name ends at the first NUL. Trailing-only stripping
   // would keep junk after an embedded NUL and miss __RESTRICT.
   return decodeMachoFixedName(header.value.nameBytes);

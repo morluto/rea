@@ -1127,7 +1127,8 @@ it("rejects a section payload past EOF and impossible load sizes", () => {
 it.each([
   ["empty", 0n, null],
   ["unterminated", null, 0x41],
-] as const)("rejects an %s PT_INTERP", (_label, size, last) => {
+  ["NUL-leading", null, null],
+] as const)("rejects an %s PT_INTERP", (label, size, last) => {
   const bytes = elfHardeningFixture({ interp: true });
   const at = elfProgramAt(bytes, PT_INTERP);
   if (size !== null) bytes.writeBigUInt64LE(size, at + 32);
@@ -1137,6 +1138,7 @@ it.each([
         Number(bytes.readBigUInt64LE(at + 32)) -
         1
     ] = last;
+  if (label === "NUL-leading") bytes[Number(bytes.readBigUInt64LE(at + 8))] = 0;
   expect(() => readElfHardening(bytes)).toThrow(/PT_INTERP/u);
 });
 
@@ -1407,6 +1409,58 @@ it.each([
     expect(images[1]?.rows).toEqual([]);
   },
 );
+
+it.each([
+  [
+    "a file-backed payload past EOF",
+    { offset: 0x10000000, size: 16, flags: 0 },
+  ],
+  ["a payload straddling EOF", { offset: -8, size: 64, flags: 0 }],
+  [
+    "a zero-fill section with an offset past EOF",
+    { offset: 0x10000000, size: 0, flags: 1 },
+  ],
+] as const)("handles Mach-O section %s", async (label, spec) => {
+  const size = 72 + 80;
+  const probe = machoHardeningFixture({
+    extraCommands: [machoSegment(64, { commandSize: size })],
+  });
+  const build = (offset: number) => {
+    const segment = machoSegment(64, {
+      commandSize: size,
+      sections: 1,
+      vmSize: probe.length,
+      fileSize: probe.length,
+    });
+    segment.writeBigUInt64LE(BigInt(spec.size), 72 + 40);
+    segment.writeUInt32LE(offset, 72 + 48);
+    segment.writeUInt32LE(spec.flags, 72 + 64);
+    return machoHardeningFixture({ extraCommands: [segment] });
+  };
+  const bytes = build(
+    spec.offset < 0 ? probe.length + spec.offset : spec.offset,
+  );
+  const message = "Mach-O section payload is outside the file";
+  if (spec.flags === 1) {
+    // Zero-fill sections own no file bytes, so their offset is not a range.
+    const image = (await readMachoHardening(bytes))[0];
+    expect(image?.status, label).toBe("parsed");
+    return;
+  }
+  await expect(readMachoHardening(bytes)).rejects.toMatchObject({
+    kind: "malformed",
+    message,
+  });
+  const images = await readMachoHardening(
+    fatMachoHardeningFixture([
+      { bytes, cpuType: CPU_ARM64, cpuSubtype: 0 },
+      { bytes: machoHardeningFixture(), cpuType: CPU_ARM64, cpuSubtype: 0 },
+    ]),
+  );
+  expect(images.map((image) => image.status)).toEqual(["malformed", "parsed"]);
+  expect(images[0]?.reason).toBe(message);
+  expect(images[0]?.rows).toEqual([]);
+});
 
 it("measures a segment file range against its slice, not the container", async () => {
   // In a fat file this range lands inside the container but past its own slice.

@@ -1,5 +1,6 @@
 import { decodeMachoFixedName } from "../AppleMachoNames.js";
 import {
+  isMachoZeroFillSection,
   readMachoSectionHeader,
   type MachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
@@ -203,7 +204,7 @@ const machoImageSection = ({
   const sectionOffset = BigInt(section.offset);
   const sectionName = decodeMachoFixedName(section.nameBytes);
   const name = `${decodeMachoFixedName(section.segmentNameBytes)},${sectionName}`;
-  const zeroFill = [1, 0xc, 0x12].includes(flags & 0xff);
+  const zeroFill = isMachoZeroFillSection(flags);
   const addressDelta = sectionAddress - segmentAddress;
   const fileDelta = sectionOffset - segmentFileOffset;
   const inSegmentMemory =

@@ -316,8 +316,9 @@ export const readElfHardening = (
 /** PIE reads this header's presence, so it must name a loadable path. */
 const admitInterp = (bytes: Buffer, interp: SpanProgram): void => {
   const end = exact(interp.file_offset + interp.file_size, "PT_INTERP range");
-  if (interp.file_size < 2n || bytes[end - 1] !== 0)
-    malformed("ELF PT_INTERP is not a NUL-terminated path");
+  const start = exact(interp.file_offset, "PT_INTERP range");
+  if (interp.file_size < 2n || bytes[start] === 0 || bytes[end - 1] !== 0)
+    malformed("ELF PT_INTERP is not a nonempty NUL-terminated path");
 };
 
 const mapVirtualAddress = (
