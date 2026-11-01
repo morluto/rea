@@ -199,20 +199,27 @@ describe("ReleaseExposureReader review regressions", () => {
     expect((await inspect(path)).source_maps.skipped).toBe(1);
   });
 
-  it("inspects embedded sources in inline JavaScript maps", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-inline-");
-    const source = `const value = 1;\n//# sourceMappingURL=data:application/json;base64,${embeddedSourceMap().toString("base64")}`;
-    await writeFile(join(root, "app.js"), source);
-    const scanned = await inspect(root);
-    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
-    expect(scanned.source_maps.embedded_paths).toEqual([join(root, "app.js")]);
-    await writeFile(
-      join(root, "app.asar"),
-      asarArchive([{ name: "app.js", bytes: Buffer.from(source) }]),
-    );
-    const packaged = await inspect(join(root, "app.asar"));
-    expect(packaged.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
-  });
+  it.each(["data", "DATA"])(
+    "inspects embedded sources in inline JavaScript maps with a %s: scheme",
+    async (scheme) => {
+      const root = await createTestTempDirectory(
+        "rea-release-exposure-inline-",
+      );
+      const source = `const value = 1;\n//# sourceMappingURL=${scheme}:application/json;base64,${embeddedSourceMap().toString("base64")}`;
+      await writeFile(join(root, "app.js"), source);
+      const scanned = await inspect(root);
+      expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+      expect(scanned.source_maps.embedded_paths).toEqual([
+        join(root, "app.js"),
+      ]);
+      await writeFile(
+        join(root, "app.asar"),
+        asarArchive([{ name: "app.js", bytes: Buffer.from(source) }]),
+      );
+      const packaged = await inspect(join(root, "app.asar"));
+      expect(packaged.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    },
+  );
 
   it.each([80, 200, 520, 550])(
     "preserves CodeView parsing truncated at %s bytes as unresolved",

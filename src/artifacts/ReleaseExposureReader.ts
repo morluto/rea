@@ -1021,7 +1021,8 @@ const examineInlineMaps = (
   const directives = createJavaScriptAnalysisAccumulator(source.length);
   addSourceMapDirectives(source, parsed.comments ?? [], directives);
   for (const { declared_url: url } of directives.sourceMaps) {
-    if (!url.startsWith("data:")) {
+    // URL schemes are case-insensitive (RFC 3986 section 3.1).
+    if (!/^data:/iu.test(url)) {
       noteLocalMapReference(state, member, url);
       continue;
     }
