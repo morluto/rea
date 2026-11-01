@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 963; runtime: 180.
+Locked package entries: 963; runtime: 174.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -395,12 +395,12 @@ unist-util-visit-parents@3.1.1 | development | MIT
   Package: https://www.npmjs.com/package/@docsearch/react/v/3.8.2
   Archive: https://registry.npmjs.org/@docsearch/react/-/react-3.8.2.tgz
   Integrity: sha512-xCRrJQlTt8N9GU0DG4ptwHRkfnSnD/YpdeaXe02iKfqs97TkZJv60yE+1eq/tjPcVnTW8dP5qLP7itifFVV5eg==
-@electron/asar@4.2.0 | runtime | MIT
+@electron/asar@4.2.0 | development | MIT
   Lockfile path: node_modules/@electron/asar
   Package: https://www.npmjs.com/package/@electron/asar/v/4.2.0
   Archive: https://registry.npmjs.org/@electron/asar/-/asar-4.2.0.tgz
   Integrity: sha512-npW1NW5yy8EB9XY/vEw9sUdgmq0sJEhmSBb6bqyFOAw1CSkrhvAvO6QWlW8CdIMo8VN1lkdF345l/MeW0LrY0Q==
-commander@13.1.0 | runtime | MIT
+commander@13.1.0 | development | MIT
   Lockfile path: node_modules/@electron/asar/node_modules/commander
   Package: https://www.npmjs.com/package/commander/v/13.1.0
   Archive: https://registry.npmjs.org/commander/-/commander-13.1.0.tgz
@@ -2815,7 +2815,7 @@ github-from-package@0.0.0 | runtime, optional | MIT
   Package: https://www.npmjs.com/package/github-from-package/v/0.0.0
   Archive: https://registry.npmjs.org/github-from-package/-/github-from-package-0.0.0.tgz
   Integrity: sha512-SyHy3T1v2NUXn29OsWdxmK6RwHD+vkj3v8en8AOBZ1wBQ/hCAQ5bAQTD02kW4W9tUp/3Qh6J8r9EvntiyCmOOw==
-glob@13.0.6 | runtime | BlueOak-1.0.0
+glob@13.0.6 | development | BlueOak-1.0.0
   Lockfile path: node_modules/glob
   Package: https://www.npmjs.com/package/glob/v/13.0.6
   Archive: https://registry.npmjs.org/glob/-/glob-13.0.6.tgz
@@ -3270,7 +3270,7 @@ lossless-json@4.3.1 | runtime | MIT
   Package: https://www.npmjs.com/package/lossless-json/v/4.3.1
   Archive: https://registry.npmjs.org/lossless-json/-/lossless-json-4.3.1.tgz
   Integrity: sha512-SqD/Bg3ZfltBJ2Z14hJ/BihnvtV553WO4g9/ePtlp4lrnl9jF3AdIJt53A/Wkg/0Li+LMfxaBqgx1MiFZdQlpQ==
-lru-cache@11.5.2 | runtime | BlueOak-1.0.0
+lru-cache@11.5.2 | development | BlueOak-1.0.0
   Lockfile path: node_modules/lru-cache
   Package: https://www.npmjs.com/package/lru-cache/v/11.5.2
   Archive: https://registry.npmjs.org/lru-cache/-/lru-cache-11.5.2.tgz
@@ -3405,7 +3405,7 @@ minimisted@2.0.1 | runtime | MIT
   Package: https://www.npmjs.com/package/minimisted/v/2.0.1
   Archive: https://registry.npmjs.org/minimisted/-/minimisted-2.0.1.tgz
   Integrity: sha512-1oPjfuLQa2caorJUM8HV8lGgWCc0qqAO1MNv/k05G4qslmsndV/5WdNZrqCiyqiz3wohia2Ij2B7w2Dr7/IyrA==
-minipass@7.1.3 | runtime | BlueOak-1.0.0
+minipass@7.1.3 | development | BlueOak-1.0.0
   Lockfile path: node_modules/minipass
   Package: https://www.npmjs.com/package/minipass/v/7.1.3
   Archive: https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz
@@ -3665,7 +3665,7 @@ path-parse@1.0.7 | development | MIT
   Package: https://www.npmjs.com/package/path-parse/v/1.0.7
   Archive: https://registry.npmjs.org/path-parse/-/path-parse-1.0.7.tgz
   Integrity: sha512-LDJzPVEEEPR+y48z93A0Ed0yXb8pAByGWo/k5YYdYgpY2/2EsOsksJrq7lOHxryrVOn1ejG6oAp8ahvOIQD8sw==
-path-scurry@2.0.2 | runtime | BlueOak-1.0.0
+path-scurry@2.0.2 | development | BlueOak-1.0.0
   Lockfile path: node_modules/path-scurry
   Package: https://www.npmjs.com/package/path-scurry/v/2.0.2
   Archive: https://registry.npmjs.org/path-scurry/-/path-scurry-2.0.2.tgz
