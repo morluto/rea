@@ -137,7 +137,10 @@ const trace = async (analysis: AnalysisOperationPort) => {
     arguments: { query: "hello" },
   });
   expect(result.isError).not.toBe(true);
-  return result.structuredContent as { normalized_result: unknown };
+  return result.structuredContent as {
+    normalized_result: unknown;
+    limitations: string[];
+  };
 };
 
 it("preserves references and explicitly unknown owners without claiming truncation", async () => {
@@ -330,6 +333,14 @@ it("retains incomplete cleanup when cancellation arrives during owner lookup", a
 });
 
 describe("trace_feature reference coverage", () => {
+  it("reports the address-only scope when a match has no references", async () => {
+    const output = await trace(provider({ emptyXrefsOf: "0x10" }));
+
+    expect(output.limitations).toContain(
+      "Reference queries cover only each matched start address, not interior string bytes. Empty references and truncated: false do not establish complete reference coverage.",
+    );
+  });
+
   it("marks the trace truncated for the target whose references the provider capped", async () => {
     const output = await trace(
       provider({ coverage: { "0x10": true, "0x11": false } }),

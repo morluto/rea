@@ -265,14 +265,22 @@ const literalTraceOutput = evidenceResultOf(
     query: z.string(),
     search_mode: z.literal("literal"),
     matches: z.array(literalFeatureMatchSchema),
-    references: z.array(
-      z.object({
-        target_address: z.string(),
-        source_address: z.string(),
-        containing_procedure: traceContainingProcedureSchema,
-      }),
-    ),
-    truncated: z.boolean(),
+    references: z
+      .array(
+        z.object({
+          target_address: z.string(),
+          source_address: z.string(),
+          containing_procedure: traceContainingProcedureSchema,
+        }),
+      )
+      .describe(
+        "References to matched start addresses only; references to interior string bytes are not searched. Empty does not establish absence.",
+      ),
+    truncated: z
+      .boolean()
+      .describe(
+        "True only when a provider reports a reference cap; false does not establish complete reference coverage.",
+      ),
     residual_unknowns: z.array(z.string()),
   }),
 );

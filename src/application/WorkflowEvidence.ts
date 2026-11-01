@@ -212,6 +212,11 @@ export const createWorkflowEvidence = (input: {
       : { evidenceLinks: input.upstreamEvidenceLinks }),
     limitations: [
       "Derived by an REA composed workflow.",
+      ...(input.operation === "trace_feature"
+        ? [
+            "Reference queries cover only each matched start address, not interior string bytes. Empty references and truncated: false do not establish complete reference coverage.",
+          ]
+        : []),
       ...input.upstreamLimitations,
     ],
     ...(input.operation === "batch_decompile"
