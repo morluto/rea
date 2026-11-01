@@ -28,7 +28,6 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
-import { MULTI_MODE_TARGET_REMEDIATION } from "../dist/application/CapabilityInventory.js";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { verifyKunaReferences } from "./lib/kuna-reference-verifier.mjs";
 import {
@@ -36,6 +35,7 @@ import {
   verifyKunaStrings,
 } from "./lib/kuna-string-verifier.mjs";
 import { nativeKunaIncomingSites } from "./lib/kuna-native-reference-verifier.mjs";
+import { MULTI_MODE_TARGET_REMEDIATION } from "../dist/application/CapabilityInventory.js";
 import {
   assertVerifierCleanupComplete,
   completeVerifierRun,
