@@ -563,7 +563,8 @@ const workflowAvailabilityFor = ({
     name === "inspect_elf_notes" ||
     name === "inspect_devicetree" ||
     name === "inspect_kernel_module" ||
-    name === "inspect_pe_load_config"
+    name === "inspect_pe_load_config" ||
+    name === "inspect_binary_hardening"
   )
     return { reason: "available", remediation: null };
   if (name === "inspect_evm_interface") {

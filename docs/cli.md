@@ -1350,6 +1350,16 @@ Reports TLS callbacks and size-covered load-config fields without execution.
 Use `--max-callbacks` and `--max-file-bytes` to set read budgets. See
 [PE TLS and load configuration](pe-load-config.md).
 
+### Binary hardening
+
+```sh
+rea inspect-binary-hardening /absolute/path/to/program --json
+```
+
+Reports ELF, PE, and Mach-O hardening rows without execution. A missing import
+is `unknown`, not `disabled`. Use `--max-file-bytes` to set the read budget. See
+[binary hardening](binary-hardening.md).
+
 Bun standalone executables use the existing `inspect-artifact` and
 `extract-artifact` commands to inventory and materialize embedded source,
 sourcemaps and bytecode without running the executable. See

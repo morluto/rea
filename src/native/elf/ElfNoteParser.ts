@@ -8,6 +8,7 @@ import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { createHash } from "node:crypto";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import {
   elfNoteAlignment as noteAlignment,
@@ -170,6 +171,7 @@ const parseNoteStream = (
   maxEntries: number,
   examined: { count: number },
   text: TextBudget,
+  signal?: AbortSignal,
 ): ParsedNote[] => {
   // Alignment padding is not read when a note's aligned size equals the
   // declared table. Require the whole table first so a short file is invalid
@@ -178,6 +180,7 @@ const parseNoteStream = (
   const notes: ParsedNote[] = [];
   let at = 0;
   while (at + 12 <= size) {
+    assertArtifactReadActive(signal);
     examined.count += 1;
     if (examined.count > maxEntries)
       throw new ArtifactReaderFailure(
@@ -555,4 +558,118 @@ const toEntry = (
     },
     gnu: decodeGnu(note.owner, note.type, note.descriptor, little, text),
   };
+};
+
+const NT_GNU_PROPERTY_TYPE_0 = 5;
+const GNU_PROPERTY_AARCH64_FEATURE_1_AND = 0xc0000000;
+const GNU_PROPERTY_X86_FEATURE_1_AND = 0xc0000002;
+
+/** One note table. `alignment` is the declared `sh_addralign` or `p_align`. */
+export interface ElfNoteTableWalk {
+  readonly offset: number;
+  readonly size: number;
+  readonly alignment: number | bigint;
+}
+
+export interface ElfWalkedNote {
+  readonly owner: string;
+  readonly type: number;
+  readonly descriptor: Buffer;
+  readonly descriptorOffset: number;
+}
+
+export interface GnuPropertyWord {
+  readonly value: number;
+  readonly offset: number;
+  readonly conflict: boolean;
+}
+
+/** Walk note tables with the owner's alignment, entry budget, and cancellation. */
+export const walkElfNoteTables = (
+  bytes: Buffer,
+  little: boolean,
+  tables: readonly ElfNoteTableWalk[],
+  maxEntries: number,
+  signal?: AbortSignal,
+): ElfWalkedNote[] => {
+  const reader = new ElfReader(bytes, little);
+  const text: TextBudget = {
+    limit: Math.max(bytes.length, 1),
+    used: 0,
+    hashed: 0,
+    scanned: 0,
+    hashes: new Map(),
+    scans: new Map(),
+  };
+  const examined = { count: 0 };
+  const notes: ElfWalkedNote[] = [];
+  for (const table of tables) {
+    assertArtifactReadActive(signal);
+    for (const note of parseNoteStream(
+      reader,
+      table.offset,
+      table.size,
+      noteAlignment(table.alignment),
+      maxEntries,
+      examined,
+      text,
+      signal,
+    ))
+      notes.push({
+        owner: note.owner,
+        type: note.type,
+        descriptor: note.descriptor,
+        descriptorOffset: note.descriptor_offset,
+      });
+  }
+  return notes;
+};
+
+/** GNU property feature words from notes the owner already walked. */
+export const readGnuPropertyWords = (
+  notes: readonly ElfWalkedNote[],
+  little: boolean,
+  propertyAlign: number,
+): Map<number, GnuPropertyWord> => {
+  const found = new Map<number, GnuPropertyWord>();
+  for (const note of notes) {
+    if (note.owner !== "GNU" || note.type !== NT_GNU_PROPERTY_TYPE_0) continue;
+    const descriptor = note.descriptor;
+    let cursor = 0;
+    while (cursor < descriptor.length) {
+      if (descriptor.length - cursor < 8)
+        fail("ELF GNU property record is truncated.");
+      const type = little
+        ? descriptor.readUInt32LE(cursor)
+        : descriptor.readUInt32BE(cursor);
+      const dataSize = little
+        ? descriptor.readUInt32LE(cursor + 4)
+        : descriptor.readUInt32BE(cursor + 4);
+      if (dataSize > descriptor.length - cursor - 8)
+        fail("ELF GNU property data extends outside the note descriptor.");
+      const step = Math.ceil((8 + dataSize) / propertyAlign) * propertyAlign;
+      if (!Number.isSafeInteger(step) || cursor + step > descriptor.length)
+        fail("ELF GNU property record is truncated.");
+      if (
+        type === GNU_PROPERTY_X86_FEATURE_1_AND ||
+        type === GNU_PROPERTY_AARCH64_FEATURE_1_AND
+      ) {
+        if (dataSize !== 4)
+          fail("ELF GNU feature property is not a 4-byte word.");
+        const value = little
+          ? descriptor.readUInt32LE(cursor + 8)
+          : descriptor.readUInt32BE(cursor + 8);
+        const previous = found.get(type);
+        found.set(type, {
+          value: previous === undefined ? value : previous.value,
+          offset: previous?.offset ?? note.descriptorOffset + cursor + 8,
+          conflict:
+            previous !== undefined &&
+            (previous.conflict || previous.value !== value),
+        });
+      }
+      cursor += step;
+    }
+  }
+  return found;
 };

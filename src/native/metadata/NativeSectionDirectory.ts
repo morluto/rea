@@ -11,7 +11,10 @@ import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { readPeCoffHeader } from "../../domain/peCoffHeader.js";
 import { readPeSectionHeader } from "../../domain/peSectionHeader.js";
-import { readElfTableDeclarations } from "../../domain/elfDeclaredRanges.js";
+import {
+  readElfTableDeclarations,
+  validateElfDeclaredRanges,
+} from "../../domain/elfDeclaredRanges.js";
 import { readPeOptionalHeaderStructure } from "../../domain/peOptionalHeader.js";
 import {
   BinaryFormatFailure,
@@ -40,19 +43,36 @@ export interface NativeSection {
   readonly link: number;
   readonly info: number;
   readonly entry_size: bigint;
+  /** `sh_addralign` for ELF. PE sections have no note alignment and use 1. */
+  readonly alignment: bigint;
   readonly file_backed: boolean;
 }
+/** Program header types retained for load, dynamic, and hardening consumers. */
+export const ELF_PT_NOTE = 4 as const;
+export const ELF_PT_INTERP = 3 as const;
+export const ELF_PT_GNU_STACK = 0x6474e551 as const;
+export const ELF_PT_GNU_RELRO = 0x6474e552 as const;
+export const ELF_PT_GNU_PROPERTY = 0x6474e553 as const;
+
+type ElfProgramSpan = {
+  readonly header_offset: number;
+  readonly flags: number;
+  readonly file_offset: bigint;
+  readonly file_size: bigint;
+  readonly virtual_address: bigint;
+  readonly memory_size: bigint;
+  readonly alignment: bigint;
+};
+
 /** Raw relevant program declarations; consumers own load/dynamic admission. */
 export type ElfProgramDeclaration =
-  | {
-      readonly type: 1;
-      readonly flags: number;
-      readonly file_offset: bigint;
-      readonly file_size: bigint;
-      readonly virtual_address: bigint;
-      readonly memory_size: bigint;
-    }
-  | ({ readonly type: 2 } & ElfDynamicSegment);
+  | ({ readonly type: 1 } & ElfProgramSpan)
+  | ({ readonly type: 2; readonly header_offset: number } & ElfDynamicSegment)
+  | ({ readonly type: typeof ELF_PT_NOTE } & ElfProgramSpan)
+  | ({ readonly type: typeof ELF_PT_INTERP } & ElfProgramSpan)
+  | ({ readonly type: typeof ELF_PT_GNU_STACK } & ElfProgramSpan)
+  | ({ readonly type: typeof ELF_PT_GNU_RELRO } & ElfProgramSpan)
+  | ({ readonly type: typeof ELF_PT_GNU_PROPERTY } & ElfProgramSpan);
 
 export interface NativeSectionDirectory {
   readonly format: "elf" | "pe";
@@ -142,21 +162,34 @@ export function* readElfSectionDirectory(
       if (!parsedProgram.ok) return reject(parsedProgram.error.message);
       const program = parsedProgram.value;
       const { type } = program;
-      if (type === 1)
-        programDeclarations.push({
-          type,
-          flags: program.flags,
-          file_offset: program.offset,
-          virtual_address: program.virtualAddress,
-          file_size: program.fileSize,
-          memory_size: program.memorySize,
-        });
+      const header_offset = exact(program_offset) + at;
+      const span = {
+        header_offset,
+        flags: program.flags,
+        file_offset: program.offset,
+        virtual_address: program.virtualAddress,
+        file_size: program.fileSize,
+        memory_size: program.memorySize,
+        alignment: program.alignment,
+      };
+      if (type === 1) programDeclarations.push({ type, ...span });
       else if (type === 2)
         programDeclarations.push({
           type,
+          header_offset,
           offset: program.offset,
           size: program.fileSize,
         });
+      else if (type === ELF_PT_NOTE)
+        programDeclarations.push({ type: ELF_PT_NOTE, ...span });
+      else if (type === ELF_PT_INTERP)
+        programDeclarations.push({ type: ELF_PT_INTERP, ...span });
+      else if (type === ELF_PT_GNU_STACK)
+        programDeclarations.push({ type: ELF_PT_GNU_STACK, ...span });
+      else if (type === ELF_PT_GNU_RELRO)
+        programDeclarations.push({ type: ELF_PT_GNU_RELRO, ...span });
+      else if (type === ELF_PT_GNU_PROPERTY)
+        programDeclarations.push({ type: ELF_PT_GNU_PROPERTY, ...span });
     }
   }
   const sections: NativeSection[] = [];
@@ -268,6 +301,7 @@ export function* readElfSectionDirectory(
         link: section.link,
         info: section.info,
         entry_size: section.entrySize,
+        alignment: section.alignment,
         file_backed:
           type !== 8 && declaredFileRange(fileSize, offset, size).file_backed,
       });
@@ -366,6 +400,7 @@ export function* readPeSectionDirectory(
       link: 0,
       info: 0,
       entry_size: 0n,
+      alignment: 1n,
       file_backed: declaredFileRange(
         fileSize,
         BigInt(row.offset),
@@ -385,15 +420,29 @@ export function* readPeSectionDirectory(
   };
 }
 
-/** Borrow ELF bytes; file drivers satisfy the identical requests without loading payloads. */
-export const readElfDirectoryFromBuffer = (
+const driveFromBuffer = <T>(
   bytes: Buffer,
-): ElfSectionDirectory => {
-  const steps = readElfSectionDirectory(bytes.length);
+  steps: Generator<NativeReadRequest, T, Buffer>,
+): T => {
   let next = steps.next();
   while (!next.done) {
     const { offset, size } = next.value;
     next = steps.next(bytes.subarray(offset, offset + size));
   }
   return next.value;
+};
+
+/** Borrow ELF bytes; file drivers satisfy the identical requests without loading payloads. */
+export const readElfDirectoryFromBuffer = (
+  bytes: Buffer,
+): ElfSectionDirectory =>
+  driveFromBuffer(bytes, readElfSectionDirectory(bytes.length));
+
+/** Reject a program or section payload the declared tables place outside these bytes. */
+export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {
+  const checked = driveFromBuffer(
+    bytes,
+    validateElfDeclaredRanges(bytes.subarray(0, 64), bytes.length),
+  );
+  if (!checked.ok) reject(checked.error);
 };

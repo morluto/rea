@@ -13,8 +13,12 @@ export interface MachoLoadCommandTableHeader {
   readonly commandBytes: number;
 }
 
+/** Byte offset of `mach_header.flags`, shared by the 32- and 64-bit headers. */
+export const MACHO_HEADER_FLAGS_OFFSET = 24;
+
 export interface MachoHeaderDeclarations extends MachoLoadCommandTableHeader {
   readonly fileType: number;
+  readonly flags: number;
   readonly identity: { readonly cpuType: number; readonly cpuSubtype: number };
 }
 
@@ -39,6 +43,7 @@ export const readMachoHeaderDeclarations = (
     commandCount: view.getUint32(16, littleEndian),
     commandBytes,
     fileType: view.getUint32(12, littleEndian),
+    flags: view.getUint32(MACHO_HEADER_FLAGS_OFFSET, littleEndian),
     identity: prefix.identity,
   });
 };
@@ -134,6 +139,19 @@ export class MachoLoadCommandCursor {
         );
   }
 }
+
+/** `linkedit_data_command`: cmd, cmdsize, dataoff, datasize. Null when truncated. */
+export const readMachoLinkeditDataCommand = (
+  body: Uint8Array,
+  littleEndian: boolean,
+): { readonly dataOffset: number; readonly dataSize: number } | null => {
+  if (body.byteLength < 16) return null;
+  const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+  return {
+    dataOffset: view.getUint32(8, littleEndian),
+    dataSize: view.getUint32(12, littleEndian),
+  };
+};
 
 export type MachoCommandStringFailure =
   | {
