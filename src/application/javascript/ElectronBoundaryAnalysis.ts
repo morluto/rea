@@ -151,8 +151,11 @@ export const electronModuleReferenced = (
       )
     )
       return true;
+    // Only a loaded module establishes Electron applicability: `require.resolve`
+    // locates the module without loading it, so no boundary fact is expected.
     return (javascript?.references ?? []).some(
-      ({ specifier, kind }) =>
+      ({ specifier, kind, operation }) =>
+        operation === "load" &&
         ELECTRON_REFERENCE_KINDS.has(kind) &&
         specifier !== null &&
         ELECTRON_MODULE.test(specifier),

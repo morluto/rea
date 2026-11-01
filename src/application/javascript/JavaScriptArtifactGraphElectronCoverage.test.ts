@@ -266,3 +266,13 @@ it("reports the same Electron applicability as the retained static fact", async 
   );
   expect(graph.electronSemantics).toBeUndefined();
 });
+
+it("does not count a resolve-only Electron reference as coverage", async () => {
+  // `require.resolve("electron")` locates the module without loading it, so no
+  // boundary fact is expected and neither output may claim empty coverage.
+  const { limitations, electronSemantics } = await graphFor(
+    `const entry = require.resolve("electron");\n`,
+  );
+  expect(electronSemantics).toBeUndefined();
+  expect(limitations).not.toContain(EMPTY_COVERAGE);
+});
