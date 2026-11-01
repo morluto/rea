@@ -249,6 +249,17 @@ it("keeps an expected block unknown when an ExtraData block overruns the file", 
   expect(missingBlockIssues(report)).toEqual([]);
 });
 
+it("treats any TerminalSize below 4 as the ExtraData terminal", async () => {
+  const base = windowsShortcutBytes({ extraData: [], terminalBlock: false });
+  for (const size of [1, 2, 3]) {
+    const report = await parse(
+      Buffer.concat([base, Buffer.from([size, 0x00, 0x00, 0x00])]),
+    );
+    expect(report.extra_data.terminal_offset).toBe(base.length);
+    expect(report.coverage.status).toBe("complete");
+  }
+});
+
 it("reports partial coverage when an expected block has no ExtraData to read", async () => {
   const report = await parse(
     withLinkFlags(

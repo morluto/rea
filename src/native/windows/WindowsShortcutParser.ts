@@ -954,7 +954,8 @@ const parseExtraData = async (
       break;
     }
     const size = bytes.readUInt32LE(walk.offset);
-    if (size === 0) {
+    // TerminalSize MUST be below 4; any such value ends ExtraData.
+    if (size < 4) {
       terminalOffset = walk.offset;
       walk.offset += 4;
       break;
