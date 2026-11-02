@@ -1514,8 +1514,10 @@ const currentProcessUid = (): number | undefined =>
  * current macOS omits the environment of Apple platform binaries and
  * CS_RESTRICT processes from KERN_PROCARGS2, and fails with EINVAL for
  * processes owned by another account. Linux denies `/proc/<pid>/environ` for
- * another account, mismatched real/saved IDs (setgid and setuid programs) and
- * non-dumpable processes. These classes cannot be token-verified by this
+ * another account, mismatched real/saved IDs (setgid and setuid programs),
+ * non-dumpable processes and processes in another user namespace (for example
+ * bubblewrap sandboxes, whose UID still matches). These classes cannot be
+ * token-verified by this
  * caller. An unrelated candidate is recorded as unverified instead of failing
  * an otherwise clean capture; every related or otherwise unreadable candidate
  * stays fail-closed.

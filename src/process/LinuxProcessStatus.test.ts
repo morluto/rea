@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import {
   linuxEnvironmentRestriction,
+  linuxUserNamespaceDiffers,
   parseLinuxProcessIds,
 } from "./LinuxProcessStatus.js";
 
@@ -48,6 +49,36 @@ it.each([
     undefined,
   ],
   [
+    "a process in another user namespace",
+    {
+      uids: matching,
+      gids: matching,
+      procfsOwnerUid: 1000,
+      userNamespaceDiffers: true,
+    },
+    "user-namespace",
+  ],
+  [
+    "a process whose user namespace matches or is unknown",
+    {
+      uids: matching,
+      gids: matching,
+      procfsOwnerUid: 1000,
+      userNamespaceDiffers: false,
+    },
+    undefined,
+  ],
+  [
+    "a non-dumpable process in another user namespace",
+    {
+      uids: matching,
+      gids: matching,
+      procfsOwnerUid: 0,
+      userNamespaceDiffers: true,
+    },
+    "non-dumpable",
+  ],
+  [
     "a process with unknown procfs ownership and GIDs",
     { uids: matching, gids: undefined, procfsOwnerUid: undefined },
     undefined,
@@ -70,3 +101,28 @@ it("does not derive a credential restriction without caller credentials", () => 
     }),
   ).toBeUndefined();
 });
+
+it.each([
+  [
+    "a different mapping",
+    "         0       1000          1\n",
+    "0 0 4294967295\n",
+    true,
+  ],
+  ["a different extent count", "1000 1000 1\n", "1000 1000 2\n", true],
+  ["an empty unmapped namespace", "", "0 0 4294967295\n", true],
+  [
+    "identical text with different spacing",
+    "0\t0  4294967295",
+    " 0 0 4294967295\n",
+    false,
+  ],
+  ["an unreadable target map", undefined, "0 0 4294967295\n", undefined],
+  ["an unreadable caller map", "0 0 1\n", undefined, undefined],
+  ["an empty caller map", "0 0 1\n", "\n", undefined],
+] as const)(
+  "compares user namespace maps for %s",
+  (_name, target, callerMap, expected) => {
+    expect(linuxUserNamespaceDiffers(target, callerMap)).toBe(expected);
+  },
+);

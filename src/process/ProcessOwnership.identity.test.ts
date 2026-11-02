@@ -266,7 +266,7 @@ it
 
 it
   .skipIf(typeof process.getuid !== "function")
-  .each(["credentials", "non-dumpable"] as const)(
+  .each(["credentials", "non-dumpable", "user-namespace"] as const)(
   "records an unrelated same-UID Linux process whose environment is withheld for %s",
   async (restriction) => {
     const diagnostic = "EACCES: permission denied, open '/proc/908/environ'";
