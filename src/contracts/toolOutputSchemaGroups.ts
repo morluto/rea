@@ -46,6 +46,7 @@ import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
 import {
   evidenceBundleSummarySchema,
+  evidenceLinkInspectionSchema,
   evidenceRecordSelectionSchema,
 } from "../domain/evidenceRecordSummary.js";
 import { liveBinaryTargetSummaryVariants } from "../domain/liveBinaryTargetSummary.js";
@@ -537,6 +538,7 @@ export const sessionOutputSchemas = {
       evidenceBundleSchema,
       evidenceBundleSummarySchema,
       evidenceRecordSelectionSchema,
+      evidenceLinkInspectionSchema,
     ]),
   ),
   get_navigation_context: lifecycleResultOf(

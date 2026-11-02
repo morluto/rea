@@ -390,9 +390,26 @@ that revision. If a list response overflows, retry on the same connection with
 the same filters and offset and a smaller limit; export if one head still cannot
 fit.
 
+To find missing sources before a downstream analysis refuses them, read
+`missing_direct_links` from the summary, or call `get_evidence_bundle` with
+`detail: "links"`. The result (`kind: "evidence-link-inspection"`) transfers no
+record payload. `filters` select the starting records, while membership is
+checked against every record in the session or file, so a filtered-out source is
+`retained`, not missing. Rows (`evidence_id`, `linked_evidence_id`, `status`) are
+in canonical order, default to `link_status: "missing"` and page with `offset` and
+`limit` (default 64); `links` counts every inspected link regardless of that
+selection. `traversal: "direct"` (the default) reads the selected records' own
+links and sets `retained_closure` to null, because it makes no closure claim.
+`traversal: "retained-closure"` also follows retained links, as composed workflows
+such as `build_call_path` do, and reports `complete` or `incomplete`; anything
+beyond a missing link remains unknown. Missing means absent from this session or
+file, not nonexistent, and neither status describes analysis coverage. Importing
+a missing source changes this membership without changing any Evidence ID.
+
 For a portable exported bundle, the CLI shares this projection:
 `rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"}}' --format json`.
-`"detail":"records"` with an `evidence_id` filter returns that complete record.
+`"detail":"records"` with an `evidence_id` filter returns that complete record,
+and `"detail":"links"` reads link membership.
 The CLI validates and materializes that local bundle under its existing memory
 budget; summary delivery does not make arbitrary large files cheap to import.
 
