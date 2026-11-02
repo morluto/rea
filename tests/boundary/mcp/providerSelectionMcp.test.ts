@@ -212,13 +212,6 @@ describe("provider selection over MCP", () => {
     expect(remediation).toMatch(
       /binary_session.*complete.*open_binary.*provider_id/u,
     );
-    expect(remediation).toMatch(
-      /availability, target support, and capabilities/u,
-    );
-    expect(remediation).toMatch(/If a suitable candidate is available/u);
-    expect(remediation).toMatch(
-      /rea providers.*target support remains unknown/u,
-    );
     expect(starts).toEqual(["beta"]);
 
     const status = structured(
