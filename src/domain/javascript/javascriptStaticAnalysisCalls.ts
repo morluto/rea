@@ -560,6 +560,7 @@ const inspectEndpointCall = (
     const unwrapped = unwrapJavaScriptExpression(reference).node;
     if (
       t.isIdentifier(unwrapped) ||
+      t.isNewExpression(unwrapped) ||
       t.isMemberExpression(unwrapped) ||
       t.isOptionalMemberExpression(unwrapped)
     ) {
@@ -751,8 +752,12 @@ export const resolvedRequestTarget = (
     t.isNewExpression(direct) &&
     direct.arguments.length === 1 &&
     isFetchCall(site, bindings)
-  )
-    return requestConstructorUrl(direct, bindings);
+  ) {
+    const requestUrl = requestConstructorUrl(direct, bindings);
+    if (requestUrl !== undefined) return requestUrl;
+  }
+  if (t.isNewExpression(direct))
+    return literalUrlObjectTarget(direct, bindings);
   const reference = requestReferenceNode(node);
   // A toString result is selected before the enclosing request invocation.
   const expression = unwrapJavaScriptExpression(node).node;
@@ -857,6 +862,15 @@ const urlObjectRequestTarget = (
     if (requestUrl !== undefined) return requestUrl;
   }
   if (!t.isNewExpression(initialized)) return undefined;
+  return literalUrlObjectTarget(initialized, bindings);
+};
+
+const literalUrlObjectTarget = (
+  initialized: t.NewExpression,
+  bindings: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  if (semanticOpaqueGlobalMayHaveChanged(initialized.callee, bindings))
+    return undefined;
   if (!isUnmodifiedGlobalReference(initialized.callee, bindings, "URL"))
     return undefined;
   if (

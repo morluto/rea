@@ -1277,6 +1277,31 @@ it("resolves a direct Request passed to fetch while preserving constructor ident
   }
 });
 
+it("resolves direct URL objects only when their construction and coercion are known", () => {
+  const report = analyzeWebBundleFixture(
+    inspection("fetch(new URL('/path?x=1','https://example.com/base'));"),
+  );
+  expect(report.observations.endpoints).toContainEqual(
+    expect.objectContaining({ value: "https://example.com/path?x=1" }),
+  );
+  expect(report.completeness.status).toBe("complete");
+  for (const source of [
+    "function f(URL) { fetch(new URL('/x','https://example.com')); }",
+    "URL=custom; fetch(new URL('/x','https://example.com'));",
+    "eval('URL=custom'); fetch(new URL('/x','https://example.com'));",
+    "URL.prototype.toString=custom; fetch(new URL('/x','https://example.com'));",
+    "fetch(new URL(...args));",
+    "fetch(new URL('/x',base));",
+  ]) {
+    const unknown = analyzeWebBundleFixture(inspection(source));
+    expect(unknown.observations.endpoints).toEqual([]);
+    expect(unknown.completeness.status).toBe("partial");
+    expect(unknown.unknowns).toContainEqual(
+      expect.objectContaining({ dimension: "network_target" }),
+    );
+  }
+});
+
 it("does not promote mutated, conditional or shadowed request targets", () => {
   for (const source of [
     `let target = '/old'; target = '/new'; fetch(target);`,
