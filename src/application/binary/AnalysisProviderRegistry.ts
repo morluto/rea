@@ -210,7 +210,10 @@ export class AnalysisProviderRegistry {
       this.#profileResources.hasPending ||
       [...this.#selectionCleanup].some((error) => error.cleanupIncomplete) ||
       this.#providers.some(
-        (provider) => provider.hasPendingOwnedResources?.() === true,
+        (provider) =>
+          provider.hasRetainedCleanupFailures?.() === true ||
+          (provider.hasRetainedCleanupFailures === undefined &&
+            provider.hasPendingOwnedResources?.() === true),
       )
     );
   }

@@ -376,6 +376,8 @@ export interface AnalysisProviderCandidate extends AnalysisProvider {
   ): Promise<ProviderTargetSupport>;
   /** Observe retained candidate cleanup without starting or retrying work. */
   hasPendingOwnedResources?(): boolean;
+  /** Observe unconfirmed candidate cleanup failures without active inspection work. */
+  hasRetainedCleanupFailures?(): boolean;
   /** Release candidate resources that are independent of any active client. */
   closeOwnedResources?(): Promise<Result<null, AnalysisError>>;
 }

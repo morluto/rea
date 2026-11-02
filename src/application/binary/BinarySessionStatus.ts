@@ -42,8 +42,8 @@ interface BinarySessionStatusInput {
   readonly runtimeLineageSnapshots: readonly ProviderRuntimeLineageSnapshot[];
   readonly requestActivitySnapshots: readonly ProviderRequestActivitySnapshot[];
   readonly providerOperationHealth?: ProviderOperationHealth | null;
-  readonly cleanupPending?: boolean;
-  readonly closeCleanupPending?: boolean;
+  readonly cleanupPending?: boolean | (() => boolean);
+  readonly closeCleanupPending?: boolean | (() => boolean);
   readonly detail?: BinarySessionDetail;
   readonly signal?: AbortSignal;
 }
@@ -136,10 +136,16 @@ export const binarySessionStatus = async ({
                 ),
               },
         );
+  const resolvedCleanupPending =
+    typeof cleanupPending === "function" ? cleanupPending() : cleanupPending;
+  const resolvedCloseCleanupPending =
+    typeof closeCleanupPending === "function"
+      ? closeCleanupPending()
+      : closeCleanupPending;
   const common = {
     investigation,
-    cleanup_pending: cleanupPending,
-    ...(closeCleanupPending ? { close_cleanup_pending: true } : {}),
+    cleanup_pending: resolvedCleanupPending,
+    ...(resolvedCloseCleanupPending ? { close_cleanup_pending: true } : {}),
     capabilities,
     analysis_provider_binding: analysisProviderBinding,
     analysis_provider_candidates: analysisProviderCandidates,

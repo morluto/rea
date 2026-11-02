@@ -327,6 +327,10 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     );
   }
 
+  hasRetainedCleanupFailures(): boolean {
+    return this.#inspectionResources.hasPending;
+  }
+
   closeOwnedResources() {
     this.#closing ??= Promise.resolve()
       .then(async () => {

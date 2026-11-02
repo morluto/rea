@@ -1255,10 +1255,10 @@ export class BinarySession
       runtimeLineageSnapshots: client?.runtimeLineageSnapshots?.() ?? [],
       requestActivitySnapshots: client?.requestActivitySnapshots?.() ?? [],
       providerOperationHealth: client?.operationHealthSnapshot?.() ?? null,
-      cleanupPending:
+      cleanupPending: () =>
         this.#externalMutationCleanupFailure?.cleanupIncomplete === true ||
         this.#retainsCloseCleanup(),
-      closeCleanupPending: this.#retainsCloseCleanup(),
+      closeCleanupPending: () => this.#retainsCloseCleanup(),
     });
   }
 

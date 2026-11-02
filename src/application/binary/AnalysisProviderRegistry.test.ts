@@ -1343,3 +1343,15 @@ it("registers selection before async readiness can race shutdown", async () => {
   expect(calls).toBe(2);
   expect(registry.hasPendingOwnedResources()).toBe(false);
 });
+
+it("excludes active provider candidate inspections from retained cleanup failures", () => {
+  const fixture = candidate("fixture");
+  const providerWithInFlightWork: AnalysisProviderCandidate = {
+    ...fixture.provider,
+    hasPendingOwnedResources: () => true,
+    hasRetainedCleanupFailures: () => false,
+  };
+  const registry = new AnalysisProviderRegistry([providerWithInFlightWork]);
+  expect(registry.hasPendingOwnedResources()).toBe(true);
+  expect(registry.hasRetainedCleanupFailures()).toBe(false);
+});
