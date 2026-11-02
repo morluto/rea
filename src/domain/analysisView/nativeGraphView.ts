@@ -10,6 +10,18 @@ import {
 type GraphItems = z.output<typeof nativeGraphViewItemsSchema>;
 type Coverage = z.output<typeof referencedRelationshipCoverageSchema>;
 
+const canonicalDepth = /^(?:0|[1-9][0-9]*)$/;
+
+const compareGraphLevels = (left: string, right: string): number => {
+  const leftNumeric = canonicalDepth.test(left);
+  const rightNumeric = canonicalDepth.test(right);
+  if (leftNumeric && rightNumeric) {
+    if (left.length !== right.length) return left.length - right.length;
+    return compareUnicodeCodePoints(left, right);
+  }
+  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+  return compareUnicodeCodePoints(left, right);
+};
 const referenceCoverage = (
   source: RelationshipCoverage,
   intern: (message: string) => number,
@@ -56,9 +68,7 @@ export const projectNativeGraphRows = (
   };
   const rows: GraphItems["rows"] = [];
   let total = 0;
-  for (const level of Object.keys(source.graph).sort(
-    compareUnicodeCodePoints,
-  )) {
+  for (const level of Object.keys(source.graph).sort(compareGraphLevels)) {
     const nodes = source.graph[level]!;
     if (nodes.length === 0) {
       if (total >= view.offset && rows.length < view.limit)
