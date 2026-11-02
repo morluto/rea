@@ -17,7 +17,10 @@ import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
-import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
+import {
+  createImmutableEvidenceBundle,
+  type EvidenceBundle,
+} from "../domain/evidenceBundle.js";
 import { retainAnalysisResultSources } from "./investigation/recordEvidenceSources.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
@@ -138,6 +141,8 @@ export const runDirectAnalysis = async (
     readonly architecture?: BinaryArchitecture;
     readonly entryPoint?: string;
     readonly espFlash?: EspFlashSelection;
+    /** Capture the exact session Evidence available to a one-shot CLI adapter. */
+    readonly onEvidenceBundle?: (bundle: EvidenceBundle) => void;
   } = {},
 ): Promise<Result<Evidence, JsonValue>> =>
   withProcessCancellation(options.signal, (signal) =>
@@ -145,6 +150,9 @@ export const runDirectAnalysis = async (
       logger: options.logger ?? silentLogger,
       snapshotPath: options.snapshotPath,
       signal,
+      ...(options.onEvidenceBundle === undefined
+        ? {}
+        : { onEvidenceBundle: options.onEvidenceBundle }),
       ...targetSelection(options),
       ...(options.providerId === undefined
         ? {}
@@ -363,6 +371,7 @@ const runAnalysis = async (
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
     readonly evidenceParameters?: Readonly<Record<string, JsonValue>>;
+    readonly onEvidenceBundle?: (bundle: EvidenceBundle) => void;
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly providerId?: AnalysisProviderSelector;
     readonly formatHint?: ExecutableFormatHint;
@@ -457,8 +466,10 @@ const runAnalysis = async (
             : routeProviderIdentity(route, tool),
           evidenceProfile,
         });
-        if (cached !== undefined)
+        if (cached !== undefined) {
+          options.onEvidenceBundle?.(snapshot.evidence_bundle);
           return ok(withEvidenceCallerInputPath(cached, path));
+        }
       }
     }
     const openOptions = {
@@ -550,6 +561,7 @@ const runAnalysis = async (
           return err(written.error.retainPartialObservation(evidence));
       }
     }
+    options.onEvidenceBundle?.(session.exportEvidenceBundle());
     return ok(evidence);
   };
   const outcome = await withSessionCleanup<{
