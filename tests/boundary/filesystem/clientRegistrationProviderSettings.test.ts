@@ -1,10 +1,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { recordedProviderSettings } from "../../../src/application/ClientRegistrationEnvironment.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
@@ -213,15 +212,9 @@ it("reads the effective view of layered OpenCode files", async () => {
 
 it("keeps a Cordis expression unresolved instead of absent or different", async () => {
   const home = await createTestTempDirectory("rea-recorded-settings-dsh-");
-  const patches = join(home, ".dsh/config.d");
-  await mkdir(patches, { recursive: true });
-  const client = supportedClients(home, "linux", {}).find(
-    ({ name }) => name === "dsh",
-  );
-  if (client === undefined) throw new Error("missing dsh client");
-  await mkdir(dirname(client.configPath), { recursive: true });
+  await mkdir(join(home, ".dsh"));
   await writeFile(
-    client.configPath,
+    join(home, ".dsh/cordis.patch.yml"),
     `- insert:
     - id: rea-mcp
       name: "@deepseek-ai/dsh-mcp-client"
