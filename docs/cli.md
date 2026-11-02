@@ -1301,8 +1301,10 @@ captured, within 64 KiB. `omitted` lists up to 64 other identities and
 `omitted_count` the total: `not_captured` means the invocation holds no such
 record, so nothing is shown for it or its ancestors; `not_inlined` means it was
 captured but is not in this response. `complete` is true only when every cited
-record is in `records` or embedded in the observation. Nothing is retained after
-exit, and running the command again is a new observation.
+record is in `records` or embedded in the observation. If examining the closure
+itself fails, `collection_failure` names the error type and the closure state is
+unknown; the original failure is still returned. Nothing is retained after exit,
+and running the command again is a new observation.
 
 When the reader of piped output closes early, as `rea ... | head` does, the
 CLI stops writing, prints no error and exits `141` (`128 + 13`, the status of a

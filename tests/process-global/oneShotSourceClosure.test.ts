@@ -5,6 +5,7 @@ import { Cli } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 
 import type { UndeliveredSourceClosure } from "../../src/application/AnalysisEvidenceSources.js";
+import * as matchingService from "../../src/application/native/NativeFunctionMatchingService.js";
 import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
 import { registerNativeFunctionMatchingCommands } from "../../src/cli/nativeFunctionMatchingCommands.js";
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
@@ -92,16 +93,39 @@ const fixture = async (dependencyText = "Synthetic dependency") => {
   };
 };
 
-/** Run the registered command and synchronize its signal with real final close. */
+/**
+ * Run the registered command, faulting only the close of the scope the command
+ * gave to matching, after that matching completed. Another scope's close cannot
+ * move the fault, and a command that stops reaching this close fails here.
+ */
 const runMatching = async (
   input: Awaited<ReturnType<typeof fixture>>,
   finalClose: FinalClose,
-  detail: readonly string[] = [],
+  options: {
+    readonly environment?: Readonly<Record<string, string>>;
+    readonly earlierScopeClose?: boolean;
+  } = {},
 ) => {
+  const match = matchingService.matchNativeFunctionsFromBundles;
   const close = ArtifactResourceScope.prototype.close;
+  let commandScope: ArtifactResourceScope | undefined;
+  let completed = false;
+  let finalCloses = 0;
+  const matching = vi
+    .spyOn(matchingService, "matchNativeFunctionsFromBundles")
+    .mockImplementation(async (request, paths, resources, matchOptions) => {
+      commandScope = resources;
+      if (options.earlierScopeClose === true)
+        await new ArtifactResourceScope().close();
+      const result = await match(request, paths, resources, matchOptions);
+      completed = result.ok;
+      return result;
+    });
   const seam = vi
     .spyOn(ArtifactResourceScope.prototype, "close")
-    .mockImplementationOnce(async function (this: ArtifactResourceScope) {
+    .mockImplementation(async function (this: ArtifactResourceScope) {
+      if (this !== commandScope || !completed) return close.call(this);
+      finalCloses += 1;
       if (
         finalClose === "interrupt" ||
         finalClose === "interrupt-cleanup-failure"
@@ -120,7 +144,11 @@ const runMatching = async (
         );
     });
   const cli = Cli.create("one-shot-source-closure-test", { sync: false });
-  registerNativeFunctionMatchingCommands(cli, silentLogger, {});
+  registerNativeFunctionMatchingCommands(
+    cli,
+    silentLogger,
+    options.environment ?? {},
+  );
   let stdout = "";
   const previous = process.exitCode;
   try {
@@ -133,7 +161,6 @@ const runMatching = async (
         input.sources,
         "--evidence_output",
         input.output,
-        ...detail,
         "--json",
       ],
       {
@@ -143,12 +170,17 @@ const runMatching = async (
         exit: () => {},
       },
     );
+    expect(finalCloses, stdout).toBe(1);
     return { stdout, exitCode: process.exitCode };
   } finally {
     process.exitCode = previous;
     seam.mockRestore();
+    matching.mockRestore();
   }
 };
+
+/** Above V8's default call-argument limit of about 125,000 on a forked main thread. */
+const DATA_SIZED_LINKS = 200_000;
 
 const closureOf = (stdout: string) => {
   const failure = analysisErrorProjectionSchema.parse(JSON.parse(stdout));
@@ -199,6 +231,78 @@ it.each([
     expect(await readdir(input.root)).not.toContain("evidence.json");
     expect(host.listeners.size).toBe(0);
   },
+);
+
+it("keeps the fault on the final close when another scope closes first", async () => {
+  const input = await fixture();
+  const { stdout, exitCode } = await runMatching(input, "interrupt", {
+    earlierScopeClose: true,
+  });
+  expect(exitCode).toBe(130);
+  const { failure, closure } = closureOf(stdout);
+  expect(failure.code).toBe("cancelled");
+  expect(parseEvidence(failure.details?.partial_observation).operation).toBe(
+    "match_native_functions",
+  );
+  expect(closure.complete).toBe(true);
+});
+
+it.each([
+  ["interrupt", "cancelled"],
+  ["cleanup-failure", "cleanup_incomplete"],
+] as const)(
+  "keeps the typed failure for a captured source with a data-sized link set: %s",
+  async (finalClose, code) => {
+    // Repeated links are valid Evidence, and only one distinct record backs them.
+    const ancestor = createEvidence(undefined, nativeMatchingProvider, {
+      operation: "fixture_ancestor",
+      parameters: {},
+      result: { source: "Synthetic ancestor" },
+    });
+    const wide = createEvidence(undefined, nativeMatchingProvider, {
+      operation: "fixture_dependency",
+      parameters: {},
+      result: { source: "Synthetic wide dependency" },
+      evidenceLinks: Array.from(
+        { length: DATA_SIZED_LINKS },
+        () => ancestor.evidence_id,
+      ),
+    });
+    const input = await fixture();
+    const left = nativeMatchingInventory(
+      "1",
+      [{ address: "0x10", value: "main" }],
+      [wide.evidence_id],
+    );
+    await writeFile(
+      input.sources,
+      JSON.stringify(createEvidenceBundle([ancestor, wide])),
+    );
+    await writeFile(
+      input.request,
+      JSON.stringify({ left, right: input.right, detail: "complete" }),
+    );
+    const { stdout } = await runMatching(input, finalClose, {
+      environment: {
+        REA_NATIVE_MATCHING_REPRESENTATION_BYTES: String(1024 ** 3),
+      },
+    });
+    const { failure, closure } = closureOf(stdout);
+    expect(failure.code).toBe(code);
+    expect(parseEvidence(failure.details?.partial_observation).operation).toBe(
+      "match_native_functions",
+    );
+    // The closure is deduplicated: each record is examined and reported once.
+    expect(recordIds(closure)).toEqual(
+      [ancestor.evidence_id, left.evidence_id, input.right.evidence_id].sort(),
+    );
+    expect(closure).toMatchObject({
+      complete: false,
+      omitted_count: 1,
+      omitted: [{ evidence_id: wide.evidence_id, reason: "not_inlined" }],
+    });
+  },
+  60_000,
 );
 
 it("hands off the same closure for summary delivery and permits a clean retry", async () => {

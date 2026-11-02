@@ -194,6 +194,152 @@ it("bounds records and listed omissions while counting everything", async () => 
   expect(jsonByteLength(closure)).toBeLessThan(80 * 1024);
 });
 
+/** Above V8's default call-argument limit of about 125,000 on a forked main thread. */
+const DATA_SIZED_LINKS = 200_000;
+
+const digestLink = (index: number) =>
+  `ev_${index.toString(16).padStart(64, "0")}`;
+
+const wideSource = (links: readonly string[]) =>
+  createEvidence(undefined, provider, {
+    operation: "fixture_source",
+    parameters: {},
+    result: { wide: true },
+    evidenceLinks: links,
+  });
+
+it.each(["final-close cancellation", "refused publication"] as const)(
+  "keeps the original failure when a captured source has a data-sized link set: %s",
+  async (failure) => {
+    const root = await createTestTempDirectory("rea-closure-wide-");
+    const links = Array.from({ length: DATA_SIZED_LINKS }, (_, index) =>
+      digestLink(index),
+    );
+    const wide = wideSource(links);
+    const observation = observed([wide.evidence_id]);
+    const requested = delivery(root, [wide]);
+    if (failure === "refused publication")
+      await writeFile(requested.evidenceOutput, "original");
+    const output = await publishCliAnalysisEvidence(
+      failure === "refused publication"
+        ? ok(observation)
+        : err(cancelledWith(observation)),
+      requested,
+    );
+    expect(output).toMatchObject(
+      failure === "refused publication"
+        ? { details: { reason: "exists" } }
+        : { code: "cancelled" },
+    );
+    const closure = closureOf(output);
+    expect(closure.records).toEqual([]);
+    expect(closure.omitted_count).toBe(DATA_SIZED_LINKS + 1);
+    expect(closure.omitted).toHaveLength(64);
+    expect(closure.omitted[0]).toEqual({
+      evidence_id: wide.evidence_id,
+      reason: "not_inlined",
+    });
+    expect(jsonByteLength(closure)).toBeLessThan(16 * 1024);
+  },
+  60_000,
+);
+
+it("reports a data-sized link set cited by the observation itself", async () => {
+  const root = await createTestTempDirectory("rea-closure-wide-observation-");
+  const closure = closureOf(
+    await publishCliAnalysisEvidence(
+      err(
+        cancelledWith(
+          observed(
+            Array.from({ length: DATA_SIZED_LINKS }, (_, index) =>
+              digestLink(index),
+            ),
+          ),
+        ),
+      ),
+      delivery(root),
+    ),
+  );
+  expect(closure.omitted_count).toBe(DATA_SIZED_LINKS);
+  expect(closure.omitted).toHaveLength(64);
+}, 60_000);
+
+it("examines repeated links once across every captured source", async () => {
+  const root = await createTestTempDirectory("rea-closure-dedupe-");
+  const shared = source("shared");
+  const repeated = Array.from(
+    { length: DATA_SIZED_LINKS },
+    () => shared.evidence_id,
+  );
+  const first = wideSource(repeated);
+  const second = createEvidence(undefined, provider, {
+    operation: "fixture_source",
+    parameters: { second: true },
+    result: { wide: true },
+    evidenceLinks: repeated,
+  });
+  const closure = closureOf(
+    await publishCliAnalysisEvidence(
+      err(cancelledWith(observed([first.evidence_id, second.evidence_id]))),
+      delivery(root, [first, second, shared]),
+    ),
+  );
+  expect(closure.records).toEqual([shared]);
+  expect(closure.omitted_count).toBe(2);
+}, 60_000);
+
+it.each([
+  ["a captured source", "captured"],
+  ["the completed observation", "observation"],
+] as const)(
+  "keeps the original failure when examining %s throws",
+  async (_, thrower) => {
+    const root = await createTestTempDirectory("rea-closure-throws-");
+    const held = source("held");
+    const failing = (record: Evidence) =>
+      Object.defineProperty({ ...record }, "evidence_links", {
+        enumerable: true,
+        get: () => {
+          throw new RangeError("quoted analyzed-value text");
+        },
+      }) as Evidence;
+    const observation = observed([held.evidence_id]);
+    const projected = cancelledWith(observation) as {
+      details: Record<string, JsonValue>;
+    };
+    const partial =
+      thrower === "observation"
+        ? (failing(observation) as unknown as JsonValue)
+        : projected.details.partial_observation!;
+    const failure = {
+      ...projected,
+      details: { ...projected.details, partial_observation: partial },
+    } as JsonValue;
+    const output = (await publishCliAnalysisEvidence(
+      err(failure),
+      delivery(root, thrower === "captured" ? [failing(held)] : [held]),
+    )) as {
+      code: string;
+      message: string;
+      details: Record<string, unknown>;
+    };
+    expect(output.code).toBe("cancelled");
+    expect(output.message).toBe((failure as { message: string }).message);
+    expect(output.details.partial_observation).toBe(partial);
+    expect(output.details.operation).toBe("fixture_observation");
+    expect(output.details.source_closure).toEqual({
+      publication: "not_published",
+      complete: false,
+      collection_failure: "RangeError",
+      recovery: expect.any(String),
+    });
+    expect(JSON.stringify(output.details.source_closure)).not.toContain(
+      "quoted analyzed-value text",
+    );
+    expect(await readdir(root)).toEqual([]);
+  },
+);
+
 it("spends the allowance on smaller later records after a record does not fit", async () => {
   const root = await createTestTempDirectory("rea-closure-greedy-");
   const large = createEvidence(undefined, provider, {

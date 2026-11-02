@@ -7,7 +7,6 @@ import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js
 import { z } from "incur";
 import {
   parseEvidence,
-  tryParseEvidence,
   withEvidenceCallerInputPath,
   type Evidence,
 } from "../domain/evidence.js";
@@ -190,10 +189,8 @@ const withUndeliveredSourceClosure = (
   if (input.evidenceOutput === undefined || !isObject(failure)) return failure;
   const { details } = failure;
   if (!isObject(details)) return failure;
-  const observation = tryParseEvidence(details.partial_observation);
-  if (observation === undefined) return failure;
   const closure = undeliveredSourceClosure(
-    observation,
+    details.partial_observation,
     input.sourceEvidence ?? [],
     // Error output is not the caller's selected Evidence sink. Keep records
     // out of it when this invocation carries explicit exclusions.
