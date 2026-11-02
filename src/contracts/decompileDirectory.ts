@@ -200,6 +200,11 @@ export const decompileDirectoryManifestSchema = z
       .describe(
         "SHA-256 of the analyzed target, or null when the observation has no file subject.",
       ),
+    inventory_limitations: z
+      .array(z.string())
+      .describe(
+        "Limitations reported by this call's procedure inventory. They describe the selection that produced this run, not every historical function record in the directory.",
+      ),
     limitations: z
       .array(z.string())
       .describe("Limits of this export. Pseudocode is not included."),
@@ -301,6 +306,28 @@ export const decompileJournalLineSchema = z.discriminatedUnion("kind", [
   decompileJournalFunctionSchema,
 ]);
 
+/** One caller selection, retained to distinguish the latest run from older records. */
+const decompileSelectionSchema = z.strictObject({
+  name: z.string().nullable(),
+  namespace: z.string().nullable(),
+  address_start: z.string().nullable(),
+  address_end: z.string().nullable(),
+  limit: z.number().int().min(1).nullable(),
+});
+
+/**
+ * Facts owned by the run that last rewrote this index. Inventory limitations
+ * and filters describe that run; older runs remain represented only by their
+ * retained function records.
+ */
+const decompileLatestRunSchema = z.strictObject({
+  resume: z.boolean(),
+  selected: countSchema("Functions matching this run's filter."),
+  excluded: countSchema("Inventory functions excluded by this run's filter."),
+  selection: decompileSelectionSchema,
+  inventory_limitations: z.array(z.string()),
+});
+
 /** Index rewritten from the journal at the end of a call. */
 export const decompileDirectoryIndexSchema = z.strictObject({
   version: z.literal(DECOMPILE_DIRECTORY_VERSION),
@@ -309,6 +336,11 @@ export const decompileDirectoryIndexSchema = z.strictObject({
   analysis_profile_digest: digestSchema.nullable(),
   layout: layoutSchema,
   layout_status: z.enum(["address", "debug_layout_unavailable"]),
+  latest_run: decompileLatestRunSchema
+    .optional()
+    .describe(
+      "Selection and inventory limitations owned by the run that last rewrote this index. Absent in indexes written before this field existed.",
+    ),
   limitations: z.array(z.string()),
   functions: z.array(decompileDirectoryFunctionSchema),
 });
