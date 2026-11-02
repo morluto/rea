@@ -347,6 +347,18 @@ counterparts while resolving to inventoried source files. This substitution
 requires import or require semantics. Literal Electron preload, renderer, and
 utility-process runtime paths retain the runtime filename selected by the caller.
 
+Application `.js` and `.ts` sources use the nearest readable, same-container
+`package.json` type; explicit module/CommonJS suffixes keep their own meaning.
+An unavailable nearer manifest leaves the package type unknown. When a module
+package contains `.js` sources, a preliminary pass through the bounded worker
+collects BrowserWindow preload declarations. Exact same-container `.js`
+preloads use the script-loader context even when their only operation is a
+helper `require`. Renderer API names alone never select that context. Dynamic,
+unresolved, excluded-source, and cross-container declarations do not establish
+a preload identity; this static association is not proof that Electron loaded
+the file. Discovery performs another static pass, while semantic projection
+runs once and existing heap, deadline, cancellation, and cleanup controls remain.
+
 Selected bounded text is then parsed as inert data to recover:
 
 - `package.json` metadata and declared main or renderer entrypoints;

@@ -45,6 +45,7 @@ export interface JavaScriptSourceWorkerAnalyzer {
       readonly checkpoint: (facts: JavaScriptStaticAnalysis) => Promise<number>;
     },
     packageType: JavaScriptPackageType,
+    purpose: "analysis" | "preload-discovery",
   ): Promise<{
     readonly module: JavaScriptModuleSemanticIr;
     readonly projection: JavaScriptSemanticFileProjection;
@@ -189,6 +190,7 @@ const analyzeJob = async (
         },
       },
       request.package_type,
+      request.purpose,
     );
     await send({ kind: "phase", id: request.id, phase: "transfer" });
     const descriptor =

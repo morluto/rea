@@ -49,8 +49,10 @@ export interface JavaScriptSourceAnalysisPort {
     capacity: JavaScriptSemanticProjectionCapacity,
     signal?: AbortSignal,
     onPhase?: (phase: string) => Promise<void>,
-    /** Type of the source's inventoried package scope; omitted is unknown. */
+    /** Effective package/loader context; declared .js preloads use commonjs. */
     packageType?: JavaScriptPackageType,
+    /** Discover loader declarations without retaining semantic projections. */
+    purpose?: "analysis" | "preload-discovery",
   ): Promise<Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>>;
   close(): Promise<void>;
 }

@@ -80,13 +80,17 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   ) => Promise<void>,
   signal?: AbortSignal,
   onPhase?: (file: JavaScriptArtifactFile, phase: string) => Promise<void>,
+  preloadPaths: ReadonlySet<string> = new Set(),
 ): Promise<{
   readonly analysis: JavaScriptArtifactAnalysis;
   readonly interruption: AnalysisError | null;
 }> => {
   const state = emptyArtifactAnalysis();
   const sourceIndices: number[] = [];
-  const packageTypeFor = packageTypeLookup(fileSet, state.jsonDocuments);
+  const packageTypeFor = createJavaScriptPackageTypeLookup(
+    fileSet,
+    state.jsonDocuments,
+  );
   let interruption: AnalysisError | null = null;
   const selectedFileCount =
     fileSet.files.length - (fileSet.source_selection?.unselected_files ?? 0);
@@ -122,7 +126,10 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         projection.remainingFileCapacity(),
         signal,
         onPhase === undefined ? undefined : (phase) => onPhase(file, phase),
-        packageTypeFor(file),
+        preloadPaths.has(`${file.container_sha256}:${file.path}`) &&
+          /\.js$/iu.test(file.path)
+          ? "commonjs"
+          : packageTypeFor(file),
       );
       const facts = result.ok ? result.value : result.error;
       for (const revoked of facts.revokedStaticProjections ?? []) {
@@ -398,7 +405,7 @@ const addStructuredObservations = (
  * nearest manifest, including one whose bytes are unavailable, or none in the
  * inventory, leaves the scope unknown.
  */
-const packageTypeLookup = (
+export const createJavaScriptPackageTypeLookup = (
   fileSet: JavaScriptArtifactFileSet,
   jsonDocuments: JavaScriptJsonDocuments,
 ): ((file: JavaScriptArtifactFile) => JavaScriptPackageType) => {

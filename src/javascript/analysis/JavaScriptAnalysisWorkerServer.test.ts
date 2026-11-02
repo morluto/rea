@@ -82,6 +82,7 @@ const startServer = async () => {
           unpacked: false,
         },
         package_type: "unknown",
+        purpose: "analysis",
       });
     },
     close: async () => {

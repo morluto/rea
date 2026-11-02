@@ -39,6 +39,7 @@ export const javaScriptWorkerRequestSchema = z.strictObject({
   }),
   /** Type of the source's inventoried package scope, observed by the parent. */
   package_type: z.enum(["module", "commonjs", "unspecified", "unknown"]),
+  purpose: z.enum(["analysis", "preload-discovery"]),
 });
 
 /** Parent admission after validated static observations have been retained. */

@@ -1,14 +1,6 @@
-import {
-  mayHaveElectronRendererEvidenceSteps,
-  mayRunUnderElectronScriptLoader,
-} from "../domain/javascript/electronScriptLoaderEvidence.js";
 import { moduleResolutionModeForJavaScriptReference } from "../domain/javascript/javascriptModuleResolutionMode.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
-import {
-  analyzeParsedJavaScriptStaticSourceSteps,
-  observedElectronRendererCall,
-} from "../domain/javascript/javascriptStaticAnalysis.js";
-import type { JavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisTypes.js";
+import { analyzeParsedJavaScriptStaticSourceSteps } from "../domain/javascript/javascriptStaticAnalysis.js";
 import { analyzeParsedJavaScriptSemanticsSteps } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { failedJavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import { projectJavaScriptModuleSemantics } from "../domain/javascript/javascriptModuleSemanticIr.js";
@@ -29,6 +21,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
   capacity,
   callbacks,
   packageType,
+  purpose,
 ) => {
   if (!file.text.included)
     throw new TypeError("JavaScript worker requires decoded source text");
@@ -39,31 +32,29 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     return null;
   }
   await callbacks.phase("static");
-  let facts: JavaScriptStaticAnalysis | undefined;
-  if (mayRunUnderElectronScriptLoader(parsed.program)) {
-    // Renderer-side evidence is read outside the package scope, where an
-    // unbound require keeps its Electron identity; with that evidence the
-    // whole source keeps that context, so its static and semantic facts agree.
-    // The screen rules evidence out cheaply; only the static pass confirms it.
-    const script = parseJavaScriptSource(file.text.value, file.path);
-    if (
-      script !== null &&
-      (await completeJavaScriptAnalysisSteps(
-        mayHaveElectronRendererEvidenceSteps(script.program),
-      ))
-    ) {
-      const scriptFacts = await completeJavaScriptAnalysisSteps(
-        analyzeParsedJavaScriptStaticSourceSteps(file.text.value, script),
-      );
-      if (observedElectronRendererCall(scriptFacts)) {
-        parsed = script;
-        facts = scriptFacts;
-      }
-    }
-  }
-  facts ??= await completeJavaScriptAnalysisSteps(
+  const facts = await completeJavaScriptAnalysisSteps(
     analyzeParsedJavaScriptStaticSourceSteps(file.text.value, parsed),
   );
+  if (purpose === "preload-discovery") {
+    // Only declarations cross this preliminary pass. The normal pass owns
+    // full static/semantic facts and their result reservations.
+    const empty = failedJavaScriptStaticAnalysis();
+    await callbacks.checkpoint({
+      ...empty,
+      parse_status: facts.parse_status,
+      parse_error_count: facts.parse_error_count,
+      ...(facts.analysis_coverage === undefined
+        ? {}
+        : { analysis_coverage: facts.analysis_coverage }),
+      visited_ast_nodes: facts.visited_ast_nodes,
+      limitations: facts.limitations,
+      electron: {
+        ...empty.electron,
+        browser_windows: facts.electron.browser_windows,
+      },
+    });
+    return null;
+  }
   const resultBudgetBytes = await callbacks.checkpoint(facts);
   if (facts.parse_status === "failed") return null;
   if (resultBudgetBytes === 0)

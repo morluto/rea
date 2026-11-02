@@ -1,3 +1,4 @@
+import { discoverJavaScriptPreloadPaths } from "./JavaScriptPreloadDiscovery.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import type { AnalysisSettingValues } from "../../domain/analysisSettings.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
@@ -180,17 +181,24 @@ export const reconstructJavaScriptArtifact = async (
           ? {}
           : { fileNodes: input.max_semantic_nodes_per_file }),
       });
+      const sourceLimits = {
+        heapMb:
+          input.max_heap_mb ??
+          overrides?.["javascript.max_heap_mb"] ??
+          JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
+        timeoutMs:
+          input.analysis_timeout_ms ??
+          overrides?.["javascript.analysis_timeout_ms"] ??
+          JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
+      };
+      const preloadPaths = await discoverJavaScriptPreloadPaths(
+        files,
+        sourceLimits,
+        scope,
+        signal,
+      );
       const worker = await createJavaScriptSourceAnalysis(
-        {
-          heapMb:
-            input.max_heap_mb ??
-            overrides?.["javascript.max_heap_mb"] ??
-            JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
-          timeoutMs:
-            input.analysis_timeout_ms ??
-            overrides?.["javascript.analysis_timeout_ms"] ??
-            JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
-        },
+        sourceLimits,
         files.files.filter(
           (file) => file.kind === "javascript" && file.text.included,
         ).length,
@@ -229,6 +237,7 @@ export const reconstructJavaScriptArtifact = async (
             });
             abortIfNeeded(signal);
           },
+          preloadPaths,
         );
       } finally {
         try {

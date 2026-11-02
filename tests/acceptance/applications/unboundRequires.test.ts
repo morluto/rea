@@ -373,6 +373,8 @@ cliTest(
       "main.js": source("./dep.cjs"),
       "electron-main.js":
         'try { require("electron"); console.log(require("./dep.cjs")); } catch (error) { console.log(error.name); }\n',
+      "renderer-looking-main.js":
+        'try { require("electron").ipcRenderer.send("ready"); require("./dep.cjs"); } catch (error) { console.log(error.name); }',
       "shadowed.js": `function load(require) { return require("electron").contextBridge; }\n${source("./dep.cjs")}`,
       "dead-default.js": [
         source("./dep.cjs"),
@@ -390,6 +392,7 @@ cliTest(
     for (const [path, expected] of [
       ["main.js", "ReferenceError"],
       ["electron-main.js", "ReferenceError"],
+      ["renderer-looking-main.js", "ReferenceError"],
       ["shadowed.js", "ReferenceError"],
       ["dead-default.js", "ReferenceError"],
       ["legacy/main.js", "1"],
@@ -414,6 +417,7 @@ cliTest(
     for (const path of [
       "main.js",
       "electron-main.js",
+      "renderer-looking-main.js",
       "shadowed.js",
       "dead-default.js",
     ])
@@ -445,22 +449,14 @@ cliTest(
         'ipcMain.handle("ping", () => "pong");',
         "app.whenReady().then(() => {",
         "  const window = new BrowserWindow({",
-        '    webPreferences: { preload: fileURLToPath(new URL("./preload.js", import.meta.url)) },',
+        '    webPreferences: { sandbox: false, preload: fileURLToPath(new URL("./preload.js", import.meta.url)) },',
         "  });",
         '  window.loadFile("index.html");',
         "});",
       ].join("\n"),
       "preload.js": [
         'const { contextBridge, ipcRenderer } = require("electron");',
-        'contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });',
-      ].join("\n"),
-      // Its only renderer call is a contextBridge exposure inside a helper.
-      "bridge-helper.js": [
-        'const { contextBridge } = require("electron");',
-        "function expose(key) {",
-        "  contextBridge.exposeInMainWorld(key, { version: () => 1 });",
-        "}",
-        'expose("helper");',
+        'function expose() { contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") }); } expose();',
       ].join("\n"),
       "index.html": "<!doctype html><title>app</title>\n",
     });
@@ -482,15 +478,37 @@ cliTest(
         ["electron", null, "external"],
       ],
     });
-    expect(sourceRequireFacts(graph, "bridge-helper.js")).toEqual({
-      module_format: "commonjs",
-      import_relationships: 1,
-      require_targets: [["electron", null, "external"]],
-    });
     expect(summary.ipc).toMatchObject({
       main_handlers: 1,
       renderer_transmissions: 1,
       paired_renderer_transmissions: 1,
+    });
+  },
+);
+
+cliTest(
+  "keeps a declared preload's helper require without renderer API text",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-helper-only-preload-");
+    await writeFixtureFiles(root, {
+      "package.json": JSON.stringify({ type: "module", main: "main.mjs" }),
+      "main.mjs":
+        'import { BrowserWindow } from "electron"; import { fileURLToPath } from "node:url"; new BrowserWindow({webPreferences:{sandbox:false,preload:fileURLToPath(new URL("./aaa-preload.js",import.meta.url))}});',
+      "aaa-preload.js": 'require("./helper.cjs");',
+      "helper.cjs": "module.exports = 1;",
+    });
+    const response = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const { graph } = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(response.json).normalized_result,
+    );
+    expect(sourceRequireFacts(graph, "aaa-preload.js")).toEqual({
+      module_format: "commonjs",
+      import_relationships: 1,
+      require_targets: [["./helper.cjs", "helper.cjs", "resolved"]],
     });
   },
 );

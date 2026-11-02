@@ -293,6 +293,7 @@ export class JavaScriptAnalysisWorker {
     signal?: AbortSignal,
     onPhase?: (phase: string) => Promise<void>,
     packageType: JavaScriptPackageType = "unknown",
+    purpose: "analysis" | "preload-discovery" = "analysis",
   ): Promise<
     Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>
   > {
@@ -349,6 +350,7 @@ export class JavaScriptAnalysisWorker {
         text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
         file: metadata,
         package_type: packageType,
+        purpose,
       });
       const frame = `${JSON.stringify(request)}\n`;
       if (Buffer.byteLength(frame) > DEFAULTS.protocolBytes)
