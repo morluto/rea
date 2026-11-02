@@ -1309,6 +1309,25 @@ it("does not report uncertain browser network identity for an intact or replaced
   }
 });
 
+it("does not reclassify a replaced browser API as a generic candidate", () => {
+  const result = analyzeWebBundleFixture(
+    inspection(`
+      globalThis.navigator.sendBeacon('/first', '');
+      globalThis.navigator.sendBeacon = custom;
+      globalThis.navigator.sendBeacon('/second', '');
+      client.sendBeacon('/candidate', '');
+    `),
+  );
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/first",
+  ]);
+  expect(
+    result.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value),
+  ).toEqual(["/candidate"]);
+});
+
 it("marks missing browser network identity coverage uncollected", () => {
   const captured = inspection("fetch('/independent');");
   const script = captured.scripts.items.find(isIncludedScript);

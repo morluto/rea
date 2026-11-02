@@ -55,3 +55,40 @@ it("reports uncertain fetch identity after opaque code", async () => {
     await browser.close();
   }
 }, 120_000);
+
+it("does not reclassify a replaced browser API through MCP", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandResult: ({ method }) =>
+      method === "Debugger.getScriptSource"
+        ? {
+            scriptSource:
+              "globalThis.navigator.sendBeacon('/first','');globalThis.navigator.sendBeacon=custom;globalThis.navigator.sendBeacon('/second','');client.sendBeacon('/candidate','');",
+          }
+        : undefined,
+  });
+  try {
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("analyze_web_bundle", {
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+      include_script_sources: true,
+      fetch_source_maps: false,
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const report = webBundleAnalysisSchema.parse(
+      parseEvidence(response.structuredContent).normalized_result,
+    );
+    expect(report.observations.endpoints.map(({ value }) => value)).toContain(
+      "/first",
+    );
+    const candidates = report.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value);
+    expect(candidates).toContain("/candidate");
+    expect(candidates).not.toContain("/second");
+  } finally {
+    await browser.close();
+  }
+}, 120_000);
