@@ -37,6 +37,8 @@ import {
   buildPspFixture,
   assertPspLoadedImage,
   assertPspProbe,
+  PSP_VFPU_DECODE_CASES,
+  assertPspVfpuProbe,
 } from "../tests/conformance/ghidra/psp-fixture.mjs";
 import {
   requireMcpToolError,
@@ -426,6 +428,47 @@ try {
       });
       if (psp) assertPspProbe(move, branch);
       else assertMipsProbe(move, branch, byteOrder, probe);
+      let vfpuCoverage;
+      if (psp) {
+        const vfpuAddress = BigInt(independent.symbols.rea_psp_vfpu_probe);
+        const vfpuInstructions = [];
+        for (const { index } of PSP_VFPU_DECODE_CASES) {
+          vfpuInstructions.push(
+            await call("inspect_native_instruction", {
+              address: `0x${(vfpuAddress + 4n * BigInt(index)).toString(16)}`,
+            }),
+          );
+        }
+        assertPspVfpuProbe(vfpuInstructions);
+        const vfpuDossier = functionDossierSchema.parse(
+          await call("analyze_function", {
+            procedure: independent.symbols.rea_psp_vfpu_probe,
+            detail: "complete",
+          }),
+        );
+        assert.equal(BigInt(vfpuDossier.procedure.address), vfpuAddress);
+        const flow = vfpuDossier.native_value_flow;
+        const hasHighPcode = flow?.available === true;
+        vfpuCoverage = {
+          decoded_instructions: vfpuInstructions.length,
+          prefix_sites: 4,
+          vadd_sites: 3,
+          high_pcode: hasHighPcode ? "observed" : "unavailable",
+          opaque_high_pcode_operations: hasHighPcode
+            ? flow.operations.filter(({ opcode }) => opcode === "CALLOTHER")
+                .length
+            : null,
+          truncated: hasHighPcode ? flow.truncated : null,
+          unavailable_reason:
+            flow?.available === false
+              ? flow.reason
+              : hasHighPcode
+                ? null
+                : "Ghidra did not report a HighFunction value flow",
+          pseudocode_nonempty: vfpuDossier.pseudocode.trim().length > 0,
+          numeric_vector_semantics: "not_verified",
+        };
+      }
       const global = await call("read_bytes", {
         address: independent.symbols[`${prefix}_global`],
         length: 4,
@@ -689,6 +732,9 @@ try {
           "independent ELF/ABI and symbols",
           "loaded Ghidra identity",
           "fixed instruction bytes and immediate",
+          ...(psp
+            ? ["VFPU prefix/vadd opcode decoding (not arithmetic equivalence)"]
+            : []),
           psp
             ? "Allegrex BITREV decoding and A-B-A target identity"
             : "conditional branch destination",
@@ -698,6 +744,7 @@ try {
             ? ["soft-float o32 parameter/return storage and caller constants"]
             : []),
         ],
+        ...(vfpuCoverage === undefined ? {} : { vfpu_decode: vfpuCoverage }),
         ...(softFloat === undefined ? {} : { soft_float: softFloat }),
         procedures: procedures.length,
         carved: carved ?? {
