@@ -691,3 +691,22 @@ describe("release exposure gate and undecided checks", () => {
     }
   });
 });
+
+describe("go.build_paths locations", () => {
+  it("names only the images that retain build paths", () => {
+    const report = reportFor(
+      scan(),
+      owners({
+        go_images: [
+          { kind: "paths", path: "/work/leaky", paths: ["/home/dev/main.go"] },
+          { kind: "paths", path: "/work/clean", paths: [] },
+        ],
+      }),
+    );
+    const go = report.checks.find((check) => check.id === "go.build_paths");
+    expect(go?.status).toBe("exposed");
+    expect(go?.locations).toEqual([
+      { kind: "artifact-path", path: "/work/leaky" },
+    ]);
+  });
+});

@@ -709,6 +709,9 @@ const metadataStatus = (
   return "not_observed";
 };
 
+const retainsBuildPaths = (image: MetadataImageFact): boolean =>
+  image.kind === "paths" && image.paths.length > 0;
+
 const goCheck = (
   scan: ReleaseExposureScan,
   images: readonly MetadataImageFact[],
@@ -721,11 +724,11 @@ const goCheck = (
     image.kind === "failed" ? [image.reason] : [],
   );
   const imagePaths = images.flatMap((image) =>
-    image.kind === "paths" && image.path !== undefined ? [image.path] : [],
+    retainsBuildPaths(image) && image.path !== undefined ? [image.path] : [],
   );
   const status = metadataStatus(
     images,
-    (image) => image.kind === "paths" && image.paths.length > 0,
+    retainsBuildPaths,
     nativeImagesMayBeUnread(scan) ||
       images.some(
         (image) => image.kind === "paths" && image.complete === false,
