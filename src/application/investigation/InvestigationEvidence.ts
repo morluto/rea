@@ -30,7 +30,7 @@ export const resolveInvestigationEvidenceClosure = (
     );
     if (!evidence.ok) return evidence;
     visited.add(evidenceId);
-    pending.push(...evidence.value.evidence_links);
+    for (const link of evidence.value.evidence_links) pending.push(link);
   }
   return ok(uniqueSorted([...visited]));
 };
