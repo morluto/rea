@@ -4124,11 +4124,13 @@ describe("Ghidra disabled analyzer applicability per program", () => {
   const analyzerSession = async (
     setting: string | undefined,
     report: GhidraDisabledAnalyzerReport | undefined,
+    isReady?: () => boolean,
   ) => {
     const counts = { starts: 0, calls: 0, closes: 0 };
     const ghidra = configuredProvider(
       setting === undefined ? {} : { REA_GHIDRA_DISABLED_ANALYZERS: setting },
       () => ({
+        ...(isReady === undefined ? {} : { isReady }),
         start: () => {
           counts.starts++;
           return Promise.resolve(
@@ -4245,6 +4247,35 @@ describe("Ghidra disabled analyzer applicability per program", () => {
     expect(failed.ok).toBe(false);
     if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
     expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
+  });
+
+  it("fails closed on an uncommitted analyzer report before a lazily started query", async () => {
+    const { counts, client } = await analyzerSession(
+      undefined,
+      analyzerReport(["Objective-C Message Analyzer", "not_applicable"]),
+      () => false,
+    );
+    const failed = await client.execute("list_procedures", {});
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
+    expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
+  });
+
+  it("binds a lazily started handshake once and queries the ready client directly", async () => {
+    let ready = false;
+    const { counts, client } = await analyzerSession(
+      undefined,
+      undefined,
+      () => ready,
+    );
+    const first = await client.execute("list_procedures", {});
+    expect(first.ok).toBe(true);
+    expect(counts).toEqual({ starts: 1, calls: 1, closes: 0 });
+    ready = true;
+    const second = await client.execute("list_procedures", {});
+    expect(second.ok).toBe(true);
+    expect(counts).toEqual({ starts: 1, calls: 2, closes: 0 });
+    await client.close();
   });
 });
 

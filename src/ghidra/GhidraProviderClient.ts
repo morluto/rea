@@ -135,6 +135,7 @@ export type GhidraProviderClientFactory = (
     Pick<
       GhidraClient,
       | "callToolIfReady"
+      | "isReady"
       | "operationHealthSnapshot"
       | "runtimeLineage"
       | "readTargetSnapshot"
@@ -636,9 +637,14 @@ export const createGhidraProviderClient = (input: {
           operation,
         ).bindCleanupDependencies([extensionFailure, closed.error]);
   };
-  const startSession = async (
+  // Start the bridge and bind every handshake report to the committed profile
+  // before a query runs. `onStarted` records a provider that ran, which an
+  // eager session describes as lost after a later failure; a lazily started
+  // session keeps its startup guidance until its first query answers.
+  const checkedStart = async (
     operation: AnalysisOperation,
-    options?: ExecutionOptions,
+    options: ExecutionOptions | undefined,
+    onStarted?: () => void,
   ): Promise<Result<GhidraSessionInfo, AnalysisError>> => {
     const started = await client.start(options?.signal, options?.progress);
     if (!started.ok)
@@ -650,10 +656,17 @@ export const createGhidraProviderClient = (input: {
           lostProviderHealth(),
         ),
       );
-    providerStarted = true;
+    onStarted?.();
     const failed = await checkSessionObservations(operation, started.value);
     return failed === undefined ? started : err(failed);
   };
+  const startSession = (
+    operation: AnalysisOperation,
+    options?: ExecutionOptions,
+  ): Promise<Result<GhidraSessionInfo, AnalysisError>> =>
+    checkedStart(operation, options, () => {
+      providerStarted = true;
+    });
   const releaseLimitation = unverifiedGhidraBuildLimitation(
     prerequisites.value.providerVersion,
   );
@@ -813,6 +826,12 @@ export const createGhidraProviderClient = (input: {
         riscvCallingConvention !== undefined
       ) {
         const started = await startSession(operation, options);
+        if (!started.ok) return started;
+      } else if (client.isReady?.() === false) {
+        // A lazily started bridge can report seeds, disabled analyzers or
+        // extensions the profile did not commit; bind that handshake before
+        // the first query instead of only when `health` asks for it.
+        const started = await checkedStart(operation, options);
         if (!started.ok) return started;
       }
       const called = await client.callTool(operation, input.value, {
