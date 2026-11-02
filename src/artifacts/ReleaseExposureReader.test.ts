@@ -2122,7 +2122,7 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
       },
     },
   ])(
-    "retains a descriptor whose close failed after $name",
+    "reports and retains a descriptor whose close failed after $name",
     async ({ selected, write }) => {
       const root = await createTestTempDirectory("rea-release-exposure-fd-");
       await write(root);
@@ -2142,7 +2142,9 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
           undefined,
           ignoreText,
         );
-        if (!result.ok) throw result.error;
+        if (result.ok) throw new Error("expected cleanup-incomplete failure");
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(result.error.cleanupResources.join("\n")).toContain(selected);
         regularFiles.failUntil = regularFiles.closes + 1;
         await expect(reader.close()).rejects.toSatisfy(
           (error: unknown) =>
@@ -2159,6 +2161,64 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
       }
     },
   );
+});
+
+describe("ReleaseExposureReader cleanup-bearing read failures", () => {
+  const cleanupFailure = (
+    reason: "limit" | "format",
+    resource: string,
+  ): ArtifactReaderFailure =>
+    ArtifactReaderFailure.withCleanup(
+      new ArtifactReaderFailure(reason, `${reason} failure: ${resource}`),
+      { reason: "close failed", resources: [resource] },
+    );
+
+  it("does not read a cleanup-incomplete limit failure as an oversized member", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-limit-");
+    await writeFile(join(root, "bundle.map"), "{}");
+    const real = stableRead.impl;
+    stableRead.impl = async (...args) => {
+      if (args[0].endsWith("bundle.map"))
+        throw cleanupFailure("limit", args[0]);
+      return (real as NonNullable<typeof real>)(...args);
+    };
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await reader.inspect(
+        { path: root },
+        undefined,
+        ignoreText,
+      );
+      if (result.ok) throw new Error("expected cleanup-incomplete failure");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources.join("\n")).toContain("bundle.map");
+    } finally {
+      stableRead.impl = real;
+      await reader.close();
+    }
+  });
+
+  it("does not read cleanup-incomplete inventory as unknown coverage", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-inv-");
+    const selected = join(root, "app");
+    await writeFile(selected, "selected");
+    inventoryRead.impl = () =>
+      Promise.reject(cleanupFailure("format", selected));
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await reader.inspect(
+        { path: selected },
+        undefined,
+        ignoreText,
+      );
+      if (result.ok) throw new Error("expected cleanup-incomplete failure");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toContain(selected);
+    } finally {
+      inventoryRead.impl = undefined;
+      await reader.close();
+    }
+  });
 });
 
 const embeddedSourceMap = (): Buffer =>

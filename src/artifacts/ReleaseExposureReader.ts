@@ -2025,12 +2025,18 @@ const asReadFailure = (cause: unknown): unknown =>
     ? new ArtifactReaderFailure("integrity", cause.message, { cause })
     : cause;
 
+/**
+ * A read that left cleanup unfinished is never a skipped member, whatever its
+ * reason: only the error tells the caller a descriptor is still retained.
+ */
 const rethrowReadFailure = (cause: unknown): void => {
   const failure = asReadFailure(cause);
   if (failure instanceof AnalysisError) throw failure;
   if (
     failure instanceof ArtifactReaderFailure &&
-    (failure.reason === "cancelled" || failure.reason === "integrity")
+    (failure.reason === "cancelled" ||
+      failure.reason === "integrity" ||
+      failure.cleanup !== undefined)
   )
     throw failure;
 };
