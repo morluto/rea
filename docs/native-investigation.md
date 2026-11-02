@@ -428,7 +428,12 @@ Within one value trace, each exact procedure selector is attempted at most once,
 including failed analyses. A failed seed returns the provider's original typed
 failure and corrective guidance; it cannot establish a trace or target identity.
 Failures while expanding a validated seed remain unknown observations and do not
-establish canonical function identity. A successful seed without a native def-use
+establish canonical function identity. A cancelled expansion read returns the
+cancellation. An expansion read whose provider cannot confirm cleanup of
+resources it owns stops the trace: the result is that provider's own
+`cleanup_incomplete` failure with its resources and any bound cleanup retry, and the work
+admitted before the stop is retained as partial Evidence with a located unknown
+at the stopping read. A successful seed without a native def-use
 model still returns its procedure and an explicit coverage unknown. A new trace
 can retry failed selectors.
 
@@ -437,8 +442,9 @@ page omits retained nodes, and the edges they source, before `offset` or after
 `next_offset`. Every page repeats `traversal`: `complete`, or `truncated` with
 `reasons` naming each observed cause: the `max_depth`, `max_functions`,
 `max_call_sites`, `max_nodes` or `max_edges` budget, the fixed
-`node_payload_bytes` allowance, `provider_pcode_truncated`, or
-`ambiguous_call_candidates`. Each cause also has a located unknown. A budget is
+`node_payload_bytes` allowance, `provider_pcode_truncated`,
+`ambiguous_call_candidates`, or, only in a stopped trace's partial Evidence,
+`cleanup_incomplete`. Each cause also has a located unknown. A budget is
 reported only after it rejects work, so an exactly filled budget is not
 truncation; a depth or candidate limit is reported only when no other path
 analyzes or queues that destination. `total_nodes` and `total_edges` count
