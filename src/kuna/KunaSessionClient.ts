@@ -1064,7 +1064,7 @@ export class KunaSessionClient implements AnalysisClient {
             userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
             conformsToInputContract: true,
             remediationAction:
-              "Inspect list_procedures and select a discovered entry if it answers your question. An unlisted address is not proof of a function; REA cannot decompile it as a Kuna procedure in this session. Do not repeat the unchanged call.",
+              "Inspect list_procedures and select a discovered entry if it answers your question. An unlisted address is not proof of a function; REA cannot use it as a Kuna procedure in this session. Do not repeat the unchanged call.",
           }),
         );
       return refused(entry) ? dataRefusal(entry) : selected(entry);

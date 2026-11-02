@@ -265,6 +265,14 @@ test("reports lookup failures with recovery for the selected target, not the inp
     expect(error.remediation.action).toContain(guidance);
     expect(error.remediation.action).not.toContain("input schema");
   }
+  const assemblyError = parseMcpToolError(
+    await client.callTool({
+      name: "procedure_assembly",
+      arguments: { procedure: "0x1335" },
+    }),
+  ).error;
+  expect(assemblyError.remediation.action).toContain("Kuna procedure");
+  expect(assemblyError.remediation.action).not.toContain("decompile");
   const missingAddress = parseMcpToolError(
     await client.callTool({
       name: "xrefs",
