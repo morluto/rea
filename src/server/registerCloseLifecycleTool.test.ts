@@ -43,11 +43,10 @@ const register = (overrides: {
       },
       delivery: { toCallToolResult: (result: unknown) => result },
     },
-    session:
-      overrides.session ?? {
-        close: overrides.closeSession,
-        closeWithSnapshot: overrides.closeSession,
-      },
+    session: overrides.session ?? {
+      close: overrides.closeSession,
+      closeWithSnapshot: overrides.closeSession,
+    },
     logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
     closeContract: toolContract("close_binary"),
     closeProcessResources:
@@ -117,9 +116,13 @@ describe("close lifecycle reverse cleanup ordering", () => {
     const reverse = new AnalysisOutputError("rizin", "descendant still live", {
       cleanup: { reason: "still live", resources: ["rizin-owner"] },
     });
-    const sessionFailure = new AnalysisOutputError("close_binary", "session cleanup failed", {
-      cleanup: { reason: "client still live", resources: ["client-owner"] },
-    });
+    const sessionFailure = new AnalysisOutputError(
+      "close_binary",
+      "session cleanup failed",
+      {
+        cleanup: { reason: "client still live", resources: ["client-owner"] },
+      },
+    );
     const receipt = {
       path: "/tmp/saved.json",
       bytes: 100,
