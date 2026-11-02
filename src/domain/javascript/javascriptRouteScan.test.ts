@@ -357,6 +357,71 @@ it("recovers History API URL arguments without mistaking state and title for rou
   ).toBe(false);
 });
 
+it("recovers direct browser location assignment destinations", () => {
+  const facts = analyze(
+    `window.location.href = '/checkout?step=1'; location.href = '/account#top';`,
+  );
+  expect(
+    facts.candidates
+      .filter(({ mechanism }) => mechanism === "navigation-target")
+      .map(({ path }) => path),
+  ).toEqual(["/checkout", "/account"]);
+});
+
+it("does not interpret shadowed or overwritten location assignments as browser navigation", () => {
+  for (const source of [
+    `function f(location) { location.href = '/local'; }`,
+    `function f(window) { window.location.href = '/local'; }`,
+    `window.location = other; window.location.href = '/patched';`,
+    `location.href += '/suffix';`,
+  ])
+    expect(
+      analyze(source).candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+});
+
+it("does not mistake shadowed location.replace for browser navigation", () => {
+  expect(
+    analyze(
+      `function f(location) { location.replace('/local'); }`,
+    ).candidates.filter(({ mechanism }) => mechanism === "navigation-target"),
+  ).toEqual([]);
+});
+
+it("retains real browser location.replace and dynamic href uncertainty", () => {
+  const facts = analyze(
+    `const dest='/checkout'; window.location.replace(dest); location.href = target;`,
+  );
+  expect(facts.candidates).toContainEqual(
+    expect.objectContaining({
+      mechanism: "navigation-target",
+      path: "/checkout",
+    }),
+  );
+  expect(facts.unresolved).toContainEqual(
+    expect.objectContaining({ mechanism: "navigation-target" }),
+  );
+});
+
+it("reports direct global location assignments as unresolved", () => {
+  const facts = analyze(`window.location = '/direct';`);
+  expect(
+    facts.candidates.filter(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toEqual([]);
+  expect(facts.unresolved).toContainEqual(
+    expect.objectContaining({
+      mechanism: "navigation-target",
+      reason: expect.stringContaining(
+        "Assignment to global location may navigate",
+      ),
+    }),
+  );
+});
+
 it("recovers browser location.assign destinations without trusting local lookalikes", () => {
   const facts = analyze(`
     window.location.assign('/checkout?step=1');

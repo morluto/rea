@@ -33,7 +33,10 @@ import {
 } from "./javascriptSemanticAliasSelections.js";
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
+import {
+  globalReferenceNamespace,
+  isUnmodifiedGlobalReference,
+} from "./javascriptSemanticGlobalReference.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
@@ -172,6 +175,16 @@ const locationAssign = (
     "location",
     "assign",
   ]);
+/** Recognize writes to the ambient browser Location.href, not local lookalikes. */
+const locationHrefWrite = (
+  node: t.AssignmentExpression,
+  index: JavaScriptBindingIndex,
+): boolean =>
+  node.operator === "=" &&
+  t.isMemberExpression(node.left) &&
+  semanticStaticPropertyName(node.left.property, node.left.computed) ===
+    "href" &&
+  isUnmodifiedGlobalReference(node.left.object, index.bindings, "location");
 const localNavigationFields = new Set(["pathname", "query", "search", "hash"]);
 const nextNames = new Set(["TURBOPACK", "webpackChunk_N_E", "__NEXT_DATA__"]);
 const isRouteChildKey = (key: string, typed: boolean): boolean =>
@@ -339,6 +352,13 @@ export class JavaScriptRouteScan {
       {
         skip: () => this.#result.capacity !== null,
         enter: (node) => {
+          if (
+            t.isAssignmentExpression(node) &&
+            locationHrefWrite(node, this.index)
+          ) {
+            remember(node.right, node);
+            return;
+          }
           if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
             if (historyNavigation(node, this.index)) {
               const url = node.arguments[2];
@@ -542,6 +562,23 @@ export class JavaScriptRouteScan {
       return;
     }
     if (this.#result.capacity !== null) return;
+    if (t.isAssignmentExpression(node) && locationHrefWrite(node, this.index)) {
+      this.#navigation(node.right);
+      return;
+    }
+    if (
+      t.isAssignmentExpression(node, { operator: "=" }) &&
+      globalReferenceNamespace(node.left, this.index.bindings, ["location"]) !==
+        undefined
+    ) {
+      this.#ownDynamicValue(node.right, true, true, true);
+      this.#unknown(
+        "navigation-target",
+        node,
+        "Assignment to global location may navigate; the ambient write cannot yet be separated from a replaced location identity.",
+      );
+      return;
+    }
     if (
       t.isAssignmentExpression(node) &&
       t.isMemberExpression(node.left) &&
@@ -708,7 +745,13 @@ export class JavaScriptRouteScan {
       t.isArgumentPlaceholder(first)
     )
       return;
-    const recognized = navigationRecognition(name, parts.at(-2) ?? "");
+    const recognized =
+      name === "replace" && parts.at(-2) === "location"
+        ? isUnmodifiedGlobalReference(node.callee, this.index.bindings, [
+            "location",
+            "replace",
+          ])
+        : navigationRecognition(name, parts.at(-2) ?? "");
     if (
       recognized === true ||
       ((t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&

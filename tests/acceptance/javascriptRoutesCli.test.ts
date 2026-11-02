@@ -48,6 +48,52 @@ it("recovers History API paths through the public MCP workflow", async () => {
   );
 });
 
+it("recovers Location.href paths and excludes shadowed replacements through MCP", async () => {
+  const path = await createTestTempDirectory("rea-location-href-");
+  await writeFile(
+    join(path, "app.js"),
+    `window.location.href = '/checkout?step=1';
+     location.href = '/account#details';
+     function local(location) { location.replace('/shadowed'); }`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toHaveLength(2);
+  expect(view.items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/account" }),
+      expect.objectContaining({ path: "/checkout" }),
+    ]),
+  );
+});
+
+it("reports unresolved direct global location assignment through MCP", async () => {
+  const path = await createTestTempDirectory("rea-location-direct-");
+  await writeFile(join(path, "app.js"), `window.location = '/direct';`);
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "unknowns" },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toContainEqual(
+    expect.objectContaining({
+      reason: expect.stringContaining(
+        "Assignment to global location may navigate",
+      ),
+    }),
+  );
+  expect(view.source_coverage.candidate_enumeration).toBe("partial");
+});
+
 it("recovers Location.assign paths through the public MCP workflow", async () => {
   const path = await createTestTempDirectory("rea-location-routes-");
   await writeFile(
