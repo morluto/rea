@@ -12,6 +12,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import {
   OwnedDebuggerCleanupError,
   retainedDebuggerProcessIds,
+  retainedDebuggerRemediation,
 } from "../../../src/process/ownedDebuggerCleanupError.js";
 import {
   closeOwnedDebuggerSessions,
@@ -1551,4 +1552,10 @@ it("finds retained debugger IDs through composed failures without looping on cyc
   expect(retainedDebuggerProcessIds(composed)).toEqual([101, 102, 103]);
   expect(retainedDebuggerProcessIds(new Error("peer"))).toEqual([]);
   expect(retainedDebuggerProcessIds(undefined)).toEqual([]);
+});
+
+it("names every retained debugger in its remediation", () => {
+  const remediation = retainedDebuggerRemediation([4242, 4243]);
+  expect(remediation).toMatch(/\b4242\b/u);
+  expect(remediation).toMatch(/\b4243\b/u);
 });

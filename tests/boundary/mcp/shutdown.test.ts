@@ -6,7 +6,10 @@ import { expect, it } from "vitest";
 import { createManagedBinarySession } from "../../../src/composition/binary.js";
 import { MCP_SHUTDOWN_FAILED } from "../../../src/main/messages.js";
 import { createShutdown } from "../../../src/main/shutdown.js";
-import { OwnedDebuggerCleanupError } from "../../../src/process/ownedDebuggerCleanupError.js";
+import {
+  OwnedDebuggerCleanupError,
+  retainedDebuggerRemediation,
+} from "../../../src/process/ownedDebuggerCleanupError.js";
 import { registerProcessShutdown } from "../../../src/main/processShutdown.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -121,8 +124,10 @@ it("names retained debuggers in stderr and every log level when shutdown ends", 
 
   expect(output).toEqual([
     `${MCP_SHUTDOWN_FAILED}\n`,
-    expect.stringContaining("Check process 4242 and its target"),
+    `${retainedDebuggerRemediation([4242])}\n`,
   ]);
+  // Comparing with the formatter alone would still pass if it dropped the process.
+  expect(output[1]).toMatch(/\b4242\b/u);
   const parsed = logs.map((line) => JSON.parse(line));
   expect(parsed).toContainEqual(
     expect.objectContaining({

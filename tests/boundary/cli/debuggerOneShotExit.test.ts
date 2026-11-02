@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, onTestFinished } from "vitest";
 
 import { MCP_SHUTDOWN_FAILED } from "../../../src/main/messages.js";
+import { retainedDebuggerRemediation } from "../../../src/process/ownedDebuggerCleanupError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   cliProcessEnvironment,
@@ -205,6 +206,11 @@ const prepareLaunch = async (
   };
 };
 
+/** Comparing with the formatter alone would still pass if it dropped the process. */
+const expectNamesProcess = (guidance: string, pid: number): void => {
+  expect(guidance).toMatch(new RegExp(`\\b${String(pid)}\\b`, "u"));
+};
+
 const expectRetainedOutcome = (
   name: DebuggerName,
   result: ProcessResult,
@@ -213,7 +219,7 @@ const expectRetainedOutcome = (
   expect(JSON.parse(result.stdout)).toMatchObject({
     code: "cleanup_incomplete",
     retryable: false,
-    remediation: { action: expect.stringContaining(String(pid)) },
+    remediation: { action: retainedDebuggerRemediation([pid]) },
     details: {
       operation: debuggers[name].operation,
       cleanup: "incomplete",
@@ -223,6 +229,7 @@ const expectRetainedOutcome = (
       },
     },
   });
+  expectNamesProcess(retainedDebuggerRemediation([pid]), pid);
   expect(result.stdout).toContain(`"retained_debugger_pids":[${String(pid)}]`);
 };
 
@@ -395,7 +402,8 @@ describe.skipIf(process.platform === "win32")(
         // Nothing else reports these once the server has exited.
         await expect
           .poll(stderr, { timeout: EXIT_DEADLINE_MS })
-          .toContain(`Check process ${String(pid)} and its target`);
+          .toContain(`${retainedDebuggerRemediation([pid])}\n`);
+        expectNamesProcess(retainedDebuggerRemediation([pid]), pid);
         const logs = stderr()
           .split("\n")
           .filter((line) => line.startsWith("{"))
