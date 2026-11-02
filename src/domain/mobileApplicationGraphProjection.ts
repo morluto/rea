@@ -77,6 +77,8 @@ export const unavailableComponentSchema = z.strictObject({
   limitations: z.array(z.string()),
 });
 
+export type UnavailableComponent = z.infer<typeof unavailableComponentSchema>;
+
 export type ProjectedComponent = z.infer<typeof projectedComponentSchema>;
 
 /** Path-pair hypotheses connecting managed content to a native library. */
@@ -173,12 +175,24 @@ export const projectedInventoryEntries = (
   return { entries, limitations };
 };
 
-/** Directory trees and links retain inventory identity but are not file components. */
+/** File and slice occurrences carry content; directories and links are path-only structure. */
+export const projectedContentEntries = (
+  entries: readonly ProjectedInventoryEntry[],
+): ProjectedInventoryEntry[] =>
+  entries.filter(({ kind }) => kind === "file" || kind === "slice");
+
+/** Authenticated file and slice components, in inventory order. */
 export const projectedFileComponents = (
   entries: readonly ProjectedInventoryEntry[],
 ): ProjectedComponent[] =>
-  entries.flatMap(({ kind, component }) =>
-    (kind === "file" || kind === "slice") && component !== undefined
-      ? [component]
-      : [],
+  projectedContentEntries(entries).flatMap(({ component }) =>
+    component === undefined ? [] : [component],
+  );
+
+/** File and slice occurrences whose content identity is unavailable, in inventory order. */
+export const projectedUnavailableComponents = (
+  entries: readonly ProjectedInventoryEntry[],
+): UnavailableComponent[] =>
+  projectedContentEntries(entries).flatMap(({ unavailable }) =>
+    unavailable === undefined ? [] : [unavailable],
   );
