@@ -174,7 +174,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
           exit: (code) => {
             exiting = true;
             void (async () => {
-              let status = code;
+              let status = typeof code === "number" ? code : 0;
               try {
                 await closeCliResources();
               } catch (cleanup) {
