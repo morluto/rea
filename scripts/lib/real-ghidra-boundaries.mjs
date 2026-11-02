@@ -504,6 +504,9 @@ export async function verifyGhidraBoundaries(
   // Prime both inventories before editing so stale names cannot hide in caches.
   await call("list_names");
   await call("list_procedures");
+  const traceInput = { procedure: address, max_depth: 0, max_functions: 1 };
+  const traceBefore = await evidence("trace_native_values", traceInput);
+  const sourceBefore = traceBefore.normalized_result.procedures[0].evidence_id;
   const changes = {
     procedure: address,
     name: "dead",
@@ -517,6 +520,16 @@ export async function verifyGhidraBoundaries(
     comment: changes.comment,
     inline_comment: changes.inline_comment,
   });
+  const traceAfter = await evidence("trace_native_values", traceInput);
+  const sourceAfter = traceAfter.normalized_result.procedures[0].evidence_id;
+  assert.notEqual(sourceBefore, sourceAfter);
+  const sourceProcedure = (evidenceId) =>
+    call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id: evidenceId },
+      view: { kind: "native", facet: "procedure", offset: 0, limit: 1 },
+    });
+  assert.equal((await sourceProcedure(sourceBefore)).item.name, name);
+  assert.equal((await sourceProcedure(sourceAfter)).item.name, changes.name);
   const regexPattern = "^(a|aa)*b$";
   const regexFailure = await client.callTool(
     {

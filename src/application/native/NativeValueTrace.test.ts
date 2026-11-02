@@ -1,6 +1,7 @@
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { describe, expect, it } from "vitest";
-import { traceNativeValues } from "./NativeValueTrace.js";
+import { traceNativeValues as traceNativeValuesCore } from "./NativeValueTrace.js";
+import { executeComposedWorkflow } from "../WorkflowEvidence.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
@@ -26,6 +27,27 @@ import {
   valueTraceProvider as provider,
   valueTraceSubject as subject,
 } from "./NativeValueTrace.fixture.js";
+
+const traceNativeValues: typeof traceNativeValuesCore = async (
+  source,
+  parameters,
+  signal,
+) => {
+  const result = await executeComposedWorkflow(source, (observed) =>
+    traceNativeValuesCore(observed, parameters, signal),
+  );
+  return result.ok ? ok(result.value.result) : result;
+};
+
+it("does not return a source ID without an Evidence owner", async () => {
+  const result = await traceNativeValuesCore(valueTraceDiamond().port, {
+    procedure: "0x1000",
+  });
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
+});
+
 const analysis: AnalysisOperationPort = {
   execute: async (operation, parameters) => {
     if (operation === "resolve_native_call_targets")
