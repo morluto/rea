@@ -1260,6 +1260,28 @@ describe("ReleaseExposureReader member allowances", () => {
   });
 });
 
+describe("ReleaseExposureReader native member names", () => {
+  it("inspects a packaged PE whose name reads as text", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-name-");
+    await writeFile(
+      join(root, "app.asar"),
+      asarArchive([
+        {
+          name: "payload.json",
+          bytes: pe(0x8664, 64, 0x0002, false, {
+            pdbPath: "C:\\build\\named.pdb",
+          }),
+        },
+      ]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.pdb.paths).toContain("C:\\build\\named.pdb");
+    expect(scanned.omitted.map(({ subject }) => subject)).toContain(
+      "packaged native images",
+    );
+  });
+});
+
 describe("ReleaseExposureReader nested packages in a host", () => {
   it("leaves coverage unknown for an ASAR a PyInstaller host carries", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-nest-");

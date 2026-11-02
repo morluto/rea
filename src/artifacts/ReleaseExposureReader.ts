@@ -922,7 +922,12 @@ const examineMember = async (
       : listed;
   (map ? state.examinedMaps : state.examinedLocations).add(key);
   if (!map && isJavaScriptMember(member)) state.examinedScripts.add(key);
+  // An owner's native format outranks anything the member's name suggests.
+  const nativePackaged =
+    packageFormat !== null && asNativeFormat(member.format) !== null;
   if (member.encrypted) noteUnreadMember(state, member);
+  else if (nativePackaged)
+    readable = await examinePackagedBinary(state, member);
   else if (map) readable = await examineMapMember(state, member);
   else if (isText(member.logical, member.kind))
     readable = await examineTextMember(state, member);
@@ -945,7 +950,8 @@ const examineMember = async (
 
 const noteUnreadMember = (state: ScanState, member: MemberView): void => {
   if (holdsScripts(member) || isCssMember(member)) state.skippedMaps += 1;
-  if (isDeclaredMap(state, member)) {
+  if (asNativeFormat(member.format) !== null) noteUnreadBinary(state, member);
+  else if (isDeclaredMap(state, member)) {
     noteUnreadMap(state, member, null);
     state.skippedText += 1;
   } else if (isText(member.logical, member.kind)) state.skippedText += 1;
