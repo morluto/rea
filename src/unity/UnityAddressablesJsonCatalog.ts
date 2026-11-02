@@ -370,21 +370,19 @@ const jsonProviders = (
   options: UnityAddressablesReadOptions,
 ): UnityAddressablesProvider[] => {
   const providers: UnityAddressablesProvider[] = [];
-  for (const [value, role] of [
-    [catalog.m_InstanceProviderData, "instance"],
-    [catalog.m_SceneProviderData, "scene"],
-    ...(Array.isArray(catalog.m_ResourceProviderData)
-      ? catalog.m_ResourceProviderData.map(
-          (item) => [item, "resource"] as const,
-        )
-      : []),
-  ] as const) {
+  const add = (value: unknown, role: UnityAddressablesProvider["role"]) => {
     const row = providerRow(value, role);
     if (row !== null) {
       options.onRow?.(row);
       providers.push(row);
     }
-  }
+  };
+  add(catalog.m_InstanceProviderData, "instance");
+  add(catalog.m_SceneProviderData, "scene");
+  // Walk the catalog's own array: a tuple per entry would allocate for
+  // every null provider before any row is charged.
+  if (Array.isArray(catalog.m_ResourceProviderData))
+    for (const item of catalog.m_ResourceProviderData) add(item, "resource");
   return providers;
 };
 
