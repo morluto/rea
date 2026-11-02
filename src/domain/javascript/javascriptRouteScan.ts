@@ -176,16 +176,21 @@ const locationAssign = (
     "location",
     "assign",
   ]);
-/** Recognize writes to the ambient browser Location.href, not local lookalikes. */
-const locationHrefWrite = (
+/** Recognize writes to ambient browser location properties, not local lookalikes. */
+const locationPropertyWrite = (
   node: t.AssignmentExpression,
   index: JavaScriptBindingIndex,
 ): boolean =>
   node.operator === "=" &&
   t.isMemberExpression(node.left) &&
-  semanticStaticPropertyName(node.left.property, node.left.computed) ===
-    "href" &&
-  isUnmodifiedGlobalReference(node.left.object, index.bindings, "location");
+  ["href", "pathname"].includes(
+    semanticStaticPropertyName(node.left.property, node.left.computed) ?? "",
+  ) &&
+  (isUnmodifiedGlobalReference(node.left.object, index.bindings, "location") ||
+    isUnmodifiedGlobalReference(node.left.object, index.bindings, [
+      "document",
+      "location",
+    ]));
 const localNavigationFields = new Set(["pathname", "query", "search", "hash"]);
 const nextNames = new Set(["TURBOPACK", "webpackChunk_N_E", "__NEXT_DATA__"]);
 const isRouteChildKey = (key: string, typed: boolean): boolean =>
@@ -359,7 +364,7 @@ export class JavaScriptRouteScan {
         enter: (node) => {
           if (
             t.isAssignmentExpression(node) &&
-            locationHrefWrite(node, this.index)
+            locationPropertyWrite(node, this.index)
           ) {
             remember(node.right, node);
             return;
@@ -567,8 +572,25 @@ export class JavaScriptRouteScan {
       return;
     }
     if (this.#result.capacity !== null) return;
-    if (t.isAssignmentExpression(node) && locationHrefWrite(node, this.index)) {
-      this.#navigation(node.right);
+    if (
+      t.isAssignmentExpression(node) &&
+      locationPropertyWrite(node, this.index)
+    ) {
+      const property = t.isMemberExpression(node.left)
+        ? semanticStaticPropertyName(node.left.property, node.left.computed)
+        : undefined;
+      const value = stringValue(unwrapJavaScriptExpression(node.right).node);
+      if (
+        property === "pathname" &&
+        (value === undefined || /[?#]/u.test(value))
+      ) {
+        this.#ownDynamicValue(node.right, true, true, true);
+        this.#unknown(
+          "navigation-target",
+          node,
+          "The pathname setter needs a literal path without query or fragment delimiters.",
+        );
+      } else this.#navigation(node.right);
       return;
     }
     if (

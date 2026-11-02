@@ -368,6 +368,40 @@ it("recovers direct browser location assignment destinations", () => {
   ).toEqual(["/checkout", "/account"]);
 });
 
+it("recovers browser pathname and document location href writes", () => {
+  const facts = analyze(
+    `window.location.pathname='/products'; document.location.href='/account?view=one';`,
+  );
+  expect(
+    facts.candidates
+      .filter(({ mechanism }) => mechanism === "navigation-target")
+      .map(({ path }) => path),
+  ).toEqual(["/products", "/account"]);
+});
+
+it("keeps ambiguous pathname setters and local document objects out of routes", () => {
+  for (const source of [
+    `window.location.pathname='/foo?bar';`,
+    `window.location.pathname='/foo#bar';`,
+    `window.location.pathname=target;`,
+    `const target='/foo?bar'; window.location.pathname=target;`,
+    `window.location.pathname='../relative';`,
+  ])
+    expect(analyze(source).unresolved).toContainEqual(
+      expect.objectContaining({ mechanism: "navigation-target" }),
+    );
+  for (const source of [
+    `function f(document) { document.location.href='/local'; }`,
+    `function f(window) { window.location.pathname='/local'; }`,
+    `document.location=other; document.location.href='/patched';`,
+  ])
+    expect(
+      analyze(source).candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+});
+
 it("does not interpret shadowed or overwritten location assignments as browser navigation", () => {
   for (const source of [
     `function f(location) { location.href = '/local'; }`,

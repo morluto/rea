@@ -73,6 +73,29 @@ it("recovers Location.href paths and excludes shadowed replacements through MCP"
   );
 });
 
+it("recovers pathname and document location routes through MCP", async () => {
+  const path = await createTestTempDirectory("rea-location-properties-");
+  await writeFile(
+    join(path, "app.js"),
+    `window.location.pathname='/products'; document.location.href='/account?tab=one'; function f(document){document.location.href='/shadowed';}`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toHaveLength(2);
+  expect(view.items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/products" }),
+      expect.objectContaining({ path: "/account" }),
+    ]),
+  );
+});
+
 it("recovers direct global location assignment through MCP", async () => {
   const path = await createTestTempDirectory("rea-location-direct-");
   await writeFile(join(path, "app.js"), `window.location = '/direct';`);
