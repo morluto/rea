@@ -1,4 +1,5 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { cliIntegerArgument } from "./options.js";
 import { z } from "incur";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
@@ -105,21 +106,14 @@ export const registerAdbCommands = (
     description: "Read a bounded dump of the device log for one buffer",
     args: z.object({ serial }),
     options: z.object({
-      count: z
-        .number()
-        .int()
-        .min(1)
-        .max(10_000)
+      count: cliIntegerArgument(1, 10_000)
         .default(500)
         .describe("Number of most recent lines to read"),
       buffer: z
         .enum(["main", "system", "radio", "events", "crash"])
         .default("main")
         .describe("Log buffer to read"),
-      pid: z
-        .number()
-        .int()
-        .positive()
+      pid: cliIntegerArgument(1)
         .optional()
         .describe("Restrict to one process id"),
     }),

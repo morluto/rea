@@ -5,6 +5,7 @@ import { browserCliError } from "./browserCliError.js";
 import { createBrowserObservationProvider } from "../composition/browserObservation.js";
 import {
   browserScopeOptions,
+  observationDuration,
   selectedCommandTimeout,
 } from "../cliObservationOptions.js";
 import {
@@ -63,12 +64,7 @@ const registerWebMcp = (
     }),
     options: z.object({
       ...browserScopeOptions,
-      observationMs: z
-        .number()
-        .int()
-        .min(0)
-        .default(100)
-        .describe("Observation duration in milliseconds"),
+      observationMs: observationDuration(100),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

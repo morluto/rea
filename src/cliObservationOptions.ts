@@ -2,6 +2,7 @@ import { javascriptRouteDeliveryOptions } from "./cli/javascriptRouteDelivery.js
 import { z } from "incur";
 import { webRuntimeCommandTimeoutSchema } from "./domain/browserDeadline.js";
 import { javaScriptAnalysisResourceControlsSchema } from "./domain/javascript/javascriptAnalysisResourceControls.js";
+import { cliOptionalDecimalField } from "./cli/options.js";
 import { javaScriptSourcePathsSchema } from "./domain/javascript/javascriptSourceSelection.js";
 
 /** Accept an agent-selected browser observation duration without an artificial ceiling. */
@@ -89,15 +90,19 @@ export const electronPageInspectionOptions = z.object({
 
 export const javascriptApplicationOptions = z.object({
   ...javascriptRouteDeliveryOptions,
-  maxSemanticNodes:
+  maxSemanticNodes: cliOptionalDecimalField(
     javaScriptAnalysisResourceControlsSchema.shape.max_semantic_nodes,
-  maxSemanticNodesPerFile:
+  ),
+  maxSemanticNodesPerFile: cliOptionalDecimalField(
     javaScriptAnalysisResourceControlsSchema.shape.max_semantic_nodes_per_file,
-  maxSemanticUnknowns:
+  ),
+  maxSemanticUnknowns: cliOptionalDecimalField(
     javaScriptAnalysisResourceControlsSchema.shape.max_semantic_unknowns,
-  maxSemanticUnknownsPerFile:
+  ),
+  maxSemanticUnknownsPerFile: cliOptionalDecimalField(
     javaScriptAnalysisResourceControlsSchema.shape
       .max_semantic_unknowns_per_file,
+  ),
   sourcePath: javaScriptSourcePathsSchema
     .optional()
     .describe(
@@ -110,9 +115,12 @@ export const javascriptApplicationOptions = z.object({
     .describe(
       "Inline JSON array or JSON file path of exact inventoried file paths relative to the application root, selected after any --source-path values. Use a file for selections that exceed the host command-line limit.",
     ),
-  maxHeapMb: javaScriptAnalysisResourceControlsSchema.shape.max_heap_mb,
-  analysisTimeoutMs:
+  maxHeapMb: cliOptionalDecimalField(
+    javaScriptAnalysisResourceControlsSchema.shape.max_heap_mb,
+  ),
+  analysisTimeoutMs: cliOptionalDecimalField(
     javaScriptAnalysisResourceControlsSchema.shape.analysis_timeout_ms,
+  ),
   artifactFormat: z
     .enum(["auto", "asar", "directory"])
     .default("auto")
