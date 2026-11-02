@@ -104,12 +104,14 @@ const fixture = async () => {
 cliTest(
   "exports complete route Evidence and queries it after source removal",
   async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-route-cli-home-");
     const path = await fixture(),
       output = join(
         await createTestTempDirectory("rea-route-evidence-"),
         "routes.json",
       );
     const response = await cli.run({
+      environment: { HOME: home },
       arguments: [
         "analyze-javascript-application",
         path,
@@ -154,6 +156,7 @@ cliTest(
     );
     await writeFile(evidenceFile, JSON.stringify(record));
     const repeated = await cli.run({
+      environment: { HOME: home },
       arguments: [
         "inspect-analysis-view",
         JSON.stringify({
@@ -185,6 +188,7 @@ cliTest(
 cliTest(
   "rejects invalid route delivery before accessing the application",
   async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-route-cli-home-");
     for (const args of [
       ["--view", "{"],
       [
@@ -195,6 +199,7 @@ cliTest(
       ],
     ]) {
       const response = await cli.run({
+        environment: { HOME: home },
         arguments: [
           "analyze-javascript-application",
           "/not-opened",
@@ -362,6 +367,7 @@ it.each(["full", "compact"] as const)(
 cliTest(
   "projects captured route facts through both browser adapters",
   async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-route-cli-home-");
     const { startFakeCdpBrowser } =
       await import("../fixtures/fakeCdpBrowser.js");
     const browser = await startFakeCdpBrowser({
@@ -411,6 +417,7 @@ cliTest(
         "routes.json",
       );
       const response = await cli.run({
+        environment: { HOME: home },
         arguments: [
           "analyze-web-bundle",
           browser.endpoint,
