@@ -29,6 +29,11 @@ import {
 } from "../composition/debuggerSessions.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
+  retainedDebuggerDiagnostics,
+  retainedDebuggerProcessIds,
+  retainedDebuggerRemediation,
+} from "../process/ownedDebuggerCleanupError.js";
+import {
   analysisEvidenceDeliveryOptions,
   cliEvidenceDeliveryInputError,
   deliverCliAnalysisEvidence,
@@ -144,6 +149,9 @@ const closeDebuggerCommandSession = async (
   try {
     await manager.closeAll();
   } catch (cause) {
+    // This process is the only owner, so a caller gets the debugger to check
+    // rather than a retry that no later command could perform.
+    const retainedPids = retainedDebuggerProcessIds(cause);
     throw new ProviderCleanupError(
       providerId,
       sessionId === undefined ? [] : [sessionId],
@@ -158,8 +166,15 @@ const closeDebuggerCommandSession = async (
             : cause instanceof Error
               ? cause.message
               : String(cause),
+        ...retainedDebuggerDiagnostics(cause),
       },
-      { cause, operation },
+      {
+        cause,
+        operation,
+        ...(retainedPids.length === 0
+          ? {}
+          : { remediationAction: retainedDebuggerRemediation(retainedPids) }),
+      },
     );
   }
 };

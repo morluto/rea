@@ -26,12 +26,12 @@ export const registerAnalysisViewCommands = (
 ): void => {
   cli.command(CLI_COMMANDS.inspectEvidenceBundle, {
     description:
-      "Inspect a local Evidence bundle completely, as discovery metadata, or as a page of selected complete records",
+      "Inspect a local Evidence bundle completely, as discovery metadata, as a page of selected complete records, or as direct-link and retained-closure membership.",
     args: z.object({
       inputJson: z
         .string()
         .describe(
-          "JSON or JSON file with absolute path, detail, optional record filters, and records offset/limit",
+          "JSON or JSON file with absolute path, detail, optional record filters, records or links offset/limit, and links traversal/link_status",
         ),
     }),
     run: ({ args }) =>
