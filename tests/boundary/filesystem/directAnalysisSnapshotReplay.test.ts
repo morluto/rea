@@ -743,7 +743,7 @@ const verifyLegacyNativeApiWorkflowSnapshotIsNotReplayed = async () => {
     "inspect_native_api",
     parameters,
     { snapshotPath: fixture.snapshotPath },
-  );
+  ).then(projectCliAnalysisResult);
   const currentEvidence = parseEvidence(current);
 
   expect(currentEvidence).toMatchObject({
@@ -785,7 +785,7 @@ const verifyLegacyNativeApiWorkflowSnapshotIsNotReplayed = async () => {
     "inspect_native_api",
     parameters,
     { snapshotPath: fixture.snapshotPath },
-  );
+  ).then(projectCliAnalysisResult);
   expect(replayedCurrent).toEqual(currentEvidence);
   expect(fixture.calls).toEqual(callsAfterCurrentAnalysis);
   expect(fixture.starts).toEqual(startsAfterCurrentAnalysis);
