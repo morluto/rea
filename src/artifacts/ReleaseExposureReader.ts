@@ -498,6 +498,7 @@ const scanOccurrences = async (
     const logical = occurrence.logical_path;
     const location = diskPath(input, occurrence, byId, formatOf) ?? logical;
     if (hasCompanionName(logical)) state.companionPaths.add(location);
+    noteUnfollowedMapLink(state, occurrence.entry_kind, logical, location);
     if (occurrence.entry_kind !== "file") continue;
     const nativeFormat = nativeFormatOf(occurrence, nodeFormat);
     const onDisk =
@@ -667,7 +668,7 @@ const assembleScan = (
               subject: "source maps",
               count: state.skippedMaps,
               reason:
-                "A source map exceeded the map count or byte allowance, could not be read, was past the package entry cap or the HTML inline script limit, was declared but not found, or sat in a script an HTML file loads that was not examined as one; inline CSS source-map directives are not inspected.",
+                "A source map exceeded the map count or byte allowance, could not be read, was a link that is not followed, was past the package entry cap or the HTML inline script limit, was declared but not found, or sat in a script an HTML file loads that was not examined as one; inline CSS source-map directives are not inspected.",
             },
           ]
         : []),
@@ -1975,6 +1976,7 @@ const scanUnexpandedContainer = async (
       });
     const location = `${filePath}/${entry.path}`;
     if (hasCompanionName(entry.path)) state.companionPaths.add(location);
+    noteUnfollowedMapLink(state, entry.kind, entry.path, location);
     if (entry.kind !== "file") continue;
     // A SEA entry's code path need not name a script, so its role says what it is.
     const seaMainScript =
@@ -2507,7 +2509,20 @@ const entryPath = (
   return logical.startsWith(prefix) ? logical.slice(prefix.length) : logical;
 };
 
+/** Readers do not follow links, so a map one names stays unread, not absent. */
+const noteUnfollowedMapLink = (
+  state: ScanState,
+  kind: string,
+  logical: string,
+  location: string,
+): void => {
+  if (kind !== "symlink" || !isSourceMap(logical, "file")) return;
+  state.examinedMaps.add(memberLocationKey(location));
+  state.skippedMaps += 1;
+};
+
 const noteUnlistedEntry = (state: ScanState, entry: ArtifactEntry): void => {
+  noteUnfollowedMapLink(state, entry.kind, entry.path, entry.path);
   if (entry.kind !== "file") return;
   if (entry.encrypted) state.unreadable += 1;
   if (isSourceMap(entry.path, "file")) {

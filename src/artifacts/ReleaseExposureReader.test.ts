@@ -3286,6 +3286,62 @@ describe("ReleaseExposureReader cumulative text allowance", () => {
   });
 });
 
+describe("ReleaseExposureReader unfollowed map links", () => {
+  const SCRIPT = "const value = 1;\n//# sourceMappingURL=app.js.map\n";
+
+  it.skipIf(process.platform === "win32")(
+    "counts a map symlink in a directory as skipped once, declared or not",
+    async () => {
+      for (const script of ["const value = 1;\n", SCRIPT]) {
+        const root = await createTestTempDirectory("rea-release-map-link-");
+        await writeFile(join(root, "payload"), "not read\n");
+        await writeFile(join(root, "app.js"), script);
+        await symlink("payload", join(root, "app.js.map"));
+        const scanned = await inspect(root);
+        expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+        expect(scanned.omitted).toContainEqual(
+          expect.objectContaining({ subject: "source maps", count: 1 }),
+        );
+      }
+    },
+  );
+
+  it("counts a map link in an ASAR as skipped", async () => {
+    const root = await createTestTempDirectory("rea-release-asar-map-link-");
+    const archive = join(root, "app.asar");
+    const payload = Buffer.from("not read\n");
+    await writeFile(
+      archive,
+      Buffer.concat([
+        asarHeaderBytes(
+          JSON.stringify({
+            files: {
+              "app.js.map": { link: "payload" },
+              payload: { size: payload.length, offset: "0" },
+            },
+          }),
+        ),
+        payload,
+      ]),
+    );
+    const scanned = await inspect(archive);
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+    expect(scanned.omitted).toContainEqual(
+      expect.objectContaining({ subject: "source maps", count: 1 }),
+    );
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "leaves a link that names no map out of the map counts",
+    async () => {
+      const root = await createTestTempDirectory("rea-release-other-link-");
+      await writeFile(join(root, "payload"), "not read\n");
+      await symlink("payload", join(root, "current"));
+      expect((await inspect(root)).source_maps.skipped).toBe(0);
+    },
+  );
+});
+
 describe("ReleaseExposureReader packaged map identity", () => {
   it("keeps a named companion that a later script declares as its map", async () => {
     const root = await createTestTempDirectory("rea-release-named-companion-");
