@@ -1,0 +1,29 @@
+{
+  "name": "rea",
+  "version": "6.8.0",
+  "description": "Reverse engineer anything with agents, from app behavior down to native binaries.",
+  "author": {
+    "name": "morluto",
+    "url": "https://github.com/morluto"
+  },
+  "homepage": "https://rea.tools/",
+  "repository": "https://github.com/morluto/rea",
+  "license": "MIT",
+  "keywords": [
+    "reverse-engineering",
+    "binary-analysis",
+    "decompiler",
+    "mcp-server"
+  ],
+  "skills": "./skills",
+  "mcpServers": {
+    "rea": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
+        "6.8.0"
+      ]
+    }
+  },
+  "icon": "./assets/rea-plugin.png"
+}

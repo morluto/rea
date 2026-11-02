@@ -26,10 +26,8 @@ import {
   annotationsFromEffects,
   toolSessionEffects,
 } from "../../../src/contracts/toolEffects.js";
-import {
-  expandToolAvailability,
-  sessionProvider,
-} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createServerIdentity } from "../../../src/serverIdentity.js";
@@ -99,24 +97,6 @@ const statusCapability = (
     },
   ],
 });
-
-const unconfiguredHostTool = {
-  inspectAvailability: async () => ({
-    status: "unavailable" as const,
-    code: "not_configured" as const,
-    reason: "Host tools are outside the server identity fixture.",
-    diagnostics: { source: "test_fixture" },
-  }),
-  close: async () => {},
-  execute: async (): Promise<never> => {
-    throw new Error("Host-tool execution is outside the identity fixture");
-  },
-};
-const hostToolOptions = {
-  androidAnalysis: unconfiguredHostTool,
-  adbDeviceAnalysis: unconfiguredHostTool,
-  apktoolAnalysis: unconfiguredHostTool,
-};
 
 describe("server and catalog identity", () => {
   it("derives package and SDK versions from canonical package metadata", async () => {
@@ -354,7 +334,7 @@ describe("guided prompt catalog identity", () => {
 describe("live server identity over MCP", () => {
   it("exposes live identity, a stable catalog, and changing availability", async () => {
     const session = createTestBinarySession(availabilityProvider());
-    const server = createServer({ kind: "session", session }, hostToolOptions);
+    const server = createServer({ kind: "session", session });
     const client = new Client(
       { name: "identity-test", version: "9" },
       {
@@ -398,10 +378,7 @@ describe("live server identity over MCP", () => {
     const session = createTestBinarySession(availabilityProvider());
     const server = createServer(
       { kind: "session", session },
-      {
-        ...hostToolOptions,
-        environment: { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
-      },
+      { environment: { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" } },
     );
     const client = new Client({ name: "compact-identity-test", version: "1" });
     const [clientTransport, serverTransport] =
@@ -419,9 +396,15 @@ describe("live server identity over MCP", () => {
             server.catalogIdentity.digests.combined_sha256,
         },
       });
-      const status = z
-        .object({ result: sessionProvider })
-        .parse(response.structuredContent).result;
+      const statusSchema = sessionOutputSchemas.binary_session;
+      const status = statusSchema.parse(response.structuredContent).result;
+      expect(status.open).toBe(false);
+      for (const open of ["invalid", true]) {
+        expect(
+          statusSchema.safeParse({ result: { ...status, open } }).success,
+          `invalid session lifecycle state: ${String(open)}`,
+        ).toBe(false);
+      }
       expect(status.server_identity.catalog).toEqual(server.catalogIdentity);
       expect(status.server_identity.alignment).toMatchObject({
         state: "aligned",
@@ -448,10 +431,7 @@ describe("active-target availability over MCP", () => {
     // Availability does not depend on compiling every advertised output schema.
     const server = createServer(
       { kind: "session", session },
-      {
-        ...hostToolOptions,
-        environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" },
-      },
+      { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } },
     );
     const client = new Client({ name: "availability-test", version: "1" });
     const [clientTransport, serverTransport] =
@@ -527,7 +507,7 @@ const activeTargetReasons = async (
     arguments: {},
   });
   const availability = expandToolAvailability(
-    z.object({ result: sessionProvider }).parse(status.structuredContent).result
+    sessionOutputSchemas.binary_session.parse(status.structuredContent).result
       .tool_availability,
   );
   return Object.fromEntries(
@@ -542,9 +522,9 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
     name: "binary_session",
     arguments: { detail: "complete" },
   });
-  const status = z
-    .object({ result: sessionProvider })
-    .parse(identity.structuredContent).result;
+  const status = sessionOutputSchemas.binary_session.parse(
+    identity.structuredContent,
+  ).result;
   expect(Object.keys(status.server_identity.catalog).sort()).toEqual([
     "counts",
     "digests",
@@ -597,9 +577,9 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
     name: "binary_session",
     arguments: { expected_package_version: "1.2.0" },
   });
-  const parsed = z
-    .object({ result: sessionProvider })
-    .parse(status.structuredContent);
+  const parsed = sessionOutputSchemas.binary_session.parse(
+    status.structuredContent,
+  );
   expect({
     result: {
       ...parsed.result,

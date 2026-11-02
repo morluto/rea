@@ -34,7 +34,7 @@ const evidence = (
     turboVersion: "2.11.7",
     platform: "linux",
     architecture: "x64",
-    taskHashes: { "lint:built": "a".repeat(16) },
+    taskHashes: { lint: "a".repeat(16) },
   },
   diagnostics,
 });

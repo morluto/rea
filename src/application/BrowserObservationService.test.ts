@@ -11,6 +11,7 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
+import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   expectDroppedPartial,
@@ -54,6 +55,21 @@ const provider = (
     identity: () => ({ id: "browser-fixture", name: "Fixture", version: "1" }),
     listTargets,
   }) as unknown as BrowserObservationPort;
+
+it("keeps live browser inventory Evidence observed with external-service authority", async () => {
+  const result = await listBrowserTargets(
+    provider(async () => ok(report)),
+    input,
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: { confidence: "observed", authority: "external-service" },
+  });
+  if (result.ok)
+    expect(result.value.parameters).not.toHaveProperty(
+      "comparison_input_sha256",
+    );
+});
 
 it("retains completed browser inventory Evidence when the provider completes after abort", async () => {
   const controller = new AbortController();
@@ -134,6 +150,49 @@ it("converts a raw page inspection retained after browser cleanup failure", asyn
     });
   }
 });
+
+it.each([true, false])(
+  "promotes cleanup primary facts once when wrapper retains them: %s",
+  async (wrapperRetainsFacts) => {
+    const inspection = passiveNetworkCapture();
+    const primary = new AnalysisCancelledError("inspect_web_page", {
+      partialObservation: inspection,
+    });
+    const failure = new BrowserObservationError(
+      "inspect_web_page",
+      "cleanup_failed",
+      {
+        cleanupPrimary: primary,
+        cleanup: {
+          reason: "target detach failed",
+          resources: ["browser target"],
+        },
+        ...(wrapperRetainsFacts ? { partialObservation: inspection } : {}),
+      },
+    );
+    const browser = {
+      ...provider(async () => ok(report)),
+      inspectPage: async () => err(failure),
+    } as unknown as BrowserObservationPort;
+    const result = await inspectWebPage(browser, pageInput());
+    expect(result.ok).toBe(false);
+    expect(parseEvidence(primary.partialObservation)).toMatchObject({
+      operation: "inspect_web_page",
+      normalized_result: inspection,
+    });
+    if (wrapperRetainsFacts)
+      expect(failure.partialObservation).toBe(primary.partialObservation);
+    failure.resolveCleanup();
+    expect(resolvedAnalysisError(failure)).toBe(primary);
+    expect(
+      parseEvidence(
+        projectAnalysisError(resolvedAnalysisError(failure)).details?.[
+          "partial_observation"
+        ],
+      ),
+    ).toEqual(primary.partialObservation);
+  },
+);
 
 it("retains captured page Evidence when bundle analysis fails after capture", async () => {
   const inspection = passiveNetworkCapture();

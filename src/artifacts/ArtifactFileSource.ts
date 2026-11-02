@@ -8,7 +8,10 @@ import {
   sameRegularFileState,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  artifactSelectedPathErrno,
+  assertArtifactReadActive,
+} from "./ArtifactFileOperation.js";
 import { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
 import { hashReadable } from "./ArtifactHash.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -25,11 +28,7 @@ export const assertArtifactFileSelectedSource = async (
     lstat(path).catch((cause: unknown) => {
       // Admission already established this selected name. Its disappearance
       // or a replaced ancestor is a source change, not an unrelated I/O fault.
-      if (
-        cause instanceof Error &&
-        "code" in cause &&
-        (cause.code === "ENOENT" || cause.code === "ENOTDIR")
-      )
+      if (artifactSelectedPathErrno(cause) !== undefined)
         throw new ArtifactReaderFailure(
           "integrity",
           `${diagnosticLabel} source identity changed: ${path}`,

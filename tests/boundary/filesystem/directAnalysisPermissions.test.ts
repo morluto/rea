@@ -20,7 +20,7 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { REA_WORKFLOW_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { workflowAnalysisProfile } from "../../../src/application/WorkflowAnalysisProfile.js";
-import { HOPPER_PROVIDER_IDENTITY } from "../../../src/hopper/HopperProviderCapabilities.js";
+import { HOPPER_PROVIDER_IDENTITY } from "../../../src/hopper/HopperProviderMetadata.js";
 
 import { resolveHopperAnalysisProfile } from "../../../src/hopper/HopperAnalysisProfile.js";
 

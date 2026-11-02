@@ -255,6 +255,7 @@ const nativeExportEvidence = () => {
       },
     ]),
     segments: coverage([]),
+    encryption: coverage([]),
     provenance: [],
     limitations: [
       "Selected Mach-O slice container offset is unknown in this synthetic example.",

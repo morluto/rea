@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { constants as fsConstants } from "node:fs";
 import {
   copyFile,
@@ -14,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
-import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { detectClients } from "../../../src/application/SetupHost.js";
 import { skillDestinations } from "../../../src/application/SetupSkill.js";
@@ -35,7 +36,9 @@ import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment
  * The registration command setup writes on the host running the tests. Windows
  * wraps it in `cmd.exe /d /c`, so the expected entry follows the host too.
  */
-const command = npxRegistrationCommand(process.platform);
+const command = currentClientRegistrationCommand({
+  platform: process.platform,
+});
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());

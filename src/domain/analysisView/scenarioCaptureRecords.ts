@@ -17,7 +17,7 @@ import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { analysisViewResultInputError } from "./analysisViewParent.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
@@ -51,10 +51,16 @@ const headerValue = (
   name: string,
 ): string | undefined => {
   if (headers?.state !== "captured") return undefined;
-  const item = headers.items.find(
-    (candidate) => candidate.name.toLowerCase() === name,
-  );
-  return item?.value ?? undefined;
+  let value: string | undefined;
+  for (const item of headers.items) {
+    if (item.name.toLowerCase() !== name) continue;
+    // A singleton field has no certain value if declarations disagree or one
+    // was excluded. Never let ordering choose an interpretation of Evidence.
+    if (item.value === null || (value !== undefined && value !== item.value))
+      return undefined;
+    value = item.value;
+  }
+  return value;
 };
 
 const captured = (
@@ -88,6 +94,14 @@ export const scenarioContentMediaType = (
   captured(content)?.media_type ??
   headerValue(content?.headers, "content-type");
 
+/** Whether a request sent no body: Playwright exposed none and the request names no Content-Type, which the bodies browsers send carry. */
+const unsentBody = (
+  request: RequestEvent,
+  content: ContentEvent | undefined,
+): boolean =>
+  content?.body.state === "not_exposed" &&
+  !request.header_names.some((name) => name.toLowerCase() === "content-type");
+
 /** The request object HAR readers expect; a redacted URL is withheld so no path is templated from it. */
 const reportedRequest = (
   request: RequestEvent,
@@ -97,9 +111,15 @@ const reportedRequest = (
   const body = purpose === "manifest" ? captured(content) : undefined;
   const text = body === undefined ? undefined : utf8Text(body);
   const mimeType = scenarioContentMediaType(content);
+  const size =
+    body !== undefined && !body.redacted
+      ? body.bytes
+      : purpose === "manifest" && unsentBody(request, content)
+        ? 0
+        : -1;
   return {
     method: request.method,
-    bodySize: body !== undefined && !body.redacted ? body.bytes : -1,
+    bodySize: size,
     url: request.url.redacted ? null : request.url.url,
     ...(text === undefined || mimeType === undefined
       ? {}

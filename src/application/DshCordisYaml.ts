@@ -1,3 +1,4 @@
+import { retainYamlSequenceAnnotations } from "./YamlSequenceAnnotations.js";
 import { isDeepStrictEqual } from "node:util";
 import {
   isAlias,
@@ -143,6 +144,22 @@ export class DshCordisYaml {
         replacement.comment = original.comment;
       if (original.commentBefore !== undefined)
         replacement.commentBefore = original.commentBefore;
+    }
+    if (isSeq(original) && isSeq(replacement)) {
+      retainYamlSequenceAnnotations(
+        original,
+        replacement,
+        (node) => this.value(node),
+        (source, target) => {
+          if (source.commentBefore !== undefined)
+            target.commentBefore = source.commentBefore;
+          if (source.comment !== undefined) target.comment = source.comment;
+          if (source.spaceBefore !== undefined)
+            target.spaceBefore = source.spaceBefore;
+          return target;
+        },
+        () => true,
+      );
     }
     if (pair === undefined) map.set(key, replacement);
     else pair.value = replacement;

@@ -16,5 +16,3 @@ export const recoveryInstructions = (
   runtimeSettingsAvailable: boolean,
 ): string =>
   `${RECOVERY_START}${runtimeSettingsAvailable ? RUNTIME_SETTINGS_RECOVERY : LAUNCH_SETTINGS_RECOVERY}${EXPLICIT_ARGUMENT_RECOVERY}${RECOVERY_END}`;
-
-export const RECOVERY_INSTRUCTIONS = recoveryInstructions(true);

@@ -646,6 +646,15 @@ it("keeps a real SDK physical failure when abort arrives during its outer unwind
   }
 });
 
+it.each(["1e400", '{"observed":1e400}'])(
+  "rejects IDA JSON text outside the JSON value contract: %s",
+  (text) => {
+    expect(() =>
+      decodeIdaToolResult({ content: [{ type: "text", text }] }),
+    ).toThrow("JSON numbers must be finite");
+  },
+);
+
 it("preserves observed own structured members before deciding whether to unwrap a result", () => {
   const structured: unknown = JSON.parse(
     '{"__proto__":{"observed":true},"result":"field","nested":[{"__proto__":"nested fact"}]}',

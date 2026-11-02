@@ -223,7 +223,7 @@ cliTest(
         bundle.value.records.find(
           (row) => row.evidence_id === full.evidence_id,
         ),
-      ).toEqual(full);
+      ).toEqual({ ...full, caller_input_path: path });
       const exported = join(root, `${format}-record.json`);
       await writeFile(exported, JSON.stringify(full));
       await unlink(path);

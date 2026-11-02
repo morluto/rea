@@ -4,8 +4,9 @@ import {
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { parseRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
+import { parsePcapHttpUri } from "./PcapHttpUri.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { parseDnsMessageRaw } from "./PcapDnsWire.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 const OPERATION = "inspect_pcap_capture";
@@ -103,6 +104,7 @@ export const parseCapinfosOutput = (stdout: string): CapinfosMetadata => {
     durationText === undefined
       ? null
       : /^(\d+(?:\.\d+)?)(?:\s+seconds?)?$/u.exec(durationText);
+  const durationSeconds = duration === null ? null : Number(duration[1]);
   const snapshot = /^file hdr:\s*(\d+) bytes$/u.exec(
     lines.get("Packet size limit") ?? "",
   );
@@ -120,7 +122,10 @@ export const parseCapinfosOutput = (stdout: string): CapinfosMetadata => {
     captureEnd: captureInstant(
       lines.get("Latest packet time") ?? lines.get("Last packet time"),
     ),
-    captureDurationSeconds: duration === null ? null : Number(duration[1]),
+    captureDurationSeconds:
+      durationSeconds !== null && Number.isFinite(durationSeconds)
+        ? durationSeconds
+        : null,
     snapshotLength:
       snapshotLength !== null &&
       Number.isSafeInteger(snapshotLength) &&
@@ -136,10 +141,12 @@ export interface TsharkFields {
   readonly endpointCount: number;
   readonly dnsQueries: {
     query: string;
+    query_labels_hex?: string[] | null;
     response_addresses: string[];
     response_address_count: number;
   }[];
   readonly dnsQueryCount: number;
+  readonly dnsLimitations: string[];
   readonly tlsSniValues: string[];
   readonly tlsSniCount: number;
   readonly protocolDistribution: { protocol: string; packet_count: number }[];
@@ -157,11 +164,11 @@ export interface TsharkFields {
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** Validate the fixed JSON field representation before retaining aggregate facts. */
-export const parseTsharkJsonOutput = async (
+const decodeTsharkPackets = async (
   stdout: string,
+  budget: { decodedBytes: number },
   signal?: AbortSignal,
-): Promise<TsharkFields> => {
+): Promise<unknown[]> => {
   assertOutputReadActive(signal);
   if (Buffer.byteLength(stdout) > TSHARK_JSON_MAX_BYTES)
     throw new AnalysisResourceConstraintError(
@@ -171,12 +178,10 @@ export const parseTsharkJsonOutput = async (
       { max_json_bytes: TSHARK_JSON_MAX_BYTES },
       fixedAllowanceOptions("The tshark JSON decoding allowance", "capture"),
     );
-  // The selected-field protocol has five container levels. Reject deeper
-  // graphs before materializing them; quoted brackets are string data.
-  let depth = 0,
-    quoted = false,
+  // Account for source-driven JSON expansion before materializing protocol trees.
+  let quoted = false,
     escaped = false;
-  let decodedBytes = stdout.length * 2;
+  budget.decodedBytes += stdout.length * 2;
   for (let index = 0; index < stdout.length; index += 1) {
     if (index % 65536 === 0) {
       await yieldToEventLoop();
@@ -189,13 +194,11 @@ export const parseTsharkJsonOutput = async (
       else if (char === '"') quoted = false;
     } else if (char === '"') {
       quoted = true;
-      decodedBytes += 64;
+      budget.decodedBytes += 64;
     } else if (char === "{" || char === "[") {
-      decodedBytes += 128;
-      if (++depth > 5) protocolFailure("unexpected JSON nesting");
-    } else if (char === "}" || char === "]") depth -= 1;
-    else if (char === ":" || char === ",") decodedBytes += 128;
-    if (decodedBytes > MAX_DECODED_BYTES)
+      budget.decodedBytes += 128;
+    } else if (char === ":" || char === ",") budget.decodedBytes += 128;
+    if (budget.decodedBytes > MAX_DECODED_BYTES)
       throw new AnalysisResourceConstraintError(
         OPERATION,
         "memory",
@@ -212,8 +215,84 @@ export const parseTsharkJsonOutput = async (
   }
   if (!Array.isArray(packets))
     return protocolFailure("tshark packet root must be an array");
+  return packets;
+};
+
+/** Decode each bounded acquisition, then join DNS PDUs by unique capture frame. */
+export const parseTsharkJsonOutput = async (
+  stdout: string,
+  signal?: AbortSignal,
+  dnsStdout?: string,
+): Promise<TsharkFields> => {
+  const budget = { decodedBytes: 0 };
+  const packets = await decodeTsharkPackets(stdout, budget, signal);
+  for (const packet of packets) {
+    if (
+      !object(packet) ||
+      !object(packet._source) ||
+      !object(packet._source.layers)
+    )
+      return protocolFailure("packet lacks _source.layers");
+    const layers = packet._source.layers;
+    // Selected-field acquisitions have a flat frame.number key. Protocol-tree
+    // acquisitions are separately parsed for producer goldens and DNS PDUs.
+    if ("frame.number" in layers) {
+      for (const [key, value] of Object.entries(layers)) {
+        if (
+          ["dns", "dns_raw", "mdns", "mdns_raw", "llmnr", "llmnr_raw"].includes(
+            key,
+          )
+        )
+          continue;
+        if (
+          !Array.isArray(value) ||
+          !value.every((item) => typeof item === "string")
+        )
+          return protocolFailure(
+            `selected field ${key} must be an array of strings`,
+          );
+      }
+    }
+  }
+  if (dnsStdout !== undefined) {
+    const seen = new Set<number>();
+    for (const packet of await decodeTsharkPackets(dnsStdout, budget, signal)) {
+      if (
+        !object(packet) ||
+        !object(packet._source) ||
+        !object(packet._source.layers)
+      )
+        return protocolFailure("DNS packet lacks _source.layers");
+      const layers = packet._source.layers;
+      const frame = object(layers.frame)
+        ? layers.frame["frame.number"]
+        : undefined;
+      if (typeof frame !== "string" || !/^[1-9][0-9]*$/u.test(frame))
+        return protocolFailure("DNS packet lacks a unique frame number");
+      const number = Number(frame);
+      const base = packets[number - 1];
+      if (
+        !Number.isSafeInteger(number) ||
+        seen.has(number) ||
+        !object(base) ||
+        !object(base._source) ||
+        !object(base._source.layers)
+      )
+        return protocolFailure(
+          "DNS frame is duplicated or outside the capture inventory",
+        );
+      seen.add(number);
+      for (const family of ["dns", "mdns", "llmnr"]) {
+        base._source.layers[family] = layers[family];
+        base._source.layers[`${family}_raw`] = layers[`${family}_raw`];
+      }
+    }
+  }
   const endpoints = new Map<string, number>();
-  const dns = new Map<string, Set<string>>();
+  const dns = new Map<
+    string,
+    { query: string; labels: readonly string[] | null; addresses: Set<string> }
+  >();
   const sni = new Set<string>();
   const protocols = new Map<string, number>();
   const uris = new Set<string>();
@@ -222,6 +301,8 @@ export const parseTsharkJsonOutput = async (
   let unresolvedHttpUriTarget = false;
   const unattributed = new Set<string>();
   let unattributedPackets = 0;
+  let unresolvedDnsOwnership = false;
+  const dnsLimitations = new Set<string>();
   let retainedBytes = 0;
   const charge = (value: string): void => {
     retainedBytes += 192 + 2 * Buffer.byteLength(value);
@@ -258,16 +339,46 @@ export const parseTsharkJsonOutput = async (
         `packet ${String(index + 1)} lacks _source.layers`,
       );
     const layers = packet._source.layers;
-    for (const [key, value] of Object.entries(layers))
-      if (
-        !Array.isArray(value) ||
-        !value.every((item) => typeof item === "string")
-      )
-        return protocolFailure(
-          `packet ${String(index + 1)} field ${key} must be an array of strings`,
-        );
-    const field = (name: string): readonly string[] =>
-      (layers[name] as string[] | undefined) ?? [];
+    // The tree is the producer-owned hierarchy; flatten only selected scalar
+    // observations. DNS identity and RR ownership remain scoped to each PDU.
+    const values = new Map<string, string[]>();
+    const pending: unknown[] = [layers];
+    while (pending.length > 0) {
+      const value = pending.pop();
+      if (Array.isArray(value)) {
+        for (let item = value.length - 1; item >= 0; item -= 1)
+          pending.push(value[item]);
+        continue;
+      }
+      if (!object(value)) continue;
+      const entries = Object.entries(value);
+      for (const [key, child] of entries) {
+        if (key.endsWith("_raw")) continue;
+        if (typeof child === "string") {
+          const list = values.get(key) ?? [];
+          list.push(child);
+          values.set(key, list);
+        } else if (
+          Array.isArray(child) &&
+          child.every((item) => typeof item === "string")
+        ) {
+          const list = values.get(key) ?? [];
+          for (const item of child) list.push(item);
+          values.set(key, list);
+        }
+      }
+      for (let entry = entries.length - 1; entry >= 0; entry -= 1) {
+        const [key, child] = entries[entry]!;
+        if (
+          !key.endsWith("_raw") &&
+          (object(child) ||
+            (Array.isArray(child) &&
+              child.some((item) => typeof item !== "string")))
+        )
+          pending.push(child);
+      }
+    }
+    const field = (name: string): readonly string[] => values.get(name) ?? [];
     const frame = field("frame.number");
     if (
       frame.length !== 1 ||
@@ -296,31 +407,118 @@ export const parseTsharkJsonOutput = async (
       if (!endpoints.has(address)) charge(address);
       endpoints.set(address, (endpoints.get(address) ?? 0) + 1);
     }
-    const questions = new Set(
-      field("dns.qry.name").filter((value) => value !== ""),
-    );
-    for (const question of questions)
-      if (!dns.has(question)) {
-        charge(question);
-        dns.set(question, new Set());
-      }
-    const addresses = [...field("dns.a"), ...field("dns.aaaa")].filter(
-      (value) => value !== "",
-    );
-    const response = field("dns.flags.response");
-    if (addresses.length > 0) {
-      if (
-        questions.size === 1 &&
-        response.length > 0 &&
-        response.every((value) => value === "True" || value === "1")
-      ) {
-        const values = dns.get(questions.values().next().value!)!;
-        for (const address of addresses) add(values, address);
-      } else {
-        unattributedPackets += 1;
-        for (const address of addresses) add(unattributed, address);
+    const messages: {
+      family: "dns" | "mdns" | "llmnr";
+      source: unknown;
+      raw: unknown;
+    }[] = [];
+    for (const family of ["dns", "mdns", "llmnr"] as const) {
+      const source = layers[family];
+      const sources = Array.isArray(source)
+        ? source
+        : source === undefined
+          ? []
+          : [source];
+      const raw = layers[`${family}_raw`];
+      const raws =
+        Array.isArray(raw) && typeof raw[0] !== "string"
+          ? raw
+          : raw === undefined
+            ? []
+            : [raw];
+      for (const [pdu, source] of sources.entries())
+        messages.push({
+          family,
+          source,
+          raw: raws.length === sources.length ? raws[pdu] : undefined,
+        });
+    }
+    let packetUnattributed = false;
+    const treeQueries = new Map<string, number>();
+    const treeAddresses = new Map<string, number>();
+    const count = (counts: Map<string, number>, value: string): void => {
+      counts.set(value, (counts.get(value) ?? 0) + 1);
+    };
+    for (const [pdu, message] of messages.entries()) {
+      const facts = parseDnsMessageRaw(
+        message.raw,
+        message.source,
+        message.family,
+      );
+      for (const question of facts.questions)
+        count(treeQueries, question.query);
+      for (const [, address] of facts.assigned) count(treeAddresses, address);
+      for (const address of facts.unattributed) count(treeAddresses, address);
+      const keys = facts.questions.map((question, occurrence) => {
+        const key =
+          question.labels_hex === null
+            ? `unknown:${String(index)}:${String(pdu)}:${String(occurrence)}`
+            : JSON.stringify([question.query, question.labels_hex]);
+        if (!dns.has(key)) {
+          charge(question.query);
+          for (const label of question.labels_hex ?? []) charge(label);
+          dns.set(key, {
+            query: question.query,
+            labels: question.labels_hex,
+            addresses: new Set(),
+          });
+        }
+        return key;
+      });
+      unresolvedDnsOwnership ||= facts.incomplete;
+      for (const reason of facts.incomplete_reasons ?? [])
+        add(dnsLimitations, reason);
+      for (const [question, address] of facts.assigned)
+        add(dns.get(keys[question]!)!.addresses, address);
+      if (facts.unattributed.length > 0) {
+        packetUnattributed = true;
+        for (const address of facts.unattributed) add(unattributed, address);
       }
     }
+    // Flat selected observations are independent capture facts. Consume matching
+    // tree occurrences rather than comparing sets: one missing PDU may have the
+    // same display and address as a successfully decoded message.
+    if (
+      dnsStdout !== undefined ||
+      ["dns.qry.name", "dns.a", "dns.aaaa"].some((key) => key in layers)
+    ) {
+      const selected = (name: string): readonly string[] =>
+        (layers[name] as readonly string[] | undefined) ?? [];
+      const consume = (counts: Map<string, number>, value: string): boolean => {
+        const remaining = counts.get(value) ?? 0;
+        if (remaining === 0) return false;
+        if (remaining === 1) counts.delete(value);
+        else counts.set(value, remaining - 1);
+        return true;
+      };
+      let mismatch = false;
+      for (const [occurrence, query] of selected("dns.qry.name").entries()) {
+        if (consume(treeQueries, query)) continue;
+        mismatch = true;
+        if (query === "") continue;
+        charge(query);
+        dns.set(`selected:${String(index)}:${String(occurrence)}`, {
+          query,
+          labels: null,
+          addresses: new Set(),
+        });
+      }
+      for (const address of [...selected("dns.a"), ...selected("dns.aaaa")]) {
+        if (consume(treeAddresses, address)) continue;
+        mismatch = true;
+        if (address === "") continue;
+        packetUnattributed = true;
+        add(unattributed, address);
+      }
+      if (mismatch || treeQueries.size > 0 || treeAddresses.size > 0) {
+        unresolvedDnsOwnership = true;
+        add(
+          dnsLimitations,
+          "Selected DNS observations and per-message trees differ in query or address occurrences; unmatched selected facts are retained without wire identity or ownership",
+        );
+      }
+    }
+    if (packetUnattributed) unattributedPackets += 1;
     for (const value of field("tls.handshake.extensions_server_name"))
       if (value !== "") add(sni, value);
     if (protocol !== "") {
@@ -330,11 +528,11 @@ export const parseTsharkJsonOutput = async (
     const fullUris = field("http.request.full_uri");
     const fullUriCandidates = fullUris.map((value) => ({
       value,
-      parsed: parseRecordedTransportUrl(value),
+      parsed: parsePcapHttpUri(value, "full-uri"),
     }));
     const requestUriCandidates = field("http.request.uri").map((value) => ({
       value,
-      parsed: parseRecordedTransportUrl(value),
+      parsed: parsePcapHttpUri(value, "request-target"),
     }));
     // Wireshark emits full_uri alongside each request URI it can resolve.
     // Raw absolute-form targets stand on their own; relative targets need a
@@ -373,7 +571,7 @@ export const parseTsharkJsonOutput = async (
       ...fullUriCandidates,
       ...http2Uris.map((value) => ({
         value,
-        parsed: parseRecordedTransportUrl(value),
+        parsed: parsePcapHttpUri(value, "full-uri"),
       })),
       ...requestUriCandidates.filter(({ parsed }) => parsed.origin !== null),
     ]) {
@@ -401,12 +599,14 @@ export const parseTsharkJsonOutput = async (
         packet_count,
       })),
     endpointCount: endpoints.size,
-    dnsQueries: [...dns].map(([query, addresses]) => ({
+    dnsQueries: [...dns.values()].map(({ query, labels, addresses }) => ({
       query,
+      query_labels_hex: labels === null ? null : [...labels],
       response_addresses: [...addresses],
       response_address_count: addresses.size,
     })),
     dnsQueryCount: dns.size,
+    dnsLimitations: [...dnsLimitations],
     tlsSniValues: [...sni],
     tlsSniCount: sni.size,
     protocolDistribution: [...protocols]
@@ -422,7 +622,7 @@ export const parseTsharkJsonOutput = async (
     packetCount: packets.length,
     partial:
       observedUris.size > uris.size ||
-      unattributedPackets > 0 ||
+      unresolvedDnsOwnership ||
       unresolvedHttpUriTarget,
   };
 };

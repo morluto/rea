@@ -17,8 +17,7 @@ import {
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
-import type { ElectronCallPath } from "./electronStaticAnalysisTypes.js";
+import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -50,6 +49,7 @@ export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
     sender_validations: [],
     utility_processes: [],
     native_addon_bindings: [],
+    protocols: [],
   },
   limitations: [
     "JavaScript source could not be parsed; absence of findings is not evidence of absence.",
@@ -311,12 +311,6 @@ export interface JavaScriptStaticSourceUrlPath {
   readonly path: string;
   readonly directory: boolean;
 }
-
-/** Convert an exact static file URL expression to a POSIX path. */
-export const staticFileUrlPath = (
-  node: t.CallExpression | t.NewExpression,
-  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
-): string | undefined => staticFileUrlPathFact(node, pathIntrinsics)?.path;
 
 const staticFileUrlPathFact = (
   node: t.CallExpression | t.NewExpression,
@@ -866,12 +860,6 @@ export const registrationKey = (
 /** Hash exact UTF-8 source text. */
 export const sha256Text = (value: string): string =>
   createHash("sha256").update(value).digest("hex");
-
-/** Identify one Electron call path within its source file across graph projections. */
-export const electronCallPathId = (
-  filePath: string,
-  path: ElectronCallPath,
-): string => sha256Text(JSON.stringify([filePath, path]));
 
 /** Recognized route-construction call suffixes. */
 export const STATIC_ROUTE_CALL_NAMES = [

@@ -95,7 +95,7 @@ it.each([
       });
     expect(await readFile(path, "utf8")).toBe(original);
     expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
-    expect(await readdir(root)).toEqual([
+    expect((await readdir(root)).sort()).toEqual([
       "config.json",
       "config.json.rea.backup",
     ]);

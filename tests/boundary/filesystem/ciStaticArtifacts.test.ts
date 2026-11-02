@@ -49,7 +49,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
           turboVersion: "2.11.7",
           platform: process.platform,
           architecture: process.arch,
-          taskHashes: { "lint:built": "a".repeat(16) },
+          taskHashes: { lint: "a".repeat(16) },
         }),
       );
       const archive = join(root, "reports.zip");
@@ -107,7 +107,7 @@ it("uses the same repository path admission for archived and compared diagnostic
       turboVersion: "2.11.7",
       platform: process.platform,
       architecture: process.arch,
-      taskHashes: { "lint:built": "a".repeat(16) },
+      taskHashes: { lint: "a".repeat(16) },
     }),
   );
   const archive = join(root, "reports.zip");
@@ -201,7 +201,7 @@ it.each([3.5, 100, 0])(
         turboVersion: "2.11.7",
         platform: process.platform,
         architecture: process.arch,
-        taskHashes: { "lint:built": "a".repeat(16), jscpd: "b".repeat(16) },
+        taskHashes: { lint: "a".repeat(16), jscpd: "b".repeat(16) },
       }),
     );
     const archive = join(root, "reports.zip");

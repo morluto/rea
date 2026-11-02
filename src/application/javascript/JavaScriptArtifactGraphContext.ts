@@ -124,6 +124,10 @@ export const applicationRootPath = (
   if (context.applicationOwnershipUnknownContainers.size > 0) return null;
   const entryRoots = context.applicationRootsBySource.get(source.path);
   const container = applicationContainerIdentity(context.fileSet, source);
+  for (const root of context.applicationPossibleRootsByContainer.get(
+    container,
+  ) ?? [])
+    if (!entryRoots?.has(root)) return null;
   if (
     entryRoots === undefined &&
     context.applicationModuleGapSources.has(container)
@@ -152,12 +156,6 @@ export const applicationRootPath = (
       addApplicationRootCandidate(roots, root);
   }
   if (roots.size > 1) return null;
-  // An inventoried ancestor package can establish the same root as a possible
-  // entry even when this source has no direct entrypoint declaration.
-  for (const root of context.applicationPossibleRootsByContainer.get(
-    container,
-  ) ?? [])
-    if (!roots.has(root)) return null;
   for (const root of roots) return root;
   return applicationContainerRoot(context.fileSet, source);
 };

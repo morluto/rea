@@ -149,6 +149,11 @@ it.each([
     shown: 'bitness unknown (sun.arch.data.model = "")',
   },
   {
+    label: "nonstandard framing",
+    property: "sun.arch.data.model =\n",
+    shown: "bitness unknown",
+  },
+  {
     label: "malformed",
     property: "sun.arch.data.model = 64junk\n",
     shown: 'bitness unknown (sun.arch.data.model = "64junk")',

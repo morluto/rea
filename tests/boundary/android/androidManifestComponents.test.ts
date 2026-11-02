@@ -71,6 +71,122 @@ it("keeps pre-projection package parses independent", () => {
   }
 });
 
+it("projects exact declared component attributes without inferring runtime defaults", () => {
+  const xml =
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:other="urn:other" package="com.example"><application android:enabled="false" android:process=":app"><activity android:name=".Main" android:enabled="true" android:process=" :worker " other:enabled="false"/><provider android:name=".Files" android:grantUriPermissions="false"/><provider android:name=".Unknown" android:enabled="@bool/flag" android:grantUriPermissions="?attr/grants" android:process=""/></application></manifest>';
+  const result = parseAndroidManifestComponents(xml, "complete", "33");
+  expect(result.items[0]).toMatchObject({
+    enabled: true,
+    process: " :worker ",
+    grant_uri_permissions: null,
+  });
+  expect(result.items[1]).toMatchObject({
+    enabled: null,
+    process: null,
+    grant_uri_permissions: false,
+  });
+  expect(result.items[2]).toMatchObject({
+    enabled: null,
+    process: "",
+    grant_uri_permissions: null,
+  });
+  expect(result.status).toBe("complete");
+  expect(result.limitations.join(" ")).toContain("nonliteral boolean");
+  expect(result.limitations.join(" ")).toContain("URI-grant state is unknown");
+});
+
+it("ignores foreign namespace aliases of component access attributes", () => {
+  const result = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:other="urn:other" package="com.example"><application><provider android:name=".Provider" other:enabled="true" other:process="foreign" other:grantUriPermissions="true"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(result.status).toBe("complete");
+  expect(result.items[0]).toMatchObject({
+    enabled: null,
+    process: null,
+    grant_uri_permissions: null,
+  });
+});
+
+it("bounds the total copied component process declarations", () => {
+  const oversized = "a".repeat(ANDROID_MANIFEST_LIMITS.processBytes + 1);
+  const result = parseAndroidManifestComponents(
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><service android:name=".Oversized" android:process="${oversized}"/><service android:name=".Valid" android:process=":valid"/></application></manifest>`,
+    "complete",
+    "33",
+  );
+  expect(result.items.map((item) => item.process)).toEqual([null, ":valid"]);
+  expect(result.status).toBe("partial");
+  expect(result.limitations.join(" ")).toContain(
+    "process declarations are capped",
+  );
+});
+
+it("enforces the process copy budget across individually valid components", () => {
+  const processName = "p".repeat(2_050);
+  const declarations = Array.from(
+    { length: ANDROID_MANIFEST_LIMITS.components },
+    (_, index) =>
+      `<service android:name=".S${String(index)}" android:process="${processName}"/>`,
+  ).join("");
+  const result = parseAndroidManifestComponents(
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application>${declarations}</application></manifest>`,
+    "complete",
+    "33",
+  );
+  expect(result.items).toHaveLength(ANDROID_MANIFEST_LIMITS.components);
+  expect(result.items[0]?.process).toBe(processName);
+  expect(result.items.at(-2)?.process).toBe(processName);
+  expect(result.items.at(-1)?.process).toBeNull();
+  expect(result.status).toBe("partial");
+  expect(result.limitations.join(" ")).toContain(
+    "process declarations are capped",
+  );
+  expect(
+    result.items.reduce(
+      (bytes, item) => bytes + Buffer.byteLength(item.process ?? ""),
+      0,
+    ),
+  ).toBeLessThanOrEqual(ANDROID_MANIFEST_LIMITS.processBytes);
+});
+
+it("keeps historical declaration omissions unknown rather than absent", () => {
+  const parsed =
+    androidResultSchemas.inspect_android_package.shape.components.parse({
+      status: "complete",
+      items: [
+        {
+          kind: "receiver",
+          declared_name: ".Receiver",
+          name: "com.example.Receiver",
+          exported: null,
+          exported_default: false,
+          permission: null,
+          permission_source: "none",
+          intent_filter_count: 0,
+          actions: [],
+          categories: [],
+          foreground_service_type: null,
+          authorities: null,
+          target_activity: null,
+        },
+      ],
+      limitations: [],
+    });
+  expect(parsed.status).toBe("complete");
+  expect(parsed.items[0]?.declaration_coverage).toBe("unknown");
+  for (const field of [
+    "enabled",
+    "process",
+    "grant_uri_permissions",
+    "intent_filters",
+    "meta_data",
+    "location",
+  ])
+    expect(parsed.items[0]).not.toHaveProperty(field);
+});
+
 const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app">
   <application android:label="Example">
@@ -110,6 +226,29 @@ const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
     <meta-data android:name="ignored" android:value="not-a-component" />
   </application>
 </manifest>`;
+
+it.each(['a:name=".First" b:name=".Last"', 'b:name=".Last" a:name=".First"'])(
+  "refuses duplicate Android attribute identities: %s",
+  (attributes) => {
+    const inventory = parseAndroidManifestComponents(
+      `<manifest package="com.example" xmlns:a="http://schemas.android.com/apk/res/android" xmlns:b="http://schemas.android.com/apk/res/android"><application><activity ${attributes}/></application></manifest>`,
+      "complete",
+      "33",
+    );
+    expect(inventory).toMatchObject({ status: "unavailable", items: [] });
+    expect(inventory.limitations.join(" ")).toContain("not well-formed XML");
+  },
+);
+
+it("does not infer the Android namespace from an undeclared prefix", () => {
+  expect(
+    parseAndroidManifestComponents(
+      '<manifest package="com.example"><application><activity android:name=".Guess"/></application></manifest>',
+      "complete",
+      "33",
+    ),
+  ).toMatchObject({ status: "unavailable", items: [] });
+});
 
 it.each([".9Activity", ".hyphen-name", ".😀Activity", ".nested.7"])(
   "resolves DEX component name %s and its alias reference",
@@ -1064,4 +1203,145 @@ it.each([
   );
   expect(inventory.items[0]?.foreground_service_type).toBe(declared);
   expect(inventory.status).toBe("complete");
+});
+
+it("keeps intent-filter relationships and exact declarations in one source-located projection", () => {
+  const xml = `<manifest xmlns:a="http://schemas.android.com/apk/res/android" xmlns:other="urn:other" package="com.example">\r\n <application>\r\n  <!-- 😀 --> <activity a:name=".Main" a:enabled="@bool/ready" a:process=":worker">\r\n   <intent-filter a:priority="@integer/rank"><action a:name="VIEW"/><data a:scheme="https" a:host="example.test" a:pathPrefix="/items" other:path="not-android"/></intent-filter>\r\n   <meta-data a:name="public.configuration" a:value="retained-in-text"/>\r\n   <intent-filter a:priority="-10"><action a:name="EDIT"/><category a:name="DEFAULT"/><data a:mimeType="text/plain"/></intent-filter>\r\n  </activity>\r\n </application>\r\n</manifest>`;
+  const result = parseAndroidManifestComponents(xml, "complete", "30");
+  expect(result.status).toBe("complete");
+  const component = result.items[0]!;
+  expect(component).toMatchObject({
+    declaration_index: 0,
+    declaration_coverage: "complete",
+    enabled: null,
+    enabled_declaration: "@bool/ready",
+    process: ":worker",
+    actions: ["VIEW", "EDIT"],
+  });
+  expect(component.location?.offset).toBe(xml.indexOf("<activity"));
+  expect(component.location?.line).toBe(3);
+  expect(component.intent_filters).toMatchObject([
+    {
+      source_index: 0,
+      priority: "@integer/rank",
+      actions: ["VIEW"],
+      categories: [],
+      coverage: "complete",
+      data: [
+        {
+          scheme: "https",
+          host: "example.test",
+          path_prefix: "/items",
+          path: null,
+          mime_type: null,
+        },
+      ],
+    },
+    {
+      source_index: 1,
+      priority: "-10",
+      actions: ["EDIT"],
+      categories: ["DEFAULT"],
+      coverage: "complete",
+      data: [{ scheme: null, host: null, mime_type: "text/plain" }],
+    },
+  ]);
+  expect(component.intent_filters?.[1]?.location?.offset).toBe(
+    xml.indexOf('<intent-filter a:priority="-10"'),
+  );
+  expect(component.meta_data).toEqual([
+    {
+      name: "public.configuration",
+      location: expect.objectContaining({ offset: xml.indexOf("<meta-data") }),
+    },
+  ]);
+  expect(JSON.stringify(component.meta_data)).not.toContain("retained-in-text");
+});
+
+it("preserves original declaration ordinals across omitted unnamed components", () => {
+  const result = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity/><service android:name=".Worker"/><receiver android:name=".Receiver"/></application></manifest>',
+    "complete",
+    "30",
+  );
+  expect(result.status).toBe("partial");
+  expect(result.items.map((item) => item.declaration_index)).toEqual([1, 2]);
+});
+
+it("makes unsupported modern filter constructs partial while retaining their source entry", () => {
+  const xml =
+    '<manifest xmlns:a="http://schemas.android.com/apk/res/android" package="com.example"><application><activity a:name=".Main"><intent-filter><action a:name="VIEW"/><uri-relative-filter-group><data a:path="/selected"/></uri-relative-filter-group></intent-filter></activity></application></manifest>';
+  const result = parseAndroidManifestComponents(xml, "complete", "30");
+  expect(result.status).toBe("partial");
+  expect(result.items[0]).toMatchObject({
+    declaration_coverage: "partial",
+    intent_filters: [{ actions: ["VIEW"], data: [], coverage: "partial" }],
+  });
+  expect(result.limitations.join(" ")).toContain("unsupported constructs");
+});
+
+it.each([
+  ["a:sspPrefix", "partial"],
+  ["foreign:sspPrefix", "complete"],
+  ["android:sspPrefix", "complete"],
+] as const)(
+  "reports unprojected data constraints using namespace identity for %s",
+  (attribute, coverage) => {
+    const declaration = `<data a:scheme="mailto" ${attribute}="selected"/>`;
+    const xml = `<manifest xmlns:a="http://schemas.android.com/apk/res/android" xmlns:foreign="urn:foreign" xmlns:android="urn:foreign" package="com.example"><application><activity a:name=".Main"><intent-filter><action a:name="VIEW"/>${declaration}</intent-filter></activity></application></manifest>`;
+    const result = parseAndroidManifestComponents(xml, "complete", "30");
+    expect(result.status).toBe(coverage);
+    const component = result.items[0]!;
+    expect(component.declaration_coverage).toBe(coverage);
+    const filter = component.intent_filters[0]!;
+    expect(filter).toMatchObject({
+      actions: ["VIEW"],
+      coverage,
+      data: [{ scheme: "mailto", host: null, path: null }],
+    });
+    expect(filter.data[0]?.location?.offset).toBe(xml.indexOf(declaration));
+    expect(
+      result.limitations.join(" ").includes("unsupported constructs"),
+    ).toBe(coverage === "partial");
+  },
+);
+
+it("charges nested declarations across components and preserves unknown capped facts", () => {
+  const name = "x".repeat(2050);
+  const declarations = Array.from(
+    { length: 512 },
+    (_, i) =>
+      `<service a:name=".S${String(i)}"><meta-data a:name="${name}"/></service>`,
+  ).join("");
+  const result = parseAndroidManifestComponents(
+    `<manifest xmlns:a="http://schemas.android.com/apk/res/android" package="com.example"><application>${declarations}</application></manifest>`,
+    "complete",
+    "30",
+  );
+  expect(result.status).toBe("partial");
+  expect(result.items.at(-2)).toMatchObject({
+    declaration_coverage: "complete",
+    meta_data: [{ name }],
+  });
+  expect(result.items.at(-1)).toMatchObject({
+    declaration_coverage: "partial",
+    meta_data: [{ name: null }],
+  });
+  expect(result.limitations.join(" ")).toContain("shared copy bound");
+});
+
+it("reports shared nested-record omissions without erasing the legacy action set", () => {
+  const values = Array.from(
+    { length: 64 },
+    (_, i) => `<action a:name="ACTION_${String(i)}"/>`,
+  ).join("");
+  const xml = `<manifest xmlns:a="http://schemas.android.com/apk/res/android" package="com.example"><application><activity a:name=".Main"><intent-filter>${values}</intent-filter><meta-data a:name="extra"/></activity></application></manifest>`;
+  const result = parseAndroidManifestComponents(xml, "complete", "30");
+  expect(result.status).toBe("partial");
+  expect(result.items[0]?.actions).toHaveLength(64);
+  expect(result.items[0]).toMatchObject({
+    declaration_coverage: "partial",
+    meta_data: [],
+    intent_filters: [{ coverage: "complete" }],
+  });
 });

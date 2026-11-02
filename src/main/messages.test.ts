@@ -8,6 +8,8 @@ import { PROCESS_UNEXPECTED_FAILURE_REMEDIATION } from "../application/process/P
 import {
   MCP_CONNECTION_LOST,
   MCP_CONNECTION_START_FAILED,
+  MCP_TRANSPORT_ERROR,
+  MCP_VALIDATION_FAILED,
   SERVER_START_FAILED,
 } from "./messages.js";
 
@@ -20,6 +22,8 @@ it("publishes the canonical recovery messages in the error catalog", async () =>
   for (const message of [
     MCP_CONNECTION_LOST,
     MCP_CONNECTION_START_FAILED,
+    MCP_TRANSPORT_ERROR,
+    MCP_VALIDATION_FAILED,
     SERVER_START_FAILED,
     PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
   ])

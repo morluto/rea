@@ -9,19 +9,12 @@ import { calleeName } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptBindingIndex } from "./javascriptSemanticState.js";
 import { createJavaScriptGraphqlScan } from "./javascriptGraphqlOperations.js";
 
-/** One RPC operation or transport URL recovered from client-side syntax. */
-export interface JavaScriptRpcEndpoint {
-  readonly value: string;
-  readonly mechanism: string;
-}
+import type {
+  JavaScriptRpcEndpoint,
+  JavaScriptRpcScan,
+} from "./javascriptRpcEndpoint.js";
 
-/** Feed every AST node in pre-order, then drain finish() for Source findings. */
-export interface JavaScriptRpcScan {
-  inspect(node: t.Node): JavaScriptRpcEndpoint | undefined;
-  finish(): Iterable<
-    (JavaScriptRpcEndpoint & { readonly node: t.Node }) | void
-  >;
-}
+export type { JavaScriptRpcScan } from "./javascriptRpcEndpoint.js";
 
 // tRPC proxies preserve router and procedure names as property names, so they
 // survive identifier minification. Method names follow @trpc/react-query and

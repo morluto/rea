@@ -38,26 +38,66 @@ it("validates a tarball against the exact checkout and current workflow attempt"
 it("rejects a workflow SHA that differs from the checked out HEAD", async () => {
   const fixture = await createFixture();
 
-  await expect(validate(fixture, "c".repeat(40))).rejects.toThrow();
+  await expectFailure(
+    fixture,
+    validate(fixture, "c".repeat(40)),
+    "Verified package checked out source SHA mismatch",
+  );
 });
 
 it.each([
-  ["wrong checkout SHA", { sourceSha: "c".repeat(40) }],
-  ["wrong workflow run", { runId: 124 }],
-  ["future workflow attempt", { runAttempt: 3 }],
-  ["wrong verifier platform", { platform: "darwin" }],
-  ["wrong verifier architecture", { architecture: "arm64" }],
-  ["wrong package digest", { sha256: "c".repeat(64) }],
-  ["old manifest schema", { schemaVersion: 1 }],
-  ["wrong package version", { packageVersion: "1.2.4" }],
-  ["wrong Node version", { nodeVersion: "v24.0.0" }],
-  ["wrong release channel", { releaseTag: "next" }],
-  ["invalid release channel", { releaseTag: "latest\noutput=injection" }],
-  ["invalid package version", { packageVersion: "invalid\noutput=injection" }],
-])("rejects %s", async (_label, override) => {
+  [
+    "wrong checkout SHA",
+    { sourceSha: "c".repeat(40) },
+    "Verified package source SHA mismatch",
+  ],
+  ["wrong workflow run", { runId: 124 }, "workflow run ID mismatch"],
+  [
+    "future workflow attempt",
+    { runAttempt: 3 },
+    "workflow run attempt is from the future",
+  ],
+  [
+    "wrong verifier platform",
+    { platform: "darwin" },
+    "verifier platform mismatch",
+  ],
+  [
+    "wrong verifier architecture",
+    { architecture: "arm64" },
+    "verifier architecture mismatch",
+  ],
+  [
+    "wrong package digest",
+    { sha256: "c".repeat(64) },
+    "tarball SHA-256 mismatch",
+  ],
+  ["old manifest schema", { schemaVersion: 1 }, "manifest schema version"],
+  [
+    "wrong package version",
+    { packageVersion: "1.2.4" },
+    "package version mismatch",
+  ],
+  [
+    "wrong Node version",
+    { nodeVersion: "v24.0.0" },
+    "Node.js version mismatch",
+  ],
+  ["wrong release channel", { releaseTag: "next" }, "release tag mismatch"],
+  [
+    "invalid release channel",
+    { releaseTag: "latest\noutput=injection" },
+    "manifest has an invalid release tag",
+  ],
+  [
+    "invalid package version",
+    { packageVersion: "invalid\noutput=injection" },
+    "package version mismatch",
+  ],
+])("rejects %s", async (_label, override, diagnostic) => {
   const fixture = await createFixture({ override });
 
-  await expect(validate(fixture)).rejects.toThrow();
+  await expectFailure(fixture, validate(fixture), diagnostic);
 });
 
 it("accepts an earlier successful attempt from the same workflow run", async () => {
@@ -69,19 +109,44 @@ it("accepts an earlier successful attempt from the same workflow run", async () 
 });
 
 it.each([
-  ["malformed manifest", "{"],
-  ["manifest with missing fields", JSON.stringify({ schemaVersion: 2 })],
-])("rejects %s", async (_label, contents) => {
+  [
+    "malformed manifest",
+    "{",
+    "Could not read verified package manifest: SyntaxError",
+  ],
+  [
+    "manifest with missing fields",
+    JSON.stringify({ schemaVersion: 2 }),
+    "manifest has missing or unknown fields",
+  ],
+])("rejects %s", async (_label, contents, diagnostic) => {
   const fixture = await createFixture({ manifestContents: contents });
 
-  await expect(validate(fixture)).rejects.toThrow();
+  await expectFailure(fixture, validate(fixture), diagnostic);
 });
 
 it("rejects an absent manifest", async () => {
   const fixture = await createFixture({ writeManifest: false });
 
-  await expect(validate(fixture)).rejects.toThrow();
+  await expectFailure(
+    fixture,
+    validate(fixture),
+    "Could not read verified package manifest: Error: ENOENT",
+  );
 });
+
+async function expectFailure(
+  fixture: Fixture,
+  operation: Promise<{ stdout: string; stderr: string }>,
+  diagnostic: string,
+) {
+  await expect(operation).rejects.toMatchObject({
+    code: 1,
+    stdout: "",
+    stderr: expect.stringContaining(diagnostic),
+  });
+  expect(await readFile(fixture.output, "utf8")).toBe("");
+}
 
 async function createFixture({
   override = {},
@@ -232,20 +297,31 @@ it.each([
 );
 
 it.each([
-  ["old schema", { schemaVersion: 1 }],
-  ["wrong source", { sourceSha: "c".repeat(40) }],
-  ["wrong run", { runId: 124 }],
-  ["future attempt", { runAttempt: 3 }],
-  ["wrong Node", { nodeVersion: "v24.0.0" }],
-  ["wrong version", { packageVersion: "1.2.4" }],
-  ["wrong archive", { sha256: "c".repeat(64) }],
-  ["unknown channel", { releaseTag: "beta\noutput=injection" }],
+  ["old schema", { schemaVersion: 1 }, "manifest schema version"],
+  [
+    "wrong source",
+    { sourceSha: "c".repeat(40) },
+    "Verified package source SHA mismatch",
+  ],
+  ["wrong run", { runId: 124 }, "workflow run ID mismatch"],
+  [
+    "future attempt",
+    { runAttempt: 3 },
+    "workflow run attempt is from the future",
+  ],
+  ["wrong Node", { nodeVersion: "v24.0.0" }, "Node.js version mismatch"],
+  ["wrong version", { packageVersion: "1.2.4" }, "package version mismatch"],
+  ["wrong archive", { sha256: "c".repeat(64) }, "tarball SHA-256 mismatch"],
+  [
+    "unknown channel",
+    { releaseTag: "beta\noutput=injection" },
+    "manifest has an invalid release tag",
+  ],
 ] as const)(
   "refuses issuer-side %s without installed dependencies",
-  async (_label, override) => {
+  async (_label, override, diagnostic) => {
     const fixture = await createFixture({ override });
-    await expect(preparePublication(fixture)).rejects.toThrow();
-    expect(await readFile(fixture.output, "utf8")).toBe("");
+    await expectFailure(fixture, preparePublication(fixture), diagnostic);
   },
 );
 

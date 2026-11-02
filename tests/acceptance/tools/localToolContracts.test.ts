@@ -156,6 +156,19 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
     "inspect_android_method",
     { path: nul, class_name: "probe.Class", method_name: "run" },
   ],
+  [
+    "inspect_android_class",
+    { path: "/tmp/probe.apk", class_name: "probe.Class", mapping_path: nul },
+  ],
+  [
+    "inspect_android_method",
+    {
+      path: "/tmp/probe.apk",
+      class_name: "probe.Class",
+      method_name: "run",
+      mapping_path: nul,
+    },
+  ],
   ["trace_android_references", { path: nul, class_name: "probe.Class" }],
   ["inspect_firmware_regions", { path: nul }],
   ["extract_firmware", { path: nul, output_directory: "/tmp/out" }],

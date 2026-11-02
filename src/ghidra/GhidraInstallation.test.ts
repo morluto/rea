@@ -917,7 +917,7 @@ describe("Ghidra malformed property admission", () => {
           name: "version",
           status: "failed",
           code: "version_unresolved",
-          detail: expect.stringContaining("Malformed Unicode escape"),
+          detail: expect.stringContaining("malformed_unicode_escape"),
         }),
         expect.objectContaining({
           name: "java",

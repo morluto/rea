@@ -2,7 +2,7 @@ import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
 import { readTypeDefinitionRowFacts } from "./ManagedTypeDefinitionRows.js";
 import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 import { managedTypeReferences } from "./ManagedTypeReferences.js";
-import { MAX_TYPE_NESTING_DEPTH } from "./ManagedTypeNameDigests.js";
+import { MAX_TYPE_NESTING_DEPTH } from "./ManagedSignatureTypeNames.js";
 import { readManagedTypeNesting } from "./ManagedTypeNesting.js";
 import { memberDeclaringTypeRowLookup } from "./ManagedMemberOwnership.js";
 import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";

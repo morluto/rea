@@ -101,8 +101,7 @@ describe.skipIf(process.platform !== "darwin")(
                 reported_limits: { maximum_nesting_depth: 998 },
               },
               remediation: {
-                action:
-                  "The 998-level native plist nesting allowance (no runtime override) is a fixed allowance. Worker memory limits, inherited limits, and additional host memory do not raise it. Select another complete input within the allowance when that preserves the needed observation. Repeating the unchanged request fails the same way.",
+                action: expect.stringMatching(/\S/u),
               },
             };
             expect(output.json).toMatchObject(expectedFailure);

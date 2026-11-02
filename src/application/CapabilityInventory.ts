@@ -44,6 +44,7 @@ import type { JebAnalysisAvailability } from "./jeb/JebAnalysisPort.js";
 import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { isBundleResourceOperation } from "./binary/BundleResourceSession.js";
 
 const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
   FRIDA_TOOL_CONTRACTS.map(({ name }) => name),
@@ -51,6 +52,7 @@ const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
 
 const statusSchema = z.object({
   open: z.boolean(),
+  session_kind: z.literal("bundle_resources").optional(),
   kind: z.enum(["executable", "database", "archive", "artifact"]).optional(),
   format: z.string().optional(),
   capabilities: z
@@ -61,6 +63,7 @@ const statusSchema = z.object({
 type ToolAvailabilityReason = "available" | ToolUnavailabilityReason;
 
 type ProviderDescriptor = ProviderCapability;
+type UnavailableDescriptor = Extract<ProviderDescriptor, { available: false }>;
 
 /** Optional integrations whose verified hosts exclude some platforms. */
 export const HOST_RESTRICTED_FEATURES = [
@@ -73,6 +76,7 @@ export const HOST_RESTRICTED_FEATURES = [
   "firmwareInspection",
   "firmwareExtraction",
   "javascriptRecovery",
+  "persistentDebugger",
 ] as const;
 export type HostRestrictedFeature = (typeof HOST_RESTRICTED_FEATURES)[number];
 
@@ -125,10 +129,15 @@ type AvailabilityModeResult =
   | (Extract<ToolAvailabilityMode, { available: false }> & {
       readonly reason: ToolUnavailabilityReason;
     });
+
+/** Recovery when unavailable modes require different actions. */
+export const MULTI_MODE_REMEDIATION =
+  "No mode is currently advertised as available. Inspect each mode's missing operations and remediation.";
 type AvailabilityContext = {
   readonly name: string;
   readonly kind: ToolKind;
   readonly targetOpen: boolean;
+  readonly resourceSession: boolean;
   readonly requiresActiveTarget: boolean;
   readonly targetKind:
     | "executable"
@@ -213,12 +222,7 @@ const ENHANCED_REQUIREMENTS: ReadonlyMap<string, ProviderComposition> = new Map(
     ],
     analyze_function: ["analyze_function"],
     inspect_native_api: ["analyze_function"],
-    trace_feature: [
-      "search_strings",
-      "search_procedures",
-      "xrefs",
-      "resolve_containing_procedure",
-    ],
+    trace_feature: ["search_strings", "search_procedures", "xrefs"],
   } satisfies Readonly<Record<EnhancedContractName, ProviderComposition>>),
 );
 
@@ -277,6 +281,7 @@ export const buildCapabilityInventory = (
       name: contract.name,
       kind: contract.kind,
       targetOpen: status.open,
+      resourceSession: status.session_kind === "bundle_resources",
       requiresActiveTarget:
         "requiresActiveTarget" in contract &&
         contract.requiresActiveTarget === true,
@@ -397,6 +402,19 @@ export function compactToolAvailability(
 }
 
 const availabilityFor = (context: AvailabilityContext): Availability => {
+  const workflowAvailability = workflowAvailabilityFor(context);
+  if (
+    context.targetOpen &&
+    context.resourceSession &&
+    context.requiresActiveTarget &&
+    !isBundleResourceOperation(context.name) &&
+    (workflowAvailability === null || context.kind === "session")
+  )
+    return {
+      reason: "target_unsupported",
+      remediation:
+        "This resource-only session cannot execute this operation. Call open_binary with an executable analysis target.",
+    };
   // These built-in workflows accept a caller-selected endpoint; they do not load the optional passive provider.
   if (
     context.name === "inspect_byte_entropy" ||
@@ -420,7 +438,6 @@ const availabilityFor = (context: AvailabilityContext): Availability => {
       reason: "provider_unavailable",
       remediation: `Adapter ${failure.providerId} could not load: ${failure.reason}. Repair the adapter installation and restart REA; other capabilities remain available.`,
     };
-  const workflowAvailability = workflowAvailabilityFor(context);
   if (workflowAvailability !== null) return workflowAvailability;
   const hostDecision = hostAvailability(context);
   if (hostDecision !== null) return hostDecision;
@@ -462,7 +479,15 @@ const workflowAvailabilityFor = ({
   kind,
   policy,
 }: AvailabilityContext): Availability | null => {
+  if (name === "start_gdb_session" || name === "start_rizin_debug_session")
+    return hostRestrictedAvailability(
+      policy,
+      "persistentDebugger",
+      true,
+      "Run persistent debugger sessions on Linux with /proc descriptor readback.",
+    );
   if (
+    name === "inspect_apk_signature" ||
     name === "inspect_desktop_application" ||
     name === "inspect_go_binary" ||
     name === "inspect_il2cpp_metadata" ||
@@ -569,7 +594,7 @@ const workflowAvailabilityFor = ({
     if (profile.reason !== "available") return profile;
     const limiter = policy.evmLimiterAvailability;
     if (limiter?.status === "unavailable")
-      return { reason: "provider_missing", remediation: limiter.reason };
+      return { reason: "provider_missing", remediation: limiter.remediation };
     return { reason: "available", remediation: null };
   }
   if (name === "inspect_recorded_crash")
@@ -603,7 +628,7 @@ const workflowAvailabilityFor = ({
                 ? "provider_unavailable"
                 : "provider_missing",
           remediation:
-            policy.androidAnalysisAvailability?.reason ??
+            policy.androidAnalysisAvailability?.remediation ??
             "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp 0.7.1 JAR and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
         };
   if (kind === "adb-provider")
@@ -695,7 +720,7 @@ const ownerProbeAvailability = (
         : observation.code === "not_configured"
           ? "provider_missing"
           : "provider_unavailable",
-    remediation: observation.reason,
+    remediation: observation.remediation,
   };
 };
 
@@ -759,7 +784,10 @@ const hostAvailability = ({
   const descriptor = descriptors.get(name);
   return descriptor?.available === false &&
     descriptor.availability_code === "unsupported_host"
-    ? { reason: "unsupported_host", remediation: descriptor.reason }
+    ? {
+        reason: "unsupported_host",
+        remediation: descriptorRemediation(descriptor),
+      }
     : null;
 };
 
@@ -780,11 +808,15 @@ const targetAvailability = ({
   const descriptor = descriptors.get(name);
   if (
     targetOpen &&
+    kind !== "enhanced" &&
     descriptor?.available === false &&
     (descriptor.availability_code === "target_kind_unsupported" ||
       descriptor.availability_code === "target_format_unsupported")
   )
-    return { reason: "target_unsupported", remediation: descriptor.reason };
+    return {
+      reason: "target_unsupported",
+      remediation: descriptorRemediation(descriptor),
+    };
   if (
     targetKind !== undefined &&
     targetKind !== "executable" &&
@@ -833,10 +865,18 @@ const providerAvailability = ({
     ? { reason: "available", remediation: null }
     : {
         reason: "provider_unavailable",
-        remediation:
-          descriptor.reason ?? "Choose another target or configured provider.",
+        remediation: descriptorRemediation(descriptor),
       };
 };
+
+/**
+ * Prefer the readiness owner's repair instruction. A static capability fact
+ * declares no separate repair, so its reason remains the only guidance.
+ */
+const descriptorRemediation = (descriptor: UnavailableDescriptor): string =>
+  descriptor.remediation ??
+  descriptor.reason ??
+  "Choose another target or configured provider.";
 
 const composedAvailability = (
   name: string,
@@ -884,7 +924,8 @@ const composedAvailabilityFor = (
           (descriptor) => descriptor?.available === true,
         ),
         unavailable: observations.find(
-          (descriptor) => descriptor?.available === false,
+          (descriptor): descriptor is UnavailableDescriptor =>
+            descriptor?.available === false,
         ),
       };
     })
@@ -915,8 +956,7 @@ const composedAvailabilityFor = (
           unavailable.availability_code === "unsupported_host"
             ? "unsupported_host"
             : "provider_unavailable",
-        remediation:
-          unavailable.reason ?? "Choose another target or configured provider.",
+        remediation: descriptorRemediation(unavailable),
       },
     };
   return {
@@ -977,6 +1017,10 @@ const availabilityForModes = (
   )[0];
   const specificFailureRemediation =
     failure?.reason === "provider_missing" ? undefined : failure?.remediation;
+  const distinctModeRemediations =
+    defaultMode === undefined &&
+    failures.length > 1 &&
+    new Set(failures.map((mode) => mode.remediation)).size > 1;
   const facts = {
     ...(defaultMode === undefined
       ? {}
@@ -994,9 +1038,10 @@ const availabilityForModes = (
   return {
     ...facts,
     reason: failure?.reason ?? "provider_missing",
-    remediation:
-      specificFailureRemediation ??
-      `Configure a provider for one of: ${missingOperations.join(", ")}.`,
+    remediation: distinctModeRemediations
+      ? MULTI_MODE_REMEDIATION
+      : (specificFailureRemediation ??
+        `Configure a provider for one of: ${missingOperations.join(", ")}.`),
   };
 };
 

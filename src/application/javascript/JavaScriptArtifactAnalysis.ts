@@ -82,6 +82,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   readonly interruption: AnalysisError | null;
 }> => {
   const state = emptyArtifactAnalysis();
+  const sourceIndices: number[] = [];
   let interruption: AnalysisError | null = null;
   const selectedFileCount =
     fileSet.files.length - (fileSet.source_selection?.unselected_files ?? 0);
@@ -119,6 +120,22 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         onPhase === undefined ? undefined : (phase) => onPhase(file, phase),
       );
       const facts = result.ok ? result.value : result.error;
+      for (const revoked of facts.revokedStaticProjections ?? []) {
+        const index = sourceIndices[revoked.sourceIndex];
+        const previous = index === undefined ? undefined : state.files[index];
+        if (previous === undefined)
+          throw new TypeError(
+            "Revoked application projection has no retained source",
+          );
+        state.files[index!] = {
+          ...previous,
+          application_projection_failure: {
+            reason: revoked.error.message,
+            error: projectAnalysisError(revoked.error),
+            limits: revoked.error.reportedLimits,
+          },
+        };
+      }
       const applicationProjectionFailure = facts.applicationProjectionFailure;
       if (facts.projection !== null)
         projection.adoptFileProjection(facts.projection);
@@ -139,6 +156,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
               error: projectAnalysisError(error),
               limits,
             };
+      sourceIndices.push(state.files.length);
       state.files.push({
         file,
         javascript: facts.javascript,
@@ -650,7 +668,8 @@ const findingCount = (analysis: JavaScriptStaticAnalysis): number =>
   analysis.electron.ipc.length +
   analysis.electron.sender_validations.length +
   analysis.electron.utility_processes.length +
-  analysis.electron.native_addon_bindings.length;
+  analysis.electron.native_addon_bindings.length +
+  analysis.electron.protocols.length;
 
 const optionalString = (value: unknown): string | null =>
   typeof value === "string" && value.length > 0 ? value : null;

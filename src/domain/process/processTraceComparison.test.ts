@@ -14,7 +14,10 @@ import {
 } from "./processTraceComparison.fixture.js";
 
 import { compareProcessCaptures } from "./processComparison.js";
-import { compareProcessTraces } from "./processTraceComparison.js";
+import {
+  compareProcessTraces,
+  processTraceOutcomesDiffer,
+} from "./processTraceComparison.js";
 
 const traced = (
   left: ReturnType<typeof capture>,
@@ -65,9 +68,14 @@ describe("generic capture trace comparison", () => {
         suffix: [],
       },
     };
-    expect(compareProcessTraces(left, right, concurrent)).toMatchObject({
+    const concurrentComparison = compareProcessTraces(left, right, concurrent);
+    expect(concurrentComparison).toMatchObject({
       verdict: "equivalent",
     });
+    expect(processTraceOutcomesDiffer(concurrentComparison)).toBe(true);
+    expect(
+      processTraceOutcomesDiffer(compareProcessTraces(left, left, concurrent)),
+    ).toBe(false);
   });
 
   it("rejects malformed result contracts", () => {

@@ -1,6 +1,20 @@
 import { z } from "zod";
+import { isUtf8 } from "node:buffer";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { canonicalBase64Schema } from "../stringPatterns.js";
+
+/** ELF strings declare bytes rather than an encoding; Latin-1 is only a lossless display fallback. */
+export const decodeElfExportName = (bytes: Buffer) => {
+  const utf8 = isUtf8(bytes);
+  return {
+    name: bytes.toString(utf8 ? "utf8" : "latin1"),
+    name_bytes_base64: bytes.some((byte) => byte >= 0x80)
+      ? bytes.toString("base64")
+      : null,
+    name_utf8_decodable: utf8,
+  };
+};
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const address = z.string().regex(/^0x[0-9a-f]+$/u);
@@ -50,7 +64,7 @@ const peExportSchema = z.strictObject({
 const elfExportSchema = z.strictObject({
   name: z.string().min(1),
   /** Exact non-ASCII name bytes; ELF string tables do not declare text encoding. */
-  name_bytes_base64: z.string().nullable().default(null),
+  name_bytes_base64: canonicalBase64Schema.nullable().default(null),
   /** Whether `name` was decoded as UTF-8; null means this field was not recorded in older Evidence. */
   name_utf8_decodable: z.boolean().nullable().default(null),
   /** `st_value` as stored; on 32-bit ARM, bit 0 of a function marks Thumb code. */
@@ -65,7 +79,7 @@ const elfExportSchema = z.strictObject({
       index: z.number().int().min(2).max(0x7fff),
       name: z.string().min(1).nullable(),
       /** Exact non-ASCII version-name bytes; ELF strings do not declare encoding. */
-      name_bytes_base64: z.string().nullable().default(null),
+      name_bytes_base64: canonicalBase64Schema.nullable().default(null),
       /** Null means older Evidence did not retain version-name encoding facts. */
       name_utf8_decodable: z.boolean().nullable().default(null),
       hidden: z.boolean(),
@@ -143,6 +157,37 @@ export const nativeExportsSchema = z
         message:
           "Export coverage count must equal the retained export row count.",
       });
+    if (value.format !== "elf") return;
+    const checkName = (
+      row: {
+        name: string | null;
+        name_bytes_base64: string | null;
+        name_utf8_decodable: boolean | null;
+      },
+      path: (string | number)[],
+    ) => {
+      // Historical omissions remain unknown. Complete encoding facts must agree
+      // with the producer's UTF-8-or-Latin-1 display interpretation.
+      if (row.name_bytes_base64 === null || row.name_utf8_decodable === null)
+        return;
+      const bytes = Buffer.from(row.name_bytes_base64, "base64");
+      const decoded = decodeElfExportName(bytes);
+      if (
+        decoded.name_utf8_decodable !== row.name_utf8_decodable ||
+        decoded.name !== row.name
+      )
+        context.addIssue({
+          code: "custom",
+          path,
+          message:
+            "ELF name text and encoding must agree with retained source bytes",
+        });
+    };
+    value.exports.forEach((row, index) => {
+      checkName(row, ["exports", index]);
+      if (row.version !== null && typeof row.version === "object")
+        checkName(row.version, ["exports", index, "version"]);
+    });
   });
 export type NativeExports = z.infer<typeof nativeExportsSchema>;
 export type PeExport = z.infer<typeof peExportSchema>;

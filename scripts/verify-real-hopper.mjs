@@ -11,7 +11,7 @@ import {
   requireFunctionDossier,
   requirePseudocode,
 } from "./lib/real-hopper-assertions.mjs";
-import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderCapabilities.js";
+import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderMetadata.js";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
 import { REA_WORKFLOW_PROVIDER } from "../dist/domain/investigationProviders.js";
 import { loadRealHopperFixtureTargets } from "./lib/real-hopper-fixture.mjs";

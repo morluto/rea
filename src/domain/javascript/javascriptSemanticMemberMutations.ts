@@ -23,9 +23,11 @@ import {
 
 import {
   resolveSemanticBindingState,
+  semanticBindingLookupAt,
   type JavaScriptBindingIndex,
   type JavaScriptSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
 import {
   clearSemanticValueCaches,
@@ -521,6 +523,53 @@ export function* collectSemanticMemberMutationsSteps(
     effects.push({ path: effectPath, node, kind: effect });
     state.requiredModuleEffects.set(identity.specifier, effects);
   };
+  // Traversal states that differ only in coverage fields a record never
+  // stores, such as the origin, owner initializer or getter widening, reach the
+  // same binding fact. Each later receiver query scans every record, so retain
+  // one record per fact. Nodes and initializers compare by identity.
+  const objectIdentities = new WeakMap<object, number>();
+  let objectIdentityCount = 0;
+  const objectIdentity = (value: object | undefined): number | undefined => {
+    if (value === undefined) return undefined;
+    let identity = objectIdentities.get(value);
+    if (identity === undefined) {
+      identity = objectIdentityCount++;
+      objectIdentities.set(value, identity);
+    }
+    return identity;
+  };
+  const recordedBindingEffects = new WeakMap<
+    JavaScriptSemanticMemberEffect[],
+    Set<string>
+  >();
+  const recordBindingEffect = (
+    records: JavaScriptSemanticMemberEffect[],
+    effect: JavaScriptSemanticMemberEffect,
+  ): void => {
+    const fields: {
+      readonly [Field in keyof JavaScriptSemanticMemberEffect]-?: unknown;
+    } = {
+      path: effect.path,
+      node: objectIdentity(effect.node),
+      assignedSources: effect.assignedSources?.map((source) =>
+        objectIdentity(source),
+      ),
+      receiverInitializers: effect.receiverInitializers?.map((initializer) =>
+        objectIdentity(initializer),
+      ),
+      receiverIdentity: effect.receiverIdentity,
+      receiverAt: objectIdentity(effect.receiverAt),
+    };
+    const key = JSON.stringify(fields);
+    let recorded = recordedBindingEffects.get(records);
+    if (recorded === undefined) {
+      recorded = new Set();
+      recordedBindingEffects.set(records, recorded);
+    }
+    if (recorded.has(key)) return;
+    recorded.add(key);
+    records.push(effect);
+  };
   // Ambient indexing owns aliases of global objects. Consume its canonical
   // writes instead of reparsing qualified or aliased process assignments.
   for (const { path, node } of state.ambientWriteEffects)
@@ -842,7 +891,11 @@ export function* collectSemanticMemberMutationsSteps(
         continue;
       }
       if (t.isIdentifier(expression)) {
-        const binding = resolveBinding(expression, expression.name);
+        let binding = resolveBinding(expression, expression.name);
+        const lookup =
+          binding === undefined
+            ? semanticBindingLookupAt(state, expression, expression.name)
+            : undefined;
         if (binding === undefined) {
           for (const path of ambientPaths(
             expression,
@@ -877,8 +930,11 @@ export function* collectSemanticMemberMutationsSteps(
               arrayPrototypeIterationMayChange(current.path.slice(2)))
           )
             state.arrayIterationUnknown = true;
-          continue;
+          if (lookup?.kind !== "uncertain-binding") continue;
+          binding = lookup.binding;
         }
+        const definiteReceiver =
+          current.definiteReceiver && lookup?.kind !== "uncertain-binding";
         // An alias restored from a saved reference can revisit the same binding
         // at an earlier capture or a shorter getter-receiver path. Only a
         // repeated capture and path closes a cycle.
@@ -969,7 +1025,7 @@ export function* collectSemanticMemberMutationsSteps(
           current.originAt?.start ?? -1
         }\u0001${current.originAt?.end ?? -1}\u0001${
           current.ownerInitializer?.start ?? -1
-        }\u0001${current.ownerInitializer?.end ?? -1}\u0001${widenedGetterResult}\u0001${current.definiteReceiver}\u0001${assignedSources?.[0]?.target?.start ?? -1}\u0001${current.memberReadAt?.start ?? -1}\u0001${current.memberReadAt?.end ?? -1}`;
+        }\u0001${current.ownerInitializer?.end ?? -1}\u0001${widenedGetterResult}\u0001${definiteReceiver}\u0001${assignedSources?.[0]?.target?.start ?? -1}\u0001${current.memberReadAt?.start ?? -1}\u0001${current.memberReadAt?.end ?? -1}`;
         let covering = coveringPaths.get(pathState);
         if (covering === undefined) {
           covering = new SemanticPropertyPathCoverage();
@@ -1132,7 +1188,7 @@ export function* collectSemanticMemberMutationsSteps(
           // Initializer origins retain the normalized mutation traversal below.
           retainsInitializers = receiver?.retainsOrigin !== false;
           if (effect === "escape")
-            binding.escapedPaths.push({
+            recordBindingEffect(binding.escapedPaths, {
               path,
               node: mutation,
               receiverInitializers,
@@ -1141,10 +1197,8 @@ export function* collectSemanticMemberMutationsSteps(
                 : { receiverAt: current.memberReadAt ?? current.originAt }),
             });
           else
-            binding.memberWrites.push({
-              receiverIdentity: current.definiteReceiver
-                ? "definite"
-                : "possible",
+            recordBindingEffect(binding.memberWrites, {
+              receiverIdentity: definiteReceiver ? "definite" : "possible",
               path,
               node: mutation,
               receiverInitializers,
@@ -1183,7 +1237,7 @@ export function* collectSemanticMemberMutationsSteps(
               path: [...initializer.projection, ...path],
               bindings: nested,
               definiteReceiver:
-                current.definiteReceiver &&
+                definiteReceiver &&
                 origins.initializers.length +
                   origins.referenceInitializers.length ===
                   1,
@@ -1209,7 +1263,7 @@ export function* collectSemanticMemberMutationsSteps(
             path: copiedPath,
             bindings: nested,
             definiteReceiver:
-              current.definiteReceiver &&
+              definiteReceiver &&
               origins.initializers.length +
                 origins.referenceInitializers.length ===
                 1 &&

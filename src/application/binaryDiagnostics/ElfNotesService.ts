@@ -112,7 +112,8 @@ const validReport = (
   if (
     report.artifact.bytes > maxBytes ||
     report.coverage.examined_entries > maxEntries ||
-    report.entries.length > maxEntries
+    report.entries.length !== report.coverage.examined_entries ||
+    report.tables.length !== report.coverage.examined_tables
   )
     return false;
   return (

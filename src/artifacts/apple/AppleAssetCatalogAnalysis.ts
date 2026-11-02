@@ -465,6 +465,7 @@ const assetUtilFailure = (cause: unknown, entry: ArtifactEntry): unknown => {
     // other text, interrupted runs and incomplete captures establish no cause.
     const rejectsCatalog = [
       `carutil: error:\n    ${entry.adapterKey} is not a valid AssetCatalog`,
+      `carutil: error:\n\t${entry.adapterKey} is not a valid AssetCatalog`,
       `assetutil: file error error exiting: 'can't read from: '${entry.adapterKey}' Undefined error: 0' invalid file`,
     ].some((rejection) => {
       const offset = output.stderr.indexOf(rejection);

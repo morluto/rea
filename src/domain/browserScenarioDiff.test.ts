@@ -268,6 +268,50 @@ it("reports event-family selection mismatch as unknown", () => {
       ),
     }),
   );
+  for (const diff of both) {
+    expect(diff.reason?.match(/Event family selections differ/gu)).toHaveLength(
+      1,
+    );
+    expect(
+      diff.reason?.match(/Network content selections differ/gu),
+    ).toHaveLength(1);
+  }
+});
+
+it("reports a shared unknown redirect predecessor only once", () => {
+  const original = networkCapture(1, 0);
+  const capture = browserScenarioCaptureSchema.parse({
+    ...original,
+    events: {
+      ...original.events,
+      items: original.events.items.map((event) =>
+        event.kind === "request"
+          ? { ...event, redirected_from_transaction_state: "unknown" }
+          : event,
+      ),
+    },
+  });
+  const compare = (value: BrowserScenarioCapture) =>
+    compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: value,
+        after_scenario: value,
+      }),
+    );
+  expect(compare(original).overall_status).toBe("unchanged");
+  const result = compare(capture);
+  expect(result.overall_status).toBe("unknown");
+  const diffs = result.steps.flatMap((step) =>
+    step.artifact_diffs.filter((diff) => diff.artifact === "events"),
+  );
+  expect(diffs.length).toBeGreaterThan(0);
+  for (const diff of diffs) {
+    expect(diff.status).toBe("unknown");
+    expect(diff.before_sha256).toBe(diff.after_sha256);
+    expect(diff.reason).toBe(
+      "Redirect predecessor evidence is missing; network transaction identity remains unknown.",
+    );
+  }
 });
 
 const concurrentCapture = (

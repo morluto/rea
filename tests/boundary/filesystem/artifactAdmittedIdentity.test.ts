@@ -12,6 +12,7 @@ import {
   writeFile,
   unlink,
   symlink,
+  rmdir,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { createPackage } from "@electron/asar";
@@ -24,6 +25,100 @@ import {
 } from "../../../src/domain/artifactGraph.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createSingleEntryZip } from "../../fixtures/zipNames.js";
+
+it.skipIf(process.platform === "win32").each(["zip", "asar"])(
+  "rejects a %s selection whose traversed directory became a file",
+  async (format) => {
+    const root = await createTestTempDirectory("rea-admitted-traversal-");
+    const child = join(root, "child");
+    await mkdir(child);
+    const stored = join(root, `stored.${format}`);
+    if (format === "asar") {
+      const source = join(root, "source");
+      await mkdir(source);
+      await writeFile(join(source, "payload.txt"), "member bytes");
+      await createPackage(source, stored);
+    } else {
+      await writeFile(stored, await createSingleEntryZip("payload.txt"));
+    }
+    const selected = `${child}/../stored.${format}`;
+    const session = createTestBinarySession(new ArtifactProvider({}));
+    try {
+      const opened = await session.open(selected);
+      if (!opened.ok) throw opened.error;
+      await rmdir(child);
+      await writeFile(child, "now a regular file");
+      await expect(readFile(selected)).rejects.toMatchObject({
+        code: "ENOTDIR",
+      });
+      for (const operation of [
+        "inventory_artifact",
+        "extract_artifact",
+      ] as const) {
+        const output = join(root, operation);
+        const result = await session.execute(
+          operation,
+          operation === "extract_artifact" ? { output_root: output } : {},
+        );
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            reason: "integrity",
+            detail: expect.stringContaining(
+              "no longer resolves to its admitted source",
+            ),
+          },
+        });
+        await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps native symlink parent traversal when revalidating archive selections",
+  async () => {
+    const root = await createTestTempDirectory(
+      "rea-admitted-native-traversal-",
+    );
+    const physical = join(root, "physical");
+    await mkdir(join(physical, "child"), { recursive: true });
+    const link = join(root, "link");
+    await symlink(join(physical, "child"), link);
+    await writeFile(
+      join(physical, "stored.zip"),
+      await createSingleEntryZip("payload.txt", "selected bytes"),
+    );
+    await writeFile(
+      join(root, "stored.zip"),
+      "lexical sibling is not an archive",
+    );
+    const session = createTestBinarySession(new ArtifactProvider({}));
+    try {
+      const opened = await session.open(`${link}/../stored.zip`);
+      if (!opened.ok) throw opened.error;
+      const inventory = await session.execute("inventory_artifact", {});
+      if (!inventory.ok) throw inventory.error;
+      expect(
+        artifactInventoryResultSchema.parse(inventory.value.result).manifest
+          .root_format,
+      ).toBe("zip");
+      const output = join(root, "output");
+      const extraction = await session.execute("extract_artifact", {
+        output_root: output,
+      });
+      if (!extraction.ok) throw extraction.error;
+      expect(await readFile(join(output, "payload.txt"), "utf8")).toBe(
+        "selected bytes",
+      );
+    } finally {
+      await session.close();
+    }
+  },
+);
 
 it.each([
   { format: "zip", replacement: "valid" },

@@ -1,4 +1,4 @@
-import type { AnalysisProviderSelector } from "./contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "./domain/providerSelection.js";
 import {
   mcpPhaseBudgetRecovery,
   type McpPhaseBudget,

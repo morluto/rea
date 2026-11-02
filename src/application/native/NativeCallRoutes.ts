@@ -1,3 +1,4 @@
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { permitsCapabilityFallback } from "../CapabilityFallback.js";
 import { z } from "zod";
 import type {
@@ -153,6 +154,14 @@ export const readNativeCallRoutes = async (
           new AnalysisOutputError(
             NATIVE_CALL_ROUTE_SOURCES.references,
             "Invalid typed call references",
+            { cause: parsed.error },
+          ).retainPartialObservation(
+            createAnalysisExecutionEvidence(
+              NATIVE_CALL_ROUTE_SOURCES.references,
+              { procedure, direction: "outgoing" },
+              execution.value,
+              "observed",
+            ),
           ),
         ),
       );
@@ -188,7 +197,17 @@ export const readNativeCallRoutes = async (
     ),
   );
   const parsed = parseRelatedAddresses(callees.value.result, "callees");
-  if (!parsed.ok) return finish(err(parsed.error));
+  if (!parsed.ok) {
+    parsed.error.retainPartialObservation(
+      createAnalysisExecutionEvidence(
+        NATIVE_CALL_ROUTE_SOURCES.callees,
+        { procedure },
+        callees.value,
+        "observed",
+      ),
+    );
+    return finish(err(parsed.error));
+  }
   // Keep every observed call site. A target-only fallback cannot replace one,
   // and repeated fallback targets add no new observation.
   const targets = new Set(routes.map(({ address }) => address));

@@ -4,7 +4,7 @@ import { test } from "vitest";
 
 test("SAZ verification preserves source identities, duplicate headers and encoded empty bodies", () => {
   const moduleUrl = new URL(
-    "../../experiments/analysis-efficiency/saz-entry.mjs",
+    "../../tests/support/analysis-efficiency/saz-entry.mjs",
     import.meta.url,
   ).href;
   const source = `

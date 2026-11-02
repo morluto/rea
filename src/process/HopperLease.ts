@@ -1,8 +1,15 @@
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
+
+import {
+  ArtifactFileCleanupFailure,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { HopperStartError } from "../domain/hopperErrors.js";
 import {
   acquireOwnedLease,
+  OwnedLeaseCleanupFailure,
   type LeaseAcquisition,
   type LeaseFailure,
 } from "./OwnedLease.js";
@@ -20,6 +27,7 @@ export const acquireHopperTargetLease = async (input: {
   readonly loaderArgs: readonly string[];
   readonly runId: string;
   readonly directory?: string;
+  readonly resources?: ArtifactResourceScope | undefined;
 }): Promise<LeaseAcquisition> => {
   // Canonicalization is required for lease identity. A lexical fallback could
   // let two aliases reserve independent sockets for the same Hopper document.
@@ -46,6 +54,7 @@ export const acquireHopperTargetLease = async (input: {
 export const acquireLinuxHopperApplicationLease = (input: {
   readonly runId: string;
   readonly directory?: string;
+  readonly resources?: ArtifactResourceScope | undefined;
 }): Promise<LeaseAcquisition> =>
   acquireLease({ ...input, identity: { application: "linux-hopper-demo" } });
 
@@ -54,9 +63,11 @@ export const acquireHopperReleaseCacheLease = async (input: {
   readonly cacheDirectory: string;
   readonly launcherSha256: string;
   readonly runId: string;
+  readonly resources?: ArtifactResourceScope | undefined;
 }): Promise<LeaseAcquisition> =>
   acquireLease({
     runId: input.runId,
+    resources: input.resources,
     identity: {
       cacheDirectory: await realpath(input.cacheDirectory),
       launcherSha256: input.launcherSha256,
@@ -68,22 +79,42 @@ const acquireLease = async (input: {
   readonly identity: Readonly<Record<string, unknown>>;
   readonly runId: string;
   readonly directory?: string;
+  readonly resources?: ArtifactResourceScope | undefined;
 }): Promise<LeaseAcquisition> =>
   acquireOwnedLease({
     identity: input.identity,
     runId: input.runId,
     directory: input.directory ?? HOPPER_TARGET_LEASE_DIRECTORY,
     failure: hopperLeaseFailure,
+    resources: input.resources,
   });
 
 const hopperLeaseFailure = (
   failure: LeaseFailure,
   cause?: unknown,
-): HopperStartError =>
-  new HopperStartError({
+): HopperStartError => {
+  const primary =
+    cause instanceof OwnedLeaseCleanupFailure
+      ? cause.primary
+      : cause instanceof ArtifactFileCleanupFailure &&
+          cause.fileCleanupFailure.outcome.kind === "failed"
+        ? cause.fileCleanupFailure.outcome.cause
+        : undefined;
+  const error = new HopperStartError({
     ...(cause === undefined ? {} : { cause }),
-    userMessage: hopperLeaseMessage(failure),
+    ...(primary instanceof HopperStartError ? { cleanupPrimary: primary } : {}),
+    ...(cause instanceof ArtifactFileCleanupFailure ||
+    cause instanceof OwnedLeaseCleanupFailure
+      ? { cleanup: cause.cleanup }
+      : {}),
+    userMessage:
+      primary instanceof HopperStartError
+        ? (primary.userMessage ?? hopperLeaseMessage(failure))
+        : hopperLeaseMessage(failure),
   });
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
 
 const hopperLeaseMessage = (failure: LeaseFailure): string => {
   switch (failure.kind) {
@@ -95,6 +126,10 @@ const hopperLeaseMessage = (failure: LeaseFailure): string => {
       return "REA's Hopper lease directory permissions could not be secured.";
     case "directory_access_denied":
       return `REA could not access its Hopper lease directory at ${JSON.stringify(failure.directory)}. Check its ownership and parent-directory access. For a directory you own, restore owner-only read, write, and search permissions (0700), then retry.`;
+    case "socket_permissions":
+      return "REA could not secure its lease socket permissions.";
+    case "directory_close":
+      return "REA could not confirm closure of its Hopper lease directory handle.";
     case "directory_inspect":
       return "REA could not inspect its private Hopper lease directory.";
     case "recovery_busy":

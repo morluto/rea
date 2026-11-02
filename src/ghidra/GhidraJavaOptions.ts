@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -32,19 +33,14 @@ export const jvmEnvironmentArguments = (value: string): readonly string[] => {
       active = true;
     }
   }
-  if (quote !== undefined)
-    throw new Error(
-      "Invalid quoted Ghidra LaunchSupport JVM environment option",
-    );
+  if (quote !== undefined) throw new GhidraAdmissionError("unterminated_quote");
   if (active) args.push(token);
   return args;
 };
 
 export const rejectJvmPlatformOverrides = (args: readonly string[]): void => {
   if (args.some((argument) => /^-Dos\.(?:arch|name)(?:=|$)/u.test(argument)))
-    throw new Error(
-      "Ghidra LaunchSupport may not override os.arch or os.name; the native decompiler was validated for the inspected JVM platform.",
-    );
+    throw new GhidraAdmissionError("platform_override");
 };
 
 /** Java launcher argfile grammar: quotes, escapes inside quotes, comments and line continuation are one parse. */
@@ -148,18 +144,16 @@ const readArgumentFile = (
           new RegularFileOperationCancelled(reason),
       });
       if (data === undefined)
-        throw new Error(
-          `JDK_JAVA_OPTIONS argument files exceed the ${String(OPTIONS_BYTES)}-byte cumulative admission bound.`,
-        );
+        throw new GhidraAdmissionError("argument_files_exceed_bound", {
+          budget_bytes: OPTIONS_BYTES,
+        });
       const text = new TextDecoder("utf-8", {
         fatal: true,
         ignoreBOM: true,
       }).decode(data);
       const tokens = argumentFileTokens(text);
       if (tokens.some(fileReference))
-        throw new Error(
-          "Ghidra LaunchSupport JDK_JAVA_OPTIONS argument files may not nest @ references.",
-        );
+        throw new GhidraAdmissionError("nested_argument_file");
       rejectJvmPlatformOverrides(tokens);
       return {
         text,
@@ -170,8 +164,9 @@ const readArgumentFile = (
     "follow",
   ).catch((cause: unknown) => {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-      throw new Error(
-        `Ghidra LaunchSupport JDK_JAVA_OPTIONS argument file is unreadable: ${path}`,
+      throw new GhidraAdmissionError(
+        "argument_file_unreadable",
+        { path },
         { cause },
       );
     throw cause;
@@ -209,9 +204,7 @@ export const prepareJdkJavaOptions = async (
   const resources = options.resources;
   const directory = options.directory;
   if (resources === undefined || directory === undefined)
-    throw new Error(
-      "JDK_JAVA_OPTIONS argument files require a caller-owned resource scope and runtime root.",
-    );
+    throw new GhidraAdmissionError("argument_files_require_scope");
   const snapshots = new Map<
     string,
     {
@@ -233,9 +226,9 @@ export const prepareJdkJavaOptions = async (
       let snapshot = snapshots.get(path);
       if (snapshot === undefined) {
         if (path === "" || path.includes("\0"))
-          throw new Error(
-            "Ghidra LaunchSupport JDK_JAVA_OPTIONS argument file is unreadable.",
-          );
+          throw new GhidraAdmissionError("argument_file_path_invalid", {
+            check: path === "" ? "empty" : "nul",
+          });
         const content = await readArgumentFile(
           path,
           resources,
@@ -257,9 +250,9 @@ export const prepareJdkJavaOptions = async (
       } else {
         bytes += snapshot.bytes;
         if (bytes > OPTIONS_BYTES)
-          throw new Error(
-            `JDK_JAVA_OPTIONS argument files exceed the ${String(OPTIONS_BYTES)}-byte cumulative admission bound.`,
-          );
+          throw new GhidraAdmissionError("argument_files_exceed_bound", {
+            budget_bytes: OPTIONS_BYTES,
+          });
       }
       replacement = `@${snapshot.path}`;
       if (snapshot.disablesExpansion) expansionEnabled = false;
@@ -268,9 +261,9 @@ export const prepareJdkJavaOptions = async (
     encodedBytes +=
       Buffer.byteLength(encoded) + (prepared.length === 0 ? 0 : 1);
     if (encodedBytes > OPTIONS_BYTES)
-      throw new Error(
-        `Prepared JDK_JAVA_OPTIONS exceeds the ${String(OPTIONS_BYTES)}-byte environment admission bound.`,
-      );
+      throw new GhidraAdmissionError("prepared_options_exceed_bound", {
+        budget_bytes: OPTIONS_BYTES,
+      });
     prepared.push(encoded);
   }
   assertActive();

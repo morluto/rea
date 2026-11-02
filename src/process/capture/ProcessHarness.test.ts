@@ -5,7 +5,16 @@ import {
   captureProcessScenario,
   retainRootSignaller,
 } from "./ProcessHarness.js";
-import { settleProcessCaptureJournal } from "./ProcessCaptureLifecycle.js";
+import {
+  settleProcessCaptureJournal,
+  releaseProcessResources,
+  ProcessCaptureResourceScope,
+  createProcessCaptureObservationBuffer,
+  prepareProcessCapture,
+  resolveProcessResult,
+  type ProcessCaptureCleanupOutcome,
+  type ProcessCaptureCleanupHost,
+} from "./ProcessCaptureLifecycle.js";
 import { parseProcessCapture } from "../../domain/process/processCaptureParsing.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../domain/process/processCaptureExample.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -19,15 +28,6 @@ import {
   normalizeCaptureFailure,
   processCaptureCancelled,
 } from "./ProcessCaptureError.js";
-import {
-  releaseProcessResources,
-  ProcessCaptureResourceScope,
-  createProcessCaptureObservationBuffer,
-  prepareProcessCapture,
-  resolveProcessResult,
-  type ProcessCaptureCleanupOutcome,
-  type ProcessCaptureCleanupHost,
-} from "./ProcessCaptureLifecycle.js";
 import { DarwinProcessOwnershipInspectionError } from "../DarwinProcessRunTokenReader.js";
 
 import {
@@ -353,7 +353,10 @@ it("keeps empty cleanup exception messages actionable in the report", async () =
 
 it("retains observations and retries the temporary root when process cleanup throws", async () => {
   const cleanupFailure = new Error("termination inspection failed");
-  const removeTemporaryRoot = vi.fn(async () => undefined);
+  let rootRemovalFails = true;
+  const removeTemporaryRoot = vi.fn(async () => {
+    if (rootRemovalFails) throw new Error("root removal denied");
+  });
   let failing = true;
   const scope = new ProcessCaptureResourceScope();
   const host: ProcessCaptureCleanupHost = {
@@ -382,6 +385,10 @@ it("retains observations and retries the temporary root when process cleanup thr
     state: "failed",
     reason: cleanupFailure.message,
   });
+  expect(cleanup.cleanupLease?.cleanupResources).toEqual([
+    "owned_process_group",
+    "/fixture/root",
+  ]);
   const executionFailure = new Error("capture snapshot failed");
   const capture = parseProcessCapture({
     ...accountFullyObservedProcessCapture({
@@ -401,6 +408,7 @@ it("retains observations and retries the temporary root when process cleanup thr
     ).toMatchObject({
       code: "cleanup_incomplete",
       details: {
+        resources: ["owned_process_group", "/fixture/root"],
         cleanup_report: cleanup.report,
         execution_failure: "capture snapshot failed",
         partial_observation: {
@@ -410,10 +418,15 @@ it("retains observations and retries the temporary root when process cleanup thr
     });
   }
   failing = false;
+  await expect(scope.retryCleanup()).rejects.toMatchObject({
+    cleanupResources: ["/fixture/root"],
+  });
+  expect(cleanup.cleanupLease?.cleanupResources).toEqual(["/fixture/root"]);
+  rootRemovalFails = false;
   await scope.retryCleanup();
-  expect(removeTemporaryRoot).toHaveBeenCalledExactlyOnceWith("/fixture/root");
+  expect(removeTemporaryRoot).toHaveBeenCalledWith("/fixture/root");
   await scope.close();
-  expect(removeTemporaryRoot).toHaveBeenCalledTimes(1);
+  expect(removeTemporaryRoot).toHaveBeenCalledTimes(2);
 });
 
 it("retains unrelated withheld processes through cleanup, capture, and JSON", async () => {

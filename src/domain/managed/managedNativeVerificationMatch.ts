@@ -52,11 +52,6 @@ const sameSymbolName = (expected: string, native: NativeSymbol): boolean =>
 
 type ModuleCompatibility = "match" | "mismatch" | "unknown";
 
-const declaredModuleIdentity = (scope: string | null): boolean =>
-  scope !== null &&
-  scope.trim().length > 0 &&
-  moduleFilename(scope, false).length > 0;
-
 const moduleFilename = (
   value: string,
   caseSensitive: boolean,
@@ -226,14 +221,15 @@ const moduleCompatibility = (
   if (
     scope === null ||
     scope.trim().length === 0 ||
-    moduleFilename(scope, false).length === 0
+    moduleFilename(scope, false, format).length === 0
   )
     return "unknown";
   const observedValues = isAbsoluteModulePath(scope, format)
     ? [symbol.module_path]
     : [symbol.module_name, symbol.module_path];
   const values = observedValues.filter(
-    (value): value is string => value !== null && value.length > 0,
+    (value): value is string =>
+      value !== null && moduleFilename(value, false, format).length > 0,
   );
   if (values.length === 0) return "unknown";
   const results = values.map((value) =>
@@ -243,11 +239,6 @@ const moduleCompatibility = (
   if (results.includes("unknown")) return "unknown";
   return "mismatch";
 };
-
-const hasModuleIdentity = (symbol: NativeSymbol): boolean =>
-  [symbol.module_name, symbol.module_path].some(
-    (value) => value !== null && moduleFilename(value, false).length > 0,
-  );
 
 const candidateNames = (
   managed: Pick<
@@ -344,7 +335,6 @@ const matchPinvoke = (
     };
 
   const candidates: [NativeSymbol, ...NativeSymbol[]] = [first, ...remaining];
-  const scopeKnown = declaredModuleIdentity(managed.import_scope_name);
   const moduleRelation = (symbol: NativeSymbol) =>
     moduleCompatibility(
       managed.import_scope_name,
@@ -367,13 +357,7 @@ const matchPinvoke = (
   const decorated = candidates.find(
     (symbol) => moduleRelation(symbol) === "match",
   );
-  const selected =
-    exact ??
-    decorated ??
-    (scopeKnown
-      ? candidates.find((symbol) => !hasModuleIdentity(symbol))
-      : undefined) ??
-    first;
+  const selected = exact ?? decorated ?? first;
   if (exact !== undefined)
     return {
       match: {
@@ -408,16 +392,6 @@ const matchPinvoke = (
         basis: "decorated-name-candidate",
         status: "inferred",
         confidence: "inferred",
-        matched_native: selected,
-        candidates,
-      },
-    };
-  if (!scopeKnown || !hasModuleIdentity(selected))
-    return {
-      match: {
-        status: "unresolved",
-        basis: "module-identity-unknown",
-        confidence: "unknown",
         matched_native: selected,
         candidates,
       },

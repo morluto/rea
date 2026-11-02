@@ -191,6 +191,42 @@ const encodeNibArchiveWithSharedDataValue = (input: {
   return Buffer.concat([header, objects, keys, values, classes]);
 };
 
+it.each([16, 17])(
+  "reports the bounded sample of %i malformed archive diagnostics",
+  async (count) => {
+    const bundle = await createTestTempDirectory("rea-ib-invalid-bound-");
+    for (let index = 0; index < count; index += 1)
+      await writeFile(
+        join(bundle, `bad-${String(index).padStart(2, "0")}.nib`),
+        "not a plist",
+      );
+    const result = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "a".repeat(64),
+    });
+    const diagnostic = result.limitations.find((value) =>
+      value.startsWith("Some Interface Builder archives could not be decoded:"),
+    );
+    expect(diagnostic?.match(/bad-\d{2}\.nib/gu)).toHaveLength(16);
+    const omission = result.limitations.filter((value) =>
+      value.includes("additional archive decode failure diagnostic(s)"),
+    );
+    expect(omission).toHaveLength(count === 16 ? 0 : 1);
+    if (count === 17) {
+      expect(omission[0]).toMatch(/\b1 additional\b/u);
+      expect(omission[0]).toMatch(/\b16 paths\b/u);
+    }
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "archive_decode",
+        status: "partial",
+        examined: count,
+        omitted: 0,
+      }),
+    );
+  },
+);
+
 describe("compiled Interface Builder traversal coverage", () => {
   it.skipIf(process.platform === "win32")(
     "shares the 64-path omission budget between regular-document capacity and symlink source notices",

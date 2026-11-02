@@ -11,3 +11,10 @@ export const decodeMachoName = (bytes: Buffer): MachoName => {
     return { bytes_base64: bytes.toString("base64") };
   }
 };
+
+/** Fixed-width Mach-O names end at the first NUL; retain every preceding byte. */
+export const decodeMachoFixedName = (bytes: Buffer): string => {
+  const nul = bytes.indexOf(0);
+  // Latin-1 preserves high bits instead of fabricating ASCII metadata names.
+  return bytes.subarray(0, nul < 0 ? bytes.length : nul).toString("latin1");
+};

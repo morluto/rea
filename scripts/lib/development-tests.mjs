@@ -38,6 +38,11 @@ export const parseDevelopmentTestRequest = (mode, arguments_) => {
 // Test-only outputs are declared beside the test planner rather than becoming
 // runtime or typecheck prerequisites. Add a consumer here when it reads one.
 const artifactConsumers = {
+  "artifacts:skills": [
+    "tests/boundary/cli/guidanceCli.test.ts",
+    "tests/boundary/guidanceSearch.test.ts",
+    "tests/boundary/mcp/registerGuidanceTools.test.ts",
+  ],
   "artifacts:mcp-catalog": [
     "tests/boundary/mcp/deferredRuntime.test.ts",
     "tests/boundary/mcp/contractPresentation.test.ts",

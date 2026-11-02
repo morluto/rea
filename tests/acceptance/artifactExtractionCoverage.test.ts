@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
@@ -13,6 +13,94 @@ import {
   pyzArchive,
   PYTHON_39_MAGIC,
 } from "../../src/artifacts/pyinstaller/CArchive.fixture.js";
+
+cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "extracts readable inventoried files when a child directory is inaccessible",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-extraction-denied-");
+    const source = join(root, "Fixture.app");
+    const privateDir = join(source, "Contents", "private");
+    await mkdir(join(source, "Contents", "MacOS"), { recursive: true });
+    await mkdir(privateDir, { recursive: true });
+    const macho = Buffer.alloc(32);
+    macho.writeUInt32LE(0xfeedfacf, 0);
+    macho.writeUInt32LE(0x0100000c, 4);
+    macho.writeUInt32LE(2, 12);
+    const files = new Map([
+      [
+        "Contents/Info.plist",
+        Buffer.from(
+          "<plist><dict><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleExecutable</key><string>fixture</string></dict></plist>",
+        ),
+      ],
+      ["Contents/MacOS/fixture", macho],
+      ["Contents/good.txt", Buffer.from("retained bytes\n")],
+    ]);
+    for (const [path, bytes] of files)
+      await writeFile(join(source, path), bytes);
+    await writeFile(join(privateDir, "hidden.txt"), "hidden bytes\n");
+    await chmod(privateDir, 0);
+    onTestFinished(() => chmod(privateDir, 0o755));
+
+    const result = await cli.run({
+      arguments: ["extract-artifact", source, "--json"],
+    });
+    expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+    const extraction = artifactExtractionResultSchema.parse(
+      parseEvidence(result.json).normalized_result,
+    );
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
+    const opened = await call("open_binary", { path: source });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    const reply = await call("extract_artifact", {});
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    const mcpExtraction = artifactExtractionResultSchema.parse(
+      parseEvidence(reply.structuredContent).normalized_result,
+    );
+    for (const current of [extraction, mcpExtraction]) {
+      onTestFinished(() =>
+        rm(current.output_root, { recursive: true, force: true }),
+      );
+      expect(current.coverage.status).toBe("unknown");
+      expect(current.limitations).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("Contents/private"),
+          expect.stringContaining("source traversal coverage is unknown"),
+        ]),
+      );
+      expect(
+        current.artifacts.map(({ relative_path }) => relative_path),
+      ).toEqual([...files.keys()]);
+      for (const [path, bytes] of files)
+        expect(
+          Buffer.compare(
+            await readFile(join(current.output_root, path)),
+            bytes,
+          ),
+        ).toBe(0);
+    }
+
+    await chmod(privateDir, 0o755);
+    const control = await cli.run({
+      arguments: ["extract-artifact", source, "--json"],
+    });
+    expect(control.exitCode, control.stdout + control.stderr).toBe(0);
+    const complete = artifactExtractionResultSchema.parse(
+      parseEvidence(control.json).normalized_result,
+    );
+    onTestFinished(() =>
+      rm(complete.output_root, { recursive: true, force: true }),
+    );
+    expect(complete.coverage.status).toBe("complete");
+    expect(
+      await readFile(
+        join(complete.output_root, "Contents/private/hidden.txt"),
+        "utf8",
+      ),
+    ).toBe("hidden bytes\n");
+  },
+);
 
 // APFS rejects the raw FF basename with EILSEQ; match the filename-byte lane.
 cliTest.skipIf(process.platform !== "linux").for([false, true])(

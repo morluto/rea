@@ -5,6 +5,34 @@ import {
 } from "./IdaDiagnosticRedactor.js";
 
 describe("IDA diagnostic credential redaction", () => {
+  it("redacts known URL-encoded credentials while preserving unrelated URL spelling", () => {
+    const redact = createIdaDiagnosticRedactor({
+      url: "http://localhost:1234/mcp",
+      headers: { Authorization: "Bearer fixture-secret" },
+      mode: "attached",
+      timeoutMs: 1000,
+    }).url;
+    expect(
+      redact("HTTP://localhost:1234/mcp?token=fixture%2Dsecret&cursor=%2Fkeep"),
+    ).toBe(
+      "HTTP://localhost:1234/mcp?token=[redacted transport credential]&cursor=%2Fkeep",
+    );
+  });
+
+  it("maps encoded UTF-8 and query plus signs to their original URL spans", () => {
+    const redact = createIdaDiagnosticRedactor({
+      url: "http://localhost:1234/mcp",
+      headers: { "X-Private": "café secret" },
+      sensitive: { headers: ["X-Private"], env: [] },
+      mode: "attached",
+      timeoutMs: 1000,
+    }).url;
+    expect(
+      redact("http://localhost/mcp?token=caf%C3%A9+secret&cursor=keep"),
+    ).toBe(
+      "http://localhost/mcp?token=[redacted transport credential]&cursor=keep",
+    );
+  });
   it.each([false, true])(
     "redacts literal credentials once regardless of header order (reversed: %s)",
     (reversed) => {

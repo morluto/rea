@@ -31,6 +31,7 @@ import type {
   BrowserCaptureComparisonInput,
 } from "../domain/browserCaptureComparison.js";
 import { commitBrowserScenarioNormalization } from "../domain/browserScenarioNormalization.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import type {
   CaptureWebScreenshotInput,
   CompareWebScreenshotsInput,
@@ -81,13 +82,26 @@ export const createBrowserEvidence = (
 ): Evidence => {
   const acquisition = isBundleAcquisition(result);
   const observed = acquisition ? result.inspection : result;
+  const comparison =
+    operation === "compare_web_captures" ||
+    operation === "compare_web_screenshots";
   return createEvidence(undefined, provider, {
     predicateType: browserPredicate(operation),
     operation,
-    parameters: browserParameters(input, result),
+    parameters: {
+      ...browserParameters(input, result),
+      ...(comparison
+        ? {
+            comparison_input_sha256: digestCanonicalValue(
+              input,
+              "Browser comparison input",
+            ),
+          }
+        : {}),
+    },
     result,
-    confidence: "observed",
-    authority: "external-service",
+    confidence: comparison ? "derived" : "observed",
+    authority: comparison ? "analyst-inference" : "external-service",
     environment:
       "browser" in observed
         ? {

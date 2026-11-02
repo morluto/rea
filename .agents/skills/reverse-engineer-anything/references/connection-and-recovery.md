@@ -17,7 +17,7 @@ does not establish which server an approval wildcard covers. See
 
 | Observation                                                     | Meaning and next step                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No REA tools in the active session                              | Inspect registration with `rea doctor --client codex --json`. A skill installation alone does not register MCP.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| No REA tools in the active session                              | If REA was installed as a client plugin, follow the plugin section below. Otherwise inspect registration with `rea doctor --client codex --json`. A skill installation alone does not register MCP.                                                                                                                                                                                                                                                                                                                                                                                     |
 | Missing, malformed or stale registration                        | Prepare a scoped setup plan; apply only authorized changes with backups.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Aligned registration, but no connected tools                    | Restart/reconnect the client. Doctor checks registration; it cannot establish the current agent's connection. Inspect the client's launch error if reconnection fails.                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | MCP connection dropped or REA could not start                   | If the connection drops, retry that call once only when it is safe to repeat or known not to have started. If it may already have changed the target, or the same failure returns, tell the user REA's connection failed and ask them to restart the MCP client. If REA could not start its connection, retry once, then tell the user and ask them to restart the MCP client. Do not retry a startup failure that returns the same unchanged result. Run `rea doctor` when REA could not start or tools stay missing after restart. Doctor cannot restore a live connection by itself. |
@@ -116,6 +116,32 @@ is not a recommendation to change it. Do not invent a setting. Host memory and
 - `invalid_request`: correct the reported fields from the current schema. Do
   not repeat the unchanged call.
 
+## REA installed as a client plugin
+
+A Claude Code or Codex plugin owns its `rea` server and this skill. Doctor's
+`--client` and `--skill` checks and `rea setup` read and write only
+setup-owned state, so for a plugin-only install they report `missing`, and
+applying setup would add a second `rea` server. If this skill was loaded from
+a plugin, or the client lists a `rea` plugin, do not prepare a setup plan for
+missing tools. Instead:
+
+- Check that the plugin is installed and enabled with the client's own
+  listing: `claude plugin list` and `/mcp` in Claude Code, `codex plugin list`
+  in Codex.
+- Restart or reconnect the client, then read its launch error for the `rea`
+  server if tools are still absent. The plugin starts its bundled runtime; a missing build or version mismatch
+  requires a reinstall, or a fresh build when developing from source.
+- Check analysis engines through the connected server's
+  `binary_session.result.tool_availability`. `rea doctor --provider <id> --json`
+  from a shell reports that shell's environment, which can differ from the
+  environment the client gave the plugin server. If you still run it through
+  the package runner, use the version pinned in the plugin manifest's server
+  entry (`rea-agents@<version>`), not `@latest`, so it matches the server the
+  plugin starts.
+
+Use the setup repair below only when the user wants a setup-owned registration
+instead of the plugin, and remove or disable the plugin first.
+
 ## Repair registration when needed
 
 For Codex:
@@ -130,7 +156,10 @@ Use the current supported client's ID: `claude_code`, `claude_desktop`, `codex`,
 `copilot_cli`, `commandcode`, `qwen_code`, `vscode`, `trae`, `grok_build`, `omp`, `pi`,
 `hermes`, `qoder`, `droid`, `zcode`, `dsh`, `freebuff`, or `grok_bot`. If unknown, inspect `doctor --json` before choosing a
 scope. `grok_bot` uses a chat registration step rather than local `mcp.json`.
-For unsupported clients, use version-pinned manual stdio registration or CLI.
+For unsupported clients, use manual stdio registration with the selected
+installation’s absolute runtime and entry script, or continue through the CLI.
+Acquire packages from a trusted directory outside the target project. Keep a
+package-runner installation and its runtime available while registrations use it.
 
 Show the plan's exact paths, backups, changes and bundled-skill replacement.
 Obtain approval for writes when that concrete scope is not already authorized,

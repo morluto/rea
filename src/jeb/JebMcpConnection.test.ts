@@ -463,6 +463,15 @@ it.each([false, true])(
   },
 );
 
+it.each(["1e400", '{"observed":1e400}'])(
+  "rejects JEB JSON text outside the JSON value contract: %s",
+  (text) => {
+    expect(() =>
+      decodeJebToolResult({ content: [{ type: "text", text }] }),
+    ).toThrow("JSON numbers must be finite");
+  },
+);
+
 it("accepts omitted JEB content only when structured evidence establishes an observation", () => {
   expect(
     decodeJebToolResult({ structuredContent: { result: "ordinary field" } }),

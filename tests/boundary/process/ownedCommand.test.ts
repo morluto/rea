@@ -554,14 +554,27 @@ it.skipIf(process.platform === "win32")(
       expect(remainsLive).toBe(false);
       expect(() => process.kill(unrelated.process.pid!, 0)).not.toThrow();
     } finally {
-      if (descendantOwner !== undefined)
-        expect(
-          (
-            await (descendantOwner.cleanup?.() ??
-              cleanupOwnedProcessGroup(descendantOwner.ownership))
-          ).cleaned,
-        ).toBe(true);
-      await cleanupOwnedProcessGroup(unrelated.ownership);
+      const descendant = descendantOwner;
+      const results = await Promise.allSettled([
+        ...(descendant === undefined
+          ? []
+          : [
+              Promise.resolve().then(
+                () =>
+                  descendant.cleanup?.() ??
+                  cleanupOwnedProcessGroup(descendant.ownership),
+              ),
+            ]),
+        Promise.resolve().then(() =>
+          cleanupOwnedProcessGroup(unrelated.ownership),
+        ),
+      ]);
+      const failures = results.flatMap((result) => {
+        if (result.status === "rejected") return [result.reason];
+        return result.value.cleaned ? [] : [new Error(result.value.reason)];
+      });
+      if (failures.length > 0)
+        throw new AggregateError(failures, "Fixture process cleanup failed");
     }
   },
 );

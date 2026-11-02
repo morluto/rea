@@ -327,7 +327,7 @@ describe("HopperClient startup failures", () => {
     expect(client.operationHealth()).toMatchObject({ state: "unknown" });
   });
 
-  it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80])(
+  it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82])(
     "reports Linux adapter exit %i during bridge startup",
     async (exitCode) => {
       const client = new HopperClient({

@@ -1,11 +1,9 @@
 import { createHash } from "node:crypto";
 
 import {
-  classifyFatContainerIdentity,
-  readFatContainerHeader,
-  readMachoHeaderPrefixFacts,
-  validateFatSlice,
-} from "../../domain/apple/machoContainer.js";
+  readUniversalMachoImage,
+  readUniversalMachoSlice,
+} from "../../domain/apple/machoImageSelection.js";
 import {
   MACHO_CPU_TYPES,
   type MachoSliceArchitecture,
@@ -48,37 +46,16 @@ export const selectNativeImage = (
   bytes: Buffer,
   architecture: MachoSliceArchitecture | undefined,
 ): Result<SelectedNativeImage, MachoSliceSelectionIssue> => {
-  const fat = readFatContainerHeader(bytes, bytes.length);
-  const identity =
-    fat.state === "parsed"
-      ? classifyFatContainerIdentity(fat, (offset) =>
-          offset + 4 > bytes.length ? null : bytes.readUInt32BE(offset),
-        )
-      : undefined;
-  // A table whose slices declare known Mach-O CPUs but cannot be read is a
-  // damaged universal file; no architecture selection can repair it.
-  if (identity?.state === "malformed")
-    return err({ kind: "malformed", message: identity.reason });
-  // A FAT-shaped table is not a universal Mach-O until its slices prove it;
-  // JVM class files share the magic. Leave such files to the image reader.
-  if (
-    fat.state === "not-fat" ||
-    (fat.state === "parsed" && identity?.state !== "mach-o")
-  )
+  const container = readUniversalMachoImage(bytes);
+  if (!container.ok) return container;
+  const fat = container.value;
+  if (fat === null)
     return architecture === undefined
       ? ok({ bytes, fileOffset: 0, selection: null })
       : err({
           kind: "architecture",
           message: `architecture ${architecture} was selected, but the file is not a universal Mach-O; omit architecture.`,
         });
-  if (fat.state !== "parsed")
-    return err({
-      kind: "malformed",
-      message:
-        fat.state === "malformed"
-          ? fat.reason
-          : "Universal Mach-O header is truncated",
-    });
   const available = fat.slices
     .map(({ cpuType, cpuSubtype }) => cpuName(cpuType, cpuSubtype))
     .join(", ");
@@ -99,15 +76,10 @@ export const selectNativeImage = (
           ? `Universal Mach-O holds ${available}, not ${architecture}.`
           : `Universal Mach-O holds several ${architecture} slices (${available}); no slice was selected.`,
     });
-  const image = bytes.subarray(slice.offset, slice.offset + slice.size);
-  const embedded = readMachoHeaderPrefixFacts(image).identity;
-  const issue =
-    embedded === null
-      ? `FAT architecture ${String(slice.index)} does not begin with a Mach-O header`
-      : validateFatSlice(slice, bytes.length, fat.tableEnd, embedded);
-  if (issue !== null) return err({ kind: "malformed", message: issue });
+  const selected = readUniversalMachoSlice(bytes, fat, slice);
+  if (!selected.ok) return selected;
   return ok({
-    bytes: image,
+    bytes: selected.value,
     fileOffset: slice.offset,
     selection: {
       kind: "macho-selected-image-v1",

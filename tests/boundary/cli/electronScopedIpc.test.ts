@@ -228,3 +228,28 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     }
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps unexamined external package effects unknown without obscuring builtins through %s",
+  async (surface, { cli }) => {
+    for (const [label, extra, expected] of [
+      ["builtins", `require("node:path");`, "paired"],
+      ["external", `require("unobserved-package");`, "ambiguous"],
+      ["dynamic", `require(unknownName);`, "ambiguous"],
+      ["native", `require("./addon.node");`, "ambiguous"],
+    ] as const) {
+      const root = await createTestTempDirectory("rea-external-ipc-owner-");
+      await writeFixtureFiles(root, {
+        "package.json": JSON.stringify({ name: "app", main: "main.cjs" }),
+        "main.cjs": `const {ipcMain}=require("electron"); ${extra} ipcMain.handle("known",()=>1);`,
+        "preload.cjs": `const {ipcRenderer}=require("electron"); ipcRenderer.invoke("known");`,
+        ...(label === "native" ? { "addon.node": "fixture" } : {}),
+      });
+      const application = await analyzeJavaScriptDirectory(surface, cli, root);
+      expect(application.summary.ipc, label).toMatchObject({
+        paired_renderer_transmissions: expected === "paired" ? 1 : 0,
+        ambiguous_renderer_transmissions: expected === "ambiguous" ? 1 : 0,
+      });
+    }
+  },
+);

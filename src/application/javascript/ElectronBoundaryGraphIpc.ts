@@ -1,4 +1,5 @@
 import {
+  compareJavaScriptSourcePoints,
   javascriptSourceRangeKey,
   javascriptSourceRangeContains,
 } from "../../domain/javascript/javascriptSourceCoordinates.js";
@@ -381,31 +382,29 @@ const containingHandler = (
   records: readonly ElectronIpcRecord[],
   file: JavaScriptArtifactFile,
   validation: ElectronSenderValidationFinding,
-): ElectronIpcRecord | undefined =>
-  records
-    .filter(
-      (record) =>
-        record.file.path === file.path &&
-        record.finding.handler_location !== null &&
-        javascriptSourceRangeContains(
-          record.finding.handler_location,
-          validation.location,
-        ),
+): ElectronIpcRecord | undefined => {
+  let selected: ElectronIpcRecord | undefined;
+  for (const record of records) {
+    const location = record.finding.handler_location;
+    if (
+      record.file.path !== file.path ||
+      location === null ||
+      !javascriptSourceRangeContains(location, validation.location)
     )
-    .sort(
-      (left, right) =>
-        rangeMagnitude(left.finding.handler_location) -
-        rangeMagnitude(right.finding.handler_location),
-    )[0];
-
-const rangeMagnitude = (
-  range: ElectronIpcRecord["finding"]["handler_location"],
-): number =>
-  range === null
-    ? Number.MAX_SAFE_INTEGER
-    : (range.end.line - range.start.line) * 1_000_000 +
-      range.end.column -
-      range.start.column;
+      continue;
+    const previous = selected?.finding.handler_location;
+    // Parsed handler ranges nest: the innermost starts latest, then ends
+    // earliest. Columns have no fixed upper bound in minified JavaScript.
+    if (
+      previous == null ||
+      compareJavaScriptSourcePoints(location.start, previous.start) > 0 ||
+      (compareJavaScriptSourcePoints(location.start, previous.start) === 0 &&
+        compareJavaScriptSourcePoints(location.end, previous.end) < 0)
+    )
+      selected = record;
+  }
+  return selected;
+};
 
 const coverageFor = (
   context: JavaScriptArtifactGraphContext,

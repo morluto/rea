@@ -46,12 +46,41 @@ export const machoSubtypeRank = (
   return rank < 0 ? policy.subtypes.length : rank;
 };
 
-/** Select a tool spelling using the same preference order as FAT selection. */
-export const selectMachoArchitectureName = (
+/** Return a tool selector only for an explicitly supported CPU subtype. */
+export const machoKnownCodeSignSelector = (
+  cpuType: number,
+  cpuSubtype: number,
+): string | undefined => {
+  const capabilities = (cpuSubtype >>> 24) & 0xff;
+  // arm64e pointer authentication and x86_64 LIB64 have known tool selectors.
+  // Other capability variants may have distinct names; do not collapse them.
+  if (
+    capabilities !== 0 &&
+    !(
+      cpuType === 0x0100000c &&
+      machoCpuSubtypeBase(cpuSubtype) === 2 &&
+      capabilities === 0x80
+    ) &&
+    !(
+      cpuType === 0x01000007 &&
+      machoCpuSubtypeBase(cpuSubtype) === 3 &&
+      capabilities === 0x80
+    )
+  )
+    return undefined;
+  return Object.values(MACHO_ARCHITECTURE_POLICIES)
+    .find((policy) => policy.cpuType === cpuType)
+    ?.subtypes.find(
+      ({ subtype }) => subtype === machoCpuSubtypeBase(cpuSubtype),
+    )?.name;
+};
+
+/** Keep the selected lipo record, including its container coordinates. */
+export const selectMachoArchitecture = (
   policy: MachoArchitecturePolicy,
   available: readonly LipoArchitecture[],
-): string | undefined => {
-  let selected: string | undefined;
+): LipoArchitecture | undefined => {
+  let selected: LipoArchitecture | undefined;
   let bestRank = Number.POSITIVE_INFINITY;
   for (const architecture of available) {
     if (
@@ -77,8 +106,22 @@ export const selectMachoArchitectureName = (
         ? policy.subtypes.length
         : machoSubtypeRank(policy, subtype);
     if (rank >= bestRank) continue;
-    selected = architecture.name;
+    selected = architecture;
     bestRank = rank;
   }
   return selected;
+};
+
+/** lipo may label ARM64 V8 as arm64 even though tools select it as arm64v8. */
+export const machoToolArchitectureName = (
+  policy: MachoArchitecturePolicy,
+  architecture: LipoArchitecture,
+): string => {
+  const named = policy.subtypes.find(({ name }) => name === architecture.name);
+  const actual = policy.subtypes.find(
+    ({ subtype }) => subtype === architecture.cpu_subtype_base,
+  );
+  return named !== undefined && actual !== undefined && named !== actual
+    ? actual.name
+    : architecture.name;
 };

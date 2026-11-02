@@ -6,6 +6,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { createPackageWithOptions, extractFile } from "@electron/asar";
 import { expect, onTestFinished } from "vitest";
@@ -28,6 +29,7 @@ cliTest.skipIf(process.platform === "win32")(
     const bytes = Buffer.from("selected native companion");
     await mkdir(source);
     await writeFile(join(source, "native.node"), bytes);
+    await writeFile(join(source, "packed.txt"), "packed bytes");
     await createPackageWithOptions(source, selected, { unpack: "*.node" });
     await rename(selected, canonical);
     await symlink(canonical, selected);
@@ -54,11 +56,15 @@ cliTest.skipIf(process.platform === "win32")(
     const inventory = artifactInventoryResultSchema.parse(
       inventoryEvidence.normalized_result,
     );
+    const occurrence = inventory.occurrences.find(
+      ({ logical_path }) => logical_path === "native.node",
+    );
+    expect(occurrence?.hash_status).toBe("verified");
     expect(
-      inventory.occurrences.find(
-        ({ logical_path }) => logical_path === "native.node",
-      )?.hash_status,
-    ).toBe("verified");
+      inventory.nodes.find(
+        ({ artifact_id }) => artifact_id === occurrence?.artifact_id,
+      )?.sha256,
+    ).toBe(createHash("sha256").update(bytes).digest("hex"));
 
     const extracted = await cli.run({
       arguments: ["extract-artifact", selected, "--json"],
@@ -74,5 +80,8 @@ cliTest.skipIf(process.platform === "win32")(
     expect(
       (await readFile(join(result.output_root, "native.node"))).equals(bytes),
     ).toBe(true);
+    expect(await readFile(join(result.output_root, "packed.txt"), "utf8")).toBe(
+      "packed bytes",
+    );
   },
 );

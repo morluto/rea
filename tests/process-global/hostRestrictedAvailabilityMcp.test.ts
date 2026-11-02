@@ -4,10 +4,8 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
-import {
-  expandToolAvailability,
-  sessionProvider,
-} from "../../src/contracts/toolOutputSchemaPrimitives.js";
+import { expandToolAvailability } from "../../src/contracts/toolOutputSchemaPrimitives.js";
+import { sessionOutputSchemas } from "../../src/contracts/toolOutputSchemaGroups.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -58,7 +56,10 @@ const connect = async (
   readonly availability: () => Promise<
     ReturnType<typeof expandToolAvailability>
   >;
-  readonly call: (name: string, args: Record<string, unknown>) => unknown;
+  readonly call: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<Record<string, unknown>>;
   readonly close: () => Promise<void>;
 }> => {
   const directory = await createTestTempDirectory("rea-host-restricted-mcp-");
@@ -97,17 +98,17 @@ const connect = async (
       .array(z.object({ type: z.string(), text: z.string().optional() }))
       .parse(response.content)
       .find((item) => item.type === "text")?.text;
-    const body = z
+    return z
       .record(z.string(), z.unknown())
       .parse(response.structuredContent ?? JSON.parse(text ?? "null"));
-    return "result" in body ? body.result : body;
   };
   return {
     path,
     availability: async () =>
       expandToolAvailability(
-        sessionProvider.parse(await call("binary_session", {}))
-          .tool_availability,
+        sessionOutputSchemas.binary_session.parse(
+          await call("binary_session", {}),
+        ).result.tool_availability,
       ),
     call,
     close: async () => {

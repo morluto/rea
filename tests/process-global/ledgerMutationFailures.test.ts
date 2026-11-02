@@ -287,20 +287,30 @@ it("authenticates all Evidence before committing an imported unknown history", a
     if (!created.ok) throw created.error;
     const bundle = source.exportEvidenceBundle();
     const expectedIds = bundle.records.map(({ evidence_id }) => evidence_id);
-    const original = evidenceDomain.immutableEvidence;
+    const original = evidenceBundleDomain.safeParseImmutableEvidenceBundle;
     let incomingVisibleDuringAuthentication = false;
     const authenticate = vi
-      .spyOn(evidenceDomain, "immutableEvidence")
+      .spyOn(evidenceBundleDomain, "safeParseImmutableEvidenceBundle")
       .mockImplementation((input) => {
         const visible = session
           .exportEvidenceBundle()
           .records.some(({ evidence_id }) => expectedIds.includes(evidence_id));
         if (visible) incomingVisibleDuringAuthentication = true;
-        return original(input);
+        const admitted = original(input);
+        if (
+          session
+            .exportEvidenceBundle()
+            .records.some(({ evidence_id }) =>
+              expectedIds.includes(evidence_id),
+            )
+        )
+          incomingVisibleDuringAuthentication = true;
+        return admitted;
       });
     onTestFinished(() => authenticate.mockRestore());
 
     const imported = session.importEvidenceBundle(bundle);
+    expect(authenticate).toHaveBeenCalledTimes(1);
     authenticate.mockRestore();
     expect(imported.ok).toBe(true);
     expect(incomingVisibleDuringAuthentication).toBe(false);

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { Ajv2020 } from "ajv/dist/2020.js";
 
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import {
+  analysisErrorJsonSchema,
+  analysisErrorProjectionSchema,
+} from "../../../src/contracts/errorSchemas.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
@@ -13,6 +17,36 @@ import {
   AnalysisTimeoutError,
 } from "../../../src/domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+
+it.each([
+  { declaredSha256: "a".repeat(64), calculatedSha256: "b".repeat(64) },
+  {
+    algorithm: "md5" as const,
+    declaredMd5: "a".repeat(32),
+    calculatedMd5: "b".repeat(32),
+  },
+])("retains partial observations on integrity errors", (digests) => {
+  const error = new ArtifactOperationError(
+    "trace_web_module_imports",
+    "integrity",
+    {
+      logicalPath: "modules/main.js",
+      unpacked: false,
+      ...digests,
+    },
+  );
+  error.retainPartialObservation({
+    kind: "web-artifact-acquisition",
+    analysis: "not-performed",
+    files: [],
+  });
+  const projected = projectAnalysisError(error);
+  expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  const validate = new Ajv2020({ strict: false }).compile(
+    analysisErrorJsonSchema,
+  );
+  expect(validate(projected), JSON.stringify(validate.errors)).toBe(true);
+});
 
 describe("analysis error projection contract", () => {
   it("keeps cleanup failure distinct from unreadable collected output", () => {

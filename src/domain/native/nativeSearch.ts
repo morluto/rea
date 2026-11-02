@@ -11,7 +11,7 @@ export const nativeSearchFields = {
     .boolean()
     .default(false)
     .describe(
-      "Whether to match case; case-insensitive matching uses Unicode simple case folding, one character at a time",
+      "Whether to match case; case-insensitive literal matching uses Unicode simple case folding, one character at a time, except Hopper, which retains Python Unicode full case folding and can expand characters into sequences. Regex case handling follows the provider's advertised regex dialect",
     ),
 };
 

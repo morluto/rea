@@ -2,6 +2,8 @@ import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { inspectAndroidPackage } from "../application/android/AndroidPackageInspection.js";
+import { inspectAndroidSymbol } from "../application/android/AndroidSymbolInspection.js";
+import { inspectAndroidJniBindings } from "../application/android/AndroidJniInspection.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
@@ -51,22 +53,75 @@ export const registerAndroidTools = (
     packageHandler(packageContract),
   );
   const searchContract = toolContract("search_android_classes");
+  const jniContract = toolContract("inspect_android_jni_bindings");
+  const jniService: ContractToolService<"inspect_android_jni_bindings"> = {
+    execute: (_operation, input, options) =>
+      inspectAndroidJniBindings(
+        service,
+        input,
+        { recordEvidence, evidenceById },
+        options,
+      ),
+  };
+  server.registerTool(
+    jniContract.name,
+    toolRegistrationOptions(jniContract),
+    createContractToolHandler(
+      server,
+      jniService,
+      logger,
+      recordEvidence,
+      withAdmittedAnalysis,
+    )(jniContract),
+  );
   server.registerTool(
     searchContract.name,
     toolRegistrationOptions(searchContract),
     handler(searchContract),
   );
   const classContract = toolContract("inspect_android_class");
+  const classService: ContractToolService<"inspect_android_class"> = {
+    execute: (operation, input, options) =>
+      inspectAndroidSymbol(
+        service,
+        operation,
+        input,
+        { recordEvidence, evidenceById },
+        options,
+      ),
+  };
   server.registerTool(
     classContract.name,
     toolRegistrationOptions(classContract),
-    handler(classContract),
+    createContractToolHandler(
+      server,
+      classService,
+      logger,
+      recordEvidence,
+      withAdmittedAnalysis,
+    )(classContract),
   );
   const methodContract = toolContract("inspect_android_method");
+  const methodService: ContractToolService<"inspect_android_method"> = {
+    execute: (operation, input, options) =>
+      inspectAndroidSymbol(
+        service,
+        operation,
+        input,
+        { recordEvidence, evidenceById },
+        options,
+      ),
+  };
   server.registerTool(
     methodContract.name,
     toolRegistrationOptions(methodContract),
-    handler(methodContract),
+    createContractToolHandler(
+      server,
+      methodService,
+      logger,
+      recordEvidence,
+      withAdmittedAnalysis,
+    )(methodContract),
   );
   const referencesContract = toolContract("trace_android_references");
   server.registerTool(

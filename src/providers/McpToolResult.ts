@@ -27,9 +27,13 @@ export const mcpTextBlocks = (
 
 /** Preserve ordinary text when the selected upstream payload is not valid JSON. */
 export const parseMcpJsonOrText = (text: string): JsonValue => {
+  let value: unknown;
   try {
-    return jsonValueSchema.parse(JSON.parse(text));
+    value = JSON.parse(text);
   } catch {
     return text;
   }
+  // A parsed JSON value must satisfy the same admission rules as structured
+  // evidence. Validation failures cannot change its meaning into ordinary text.
+  return jsonValueSchema.parse(value);
 };

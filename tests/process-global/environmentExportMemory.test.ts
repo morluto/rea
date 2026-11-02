@@ -37,12 +37,9 @@ it.each(["serialize", "parse"] as const)(
               capture,
               "environment-build",
             )
-          : await environmentExportFile(
-              "evidence",
-              "capture.json",
-              bytes,
-              "environment-build",
-            );
+          : await environmentExportFile("evidence", "capture.json", bytes, {
+              operation: "environment-build",
+            });
       if (result.ok) throw new Error("Expected a memory refusal");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "resource_constraint",

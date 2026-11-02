@@ -5,11 +5,12 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
-import { join } from "node:path";
-import { readFile, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { readFile, realpath, rm } from "node:fs/promises";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { PRODUCT_IDENTITY } from "../dist/identity.js";
 import { resolveMcpStartupBudgets } from "../dist/config/mcpStartupBudgets.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import * as prompts from "./verify-package-prompts.mjs";
@@ -239,7 +240,7 @@ const verifyMcpInlineArtifactEvidence = async (
   }
 };
 
-/** Connect to the packaged MCP server and verify catalog and Evidence composition. */
+/** Check CLI diagnostics, then verify catalog and Evidence through the installed plugin. */
 export async function verifyPackageMcp({
   commands,
   cli,
@@ -249,7 +250,7 @@ export async function verifyPackageMcp({
 }) {
   const diagnosed = JSON.parse(
     (
-      await commands.exec(cli, ["mcp", "doctor", "--json"], {
+      await commands.exec(process.execPath, [cli, "mcp", "doctor", "--json"], {
         env: environment,
         timeout: resolveMcpStartupBudgets(environment).doctor.milliseconds,
       })
@@ -261,9 +262,13 @@ export async function verifyPackageMcp({
       diagnosed.inventory?.tools?.expected
   )
     throw new Error("packaged production MCP doctor failed");
+  const scriptsDirectory = dirname(await realpath(cli));
   const transport = new StdioClientTransport({
-    command: cli,
-    args: ["mcp"],
+    command: process.execPath,
+    args: [
+      join(scriptsDirectory, "plugin-mcp-launcher.mjs"),
+      PRODUCT_IDENTITY.packageVersion,
+    ],
     env: {
       ...environment,
     },

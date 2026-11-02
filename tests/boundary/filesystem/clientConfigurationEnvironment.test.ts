@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -22,9 +23,11 @@ import {
   clientRegistrationEnvironmentDetailsWithBudget,
 } from "../../../src/application/ClientRegistrationEnvironment.js";
 import { snapshotEnvironment } from "../../../src/process/snapshotEnvironment.js";
-import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+
 import { ok } from "../../../src/domain/result.js";
 import { MCP_STARTUP_POLICY } from "../../../src/mcpStartupPolicy.js";
+
+const staleOwnedCommand = ["npx", "-y", "rea-agents@6.6.0", "mcp"] as const;
 
 it("awaits the owner-parsed provider request budget without changing caller strings", async () => {
   const parsed = parseClientConfiguration(
@@ -127,16 +130,20 @@ it.each(["win32", "linux"] as const)(
         mcpServers: {
           rea: clientRegistrationEntry(
             "json",
-            npxRegistrationCommand(platform),
+            currentClientRegistrationCommand({ platform }),
             { rea_analysis_provider: "invalid provider" },
           ),
         },
       }),
     );
-    const statuses = await readClientRegistrationStatuses(home, "rea", {
-      platform,
-      environment: {},
-    });
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      currentClientRegistrationCommand({ platform })[1],
+      {
+        platform,
+        environment: {},
+      },
+    );
     expect(statuses.find(({ client }) => client === "cursor")).toMatchObject({
       state: platform === "win32" ? "invalid" : "aligned",
     });
@@ -211,20 +218,17 @@ it.skipIf(process.platform !== "win32")(
       JSON.stringify({
         mcpServers: {
           rea: {
-            command: "old-rea",
-            args: ["mcp"],
+            command: staleOwnedCommand[0],
+            args: staleOwnedCommand.slice(1),
             env: { rea_mcp_input_schema_profile: "full" },
           },
         },
       }),
     );
     const client = { name: "kimi", format: "kimi", configPath } as const;
+    const command = currentClientRegistrationCommand();
     expect(
-      await configureClientConfiguration(
-        client,
-        {},
-        npxRegistrationCommand(process.platform),
-      ),
+      await configureClientConfiguration(client, {}, command),
     ).toMatchObject({ status: "configured" });
     const parsed = parseClientConfiguration(
       await readFile(configPath, "utf8"),
@@ -233,7 +237,7 @@ it.skipIf(process.platform !== "win32")(
     expect(effectiveClientServer(parsed, "rea")).toHaveProperty("env", {
       rea_mcp_input_schema_profile: "full",
     });
-    const statuses = await readClientRegistrationStatuses(home, "rea", {
+    const statuses = await readClientRegistrationStatuses(home, command[1], {
       environment: {},
     });
     expect(statuses.find(({ client }) => client === "kimi")).toMatchObject({
@@ -378,7 +382,7 @@ it.each([
       {
         ["__proto__"]: { caller: "retain root value" },
         [serversKey]: {
-          rea: clientRegistrationEntry(format, ["rea-old", "mcp"], custom),
+          rea: clientRegistrationEntry(format, staleOwnedCommand, custom),
           other: clientRegistrationEntry(format, ["other"], { OTHER: "keep" }),
           ["__proto__"]: clientRegistrationEntry(format, ["peer"], {}),
         },
@@ -651,7 +655,7 @@ it("rejects a non-string caller environment key before editing configuration", a
   const root = await createTestTempDirectory("rea-invalid-own-environment-");
   const configPath = join(root, "config.json");
   const source =
-    '{"mcpServers":{"rea":{"command":"old-rea","args":["mcp"],"env":{"__proto__":123}}}}';
+    '{"mcpServers":{"rea":{"command":"rea","args":["mcp"],"env":{"__proto__":123}}}}';
   await writeFile(configPath, source);
   const details = clientRegistrationEnvironmentDetails(
     parseClientConfiguration(source, "json"),
@@ -666,7 +670,7 @@ it("rejects a non-string caller environment key before editing configuration", a
       {},
       ["rea", "mcp"],
     ),
-  ).toMatchObject({ status: "failed" });
+  ).toEqual({ status: "failed", reason: "readback" });
   expect(await readFile(configPath, "utf8")).toBe(source);
   await expect(access(`${configPath}.rea.backup`)).rejects.toMatchObject({
     code: "ENOENT",
@@ -712,7 +716,7 @@ it("retains legacy OpenCode environment when migrating into a native server tabl
     configPath,
     JSON.stringify({
       mcp: {
-        rea: clientRegistrationEntry("opencode", ["old", "mcp"], custom),
+        rea: clientRegistrationEntry("opencode", staleOwnedCommand, custom),
         servers: {
           other: clientRegistrationEntry("opencode_v2", ["other"], {}),
         },
@@ -896,3 +900,20 @@ it.each([
     });
   },
 );
+
+it("refuses an unidentified launch command before creating a client configuration", async () => {
+  const home = await createTestTempDirectory("rea-registration-unidentified-");
+  const configPath = join(home, "missing", "mcp.json");
+  const result = await configureClientConfiguration(
+    { name: "claude_code", configPath, format: "json" },
+    {},
+    [],
+  );
+  expect(result).toMatchObject({
+    status: "failed",
+    reason: "registration_ownership",
+  });
+  await expect(access(join(home, "missing"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});

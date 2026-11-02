@@ -27,8 +27,7 @@ it.each([
       expect(result.summary).toMatchObject({
         status: "not_applicable",
         method_tables: 0,
-        reason:
-          "No supported ReadyToRun directory signature was found in initialized non-executable PE sections.",
+        reason: { code: "no_rtr_directory" },
       });
   },
 );
@@ -50,7 +49,7 @@ it.each([
       expect(result.summary).toMatchObject({
         status: "not_applicable",
         method_tables: 0,
-        reason: "PE optional header is too short for image mapping fields",
+        reason: { code: "optional_header_too_short" },
       });
   },
 );

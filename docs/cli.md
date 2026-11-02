@@ -51,6 +51,15 @@ module page. See
 [JavaScript application workflows](javascript-application-workflows.md) for
 views, feature traces and comparisons that take the same saved Evidence.
 
+Add `--timings` to a command to write one JSON timing record to stderr. For
+example, `rea inspect-elf-notes program --json --timings > result.json` keeps
+stdout as a parseable result and writes
+`{"rea_timings":{"version":1,"command_ms":42}}` to stderr. `command_ms`
+measures CLI command dispatch and result delivery; it is not provider-only or
+analysis-only time. The flag is off by default, and the record omits stages
+that REA did not measure. Root version reporting does not dispatch a command
+and has no command timing record.
+
 ## JSON Lines record output
 
 Use `--format jsonl` to consume row-oriented results one record per line:
@@ -156,6 +165,15 @@ into the current shell:
 eval "$(rea completions bash)"
 ```
 
+For zsh, initialize completion before loading the hook. If your shell already
+runs `compinit`, place the hook after that existing initialization:
+
+```zsh
+autoload -Uz compinit
+compinit
+eval "$(rea completions zsh)"
+```
+
 The Bash hook supports macOS system Bash 3.2. It uses optional completion
 features when the shell provides them and falls back to portable registration.
 Completion includes standard global options and the active command's options;
@@ -241,6 +259,40 @@ Formats 2, 3 and 4 retain header, directory and integrity facts. Compact deliver
 keeps complete Evidence in the requested bundle. See [Godot PCK](godot-pck.md)
 for embedded packs, batch queries and unknown encrypted coverage.
 
+Inspect a UnityFS AssetBundle without running Unity:
+
+```sh
+rea inspect-artifact content.bundle --detail summary --evidence_output evidence.json --json
+rea extract-artifact content.bundle --json
+```
+
+Format versions 6 through 8 retain header, block and directory facts with
+none/LZ4/LZ4HC block decompression. See [UnityFS](unityfs.md) for encryption
+and LZMA coverage boundaries.
+
+Inspect an ESP32-family app or bootloader image without esptool:
+
+```sh
+rea inspect-artifact firmware.bin --json
+rea extract-artifact firmware.bin --json
+```
+
+The inventory lists each segment with its ESP-IDF load classification, the
+checksum and SHA-256 results, the descriptor and any Secure Boot v2 signature
+blocks. See [ESP images](esp-image.md) for recognition, coverage and refusals.
+
+Inspect an ESP flash dump, or one read from a flash address other than 0:
+
+```sh
+rea inspect-artifact flash.bin --json
+rea inspect-artifact dump.bin --target-format esp-flash-image --flash-offset 0x1000 --json
+rea extract-artifact flash.bin --json
+```
+
+The inventory lists the bootloader, the partition table and each partition,
+with ESP image facts for app partitions and the OTA records. See
+[ESP flash images](esp-flash-image.md) for table location, inputs and limits.
+
 Inspect a Node.js SEA carrier without running it:
 
 ```sh
@@ -250,6 +302,52 @@ rea extract-artifact ./application --json
 
 See [Node.js SEA](node-sea.md) for supported layouts, script and asset paths,
 fuse observations, and the real-fixture verification lane.
+
+Inventory and extract Intel HEX or S-record regions:
+
+```sh
+rea inspect-artifact ./firmware.hex --json
+rea extract-artifact ./firmware.hex --json
+```
+
+See [Intel HEX and S-record images](hex-records.md) for recognition, region
+names, metadata and limits.
+
+Inspect and extract stored U-Boot legacy uImage payloads and components:
+
+```sh
+rea inspect-artifact ./firmware.bin --detail summary --evidence_output firmware.json --json
+rea extract-artifact ./firmware.bin --json
+```
+
+See [U-Boot uImage](uimage.md) for verified CRCs, physical component ranges,
+unknown names, resource limits and retained views. Compressed bytes stay stored.
+
+`inspect-artifact` and `extract-artifact` also read ZIP members compressed with
+Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
+overlap and archive expansion checks. The native streaming decoder keeps the
+existing 128 MiB Zstandard window cap; frames requiring a larger window are
+refused. Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
+
+Inventory and extract UF2 or DfuSe regions:
+
+```sh
+rea inspect-artifact ./firmware.uf2 --json
+rea extract-artifact ./firmware.dfu --json
+```
+
+See [UF2 and DfuSe images](uf2-dfuse.md) for recognition, families, numbering,
+the DfuSe suffix CRC and limits.
+
+Inventory and extract U-Boot FIT images:
+
+```sh
+rea inspect-artifact ./boot.itb --json
+rea extract-artifact ./boot.itb --json
+```
+
+See [U-Boot FIT images](fit-images.md) for recognition, data sources, hashes
+and limits.
 
 Inspect local model declarations without loading weights:
 
@@ -463,6 +561,14 @@ be verified. See [MCP contracts](mcp-contracts.md) for session lifecycle and
 [Ghidra first-query deadlines](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for import, client timeouts and recovery.
 
+A one-shot command releases its provider session and REA runtime before it
+prints a failure, so it omits the same-session reuse and
+`update_analysis_settings` guidance an MCP connection receives. Its
+`details.limit` reports `scope: "rea-invocation"` and
+`applies_at: "next_invocation"`; set the named `environment` (or the per-call
+`parameter`) for a new invocation and rerun. For example, a Ghidra decompile
+deadline names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`.
+
 If one-shot analysis fails and closing its session also fails, the original
 error details remain inline and `details.cleanup_error` describes the later
 close failure. Each diagnostic retains its own reported resources; the later
@@ -517,6 +623,30 @@ cached result. `close_binary` accepts `snapshot_path` and optional
 `overwrite: true` to save before releasing provider resources. A failed save
 leaves the session open so the caller can resolve the output failure.
 
+When a validated snapshot does not match the selected binding, the error's
+`details.binding_mismatch` reports confirmed target identities, provider
+identities, or profile digests that differ. `snapshot` is the saved value and
+`selected` is the requested value. Multiple differences can be reported. A
+`profile_comparison: "not_compared"` means the profile was not available at
+that boundary; it does not establish a match. A profileless snapshot can report
+`workflow_scope: "incompatible"` even when its target and profile match.
+Choose a matching target, provider, and profile, or analyze without the snapshot
+and save a new one for the intended binding.
+
+For a profile mismatch, the saved snapshot contains
+`binding.analysis_profile.parameters`. If `binary_session` reports an active
+profile whose digest matches `binding_mismatch.profile_digest.selected`, its
+`analysis_provider_binding.analysis_profile.parameters` can be compared with
+those saved parameters. A rejected switch leaves the previous session active,
+so its profile may be different from the attempted selection; check the digest
+before using it for this comparison. A configuration difference does not by
+itself establish why analysis results differ.
+
+If no target is open and you intend to inspect the selected binding, open that
+target without the snapshot, then check its profile digest in `binary_session`
+before comparing parameters. This may start the selected provider; the saved
+snapshot remains a separate file.
+
 If a selected snapshot's file descriptor cannot close, `open_binary` reports
 `cleanup_incomplete`. `binary_session` reports `cleanup_pending` even when no
 target opened. Retry `close_binary` to release the retained descriptor before
@@ -554,6 +684,11 @@ rea compare left.json right.json --record_pairs '[{"left_evidence_id":"ev_<left-
 Migration: replace `rea compare-bundles` with `rea compare`; the former command
 has been removed. The MCP tool remains `compare_bundles`.
 
+`rea compare` compares records by Evidence identity and explicit pairs. It does
+not read artifact contents: the inventories of two builds are unresolved
+records, or one opaque change when you pair them. Use `compare-artifacts`,
+described at the end of this section, to compare their contents.
+
 `--record_pairs` supplies an explicit JSON array of observation pairs, matching
 MCP `compare_bundles.record_pairs`. Pair IDs must exist on their named sides and
 be one-to-one. Without pairs, one-sided membership remains unknown; REA does
@@ -570,12 +705,63 @@ with `details.reason: path-limit` and `boundary: filesystem-path`.
 For application traces and version comparisons, see
 [JavaScript application workflows](javascript-application-workflows.md).
 MCP [retained Evidence references](mcp-contracts.md#retained-application-evidence-inputs)
-belong to one connection. Separate CLI calls can consume full saved records.
-`inspect-analysis-view REQUEST.json --evidence-bundle BUNDLE.json` resolves
-the request's `retained-evidence` source ID from that authenticated bundle,
-including bundles exported from an MCP session. The same view JSON works for
-every supported parent kind; no target is reopened and no record is selected
-by file order. Omit `--evidence-bundle` when the request supplies inline Evidence.
+belong to one connection. Separate CLI calls can consume full saved records or
+resolve exact retained IDs from an explicitly selected local bundle:
+
+```bash
+rea trace-application-feature request.json --evidence-bundle /absolute/path/evidence.json --json
+```
+
+Here `request.json` uses the same logical Evidence input as MCP, for example
+`"application": {"kind":"retained-evidence","evidence_id":"ev_<64 lowercase hex characters>"}`.
+Inline records and references may be mixed in the request's declared source
+fields, including arrays and nested inputs. The bundle is read and authenticated
+once for that command; no target is reopened, no producer is rerun, and no
+record is selected by file order. Source identity, provenance, coverage and
+partial or unknown facts agree with the complete inline form. When starting
+from summary or inspection Evidence, select its
+`normalized_result.parent_evidence_id` for a workflow requiring complete source
+facts. Omit `--evidence-bundle` when all sources are inline.
+
+The JSON workflow commands supporting this option are:
+
+- `trace-application-feature`, `trace-javascript-semantics`,
+  `compare-application-versions`, `compare-javascript-export-shapes`,
+  `compare-source-to-bundle`, and `reconcile-javascript-runtime`.
+- `import-managed-reconstruction`, `verify-managed-native-boundaries`, and
+  `project-managed-application-graph`.
+- `project-android-application-graph`, `project-apple-application-graph`, and
+  `project-harmony-application-graph`.
+- `compare-wasm-interfaces` and `inspect-analysis-view`.
+
+For `inspect-analysis-view`, the request's source reference selects a parent
+from the bundle for every supported view kind. Bundles exported from MCP work
+for these commands. Its inline source form cannot also select a bundle.
+A missing ID is refused with `details.reason: "missing"`;
+supplying a bundle does not make incompatible Evidence valid for a workflow.
+`compare-managed-members` keeps its two assembly paths, and
+`compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
+option above selects an input; producer options that write a new bundle, such
+as `inspect-managed-members --evidence-bundle`, retain their existing meaning.
+File selectors remain available only on contracts that explicitly support them.
+
+Compare two artifact inventories with `compare-artifacts`. It takes the same
+`left` and `right` input as MCP `compare_artifacts`: complete Evidence, or an
+`evidence-file` source with an optional `evidence_id` that selects one record
+from a bundle. Relative paths resolve from the working directory:
+
+```bash
+rea inspect-artifact old.zip --json > old.json
+rea inspect-artifact new.zip --json > new.json
+rea compare-artifacts '{"left":{"kind":"evidence-file","path":"old.json"},"right":{"kind":"evidence-file","path":"new.json"}}' --json
+```
+
+A one-shot `compare-artifacts` command keeps no session Evidence, so it refuses a
+`retained-evidence` source with `details.reason: "missing"`. Select the record
+from a saved bundle instead.
+For an artifact summary selected from a bundle, include its complete parent
+inventory in the same bundle. The command resolves that parent from the
+authenticated file records; a summary-only file cannot supply missing facts.
 
 ## Import historical source
 
@@ -754,7 +940,13 @@ rea mcp --http --port 8765
 `--host` and `--port` default to `MCP_HOST` and `MCP_PORT` from the environment,
 then to `127.0.0.1` and an ephemeral port. A bind outside loopback requires
 `MCP_ALLOWED_HOSTS` or `--allowed-hosts`, a comma-separated list of client host
-names or IP addresses without URLs or ports. For example:
+names or IP addresses without URLs or ports.
+
+Repeat `--allowed-hosts` to append names, or put multiple names in one
+comma-separated value. All occurrences are validated together and deduplicated
+after hostname normalization; the explicit list replaces `MCP_ALLOWED_HOSTS`.
+
+For example:
 
 ```sh
 rea mcp --http --host 0.0.0.0 --allowed-hosts 127.0.0.1,rea.lan
@@ -959,8 +1151,8 @@ Malformed format values and token windows fail with `INVALID_OUTPUT_VALUE` in th
 selected structured format. Token limits and offsets must be nonnegative safe
 integers; zero selects an empty window. These checks run before command execution. `--json` is indented on a terminal and compact when piped or
 redirected, which keeps large results smaller for agents and scripts; pipe
-through `jq .` for indented files. Output selection and formatting do not change
-operation status.
+through `jq .` for indented files. A formatting refusal exits nonzero even when
+the underlying operation succeeded.
 
 `--format md` escapes backslashes, pipes, and inline Markdown syntax in table
 headers and cells so source text is displayed literally, and renders cell line
@@ -971,6 +1163,42 @@ use JSON inside their owning Markdown cells, retaining the field names and
 values instead of replacing them with an object label. Table widths are measured
 iteratively, so an admitted row page is not limited by the JavaScript function
 argument count.
+
+Markdown refuses selected NUL characters and unpaired UTF-16 surrogates because
+renderers or UTF-8 output would substitute them. TOON refuses selected unpaired
+surrogates for the same UTF-8 reason. Use JSON or YAML to retain those values.
+An authored replacement character and valid supplementary characters are not
+treated as malformed.
+
+`--format csv` and `--format tsv` export one selected row collection. Select an
+exact array path with `--filter-output` and provide comma-separated direct
+scalar columns with `--columns`; column order is the output column order:
+
+```bash
+rea inspect-analysis-view request.json --format csv \
+  --filter-output normalized_result.rows --columns name,address
+```
+
+The first line is a REA metadata record,
+`# rea-delimited-v1 <JSON>`. It carries the selected path, view request, limitations and unknowns,
+coverage, source coverage and completeness, command, and duration. A metadata
+value of `null` means that the selected row collection did not provide that
+fact; it does not mean complete coverage. The following line is the header.
+CSV records use CRLF line endings; TSV records use LF. Cells containing the
+delimiter, quotes, or line breaks are quoted and embedded quotes are doubled.
+Values are emitted as UTF-8 without Unicode normalization. Missing and `null`
+cells are empty; booleans and finite numbers use their ordinary text forms.
+String cells and headers that begin with spreadsheet formula syntax are refused
+with a structured error; unpaired surrogates in selected cells or headers are
+also refused. JSON retains those values unchanged.
+
+Delimited output does not flatten nested Evidence or nested field values.
+It returns a structured error and a nonzero status if the filter does not
+select exactly one row array, a row is not an object, or a selected cell is
+nested or formula-leading. JSON remains the complete canonical output; use it
+to retain fields outside the selected columns or preserve exact formula-leading
+text. Token counting and token windows are not
+available for CSV/TSV because slicing would corrupt records or metadata.
 
 `--filter-output` selects fields from successful command data. Classified failures
 retain their complete typed diagnostic projection even when the selector matches
@@ -1121,3 +1349,8 @@ rea inspect-pe-load-config /absolute/path/to/application.exe --json
 Reports TLS callbacks and size-covered load-config fields without execution.
 Use `--max-callbacks` and `--max-file-bytes` to set read budgets. See
 [PE TLS and load configuration](pe-load-config.md).
+
+Bun standalone executables use the existing `inspect-artifact` and
+`extract-artifact` commands to inventory and materialize embedded source,
+sourcemaps and bytecode without running the executable. See
+[Bun standalone executables](bun-standalone.md) for layout coverage and limits.

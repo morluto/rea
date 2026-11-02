@@ -253,12 +253,13 @@ const selectObservedCandidate = (
 ): Result<string | undefined, undefined> => {
   const selected = context.lookupPath.resolveCandidates(candidates);
   for (const candidate of candidates) {
+    const resolved = context.lookupPath.resolve(candidate);
+    if (resolved === selected && selected !== undefined) break;
     if (
-      context.lookupPath.resolve(candidate) === selected &&
-      selected !== undefined
+      (context.lookupPath.has(candidate) && resolved === undefined) ||
+      context.unobservedPath(candidate)
     )
-      break;
-    if (context.unobservedPath(candidate)) return err(undefined);
+      return err(undefined);
   }
   return ok(selected);
 };
@@ -306,6 +307,8 @@ const unobservedReferencePath = (
       const directory = directoryLookup.resolve(parent);
       if (directory !== undefined)
         return directories.get(directory) === "failed";
+      // A canonical collision cannot establish which directory was examined.
+      if (directoryLookup.has(parent)) return true;
     }
     return read.rootFailure !== undefined;
   };

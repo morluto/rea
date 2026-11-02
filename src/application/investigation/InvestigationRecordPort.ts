@@ -1,8 +1,6 @@
 import type { Evidence } from "../../domain/evidence.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
-import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import type {
   RecordUnknownInput,
@@ -27,7 +25,7 @@ export interface EvidenceReader {
 export interface EvidenceWriter {
   recordEvidence(
     evidence: Evidence,
-  ): Result<"added" | "duplicate", EvidenceIntegrityError>;
+  ): Result<"added" | "duplicate", AnalysisError>;
 }
 
 /** Atomic derived Evidence and linked Unknown writes. */
@@ -77,6 +75,22 @@ export interface UnknownRegistryPort {
   >;
 }
 
+/** Counts from the committed merge, before adapter response projection. */
+export interface EvidenceImportReceipt {
+  readonly recordsAdded: number;
+  readonly unknownsAdded: number;
+  readonly totalRecords: number;
+}
+
+/** Committed map counts and conservative retained representation accounting. */
+export interface InvestigationStatistics {
+  readonly evidenceRecords: number;
+  readonly unknownRevisions: number;
+  readonly unknownHeads: number;
+  readonly retainedRepresentationBytes: number;
+  readonly maximumRepresentationBytes: number;
+}
+
 /** Investigation record surface; binary execution and snapshots remain separate. */
 export interface InvestigationRecordPort
   extends
@@ -86,5 +100,5 @@ export interface InvestigationRecordPort
     UnknownRegistryPort {
   importEvidenceBundle(
     bundle: unknown,
-  ): Result<number, EvidenceIntegrityError | AnalysisInputError>;
+  ): Result<EvidenceImportReceipt, AnalysisError>;
 }

@@ -47,6 +47,7 @@ const unconfiguredHostTool = {
     status: "unavailable" as const,
     code: "not_configured" as const,
     reason: "Host tools are outside the IDA discovery fixture.",
+    remediation: "Configure the host tool for a separate test.",
     diagnostics: { source: "test_fixture" },
   }),
   close: async () => {},

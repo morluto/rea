@@ -5,6 +5,7 @@ import type { Socket } from "node:net";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it, onTestFinished } from "vitest";
+import { z } from "zod";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { webEventListenersSchema } from "../../src/domain/webEventListeners.js";
 import { startRuntimeBrowser } from "../fixtures/webRuntime.js";
@@ -16,6 +17,45 @@ const environment = () => ({
   ...process.env,
   REA_LOG_LEVEL: "silent",
   HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
+});
+
+const executionProgress = z.object({
+  rea_progress: z.object({
+    phase: z.literal("browser_execution"),
+    completed: z.literal(1),
+  }),
+});
+
+/** Buffer complete stderr lines so a progress event cannot borrow fields from another line. */
+const executionReadyReader = () => {
+  let pending = "";
+  return (chunk: string): boolean => {
+    const lines = (pending + chunk).split("\n");
+    pending = lines.pop() ?? "";
+    return lines.some((line) => {
+      try {
+        return executionProgress.safeParse(JSON.parse(line)).success;
+      } catch {
+        // Other stderr lines are not necessarily JSON progress events.
+        return false;
+      }
+    });
+  };
+};
+
+it("arms only for a complete matching browser execution progress event", () => {
+  const ready = executionReadyReader();
+  expect(
+    ready('{"rea_progress":{"phase":"browser_execution","completed":0}}\n'),
+  ).toBe(false);
+  expect(ready('{"rea_progress":{"phase":"other","completed":1}}\n')).toBe(
+    false,
+  );
+  expect(
+    ready('{"rea_progress":{"phase":"browser_execution","completed":10}}\n'),
+  ).toBe(false);
+  expect(ready('other stderr\n{"rea_progress":{"phase":"browser_')).toBe(false);
+  expect(ready('execution","completed":1}}\n')).toBe(true);
 });
 
 it("advertises the canonical observation duration bounds through the compiled CLI", async () => {
@@ -86,17 +126,15 @@ it("translates SIGINT after real CLI arming into awaited instrumentation cleanup
   let stderr = "";
   let stdout = "";
   let armed = false;
+  const executionReady = executionReadyReader();
   const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
+  child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
     stdout += chunk;
   });
-  child.stderr.on("data", (chunk) => {
+  child.stderr.on("data", (chunk: string) => {
     stderr += chunk;
-    if (
-      !armed &&
-      stderr.includes('"completed":1') &&
-      stderr.includes("browser_execution")
-    ) {
+    if (!armed && executionReady(chunk)) {
       armed = true;
       child.kill("SIGINT");
     }

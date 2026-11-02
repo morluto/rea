@@ -377,32 +377,38 @@ const selection = {
   offset: count.default(0),
   limit: z.number().int().positive().default(32),
 };
+export const gpuCodeObjectsSelectionSchemas = {
+  objects: z.strictObject({
+    ...selection,
+    collection: z.literal("objects"),
+    fields: z.array(gpuObjectSchema.keyof()).optional(),
+  }),
+  kernels: z.strictObject({
+    ...selection,
+    collection: z.literal("kernels"),
+    object_ids: z.array(z.string()).optional(),
+    names: z.array(z.string()).optional(),
+    fields: z.array(gpuKernelSchema.keyof()).optional(),
+  }),
+  ptx: z.strictObject({
+    collection: z.literal("ptx"),
+    object_id: z.string(),
+    offset: count.default(0),
+    limit: z.number().int().positive().default(4096),
+  }),
+  targets: z.strictObject({
+    ...selection,
+    collection: z.literal("targets"),
+    fields: z.array(gpuTargetSchema.keyof()).optional(),
+  }),
+};
 export const gpuCodeObjectsSelectionSchema = z.discriminatedUnion(
   "collection",
   [
-    z.strictObject({
-      ...selection,
-      collection: z.literal("objects"),
-      fields: z.array(gpuObjectSchema.keyof()).optional(),
-    }),
-    z.strictObject({
-      ...selection,
-      collection: z.literal("kernels"),
-      object_ids: z.array(z.string()).optional(),
-      names: z.array(z.string()).optional(),
-      fields: z.array(gpuKernelSchema.keyof()).optional(),
-    }),
-    z.strictObject({
-      collection: z.literal("ptx"),
-      object_id: z.string(),
-      offset: count.default(0),
-      limit: z.number().int().positive().default(4096),
-    }),
-    z.strictObject({
-      ...selection,
-      collection: z.literal("targets"),
-      fields: z.array(gpuTargetSchema.keyof()).optional(),
-    }),
+    gpuCodeObjectsSelectionSchemas.objects,
+    gpuCodeObjectsSelectionSchemas.kernels,
+    gpuCodeObjectsSelectionSchemas.ptx,
+    gpuCodeObjectsSelectionSchemas.targets,
   ],
 );
 export const inspectGpuCodeObjectsInputSchema = z

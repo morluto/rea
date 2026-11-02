@@ -67,7 +67,10 @@ export class AndroidAnalysisService {
           limitations: execution.limitations,
           locations: execution.locations,
           confidence:
-            operation === "inspect_android_method" ? "derived" : "observed",
+            operation === "inspect_android_method" ||
+            operation === "inspect_android_jni_bindings"
+              ? "derived"
+              : "observed",
         },
       ),
       options?.signal,

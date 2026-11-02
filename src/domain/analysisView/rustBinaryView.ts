@@ -1,26 +1,29 @@
 import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
 import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import {
   rustBinarySchema,
   rustAuditableMetadataSchema,
   rustcCommitSchema,
   type RustBinary,
 } from "../rust/rustBinary.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import {
+  createAnalysisViewResultReader,
+  type AnalysisViewParent,
+} from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
+import { rustBinaryViewRequestSchema } from "../rust/rustBinaryQuery.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { selectViewRows } from "./selectViewRows.js";
 
 const count = z.number().int().nonnegative();
@@ -108,8 +111,8 @@ const summarize = (
 /** Query owner-normalized facts without reopening a source or walking dependency paths. */
 export const projectRustBinaryView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (view.kind !== "summary" && view.kind !== "rust")
     return err(
       analysisViewInputError([
@@ -120,13 +123,15 @@ export const projectRustBinaryView = (
         },
       ]),
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof rustBinaryViewRequestSchema>
+  >(view, "summary", "rust");
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   const subject = parent.subject;
   if (
     subject == null ||
-    subject.local_path !== report.artifact.path ||
     subject.digest.sha256 !== report.artifact.sha256 ||
     subject.format !== metadataReportSubjectFormat(report) ||
     subject.architecture !==
@@ -178,7 +183,7 @@ export const projectRustBinaryView = (
   const summary = summarize(report);
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary,
@@ -215,11 +220,11 @@ export const projectRustBinaryView = (
       }),
     );
     return ok({
-      kind: "rust",
+      kind: "rust" as const,
       view,
       ...shared,
       rust: summary,
-      page: { collection: "packages", rows: selected.rows },
+      page: { collection: "packages" as const, rows: selected.rows },
       coverage: pageViewCoverage(
         view.offset,
         selected.rows.length,
@@ -247,11 +252,11 @@ export const projectRustBinaryView = (
     }),
   );
   return ok({
-    kind: "rust",
+    kind: "rust" as const,
     view,
     ...shared,
     rust: summary,
-    page: { collection: "edges", rows: selected.rows },
+    page: { collection: "edges" as const, rows: selected.rows },
     coverage: pageViewCoverage(
       view.offset,
       selected.rows.length,

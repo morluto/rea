@@ -271,3 +271,77 @@ it("preserves exact member writes through an externally supplied caught value", 
     }),
   ]);
 });
+
+const indexedMemberEffects = (source: string) => {
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected parsed source");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  return [...index.bindings.bindingsById.values()];
+};
+
+it("records a write reached through two alias routes once", () => {
+  // `c.y = 1` reaches `a.x` through `b` and through the later `c = a.x`.
+  const a = indexedMemberEffects(`
+    function f(a) {
+      var b = a.x;
+      var c = b;
+      c.y = 1;
+      c = a.x;
+      c.y = 2;
+    }
+  `).find(({ name }) => name === "a");
+  expect(
+    a?.memberWrites.map(({ path, node, receiverIdentity }) => [
+      path,
+      t.isAssignmentExpression(node) && t.isNumericLiteral(node.right)
+        ? node.right.value
+        : undefined,
+      receiverIdentity,
+    ]),
+  ).toEqual([
+    [["x", "y"], 1, "possible"],
+    [["x", "y"], 2, "definite"],
+  ]);
+});
+
+it("keeps one record per stored fact for loop-carried register aliases", () => {
+  const identities = new WeakMap<object, number>();
+  let identityCount = 0;
+  const identity = (value: object | undefined) => {
+    if (value === undefined) return undefined;
+    if (!identities.has(value)) identities.set(value, identityCount++);
+    return identities.get(value);
+  };
+  const bindings = indexedMemberEffects(`
+    function dispatch(a) {
+      var b, c;
+      for (b = a.target; b; ) {
+        c = b;
+        c.seen = 1;
+        if ((c = b.owner)) { b = c; continue; }
+        b = b.parentNode;
+      }
+    }
+  `);
+  const records = bindings.flatMap(({ memberWrites, escapedPaths }) => [
+    memberWrites,
+    escapedPaths,
+  ]);
+  expect(records.some((effects) => effects.length > 1)).toBe(true);
+  for (const effects of records) {
+    const facts = effects.map((effect) =>
+      JSON.stringify([
+        effect.path,
+        identity(effect.node),
+        identity(effect.receiverAt),
+        effect.receiverIdentity,
+        effect.receiverInitializers?.map((source) => identity(source)),
+        effect.assignedSources?.map((source) => identity(source)),
+      ]),
+    );
+    expect(new Set(facts).size).toBe(facts.length);
+  }
+});

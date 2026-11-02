@@ -798,6 +798,22 @@ it.each(["app/(.)photo/_private/page.tsx", "app/_private/(.)photo/page.tsx"])(
   },
 );
 
+it("tests long literals for page-shaped Next paths in linear time", () => {
+  const classify = (value: string) =>
+    classifyNextAppRoutePath(value, {
+      kind: "source-literal",
+      runtime: "unknown",
+    })?.kind;
+  const started = performance.now();
+  expect(classify("app/".repeat(64_000))).toBeUndefined();
+  expect(classify(`app/${"x/page?".repeat(32_000)}\nend`)).toBeUndefined();
+  expect(performance.now() - started).toBeLessThan(1_000);
+  expect(classify("lib/app/a\nb/page.tsx")).toBe("unknown");
+  expect(classify("app/page-a\nb.js?v=1")).toBe("unknown");
+  expect(classify("app/x/page?first\nsecond")).toBeUndefined();
+  expect(classify("app/x/page.tsx/extra")).toBeUndefined();
+});
+
 it("keeps the already-covered aliased binary fragment excluded", () => {
   const facts = analyze(
     "createBrowserRouter([{path:'/users'}]);const target={pathname:'/users/'+id};router.push(target);",

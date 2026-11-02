@@ -1,6 +1,10 @@
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Evidence } from "../domain/evidence.js";
 import { err, type Result } from "../domain/result.js";
@@ -9,6 +13,22 @@ export type ExternalMutationAdmission = Pick<
   BinarySessionPort,
   "withAdmittedExternalMutation"
 >;
+
+/** Retain the completed command outcome while reporting a later cancellation. */
+export const retainExternalMutationCancellation = <Value>(
+  value: Result<Value, AnalysisError>,
+  cancellation: AnalysisCancelledError,
+  evidenceOf?: (value: Value) => Evidence,
+  retainedDetails?: (value: Value) => Readonly<Record<string, string>>,
+): AnalysisError => {
+  if (!value.ok)
+    return analysisErrorWithCancellation(value.error, cancellation);
+  if (evidenceOf !== undefined)
+    cancellation.retainPartialObservation(evidenceOf(value.value));
+  if (retainedDetails !== undefined)
+    cancellation.retainDiagnostics(retainedDetails(value.value));
+  return cancellation;
+};
 
 /** Shared MCP admission and failure preservation for unrestricted commands. */
 export const runWithExternalMutationAdmission = async <Value>(
@@ -31,8 +51,16 @@ export const runWithExternalMutationAdmission = async <Value>(
     undefined,
     signal,
     operation,
-    (value, cause) =>
-      value.ok
+    (value, cause) => {
+      if (cause instanceof AnalysisCancelledError) {
+        return retainExternalMutationCancellation(
+          value,
+          cause,
+          evidenceOf,
+          retainedDetails,
+        );
+      }
+      return value.ok
         ? new AnalysisOutputError(
             operationName,
             "The external command may have changed the bound artifact, but the active analysis session could not be retired.",
@@ -41,9 +69,6 @@ export const runWithExternalMutationAdmission = async <Value>(
               ...(evidenceOf === undefined
                 ? {}
                 : { partialObservation: evidenceOf(value.value) }),
-              ...(cause.cleanup === undefined
-                ? {}
-                : { cleanup: cause.cleanup }),
               ...(cause.capturedOutput === undefined
                 ? {}
                 : { capturedOutput: cause.capturedOutput }),
@@ -54,7 +79,8 @@ export const runWithExternalMutationAdmission = async <Value>(
           )
         : value.error.retainSecondaryFailure(cause, {
             retirement_error: projectAnalysisError(cause),
-          }),
+          });
+    },
     operationName,
     cleanupRecovery,
   );

@@ -1,6 +1,6 @@
 import type * as t from "@babel/types";
 import type { JavaScriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
-import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
+import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
@@ -21,6 +21,7 @@ import type {
   ElectronIpcFinding,
   ElectronNativeAddonBindingFinding,
   ElectronSenderValidationFinding,
+  ElectronProtocolFinding,
   ElectronUtilityProcessFinding,
 } from "./electronStaticAnalysisTypes.js";
 import { JavaScriptModuleRangeIndex } from "./javascriptStaticAnalysisFindings.js";
@@ -89,6 +90,7 @@ export interface JavaScriptAnalysisAccumulator {
     | t.VariableDeclarator
     | t.AssignmentExpression
   )[];
+  readonly protocols: LocatedJavaScriptFinding<ElectronProtocolFinding>[];
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   /** Binding identities proven as third-parameter loaders of recovered factories. */
   readonly factoryRequireBindingIds: Set<string>;
@@ -182,6 +184,7 @@ export const createJavaScriptAnalysisAccumulator = (
   utilityProcesses: [],
   nativeAddonBindings: [],
   pendingNativeAddonBindings: [],
+  protocols: [],
   moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
   factoryRequireBindingIds: new Set(),
   seen: new Set(),

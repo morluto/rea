@@ -18,6 +18,70 @@ import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidencePro
 import { createServer } from "../../../src/server/createServer.js";
 import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 
+it("exports and imports GameCube DOL Evidence without losing its subject identity", async () => {
+  const root = await createTestTempDirectory("rea-dol-bundle-mcp-");
+  const path = join(root, "bundle.json");
+  const record = createEvidence(
+    {
+      path: join(root, "game.dol"),
+      sha256: "d".repeat(64),
+      format: "gamecube-dol",
+      architecture: "powerpc",
+    },
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "inspect_artifact",
+      parameters: {},
+      result: { observed: true },
+    },
+  );
+  const session = createTestBinarySession(() => {
+    throw new Error("bundle round trip must not run a provider");
+  });
+  expect(session.recordEvidence(record).ok).toBe(true);
+  const source = await connectEvidenceMcp("dol-source", session);
+  const importedSession = createTestBinarySession(() => {
+    throw new Error("bundle import must not run a provider");
+  });
+  const target = await connectEvidenceMcp("dol-target", importedSession);
+  try {
+    const inline = await source.client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {},
+    });
+    expect(inline.isError).not.toBe(true);
+    expect(inline.structuredContent).toMatchObject({
+      result: {
+        artifacts: [{ format: "gamecube-dol", architecture: "powerpc" }],
+      },
+    });
+    const exported = await source.client.callTool({
+      name: "export_evidence_bundle",
+      arguments: { path },
+    });
+    expect(exported.isError).not.toBe(true);
+    const imported = await target.client.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path },
+    });
+    expect(imported.isError).not.toBe(true);
+    const restored = await target.client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {},
+    });
+    expect(restored.structuredContent).toEqual(inline.structuredContent);
+  } finally {
+    await Promise.allSettled([
+      source.client.close(),
+      source.server.close(),
+      session.close(),
+      target.client.close(),
+      target.server.close(),
+      importedSession.close(),
+    ]);
+  }
+});
+
 it("preserves BOM recovery through public bundle import", async () => {
   const root = await createTestTempDirectory("rea-bundle-bom-mcp-");
   const path = join(root, "bundle.json");

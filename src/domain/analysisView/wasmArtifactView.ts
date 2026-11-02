@@ -1,18 +1,18 @@
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
-import { err, ok, type Result } from "../result.js";
+import { err, ok } from "../result.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import {
   wasmArtifactSchema,
   wasmArtifactMatchesSubject,
 } from "../wasm/wasmArtifact.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -74,9 +74,12 @@ export const wasmSummarySchema = z.strictObject({
 /** Read the exact retained WABT forms with source identity and explicit uncertainty. */
 export const projectWasmArtifactView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "wasm")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof wasmViewRequestSchema>
+  >(admitted, "summary", "wasm");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -95,7 +98,6 @@ export const projectWasmArtifactView = (
       parent.subject == null
         ? null
         : {
-            path: parent.subject.local_path,
             sha256: parent.subject.digest.sha256,
             format: parent.subject.format,
           },
@@ -107,7 +109,7 @@ export const projectWasmArtifactView = (
           path: ["source", "subject"],
           reason: "invalid_value",
           message:
-            "WASM parent Evidence subject must identify the report's exact path and SHA-256.",
+            "WASM parent Evidence subject must identify the report's file format and SHA-256.",
         },
       ]),
     );
@@ -132,7 +134,7 @@ export const projectWasmArtifactView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -174,7 +176,7 @@ export const projectWasmArtifactView = (
         ]),
       );
     return ok({
-      kind: "wasm",
+      kind: "wasm" as const,
       view,
       item: report.tool_profile,
       coverage: completeWithinViewCoverage(1, 1),
@@ -189,13 +191,13 @@ export const projectWasmArtifactView = (
     const text = view.facet === "wat" ? report.wat.text : report[view.facet];
     const page = analysisTextPage(text, view.offset, view.limit, view.facet);
     return page.ok
-      ? ok({ kind: "wasm", view, ...page.value, ...shared })
+      ? ok({ kind: "wasm" as const, view, ...page.value, ...shared })
       : page;
   }
   const rows = report[view.facet];
   const item = rows.slice(view.offset, view.offset + view.limit);
   return ok({
-    kind: "wasm",
+    kind: "wasm" as const,
     view,
     item,
     coverage: pageViewCoverage(view.offset, item.length, rows.length),

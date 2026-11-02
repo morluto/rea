@@ -28,15 +28,24 @@ export const filesystemCoverageSchema = z.strictObject({
     z.enum([
       "files_limit",
       "depth_limit",
+      "unrepresentable_name",
       ...enumerationOmissionReasonSchema.options,
     ]),
   ),
   enumeration_omissions: z.array(
-    z.strictObject({
-      path: z.string(),
-      reason: enumerationOmissionReasonSchema,
-      system_code: z.string().nullable(),
-    }),
+    z.union([
+      z.strictObject({
+        path: z.string(),
+        reason: enumerationOmissionReasonSchema,
+        system_code: z.string().nullable(),
+      }),
+      z.strictObject({
+        path: z.string(),
+        reason: z.literal("unrepresentable_name"),
+        system_code: z.null(),
+        raw_name_hex: z.string().regex(/^(?:[0-9a-f]{2})+$/u),
+      }),
+    ]),
   ),
   unobserved_subtrees: z
     .array(
@@ -66,9 +75,13 @@ export type FilesystemCoverage = z.infer<typeof filesystemCoverageSchema>;
 
 /** Actual budget accounting; rendered bytes count state and visible lines, not JSON. */
 export const processCaptureTruncationDetailsSchema = z.strictObject({
-  raw_terminal: byteRetentionSchema.describe(
-    "UTF-8 bytes of original PTY chunks; whole chunks are retained or omitted.",
-  ),
+  raw_terminal: byteRetentionSchema
+    .extend({
+      redacted_bytes: z.int().nonnegative().optional(),
+    })
+    .describe(
+      "Original PTY UTF-8 admission accounting. retained_bytes counts the safe projection; redacted_bytes counts removed bytes from admitted chunks. Their sum consumes the original output budget. Whole chunks are otherwise retained or omitted.",
+    ),
   rendered_terminal: byteRetentionSchema.describe(
     "Cumulative UTF-8 bytes of serialized state plus visible lines, evaluated from retained PTY input; whole frames are retained or omitted. observed_bytes contains the exact total for size-known frames; unknown_size_frames counts frames whose complete size was not calculated. normalization_over_budget_frames identifies the subset stopped by an ordered normalization stage rather than final representation retention.",
   ),

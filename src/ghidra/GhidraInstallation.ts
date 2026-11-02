@@ -22,7 +22,7 @@ import {
 import { constants, accessSync, realpathSync, statSync } from "node:fs";
 import { delimiter as pathDelimiter, dirname, posix, win32 } from "node:path";
 
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import {
   parseExecutableHeader,
   readFatArchitectureFamilies,
@@ -248,6 +248,7 @@ export interface UnavailableGhidraInstallation extends GhidraInstallationObserva
   readonly rejection: Readonly<{
     code: ProviderRejectionCode;
     reason: string;
+    remediation: string;
   }>;
 }
 
@@ -399,7 +400,11 @@ export const inspectGhidraInstallation = async (
       providerVersion: coordinates.properties?.providerVersion ?? null,
       javaHome: javaObservation?.home ?? options.javaHome ?? null,
       javaVersion: javaObservation?.version ?? null,
-      rejection: { code: failed.code, reason: failed.remediation },
+      rejection: {
+        code: failed.code,
+        reason: failed.remediation,
+        remediation: failed.remediation,
+      },
     };
   if (options.signal?.aborted)
     throw new AnalysisCancelledError("ghidra:installation", {

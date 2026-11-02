@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
@@ -20,12 +21,9 @@ import {
   normalizeEntrypointPath,
 } from "../../../src/process/CurrentEntrypointPath.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  clearClientLocationEnvironment,
-  NPX_REGISTRATION_COMMAND,
-} from "../../fixtures/clientEnvironment.js";
+import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
-const command = NPX_REGISTRATION_COMMAND;
+const command = currentClientRegistrationCommand();
 
 beforeEach(clearClientLocationEnvironment);
 
@@ -141,7 +139,7 @@ describe("additional client configuration dialects", () => {
     if (name === "vscode" || name === "omp" || name === "pi")
       expect(registration).toMatchObject({
         type: "stdio",
-        command: "npx",
+        command: command[0],
         args: command.slice(1),
       });
     if (name === "copilot_cli")
@@ -150,7 +148,7 @@ describe("additional client configuration dialects", () => {
       expect(registration).toMatchObject({
         transport: "stdio",
         enabled: true,
-        command: "npx",
+        command: command[0],
         args: command.slice(1),
       });
 

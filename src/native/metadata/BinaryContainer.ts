@@ -33,6 +33,18 @@ export class BinaryResourceFailure extends Error {
   }
 }
 
+/** A bounded read could not establish termination; it does not prove invalid text. */
+export class BinaryStringReadLimitFailure extends BinaryFormatFailure {
+  constructor(readonly maximumBytes: number) {
+    // Preserve the existing broad failure contract for legacy callers while
+    // allowing coverage-aware consumers to distinguish a limit from corruption.
+    super(
+      "malformed",
+      `String is unterminated or longer than ${String(maximumBytes)} bytes`,
+    );
+  }
+}
+
 /** One file-backed virtual range; addresses stay exact until mapped to file offsets. */
 export interface FileMapping {
   readonly address: bigint;
@@ -577,10 +589,7 @@ const readMappedString = (
     chunks.push(chunk);
     length += size;
   }
-  throw new BinaryFormatFailure(
-    "malformed",
-    `String is unterminated or longer than ${String(maximumBytes)} bytes`,
-  );
+  throw new BinaryStringReadLimitFailure(maximumBytes);
 };
 
 /** Recognize a wholly zero-filled span while refusing even partial file aliases. */

@@ -40,6 +40,12 @@ signer identifier facts. A signer identified by subject key identifier reports
 that value as `subject_key_identifier_hex`. Other certificate types keep
 `pkcs7` null.
 
+Each signer reports `unsigned_attribute_oids`: null means the field was absent,
+and an array lists the types when present. Older retained Evidence may omit the
+field. Unsigned attribute contents, including nested signatures and timestamp
+tokens, are not decoded; their presence makes coverage partial and adds a
+limitation. Certificate and signer counts refer to the outer SignedData.
+
 A missing table is observed absence of that directory. It is not proof the
 image is unsigned in every catalog or overlay sense.
 
@@ -54,7 +60,11 @@ fails the same way. SignedData must contain at least one `SignerInfo`, and
 each `SignerInfo` must carry a non-empty signature value. Each embedded X.509
 certificate must include `subjectPublicKeyInfo` and `signatureValue`. Decoded
 certificate name text, serials, validity spellings, and subject key identifiers
-share a 64 KiB budget per PKCS#7 payload. Unsupported certificate name
+share a 64 KiB budget per PKCS#7 payload, and each payload decodes at most
+16,384 ASN.1 values. Exhausting either fixed allowance returns a nonretryable
+`resource_constraint` error naming it, not an invalid-input error; this release
+has no runtime override, and `max_file_bytes` and `max_entries` do not raise
+it. Unsupported certificate name
 encodings, including GeneralString, fail explicitly. TeletexString (T.61)
 values are rendered with the ISO-8859-1 compatibility mapping used by OpenSSL;
 this is not a full T.61 decoder, so the result includes a limitation whenever

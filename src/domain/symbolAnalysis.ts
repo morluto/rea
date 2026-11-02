@@ -7,7 +7,7 @@ import type {
 } from "./native/objcSwiftMetadata.js";
 import {
   classifySwiftSymbol,
-  isSwiftMangledSymbolName,
+  isSwiftSymbolName,
   type SwiftTypeCategory,
 } from "./swiftSymbolClassification.js";
 
@@ -75,16 +75,6 @@ export const discoverObjcProtocols = (
     protocols: protocols.map(toJsonEntry),
   };
 };
-
-/**
- * A Swift symbol carries either a demangler mangling or a name the category
- * decoder already accepts, including visible runtime class names (`_Tt…`) and
- * the optional leading underscore of legacy encodings (`__T0…`). Whether the
- * nominal category can be decoded is a separate question, so it must not decide
- * whether the symbol is Swift at all.
- */
-const isSwiftSymbolName = (name: string): boolean =>
-  isSwiftMangledSymbolName(name) || classifySwiftSymbol(name) !== undefined;
 
 /** Categorize procedure names using Swift manglings at their exact addresses. */
 export const categorizeSwiftTypes = (

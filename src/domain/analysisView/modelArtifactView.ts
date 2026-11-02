@@ -1,4 +1,7 @@
-import { modelTypeRowSchema } from "../model/modelArtifactQuery.js";
+import {
+  modelArtifactViewRequestSchema,
+  modelTypeRowSchema,
+} from "../model/modelArtifactQuery.js";
 import { z } from "zod";
 import {
   modelArtifactSchema,
@@ -14,11 +17,12 @@ import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   boundedViewMessages,
@@ -142,11 +146,8 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
   const report = parsed.value;
   const reusable = isImmutableJsonSnapshot(report);
   const cached = reusable ? checked.get(report) : undefined;
-  if (
-    parent.subject != null &&
-    (parent.subject.local_path !== report.artifact.path ||
-      parent.subject.digest.sha256 !== report.artifact.sha256)
-  )
+  const subject = parent.subject;
+  if (subject != null && subject.digest.sha256 !== report.artifact.sha256)
     return err(
       analysisViewInputError([
         {
@@ -183,8 +184,8 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
 /** Historical pages never reopen weights or report a scoped header digest as full-file identity. */
 export const projectModelArtifactView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (view.kind !== "summary" && view.kind !== "model-artifact")
     return err(
       analysisViewInputError([
@@ -192,10 +193,13 @@ export const projectModelArtifactView = (
           path: ["view"],
           reason: "invalid_value",
           message:
-            "Model Evidence supports summary and model-artifact metadata/tensor pages",
+            "Model Evidence supports summary and model-artifact metadata/tensor/type pages",
         },
       ]),
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof modelArtifactViewRequestSchema>
+  >(view, "summary", "model-artifact");
   const parsed = read(parent);
   if (!parsed.ok) return parsed;
   const {
@@ -228,7 +232,7 @@ export const projectModelArtifactView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -321,7 +325,7 @@ export const projectModelArtifactView = (
     return result;
   });
   return ok({
-    kind: "model-artifact",
+    kind: "model-artifact" as const,
     view,
     ...shared,
     source: report.artifact,

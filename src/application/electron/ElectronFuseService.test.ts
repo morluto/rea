@@ -30,11 +30,12 @@ const report: ElectronFuseReport = {
 
 it("retains completed fuse Evidence when the provider completes after abort", async () => {
   const controller = new AbortController();
+  const reason = { requested: "stop after fuse inspection" };
   const result = await new ElectronFuseService({
     identity,
     close: async () => {},
     inspect: async () => {
-      controller.abort();
+      controller.abort(reason);
       return ok(report);
     },
   }).inspect(
@@ -44,8 +45,21 @@ it("retains completed fuse Evidence when the provider completes after abort", as
   expect(result.ok).toBe(false);
   if (!result.ok) {
     expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
     expect(parseEvidence(result.error.partialObservation)).toMatchObject({
       operation: "inspect_electron_fuses",
+      provider: identity,
+      subject: {
+        local_path: report.artifact.resolved_path,
+        digest: { sha256: report.artifact.sha256 },
+        format: report.artifact.format,
+      },
+      parameters: { path: report.artifact.selected_path },
+      confidence: "observed",
+      limitations: expect.arrayContaining(report.limitations),
+      locations: [
+        { kind: "artifact-path", path: report.artifact.selected_path },
+      ],
       normalized_result: report,
     });
   }

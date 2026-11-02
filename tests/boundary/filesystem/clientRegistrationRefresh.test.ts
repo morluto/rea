@@ -10,7 +10,7 @@ it.each([90, 120])(
   async (timeout) => {
     const directory = await createTestTempDirectory("rea-grok-refresh-");
     const configPath = join(directory, "config.toml");
-    const source = `[mcp_servers.rea]\ncommand = "old-rea"\nargs = ["mcp"]\nstartup_timeout_sec = ${timeout}\ncustom_policy = "caller"\n\n[mcp_servers.rea.env]\nPATH = "/caller/bin:/usr/bin"\nCUSTOM = "preserved"\n`;
+    const source = `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents@6.1.0", "mcp"]\nstartup_timeout_sec = ${timeout}\ncustom_policy = "caller"\n\n[mcp_servers.rea.env]\nPATH = "/caller/bin:/usr/bin"\nCUSTOM = "preserved"\n`;
     await writeFile(configPath, source);
     const client = { name: "grok_build", configPath, format: "grok" } as const;
     expect(

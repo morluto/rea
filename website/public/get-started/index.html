@@ -633,8 +633,8 @@ cd rea-work</code></pre>
             <details class="evidence-details" id="supported-clients">
               <summary>All supported clients and setup IDs</summary>
               <p>
-                The npm 6.4.0 release supports the clients below. Use the ID
-                with <code>--client</code> when choosing a client explicitly.
+                Use the ID with <code>--client</code> when choosing a client
+                explicitly. These clients are supported in npm 6.8.0 and later.
               </p>
               <div class="evidence-table-wrap">
                 <table class="evidence-table">
@@ -694,6 +694,10 @@ cd rea-work</code></pre>
                       <td><code>qwen_code</code></td>
                     </tr>
                     <tr>
+                      <td translate="no">Kimi Code</td>
+                      <td><code>kimi</code></td>
+                    </tr>
+                    <tr>
                       <td translate="no">VS Code</td>
                       <td><code>vscode</code></td>
                     </tr>
@@ -713,15 +717,42 @@ cd rea-work</code></pre>
                       <td translate="no">Hermes</td>
                       <td><code>hermes</code></td>
                     </tr>
+                    <tr>
+                      <td translate="no">Qoder</td>
+                      <td><code>qoder</code></td>
+                    </tr>
+                    <tr>
+                      <td translate="no">Factory Droid</td>
+                      <td><code>droid</code></td>
+                    </tr>
+                    <tr>
+                      <td translate="no">Trae</td>
+                      <td><code>trae</code></td>
+                    </tr>
+                    <tr>
+                      <td translate="no">WorkBuddy</td>
+                      <td><code>workbuddy</code></td>
+                    </tr>
+                    <tr>
+                      <td translate="no">ZCode</td>
+                      <td><code>zcode</code></td>
+                    </tr>
+                    <tr>
+                      <td translate="no">DeepSeek Harness</td>
+                      <td><code>dsh</code></td>
+                    </tr>
+                    <tr>
+                      <td translate="no">FreeBuff</td>
+                      <td><code>freebuff</code></td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
               <p>
-                Qoder (<code>qoder</code>), Factory Droid (<code>droid</code>),
-                Trae (<code>trae</code>), ZCode (<code>zcode</code>) and
-                DeepSeek Harness (<code>dsh</code>) are available on repository
-                main; use a source build or a release containing those
-                integrations.
+                <code>droid</code>, <code>dsh</code>, <code>kimi</code>,
+                <code>qoder</code>, <code>trae</code>,
+                <code>workbuddy</code> and <code>zcode</code> require npm 6.5.0
+                or later. <code>freebuff</code> requires npm 6.8.0 or later.
               </p>
               <p>
                 <a
@@ -1008,7 +1039,7 @@ cd rea-work</code></pre>
                       <td translate="no">Hopper</td>
                       <td>Unavailable</td>
                       <td>12+</td>
-                      <td>Supported distributions</td>
+                      <td>x86_64 installer on supported distributions</td>
                     </tr>
                     <tr>
                       <td translate="no">Ghidra</td>
@@ -1039,9 +1070,12 @@ cd rea-work</code></pre>
                   demo and its private display.
                 </p>
                 <p>
-                  Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch
-                  Linux, CachyOS or Omarchy. Hopper is commercial software; its
-                  demo has vendor-defined limits.
+                  Automated Linux setup requires an x86_64 host running Ubuntu
+                  24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or
+                  Omarchy. An existing Hopper launcher can also be configured on
+                  other supported Linux distributions. On Linux arm64, use
+                  Ghidra. Hopper is commercial software; its demo has
+                  vendor-defined limits.
                 </p>
                 <div class="code-block">
                   <div class="code-header">

@@ -1,3 +1,8 @@
+import {
+  resolveEvidenceRequest,
+  type EvidenceLookup,
+} from "../EvidenceInputResolver.js";
+import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { ok, type Result } from "../../domain/result.js";
@@ -9,7 +14,10 @@ import {
   readManagedNativeVerificationSource,
   type ManagedNativeVerificationSource,
 } from "../../domain/managed/managedNativeVerificationSource.js";
-import type { ManagedNativeVerificationResult } from "../../domain/managed/managedNativeVerificationSchemas.js";
+import {
+  managedNativeVerificationRequestSchema,
+  type ManagedNativeVerificationResult,
+} from "../../domain/managed/managedNativeVerificationSchemas.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.js";
 
 const OPERATION = "verify_managed_native_boundaries" as const;
@@ -24,8 +32,18 @@ export interface ManagedNativeVerificationExecution {
 /** Resolve untrusted source Evidence, then execute over the trusted parsed source. */
 export const executeManagedNativeBoundaries = (
   rawInput: unknown,
+  lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
 ): Result<ManagedNativeVerificationExecution, AnalysisError> => {
-  const source = readManagedNativeVerificationSource(rawInput);
+  const request = resolveEvidenceRequest(
+    OPERATION,
+    rawInput,
+    managedNativeVerificationRequestSchema,
+    lookup,
+    options,
+  );
+  if (!request.ok) return request;
+  const source = readManagedNativeVerificationSource(request.value.input);
   if (!source.ok) return source;
   const result = verifyManagedNativeVerificationSource(source.value);
   const evidence = createManagedNativeVerificationEvidence(

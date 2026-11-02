@@ -76,3 +76,32 @@ it("refuses summary acquisition before reading when complete Evidence cannot be 
     error: { _tag: "AnalysisCapabilityUnavailableError" },
   });
 });
+
+it("rejects a live provider subject path that differs from the selected APK", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-apk-subject-"));
+  const provider = new ApkSignatureProvider();
+  try {
+    const path = join(root, "selected.apk");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("classes.dex", new TextReader("x"));
+    await writeFile(path, await writer.close());
+    const inspected = await provider.inspect({ path });
+    if (!inspected.ok) throw inspected.error;
+    const execution = inspected.value;
+    const service = new ApkSignatureService({
+      close: () => Promise.resolve(),
+      inspect: async () =>
+        ok({
+          ...execution,
+          subject: { ...execution.subject, path: join(root, "other.apk") },
+        }),
+    });
+    expect(await service.inspect({ path, detail: "complete" })).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
+  } finally {
+    await provider.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

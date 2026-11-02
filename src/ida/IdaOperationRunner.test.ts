@@ -188,3 +188,47 @@ it.each(["legacy", "modern", "native"] as const)(
     }
   },
 );
+
+it.each([
+  ["legacy", "functions"],
+  ["modern", "functions"],
+  ["native", "functions"],
+  ["legacy", "strings"],
+  ["modern", "strings"],
+  ["native", "strings"],
+] as const)(
+  "%s %s inventory rejects a repeated or backward offset before another request",
+  async (protocol, inventory) => {
+    const { root, target } = await createIdaTarget();
+    const producer = new RecordingIdaMcp(target);
+    try {
+      for (const next of [2, 1]) {
+        let pages = 0;
+        producer.overrideCall = (tool) => {
+          if (
+            ![
+              "list_functions",
+              "list_funcs",
+              "list_strings",
+              "find_regex",
+            ].includes(tool)
+          )
+            return undefined;
+          const nextOffset = pages++ === 0 ? 2 : next;
+          if (tool === "find_regex")
+            return { matches: [], cursor: { next: nextOffset } };
+          const page = { data: [], next_offset: nextOffset };
+          return tool === "list_funcs" ? [page] : page;
+        };
+        const runner = new IdaOperationRunner(producer, protocol);
+        await expect(runner[inventory]()).rejects.toMatchObject({
+          _tag: "AnalysisProtocolError",
+        });
+        expect(pages).toBe(2);
+      }
+    } finally {
+      await producer.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

@@ -3,10 +3,8 @@ import { expect, it } from "vitest";
 import type { CapabilityDescriptor } from "../../../../src/application/AnalysisProvider.js";
 import { buildCapabilityInventory } from "../../../../src/application/CapabilityInventory.js";
 import { providerCapabilitySets } from "../../../../src/application/binary/BinarySessionStatus.js";
-import {
-  idaCapabilities,
-  IDA_OPERATIONS,
-} from "../../../../src/ida/IdaProviderCapabilities.js";
+import { idaCapabilities } from "../../../../src/ida/IdaProviderCapabilities.js";
+import { IDA_OPERATIONS } from "../../../../src/ida/IdaProviderMetadata.js";
 import {
   TOOL_EFFECTS,
   toolSessionEffects,

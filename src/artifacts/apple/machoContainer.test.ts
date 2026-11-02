@@ -12,6 +12,7 @@ import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
 import { classifyArtifactBytes } from "../inventory/ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import { parseExecutableHeader } from "../../domain/binaryTarget.js";
+import { isJvmClassFile } from "../../domain/apple/jvmClassFile.js";
 import {
   classifyFatContainerIdentity,
   classifyFatContainerEvidence,
@@ -313,6 +314,39 @@ describe("FAT Mach-O identity", () => {
 });
 
 describe("FAT slice header identity and bounds", () => {
+  const classWithInterface = (reference: number): Buffer => {
+    // Retain enough bytes for the coincident FAT table claim to be readable;
+    // otherwise rejecting JVM identity would still yield not-fat on truncation.
+    const source = javaClassFile(2048, true);
+    const interfaceCountOffset = source.length - 8;
+    const bytes = Buffer.concat([
+      source.subarray(0, interfaceCountOffset + 2),
+      Buffer.alloc(2),
+      source.subarray(interfaceCountOffset + 2),
+    ]);
+    bytes.writeUInt16BE(1, interfaceCountOffset);
+    bytes.writeUInt16BE(reference, interfaceCountOffset + 2);
+    return bytes;
+  };
+
+  it("preserves JVM identity for class-tagged interface references", () => {
+    const bytes = classWithInterface(3);
+    expect(isJvmClassFile(bytes)).toBe(true);
+    expect(readFatContainerHeader(bytes, bytes.length)).toEqual({
+      state: "not-fat",
+    });
+  });
+
+  it.each([0, 2, 8, 65535])(
+    "does not suppress FAT examination for invalid JVM interface index %i",
+    (reference) => {
+      // Zero, a UTF-8 entry, and out-of-pool indices are not class references.
+      const bytes = classWithInterface(reference);
+      expect(isJvmClassFile(bytes)).toBe(false);
+      expect(readFatContainerHeader(bytes, bytes.length).state).toBe("parsed");
+    },
+  );
+
   it("keeps Java CAFEBABE class files outside FAT and Mach-O identity", async () => {
     const bytes = javaClassFile();
     expect(readFatContainerHeader(bytes, bytes.byteLength)).toEqual({

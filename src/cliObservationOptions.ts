@@ -5,13 +5,28 @@ import { javaScriptAnalysisResourceControlsSchema } from "./domain/javascript/ja
 import { javaScriptSourcePathsSchema } from "./domain/javascript/javascriptSourceSelection.js";
 
 /** Accept an agent-selected browser observation duration without an artificial ceiling. */
-export const observationDuration = (fallback: number, minimum = 0) =>
-  z
-    .number()
-    .int()
-    .min(minimum)
+export const observationDuration = (fallback: number, minimum = 0) => {
+  const duration = z.number().int().min(minimum);
+  // Keep argv text until its presence is checked. Incur eagerly converts a
+  // ZodNumber field with Number(), which turns empty/blank selections into 0.
+  const selected = z
+    .union([
+      duration,
+      z
+        .string()
+        .regex(/\S/u, "Expected a nonempty observation duration")
+        .pipe(z.coerce.number<string>())
+        .pipe(duration),
+    ])
     .default(fallback)
     .describe("Observation duration in milliseconds");
+  // Incur advertises Zod's output view for CLI inputs. Publish this field's
+  // input view so the lexical guard survives the SDK conversion as well.
+  const { $schema: _dialect, ...inputSchema } = z.toJSONSchema(selected, {
+    io: "input",
+  });
+  return selected.meta(inputSchema);
+};
 
 /** Shared passive browser origin options. */
 export const browserScopeOptions = {
