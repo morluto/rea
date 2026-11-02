@@ -31,6 +31,11 @@ const LOCATION = {
   module: "Fixture",
   module_path: "/tmp/Fixture",
   symbol: "-[Greeter greet:times:]",
+  source_location: {
+    file_path: "/not-acquired/é space/fixture.pas",
+    line: 23,
+    column: null,
+  },
 };
 
 const run = (
@@ -80,7 +85,7 @@ const run = (
         { name: "x0", value: "0x6000" },
         { name: "x1", value: "0x7000" },
       ],
-      backtrace: [],
+      backtrace: [{ ...LOCATION, source_location: null }],
     },
   ],
   other_stops: [],
@@ -203,7 +208,12 @@ describe("observe_native_calls projection: projects completed observations", () 
     expect(result.events[0]).toMatchObject({
       receiver_class: "Greeter",
       selector: "greet:times:",
+      source_location: LOCATION.source_location,
+      backtrace: [{ ...LOCATION, source_location: null }],
     });
+    expect(result.breakpoints[0]?.locations[0]?.source_location).toEqual(
+      LOCATION.source_location,
+    );
     expect(result.coverage).toEqual({
       status: "complete",
       event_limit_reached: false,

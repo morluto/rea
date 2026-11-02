@@ -36,6 +36,7 @@ export const NATIVE_CALL_OBSERVATION_LIMITATIONS = [
   "Registers are the raw integer argument registers at entry. For Objective-C methods the first two hold the receiver and the selector.",
   "Receiver classes come from LLDB's Objective-C runtime reader without running target code; they are null for class methods and for receivers LLDB cannot classify.",
   "Calls that never reach a symbol's entry, such as inlined code or objc_direct methods called directly, are not observed.",
+  "Source locations come from LLDB line-table metadata; REA does not read or verify the named source-file contents.",
   "The target is launched directly under LLDB, not through LaunchServices; LLDB disables ASLR for it, so load addresses can equal file addresses.",
   "The observation window is checked about once a second, and recording pauses the process at every entry, which slows it.",
 ] as const;

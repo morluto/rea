@@ -244,6 +244,20 @@ def _hex(value):
     return "0x%x" % value
 
 
+def _source_location(address):
+    """Preserve available line-entry facets without acquiring source files."""
+    entry = address.GetLineEntry()
+    if not entry.IsValid():
+        return None
+    file_spec = entry.GetFileSpec()
+    file_path = str(file_spec) if file_spec.IsValid() else None
+    line = entry.GetLine() or None
+    column = entry.GetColumn() or None
+    if not file_path and line is None and column is None:
+        return None
+    return {"file_path": file_path or None, "line": line, "column": column}
+
+
 def _location(address, target):
     """Load and file address, module and symbol of one code address."""
     module = address.GetModule()
@@ -257,6 +271,7 @@ def _location(address, target):
         "module": module.GetFileSpec().GetFilename() if module.IsValid() else None,
         "module_path": str(module.GetFileSpec()) if module.IsValid() else None,
         "symbol": symbol.GetName() if symbol.IsValid() else None,
+        "source_location": _source_location(address),
     }
     return location
 
