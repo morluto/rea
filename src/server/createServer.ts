@@ -22,6 +22,7 @@ import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
+import { registerWindowsShortcutTool } from "./registerWindowsShortcutTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
 import { registerNativeExportsTool } from "./registerNativeExportsTool.js";
 import { registerEvmTools } from "./registerEvmTools.js";
@@ -205,6 +206,7 @@ export const createServer = (
     peLoadConfig,
     peCertificates,
     peImports,
+    windowsShortcut,
     electronFuses,
     pythonPyc,
     webNetworkCapture,
@@ -481,6 +483,13 @@ export const createServer = (
       registerPeImportsTool(
         server,
         peImports,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerWindowsShortcutTool(
+        server,
+        windowsShortcut,
         toolLogger,
         recordEvidence,
         analysisAdmission,

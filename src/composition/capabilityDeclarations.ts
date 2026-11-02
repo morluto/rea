@@ -42,6 +42,7 @@ import {
   PE_LOAD_CONFIG_PROVIDER,
   PE_RESOURCES_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
+  WINDOWS_SHORTCUT_PROVIDER,
 } from "../domain/investigationProviders.js";
 import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import {
@@ -432,6 +433,11 @@ export const CAPABILITY_DECLARATIONS = {
   peResources: {
     providers: [
       providerBinding(PE_RESOURCES_PROVIDER, ["inspect_pe_resources"]),
+    ],
+  },
+  windowsShortcut: {
+    providers: [
+      providerBinding(WINDOWS_SHORTCUT_PROVIDER, ["inspect_windows_shortcut"]),
     ],
   },
   pythonPyc: {

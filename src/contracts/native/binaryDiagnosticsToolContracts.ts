@@ -56,6 +56,10 @@ import {
   inspectKernelModuleInputSchema,
   kernelModuleSchema,
 } from "../../domain/native/kernelModule.js";
+import {
+  inspectWindowsShortcutInputSchema,
+  windowsShortcutSchema,
+} from "../../domain/native/windowsShortcut.js";
 
 /** Caller-selected delivery of completed binary layout Evidence. */
 export const inspectBinaryLayoutRequestSchema =
@@ -204,6 +208,21 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       {
         title: "Inspect PE import and delay-load identities",
         input: { path: "/artifacts/application.exe" },
+      },
+    ],
+  },
+  {
+    name: "inspect_windows_shortcut",
+    ...toolContractMetadata("inspect_windows_shortcut"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local Windows Shell Link (.lnk) file without resolving or executing the target, using COM, or opening a network path. Returns ShellLinkHeader flags, FILETIMEs, ShowCommand and hotkey; LinkTargetIDList item count with documented root/drive/file-entry names and raw hashes for unknown items; LinkInfo volume serial, label, local base path and network share names; StringData name, relative path, working directory, arguments and icon location; and ExtraData blocks including EnvironmentVariable, IconEnvironment, Tracker droid/MAC facts labelled derived, KnownFolder, SpecialFolder, ConsoleFE code page, and PropertyStore raw hashes. Unknown ExtraData signatures are listed. Derived observations cover argument presence and length, target extension, minimized ShowCommand, and an icon location that differs from the target. Reads a stable regular file; malformed HeaderSize or CLSID, exhausted budgets, and odd Unicode lengths return typed failures or partial coverage with the failing offset, never a complete partial inventory. Portable on supported Node hosts; no Windows SDK or engine installation required.",
+    inputSchema: inspectWindowsShortcutInputSchema,
+    outputSchema: evidenceResultOf(windowsShortcutSchema),
+    examples: [
+      {
+        title: "Inspect a Windows Shell Link shortcut",
+        input: { path: "/artifacts/shortcut.lnk" },
       },
     ],
   },

@@ -414,6 +414,19 @@ descriptors, and a pefile-compatible import hash of the standard import table.
 A missing import directory is observed absence of that table. See
 [PE import and delay-load tables](pe-imports.md).
 
+Inspect a Windows Shell Link (`.lnk`) without resolving or executing the
+target:
+
+```bash
+rea inspect-windows-shortcut /absolute/path/to/shortcut.lnk --json
+```
+
+The workflow reports header flags and FILETIMEs, IDList items, LinkInfo volume
+and network names, StringData arguments and icon location, ExtraData blocks
+including Tracker droid facts labelled derived, and derived observations such
+as argument length and a minimized ShowCommand. See
+[Windows Shell Link shortcuts](windows-shortcut.md).
+
 Inspect ELF PT_NOTE and SHT_NOTE tables without executing the image:
 
 ```bash
