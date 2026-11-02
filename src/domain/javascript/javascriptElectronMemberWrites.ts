@@ -8,6 +8,18 @@ import {
 } from "./javascriptAstValues.js";
 import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
 
+/**
+ * The reference kinds that load a module by package specifier. A `worker` or
+ * `service-worker` reference records a URL relative to the importing source, so
+ * `new Worker(new URL("electron", import.meta.url))` names a local file and is
+ * not an Electron module.
+ */
+export const ELECTRON_REFERENCE_KINDS: ReadonlySet<string> = new Set([
+  "static-import",
+  "dynamic-import",
+  "require",
+]);
+
 /** Match Electron's supported module entry points. */
 export const ELECTRON_MODULE =
   /^electron(?:\/(?:common|main|renderer|utility))?$/u;

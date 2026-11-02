@@ -1,6 +1,10 @@
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { ElectronIpcFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
+import {
+  ELECTRON_MODULE,
+  ELECTRON_REFERENCE_KINDS,
+} from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -117,11 +121,89 @@ export const createElectronIpcContext = (
   return { records, owners, states, pairings };
 };
 
+/**
+ * Whether any analyzed source loads an Electron module.
+ *
+ * `analysis_coverage.applicability.electron` is the domain owner of this
+ * question: it already excludes a `type-import`, a `require.resolve` that only
+ * locates the module, a `worker` URL path, and a specifier that is a recovered
+ * bundle module key. Reading the owned fact here keeps the boundary summary and
+ * the published coverage view from disagreeing.
+ *
+ * Historical evidence may predate that field, so the retained references answer
+ * the same question for those files.
+ */
+export const electronModuleReferenced = (
+  analysis: JavaScriptArtifactAnalysis,
+): boolean =>
+  analysis.files.some(({ javascript, semantic }) => {
+    const applicability = javascript?.analysis_coverage?.applicability.electron;
+    if (applicability !== undefined) return applicability === "observed";
+    const links = semantic?.ir.moduleLinks;
+    if (
+      links !== undefined &&
+      links.some(
+        ({ specifier, kind }) =>
+          kind !== "type-import" &&
+          specifier !== null &&
+          ELECTRON_MODULE.test(specifier),
+      )
+    )
+      return true;
+    return (javascript?.references ?? []).some(
+      ({ specifier, kind, operation }) =>
+        operation === "load" &&
+        ELECTRON_REFERENCE_KINDS.has(kind) &&
+        specifier !== null &&
+        ELECTRON_MODULE.test(specifier),
+    );
+  });
+
+/** Every Electron boundary fact family the graph reports. */
+export const electronBoundaryFactCount = (
+  analysis: JavaScriptArtifactAnalysis,
+): number =>
+  analysis.files.reduce(
+    (count, { javascript }) =>
+      count +
+      (javascript === null
+        ? 0
+        : javascript.electron.browser_windows.length +
+          javascript.electron.context_bridge_apis.length +
+          javascript.electron.ipc.length +
+          javascript.electron.sender_validations.length +
+          javascript.electron.utility_processes.length +
+          javascript.electron.native_addon_bindings.length +
+          javascript.electron.protocols.length),
+    0,
+  );
+
+/**
+ * Whether the Electron boundary summary came back empty. `undefined` means no
+ * analyzed source names Electron, which is unknown rather than absent: unread
+ * sources and dynamic module names can hide its use.
+ */
+export const electronSemanticsState = (
+  analysis: JavaScriptArtifactAnalysis,
+): "recovered" | "empty" | undefined =>
+  electronModuleReferenced(analysis) === false
+    ? undefined
+    : electronBoundaryFactCount(analysis) === 0
+      ? "empty"
+      : "recovered";
+
 /** Summarize static Electron findings without treating gaps as absence. */
 export const summarizeElectronBoundaries = (
   analysis: JavaScriptArtifactAnalysis,
   ipcContext: ElectronIpcContext,
   directoryPaths?: ReadonlySet<string>,
+  /**
+   * Analysis view used only to describe coverage. A rejected application
+   * projection replaces a file with a placeholder in `analysis`, which would
+   * hide a retained Electron reference, so the caller passes the raw analysis
+   * and both outputs then share one coverage result.
+   */
+  coverageAnalysis: JavaScriptArtifactAnalysis = analysis,
 ): ElectronBoundarySummary => {
   const files = new Map(analysis.files.map(({ file }) => [file.path, file]));
   const javascript = analysis.files.flatMap(({ javascript: value }) =>
@@ -155,7 +237,15 @@ export const summarizeElectronBoundaries = (
       finding.channel === null ? [] : [finding.channel],
     ),
   );
+  const protocolCount = javascript.reduce(
+    (count, { electron }) => count + electron.protocols.length,
+    0,
+  );
+  // The coverage state is read from the retained analysis so that a rejected
+  // projection cannot hide an Electron reference the graph still reports.
+  const semantics = electronSemanticsState(coverageAnalysis);
   return {
+    ...(semantics === undefined ? {} : { electron_semantics: semantics }),
     browser_windows: windows.length,
     explicit_web_preferences: windows.reduce(
       (count, window) => count + window.web_preferences.length,
@@ -220,10 +310,7 @@ export const summarizeElectronBoundaries = (
         moduleKind: finding.module_kind,
       }),
     ).length,
-    protocol_registrations: javascript.reduce(
-      (count, { electron }) => count + electron.protocols.length,
-      0,
-    ),
+    protocol_registrations: protocolCount,
   };
 };
 

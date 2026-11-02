@@ -21,6 +21,7 @@ interface ModuleRangeTreeNode {
 export class JavaScriptModuleRangeIndex {
   private readonly root: ModuleRangeTreeNode = {};
   private readonly end: number;
+  private readonly keys = new Set<string>();
   private nextOrder = 0;
 
   /** Create an empty offset index bounded by the analyzed source length. */
