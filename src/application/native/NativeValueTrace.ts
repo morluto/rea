@@ -18,6 +18,34 @@ import {
 } from "../SourceLimitations.js";
 import { createValueTraceBudget } from "./NativeValueTraceBudget.js";
 
+/**
+ * A provider can classify a procedure as a thunk whose model either borrows
+ * its target's operations (an internal branch) or holds only a synthetic
+ * return (an external import). Name the target the trace did not reach so a
+ * stub's small model is not mistaken for the end of the selected call chain.
+ * The target is reported, never traversed, loaded or executed.
+ */
+const unexaminedThunkTarget = (
+  dossier: typeof functionDossierSchema._output,
+  represented: (target: string) => boolean,
+): string | null => {
+  const classification = dossier.procedure.classification;
+  if (
+    classification === null ||
+    !classification.thunk ||
+    classification.thunk_target === null ||
+    represented(classification.thunk_target)
+  )
+    return null;
+  return classification.thunk_target;
+};
+
+const thunkTargetUnknown = (procedure: string, target: string) => ({
+  procedure,
+  address: null,
+  reason: `Thunk target ${target} is not represented in this thunk's value-flow model and was not traced`,
+});
+
 /** Compose bounded high-p-code def-use graphs across exactly referenced call destinations. */
 export const traceNativeValues = async (
   analysis: AnalysisOperationPort,
@@ -144,6 +172,9 @@ export const traceNativeValues = async (
         address: null,
         reason: flow?.reason ?? "Provider has no native def-use model",
       });
+      const thunkTarget = unexaminedThunkTarget(dossier, () => false);
+      if (thunkTarget !== null)
+        unknowns.push(thunkTargetUnknown(address, thunkTarget));
       continue;
     }
     if (flow.truncated)
@@ -229,6 +260,7 @@ export const traceNativeValues = async (
       )
         break;
     }
+    const callDestinations = new Set<string>();
     for (const operation of flow.operations) {
       if (
         !ids.has(operation.id) ||
@@ -292,6 +324,7 @@ export const traceNativeValues = async (
         });
       for (const target of targets.data.targets) {
         const destination = target.procedure ?? target.address;
+        callDestinations.add(destination);
         if (
           !budget.retainEdge(
             {
@@ -329,6 +362,16 @@ export const traceNativeValues = async (
           });
       }
     }
+    // An internal thunk's model borrows its target's operations; an external
+    // import's model holds only a synthetic return and names no target.
+    const thunkTarget = unexaminedThunkTarget(
+      dossier,
+      (target) =>
+        callDestinations.has(target) ||
+        flow.operations.some((operation) => operation.address === target),
+    );
+    if (thunkTarget !== null)
+      unknowns.push(thunkTargetUnknown(address, thunkTarget));
     // Remaining work is attributed to the rejecting budget recorded above.
     if (budget.exhausted()) break;
   }
@@ -452,6 +495,7 @@ export const traceNativeValues = async (
     limitations: [
       "Static decompiler def-use graphs cover recovered block members; when membership is unavailable they exclude operations marked dead. Logical CALL argument positions bind to recovered HighParam ordinals and RETURN values bind to recovered CALL outputs; these are decompiler-derived dependencies, not original source or runtime observations. Missing parameters, variadic arguments and alias dependencies remain unknown.",
       "LOAD and STORE are memory operations; object fields, persistent state and RNG semantics are not inferred from names or pseudocode.",
+      "A procedure the provider classifies as a thunk keeps the provider's model for that stub. When that model neither contains an operation at the thunk target nor resolves a call to it, the target is reported in unknowns; thunk targets are not traversed, loaded or executed.",
       "Traversal caps depth, decompilations, call-site resolutions, nodes, edges and node payloads (8388608 bytes, 8 MiB); traversal.reasons names each cap or policy this trace reached. This release has no runtime override for the 8388608-byte node-payload allowance. Complete serialized output is bounded to 33554432 bytes (32 MiB) and that output allowance has no runtime override. Pagination reruns analysis and returns edges whose source is on the node page; endpoints outside the page retain stable identities.",
       ...renderSourceLimitations(sourceLimitations),
     ],
