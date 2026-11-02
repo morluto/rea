@@ -561,6 +561,14 @@ be verified. See [MCP contracts](mcp-contracts.md) for session lifecycle and
 [Ghidra first-query deadlines](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for import, client timeouts and recovery.
 
+A one-shot command releases its provider session and REA runtime before it
+prints a failure, so it omits the same-session reuse and
+`update_analysis_settings` guidance an MCP connection receives. Its
+`details.limit` reports `scope: "rea-invocation"` and
+`applies_at: "next_invocation"`; set the named `environment` (or the per-call
+`parameter`) for a new invocation and rerun. For example, a Ghidra decompile
+deadline names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`.
+
 If one-shot analysis fails and closing its session also fails, the original
 error details remain inline and `details.cleanup_error` describes the later
 close failure. Each diagnostic retains its own reported resources; the later
@@ -614,6 +622,30 @@ for its matching target; an MCP provider may still start before returning a
 cached result. `close_binary` accepts `snapshot_path` and optional
 `overwrite: true` to save before releasing provider resources. A failed save
 leaves the session open so the caller can resolve the output failure.
+
+When a validated snapshot does not match the selected binding, the error's
+`details.binding_mismatch` reports confirmed target identities, provider
+identities, or profile digests that differ. `snapshot` is the saved value and
+`selected` is the requested value. Multiple differences can be reported. A
+`profile_comparison: "not_compared"` means the profile was not available at
+that boundary; it does not establish a match. A profileless snapshot can report
+`workflow_scope: "incompatible"` even when its target and profile match.
+Choose a matching target, provider, and profile, or analyze without the snapshot
+and save a new one for the intended binding.
+
+For a profile mismatch, the saved snapshot contains
+`binding.analysis_profile.parameters`. If `binary_session` reports an active
+profile whose digest matches `binding_mismatch.profile_digest.selected`, its
+`analysis_provider_binding.analysis_profile.parameters` can be compared with
+those saved parameters. A rejected switch leaves the previous session active,
+so its profile may be different from the attempted selection; check the digest
+before using it for this comparison. A configuration difference does not by
+itself establish why analysis results differ.
+
+If no target is open and you intend to inspect the selected binding, open that
+target without the snapshot, then check its profile digest in `binary_session`
+before comparing parameters. This may start the selected provider; the saved
+snapshot remains a separate file.
 
 If a selected snapshot's file descriptor cannot close, `open_binary` reports
 `cleanup_incomplete`. `binary_session` reports `cleanup_pending` even when no

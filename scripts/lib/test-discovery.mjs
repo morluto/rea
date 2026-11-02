@@ -1,4 +1,5 @@
 import { relative, resolve } from "node:path";
+import { projectForTest } from "./test-projects.mjs";
 
 /** Compare actual Vitest discovery with repository-owned test paths. */
 export const compareTestDiscovery = (expectedPaths, discovery, root) => {
@@ -35,6 +36,14 @@ export const compareTestDiscovery = (expectedPaths, discovery, root) => {
     duplicates: sorted(projectsByFile.keys()).flatMap((file) => {
       const projects = projectsByFile.get(file);
       return projects.length > 1 ? [{ file, projects: sorted(projects) }] : [];
+    }),
+    wrongProjects: sorted(expected).flatMap((file) => {
+      const projects = projectsByFile.get(file);
+      if (!projects || projects.length !== 1) return [];
+      const expectedProject = projectForTest(file).name;
+      return projects[0] === expectedProject
+        ? []
+        : [{ file, expected: expectedProject, actual: projects[0] }];
     }),
     discovered: projectsByFile.size,
   };

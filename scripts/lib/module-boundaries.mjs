@@ -24,6 +24,8 @@ const MIGRATED_PROVIDER_ROOTS = new Set([
   "inspector",
   "javascript",
 ]);
+const CENTRALIZED_CONSTRUCTOR_OWNER =
+  /^src\/(?:frida\/FridaInstrumentationManager|cutter\/CutterBridge(?:Client|Service)|gdb\/GdbSessionManager|rizin\/RizinDebugSessionManager)\.(?:js|ts)$/u;
 const repositoryPath = (root, path) =>
   relative(root, path).replaceAll("\\", "/");
 
@@ -35,7 +37,7 @@ const sourceTarget = (file, specifier) => {
     : undefined;
 };
 
-const failedBoundary = (file, target) => {
+const failedBoundary = (file, target, typeOnly) => {
   if (!file.startsWith("src/") || !target.startsWith("src/")) return undefined;
   const layer = file.split("/")[1];
   const targetLayer = target.split("/")[1];
@@ -77,6 +79,12 @@ const failedBoundary = (file, target) => {
     return "application-composition";
   if (
     (layer === "application" || layer === "server") &&
+    !typeOnly &&
+    CENTRALIZED_CONSTRUCTOR_OWNER.test(target)
+  )
+    return "provider-construction";
+  if (
+    (layer === "application" || layer === "server") &&
     (MIGRATED_PROVIDER_ROOTS.has(targetLayer) ||
       /^src\/(?:artifacts\/ArtifactProvider|dotnet\/ManagedStaticProvider|native\/NativeMacOSProvider)\.[^/]+$/u.test(
         target,
@@ -92,11 +100,11 @@ export const inspectModuleBoundaries = (file, source, root) => {
   const absoluteFile = resolve(root, file);
   const importer = repositoryPath(root, absoluteFile);
   const violations = [];
-  for (const { specifier, line } of readImportSpecifiers(source)) {
+  for (const { specifier, line, typeOnly } of readImportSpecifiers(source)) {
     const resolved = sourceTarget(absoluteFile, specifier);
     if (resolved === undefined) continue;
     const target = repositoryPath(root, resolved);
-    const boundary = failedBoundary(importer, target);
+    const boundary = failedBoundary(importer, target, typeOnly);
     if (boundary !== undefined)
       violations.push({ file: importer, line, specifier, target, boundary });
   }

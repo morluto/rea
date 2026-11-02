@@ -1,20 +1,13 @@
-import {
-  ELECTRON_FUSE_SENTINEL,
-  ELECTRON_FUSE_STATE_BYTES,
-} from "../../../src/domain/electron/electronFuses.js";
-
-export const FUSE_SENTINEL = Buffer.from(ELECTRON_FUSE_SENTINEL, "ascii");
+// Electron's documented on-disk fuse wire, independent of the reader constants:
+// https://github.com/electron/electron/blob/main/docs/tutorial/fuses.md#the-hard-way
+export const FUSE_SENTINEL = Buffer.from(
+  "dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX",
+  "ascii",
+);
 
 /** Obsidian's observed version-1 states: disabled, enabled, then six more with the last enabled. */
 export const OBSIDIAN_FUSE_BYTES = [
-  ELECTRON_FUSE_STATE_BYTES.disabled,
-  ELECTRON_FUSE_STATE_BYTES.enabled,
-  ELECTRON_FUSE_STATE_BYTES.disabled,
-  ELECTRON_FUSE_STATE_BYTES.disabled,
-  ELECTRON_FUSE_STATE_BYTES.disabled,
-  ELECTRON_FUSE_STATE_BYTES.disabled,
-  ELECTRON_FUSE_STATE_BYTES.disabled,
-  ELECTRON_FUSE_STATE_BYTES.enabled,
+  0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x31,
 ] as const;
 
 export const fuseWire = (version: number, fuses: readonly number[]): Buffer =>
@@ -56,7 +49,7 @@ export const universalFuseImage = (): {
     Buffer.concat([FUSE_SENTINEL, fuseWire(1, OBSIDIAN_FUSE_BYTES)]),
   );
   const rightFuses = [...OBSIDIAN_FUSE_BYTES];
-  rightFuses[3] = ELECTRON_FUSE_STATE_BYTES.enabled;
+  rightFuses[3] = 0x31;
   const right = thinMacho(
     0x0100000c,
     Buffer.concat([FUSE_SENTINEL, fuseWire(1, rightFuses)]),

@@ -675,12 +675,33 @@ an existing Hopper launcher is selected through `HOPPER_LAUNCHER_PATH`. Ghidra
 and IDA have their own provider-specific host requirements; Windows Ghidra uses
 the [experimental P0 boundary](windows-ghidra-p0.md).
 
-If the Linux package download receives an HTTP failure, setup includes the
-observed HTTP status in its `download_failed` diagnostic. The status does not
-establish the underlying cause or guarantee that retrying will succeed.
+Bazzite uses RPM packages, but REA does not install Hopper automatically on it.
+Setup skips the Hopper offer because Bazzite is outside the supported host list,
+regardless of whether Xvfb is installed. Bazzite documents
+[containers for installing Linux packages](https://docs.bazzite.gg/Installing_and_Managing_Software/Containers/).
+If using a container, check its distribution and architecture against the list
+above. Install REA and Hopper in that container, give it access to the files you
+want to analyze, and configure your agent to launch REA there. Verify installation
+and analysis before relying on that workflow.
+
+`rea doctor` checks health; it does not offer to install Hopper. Run `rea setup`
+for installation. Setup cannot prompt when its output is redirected or during a
+container image build. To approve Hopper installation without prompts, run
+`rea setup --yes --install-hopper`.
+
+If a Hopper request fails on macOS or Linux, the setup result's `download`
+field names the request (`release_feed`, `package` or `public_key`), its `url`,
+and the observed outcome `kind`: `http_status` with `httpStatus`, `timeout`,
+`network`, `response_too_large`, or `url_refused`. The remediation names the
+same URL and outcome. HTTP 404 or 410 means the file is missing, so an
+immediate retry is unlikely to help; 5xx, 408 and 429 indicate a temporary
+service failure. The status does not establish the underlying cause or guarantee
+that retrying will succeed. Doctor and Linux launches report the same request
+and status when publisher verification cannot download the current package.
 
 Hopper metadata and package downloads require HTTPS throughout the redirect
-chain; a redirect to HTTP is refused before that destination is requested.
+chain; a redirect to HTTP or to a URL carrying credentials is refused before
+that destination is requested, and those credentials are not reported.
 
 On macOS, approved setup downloads the official DMG, checks its published size
 and digest, validates the application bundle, and atomically installs it to
@@ -728,6 +749,12 @@ Rotating signing subkeys remain bound to that primary identity.
 The feed row itself is not PGP-signed; doctor labels its display version as
 `reported_release_version`, separately from the authenticated launcher identity.
 
+Even a correctly signed package can contain a launcher whose hash disagrees with
+the feed. REA stops before installing that package. When reporting this error,
+include the release version, package format and both hashes from the diagnostic.
+Each format needs its own check: a matching Ubuntu DEB does not establish that
+the Fedora RPM matches.
+
 The approval plan includes the caller-selected cache location. Approved setup
 retains the signed archive, public key and release metadata under
 `${XDG_CACHE_HOME:-$HOME/.cache}/rea/hopper-releases/<launcher-sha256>`.
@@ -760,6 +787,16 @@ mount namespace with a private mode-1777 tmpfs over that directory only. The
 host mount and the rest of `/tmp` remain unchanged; this fallback never invokes
 `sudo`. `rea doctor --provider hopper --json` reports the selected
 strategy and both host and effective mount facts.
+
+You do not need to start a separate `Xvfb :99` server. REA starts and manages its
+own display. After installation, run `rea doctor --provider hopper --json` and
+check `hopper-demo-runtime` for display and Python problems. Setup also runs these
+health checks: installing the package is only one step toward a working provider.
+
+If an image build ends with `exit status 1`, read the setup output immediately
+before that summary to find the failing step. On minimal Ubuntu images, run
+`apt-get update` before setup if an earlier layer deleted the package indexes.
+REA's package installation commands do not refresh those indexes.
 
 Hopper also embeds Python; the Python executable and standard library alone
 are insufficient on Ubuntu. Approved setup checks the system interpreter
@@ -971,7 +1008,9 @@ including while a shutdown request is in flight. A helper exit alone is
 insufficient, and an application that never authenticated has no verified
 process identity. If no matching bridge becomes available, inspect and close
 the reported document in Hopper before ending the owning REA connection.
-Export the Evidence bundle before `close_binary` clears session records.
+`close_binary` preserves Evidence and complete Unknown history in memory on the
+same connection. Export the bundle before ending the REA process to resume later;
+`reset_investigation(save_path)` checkpoints and explicitly clears those records.
 `binary_session.cleanup_pending` remains true while provider cleanup is retained,
 and provider health remains visible even with `open: false`; that flag alone
 does not establish successful cleanup.
@@ -1282,7 +1321,8 @@ fails with `provider_timeout` and that message; other Ghidra tools stay
 available. If the caller also cancels while the timeout settles, the session
 still closes and the message says so. Session reuse concerns an active MCP or
 library session; a standalone CLI command still closes its own session when it
-finishes. In MCP, `ghidra.decompile_timeout_seconds` can override the launch
+finishes, so its timeout names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` for a new
+invocation instead. In MCP, `ghidra.decompile_timeout_seconds` can override the launch
 value for newly accepted operations on the existing Program; explicit `null`
 removes the deadline. A transient timeout remains uncached so the same function
 can be retried after an update. See the

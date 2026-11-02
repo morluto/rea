@@ -622,6 +622,24 @@ cliTest(
     const expected = inspectEvidenceBundle(bundle, options);
     if (!expected.ok) throw expected.error;
     expect(result.json).toEqual(expected.value);
+    // The same shared owner selects the complete record from the portable file.
+    const records = await cli.run({
+      arguments: [
+        "inspect-evidence-bundle",
+        JSON.stringify({ path, ...options, detail: "records", limit: 1 }),
+        "--json",
+      ],
+      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
+    });
+    expect(records.exitCode).toBe(0);
+    expect(records.json).toMatchObject({
+      kind: "evidence-record-selection",
+      matching_records: 1,
+      limit: 1,
+      next_offset: null,
+      records: [parent],
+      missing_evidence_links: [],
+    });
     const complete = await cli.run({
       arguments: [
         "inspect-evidence-bundle",

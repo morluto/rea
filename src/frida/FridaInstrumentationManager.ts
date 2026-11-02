@@ -68,12 +68,6 @@ const isFridaDeviceLookupTimeout = (cause: unknown): boolean =>
   cause instanceof Error &&
   cause.message === FRIDA_DEVICE_LOOKUP_TIMEOUT_MESSAGE;
 
-export const FRIDA_PROVIDER_IDENTITY = {
-  id: "frida",
-  name: "Frida",
-  version: null,
-} as const;
-
 interface ScriptMessageCapture {
   readonly messages: MessageFifo<JsonValue>;
   truncated: boolean;

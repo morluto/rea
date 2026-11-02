@@ -201,7 +201,7 @@ it("runs the same trace/compare workflows with inline and retained application E
   expect(mixed.isError).not.toBe(true);
 });
 
-it("keeps references session-scoped and expires them when close_binary clears the ledger", async () => {
+it("keeps references connection-scoped through close and expires them on explicit investigation reset", async () => {
   const first = await connect();
   const second = await connect();
   expect(first.session.recordEvidence(application).ok).toBe(true);
@@ -230,6 +230,12 @@ it("keeps references session-scoped and expires them when close_binary clears th
     arguments: {},
   });
   expect(closed.isError).not.toBe(true);
+  expect((await first.client.callTool(request)).isError).not.toBe(true);
+  const reset = await first.client.callTool({
+    name: "reset_investigation",
+    arguments: {},
+  });
+  expect(reset.isError).not.toBe(true);
   expect(parseMcpToolError(await first.client.callTool(request))).toMatchObject(
     { error: { details: { reason: "missing" } } },
   );

@@ -127,6 +127,12 @@ mcpTest(
       const snapshot = await readAnalysisSnapshot(snapshotPath);
       if (!snapshot.ok) throw snapshot.error;
       expect(snapshot.value.evidence_bundle.records).toContainEqual(evidence);
+      expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
+      const reset = await client.callTool({
+        name: "reset_investigation",
+        arguments: {},
+      });
+      expect(reset.isError, JSON.stringify(reset.content)).not.toBe(true);
       expect(session.evidenceById(evidence.evidence_id)).toBeUndefined();
     }, [
       () => release.resolve(),

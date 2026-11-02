@@ -17,7 +17,9 @@ export const workflowAnalysisProfile = (
       ? { workflow_revision: 5 }
       : operation === "batch_decompile"
         ? { workflow_revision: 4 }
-        : operation === "get_call_graph" || operation === "trace_feature"
-          ? { workflow_revision: 3 }
-          : { workflow_revision: 1 }),
+        : operation === "trace_feature"
+          ? { workflow_revision: 4 }
+          : operation === "get_call_graph"
+            ? { workflow_revision: 3 }
+            : { workflow_revision: 1 }),
   });

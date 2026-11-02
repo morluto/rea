@@ -41,36 +41,6 @@ it("managed reconstruction reports UTF-8 byte totals while preserving UTF-16 tex
   });
 });
 
-it("managed reconstruction rejects text hash drift", () => {
-  const rejected = resolveManagedReconstructionImport({
-    ...exampleInput(),
-    methods: [
-      {
-        ...exampleMethod(),
-        reconstruction: {
-          ...exampleMethod().reconstruction,
-          text_sha256: "0".repeat(64),
-        },
-      },
-    ],
-  });
-  expect(rejected).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisInputError",
-      operation: "import_managed_reconstruction",
-      issues: [
-        {
-          path: ["methods", 0, "reconstruction", "text_sha256"],
-          reason: "invalid_value",
-          message: expect.stringContaining("Reconstruction text hash mismatch"),
-        },
-      ],
-    },
-  });
-  if (!rejected.ok) expect(rejected.error).toBeInstanceOf(AnalysisInputError);
-});
-
 it("managed reconstruction rejects stale method locks", () => {
   const staleInput = {
     ...exampleInput(),
@@ -234,13 +204,15 @@ describe("managed reconstruction input diagnostics", () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisInputError);
     expect(result.error).toMatchObject({
       _tag: "AnalysisInputError",
+      operation: "import_managed_reconstruction",
       issues: [
         {
           path: ["methods", 0, "reconstruction", "text_sha256"],
           reason: "invalid_value",
-          message: expect.stringMatching(/text hash mismatch/u),
+          message: expect.stringContaining("Reconstruction text hash mismatch"),
         },
       ],
     });

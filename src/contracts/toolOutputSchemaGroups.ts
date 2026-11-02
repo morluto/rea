@@ -1,7 +1,7 @@
 import {
   nativeAddressListSchema,
   nativeObservationSourceSchemas,
-  containingProcedureResolutionSchema,
+  traceContainingProcedureSchema,
 } from "../domain/native/nativeObservation.js";
 import { overviewInventoryCoverageSchema } from "../domain/native/inventoryCoverage.js";
 import {
@@ -36,9 +36,16 @@ import {
 } from "../domain/native/nativeReference.js";
 import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
+import {
+  evidenceBundleExportReceiptSchema,
+  resetInvestigationReceiptSchema,
+} from "../domain/investigationLifecycle.js";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
-import { evidenceBundleSummarySchema } from "../domain/evidenceRecordSummary.js";
+import {
+  evidenceBundleSummarySchema,
+  evidenceRecordSelectionSchema,
+} from "../domain/evidenceRecordSummary.js";
 import { liveBinaryTargetSummaryVariants } from "../domain/liveBinaryTargetSummary.js";
 import { nativeFunctionAnnotationsSchema } from "../domain/native/nativeFunctionAnnotations.js";
 import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
@@ -87,7 +94,10 @@ import { callPathResultSchema } from "../domain/callPathSchemas.js";
 import { staticRuntimeCorrelationResultSchema } from "../domain/staticRuntimeCorrelation.js";
 import { reconstructionVerificationResultSchema } from "../domain/reconstructionVerificationSchemas.js";
 import { decompileDirectoryManifestSchema } from "./decompileDirectory.js";
-import { analysisErrorProjectionSchema } from "./errorSchemas.js";
+import {
+  analysisErrorProjectionSchema,
+  analysisInputErrorProjectionSchema,
+} from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";
@@ -113,6 +123,7 @@ const contextFacetSchema = z.discriminatedUnion("state", [
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
+    error: analysisInputErrorProjectionSchema.optional(),
   }),
 ]);
 const bookmarkFacetSchema = z.discriminatedUnion("state", [
@@ -124,6 +135,7 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
+    error: analysisInputErrorProjectionSchema.optional(),
   }),
 ]);
 
@@ -257,7 +269,7 @@ const literalTraceOutput = evidenceResultOf(
       z.object({
         target_address: z.string(),
         source_address: z.string(),
-        containing_procedure: containingProcedureResolutionSchema,
+        containing_procedure: traceContainingProcedureSchema,
       }),
     ),
     truncated: z.boolean(),
@@ -513,6 +525,7 @@ export const managedWorkflowOutputSchemas = {
 
 /** Exact structured-content schemas for target lifecycle operations. */
 export const sessionOutputSchemas = {
+  reset_investigation: lifecycleResultOf(resetInvestigationReceiptSchema),
   open_binary: lifecycleResultOf(
     z.discriminatedUnion("format", [...liveBinaryTargetSummaryVariants]),
   ),
@@ -562,16 +575,13 @@ export const sessionOutputSchemas = {
       ]),
     ),
   ),
-  export_evidence_bundle: lifecycleResultOf(
-    z.object({
-      path: z.string(),
-      bytes: z.int().min(0),
-      records: z.int().min(0),
-      unknowns: z.int().min(0),
-    }),
-  ),
+  export_evidence_bundle: lifecycleResultOf(evidenceBundleExportReceiptSchema),
   get_evidence_bundle: lifecycleResultOf(
-    z.union([evidenceBundleSchema, evidenceBundleSummarySchema]),
+    z.union([
+      evidenceBundleSchema,
+      evidenceBundleSummarySchema,
+      evidenceRecordSelectionSchema,
+    ]),
   ),
   get_navigation_context: lifecycleResultOf(
     z.object({
