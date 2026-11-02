@@ -680,6 +680,35 @@ it("counts credential-named members that hold a retained value, by pointer and n
   expect(parseEvidence(result.value)).toEqual(result.value);
 });
 
+it("bounds the listed pointers so a long member name cannot inflate the limitation", async () => {
+  const report = credentialNamedReport();
+  const long = "k".repeat(2048);
+  report.records[0]!.reported = {
+    request: {
+      method: "POST",
+      url: "https://example.test/login",
+      postData: {
+        mimeType: "application/json",
+        text: JSON.stringify({
+          [long]: { token: "demo-token" },
+          password: "p",
+        }),
+      },
+    },
+    response: { status: 204 },
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  const [limitation] = credentialNameLimitation(result.value.limitations);
+  expect(limitation).toMatch(/^2 /);
+  expect(limitation).toContain("record 0 request /password");
+  expect(limitation).toContain("1 more not listed");
+  expect(limitation).not.toContain(long);
+  expect(limitation!.length).toBeLessThan(1024 + 400);
+});
+
 it("adds no credential-name limitation when no counted name holds a value", async () => {
   const result = await new WebNetworkCaptureService({
     inspect: () => Promise.resolve(ok(fixture())),

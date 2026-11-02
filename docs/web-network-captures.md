@@ -372,8 +372,9 @@ canonical meanings; declarations do not rename formats or providers.
 A HAR capture's header names, query parameter names and JSON or form body
 member names that look like credentials (whole name segments such as `token`,
 `secret`, `password`, `api_key`, `authorization` or `session`) and hold a
-retained value are counted in a limitation that lists the first 20 by record
-and pointer (`record 3 request header X-Api-Key`), never by value; the
+retained value are counted in a limitation that lists up to 20 of them by
+record and pointer (`record 3 request header X-Api-Key`) within about 1 KiB
+of text, says how many are not listed, and never names a value; the
 [environment build](agent-environments.md) runs the same scan as its
 `credential-named-members` warning. Values already excluded, such as the
 standard authentication headers or declared sensitive values, are not counted.

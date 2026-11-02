@@ -296,10 +296,24 @@ type ScanTally = {
   readonly pointers: readonly string[];
 };
 
-const listedPointers = (tally: ScanTally): string =>
-  tally.pointers.length < tally.count
-    ? `first ${String(tally.pointers.length)}: ${tally.pointers.join(", ")}`
-    : tally.pointers.join(", ");
+/** Listed pointers stay within this many characters, so one long member name cannot inflate a limitation. */
+const LISTED_POINTER_CHARACTERS = 1024;
+
+/** The pointers that fit the sample in order, then how many of the counted names are not listed. */
+const listedPointers = (tally: ScanTally): string => {
+  const listed: string[] = [];
+  let length = 0;
+  for (const pointer of tally.pointers) {
+    const added = pointer.length + (listed.length > 0 ? 2 : 0);
+    if (length + added > LISTED_POINTER_CHARACTERS) break;
+    length += added;
+    listed.push(pointer);
+  }
+  const unlisted = tally.count - listed.length;
+  if (unlisted === 0) return listed.join(", ");
+  const rest = `${String(unlisted)} ${listed.length > 0 ? "more " : ""}not listed`;
+  return listed.length > 0 ? `${listed.join(", ")}; ${rest}` : rest;
+};
 
 /**
  * The credential-name scan environment-build runs over selected HAR records,
