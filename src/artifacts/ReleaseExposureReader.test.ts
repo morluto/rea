@@ -1757,6 +1757,9 @@ describe("ReleaseExposureReader unexpanded packages", () => {
     const scanned = await inspect(root);
     expect(scanned.pdb).toMatchObject({ failed: 1, paths: [] });
     expect(scanned.limitations.join("\n")).toContain("Delayed.dll");
+    expect(scanned.omitted).toContainEqual(
+      expect.objectContaining({ subject: PACKAGED_NATIVE_IMAGES, count: 1 }),
+    );
   });
 });
 

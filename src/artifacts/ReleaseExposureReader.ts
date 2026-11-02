@@ -1282,8 +1282,11 @@ const examinePackagedBinary = async (
     if (
       windows.state === "signature-needed" ||
       (windows.state === "candidate" && windows.signature === "unobserved")
-    )
+    ) {
+      // The image may be native, so it stays unexamined by the on-disk readers.
+      state.packagedNative += 1;
       notePeNotExamined(state, member.location);
+    }
   }
   if (native !== null) state.packagedNative += 1;
   else await examineProbedText(state, member, probe);
