@@ -98,6 +98,7 @@ export const buildCapturedWebBundleAnalysis = (
     accumulator.recoveredScripts.length > 0 ||
     accumulator.widenedScripts.length > 0 ||
     accumulator.uncertainXhrScripts.length > 0 ||
+    accumulator.uncollectedXhrScripts.length > 0 ||
     unavailable.length > 0 ||
     unavailableAnalyses.length > 0 ||
     sourceMapIncomplete ||
@@ -187,6 +188,7 @@ export const buildCapturedWebBundleAnalysis = (
       recoveredScripts: accumulator.recoveredScripts,
       widenedScripts: accumulator.widenedScripts,
       uncertainXhrScripts: accumulator.uncertainXhrScripts,
+      uncollectedXhrScripts: accumulator.uncollectedXhrScripts,
       unavailableAnalyses,
       sourceMaps,
       omittedScripts,
@@ -223,6 +225,8 @@ const mergeScriptResults = (
       accumulator.widenedScripts.push(result.script_key);
     if (result.uncertain_xhr_identity === true)
       accumulator.uncertainXhrScripts.push(result.script_key);
+    else if (result.uncertain_xhr_identity === undefined)
+      accumulator.uncollectedXhrScripts.push(result.script_key);
     accumulator.edges.push(...result.observations.edges);
     accumulator.routes.push(...result.observations.routes);
     accumulator.endpoints.push(...result.observations.endpoints);
@@ -273,6 +277,7 @@ interface UnknownsInput {
   readonly recoveredScripts: readonly string[];
   readonly widenedScripts: readonly string[];
   readonly uncertainXhrScripts: readonly string[];
+  readonly uncollectedXhrScripts: readonly string[];
   readonly unavailableAnalyses: readonly Extract<
     WebBundleScriptAnalysis,
     { readonly status: "unavailable" }
@@ -284,6 +289,16 @@ interface UnknownsInput {
 }
 
 const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
+  ...(input.uncollectedXhrScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "network_identity",
+          reason:
+            "XHR identity coverage was not collected by the script analyzer",
+          affected_script_keys: [...input.uncollectedXhrScripts],
+        },
+      ]),
   ...(input.uncertainXhrScripts.length === 0
     ? []
     : [

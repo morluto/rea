@@ -1274,6 +1274,26 @@ it("does not mark unrelated open methods as uncertain XHR", () => {
   ).toBe(false);
 });
 
+it("preserves missing historical XHR identity coverage as uncollected", () => {
+  const captured = inspection("fetch('/independent');");
+  const script = captured.scripts.items.find(isIncludedScript);
+  if (script === undefined) throw new Error("Missing included script fixture");
+  const facts = analyzeCapturedWebScript(script);
+  if (facts.status !== "analyzed") throw new Error("Expected analyzed script");
+  const { uncertain_xhr_identity: _omitted, ...historical } = facts;
+  const report = buildCapturedWebBundleAnalysis(
+    captured,
+    { status: "not_requested", requested: 0, processed: 0, items: [] },
+    [historical],
+  );
+  expect(report.completeness.status).toBe("partial");
+  expect(report.unknowns).toContainEqual({
+    dimension: "network_identity",
+    reason: "XHR identity coverage was not collected by the script analyzer",
+    affected_script_keys: [script.script_key],
+  });
+});
+
 describe("per-script web bundle analysis", () => {
   it("keeps parser failures as analyzed outcomes with their own coverage", () => {
     const captured = inspection("function broken( {");
