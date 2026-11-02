@@ -1,8 +1,7 @@
-import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it, onTestFinished } from "vitest";
+import { afterAll, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import {
@@ -16,6 +15,7 @@ import { err, ok } from "../../../src/domain/result.js";
 import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
@@ -82,29 +82,11 @@ const provider = (calls: { count: number }, bodies: typeof BODIES) =>
     return Promise.resolve(ok(ghidraFixtureResult(operation, input)));
   }) satisfies NonNullable<Parameters<typeof connectGhidraMcp>[1]>;
 
-type Validators = ReadonlyMap<string, ValidateFunction>;
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
-/** Advertised schemas are large, so each profile compiles them once per file. */
-const outputValidators = new Map<"full" | "compact", Validators>();
-
-const compileOutputValidators = (
-  tools: readonly {
-    readonly name: string;
-    readonly outputSchema?: object | undefined;
-  }[],
-): Validators => {
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  return new Map(
-    tools.flatMap((tool) => {
-      if (
-        !["batch_decompile", "inspect_analysis_view"].includes(tool.name) ||
-        tool.outputSchema === undefined
-      )
-        return [];
-      return [[tool.name, ajv.compile(tool.outputSchema)] as const];
-    }),
-  );
-};
+/** Replies these tools deliver must validate against what they advertise. */
+const ADVERTISED_OUTPUTS = ["batch_decompile", "inspect_analysis_view"];
 
 const connect = async (profile: "full" | "compact") => {
   const calls = { count: 0 };
@@ -116,13 +98,20 @@ const connect = async (profile: "full" | "compact") => {
         REA_MCP_INPUT_SCHEMA_PROFILE: profile,
         REA_MCP_OUTPUT_SCHEMA_PROFILE: profile,
       },
+      schemaValidator: schemaValidation,
     },
   );
   onTestFinished(() => harness.close());
-  const validators =
-    outputValidators.get(profile) ??
-    compileOutputValidators((await harness.mcp.listTools()).tools);
-  outputValidators.set(profile, validators);
+  const { tools } = await harness.mcp.listTools();
+  const outputSchemas = new Map(
+    ADVERTISED_OUTPUTS.map((name) => {
+      const advertised = tools.find((tool) => tool.name === name)?.outputSchema;
+      if (advertised === undefined)
+        throw new Error(`${name} advertises no output schema`);
+      const schema: Record<string, unknown> = advertised;
+      return [name, schema] as const;
+    }),
+  );
   const reply = async (name: string, args: Record<string, unknown>) =>
     z
       .custom<CallToolResult>()
@@ -130,11 +119,11 @@ const connect = async (profile: "full" | "compact") => {
   const call = async (name: string, args: Record<string, unknown>) => {
     const result = await reply(name, args);
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
-    const validate = validators.get(name);
-    if (validate !== undefined)
+    const schema = outputSchemas.get(name);
+    if (schema !== undefined)
       expect(
-        validate(result.structuredContent),
-        JSON.stringify(validate.errors),
+        schemaValidation.assertions.validate(schema, result.structuredContent),
+        JSON.stringify(schemaValidation.assertions.errors),
       ).toBe(true);
     return { evidence: parseEvidence(result.structuredContent), result };
   };
@@ -450,6 +439,7 @@ it("reads the same rows from a bundle and an Evidence file without a provider", 
       throw new Error("Retained batch views must not open a provider");
     }),
     clientIdentity: { name: "batch-decompile-offline", version: "1.0.0" },
+    schemaValidator: schemaValidation,
   });
   onTestFinished(close);
   const imported = await client.callTool({
