@@ -933,33 +933,55 @@ describe("ReleaseExposureReader mixed maps and sibling paths", () => {
     },
   );
 
-  it("keeps an embedded leaf beside a leaf with malformed mappings", async () => {
-    const root = await createTestTempDirectory("rea-release-malformed-leaf-");
-    const path = join(root, "app.js.map");
-    await writeFile(
-      path,
-      JSON.stringify({
-        version: 3,
-        sections: [
-          {
-            offset: { line: 0, column: 0 },
-            map: JSON.parse(embeddedSourceMap().toString("utf8")) as unknown,
-          },
-          {
-            offset: { line: 1, column: 0 },
-            map: { version: 3, sources: ["b.js"], names: [], mappings: "AA" },
-          },
-        ],
-      }),
-    );
-    const scanned = await inspect(path);
-    expect(scanned.source_maps).toMatchObject({
-      embedded: 1,
-      embedded_paths: [path],
-      unparsed: 1,
-    });
-    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
-  });
+  it.each([
+    {
+      name: "a truncated mapping segment",
+      root: {},
+      second: { offset: { line: 1, column: 0 }, map: malformedLeaf("AA") },
+    },
+    {
+      name: "a schema-invalid mappings string",
+      root: {},
+      second: { offset: { line: 1, column: 0 }, map: malformedLeaf("!") },
+    },
+    {
+      name: "a schema-invalid section offset",
+      root: {},
+      second: { offset: { line: "1" }, map: malformedLeaf("AAAA") },
+    },
+    {
+      name: "a schema-invalid root field",
+      root: { file: 5 },
+      second: { offset: { line: 1, column: 0 }, map: malformedLeaf("AAAA") },
+    },
+  ])(
+    "keeps an embedded leaf beside $name",
+    async ({ root: fields, second }) => {
+      const root = await createTestTempDirectory("rea-release-malformed-leaf-");
+      const path = join(root, "app.js.map");
+      await writeFile(
+        path,
+        JSON.stringify({
+          version: 3,
+          ...fields,
+          sections: [
+            {
+              offset: { line: 0, column: 0 },
+              map: JSON.parse(embeddedSourceMap().toString("utf8")) as unknown,
+            },
+            second,
+          ],
+        }),
+      );
+      const scanned = await inspect(path);
+      expect(scanned.source_maps).toMatchObject({
+        embedded: 1,
+        embedded_paths: [path],
+        unparsed: 1,
+      });
+      expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    },
+  );
 
   it("does not expand sections past the decoder depth budget", async () => {
     const root = await createTestTempDirectory("rea-release-deep-map-");
@@ -2573,6 +2595,13 @@ describe("ReleaseExposureReader member identity", () => {
     const scanned = await inspect(root);
     expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
   });
+});
+
+const malformedLeaf = (mappings: string) => ({
+  version: 3,
+  sources: ["b.js"],
+  names: [],
+  mappings,
 });
 
 const sourceMapSourcesStatus = (scan: ReleaseExposureScan) =>

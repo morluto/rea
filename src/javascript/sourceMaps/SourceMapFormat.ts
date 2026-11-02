@@ -62,6 +62,16 @@ export class SourceMapFormatFailure extends Error {
   }
 }
 
+/** Report schema rejection through the one failure type consumers classify. */
+const parseStructure = <Schema extends z.ZodType>(
+  schema: Schema,
+  value: unknown,
+): z.output<Schema> => {
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  throw new SourceMapFormatFailure("format", parsed.error.message);
+};
+
 /** Raw declaration identity, separate from flattened engine URL identity. */
 export interface SourceMapSourceDeclaration {
   readonly sectionPath: readonly number[];
@@ -139,7 +149,7 @@ const addSections = ({
 }): void => {
   options.check?.();
   consumeRecords(budget, rawSections.length);
-  const sections = z.array(sectionSchema).parse(rawSections);
+  const sections = parseStructure(z.array(sectionSchema), rawSections);
   const embeddedMaps: Extract<
     SourceMapSection,
     { readonly kind: "embedded" }
@@ -266,7 +276,7 @@ const inspectLeaf = (
     node.value === null ||
     Array.isArray(node.value)
   )
-    return leafSchema.parse(node.value);
+    return parseStructure(leafSchema, node.value);
   const rawMap = node.value as Readonly<Record<string, unknown>>;
   const rawSources = rawMap.sources;
   const rawNames = rawMap.names;
@@ -275,7 +285,7 @@ const inspectLeaf = (
   consumeRecords(budget, Array.isArray(rawNames) ? rawNames.length : 0);
   consumeRecords(budget, Array.isArray(rawContents) ? rawContents.length : 0);
   options.check?.();
-  const leaf = leafSchema.parse(node.value);
+  const leaf = parseStructure(leafSchema, node.value);
   const layout = inspectMappingLayout(leaf.mappings, options.check);
   consumeRecords(budget, layout.segments + layout.lines);
   if (
@@ -309,7 +319,7 @@ export const inspectSourceMapValue = (
   readonly leaves: readonly SourceMapLeaf[];
 } => {
   options.check?.();
-  const root = mapHeaderSchema.parse(value);
+  const root = parseStructure(mapHeaderSchema, value);
   const declarations: SourceMapSourceDeclaration[] = [];
   const leaves: SourceMapLeaf[] = [];
   const pending: PendingMap[] = [
