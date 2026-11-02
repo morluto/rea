@@ -13,11 +13,21 @@ import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ArtifactLimitBoundary } from "../../domain/artifactOperationError.js";
 import { jsonParts } from "../../domain/jsonSerialization.js";
+import {
+  BYTE_PRESERVING_CODE_PAGE,
+  RESOURCE_CODE_PAGES,
+  type DelphiFormResource,
+} from "../../domain/native/delphiForm.js";
 import type {
   InspectPeResourcesInput,
   PeResourceIdentity,
   PeResources,
 } from "../../domain/native/peResources.js";
+import {
+  DELPHI_FORM_LIMITATIONS,
+  decodeDelphiFormStream,
+  detectDelphiFormSignature,
+} from "./DelphiFormStream.js";
 import {
   peFailure,
   readPeResourceLayout,
@@ -262,6 +272,12 @@ export const parsePeResources = async (
     resource.payload.sha256 = digest;
   }
   const iconGroups = readIconGroups(bytes, resources, account, ensureCapacity);
+  const delphiForms = readDelphiForms(
+    bytes,
+    resources,
+    account,
+    ensureCapacity,
+  );
   const report: PeResources = {
     artifact,
     format: layout.format,
@@ -277,13 +293,15 @@ export const parsePeResources = async (
     directories,
     resources,
     icon_groups: iconGroups,
+    delphi_forms: delphiForms,
     coverage: {
       status: "complete",
       examined_entries: examined,
       resources: resources.length,
     },
     limitations: [
-      "Static PE32/PE32+ type/name/language resource inventory; payloads other than RT_GROUP_ICON remain opaque.",
+      "Static PE32/PE32+ type/name/language resource inventory; payloads other than RT_GROUP_ICON and Delphi/C++Builder forms (TPF0/TPF1 RT_RCDATA) remain opaque.",
+      ...DELPHI_FORM_LIMITATIONS,
       "Icon candidates are resource-table relationships. Language fallback, image decoding and actual shell/window loading are not observed.",
       "Exact shared byte ranges are retained; non-identical overlapping resource structures or payloads are rejected.",
     ],
@@ -381,4 +399,63 @@ const readIconGroups = (
       account({ resource_index: group.index, images: [] });
       return { resource_index: group.index, images };
     });
+};
+
+/**
+ * Decode Delphi/C++Builder binary forms in RT_RCDATA payloads, the way
+ * `readIconGroups` decodes RT_GROUP_ICON. Payloads without a filer signature
+ * are left out rather than reported as failures.
+ */
+const readDelphiForms = (
+  bytes: Buffer,
+  resources: PeResources["resources"],
+  account: (value: unknown) => void,
+  ensureCapacity: (projectedBytes: number) => void,
+): PeResources["delphi_forms"] => {
+  const forms: DelphiFormResource[] = [];
+  for (const resource of resources) {
+    if (resource.type.kind !== "id" || resource.type.id !== 10) continue;
+    const { offset, bytes: size } = resource.payload.location;
+    const signature = detectDelphiFormSignature(bytes, offset, offset + size);
+    if (signature === null) continue;
+    // The declared resource code page decides the decode when it is known. A
+    // declared page this host cannot label is reported as unsupported rather
+    // than silently decoded as the Delphi 7 ANSI default; only an absent page
+    // falls back to that default.
+    const declaredPage = RESOURCE_CODE_PAGES[resource.code_page];
+    const declared =
+      resource.code_page === 0
+        ? undefined
+        : (declaredPage ?? BYTE_PRESERVING_CODE_PAGE);
+    // The decoder is bounded by its own budgets and the decoded form is
+    // accounted below. Reserving the raw payload size here would reject a valid
+    // form whose output is far smaller than its input.
+    ensureCapacity(1024);
+    const decoded = decodeDelphiFormStream(
+      bytes,
+      offset,
+      offset + size,
+      declared === undefined ? {} : { code_page: declared },
+    );
+    if (decoded === null) continue;
+    const form: DelphiFormResource = {
+      resource_index: resource.index,
+      signature: signature.signature,
+      version: signature.version,
+      signature_location: signature.location,
+      prefix: signature.prefix,
+      declared_code_page: resource.code_page,
+      code_page: decoded.code_page,
+      code_page_source:
+        resource.code_page === 0
+          ? "default"
+          : declaredPage === undefined
+            ? "unsupported"
+            : "resource",
+      root: decoded.root,
+    };
+    account(form);
+    forms.push(form);
+  }
+  return forms;
 };
