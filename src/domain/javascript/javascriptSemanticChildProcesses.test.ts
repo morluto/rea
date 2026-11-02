@@ -261,3 +261,66 @@ it("resolves an unconditional assignment before the read in the same function bo
     })),
   );
 });
+
+it.each([
+  ["a missing on listener", `child.on("exit")`],
+  ["a missing once listener", `child.once("error")`],
+  ["a missing addListener listener", `child.addListener("exit")`],
+  ["a numeric listener", `child.on("exit", 1)`],
+  ["an overflowing numeric listener", `child.on("exit", 1e999)`],
+  ["a string listener", `child.on("exit", "done")`],
+  ["a template-literal listener", 'child.on("exit", `done`)'],
+  ["a boolean listener", `child.on("exit", true)`],
+  ["a null listener", `child.on("exit", null)`],
+  ["a void listener", `child.on("exit", void 0)`],
+  ["a unary listener", `child.on("exit", !0)`],
+  ["a BigInt listener", `child.on("exit", 0n)`],
+  ["a RegExp listener", `child.on("exit", /re/)`],
+  ["an object listener", `child.on("exit", {})`],
+  ["an array listener", `child.on("exit", [])`],
+  ["an unshadowed undefined listener", `child.on("exit", undefined)`],
+  ["an unshadowed NaN listener", `child.once("error", NaN)`],
+  ["an unshadowed Infinity listener", `child.addListener("exit", Infinity)`],
+] as const)("emits no child listener interaction for %s", (_name, call) => {
+  const ir = analyze(`const child = spawn('worker'); ${call};`);
+  expect(ir.childProcessInteractions).toEqual([]);
+});
+
+it.each([
+  ["an arrow listener", `child.on("exit", () => {})`, "on", "exit"],
+  [
+    "a function-expression listener",
+    `child.once("error", function () {})`,
+    "once",
+    "error",
+  ],
+  [
+    "a class-expression listener",
+    `child.addListener("exit", class {})`,
+    "addListener",
+    "exit",
+  ],
+  ["an identifier listener", `child.on("exit", done)`, "on", "exit"],
+  ["a call-result listener", `child.on("exit", makeListener())`, "on", "exit"],
+  ["a spread listener", `child.on("exit", ...listeners)`, "on", "exit"],
+  [
+    "a shadowed undefined parameter",
+    `function register(undefined) { child.on("exit", undefined); }`,
+    "on",
+    "exit",
+  ],
+] as const)(
+  "keeps the child listener interaction for %s",
+  (_name, call, method, eventName) => {
+    const ir = analyze(`const child = spawn('worker'); ${call};`);
+    expect(ir.childProcessInteractions).toMatchObject([
+      {
+        kind: "listener",
+        method,
+        eventName,
+        linkedProcessIds: [ir.childProcessSpawns[0]!.processId],
+        resolution: "complete",
+      },
+    ]);
+  },
+);
