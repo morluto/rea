@@ -208,7 +208,7 @@ export class GetterResultWalker {
     const { binding: origins } = semanticBindingAtRead(
       binding,
       expression,
-      state.parentsByNode,
+      state,
     );
     const aliases: AliasVisit = {
       identity,

@@ -75,7 +75,7 @@ export const resolveElectronBrowserWindowReceiver = (
     if (
       initializer === undefined ||
       initializer.projection.length !== 0 ||
-      !semanticBindingAtRead(binding, receiver, index.bindings.parentsByNode)
+      !semanticBindingAtRead(binding, receiver, index.bindings)
         .hasDefiniteInitializer
     )
       return undefined;

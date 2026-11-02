@@ -225,7 +225,7 @@ const projectedSourceFactsAtRead = (
       readonly retainsOrigin: boolean;
     }
   | undefined => {
-  const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
+  const read = semanticBindingAtRead(binding, reference, state);
   const captured = [
     ...read.binding.initializers,
     ...read.binding.referenceInitializers,

@@ -87,18 +87,27 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
   },
 );
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
+cliTest.for([
+  ["CLI", false],
+  ["stdio MCP", false],
+  ["CLI", true],
+  ["stdio MCP", true],
+] as const)(
   "preserves classic global initialization uncertainty through %s",
-  async (surface, { cli }) => {
+  async ([surface, alias], { cli }) => {
     const root = await createTestTempDirectory(
       "rea-electron-global-initialization-",
     );
+    const activation = alias
+      ? "root.createWindow();"
+      : "globalThis.createWindow();";
     const source = (early: boolean) => `
       const { BrowserWindow } = require("electron");
-      ${early ? "globalThis.createWindow();" : ""}
+      ${alias ? "const root = globalThis;" : ""}
+      ${early ? activation : ""}
       const webPreferences = { nodeIntegration: true };
       function createWindow() { return new BrowserWindow({ webPreferences }); }
-      ${early ? "" : "globalThis.createWindow();"}
+      ${early ? "" : activation}
       createWindow();
       throw new Error("must not execute source");
     `;

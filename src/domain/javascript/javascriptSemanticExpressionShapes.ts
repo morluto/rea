@@ -96,7 +96,7 @@ export const createSemanticExpressionShapeResolver = (
       const initializer = semanticStableInitializer(binding, state);
       if (initializer === undefined || initializer.projection.length > 0)
         return "unknown";
-      const read = semanticBindingAtRead(binding, node, state.parentsByNode);
+      const read = semanticBindingAtRead(binding, node, state);
       if (read.status !== "ordered" || !read.hasDefiniteInitializer)
         return "unknown";
       node = initializer.node;

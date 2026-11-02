@@ -840,6 +840,7 @@ const moduleFunctionFirstRead = (
   declaration: t.FunctionDeclaration,
   body: readonly t.Statement[],
   parents: WeakMap<t.Node, t.Node>,
+  state?: JavaScriptSemanticAnalysisState,
 ): number | null => {
   const cache = initializerPositionCache(parents).moduleFunctionReads;
   let reads = cache.get(body);
@@ -869,6 +870,25 @@ const moduleFunctionFirstRead = (
       firstStatement === undefined ? undefined : parents.get(firstStatement);
     const classicScript =
       t.isProgram(program) && program.sourceType === "script";
+    const globalReceiver = (
+      input: t.Node,
+      seen = new Set<string>(),
+    ): boolean => {
+      const node = unwrapJavaScriptExpression(input).node;
+      if (t.isThisExpression(node)) return true;
+      if (!t.isIdentifier(node)) return false;
+      const binding =
+        state === undefined
+          ? undefined
+          : resolveSemanticBindingState(state, node, node.name);
+      if (binding === undefined)
+        return ["globalThis", "window", "self"].includes(node.name);
+      if (seen.has(binding.bindingId)) return false;
+      seen.add(binding.bindingId);
+      return binding.initializers.some(({ node: value }) =>
+        globalReceiver(value, seen),
+      );
+    };
     const active = new Set<t.Function>();
     for (let index = 0; index < body.length; index++) {
       const statement = body[index];
@@ -881,22 +901,28 @@ const moduleFunctionFirstRead = (
             t.isIdentifier(node) &&
             parent !== null &&
             t.isReferenced(node, parent)
-          )
-            name = node.name;
-          else if (
+          ) {
+            const candidate = functions.get(node.name);
+            const binding =
+              state === undefined
+                ? undefined
+                : resolveSemanticBindingState(state, node, node.name);
+            if (
+              state === undefined ||
+              (candidate != null &&
+                binding?.initializers.some(
+                  ({ node: value }) => value === candidate,
+                ))
+            )
+              name = node.name;
+          } else if (
             classicScript &&
             (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
           ) {
             const receiver = unwrapJavaScriptExpression(node.object).node;
             // Classic scripts expose hoisted functions through the global object.
             // Property names are not referenced identifiers; keep their read timing too.
-            if (
-              t.isThisExpression(receiver) ||
-              (t.isIdentifier(receiver) &&
-                (receiver.name === "globalThis" ||
-                  receiver.name === "window" ||
-                  receiver.name === "self"))
-            )
+            if (globalReceiver(receiver))
               name = semanticStaticPropertyKey(node.property, node.computed);
           }
           if (name === null) return;
@@ -925,8 +951,13 @@ const moduleFunctionFirstRead = (
 export const semanticBindingAtRead = (
   binding: JavaScriptSemanticBindingState,
   read: t.Node,
-  parents: WeakMap<t.Node, t.Node>,
+  context: WeakMap<t.Node, t.Node> | JavaScriptSemanticAnalysisState,
 ): SemanticBindingRead => {
+  const state = "parentsByNode" in context ? context : undefined;
+  const parents =
+    state === undefined
+      ? (context as WeakMap<t.Node, t.Node>)
+      : state.parentsByNode;
   if (
     binding.initializers.length === 0 &&
     binding.referenceInitializers.length === 0
@@ -1050,7 +1081,12 @@ export const semanticBindingAtRead = (
     functionPosition !== null &&
     sourcePosition.body === functionPosition.body &&
     t.isFunctionDeclaration(enclosingFunction)
-      ? moduleFunctionFirstRead(enclosingFunction, sourcePosition.body, parents)
+      ? moduleFunctionFirstRead(
+          enclosingFunction,
+          sourcePosition.body,
+          parents,
+          state,
+        )
       : null;
   const moduleConstInitializedBeforeActivation =
     moduleConstBinding &&
@@ -1415,7 +1451,7 @@ export const semanticBindingHasPriorValueWrite = (
 ): boolean => {
   if (binding.definitions.some(({ kind }) => kind === "function")) return true;
   const writes = state.bindingWrites.get(binding.bindingId) ?? [];
-  const read = semanticBindingAtRead(binding, site, state.parentsByNode);
+  const read = semanticBindingAtRead(binding, site, state);
   const retained =
     read.status === "ordered"
       ? new Set([

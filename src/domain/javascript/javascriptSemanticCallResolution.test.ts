@@ -206,7 +206,7 @@ it.each([
         ) {
           reads++;
           expect(
-            semanticBindingAtRead(binding, node.callee, state.parentsByNode)
+            semanticBindingAtRead(binding, node.callee, state)
               .hasDefiniteInitializer,
           ).toBe(expected);
         }
@@ -411,7 +411,7 @@ it.each(["||=", "??="])(
         ) {
           reads++;
           expect(
-            semanticBindingAtRead(binding, node.callee, state.parentsByNode)
+            semanticBindingAtRead(binding, node.callee, state)
               .hasDefiniteInitializer,
           ).toBe(true);
         }

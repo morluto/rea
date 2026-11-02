@@ -175,11 +175,7 @@ const canonicalWebpackInteropBindings = (
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined) continue;
       if (loaderBindingIds.has(binding.bindingId)) return true;
-      const selected = semanticBindingAtRead(
-        binding,
-        node,
-        state.parentsByNode,
-      ).binding;
+      const selected = semanticBindingAtRead(binding, node, state).binding;
       for (const source of [
         ...selected.initializers,
         ...selected.referenceInitializers,

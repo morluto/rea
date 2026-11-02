@@ -161,11 +161,7 @@ const localAccessorMethods = (
     if (t.isIdentifier(node)) {
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined) continue;
-      const selected = semanticBindingAtRead(
-        binding,
-        node,
-        state.parentsByNode,
-      ).binding;
+      const selected = semanticBindingAtRead(binding, node, state).binding;
       for (const source of [
         ...selected.initializers,
         ...selected.referenceInitializers,

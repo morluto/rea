@@ -452,7 +452,7 @@ export class JavaScriptRouteScan {
             const binding = semanticBindingAtRead(
               declared,
               node,
-              this.index.bindings.parentsByNode,
+              this.index.bindings,
             ).binding;
             for (const initializers of [
               binding.initializers,
@@ -1020,11 +1020,7 @@ export class JavaScriptRouteScan {
       seen.add(node);
       const binding = index.bindingForReferenceAt(node);
       if (binding === undefined) return;
-      const read = semanticBindingAtRead(
-        binding,
-        node,
-        index.bindings.parentsByNode,
-      );
+      const read = semanticBindingAtRead(binding, node, index.bindings);
       if (!read.hasDefiniteInitializer) return;
       const initializer = semanticStableInitializer(
         read.binding,

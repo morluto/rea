@@ -347,6 +347,8 @@ describe("Classic-script global function activation", () => {
     "window.createWindow();",
     'self["createWindow"]();',
     "this.createWindow();",
+    "const root = globalThis; root.createWindow();",
+    "const root = window; const alias = root; alias.createWindow();",
   ])("keeps early global access unresolved: %s", (activation) => {
     const body = (early: boolean) => `
       const { BrowserWindow } = require("electron");
@@ -379,6 +381,24 @@ describe("Classic-script global function activation", () => {
     });
     expect(
       analyzeJavaScriptStaticSource(body(false)).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  });
+
+  it("does not confuse an unrelated parameter with the module function", () => {
+    const source = `
+      const { BrowserWindow } = require("electron");
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      function helper(createWindow) { createWindow(); }
+      createWindow();
+    `;
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
     ).toMatchObject({
       web_preferences_status: "object-literal",
       web_preferences: [
