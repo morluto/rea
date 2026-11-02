@@ -16,6 +16,7 @@ import type { GhidraProviderClientFactory } from "../../../src/ghidra/GhidraProv
 import { GHIDRA_SESSION_CAPABILITIES } from "../../../src/ghidra/GhidraSessionValues.js";
 import type { GhidraSessionInfo } from "../../../src/ghidra/GhidraSessionValues.js";
 import { silentLogger } from "../../../src/logger.js";
+import type { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import {
   ghidraFunctionClassification,
   ghidraFunctionDossier,
@@ -34,6 +35,7 @@ export const connectGhidraMcp = async (
     readonly sessionTarget?: GhidraSessionInfo["target"];
     readonly attestDosTargetSnapshot?: ReturnType<GhidraProviderClientFactory>["attestDosTargetSnapshot"];
     readonly close?: ReturnType<GhidraProviderClientFactory>["close"];
+    readonly delivery?: ToolResultDelivery;
     readonly environment?: Readonly<Record<string, string>>;
     readonly schemaValidator?: ReturnType<typeof createMcpSchemaValidation>;
   } = {},
@@ -85,6 +87,7 @@ export const connectGhidraMcp = async (
         REA_MCP_MAX_INPUT_ELEMENTS: process.env.REA_MCP_MAX_INPUT_ELEMENTS,
         ...fixture.environment,
       },
+      ...(fixture.delivery === undefined ? {} : { delivery: fixture.delivery }),
     },
   });
   try {

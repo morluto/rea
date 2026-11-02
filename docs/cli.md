@@ -1294,6 +1294,18 @@ new file. A publication that has committed can win a later cancellation; the
 after commit, the `cleanup_incomplete` error reports the same file as
 `details.published_path` and `details.bytes`.
 
+When a failure retains a completed observation and no bundle committed,
+`details.source_closure` states what that observation cites. `publication` is
+`not_published`. `records` holds authentic source Evidence this invocation
+captured, within 64 KiB. `omitted` lists up to 64 other identities and
+`omitted_count` the total: `not_captured` means the invocation holds no such
+record, so nothing is shown for it or its ancestors; `not_inlined` means it was
+captured but is not in this response. `complete` is true only when every cited
+record is in `records` or embedded in the observation. If examining the closure
+itself fails, `collection_failure` names the error type and the closure state is
+unknown; the original failure is still returned. Nothing is retained after exit,
+and running the command again is a new observation.
+
 When the reader of piped output closes early, as `rea ... | head` does, the
 CLI stops writing, prints no error and exits `141` (`128 + 13`, the status of a
 SIGPIPE-terminated writer). The operation itself may have completed; only its
