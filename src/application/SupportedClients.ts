@@ -41,6 +41,10 @@ export interface SetupClient {
    * ownership of a registration REA wrote.
    */
   readonly sharedRegistration?: boolean;
+  /** Installation evidence that overrides the shared registration paths. */
+  readonly evidencePath?: string;
+  /** Explicitly shared registration contract; skill ownership stays per client. */
+  readonly registrationGroup?: string;
   /** MSIX package storage that decides which configuration the client reads. */
   readonly msixPackage?: MsixPackageView;
   /** A running client can rewrite its configuration from memory. */
@@ -114,6 +118,12 @@ interface ClientDefinitionBase {
   readonly format: NonNullable<SetupClient["format"]>;
   readonly quitBeforeSetup?: boolean;
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
+  /**
+   * Installation evidence for surfaces whose configuration file is shared
+   * with another client; detection follows this path alone.
+   */
+  readonly evidencePath?: ClientPath;
+  readonly registrationGroup?: string;
   readonly skillPath?: ClientPath;
   readonly configPaths?: (context: ClientPathContext) => readonly string[];
   readonly geminiSettings?: (
@@ -560,6 +570,17 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(env.GEMINI_CLI_HOME || home, ".gemini", "settings.json"),
     markerPath: ({ home, env }: ClientPathContext) =>
       join(env.GEMINI_CLI_HOME || home, ".gemini"),
+    // Antigravity creates the shared .gemini directory for its own config.
+    // Only Gemini CLI's own settings or runtime state establish applicability.
+    discoveryPaths: ({ home, env }: ClientPathContext) => {
+      const root = join(env.GEMINI_CLI_HOME || home, ".gemini");
+      return [
+        join(root, "settings.json"),
+        join(root, "tmp"),
+        env.GEMINI_CLI_TRUSTED_FOLDERS_PATH ||
+          join(root, "trustedFolders.json"),
+      ];
+    },
     skillPath: ({ home, env }: ClientPathContext) =>
       join(env.GEMINI_CLI_HOME || home, ".agents", "skills"),
     format: "json",
@@ -590,9 +611,25 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   {
     name: "antigravity",
     displayName: "Antigravity",
+    evidencePath: [".gemini", "config", "skills"],
+    registrationGroup: "antigravity",
     skillPath: [".gemini", "config", "skills"],
     configPath: [".gemini", "config", "mcp_config.json"],
-    markerPath: [".gemini", "config"],
+    markerPath: [".gemini", "config", "skills"],
+    format: "json",
+  },
+  {
+    // The CLI reads the app's shared MCP file but loads global skills from
+    // its own ~/.gemini/antigravity-cli root, so its skill copy is separate.
+    // Detection follows that root alone: the shared file also belongs to the
+    // IDE surface and must not report a CLI installation.
+    name: "antigravity_cli",
+    displayName: "Antigravity CLI",
+    registrationGroup: "antigravity",
+    skillPath: [".gemini", "antigravity-cli", "skills"],
+    configPath: [".gemini", "config", "mcp_config.json"],
+    markerPath: [".gemini", "antigravity-cli"],
+    evidencePath: [".gemini", "antigravity-cli"],
     format: "json",
   },
   {
@@ -772,18 +809,26 @@ export const clientEvidencePaths = (
   client: Pick<
     SetupClient,
     "configPath" | "configPaths" | "markerPath" | "discoveryPaths"
-  >,
-): readonly string[] => [
-  ...new Set(
-    (
-      client.discoveryPaths ?? [
-        client.configPath,
-        ...(client.configPaths ?? []),
-        client.markerPath,
-      ]
-    ).filter((path): path is string => path !== undefined && path.length > 0),
-  ),
-];
+  > &
+    // A pinned evidence path overrides discovery: shared registration
+    // storage must not report a product whose own root is absent.
+    Pick<SetupClient, "evidencePath">,
+): readonly string[] =>
+  client.evidencePath !== undefined && client.evidencePath.length > 0
+    ? [client.evidencePath]
+    : [
+        ...new Set(
+          (
+            client.discoveryPaths ?? [
+              client.configPath,
+              ...(client.configPaths ?? []),
+              client.markerPath,
+            ]
+          ).filter(
+            (path): path is string => path !== undefined && path.length > 0,
+          ),
+        ),
+      ];
 
 /**
  * Paths where a recognizable REA-owned row proves ownership of a registration
@@ -822,6 +867,27 @@ export const clientSharedRegistrationPaths = (
       ? []
       : [client.zcodeFallbackPath]),
   ]);
+
+export const clientRegistrationKey = (client: SetupClient): string =>
+  JSON.stringify(
+    client.registrationGroup === undefined
+      ? ["client", client.name]
+      : ["shared", client.registrationGroup, client.format, client.configPath],
+  );
+
+/** Group only explicitly shared registrations with the same resolved contract. */
+export const clientRegistrationGroups = (
+  clients: readonly SetupClient[],
+): readonly (readonly SetupClient[])[] => {
+  const groups = new Map<string, SetupClient[]>();
+  for (const client of clients) {
+    const key = clientRegistrationKey(client);
+    const group = groups.get(key);
+    if (group === undefined) groups.set(key, [client]);
+    else group.push(client);
+  }
+  return [...groups.values()];
+};
 
 const resolvePath = (
   path: ClientPath,
@@ -865,10 +931,20 @@ export const supportedClients = (
           configPathError: location.error.message,
         };
       const { configPath, markerPath, msixPackage } = location.value;
+      const evidence =
+        definition.evidencePath === undefined
+          ? undefined
+          : resolvePath(definition.evidencePath, context);
       return {
         name: definition.name,
         displayName: definition.displayName,
         configPath,
+        ...(definition.registrationGroup === undefined
+          ? {}
+          : { registrationGroup: definition.registrationGroup }),
+        ...(evidence !== undefined && evidence.ok
+          ? { evidencePath: evidence.value }
+          : {}),
         ...(definition.geminiSettings === undefined
           ? {}
           : { geminiSettings: definition.geminiSettings(context) }),
