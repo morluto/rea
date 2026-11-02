@@ -48,6 +48,7 @@ export const RELEASE_EXPOSURE_ALLOWANCES = [
   `Local source map targets keep at most ${String(MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES)} bytes of resolved paths. Later targets stay unassessed.`,
   `Source map scans read at most ${String(MAX_RELEASE_EXPOSURE_SOURCE_MAPS)} maps and ${String(MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES)} bytes each. sourcesContent text is counted and then dropped.`,
   `Other files and package members are identified from their first ${String(MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES)} bytes, and those without a NUL byte in that prefix are scanned as text. Up to ${String(MAX_RELEASE_EXPOSURE_PACKAGED_PE_READS)} packaged PE images are read for debug records, ${String(MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES)} bytes each.`,
+  "Packaged ELF, Mach-O, and PE images are read in full and copied to a temporary file to probe for an embedded package. They share one max_file_bytes allowance, and an image that does not fit is not probed.",
   `Go, Rust, and Electron fuse readers run on at most ${String(MAX_RELEASE_EXPOSURE_NATIVE_IMAGES)} native images.`,
 ] as const;
 
@@ -307,7 +308,7 @@ export const auditReleaseExposureInputSchema = z.strictObject({
     .max(MAX_RELEASE_EXPOSURE_FILE_BYTES)
     .default(MAX_RELEASE_EXPOSURE_FILE_BYTES)
     .describe(
-      "Selected-file and on-disk PE read ceiling. Text, source-map, and package members use the smaller allowances in coverage.allowances.",
+      "Selected-file, on-disk PE, and shared packaged-image read ceiling. Text, source-map, and other package members use the smaller allowances in coverage.allowances.",
     ),
 });
 
