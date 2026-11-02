@@ -109,6 +109,8 @@
     "npm-shrinkwrap.json"
   ],
   "scripts": {
+    "jarvis": "node jarvis/src/server.ts",
+    "jarvis:test": "node --test jarvis/test/*.test.ts",
     "release:notes": "node scripts/release-notes.mjs",
     "deps:check": "node scripts/check-dependency-install.mjs",
     "metadata:generate": "node scripts/run-exclusive.mjs artifacts node scripts/generate-package-metadata.mjs",
