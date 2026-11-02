@@ -41,6 +41,23 @@ it("reports opaque global navigation as uncertain through MCP", async () => {
   expect(view.items.length).toBeGreaterThan(0);
 });
 
+it("retains History routes before a later replacement through MCP", async () => {
+  const path = await createTestTempDirectory("rea-history-timing-");
+  await writeFile(
+    join(path, "app.js"),
+    `history.pushState(null, '', '/early'); history.pushState=custom; history.pushState(null, '', '/late');`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toEqual([expect.objectContaining({ path: "/early" })]);
+});
+
 it("recovers History API paths through the public MCP workflow", async () => {
   const path = await createTestTempDirectory("rea-history-routes-");
   await writeFile(

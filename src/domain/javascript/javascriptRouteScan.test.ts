@@ -357,6 +357,61 @@ it("recovers History API URL arguments without mistaking state and title for rou
   ).toBe(false);
 });
 
+it("resolves History API identity at the call site", () => {
+  for (const method of ["pushState", "replaceState"]) {
+    const before = analyze(
+      `history.${method}(null, '', '/early'); history.${method}=custom;`,
+    );
+    expect(before.candidates).toContainEqual(
+      expect.objectContaining({
+        path: "/early",
+        mechanism: "navigation-target",
+      }),
+    );
+    const after = analyze(
+      `history.${method}=custom; history.${method}(null, '', '/late');`,
+    );
+    expect(
+      after.candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+    const conditional = analyze(
+      `if (flag) history.${method}=custom; history.${method}(null, '', '/maybe');`,
+    );
+    expect(
+      conditional.candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+    expect(conditional.unresolved).toContainEqual(
+      expect.objectContaining({ mechanism: "navigation-target" }),
+    );
+    const nested = analyze(
+      `function f(){ history.${method}(null, '', '/nested'); } history.${method}=custom;`,
+    );
+    expect(
+      nested.candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+    expect(nested.unresolved).toContainEqual(
+      expect.objectContaining({ mechanism: "navigation-target" }),
+    );
+    for (const source of [
+      `globalThis = replacement; globalThis.history.${method}(null, '', '/wrong');`,
+      `globalThis.history = replacement; globalThis.history.${method}(null, '', '/wrong');`,
+    ]) {
+      const result = analyze(source);
+      expect(
+        result.candidates.filter(
+          ({ mechanism }) => mechanism === "navigation-target",
+        ),
+      ).toEqual([]);
+    }
+  }
+});
+
 it("recovers direct browser location assignment destinations", () => {
   const facts = analyze(
     `window.location.href = '/checkout?step=1'; location.href = '/account#top';`,

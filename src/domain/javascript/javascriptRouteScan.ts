@@ -157,17 +157,6 @@ const navigationRecognition = (
     ? (name !== "push" && name !== "replace") ||
       navigationReceivers.has(receiver)
     : undefined;
-/** Only the browser History API uses the third argument as its URL. */
-const historyNavigation = (
-  node: t.CallExpression | t.OptionalCallExpression,
-  index: JavaScriptBindingIndex,
-): boolean => {
-  const name = calleeName(node.callee).split(".").at(-1);
-  return (
-    (name === "pushState" || name === "replaceState") &&
-    isUnmodifiedGlobalReference(node.callee, index.bindings, ["history", name])
-  );
-};
 /** Recognize the ambient browser Location.assign without guessing local methods. */
 const locationAssign = (
   node: t.CallExpression | t.OptionalCallExpression,
@@ -314,6 +303,10 @@ export class JavaScriptRouteScan {
   #factBytes: number;
   #workBytes = 0;
   readonly #locationReader: ReturnType<typeof createGlobalReferenceReader>;
+  readonly #historyPushReader: ReturnType<typeof createGlobalReferenceReader>;
+  readonly #historyReplaceReader: ReturnType<
+    typeof createGlobalReferenceReader
+  >;
 
   private constructor(
     private readonly index: JavaScriptBindingIndex,
@@ -322,6 +315,14 @@ export class JavaScriptRouteScan {
   ) {
     this.#locationReader = createGlobalReferenceReader(index.bindings, [
       "location",
+    ]);
+    this.#historyPushReader = createGlobalReferenceReader(index.bindings, [
+      "history",
+      "pushState",
+    ]);
+    this.#historyReplaceReader = createGlobalReferenceReader(index.bindings, [
+      "history",
+      "replaceState",
     ]);
     this.#factBytes = jsonValueByteLength({
       candidates: [],
@@ -340,6 +341,15 @@ export class JavaScriptRouteScan {
       throw new RangeError(
         "Route accounting budget must fit its coverage metadata",
       );
+  }
+
+  #historyStatus(node: t.CallExpression | t.OptionalCallExpression) {
+    const name = calleeName(node.callee).split(".").at(-1);
+    if (name === "pushState")
+      return this.#historyPushReader(node.callee).status;
+    if (name === "replaceState")
+      return this.#historyReplaceReader(node.callee).status;
+    return "unrelated";
   }
 
   /** Establish navigation data ownership before either adapter interprets syntax. */
@@ -376,7 +386,7 @@ export class JavaScriptRouteScan {
             return;
           }
           if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-            if (historyNavigation(node, this.index)) {
+            if (this.#historyStatus(node) === "unmodified") {
               const url = node.arguments[2];
               if (
                 url !== undefined &&
@@ -820,7 +830,20 @@ export class JavaScriptRouteScan {
       );
       return;
     }
-    if (historyNavigation(node, this.index)) {
+    const historyStatus = this.#historyStatus(node);
+    if (historyStatus === "unknown") {
+      for (const argument of node.arguments) {
+        if (!t.isSpreadElement(argument) && !t.isArgumentPlaceholder(argument))
+          this.#ownDynamicValue(argument, true, true, true);
+      }
+      this.#unknown(
+        "navigation-target",
+        node,
+        "The History API identity may have been replaced before this call.",
+      );
+      return;
+    }
+    if (historyStatus === "unmodified") {
       // The state and title are data, not navigation destinations.
       for (const argument of node.arguments.slice(0, 2)) {
         if (t.isSpreadElement(argument) || t.isArgumentPlaceholder(argument))
