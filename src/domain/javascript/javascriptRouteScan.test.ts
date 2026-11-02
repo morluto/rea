@@ -405,21 +405,40 @@ it("retains real browser location.replace and dynamic href uncertainty", () => {
   );
 });
 
-it("reports direct global location assignments as unresolved", () => {
-  const facts = analyze(`window.location = '/direct';`);
+it("recovers direct global location assignment while preserving uncertainty", () => {
+  for (const source of [
+    `window.location = '/direct';`,
+    `location = '/direct';`,
+  ]) {
+    expect(analyze(source).candidates).toContainEqual(
+      expect.objectContaining({
+        mechanism: "navigation-target",
+        path: "/direct",
+      }),
+    );
+  }
+  for (const source of [
+    `window.location = target;`,
+    `window.location = '../relative';`,
+    `window.location = custom; window.location = '/later';`,
+    `window = other; window.location = '/later';`,
+    `if (condition) window.location = custom; window.location = '/later';`,
+    `location.href += '/suffix';`,
+  ])
+    expect(analyze(source).unresolved).toContainEqual(
+      expect.objectContaining({ mechanism: "navigation-target" }),
+    );
+  for (const source of [
+    `window.location = custom; window.location = '/later';`,
+    `window = other; window.location = '/later';`,
+    `if (condition) window.location = custom; window.location = '/later';`,
+  ])
+    expect(
+      analyze(source).candidates.some(({ path }) => path === "/later"),
+    ).toBe(false);
   expect(
-    facts.candidates.filter(
-      ({ mechanism }) => mechanism === "navigation-target",
-    ),
+    analyze(`function f(window){window.location='/local'}`).candidates,
   ).toEqual([]);
-  expect(facts.unresolved).toContainEqual(
-    expect.objectContaining({
-      mechanism: "navigation-target",
-      reason: expect.stringContaining(
-        "Assignment to global location may navigate",
-      ),
-    }),
-  );
 });
 
 it("recovers browser location.assign destinations without trusting local lookalikes", () => {

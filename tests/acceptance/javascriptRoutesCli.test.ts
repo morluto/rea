@@ -73,25 +73,22 @@ it("recovers Location.href paths and excludes shadowed replacements through MCP"
   );
 });
 
-it("reports unresolved direct global location assignment through MCP", async () => {
+it("recovers direct global location assignment through MCP", async () => {
   const path = await createTestTempDirectory("rea-location-direct-");
   await writeFile(join(path, "app.js"), `window.location = '/direct';`);
   const { call } = await connectLocalToolsMcp();
   const response = await call("analyze_javascript_application", {
     input_path: path,
     detail: "summary",
-    view: { kind: "javascript-routes", collection: "unknowns" },
+    view: { kind: "javascript-routes", collection: "routes" },
   });
   expect(response.isError).not.toBe(true);
   const view = routeViewFromEvidence(response.structuredContent);
   expect(view.items).toContainEqual(
     expect.objectContaining({
-      reason: expect.stringContaining(
-        "Assignment to global location may navigate",
-      ),
+      path: "/direct",
     }),
   );
-  expect(view.source_coverage.candidate_enumeration).toBe("partial");
 });
 
 it("recovers Location.assign paths through the public MCP workflow", async () => {

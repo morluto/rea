@@ -13,6 +13,28 @@ import {
 import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
+it("excludes only the caller-selected write from ambient identity reads", () => {
+  const parsed = parseJavaScriptSource(
+    `window.location = first; window.location = second;`,
+    "app.cjs",
+  );
+  if (parsed === null) throw new Error("Expected global-reference fixture");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const read = createGlobalReferenceReader(state, ["location"]);
+  const writes: t.AssignmentExpression[] = [];
+  traverseJavaScriptAst(parsed.program, {
+    enter(node) {
+      if (t.isAssignmentExpression(node)) writes.push(node);
+    },
+  });
+  expect(writes).toHaveLength(2);
+  expect(read(writes[0]!.left, writes[0]).status).toBe("unmodified");
+  expect(read(writes[1]!.left, writes[1]).status).toBe("replacement");
+  expect(read(writes[1]!.left).status).not.toBe("unmodified");
+});
+
 it("keeps wrapper module aliases distinct from global-object module properties", () => {
   const parsed = parseJavaScriptSource(
     `

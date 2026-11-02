@@ -37,6 +37,7 @@ import {
   globalReferenceNamespace,
   isUnmodifiedGlobalReference,
 } from "./javascriptSemanticGlobalReference.js";
+import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
@@ -301,12 +302,16 @@ export class JavaScriptRouteScan {
   #nextRuntime = false;
   #factBytes: number;
   #workBytes = 0;
+  readonly #locationReader: ReturnType<typeof createGlobalReferenceReader>;
 
   private constructor(
     private readonly index: JavaScriptBindingIndex,
     readonly onLegacyRoute?: (fact: LegacyRoute) => void,
     readonly factByteBudget = JAVASCRIPT_STATIC_FACT_BYTES,
   ) {
+    this.#locationReader = createGlobalReferenceReader(index.bindings, [
+      "location",
+    ]);
     this.#factBytes = jsonValueByteLength({
       candidates: [],
       unresolved: [],
@@ -567,16 +572,38 @@ export class JavaScriptRouteScan {
       return;
     }
     if (
-      t.isAssignmentExpression(node, { operator: "=" }) &&
-      globalReferenceNamespace(node.left, this.index.bindings, ["location"]) !==
-        undefined
+      t.isAssignmentExpression(node) &&
+      node.operator !== "=" &&
+      t.isMemberExpression(node.left) &&
+      semanticStaticPropertyName(node.left.property, node.left.computed) ===
+        "href" &&
+      globalReferenceNamespace(node.left.object, this.index.bindings, [
+        "location",
+      ]) !== undefined
     ) {
       this.#ownDynamicValue(node.right, true, true, true);
       this.#unknown(
         "navigation-target",
         node,
-        "Assignment to global location may navigate; the ambient write cannot yet be separated from a replaced location identity.",
+        "Compound location.href assignment depends on the current destination.",
       );
+      return;
+    }
+    if (
+      t.isAssignmentExpression(node, { operator: "=" }) &&
+      globalReferenceNamespace(node.left, this.index.bindings, ["location"]) !==
+        undefined
+    ) {
+      const identity = this.#locationReader(node.left, node);
+      if (identity.status === "unmodified") this.#navigation(node.right);
+      else {
+        this.#ownDynamicValue(node.right, true, true, true);
+        this.#unknown(
+          "navigation-target",
+          node,
+          "Assignment to global location may navigate; its ambient identity is uncertain.",
+        );
+      }
       return;
     }
     if (

@@ -845,11 +845,12 @@ export type GlobalReferenceRead =
 /** Reuse retained write provenance and activation ordering at a selected read.
  * The reader retains only matching effects, refreshing when their owner grows.
  * Missing timing, possibly repeated activations, conditional replacements and
- * parent writes stay unknown. */
+ * parent writes stay unknown. `ignoreWriteAt` excludes only the selected write
+ * site when a caller must classify that write's target before the write occurs. */
 export const createGlobalReferenceReader = (
   state: JavaScriptSemanticAnalysisState,
   path: readonly [string, ...string[]],
-): ((callee: t.Node) => GlobalReferenceRead) => {
+): ((callee: t.Node, ignoreWriteAt?: t.Node) => GlobalReferenceRead) => {
   const selected = ["global", ...path];
   let generation = -1;
   const byNamespace = new Map<
@@ -864,7 +865,7 @@ export const createGlobalReferenceReader = (
     effect.path.every((key, index) =>
       semanticPropertyPathKeyMatches(key, target[index]!),
     );
-  return (callee) => {
+  return (callee, ignoreWriteAt) => {
     const namespace = globalReferenceNamespace(callee, state, path);
     if (namespace === undefined) return { status: "unrelated" };
     if (
@@ -887,7 +888,9 @@ export const createGlobalReferenceReader = (
     }
     if (effects.length === 0) return { status: "unknown" };
     const active = effects.filter(
-      (effect) => semanticEffectTiming(callee, effect.node, state) !== "after",
+      (effect) =>
+        (ignoreWriteAt === undefined || effect.node !== ignoreWriteAt) &&
+        semanticEffectTiming(callee, effect.node, state) !== "after",
     );
     if (active.length === 0) return { status: "unmodified" };
     if (
