@@ -12,14 +12,34 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import * as t from "@babel/types";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import {
+  createGlobalReferenceReader,
+  isUnmodifiedGlobalReference,
+} from "./javascriptSemanticAmbientWrites.js";
+
+const fetchReaders = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  ReturnType<typeof createGlobalReferenceReader>
+>();
+
+export const fetchReferenceStatus = (
+  callee: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): ReturnType<ReturnType<typeof createGlobalReferenceReader>>["status"] => {
+  let reader = fetchReaders.get(bindings);
+  if (reader === undefined) {
+    reader = createGlobalReferenceReader(bindings, ["fetch"]);
+    fetchReaders.set(bindings, reader);
+  }
+  return reader(callee).status;
+};
 
 export const isFetchCall = (
   node: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
 ): boolean =>
   (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-  isUnmodifiedGlobalReference(node.callee, bindings, "fetch");
+  fetchReferenceStatus(node.callee, bindings) === "unmodified";
 
 /** Browser request identity requires an intact intrinsic, not a method spelling. */
 export const isBrowserNetworkRequest = (

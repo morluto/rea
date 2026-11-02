@@ -1,4 +1,5 @@
 import {
+  fetchReferenceStatus,
   isBrowserNetworkRequest,
   isFetchCall,
 } from "./javascriptNetworkRequests.js";
@@ -568,7 +569,16 @@ const inspectEndpointCall = (
   }
   // A local or shadowed function with a familiar network name is not a known
   // browser request API. Do not let the literal fallback turn it into one.
-  if (isNetworkRequestSpelling(name)) return;
+  if (isNetworkRequestSpelling(name)) {
+    // A possibly overwritten ambient fetch can still be the intrinsic at
+    // runtime. Preserve that uncertainty without asserting a network endpoint.
+    if (
+      (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+      fetchReferenceStatus(node.callee, bindings) === "unknown"
+    )
+      context.accumulator.unknownFindings++;
+    return;
+  }
   if (first !== undefined && /(?:^|\.)(?:get|delete)$/u.test(name)) {
     // Apply existing literal exclusions before requesting whole-source alias
     // mutation facts. Inline receivers and unbound names need no such index.
