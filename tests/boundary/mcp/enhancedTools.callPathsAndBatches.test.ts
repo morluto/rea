@@ -8,6 +8,7 @@ import {
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { batchDecompileResultSchema } from "../../../src/domain/native/batchDecompile.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolContracts.js";
 import { NULL_PSEUDOCODE_GUIDANCE } from "../../../src/application/EnhancedTools.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
@@ -722,7 +723,9 @@ describe("enhanced MCP batch answers without pseudocode", () => {
       succeeded: 1,
       failed: 5,
     });
-    const { items } = evidence.normalized_result;
+    const { items } = batchDecompileResultSchema.parse(
+      evidence.normalized_result,
+    );
     // Successful text, a caveat-free null and a typed provider failure carry
     // no item caveats; the batch Evidence aggregates every observation's.
     for (const index of [0, 2, 5])

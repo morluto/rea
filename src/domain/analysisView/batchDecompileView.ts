@@ -394,3 +394,39 @@ export const projectBatchDecompileView = (
     coverage: page.value.coverage,
   });
 };
+
+const deliveredPageSchema = z.looseObject({
+  view: batchDecompileViewRequestSchema,
+  items: z
+    .array(z.looseObject({ index: z.int(), status: z.string() }))
+    .optional(),
+});
+
+/**
+ * The next selection when a delivered page did not fit: fewer rows, then one
+ * body's text pages, which need no export. Other views are refused by kind
+ * first, because delivery asks about every view it returns.
+ */
+export const smallerBatchDecompileSelection = (
+  delivered: unknown,
+): z.input<typeof batchDecompileViewRequestSchema> | undefined => {
+  if (
+    typeof delivered !== "object" ||
+    delivered === null ||
+    !("kind" in delivered) ||
+    delivered.kind !== "batch-decompile"
+  )
+    return undefined;
+  const page = deliveredPageSchema.safeParse(delivered);
+  if (!page.success) return undefined;
+  const { view, items = [] } = page.data;
+  if (view.collection === "pseudocode")
+    return view.limit > 1
+      ? { ...view, limit: Math.floor(view.limit / 2) }
+      : undefined;
+  if (items.length > 1) return { ...view, limit: Math.floor(items.length / 2) };
+  const [row] = items;
+  return row?.status === "ok" && view.include_pseudocode
+    ? { kind: view.kind, collection: "pseudocode", index: row.index }
+    : undefined;
+};
