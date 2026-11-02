@@ -396,6 +396,8 @@ export interface FuseImageFact {
   readonly kind: "unsupported" | "failed" | "report";
   readonly role: "app-bundle" | "native-image";
   readonly path?: string;
+  /** Digest of the file the reader resolved, on a report. */
+  readonly sha256?: string;
   readonly reason?: string;
   readonly implications?: readonly {
     readonly subject: string;
@@ -583,11 +585,13 @@ const fuseCheck = (
       : [],
   );
   const failed = images.some((image) => image.kind === "failed");
+  // A bundle's framework holds its fuses, so an image beside it cannot settle them.
   const hostUnresolved = images.some(
     (image) =>
-      image.kind === "report" &&
-      image.path !== undefined &&
-      owners.electron_host_paths?.includes(image.path) === true &&
+      image.kind !== "failed" &&
+      (image.role === "app-bundle" ||
+        (image.path !== undefined &&
+          owners.electron_host_paths?.includes(image.path) === true)) &&
       !(image.implications ?? []).some((item) => item.subject === spec.subject),
   );
   const partialFuseSample =

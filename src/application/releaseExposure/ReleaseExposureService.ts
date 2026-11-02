@@ -205,7 +205,8 @@ export class ReleaseExposureService {
       ),
     );
     const fuseImages: FuseImageFact[] = [];
-    for (const candidate of prepared.scan.fuse_candidates)
+    for (const candidate of prepared.scan.fuse_candidates) {
+      if (bundleReadCovers(candidate, digests, fuseImages)) continue;
       fuseImages.push(
         await settle(() => this.#fuseImage(candidate, digests, options), {
           kind: "failed",
@@ -214,6 +215,7 @@ export class ReleaseExposureService {
           reason: OWNER_NOT_RUN,
         }),
       );
+    }
     const family = fuseImagesRuleOutElectron(
       desktop.family,
       prepared.scan,
@@ -346,6 +348,7 @@ export class ReleaseExposureService {
       kind: "report",
       role: candidate.role,
       path: candidate.path,
+      sha256: report.data.artifact.sha256,
       implications: fuseImplications(report.data),
     });
   }
@@ -541,6 +544,24 @@ const fuseImageChanged = (
   return digests.size > 0 && ![...digests.values()].includes(sha256);
 };
 
+/**
+ * The bundle read lands on the framework file, which the sample may also list.
+ * The bundle candidate comes first, so that image needs no second read.
+ */
+const bundleReadCovers = (
+  candidate: ReleaseExposureFuseCandidate,
+  digests: ReadonlyMap<string, string>,
+  images: readonly FuseImageFact[],
+): boolean => {
+  const digest = digests.get(candidate.path);
+  return (
+    digest !== undefined &&
+    images.some(
+      (image) => image.role === "app-bundle" && image.sha256 === digest,
+    )
+  );
+};
+
 const imageChanged = (
   image: ReleaseExposureNativeImage,
   sha256: string,
@@ -710,13 +731,16 @@ const limitNativeSample = (
     scan: {
       ...scan,
       native_images: kept,
-      fuse_candidates:
-        scan.target.kind === "app"
-          ? scan.fuse_candidates
-          : kept.map((image) => ({
-              path: image.path,
-              role: "native-image" as const,
-            })),
+      // The bundle read covers one framework file, not the images beside it.
+      fuse_candidates: [
+        ...scan.fuse_candidates.filter(
+          (candidate) => candidate.role === "app-bundle",
+        ),
+        ...kept.map((image) => ({
+          path: image.path,
+          role: "native-image" as const,
+        })),
+      ],
       omitted: [
         ...scan.omitted.filter((item) => item.subject !== "native images"),
         ...(omittedNative > 0

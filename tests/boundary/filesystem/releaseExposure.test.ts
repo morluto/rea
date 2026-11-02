@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { createReleaseExposureService } from "../../../src/composition/releaseExposure.js";
 import { releaseExposureReportSchema } from "../../../src/domain/releaseExposure.js";
+import { thinFuseImage } from "../../fixtures/electron/fuseImage.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("release exposure filesystem boundary", () => {
@@ -129,6 +130,46 @@ describe("release exposure filesystem boundary", () => {
       };
       expect(report.summary.no_exposure_observed_in_assessed_checks).toBe(true);
       expect(report.summary.by_status.not_assessed).toBe(3);
+    } finally {
+      await service.close();
+    }
+  });
+});
+
+describe("release exposure app bundle boundary", () => {
+  it("reports a sidecar's RunAsNode fuse in an app bundle with safe outer fuses", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-app-");
+    const app = join(root, "Sample.app");
+    const framework = join(
+      app,
+      "Contents",
+      "Frameworks",
+      "Electron Framework.framework",
+    );
+    const resources = join(app, "Contents", "Resources");
+    await mkdir(framework, { recursive: true });
+    await mkdir(resources, { recursive: true });
+    const disabled = 0x30;
+    const enabled = 0x31;
+    await writeFile(
+      join(framework, "Electron Framework"),
+      thinFuseImage(Array.from({ length: 6 }, () => disabled)).bytes,
+    );
+    const sidecar = join(resources, "sidecar");
+    await writeFile(
+      sidecar,
+      thinFuseImage([enabled, disabled, disabled, disabled, disabled, disabled])
+        .bytes,
+    );
+    const service = createReleaseExposureService();
+    try {
+      const result = await service.inspect({ path: app });
+      if (!result.ok) throw new Error(result.error.message);
+      const check = releaseExposureReportSchema
+        .parse(result.value.normalized_result)
+        .checks.find((item) => item.id === "electron.run_as_node");
+      expect(check?.status).toBe("exposed");
+      expect(JSON.stringify(check?.locations)).toContain("sidecar");
     } finally {
       await service.close();
     }

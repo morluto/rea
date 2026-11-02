@@ -989,27 +989,29 @@ describe("ReleaseExposureService Electron host identity", () => {
   });
 });
 
-describe("ReleaseExposureService Electron applicability", () => {
-  const appScan = scan({
-    target: {
-      selected_path: "/work/App.app",
-      kind: "app",
-      format: "directory",
-      sha256: null,
+const appScan = scan({
+  target: {
+    selected_path: "/work/App.app",
+    kind: "app",
+    format: "directory",
+    sha256: null,
+  },
+  fuse_candidates: [{ path: "/work/App.app", role: "app-bundle" }],
+});
+
+const frameworkDesktopReport = () => ({
+  ...nativeDesktopReport(),
+  files: [
+    {
+      ...electronDesktopReport().files[0],
+      path: "Contents/Frameworks/Electron Framework.framework/Electron Framework",
+      local_path:
+        "/work/App.app/Contents/Frameworks/Electron Framework.framework/Electron Framework",
     },
-    fuse_candidates: [{ path: "/work/App.app", role: "app-bundle" }],
-  });
-  const frameworkDesktopReport = () => ({
-    ...nativeDesktopReport(),
-    files: [
-      {
-        ...electronDesktopReport().files[0],
-        path: "Contents/Frameworks/Electron Framework.framework/Electron Framework",
-        local_path:
-          "/work/App.app/Contents/Frameworks/Electron Framework.framework/Electron Framework",
-      },
-    ],
-  });
+  ],
+});
+
+describe("ReleaseExposureService Electron applicability", () => {
   const noSentinel = ok(evidence(fuseReport([slice(0, { sentinels: 0 })])));
   const unreadable = err(new AnalysisInputError("inspect_electron_fuses"));
 
@@ -1137,6 +1139,82 @@ describe("ReleaseExposureService Electron applicability", () => {
       );
     },
   );
+});
+
+describe("ReleaseExposureService app bundle with a sidecar", () => {
+  const noSentinel = ok(evidence(fuseReport([slice(0, { sentinels: 0 })])));
+  const unreadable = err(new AnalysisInputError("inspect_electron_fuses"));
+  const FRAMEWORK =
+    "/work/App.app/Contents/Frameworks/Electron Framework.framework/Electron Framework";
+  const SIDECAR = "/work/App.app/Contents/Resources/sidecar";
+  const safe = ok(evidence(fuseReport([slice(0)])));
+  const runAsNodeOn = ok(
+    evidence(
+      fuseReport([slice(0, { state: ELECTRON_FUSE_STATE_BYTES.enabled })]),
+    ),
+  );
+  const bundleWithSidecar = () => {
+    const parts = owners({
+      ...appScan,
+      native_images: [
+        { path: FRAMEWORK, format: "mach-o", sha256: SHA },
+        { path: SIDECAR, format: "mach-o" },
+      ],
+    });
+    parts.desktop.inspect.mockResolvedValue(
+      ok(evidence(frameworkDesktopReport())),
+    );
+    return parts;
+  };
+  const readPaths = (inspect: ReturnType<typeof vi.fn>) =>
+    inspect.mock.calls.map((call) => (call[0] as { path: string }).path);
+
+  it("reports RunAsNode exposed on the sidecar and reads the framework once", async () => {
+    const { service, electronFuses } = bundleWithSidecar();
+    electronFuses.inspect.mockImplementation(async (input) =>
+      (input as { path: string }).path === SIDECAR ? runAsNodeOn : safe,
+    );
+    const check = await runAsNode(service, "/work/App.app");
+    expect(check?.status).toBe("exposed");
+    expect(JSON.stringify(check?.locations)).toContain(SIDECAR);
+    expect(readPaths(electronFuses.inspect)).toEqual([
+      "/work/App.app",
+      SIDECAR,
+    ]);
+  });
+
+  it.each([
+    ["sentinel-free", noSentinel],
+    [
+      "unsupported",
+      err(
+        new AnalysisUnsupportedTargetError(
+          "inspect_electron_fuses",
+          "/work/App.app",
+          "unsupported",
+        ),
+      ),
+    ],
+  ] as const)(
+    "keeps a safe sidecar from standing for an %s framework",
+    async (_, framework) => {
+      const { service, electronFuses } = bundleWithSidecar();
+      electronFuses.inspect.mockImplementation(async (input) =>
+        (input as { path: string }).path === SIDECAR ? safe : framework,
+      );
+      expect((await runAsNode(service, "/work/App.app"))?.status).toBe(
+        "unknown",
+      );
+    },
+  );
+
+  it("keeps safe outer fuses unknown when the sidecar cannot be read", async () => {
+    const { service, electronFuses } = bundleWithSidecar();
+    electronFuses.inspect.mockImplementation(async (input) =>
+      (input as { path: string }).path === SIDECAR ? unreadable : safe,
+    );
+    expect((await runAsNode(service, "/work/App.app"))?.status).toBe("unknown");
+  });
 });
 
 describe("ReleaseExposureService scanners and selected archives", () => {

@@ -612,13 +612,15 @@ const assembleScan = (
         : "file",
     },
     native_images: nativeImages,
-    fuse_candidates:
-      kind === "app"
-        ? [{ path: input.path, role: "app-bundle" }]
-        : nativeImages.map((image) => ({
-            path: image.path,
-            role: "native-image" as const,
-          })),
+    fuse_candidates: [
+      ...(kind === "app"
+        ? [{ path: input.path, role: "app-bundle" as const }]
+        : []),
+      ...nativeImages.map((image) => ({
+        path: image.path,
+        role: "native-image" as const,
+      })),
+    ],
     source_maps: {
       embedded: state.embedded,
       without_sources: state.withoutSources,
