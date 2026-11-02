@@ -30,6 +30,7 @@ type FormatsWithReaders =
   | "ines"
   | "godot-pck"
   | "unityfs"
+  | "unity-web-data"
   | "uimage"
   | "mach-o-universal"
   | "directory"

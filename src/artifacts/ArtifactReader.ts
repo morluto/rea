@@ -197,6 +197,7 @@ export interface ArtifactReader {
     | "ines"
     | "godot-pck"
     | "unityfs"
+    | "unity-web-data"
     | "uimage"
     | "pyinstaller"
     | "dotnet-bundle"

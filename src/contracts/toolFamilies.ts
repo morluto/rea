@@ -18,6 +18,7 @@ import { RIZIN_DEBUG_TOOL_CONTRACTS } from "./rizinDebugToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 import { APK_SIGNATURE_TOOL_CONTRACTS } from "./apkSignature/apkSignatureToolContracts.js";
 import { ERLANG_BEAM_TOOL_CONTRACTS } from "./erlang/beamToolContracts.js";
+import { UNITY_TOOL_CONTRACTS } from "./unity/unityToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
 import { DESKTOP_APPLICATION_TOOL_CONTRACTS } from "./desktopApplicationToolContracts.js";
 import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
@@ -69,6 +70,7 @@ export const TOOL_CONTRACT_GROUPS = {
   ENHANCED_TOOL_CONTRACTS,
   ENVIRONMENT_TOOL_CONTRACTS,
   ERLANG_BEAM_TOOL_CONTRACTS,
+  UNITY_TOOL_CONTRACTS,
   EVM_TOOL_CONTRACTS,
   FIRMWARE_TOOL_CONTRACTS,
   FLUTTER_TOOL_CONTRACTS,
@@ -150,6 +152,7 @@ export const TOOL_FAMILY_DEFINITIONS = [
       ...TOOL_CONTRACT_GROUPS.RUST_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.PYTHON_PYC_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.ERLANG_BEAM_TOOL_CONTRACTS,
+      ...TOOL_CONTRACT_GROUPS.UNITY_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.WASM_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.APK_SIGNATURE_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.SQLITE_TOOL_CONTRACTS,

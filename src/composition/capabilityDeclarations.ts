@@ -50,6 +50,7 @@ import {
 } from "../domain/webTraceProviders.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "../electron/ElectronFuseProviderIdentity.js";
 import { ERLANG_BEAM_PROVIDER_IDENTITY } from "../erlang/ErlangBeamProviderIdentity.js";
+import { UNITY_ASSETS_PROVIDER_IDENTITY } from "../unity/UnityAssetsProviderIdentity.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "../evm/EvmoleProviderIdentity.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
@@ -258,6 +259,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(ERLANG_BEAM_PROVIDER_IDENTITY, {
         group: "ERLANG_BEAM_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  unityAssets: {
+    providers: [
+      providerBinding(UNITY_ASSETS_PROVIDER_IDENTITY, {
+        group: "UNITY_TOOL_CONTRACTS",
       }),
     ],
   },
