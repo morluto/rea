@@ -23,7 +23,16 @@ primary diagnostic when socket cleanup also fails; later policy cleanup retries
 that retained transport and clears cleanup uncertainty only after close succeeds.
 For attached browsers, `block` rejects captures when the selected page or its
 frames are controlled by a service worker or already have a registration,
-including after navigation. Policy checks bracket each artifact capture, including
+including after navigation. Frames with an opaque origin, such as sandboxed
+frames without `allow-same-origin`, can neither be controlled nor hold a
+registration. Chromium gives `about:blank` and `blob:` documents no
+service-worker container, so their registrations are read from the nearest
+parent frame in the same storage partition: the same origin and the same
+`credentialless` state, since credentialless frames use a separate partition.
+When no such parent answers, or a live frame cannot be checked, the capture
+fails with reason `service_worker_state_unknown`
+rather than treating the frame as unregistered; `details.diagnostics.frame_state`
+names which case applied. Policy checks bracket each artifact capture, including
 the final step. If an external worker takes control while artifacts are being
 captured, REA rejects the capture and retains the completed artifacts in
 `details.diagnostics.collected_artifacts`; they do not establish policy-compliant
