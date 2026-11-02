@@ -15,7 +15,6 @@ import { afterEach, expect, it } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import {
-  assertRizinEmptyInferiorInventory,
   parseRizinPtraceRows,
   RizinDebugSessionManager,
 } from "../../../src/rizin/RizinDebugSessionManager.js";
@@ -38,20 +37,6 @@ let directory: string | undefined;
 const managers: Array<{ closeAll(): Promise<void> }> = [];
 const inferiorProcesses: ChildProcess[] = [];
 const ownedProviderProcesses: ProviderProcessHandle[] = [];
-
-it("accepts only ended retained identities for an empty Rizin inventory", async () => {
-  const identity = { pid: "123", startTime: "100" };
-
-  await expect(
-    assertRizinEmptyInferiorInventory([identity], async () => "100"),
-  ).rejects.toThrow("still active");
-  await expect(
-    assertRizinEmptyInferiorInventory([identity], async () => "101"),
-  ).resolves.toBeUndefined();
-  await expect(
-    assertRizinEmptyInferiorInventory([identity], async () => null),
-  ).resolves.toBeUndefined();
-});
 
 it("does not retain an out-of-range PID from a Rizin ptrace row", () => {
   const parsed = parseRizinPtraceRows(

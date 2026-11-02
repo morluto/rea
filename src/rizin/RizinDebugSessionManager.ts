@@ -2379,26 +2379,6 @@ export const assertRizinProcessStartTimeStable = (
     );
 };
 
-/** Reject an empty ptrace inventory while a retained inferior identity is still present. */
-export const assertRizinEmptyInferiorInventory = async (
-  identities: Iterable<OwnedInferiorIdentity>,
-  readStartTime: (
-    pid: string,
-  ) => Promise<string | null> = readLinuxProcessStartTime,
-): Promise<void> => {
-  for (const identity of identities) {
-    const observed = await readStartTime(identity.pid);
-    if (observed === null) continue;
-    if (observed === identity.startTime)
-      throw new Error(
-        `Rizin reported no inferior while identified PID ${identity.pid} is still active.`,
-      );
-    // A different start time proves the original process ended and the PID
-    // now belongs to another process. Do not apply the old target's descriptor
-    // requirements to that new identity.
-  }
-};
-
 const hasUnclaimedRizinFrames = (session: RizinDebugSession): boolean =>
   session.frames.length > 0 ||
   session.bufferedFrameBytes > 0 ||
