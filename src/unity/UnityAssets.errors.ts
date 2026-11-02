@@ -22,3 +22,23 @@ export class UnityAssetsFormatFailure extends Error {
     this.name = "UnityAssetsFormatFailure";
   }
 }
+
+/**
+ * Resource policy for one decoded metadata or object string, checked before
+ * decoding; real paths and names are short.
+ */
+export const UNITY_SERIALIZED_FILE_MAX_STRING_BYTES = 65_536;
+
+export const unityStringLimitFailure = (
+  field: string,
+): UnityAssetsFormatFailure =>
+  new UnityAssetsFormatFailure(
+    "limit",
+    `SerializedFile ${field} is longer than the ${String(UNITY_SERIALIZED_FILE_MAX_STRING_BYTES)}-byte string allowance`,
+    undefined,
+    {
+      name: "The SerializedFile string allowance",
+      maximum: UNITY_SERIALIZED_FILE_MAX_STRING_BYTES,
+      kind: "bytes",
+    },
+  );

@@ -5,7 +5,11 @@ import {
   UNITY_SERIALIZED_FILE_VERSION_MIN,
   type UnityAssets,
 } from "../domain/unity/unityAssets.js";
-import { UnityAssetsFormatFailure } from "./UnityAssets.errors.js";
+import {
+  UNITY_SERIALIZED_FILE_MAX_STRING_BYTES,
+  UnityAssetsFormatFailure,
+  unityStringLimitFailure,
+} from "./UnityAssets.errors.js";
 import {
   atLeast,
   CLASS_GAME_OBJECT,
@@ -40,36 +44,25 @@ const MIN_OBJECT_ROW_BYTES = 20;
  * is admitted by count before allocation rather than by source bytes alone.
  */
 export const UNITY_SERIALIZED_FILE_MAX_OBJECTS = 1_048_576;
+/**
+ * Output policy: each returned asset or root list is one bounded page so a
+ * small file cannot become a huge CLI/MCP response.
+ */
+export const UNITY_ASSETS_MAX_ROWS_PER_LIST = 2_048;
 /** Same policy for the retained type and external tables; real files hold hundreds. */
 export const UNITY_SERIALIZED_FILE_MAX_TABLE_ENTRIES = 65_536;
 
-/** Resource policy for one metadata string; real paths and names are short. */
-export const UNITY_SERIALIZED_FILE_MAX_STRING_BYTES = 65_536;
-
-const limit = (
-  name: string,
-  maximum: number,
-  unit: "entry" | "byte",
-  detail: string,
-) =>
-  new UnityAssetsFormatFailure(
-    "limit",
-    `SerializedFile ${detail}, above the ${String(maximum)}-${unit} ${name}`,
-    undefined,
-    {
-      name: `The SerializedFile ${name}`,
-      maximum,
-      kind: unit === "entry" ? "count" : "bytes",
-    },
-  );
-
 const admitRetained = (count: number, maximum: number, table: string) => {
   if (count > maximum)
-    throw limit(
-      `${table} table allowance`,
-      maximum,
-      "entry",
-      `declares ${String(count)} ${table}`,
+    throw new UnityAssetsFormatFailure(
+      "limit",
+      `SerializedFile declares ${String(count)} ${table}, above the ${String(maximum)}-entry ${table} table allowance`,
+      undefined,
+      {
+        name: `The SerializedFile ${table} table allowance`,
+        maximum,
+        kind: "count",
+      },
     );
   return count;
 };
@@ -137,13 +130,7 @@ class MetadataReader {
       this.cursor + UNITY_SERIALIZED_FILE_MAX_STRING_BYTES + 1,
     );
     const stop = this.bytes.subarray(0, scanEnd).indexOf(0, this.cursor);
-    if (stop < 0 && scanEnd < this.end)
-      throw limit(
-        "metadata string allowance",
-        UNITY_SERIALIZED_FILE_MAX_STRING_BYTES,
-        "byte",
-        `${field} is longer than ${String(UNITY_SERIALIZED_FILE_MAX_STRING_BYTES)} bytes`,
-      );
+    if (stop < 0 && scanEnd < this.end) throw unityStringLimitFailure(field);
     if (stop < 0) throw malformed(`${field} is not NUL-terminated`);
     const at = this.#take(stop - this.cursor + 1, field);
     try {
@@ -483,8 +470,22 @@ const decodeObjects = (
       return null;
     }
   };
+  // Rows past a list's page are neither decoded nor returned; class_counts
+  // keeps the totals.
+  let omitted = 0;
+  const pageFull = (list: readonly unknown[]): boolean => {
+    if (list.length < UNITY_ASSETS_MAX_ROWS_PER_LIST) return false;
+    omitted += 1;
+    return true;
+  };
   for (const row of rows) {
     if (!DECODED_CLASSES.has(row.classId)) continue;
+    if (
+      (row.classId === CLASS_MESH && pageFull(meshes)) ||
+      (row.classId === CLASS_TEXTURE_2D && pageFull(textures)) ||
+      (row.classId === CLASS_MATERIAL && pageFull(materials))
+    )
+      continue;
     if (row.classId === CLASS_MESH) {
       const mesh = attempt(row, decodeMesh);
       meshes.push({
@@ -518,8 +519,15 @@ const decodeObjects = (
         transforms.push({ ...transform, pathId: row.pathId });
     }
   }
-  const roots = transforms
-    .filter(({ father }) => father.file_id === 0 && father.path_id === "0")
+  const rootTransforms = transforms.filter(
+    ({ father }) => father.file_id === 0 && father.path_id === "0",
+  );
+  omitted += Math.max(
+    0,
+    rootTransforms.length - UNITY_ASSETS_MAX_ROWS_PER_LIST,
+  );
+  const roots = rootTransforms
+    .slice(0, UNITY_ASSETS_MAX_ROWS_PER_LIST)
     .map((transform) => {
       const owner =
         transform.gameObject.file_id === 0
@@ -539,12 +547,19 @@ const decodeObjects = (
     "Object fields are decoded from fixed Unity 5.5+ serialization layouts selected by the declared Unity version, not from embedded type trees; MonoBehaviour fields, vertex buffers, texture pixels and shader programs are not decoded.",
     "submesh_vertex_extent is derived from SubMesh vertex ranges; it is not m_VertexData.m_VertexCount.",
     "Root GameObjects are Transforms whose parent is null within this file; PPtrs with a nonzero file_id refer to externals and are not resolved.",
+    `meshes, textures, materials and root_game_objects each return at most ${String(UNITY_ASSETS_MAX_ROWS_PER_LIST)} rows in object-table order; class_counts reports every object.`,
   ];
-  const reason = !decodable
-    ? `Unity version ${JSON.stringify(unityVersion)} is older than 5.5 or unparsable; object fields were not decoded.`
-    : failed > 0
-      ? `${String(failed)} object(s) did not match the expected field layout; their fields are null.`
-      : null;
+  const reasons = [
+    !decodable
+      ? `Unity version ${JSON.stringify(unityVersion)} is older than 5.5 or unparsable; object fields were not decoded.`
+      : failed > 0
+        ? `${String(failed)} object(s) did not match the expected field layout; their fields are null.`
+        : null,
+    omitted > 0
+      ? `${String(omitted)} row(s) beyond the ${String(UNITY_ASSETS_MAX_ROWS_PER_LIST)}-row page per list were omitted.`
+      : null,
+  ].filter((value) => value !== null);
+  const reason = reasons.length === 0 ? null : reasons.join(" ");
   return {
     class_counts: classCounts(rows),
     meshes,

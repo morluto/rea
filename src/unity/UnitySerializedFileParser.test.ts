@@ -2,14 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseUnitySerializedFile,
-  UNITY_SERIALIZED_FILE_MAX_STRING_BYTES,
+  UNITY_ASSETS_MAX_ROWS_PER_LIST,
   UNITY_SERIALIZED_FILE_MAX_TABLE_ENTRIES,
 } from "./UnitySerializedFileParser.js";
-import { UnityAssetsFormatFailure } from "./UnityAssets.errors.js";
+import {
+  UNITY_SERIALIZED_FILE_MAX_STRING_BYTES,
+  UnityAssetsFormatFailure,
+} from "./UnityAssets.errors.js";
 import {
   buildSerializedFile,
   buildUnityWebData,
   unityGameObject,
+  unityMesh,
   unitySceneObjects,
   unityTransform,
 } from "../../tests/fixtures/unity.js";
@@ -250,6 +254,56 @@ it("refuses a metadata string above the byte allowance", () => {
       allowance: expect.objectContaining({ kind: "bytes" }),
     }),
   );
+});
+
+it("refuses an object string above the byte allowance", () => {
+  const bytes = buildSerializedFile({
+    objects: [
+      {
+        pathId: 1n,
+        classId: 1,
+        bytes: unityGameObject(
+          "a".repeat(UNITY_SERIALIZED_FILE_MAX_STRING_BYTES + 1),
+          [],
+        ),
+      },
+    ],
+  });
+  expect(() => parse(bytes)).toThrow(
+    expect.objectContaining({
+      kind: "limit",
+      allowance: expect.objectContaining({ kind: "bytes" }),
+    }),
+  );
+});
+
+it("returns one bounded page per asset list and keeps the totals", () => {
+  const report = parse(
+    buildSerializedFile({
+      objects: Array.from(
+        { length: UNITY_ASSETS_MAX_ROWS_PER_LIST + 1 },
+        (_, index) => ({
+          pathId: BigInt(index + 1),
+          classId: 43,
+          bytes: unityMesh(`SM_${String(index)}`, []),
+        }),
+      ),
+    }),
+  );
+  expect(report.meshes).toHaveLength(UNITY_ASSETS_MAX_ROWS_PER_LIST);
+  expect(report.class_counts).toEqual([
+    {
+      class_id: 43,
+      class_name: "Mesh",
+      objects: UNITY_ASSETS_MAX_ROWS_PER_LIST + 1,
+    },
+  ]);
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    decoded_objects: UNITY_ASSETS_MAX_ROWS_PER_LIST,
+    undecoded_objects: 0,
+  });
+  expect(report.coverage.reason).toContain("1 row(s) beyond");
 });
 
 it("bounds-checks the trailing reference-type table", () => {

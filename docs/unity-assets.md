@@ -78,8 +78,13 @@ this includes a data offset inside the header or metadata, duplicate path IDs,
 overlapping object spans and a reference-type table or user string that does
 not fit. A file declaring more than 1,048,576 objects, or more than 65,536
 types or externals, is refused as a fixed count allowance before the table is
-retained. A metadata string longer than 64 KiB is refused as a fixed byte
-allowance before it is decoded.
+retained. A metadata or object string longer than 64 KiB is refused as a fixed
+byte allowance before it is decoded.
+
+`meshes`, `textures`, `materials` and `root_game_objects` each return at most
+2,048 rows in object-table order. Rows past that page are not decoded, coverage
+becomes `partial` with the omitted count in `coverage.reason`, and
+`class_counts` still reports every object.
 
 `submesh_vertex_extent` is the largest `firstVertex + vertexCount` across a
 mesh's submeshes. It is derived from submesh ranges and is not

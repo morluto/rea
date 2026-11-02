@@ -1,4 +1,8 @@
 import type { UnityPPtr } from "../domain/unity/unityAssets.js";
+import {
+  UNITY_SERIALIZED_FILE_MAX_STRING_BYTES,
+  unityStringLimitFailure,
+} from "./UnityAssets.errors.js";
 
 /** Common Unity ClassIDReference values; other IDs keep a null name. */
 export const UNITY_CLASS_NAMES: Readonly<Record<number, string>> = {
@@ -148,6 +152,9 @@ export class UnityObjectReader {
 
   string(): string {
     const length = this.count(1);
+    // A fitting but oversized name is a resource limit, not a layout mismatch.
+    if (length > UNITY_SERIALIZED_FILE_MAX_STRING_BYTES)
+      throw unityStringLimitFailure("object string");
     const at = this.#take(length);
     let value: string;
     try {
