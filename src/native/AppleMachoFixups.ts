@@ -1164,10 +1164,6 @@ const readBindStream = (
         bind(1n, BigInt(byte & 0x0f) * 8n);
         break;
       case 0xc0: {
-        if (range.stream === "lazy")
-          throw new RangeError(
-            "Lazy bind streams do not support repeated bind opcodes",
-          );
         const count = uleb(bytes, cursor, end);
         const skip = uleb(bytes, cursor, end);
         bind(count, skip);

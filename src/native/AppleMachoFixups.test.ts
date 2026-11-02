@@ -1646,6 +1646,43 @@ describe("legacy pointer fixup streams", () => {
   });
 });
 
+describe("lazy bind streams", () => {
+  it("decodes repeated binds in a lazy-bind entry", () => {
+    const lazy = Buffer.from([
+      0x71, // SET_SEGMENT_AND_OFFSET segment 1 + 8
+      0x08,
+      0x40,
+      ...Buffer.from("_shared\0"),
+      0xc0, // DO_BIND_ULEB_TIMES_SKIPPING_ULEB twice, without a skip
+      0x02,
+      0x00,
+      0x00, // DONE
+    ]);
+    const fixups = parsePointerFixups(
+      lazy,
+      {
+        chained: null,
+        binds: [{ offset: 0, size: lazy.length, stream: "lazy" }],
+        rebases: [],
+        dylibs: [],
+      },
+      SEGMENTS,
+      BASE,
+    );
+
+    expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
+      kind: "bind",
+      symbol: "_shared",
+      binding_source: "lazy",
+    });
+    expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
+      kind: "bind",
+      symbol: "_shared",
+      binding_source: "lazy",
+    });
+  });
+});
+
 describe("legacy bind operand decoding", () => {
   const addendStream = (addend: readonly number[]) =>
     Buffer.from([
