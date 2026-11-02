@@ -121,7 +121,7 @@ export class ReleaseExposureService {
       });
     } catch (cause) {
       return err(
-        owned.cancelled ??
+        owned.stopped ??
           new AnalysisOutputError(
             RELEASE_EXPOSURE_OPERATION,
             "Release exposure report did not match its schema.",
@@ -157,22 +157,15 @@ export class ReleaseExposureService {
         ],
       },
     );
-    if (owned.cancelled !== undefined)
-      return err(
-        // An owner's own partial is one image, not this audit's report.
-        owned.cancelled.partialObservation === undefined
-          ? owned.cancelled.retainPartialObservation(evidence)
-          : new AnalysisCancelledError(RELEASE_EXPOSURE_OPERATION, {
-              cause: owned.cancelled.cause,
-              partialObservation: evidence,
-            }),
-      );
+    if (owned.stopped !== undefined)
+      return err(withAuditPartial(owned.stopped, evidence));
     return completeProviderEvidence(evidence, options?.signal);
   }
 
   /**
-   * Run each owner in order. After cancellation the remaining owners do not
-   * run, and their facts stay failed so those checks report unknown.
+   * Run each owner in order. After cancellation or unfinished cleanup the
+   * remaining owners do not run, and their facts stay failed so those checks
+   * report unknown.
    */
   async #owners(
     scan: ReleaseExposureScan,
@@ -242,7 +235,7 @@ export class ReleaseExposureService {
         go_images: goImages,
         rust_images: rustImages,
       },
-      cancelled: stopped.error,
+      stopped: stopped.error,
     };
   }
 
@@ -265,8 +258,7 @@ export class ReleaseExposureService {
         options,
       );
       if (!result.ok) {
-        if (result.error instanceof AnalysisCancelledError)
-          return err(result.error);
+        if (stopsAudit(result.error)) return err(result.error);
         return ok({
           family: "unknown",
           reason: result.error.message,
@@ -275,7 +267,8 @@ export class ReleaseExposureService {
       }
       return ok(desktopFamily(result.value, scan.target.kind));
     } catch (cause) {
-      if (cause instanceof AnalysisCancelledError) return err(cause);
+      if (cause instanceof AnalysisError && stopsAudit(cause))
+        return err(cause);
       return ok({
         family: "unknown",
         reason: cause instanceof Error ? cause.message : String(cause),
@@ -296,7 +289,8 @@ export class ReleaseExposureService {
         options,
       );
     } catch (cause) {
-      if (cause instanceof AnalysisCancelledError) return err(cause);
+      if (cause instanceof AnalysisError && stopsAudit(cause))
+        return err(cause);
       return ok({
         kind: "failed",
         role: candidate.role,
@@ -305,8 +299,7 @@ export class ReleaseExposureService {
       });
     }
     if (!result.ok) {
-      if (result.error instanceof AnalysisCancelledError)
-        return err(result.error);
+      if (stopsAudit(result.error)) return err(result.error);
       if (result.error instanceof AnalysisUnsupportedTargetError)
         return ok({
           kind: "unsupported",
@@ -428,15 +421,15 @@ export class ReleaseExposureService {
     try {
       const result = await run();
       if (!result.ok) {
-        if (result.error instanceof AnalysisCancelledError)
-          return err(result.error);
+        if (stopsAudit(result.error)) return err(result.error);
         if (result.error instanceof AnalysisUnsupportedTargetError)
           return ok({ kind: "unsupported", path });
         return ok(failedMetadata(result.error.message, path));
       }
       return ok({ ...present(result.value), path });
     } catch (cause) {
-      if (cause instanceof AnalysisCancelledError) return err(cause);
+      if (cause instanceof AnalysisError && stopsAudit(cause))
+        return err(cause);
       return ok(
         failedMetadata(
           cause instanceof Error ? cause.message : String(cause),
@@ -448,15 +441,36 @@ export class ReleaseExposureService {
 }
 
 const OWNER_NOT_RUN =
-  "The audit was cancelled before this reader ran. Its checks are unknown.";
+  "The audit was cancelled or stopped on unfinished cleanup before this reader ran. Its checks are unknown.";
 const IMAGE_CHANGED =
   "The file changed after inventory, so its findings were not attached.";
 
 interface OwnerOutcome {
   readonly scan: ReleaseExposureScan;
   readonly facts: Omit<ReleaseExposureOwnerFacts, "credential_markers">;
-  readonly cancelled: AnalysisError | undefined;
+  readonly stopped: AnalysisError | undefined;
 }
+
+/** A failure that ends the audit instead of staying on one check. */
+const stopsAudit = (error: AnalysisError): boolean =>
+  error instanceof AnalysisCancelledError || error.cleanupIncomplete;
+
+/**
+ * Attach this audit's report, which replaces an owner's own partial for one
+ * image. An error with unfinished cleanup is kept, so its owner can resolve it.
+ */
+const withAuditPartial = (
+  error: AnalysisError,
+  report: Evidence,
+): AnalysisError => {
+  if (error.partialObservation !== undefined && !error.cleanupIncomplete)
+    return new AnalysisCancelledError(RELEASE_EXPOSURE_OPERATION, {
+      cause: error.cause,
+      partialObservation: report,
+    });
+  error.partialObservation = report;
+  return error;
+};
 
 /** Combine owner close failures without losing typed cleanup ownership. */
 const ownerCloseFailure = (

@@ -325,6 +325,100 @@ describe("ReleaseExposureService cancellation partials", () => {
   });
 });
 
+describe("ReleaseExposureService unfinished owner cleanup", () => {
+  const unfinished = (operation: string) =>
+    new ProviderCleanupError(
+      "rea-owner",
+      ["/work/app/descriptor"],
+      { reason: "EPERM" },
+      { operation },
+    );
+  const audit = async (result: Awaited<ReturnType<OwnerInspect>>) => {
+    if (result.ok) throw new Error("Expected a failed audit.");
+    return releaseExposureReportSchema.parse(
+      (result.error.partialObservation as Evidence).normalized_result,
+    );
+  };
+
+  it("returns a Go failure with the partial audit and runs no later owner", async () => {
+    const { service, goBinaries, rustBinaries } = owners(
+      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
+    );
+    const failure = unfinished("inspect_go_binary");
+    goBinaries.inspect.mockResolvedValue(err(failure));
+    const result = await service.inspect({ path: "/work/app" });
+    expect(result).toMatchObject({ ok: false, error: failure });
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(rustBinaries.inspect).not.toHaveBeenCalled();
+    const report = await audit(result);
+    expect(
+      report.checks.find((check) => check.id === "rust.dependency_metadata")
+        ?.status,
+    ).toBe("unknown");
+  });
+
+  it("replaces an owner's partial without losing its cleanup", async () => {
+    const { service, goBinaries } = owners(
+      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
+    );
+    const failure = unfinished("inspect_go_binary");
+    failure.retainPartialObservation(evidence({ owner: "go" }));
+    goBinaries.inspect.mockResolvedValue(err(failure));
+    const result = await service.inspect({ path: "/work/app" });
+    expect(result).toMatchObject({ ok: false, error: failure });
+    expect((await audit(result)).limitations).toEqual(
+      expect.arrayContaining([expect.stringContaining("unfinished cleanup")]),
+    );
+  });
+
+  it("returns a thrown Rust failure with the partial audit", async () => {
+    const { service, rustBinaries } = owners(
+      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
+    );
+    const failure = unfinished("inspect_rust_binary");
+    rustBinaries.inspect.mockRejectedValue(failure);
+    const result = await service.inspect({ path: "/work/app" });
+    expect(result).toMatchObject({ ok: false, error: failure });
+    await audit(result);
+  });
+
+  it("returns a desktop failure with the partial audit", async () => {
+    const { service, desktop, goBinaries } = owners(
+      scan({
+        target: {
+          selected_path: "/work/app",
+          kind: "directory",
+          format: "directory",
+          sha256: null,
+        },
+        subject: { path: "/work/app", sha256: SHA, format: "directory" },
+        native_images: [{ path: "/work/app/app", format: "elf" }],
+      }),
+    );
+    const failure = unfinished("inspect_desktop_application");
+    desktop.inspect.mockResolvedValue(err(failure));
+    const result = await service.inspect({ path: "/work/app" });
+    expect(result).toMatchObject({ ok: false, error: failure });
+    expect(goBinaries.inspect).not.toHaveBeenCalled();
+    await audit(result);
+  });
+
+  it("returns a fuse failure with the partial audit", async () => {
+    const { service, electronFuses, goBinaries } = owners(
+      scan({
+        fuse_candidates: [{ role: "native-image", path: "/work/app/app" }],
+        native_images: [{ path: "/work/app/app", format: "elf" }],
+      }),
+    );
+    const failure = unfinished("inspect_electron_fuses");
+    electronFuses.inspect.mockResolvedValue(err(failure));
+    const result = await service.inspect({ path: "/work/app" });
+    expect(result).toMatchObject({ ok: false, error: failure });
+    expect(goBinaries.inspect).not.toHaveBeenCalled();
+    await audit(result);
+  });
+});
+
 const CHANGED = "cd".repeat(32);
 
 describe("ReleaseExposureService image identity", () => {
