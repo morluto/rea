@@ -85,6 +85,69 @@ export async function verifyGhidraTailBoundaries({
     });
     assert.equal(local.relationship_coverage.status, "complete");
     await call("close_binary");
+    // A conditional branch can transfer out of a function without being a
+    // Ghidra call reference. This fixed assembly is currently qualified only
+    // for Darwin ARM64; the C fixture above remains the cross-platform check.
+    if (process.platform === "darwin" && process.arch === "arm64") {
+      const conditionalSource = fileURLToPath(
+        new URL(
+          "../../tests/conformance/ghidra/tail-conditional-arm64-darwin.S",
+          import.meta.url,
+        ),
+      );
+      const conditionalBinary = join(directory, "conditional-tail");
+      await promisify(execFile)(
+        process.env.REA_CC ?? "cc",
+        [conditionalSource, "-o", conditionalBinary],
+        { env, timeout: 30000 },
+      );
+      await call("open_binary", {
+        path: conditionalBinary,
+        provider_id: "ghidra",
+      });
+      const conditionalNames = await call("list_names");
+      const main = conditionalNames.find(({ value }) => value === "_main");
+      const conditionalLeaf = conditionalNames.find(
+        ({ value }) => value === "_rea_conditional_tail_leaf",
+      );
+      assert.ok(main, "Missing conditional-tail entry");
+      assert.ok(conditionalLeaf, "Missing conditional-tail target");
+      const conditional = await evidence("analyze_function", {
+        procedure: main.address,
+        detail: "complete",
+      });
+      assert.ok(
+        conditional.normalized_result.assembly.some((line) =>
+          /\bb\.eq\b/u.test(line),
+        ),
+        "Conditional fixture must contain the decoded branch",
+      );
+      assert.ok(
+        conditional.normalized_result.procedure.body.ranges.every(
+          ({ start, end }) =>
+            BigInt(conditionalLeaf.address) < BigInt(start) ||
+            BigInt(conditionalLeaf.address) > BigInt(end),
+        ),
+        "Conditional destination must be outside the entry function body",
+      );
+      if (
+        !conditional.normalized_result.callees.some(
+          ({ address }) => address === conditionalLeaf.address,
+        )
+      ) {
+        assert.equal(conditional.relationship_coverage.status, "partial");
+        assert.ok(
+          conditional.relationship_coverage.limited_directions.includes(
+            "callees",
+          ),
+        );
+        assert.match(
+          conditional.relationship_coverage.limitations.join("\n"),
+          /conditional jump\(s\) outside this function/u,
+        );
+      }
+      await call("close_binary");
+    }
     await call("open_binary", { path: target.path, provider_id: "ghidra" });
   } finally {
     await rm(directory, { recursive: true, force: true });

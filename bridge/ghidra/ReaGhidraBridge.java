@@ -3640,6 +3640,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 " unconditional jump(s) outside this function without an established callee; whether they are tail calls remains unknown.");
             if (!directions.contains(new com.google.gson.JsonPrimitive("callees"))) directions.add("callees");
         }
+        if (calls != null && calls.unrepresentedConditionalExternalJumps() > 0) {
+            limitations.add("Ghidra decoded " + calls.unrepresentedConditionalExternalJumps() +
+                " conditional jump(s) outside this function without an established callee; whether they transfer to another function remains unknown.");
+            if (!directions.contains(new com.google.gson.JsonPrimitive("callees"))) directions.add("callees");
+        }
         if (!limitations.isEmpty()) {
             coverage.addProperty("status", "partial");
             coverage.add("limitations", limitations);
@@ -3696,7 +3701,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         for (Instruction instruction : instructions) {
             boundary.observe(instruction);
             if (instruction.getFlowType().isJump() && instruction.getFlowType().isComputed() &&
-                !instruction.getFlowType().isConditional() && instruction.getFlows().length == 0) {
+                instruction.getFlows().length == 0) {
                 boundary.unresolvedComputedJumps++;
             }
             if (instruction.getFlowType().isJump() && !instruction.getFlowType().isConditional()) {
@@ -3704,6 +3709,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     if (!function.getBody().contains(target) &&
                         (returnedCallees == null || !returnedCallees.contains(functionAtOrContaining(target)))) {
                         boundary.unrepresentedExternalJumps++;
+                        break;
+                    }
+                }
+            }
+            if (instruction.getFlowType().isJump() && instruction.getFlowType().isConditional()) {
+                for (Address target : instruction.getFlows()) {
+                    if (!function.getBody().contains(target) &&
+                        (returnedCallees == null || !returnedCallees.contains(functionAtOrContaining(target)))) {
+                        boundary.unrepresentedConditionalExternalJumps++;
                         break;
                     }
                 }
@@ -3723,7 +3737,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         return new CallBoundaryObservation(boundary.values(),
             returnedCallees == null ? null : calls.unrepresented, calls.unresolvedCalls(),
-            boundary.unresolvedComputedJumps, boundary.unrepresentedExternalJumps);
+            boundary.unresolvedComputedJumps, boundary.unrepresentedExternalJumps,
+            boundary.unrepresentedConditionalExternalJumps);
     }
 
     private final class FunctionBoundaryLimitations {
@@ -3731,6 +3746,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         private final List<String> limitations = new ArrayList<>();
         private int unresolvedComputedJumps;
         private int unrepresentedExternalJumps;
+        private int unrepresentedConditionalExternalJumps;
         private Instruction beforePrevious;
         private Instruction previous;
 
@@ -5175,7 +5191,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private record AddressNameFailure(String reason, AddressNameConflict conflict) {}
     private record FunctionEntry(Function function, InventoryItem item) {}
     private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage, boolean decompilerFailed) {}
-    private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls, int unresolvedComputedJumps, int unrepresentedExternalJumps) {}
+    private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls, int unresolvedComputedJumps, int unrepresentedExternalJumps, int unrepresentedConditionalExternalJumps) {}
     private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}
     private record SwiftLiteralLayout(
         String representation,
