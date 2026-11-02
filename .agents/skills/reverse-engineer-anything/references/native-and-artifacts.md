@@ -320,6 +320,12 @@ names, the native API record, and value-flow summaries. Pseudocode offsets and l
 code units; use the returned `next_offset` for continuation. Provider limitations
 and unavailable facts remain explicit; the complete parent Evidence is retained.
 
+For large pseudocode, collect a separate `analyze_function` dossier by symbol or
+provider-returned address and use its retained parent with
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 4000}`. This is a
+new observation, not a page of earlier `procedure_pseudo_code` Evidence. Choose a
+smaller limit if the response exceeds the client or transport budget.
+
 `inspect_macho` on a large framework returns megabytes of imports and exports.
 Select `detail: "summary"` for slice identity, UUID and per-collection counts,
 then page rows with `view: {kind: "macho", facet: "exports", offset: 0, limit: 64}`
