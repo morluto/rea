@@ -553,6 +553,14 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "json",
   },
   {
+    name: "codebuddy",
+    displayName: "CodeBuddy",
+    skillPath: [".codebuddy", "skills"],
+    configPath: [".codebuddy", "mcp.json"],
+    markerPath: [".codebuddy"],
+    format: "json",
+  },
+  {
     name: "gemini_cli",
     displayName: "Gemini CLI",
     geminiSettings,

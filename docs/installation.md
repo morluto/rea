@@ -622,6 +622,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Claude Desktop     | `claude_desktop` |
 | Codex              | `codex`          |
 | Cursor             | `cursor`         |
+| CodeBuddy          | `codebuddy`      |
 | Gemini CLI         | `gemini_cli`     |
 | Windsurf           | `windsurf`       |
 | Devin              | `devin`          |
