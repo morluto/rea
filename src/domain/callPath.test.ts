@@ -180,6 +180,7 @@ describe("call path reconstruction", () => {
     expect(
       result.paths.map((path) => path.nodes.map(({ address }) => address)),
     ).toEqual([["0x1000", "0x2000", "0x4000"]]);
+    expect(result.paths[0]?.edges).toHaveLength(2);
     expect(
       result.paths[0]?.edges.every((edge) => edge.evidence_links.length > 0),
     ).toBe(true);

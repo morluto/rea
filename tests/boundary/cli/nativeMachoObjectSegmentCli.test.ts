@@ -32,7 +32,10 @@ describe.skipIf(process.platform !== "darwin")(
         });
         expect(result.exitCode, result.stdout + result.stderr).toBe(0);
         const inspected = evidenceSchema.parse(result.json).normalized_result;
-        expect(inspected.load_commands.items[0]?.fields.segname).toBe("");
+        const segment = inspected.load_commands.items.find(
+          ({ kind }) => kind === "LC_SEGMENT_64" || kind === "LC_SEGMENT",
+        );
+        expect(segment?.fields["segname #1"]).toBe("");
         expect(inspected.segments).toMatchObject({
           items: [
             {

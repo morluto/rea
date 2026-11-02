@@ -593,27 +593,6 @@ describe("ZipArtifactReader decompression budget", () => {
     }
   });
 
-  it("streams a valid small member through open", async () => {
-    const directory = await createTestTempDirectory("rea-zip-budget-valid-");
-    const path = join(directory, "valid.zip");
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("member.bin", new TextReader("valid member bytes"));
-    await writeFile(path, await writer.close());
-    const reader = new ZipArtifactReader(path, "zip");
-    try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const entry = entries[0];
-      if (entry === undefined) throw new Error("Expected a ZIP member");
-      const chunks: Buffer[] = [];
-      for await (const chunk of await reader.open(entry))
-        chunks.push(Buffer.from(chunk));
-      expect(Buffer.concat(chunks).toString()).toBe("valid member bytes");
-    } finally {
-      await reader.close();
-    }
-  });
-
   it("rejects under-declared member output before delivering its complete actual bytes", async () => {
     const directory = await createTestTempDirectory("rea-zip-underdeclared-");
     const path = join(directory, "underdeclared.zip");

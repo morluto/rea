@@ -56,6 +56,7 @@ let catalog;
 let patternCount = 0;
 let skillRequested = false;
 let skillLoaded = false;
+let expectedSkillBody;
 let evidenceSeen = false;
 let finalSeen = false;
 let artifactDigest;
@@ -169,11 +170,34 @@ await withVerifierCleanup(async () => {
         const toolMessages = (body.messages ?? []).filter(
           (message) => message.role === "tool",
         );
-        const serialized = JSON.stringify(toolMessages);
-        skillLoaded ||=
-          serialized.includes(
-            '<skill_content name=\\"reverse-engineer-anything\\">',
-          ) && serialized.includes(dirname(skillPath));
+        skillLoaded ||= toolMessages.some((message) => {
+          if (
+            typeof message.content !== "string" ||
+            expectedSkillBody === undefined
+          )
+            return false;
+          const open =
+            '<skill_content name="reverse-engineer-anything">\n<skill_resources>\n';
+          const start = message.content.indexOf(open);
+          if (start < 0) return false;
+          const resourcesStart = start + open.length;
+          const instructions = `\n</skill_resources>\n\n<skill_instructions>\n${expectedSkillBody}\n</skill_instructions>\n</skill_content>`;
+          const resourcesEnd = message.content.indexOf(
+            instructions,
+            resourcesStart,
+          );
+          if (resourcesEnd < 0) return false;
+          const expectedPath = dirname(skillPath)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;");
+          const resources = message.content.slice(resourcesStart, resourcesEnd);
+          return (
+            !resources.includes("</skill_content>") &&
+            !resources.includes("</skill_resources>") &&
+            resources.includes(expectedPath)
+          );
+        });
         for (const message of toolMessages) {
           const found = findClientResult(
             message.content,
@@ -281,11 +305,15 @@ await withVerifierCleanup(async () => {
     const configured = await readFile(configPath, "utf8");
     assert.deepEqual(withoutRea(configured), withoutRea(original));
     assert(configured.includes("!!js process.cwd()"));
-    assert(
-      (await readFile(skillPath, "utf8")).includes(
-        "name: reverse-engineer-anything",
-      ),
+    const installedSkill = await readFile(skillPath, "utf8");
+    assert(installedSkill.includes("name: reverse-engineer-anything"));
+    const frontmatter = /^---\r?\n[\s\S]*?^---(?:\r?\n|$)/mu.exec(
+      installedSkill,
     );
+    assert(frontmatter, "Installed skill must have its authored frontmatter");
+    expectedSkillBody = installedSkill.slice(frontmatter[0].length).trim();
+    assert(expectedSkillBody.length > 0);
+
     lifecycle.push("setup");
     const repeated = await runRea(
       ["setup", "--client", "dsh", "--yes"],

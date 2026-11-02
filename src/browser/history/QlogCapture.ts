@@ -14,7 +14,7 @@ import {
   capturePointer,
   isCaptureCredentialHeader,
 } from "./CaptureRedaction.js";
-import { QLOG_CAPTURE_PROVIDER_IDENTITY } from "./CaptureRelease.js";
+import { QLOG_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 
 const MAX_VARINT = (1n << 62n) - 1n;
 type Projection = Pick<

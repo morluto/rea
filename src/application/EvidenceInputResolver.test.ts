@@ -28,6 +28,7 @@ describe("exact Evidence input resolution", () => {
       expect(projected.remediation.action).toContain(
         "complete inline Evidence",
       );
+      expect(projected.details).not.toHaveProperty("reference_scope");
     }
   });
 

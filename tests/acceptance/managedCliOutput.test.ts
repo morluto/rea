@@ -8,7 +8,7 @@ import { JSON_LINES_SELECTION_REMEDIATION } from "../../src/cli/jsonLines.js";
 import { elf, thinMach } from "../../src/domain/binaryTarget.fixture.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest } from "../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 
 cliTest(
   "managed CLI preserves malformed prefix evidence without a complete CIL fingerprint",
@@ -79,7 +79,7 @@ cliTest(
           ilBody: Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]),
         }),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-managed-members", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -464,7 +464,7 @@ cliTest(
       });
       const path = join(root, `virtual-${virtualSectionSize}.dll`);
       await writeFile(path, bytes);
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-managed-members", path, "--json"],
       });
       expect(result.exitCode).toBe(0);
@@ -565,7 +565,9 @@ cliTest(
       "inspect-managed-members",
       "inspect-managed-native-boundaries",
     ]) {
-      const result = await cli.run({ arguments: [command, path, "--json"] });
+      const result = await runFileCli(cli, {
+        arguments: [command, path, "--json"],
+      });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
         code: "invalid_request",
@@ -598,7 +600,9 @@ cliTest(
         "inspect-managed-members",
         "inspect-managed-native-boundaries",
       ]) {
-        const result = await cli.run({ arguments: [command, path, "--json"] });
+        const result = await runFileCli(cli, {
+          arguments: [command, path, "--json"],
+        });
         expect(result.exitCode).not.toBe(0);
         expect(result.json).toMatchObject({
           code: "unsupported_target",

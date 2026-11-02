@@ -11,7 +11,7 @@ import {
   hopperLoaderArgsForTarget,
   resolveHopperAnalysisProfile,
 } from "../../../../src/hopper/HopperAnalysisProfile.js";
-import { HOPPER_PROVIDER_IDENTITY } from "../../../../src/hopper/HopperProviderCapabilities.js";
+import { HOPPER_PROVIDER_IDENTITY } from "../../../../src/hopper/HopperProviderMetadata.js";
 
 let inspectionResources = createInspectionResources();
 let directory: string | undefined;

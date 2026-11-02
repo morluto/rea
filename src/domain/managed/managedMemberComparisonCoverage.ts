@@ -191,6 +191,14 @@ export const comparisonLimitations = (
     "Methods pair within one declared type and name by exact CIL/signature, then signature, then structural shape; only then may exact CIL/signature or structural shape alone remap across declared types or names, never taking a member whose own declared type and name remain unpaired on the other side or whose declaring type is unresolved. Names alone are never a matching basis.",
     "Fields pair by declared type, name, and signature, then remap by exact decoded signature alone under the same rule; an undecoded signature is compared only for an exact signature match, and an unmatched member with one stays unknown.",
   ];
+  if (
+    [left, right].some((report) =>
+      report.fields.some((field) => field.constant != null),
+    )
+  )
+    limitations.push(
+      "Field Constant-table defaults are not compared; field matching and change detection cover names, flags and signatures only.",
+    );
   const namesTypes = (result: ManagedMemberInspection) =>
     result.methods.some(
       ({ signature }) =>

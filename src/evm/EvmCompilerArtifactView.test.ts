@@ -68,6 +68,7 @@ const compilerParent = (object?: string): AnalysisViewParent => {
   };
   return {
     evidenceId: "ev_" + "b".repeat(64),
+    predicateType: "rea.analysis",
     operation: "inspect_evm_interface",
     parameters: {
       path: report.artifact.path,

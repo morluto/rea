@@ -1,11 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { describe, expect, onTestFinished } from "vitest";
+import { describe, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -61,7 +60,7 @@ const encodingFixture = () => {
       valid: false,
     },
   ];
-  return { utf16, cases };
+  return cases;
 };
 
 describe.skipIf(process.platform !== "darwin")(
@@ -81,21 +80,40 @@ describe.skipIf(process.platform !== "darwin")(
           join(contents, "MacOS", "App"),
         ]);
         expect(compiled.exitCode, compiled.stderr).toBe(0);
-        const { utf16, cases } = encodingFixture();
+        const cases = encodingFixture();
+        const { call } = await connectLocalToolsMcp({
+          PATH: "/usr/bin:/bin",
+        });
+        const cliFailureReasons: Readonly<Record<string, string>> = {
+          "declaration mismatch":
+            "XML encoding declaration disagrees with its bytes",
+          "truncated UTF-16":
+            "XML text bytes are invalid for the detected encoding",
+          "malformed UTF-8 executable":
+            "XML text bytes are invalid for the detected encoding",
+        };
         for (const { name, bytes, valid } of cases) {
           await writeFile(join(contents, "Info.plist"), bytes);
-          const result = await cli.run({
-            arguments: ["inspect-plist", app, "--json"],
-            environment: {
-              REA_LOG_LEVEL: "silent",
-              REA_ANALYSIS_PROVIDER: "auto",
-            },
-          });
-          expect(
-            result.exitCode,
-            `${name}: ${result.stdout}\n${result.stderr}`,
-          ).toBe(valid ? 0 : 1);
-          if (valid)
+          const opened = await call("open_binary", { path: app });
+          if (valid) {
+            expect(
+              opened.isError,
+              `${name}: ${JSON.stringify(opened)}`,
+            ).not.toBe(true);
+            expect(opened.structuredContent, name).toMatchObject({
+              result: {
+                path: join(contents, "MacOS", "App"),
+                format: "mach-o",
+              },
+            });
+            const result = await cli.run({
+              arguments: ["inspect-plist", app, "--json"],
+              environment: { REA_LOG_LEVEL: "silent" },
+            });
+            expect(
+              result.exitCode,
+              `${name}: ${result.stdout}\n${result.stderr}`,
+            ).toBe(0);
             expect(result.json).toMatchObject({
               normalized_result: {
                 value: {
@@ -105,83 +123,53 @@ describe.skipIf(process.platform !== "darwin")(
                 bundle: { executable: "App" },
               },
             });
-          else
-            expect(result.json).toMatchObject({
-              error: "Analysis failed",
-              details: {
-                path: join(contents, "Info.plist"),
-                reason: expect.stringContaining(
-                  "app Info.plist is malformed, unsupported, or lacks CFBundleExecutable",
-                ),
+            const inspected = await call("inspect_plist", {});
+            expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+            expect(inspected.structuredContent).toMatchObject({
+              normalized_result: {
+                value: {
+                  CFBundleExecutable: "App",
+                  CFBundleIdentifier: "dev.rea.encoding",
+                },
               },
             });
-        }
-        const transport = new StdioClientTransport({
-          command: process.execPath,
-          args: [resolve("scripts/rea.mjs"), "mcp"],
-          env: {
-            PATH: process.env.PATH ?? "",
-            REA_LOG_LEVEL: "silent",
-            REA_ANALYSIS_PROVIDER: "auto",
-          },
-          stderr: "pipe",
-        });
-        const client = new Client({
-          name: "bundle-encoding-parity",
-          version: "1",
-        });
-        onTestFinished(async () => {
-          try {
-            await client.close();
-          } finally {
-            await transport.close();
+            const closed = await call("close_binary", {});
+            expect(closed.isError, JSON.stringify(closed)).not.toBe(true);
+          } else {
+            expect(opened.isError, name).toBe(true);
+            expect(parseMcpToolError(opened), name).toMatchObject({
+              error: {
+                details: {
+                  path: join(contents, "Info.plist"),
+                  reason: expect.stringContaining(
+                    "app Info.plist is malformed, unsupported, or lacks CFBundleExecutable",
+                  ),
+                },
+              },
+            });
+            const cliFailureReason = cliFailureReasons[name];
+            if (cliFailureReason !== undefined) {
+              const result = await cli.run({
+                arguments: ["inspect-plist", app, "--json"],
+                environment: { REA_LOG_LEVEL: "silent" },
+              });
+              expect(result.exitCode, result.stdout + result.stderr).toBe(1);
+              expect(result.json).toMatchObject({
+                code: "capability_unavailable",
+                details: {
+                  provider_id: "native-macos",
+                  operation: "inspect_plist",
+                  reason: expect.stringContaining(join(contents, "Info.plist")),
+                },
+              });
+              expect(result.json).toMatchObject({
+                details: {
+                  reason: expect.stringContaining(cliFailureReason),
+                },
+              });
+            }
           }
-        });
-        await client.connect(transport);
-        await writeFile(
-          join(contents, "Info.plist"),
-          Buffer.concat([
-            Buffer.from([0xfe, 0xff]),
-            Buffer.from(utf16).swap16(),
-          ]),
-        );
-        const opened = await client.callTool({
-          name: "open_binary",
-          arguments: { path: app },
-        });
-        expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-        const inspected = await client.callTool({
-          name: "inspect_plist",
-          arguments: {},
-        });
-        expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
-        expect(inspected.structuredContent).toMatchObject({
-          normalized_result: {
-            value: {
-              CFBundleExecutable: "App",
-              CFBundleIdentifier: "dev.rea.encoding",
-            },
-          },
-        });
-        await writeFile(
-          join(contents, "Info.plist"),
-          Buffer.concat([Buffer.from([0xff, 0xfe]), utf16.subarray(0, -1)]),
-        );
-        const invalid = await client.callTool({
-          name: "open_binary",
-          arguments: { path: app },
-        });
-        expect(invalid.isError).toBe(true);
-        expect(parseMcpToolError(invalid)).toMatchObject({
-          error: {
-            details: {
-              path: join(contents, "Info.plist"),
-              reason: expect.stringContaining(
-                "app Info.plist is malformed, unsupported, or lacks CFBundleExecutable",
-              ),
-            },
-          },
-        });
+        }
       },
       45_000,
     );

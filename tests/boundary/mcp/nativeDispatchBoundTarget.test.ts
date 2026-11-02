@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { nativeDispatchMetadataResultSchema } from "../../../src/domain/native/objcSwiftMetadata.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { localToolsMcpEnvironment } from "../../fixtures/localToolsMcp.js";
 import { objcRecordBudgetMacho } from "../../fixtures/objcRecordBudgetMacho.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -40,7 +41,7 @@ const inspectReplacements = async (replacements: readonly Replacement[]) => {
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
     cwd: process.cwd(),
-    env,
+    env: localToolsMcpEnvironment(env),
     stderr: "pipe",
   });
   let stderr = "";
@@ -65,7 +66,7 @@ const inspectReplacements = async (replacements: readonly Replacement[]) => {
       name: "open_binary",
       arguments: { path },
     });
-    expect(opened.isError).not.toBe(true);
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
     const control = await successfulRead();
     for (const replacement of replacements) {
       await rm(path, { recursive: true, force: true });

@@ -22,7 +22,11 @@ import {
   safetensorsFixture,
 } from "../fixtures/model/model.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, createSharedMcpSession } from "../support/cli/cliFixture.js";
+import {
+  cliTest,
+  createSharedMcpSession,
+  runFileCli,
+} from "../support/cli/cliFixture.js";
 
 // Model queries are target-free; share immutable registration and schema setup.
 // Portable export keeps its separate post-CLI connection below.
@@ -109,7 +113,7 @@ cliTest(
       });
       const bytes = Buffer.concat([fixture.bytes, Buffer.alloc(16)]);
       await writeFile(path, bytes);
-      const cliResult = await cli.run({
+      const cliResult = await runFileCli(cli, {
         arguments: [
           "inspect-model-artifact",
           path,
@@ -361,7 +365,7 @@ cliTest(
         tensors,
       });
       await writeFile(path, fixture.bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-model-artifact",
           path,
@@ -990,7 +994,7 @@ cliTest(
     ] as const) {
       const path = join(root, name);
       await writeFile(path, bytes);
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "inspect-model-artifact",
           path,
@@ -1038,7 +1042,7 @@ cliTest(
         Buffer.alloc(0),
       ).bytes,
     );
-    const mapCli = await cli.run({
+    const mapCli = await runFileCli(cli, {
       arguments: [
         "inspect-model-artifact",
         mapPath,
@@ -1075,7 +1079,7 @@ cliTest(
         safetensorsFixture(`{"__metadata__":${numeric}}`, Buffer.alloc(0))
           .bytes,
       );
-      const malformedCli = await cli.run({
+      const malformedCli = await runFileCli(cli, {
         arguments: ["inspect-model-artifact", malformedPath, "--json"],
       });
       expect(malformedCli.exitCode).toBe(1);

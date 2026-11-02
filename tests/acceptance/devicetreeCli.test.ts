@@ -66,7 +66,15 @@ cliTest(
       result.json,
     ).normalized_result;
     if (!("references" in report)) throw new Error("Expected complete report");
-    expect(report.references).toMatchObject([{ phandle: 3, target: null }]);
+    expect(report.references).toMatchObject([
+      { source: "/consumer", phandle: 3, target: null },
+    ]);
+    expect(report.nodes[1]?.properties[0]).toMatchObject({
+      name: "phandle",
+      bytes: 0,
+      hex: "",
+      derived: { cells: null },
+    });
     expect(report.limitations).toContain(
       "phandle at /target is not a single cell; this node's reference identity remains unresolved.",
     );
@@ -99,7 +107,28 @@ cliTest(
       kind: "summary",
       summary: { unresolved_reference_count: 1 },
     });
-    expect(await readFile(output, "utf8")).toContain('"nodes"');
+    const bundle = z
+      .object({ records: z.array(z.unknown()).length(1) })
+      .parse(JSON.parse(await readFile(output, "utf8")));
+    const retained = toolContract("inspect_devicetree").outputSchema.parse(
+      bundle.records[0],
+    ).normalized_result;
+    if (!("nodes" in retained)) throw new Error("Expected complete evidence");
+    expect(retained.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "/serial@1000",
+          properties: expect.arrayContaining([
+            expect.objectContaining({
+              name: "reg",
+              derived: expect.objectContaining({
+                reg: [{ address: "0x1000", size: "0x100" }],
+              }),
+            }),
+          ]),
+        }),
+      ]),
+    );
   },
 );
 for (const [name, build, flags, code] of [

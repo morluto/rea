@@ -225,6 +225,7 @@ const projectResolvedAnalysisView = (
   const projected = projection.project({
     evidenceId: parent.evidence_id,
     operation: parent.operation,
+    predicateType: parent.predicate_type,
     provider: parent.provider,
     analysisProfile: parent.analysis_profile,
     authority: parent.authority,
@@ -416,8 +417,10 @@ const createAnalysisViewEvidence = (
       result,
       rawResult: null,
       confidence:
+        // A projection never strengthens its parent: inferred facts stay inferred.
         // Grouping is whole-capture, so any templated group or parameter makes the result inferred;
         // entity types and identity in an extracted state, and the coverage summarizing it, always are.
+        parent.confidence === "inferred" ||
         result.kind === "environment-state" ||
         result.kind === "environment-coverage" ||
         ((result.kind === "api-surface" ||

@@ -419,6 +419,8 @@ describe("Ghidra language override profile", () => {
     });
     expect(parameters).not.toHaveProperty("language_selection");
     expect(ghidraProfileLanguageOverride(parameters)).toBeUndefined();
+    expect(automatic.value.profile?.digest).toEqual(expect.any(String));
+    expect(configured.value.profile?.digest).toEqual(expect.any(String));
     expect(automatic.value.profile?.digest).not.toBe(
       configured.value.profile?.digest,
     );

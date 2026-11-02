@@ -510,7 +510,7 @@ try {
       );
       const { GHIDRA_OPERATIONS } = await import(
         pathToFileURL(
-          join(packageRoot, "dist/ghidra/GhidraProviderCapabilities.js"),
+          join(packageRoot, "dist/ghidra/GhidraProviderMetadata.js"),
         )
       );
       const expected = GHIDRA_OPERATIONS.filter(

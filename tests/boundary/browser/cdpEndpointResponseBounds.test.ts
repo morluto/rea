@@ -2,6 +2,8 @@ import { createServer } from "node:http";
 import type { RequestListener, Server } from "node:http";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   discoverCdpEndpoint,
@@ -41,10 +43,7 @@ describe("CDP discovery response UTF-8", () => {
       malformed[malformed.indexOf("target-slot")] =
         field === "title" ? 0xff : 0xc3;
       let sendMalformed = true;
-      let responseClosed: (() => void) | undefined;
-      const closed = new Promise<void>((resolve) => {
-        responseClosed = resolve;
-      });
+      let responseClosed = false;
       const server = await startServer((request, response) => {
         if (request.url === "/json/version") {
           response.end(
@@ -58,7 +57,10 @@ describe("CDP discovery response UTF-8", () => {
             }),
           );
         } else if (request.url === "/json/list") {
-          if (sendMalformed) response.once("close", () => responseClosed?.());
+          if (sendMalformed)
+            response.once("close", () => {
+              responseClosed = true;
+            });
           response.end(sendMalformed ? malformed : valid);
         } else {
           response.writeHead(404).end();
@@ -72,7 +74,7 @@ describe("CDP discovery response UTF-8", () => {
         operation: "list_browser_targets",
         reason: "invalid_endpoint_response",
       });
-      await closed;
+      await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
       sendMalformed = false;
       await expect(
         discoverCdpEndpoint(server.url.href, "list_browser_targets"),
@@ -127,12 +129,11 @@ describe("CDP discovery response bounds", () => {
   });
 
   it("rejects and closes an oversized chunked response without parsing a prefix", async () => {
-    let responseClosed: (() => void) | undefined;
-    const closed = new Promise<void>((resolve) => {
-      responseClosed = resolve;
-    });
+    let responseClosed = false;
     const server = await startServer((_request, response) => {
-      response.once("close", () => responseClosed?.());
+      response.once("close", () => {
+        responseClosed = true;
+      });
       response.write(JSON.stringify("x".repeat(15)));
     });
 
@@ -145,47 +146,56 @@ describe("CDP discovery response bounds", () => {
       _tag: "BrowserObservationError",
       reason: "payload_limit",
     });
-    await closed;
+    await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
   });
 
   it("ends a response that exceeds the total elapsed deadline", async () => {
-    let responseClosed: (() => void) | undefined;
+    let responseClosed = false;
     let requestStarted: (() => void) | undefined;
-    const closed = new Promise<void>((resolve) => {
-      responseClosed = resolve;
-    });
     const started = new Promise<void>((resolve) => {
       requestStarted = resolve;
     });
     const server = await startServer((_request, response) => {
-      response.once("close", () => responseClosed?.());
+      response.once("close", () => {
+        responseClosed = true;
+      });
       requestStarted?.();
     });
-    const pending = readCdpJson(server.url, "list_browser_targets", undefined, {
-      bytes: 16,
-      timeoutMs: 50,
-    });
-    const timeoutAssertion = expect(pending).rejects.toMatchObject({
-      _tag: "BrowserObservationError",
-      reason: "timeout",
-    });
-    await started;
-
-    await timeoutAssertion;
-    await closed;
+    const controller = new AbortController();
+    const pending = readCdpJson(
+      server.url,
+      "list_browser_targets",
+      controller.signal,
+      {
+        bytes: 16,
+        timeoutMs: 50,
+      },
+    );
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(started, pending, "CDP request");
+      await expect(pending).rejects.toMatchObject({
+        _tag: "BrowserObservationError",
+        reason: "timeout",
+      });
+      await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
+    }, [
+      () => controller.abort(),
+      async () => {
+        await pending.catch(() => undefined);
+      },
+    ]);
   });
 
   it("preserves caller cancellation and closes the response", async () => {
-    let responseClosed: (() => void) | undefined;
+    let responseClosed = false;
     let requestStarted: (() => void) | undefined;
-    const closed = new Promise<void>((resolve) => {
-      responseClosed = resolve;
-    });
     const started = new Promise<void>((resolve) => {
       requestStarted = resolve;
     });
     const server = await startServer((_request, response) => {
-      response.once("close", () => responseClosed?.());
+      response.once("close", () => {
+        responseClosed = true;
+      });
       requestStarted?.();
     });
     const controller = new AbortController();
@@ -198,23 +208,28 @@ describe("CDP discovery response bounds", () => {
         timeoutMs: 1_000,
       },
     );
-    await started;
-    controller.abort();
-
-    await expect(pending).rejects.toMatchObject({
-      _tag: "AnalysisCancelledError",
-      operation: "list_browser_targets",
-    });
-    await closed;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(started, pending, "CDP request");
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({
+        _tag: "AnalysisCancelledError",
+        operation: "list_browser_targets",
+      });
+      await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
+    }, [
+      () => controller.abort(),
+      async () => {
+        await pending.catch(() => undefined);
+      },
+    ]);
   });
 
   it("destroys an unsuccessful HTTP response", async () => {
-    let responseClosed: (() => void) | undefined;
-    const closed = new Promise<void>((resolve) => {
-      responseClosed = resolve;
-    });
+    let responseClosed = false;
     const server = await startServer((_request, response) => {
-      response.once("close", () => responseClosed?.());
+      response.once("close", () => {
+        responseClosed = true;
+      });
       response.writeHead(503).flushHeaders();
     });
 
@@ -227,7 +242,7 @@ describe("CDP discovery response bounds", () => {
       _tag: "BrowserObservationError",
       reason: "invalid_endpoint_response",
     });
-    await closed;
+    await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
   });
 });
 

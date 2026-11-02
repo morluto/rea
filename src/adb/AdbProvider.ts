@@ -1,3 +1,4 @@
+import { ADB_PROVIDER_IDENTITY } from "./AdbProviderIdentity.js";
 import {
   absoluteCallerPath,
   appendCallerPath,
@@ -151,13 +152,6 @@ import {
   listAdbDevicesOperation,
   type AdbCommandContext,
 } from "./AdbDeviceOperations.js";
-
-/** Stable identity for the ADB device-acquisition provider. */
-export const ADB_PROVIDER_IDENTITY = {
-  id: "adb",
-  name: "Android Debug Bridge",
-  version: null,
-} as const;
 
 const SHELL_TIMEOUT_MS = 30_000;
 const PACKAGE_LIST_TIMEOUT_MS = 60_000;

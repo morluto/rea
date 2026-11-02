@@ -170,10 +170,10 @@ it.each(["switch", "restart"] as const)(
         source: { kind: "retained-evidence", evidence_id: applicationId },
         view: { kind: "page", collection: "modules", offset: 0, limit: 10 },
       });
+      const beforeClose = bundleResult(await call("get_evidence_bundle"));
       await call("close_binary");
       const closed = bundleResult(await call("get_evidence_bundle"));
-      expect(closed.records).toEqual([]);
-      expect(closed.unknowns).toEqual([]);
+      expect(closed).toEqual(beforeClose);
     } finally {
       cleanupAllowed = true;
       await client.close();
