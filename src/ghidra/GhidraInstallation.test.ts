@@ -1488,14 +1488,128 @@ describe("Ghidra native decompiler compatibility", () => {
     );
     expect(result.status).toBe("unavailable");
     if (result.status !== "unavailable") return;
-    expect(
-      result.checks.find(({ name }) => name === "native_decompiler"),
-    ).toMatchObject({
+    const check = result.checks.find(
+      ({ name }) => name === "native_decompiler",
+    );
+    expect(check).toMatchObject({
       status: "failed",
       detail: expect.stringMatching(
         /reports elf x86_64, but darwin\/arm64 requires mach-o arm64/u,
       ),
-      remediation: expect.stringContaining("os/mac_arm_64/decompile"),
+      remediation: `REA selects ${MAC_DECOMPILER} (os/ takes precedence over build/os/), but it is not built for mach-o arm64. Remove it or replace it with an executable built for mach-o arm64. To build one with Ghidra's buildNatives task instead, remove it first so REA selects build/os/mac_arm_64/decompile. REA does not build or install native tools.`,
+    });
+    // A fresh build/os output cannot displace the selected os/ executable, so
+    // building must not be offered as the fix on its own.
+    const remediation = check?.status === "failed" ? check.remediation : "";
+    expect(remediation).not.toContain("Official Ghidra release");
+    expect(remediation).not.toContain("build it once");
+  });
+});
+
+describe("Ghidra native decompiler remediation", () => {
+  it.each([
+    {
+      platform: "darwin" as const,
+      architecture: "arm64" as const,
+      osArch: "aarch64",
+      osName: "Mac OS X",
+      directory: "mac_arm_64",
+    },
+    {
+      platform: "darwin" as const,
+      architecture: "x64" as const,
+      osArch: "x86_64",
+      osName: "Mac OS X",
+      directory: "mac_x86_64",
+    },
+    {
+      platform: "linux" as const,
+      architecture: "arm64" as const,
+      osArch: "aarch64",
+      osName: "Linux",
+      directory: "linux_arm_64",
+    },
+  ])(
+    "names Ghidra's buildNatives task when $platform/$architecture lacks a release decompiler",
+    async ({ platform, architecture, osArch, osName, directory }) => {
+      const result = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: {},
+          installDir: INSTALL,
+          platform,
+          architecture,
+        },
+        host({
+          executable: (path) => path === HEADLESS,
+          probeJava: () =>
+            javaProbeOk<GhidraJavaObservation>({ ...JAVA, osArch, osName }),
+        }),
+      );
+      expect(result.status).toBe("unavailable");
+      if (result.status !== "unavailable") return;
+      expect(
+        result.checks.find(({ name }) => name === "native_decompiler"),
+      ).toMatchObject({
+        status: "failed",
+        detail: `Matching native decompiler for ${platform}/${architecture} was not found`,
+        remediation: `Provide an executable Ghidra/Features/Decompiler/os/${directory}/decompile, or its build/os equivalent. Official Ghidra release archives do not include it; build it once from <GhidraInstallDir>/support/gradle/ with ./gradlew buildNatives (or gradle buildNatives), which writes build/os/${directory}/decompile. REA does not build or install native tools.`,
+      });
+    },
+  );
+
+  it("omits the buildNatives hint where release archives ship the decompiler", async () => {
+    const result = await inspectGhidraInstallation(
+      {
+        resourceOwner: inspectionResources.owner,
+        environment: {},
+        installDir: INSTALL,
+        platform: "linux",
+        architecture: "x64",
+      },
+      host({ executable: (path) => path === HEADLESS }),
+    );
+    expect(result.status).toBe("unavailable");
+    if (result.status !== "unavailable") return;
+    expect(
+      result.checks.find(({ name }) => name === "native_decompiler"),
+    ).toMatchObject({
+      status: "failed",
+      remediation:
+        "Provide an executable Ghidra/Features/Decompiler/os/linux_x86_64/decompile, or its build/os equivalent. REA does not build or install native tools.",
+    });
+  });
+
+  it("names a foreign decompiler selected from build/os, not the os/ path", async () => {
+    const built = `${INSTALL}/Ghidra/Features/Decompiler/build/os/mac_arm_64/decompile`;
+    const result = await inspectGhidraInstallation(
+      {
+        resourceOwner: inspectionResources.owner,
+        environment: {},
+        installDir: INSTALL,
+        platform: "darwin",
+        architecture: "arm64",
+      },
+      host({
+        executable: (path) => path === HEADLESS || path === built,
+        probeJava: () =>
+          javaProbeOk<GhidraJavaObservation>({
+            ...JAVA,
+            osArch: "aarch64",
+            osName: "Mac OS X",
+          }),
+        executableHeader: (path: string) =>
+          path === built ? headerProbe(elf(2, 1, 62)) : javaProbeOk(undefined),
+      }),
+    );
+    expect(result.status).toBe("unavailable");
+    if (result.status !== "unavailable") return;
+    expect(
+      result.checks.find(({ name }) => name === "native_decompiler"),
+    ).toMatchObject({
+      status: "failed",
+      detail: `${built} reports elf x86_64, but darwin/arm64 requires mach-o arm64`,
+      remediation: `REA selects ${built}, but it is not built for mach-o arm64. Remove it and rerun ./gradlew buildNatives (or gradle buildNatives) from <GhidraInstallDir>/support/gradle/ to rebuild it for this host. REA does not build or install native tools.`,
     });
   });
 });
@@ -1634,6 +1748,42 @@ describe("Ghidra JVM native directory admission", () => {
       detail: expect.stringContaining("JVM reports os.name=Windows 11"),
       remediation: expect.stringContaining("JAVA_HOME"),
     });
+  });
+});
+
+describe("Ghidra JVM native directory remediation", () => {
+  it("names the JVM architecture, not buildNatives, when an emulated JDK meets a missing decompiler", async () => {
+    const result = await inspectGhidraInstallation(
+      {
+        resourceOwner: inspectionResources.owner,
+        environment: {},
+        installDir: INSTALL,
+        platform: "darwin",
+        architecture: "arm64",
+      },
+      host({
+        executable: (path) => path === HEADLESS,
+        probeJava: () =>
+          javaProbeOk<GhidraJavaObservation>({
+            ...JAVA,
+            osArch: "x86_64",
+            osName: "Mac OS X",
+          }),
+      }),
+    );
+    expect(result.status).toBe("unavailable");
+    if (result.status !== "unavailable") return;
+    const check = result.checks.find(
+      ({ name }) => name === "native_decompiler",
+    );
+    expect(check).toMatchObject({
+      status: "failed",
+      code: "executable_missing",
+      detail: expect.stringContaining("JVM reports os.arch=x86_64"),
+      remediation: expect.stringContaining("JAVA_HOME"),
+    });
+    if (check?.status !== "failed") return;
+    expect(check.remediation).not.toContain("buildNatives");
   });
 });
 
