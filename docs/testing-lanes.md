@@ -451,6 +451,11 @@ Mach-O fixture and caller-built symbol-bearing and stripped x86-64 ELF fixtures.
 Linux and other hosts have not been verified with 1.988; this is not a repeat
 of the larger 1.833 matrix.
 
+Kuna 1.989 passed the real-provider lane on macOS arm64 with the generated
+symbol-bearing and stripped Mach-O fixtures, including cold and warm reads,
+references, and cleanup. Linux, other hosts, and the larger 1.833 target matrix
+were not verified with 1.989.
+
 ## DOS Ghidra analysis
 
 `npm run verify:ghidra:dos` requires the supported Ghidra and JDK installation
