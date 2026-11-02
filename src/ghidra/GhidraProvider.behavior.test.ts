@@ -1350,24 +1350,153 @@ describe("Ghidra result projection", () => {
   });
 });
 
-describe("Ghidra file-offset outcome projection", () => {
-  const remoteFailure = (remoteCode: string, message: string) =>
-    provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () =>
-        Promise.resolve(
+const remoteFailure = (remoteCode: string, message: string) =>
+  provider(installationHost(), () => ({
+    start: () => Promise.resolve(ok(sessionInfo())),
+    callTool: () =>
+      Promise.resolve(
+        err(
+          new GhidraSessionError(
+            "remote",
+            message,
+            { remote_code: remoteCode },
+            { remoteCode },
+          ),
+        ),
+      ),
+    close: () => Promise.resolve(ok(null)),
+  }));
+
+describe("Ghidra procedure lookup projection", () => {
+  it.each([
+    {
+      code: "procedure_not_found",
+      selector: "Unresolved_Selected_Name",
+      message:
+        "Unknown Ghidra procedure name or address: Unresolved_Selected_Name",
+      remedy: "list_procedures",
+      qualification: "does not prove",
+    },
+    {
+      code: "file_offset_unmapped",
+      selector: "file-offset:0xdeadbeef",
+      message: "File offset 0xdeadbeef has no loaded source mapping",
+      remedy: "inspect_native_load_image",
+      qualification: "does not prove",
+    },
+    {
+      code: "procedure_ambiguous",
+      selector: "overloaded",
+      message:
+        "Ghidra procedure name is ambiguous: overloaded; select an exact entry address from [0x1000, 0x2000]",
+      remedy: "entry address",
+      qualification: "reported candidates",
+    },
+    {
+      code: "file_offset_ambiguous",
+      selector: "file-offset:0x100",
+      message:
+        "File offset 0x100 has multiple loaded mappings: [0x1000, 0x2000]",
+      remedy: "analysis address",
+      qualification: "does not select one automatically",
+    },
+  ])(
+    "reports $code without schema repair",
+    async ({ code, selector, message, remedy, qualification }) => {
+      const client = await createElfClient(remoteFailure(code, message));
+      try {
+        const result = await client.execute("procedure_pseudo_code", {
+          procedure: selector,
+        });
+        if (result.ok) throw new Error("Expected a missing procedure");
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
+          code: "invalid_request",
+          message,
+          details: {
+            issues: [
+              {
+                path: ["procedure"],
+                observed: { procedure: selector },
+              },
+            ],
+            diagnostics: { remote_code: code },
+          },
+        });
+        expect(projected).not.toHaveProperty("recovery");
+        expect(projected.remediation.action).toContain(remedy);
+        expect(projected.remediation.action).toContain(qualification);
+        expect(projected.remediation.action).not.toContain(
+          "REA_GHIDRA_PROJECT_PATH",
+        );
+      } finally {
+        await client.close();
+      }
+    },
+  );
+
+  it("offers an explicit fresh import when the missing procedure came from a selected project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-missing-procedure-"));
+    await mkdir(join(root, "selected.rep"));
+    await writeFile(join(root, "selected.gpr"), "marker");
+    const message = "Unknown Ghidra procedure name or address: missing";
+    const ghidra = provider(
+      installationHost(),
+      () => ({
+        start: async () =>
+          ok({
+            ...sessionInfo(),
+            read_only: true,
+            existing_project: true as const,
+            analysis_complete: null,
+            capabilities: GHIDRA_SESSION_CAPABILITIES.filter(
+              (name) => !GHIDRA_MUTATING_OPERATIONS.has(name),
+            ),
+          }),
+        callTool: async () =>
           err(
             new GhidraSessionError(
               "remote",
               message,
-              { remote_code: remoteCode },
-              { remoteCode },
+              {},
+              {
+                remoteCode: "procedure_not_found",
+              },
             ),
           ),
-        ),
-      close: () => Promise.resolve(ok(null)),
-    }));
+        close: async () => ok(null),
+      }),
+      { REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr") },
+    );
+    try {
+      const client = await createElfClient(ghidra);
+      try {
+        const result = await client.execute("procedure_address", {
+          procedure: "missing",
+        });
+        if (result.ok) throw new Error("Expected a missing procedure");
+        const projected = projectAnalysisError(result.error);
+        expect(projected).not.toHaveProperty("recovery");
+        expect(projected.remediation.action).toContain(
+          "REA_GHIDRA_PROJECT_PATH",
+        );
+        expect(projected.remediation.action).toContain(
+          "completeness is unknown",
+        );
+        expect(projected.remediation.action).toContain(
+          "will not include the selected project's annotations",
+        );
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await ghidra.closeOwnedResources();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
+describe("Ghidra file-offset outcome projection", () => {
   it.each([
     [
       "address_unmapped",
