@@ -2221,6 +2221,8 @@ export class GdbSessionManager {
           );
         });
       }, this.#commandTimeoutMs);
+      // Cleanup bounds its own wait, so a late reply must not hold the host open.
+      if (session.cleanupStarted) timer.unref();
       pending = {
         token,
         command,

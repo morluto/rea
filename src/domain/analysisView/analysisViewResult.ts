@@ -69,6 +69,11 @@ import {
   featureTraceViewContextSchema,
 } from "./featureTraceView.js";
 import {
+  batchDecompileSummarySchema,
+  batchDecompileViewCollections,
+  batchDecompileViewContextSchema,
+} from "./batchDecompileView.js";
+import {
   gpuCodeObjectsViewRequestSchema,
   gpuCodeObjectsSummarySchema,
   gpuCodeObjectsItemsSchema,
@@ -987,6 +992,39 @@ export const featureTraceViewResultSchema = z
     ]),
   );
 
+/** Counts and identities of a retained batch without any pseudocode body. */
+export const batchDecompileSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: artifactSchema.nullable(),
+  parent_operation: z.literal("batch_decompile"),
+  summary: batchDecompileSummarySchema,
+});
+const batchDecompilePage = {
+  ...viewResultBase,
+  ...batchDecompileViewContextSchema.shape,
+  kind: z.literal("batch-decompile"),
+  artifact: artifactSchema.nullable(),
+  parent_operation: z.literal("batch_decompile"),
+};
+// The kind tag keeps dispatch while each collection keeps exactly its own shape.
+export const batchDecompileViewResultSchema = z
+  .object({ kind: z.literal("batch-decompile") })
+  .passthrough()
+  .pipe(
+    z.union([
+      z.strictObject({
+        ...batchDecompilePage,
+        view: batchDecompileViewCollections.items.request,
+        items: batchDecompileViewCollections.items.rows,
+      }),
+      z.strictObject({
+        ...batchDecompilePage,
+        view: batchDecompileViewCollections.pseudocode.request,
+        item: batchDecompileViewCollections.pseudocode.item,
+      }),
+    ]),
+  );
+
 /** Bind the existing nested facet selection to its producer-owned rows. */
 const machoPage = <Facet extends keyof typeof machoViewRows>(facet: Facet) =>
   z.strictObject({
@@ -1026,6 +1064,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   webBundlePageViewResultSchema,
   sourceToBundlePageViewResultSchema,
   featureTraceViewResultSchema,
+  batchDecompileViewResultSchema,
   z.strictObject({
     ...viewResultBase,
     ...nativeFunctionMatchingContextSchema.shape,
@@ -1116,6 +1155,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeFunctionSummaryViewResultSchema,
     sourceToBundleSummaryViewResultSchema,
     featureTraceSummaryViewResultSchema,
+    batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
   ]),
   z.strictObject({

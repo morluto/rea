@@ -1,6 +1,10 @@
 import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import { withOverviewInventoryCoverage } from "../domain/native/inventoryCoverage.js";
 import type { NativeCallGraph } from "../domain/native/nativeCallGraph.js";
+import type {
+  BatchDecompileItem,
+  BatchProcedureIdentity,
+} from "../domain/native/batchDecompile.js";
 import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
 import {
   cleanupStoppedTraversal,
@@ -76,18 +80,6 @@ import {
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 
-type BatchProcedureIdentity =
-  | {
-      readonly status: "resolved";
-      readonly address: string;
-      readonly name: string | null;
-      readonly name_error?: ReturnType<typeof projectAnalysisError>;
-    }
-  | {
-      readonly status: "unknown";
-      readonly error: ReturnType<typeof projectAnalysisError>;
-    };
-
 type BatchResolution = {
   readonly address: string;
   readonly result: Result<string, AnalysisError>;
@@ -97,16 +89,6 @@ type BatchReadyItem = {
   readonly address: string;
   readonly procedure: BatchProcedureIdentity;
   readonly providerProcedure: string;
-};
-
-type BatchDecompileItem = {
-  readonly address: string;
-  readonly procedure: BatchProcedureIdentity;
-  readonly status: "ok" | "error";
-  readonly pseudocode?: string;
-  readonly error?: ReturnType<typeof projectAnalysisError>;
-  /** Caveats of this item's own observation when it supplied no pseudocode. */
-  readonly limitations?: string[];
 };
 
 /**

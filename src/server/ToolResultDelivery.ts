@@ -16,6 +16,7 @@ import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js"
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
   MCP_TRANSPORT_EVIDENCE_EXPORT,
+  MCP_TRANSPORT_EVIDENCE_LINKS,
   MCP_TRANSPORT_EVIDENCE_RECORDS,
 } from "../domain/analysisErrorPresentation.js";
 import {
@@ -85,6 +86,8 @@ const evidenceBundleOverflowStep = (value: JsonValue): string => {
   // A summary already used detail: summary; export writes outside one frame.
   if (projection === "evidence-bundle-summary")
     return MCP_TRANSPORT_EVIDENCE_EXPORT;
+  if (projection === "evidence-link-inspection")
+    return MCP_TRANSPORT_EVIDENCE_LINKS;
   return projection === "evidence-record-selection"
     ? MCP_TRANSPORT_EVIDENCE_RECORDS
     : MCP_TRANSPORT_EVIDENCE_DISCOVERY;
@@ -99,6 +102,7 @@ export class ToolResultDelivery {
     private readonly nativeContinuation: (
       evidence: Evidence,
       selected?: JsonValue,
+      viewSource?: JsonValue,
     ) => Readonly<Record<string, JsonValue>> = () => ({}),
   ) {
     this.maximumResponseBytes = maximumResponseBytes;
@@ -126,6 +130,7 @@ export class ToolResultDelivery {
     evidence: Evidence,
     contract: ToolContract,
     recorded: Result<unknown, AnalysisError> | undefined,
+    viewSource?: JsonValue,
   ): CallToolResult {
     return recorded !== undefined && !recorded.ok
       ? this.toErrorToolResult(recorded.error, contract.returnsTargetContent)
@@ -138,8 +143,11 @@ export class ToolResultDelivery {
                   kind: "retained-evidence",
                   evidence_id: evidence.evidence_id,
                 },
-                ...this.nativeContinuation(evidence),
               }),
+          // A view names its caller's source, which needs no session to read again.
+          ...(recorded === undefined && viewSource === undefined
+            ? {}
+            : this.nativeContinuation(evidence, undefined, viewSource)),
         });
   }
 
