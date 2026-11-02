@@ -742,6 +742,7 @@ function* parseElfExports(
       size: symbol.size.toString(),
       type: ELF_TYPES[symbol.type] ?? "other",
       binding,
+      visibility: visibility === 0 ? "default" : "protected",
       version,
     });
   }

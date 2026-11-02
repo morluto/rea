@@ -247,6 +247,14 @@ export const projectNativeExportsView = (
                 : row.name !== null && names.has(row.name))),
           projectRow,
         );
+  if (
+    report.format === "elf" &&
+    columns.has("visibility") &&
+    selected.rows.some((row) => !("visibility" in row))
+  )
+    shared.unknowns.push(
+      "ELF symbol visibility was not recorded for some selected rows; omission means unknown.",
+    );
   return ok({
     ...shared,
     kind: "native-exports" as const,
