@@ -242,6 +242,7 @@ export class ReleaseExposureService {
         electron_family: family.family,
         electron_family_reason: family.reason,
         electron_executable_included: prepared.electronExecutableIncluded,
+        electron_host_paths: prepared.electronHostPaths,
         fuse_images: fuseImages,
         go_images: goImages,
         rust_images: rustImages,
@@ -671,6 +672,7 @@ const limitNativeSample = (
 ): {
   readonly scan: ReleaseExposureScan;
   readonly electronExecutableIncluded: boolean;
+  readonly electronHostPaths: readonly string[];
 } => {
   const ranked = electronExecutableRank(scan.native_images, basisPaths);
   const preferred = scan.native_images
@@ -700,6 +702,11 @@ const limitNativeSample = (
       preferred.length <= MAX_RELEASE_EXPOSURE_NATIVE_IMAGES);
   return {
     electronExecutableIncluded,
+    electronHostPaths: kept.flatMap((image) =>
+      (ranked.get(image.path) ?? ANY_SIBLING_RANK) < ANY_SIBLING_RANK
+        ? [image.path]
+        : [],
+    ),
     scan: {
       ...scan,
       native_images: kept,

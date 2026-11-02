@@ -421,6 +421,8 @@ export interface ReleaseExposureOwnerFacts {
     | "not_a_directory";
   readonly electron_family_reason?: string | null;
   readonly electron_executable_included?: boolean;
+  /** Images named as the Electron host. Others may be helpers with no fuses. */
+  readonly electron_host_paths?: readonly string[];
   readonly fuse_images: readonly FuseImageFact[];
   readonly go_images: readonly MetadataImageFact[];
   readonly rust_images: readonly MetadataImageFact[];
@@ -578,13 +580,21 @@ const fuseCheck = (
       : [],
   );
   const failed = images.some((image) => image.kind === "failed");
+  const hostUnresolved = images.some(
+    (image) =>
+      image.kind === "report" &&
+      image.path !== undefined &&
+      owners.electron_host_paths?.includes(image.path) === true &&
+      !(image.implications ?? []).some((item) => item.subject === spec.subject),
+  );
   const partialFuseSample =
     nativeImagesMayBeUnread(scan) &&
     owners.electron_executable_included !== true;
   let status: Status;
   if (outcomes.includes(spec.exposed)) status = "exposed";
   else if (owners.electron_family === "not_electron") status = "not_applicable";
-  else if (outcomes.includes("unknown") || failed) status = "unknown";
+  else if (outcomes.includes("unknown") || failed || hostUnresolved)
+    status = "unknown";
   else if (outcomes.length > 0 && outcomes.every((item) => item === spec.safe))
     status = partialFuseSample ? "unknown" : "not_observed";
   else if (owners.electron_family === "not_a_directory")

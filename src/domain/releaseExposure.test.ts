@@ -710,3 +710,46 @@ describe("go.build_paths locations", () => {
     ]);
   });
 });
+
+describe("electron host fuses beside other images", () => {
+  const safeImage = {
+    kind: "report" as const,
+    role: "native-image" as const,
+    path: "/work/app/helper",
+    implications: [
+      { subject: "electron_run_as_node", outcome: "not_honored" },
+      { subject: "node_cli_inspect_arguments", outcome: "not_honored" },
+      { subject: "embedded_asar_integrity_validation", outcome: "enforced" },
+      { subject: "only_load_app_from_asar", outcome: "restricted_to_app_asar" },
+    ],
+  };
+  const hostWithoutFuses = {
+    kind: "report" as const,
+    role: "native-image" as const,
+    path: "/work/app/app",
+    implications: [],
+  };
+  const report = (electron_host_paths?: readonly string[]) =>
+    reportFor(
+      scan(),
+      owners({
+        electron_family: "electron",
+        electron_executable_included: true,
+        ...(electron_host_paths === undefined ? {} : { electron_host_paths }),
+        fuse_images: [hostWithoutFuses, safeImage],
+      }),
+    );
+
+  it("leaves an unresolved host unknown whatever another image reports", () => {
+    expect(statusOf(report(["/work/app/app"]), "electron.run_as_node")).toBe(
+      "unknown",
+    );
+  });
+
+  it("does not let a fuseless helper unsettle the host's safe answer", () => {
+    expect(statusOf(report(["/work/app/helper"]), "electron.run_as_node")).toBe(
+      "not_observed",
+    );
+    expect(statusOf(report(), "electron.run_as_node")).toBe("not_observed");
+  });
+});
