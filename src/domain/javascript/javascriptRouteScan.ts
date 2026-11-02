@@ -679,6 +679,25 @@ export class JavaScriptRouteScan {
       return;
     }
     if (
+      t.isAssignmentExpression(node) &&
+      node.operator !== "=" &&
+      (globalReferenceNamespace(node.left, this.index.bindings, [
+        "location",
+      ]) !== undefined ||
+        globalReferenceNamespace(node.left, this.index.bindings, [
+          "document",
+          "location",
+        ]) !== undefined)
+    ) {
+      this.#ownDynamicValue(node.right, true, true, true);
+      this.#unknown(
+        "navigation-target",
+        node,
+        "Compound location assignment depends on the current destination.",
+      );
+      return;
+    }
+    if (
       t.isAssignmentExpression(node, { operator: "=" }) &&
       (globalReferenceNamespace(node.left, this.index.bindings, [
         "location",

@@ -192,7 +192,7 @@ it("recovers document location and reports compound pathname uncertainty through
   const path = await createTestTempDirectory("rea-document-location-");
   await writeFile(
     join(path, "app.js"),
-    `document.location = '/document'; window.location.pathname += '/suffix';`,
+    `document.location = '/document'; window.location.pathname += '/suffix'; window.location += '/other';`,
   );
   const { call } = await connectLocalToolsMcp();
   const response = await call("analyze_javascript_application", {

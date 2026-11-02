@@ -563,6 +563,8 @@ it("recovers direct global location assignment while preserving uncertainty", ()
     `window.location.pathname += '/suffix';`,
     `document.location.href += '/suffix';`,
     `document.location.pathname += '/suffix';`,
+    `window.location += '/suffix';`,
+    `document.location += '/suffix';`,
     `document.location = custom; document.location = '/later';`,
     `document = other; document.location = '/later';`,
     `document.location = (document = other, '/later');`,
