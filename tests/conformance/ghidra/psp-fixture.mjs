@@ -251,7 +251,11 @@ export function assertPspVfpuProbe(observations) {
     const observed = observations[i];
     const word = Buffer.alloc(4);
     word.writeUInt32LE(expected.word);
-    assert.equal(observed.status, "decoded", `VFPU instruction ${expected.index} did not decode`);
+    assert.equal(
+      observed.status,
+      "decoded",
+      `VFPU instruction ${expected.index} did not decode`,
+    );
     assert.equal(observed.length, 4);
     assert.equal(observed.bytes.toLowerCase(), word.toString("hex"));
     assert.equal(observed.mnemonic.toLowerCase(), expected.mnemonic);
