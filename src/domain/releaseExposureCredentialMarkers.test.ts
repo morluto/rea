@@ -42,3 +42,28 @@ describe("release exposure credential markers", () => {
     expect(JSON.stringify(scan)).not.toContain(line);
   });
 });
+
+describe("release exposure credential marker boundaries", () => {
+  const GOOGLE_KEY = `AIza${"A".repeat(34)}-`;
+  const GITLAB_PAT = `glpat-${"a".repeat(19)}-`;
+  const SLACK_TOKEN = `xoxb-${"a".repeat(9)}-`;
+
+  const ruleIds = (text: string) =>
+    scanCredentialMarkers(text, "config.json").hits.map((hit) => hit.rule_id);
+
+  it.each([
+    ["google.api_key", GOOGLE_KEY],
+    ["gitlab.pat", GITLAB_PAT],
+    ["slack.token", SLACK_TOKEN],
+  ])("reports a %s that ends in a hyphen", (ruleId, token) => {
+    expect(ruleIds(JSON.stringify({ token }))).toEqual([ruleId]);
+    expect(ruleIds(`${token} next`)).toEqual([ruleId]);
+    expect(ruleIds(token)).toEqual([ruleId]);
+  });
+
+  it("keeps a Google API key to its exact length", () => {
+    expect(ruleIds(`${GOOGLE_KEY}-`)).toEqual([]);
+    expect(ruleIds(`${GOOGLE_KEY}A`)).toEqual([]);
+    expect(ruleIds(`AIza${"A".repeat(35)}-suffix`)).toEqual([]);
+  });
+});

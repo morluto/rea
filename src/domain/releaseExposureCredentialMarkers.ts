@@ -1,5 +1,10 @@
 /** High-precision credential markers for an owner-side release audit. */
 
+/*
+ * A token alphabet that includes "-" cannot end on `\b`: a final hyphen before
+ * a quote, whitespace, or end of input has no word boundary after it. Open-ended
+ * rules consume the whole token, and fixed-length rules check the full alphabet.
+ */
 const MARKER_RULES = [
   {
     id: "pem.private_key",
@@ -12,10 +17,13 @@ const MARKER_RULES = [
     id: "github.fine_grained_pat",
     pattern: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/u,
   },
-  { id: "gitlab.pat", pattern: /\bglpat-[A-Za-z0-9_-]{20,}\b/u },
-  { id: "slack.token", pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/u },
+  { id: "gitlab.pat", pattern: /\bglpat-[A-Za-z0-9_-]{20,}/u },
+  { id: "slack.token", pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}/u },
   { id: "stripe.live_secret", pattern: /\b(?:sk|rk)_live_[A-Za-z0-9]{16,}\b/u },
-  { id: "google.api_key", pattern: /\bAIza[0-9A-Za-z_-]{35}\b/u },
+  {
+    id: "google.api_key",
+    pattern: /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/u,
+  },
   { id: "npm.token", pattern: /\bnpm_[A-Za-z0-9]{36}\b/u },
 ] as const;
 
