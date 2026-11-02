@@ -121,53 +121,56 @@ const graph = (): NativeCallGraph =>
     limitations: ["Graph caveat", "Graph caveat"],
   });
 
-it("returns useful caller/callee facts with exact source context identity and partial coverage", async () => {
-  const source = parent("procedure_callees", [
-    "ram:0x0010",
-    "ram:0x0010",
-    "ram:0x0020",
-  ]);
-  const before = JSON.stringify(source);
-  const summary = await project(source, { kind: "summary" });
-  expect(summary.value).toMatchObject({
-    kind: "summary",
-    parent_evidence_id: source.evidence_id,
-    source_provider: source.provider,
-    source_parameters: source.parameters,
-    source_analysis_profile_digest: source.analysis_profile?.digest,
-    source_context: {
-      evidence_limitation_count: 1,
-      result_limitation_count: null,
-    },
-    summary: { observations: 3 },
-    items: {
-      type: "addresses",
-      rows: [
-        { source_index: 0, address: "ram:0x0010" },
-        { source_index: 1, address: "ram:0x0010" },
-        { source_index: 2, address: "ram:0x0020" },
-      ],
-    },
-  });
-  expect(summary.evidence.relationship_coverage).toEqual(
-    source.relationship_coverage,
-  );
-  const page = await project(source, {
-    kind: "native-observation",
-    offset: 1,
-    limit: 1,
-  });
-  expect(page.value).toMatchObject({
-    items: { rows: [{ source_index: 1, address: "ram:0x0010" }] },
-    coverage: { total: 3, next_offset: 2, exhausted: false },
-  });
-  expect(page.value).toHaveProperty(
-    "source_context.digest",
-    contextDigest(summary.value),
-  );
-  expect(JSON.stringify(summary.value)).not.toContain('"analysis_profile":');
-  expect(JSON.stringify(source)).toBe(before);
-});
+it.each(["procedure_callees", "xrefs"])(
+  "pages %s addresses with exact source context and duplicate identity",
+  async (operation) => {
+    const source = parent(operation, [
+      "ram:0x0010",
+      "ram:0x0010",
+      "ram:0x0020",
+    ]);
+    const before = JSON.stringify(source);
+    const summary = await project(source, { kind: "summary" });
+    expect(summary.value).toMatchObject({
+      kind: "summary",
+      parent_evidence_id: source.evidence_id,
+      source_provider: source.provider,
+      source_parameters: source.parameters,
+      source_analysis_profile_digest: source.analysis_profile?.digest,
+      source_context: {
+        evidence_limitation_count: 1,
+        result_limitation_count: null,
+      },
+      summary: { observations: 3 },
+      items: {
+        type: "addresses",
+        rows: [
+          { source_index: 0, address: "ram:0x0010" },
+          { source_index: 1, address: "ram:0x0010" },
+          { source_index: 2, address: "ram:0x0020" },
+        ],
+      },
+    });
+    expect(summary.evidence.relationship_coverage).toEqual(
+      source.relationship_coverage,
+    );
+    const page = await project(source, {
+      kind: "native-observation",
+      offset: 1,
+      limit: 1,
+    });
+    expect(page.value).toMatchObject({
+      items: { rows: [{ source_index: 1, address: "ram:0x0010" }] },
+      coverage: { total: 3, next_offset: 2, exhausted: false },
+    });
+    expect(page.value).toHaveProperty(
+      "source_context.digest",
+      contextDigest(summary.value),
+    );
+    expect(JSON.stringify(summary.value)).not.toContain('"analysis_profile":');
+    expect(JSON.stringify(source)).toBe(before);
+  },
+);
 
 it("pages complete context fields and changes its digest when source profile or caveats change", async () => {
   const source = parent("procedure_callers", []);
