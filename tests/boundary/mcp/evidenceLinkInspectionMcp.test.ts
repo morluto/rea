@@ -76,9 +76,27 @@ const connect = async (
     expect(session.recordEvidence(retained).ok).toBe(true);
   const reply = (args: Record<string, unknown>) =>
     client.callTool({ name: "get_evidence_bundle", arguments: args });
+  // Every delivered result must satisfy what this profile actually advertises.
+  const { tools } = await client.listTools();
+  const advertised = tools.find(({ name }) => name === "get_evidence_bundle");
+  if (advertised?.outputSchema === undefined)
+    throw new Error("get_evidence_bundle advertises no output schema");
+  const inputSchema: Record<string, unknown> = advertised.inputSchema;
+  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const validation = schemaValidation.assertions;
+  expect(validation.validateSchema(inputSchema)).toBe(true);
+  expect(validation.validateSchema(outputSchema)).toBe(true);
   const resultOf = async (args: Record<string, unknown>) => {
+    expect(
+      validation.validate(inputSchema, args),
+      JSON.stringify(validation.errors),
+    ).toBe(true);
     const result = await reply(args);
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    expect(
+      validation.validate(outputSchema, result.structuredContent),
+      JSON.stringify(validation.errors),
+    ).toBe(true);
     return z.object({ result: z.unknown() }).parse(result.structuredContent)
       .result;
   };
