@@ -28,7 +28,11 @@ import {
   createRizinDebugSessionManager,
 } from "../composition/debuggerSessions.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { OwnedDebuggerCleanupError } from "../process/ownedDebuggerSession.js";
+import {
+  retainedDebuggerDiagnostics,
+  retainedDebuggerProcessIds,
+  retainedDebuggerRemediation,
+} from "../process/ownedDebuggerCleanupError.js";
 import {
   analysisEvidenceDeliveryOptions,
   cliEvidenceDeliveryInputError,
@@ -147,11 +151,7 @@ const closeDebuggerCommandSession = async (
   } catch (cause) {
     // This process is the only owner, so a caller gets the debugger to check
     // rather than a retry that no later command could perform.
-    const retainedPids =
-      cause instanceof OwnedDebuggerCleanupError
-        ? cause.retainedProcessIds
-        : [];
-    const identified = retainedPids.length > 0;
+    const retainedPids = retainedDebuggerProcessIds(cause);
     throw new ProviderCleanupError(
       providerId,
       sessionId === undefined ? [] : [sessionId],
@@ -166,16 +166,14 @@ const closeDebuggerCommandSession = async (
             : cause instanceof Error
               ? cause.message
               : String(cause),
-        ...(identified ? { retained_debugger_pids: [...retainedPids] } : {}),
+        ...retainedDebuggerDiagnostics(cause),
       },
       {
         cause,
         operation,
-        ...(identified
-          ? {
-              remediationAction: `REA exits without confirming that the debugger stopped, and no later REA command can retry this cleanup. Check process ${retainedPids.join(", ")} and its target, and stop them if they are still running.`,
-            }
-          : {}),
+        ...(retainedPids.length === 0
+          ? {}
+          : { remediationAction: retainedDebuggerRemediation(retainedPids) }),
       },
     );
   }

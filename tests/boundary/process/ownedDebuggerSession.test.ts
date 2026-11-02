@@ -10,8 +10,11 @@ import { spawn as spawnPty } from "@lydell/node-pty";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import {
-  closeOwnedDebuggerSessions,
   OwnedDebuggerCleanupError,
+  retainedDebuggerProcessIds,
+} from "../../../src/process/ownedDebuggerCleanupError.js";
+import {
+  closeOwnedDebuggerSessions,
   type OwnedDebuggerStopResult,
   stopOwnedDebuggerProcess,
   verifyOwnedInferiorsEnded,
@@ -1533,4 +1536,19 @@ it("holds the host again while retrying a retained session and leaves it held on
   await closeOwnedDebuggerSessions(sessions, stop, "GDB");
   expect(order).toEqual(["ref", "stop"]);
   expect(sessions.size).toBe(0);
+});
+
+it("finds retained debugger IDs through composed failures without looping on cycles", () => {
+  const first = new OwnedDebuggerCleanupError([], "first", [101, 102]);
+  const second = new OwnedDebuggerCleanupError([], "second", [102, 103]);
+  const cyclic = new Error("cyclic", { cause: second });
+  Object.assign(second, { cause: cyclic });
+  const composed = new AggregateError(
+    [first, new Error("wrapped", { cause: cyclic }), new Error("peer"), null],
+    "outer",
+  );
+
+  expect(retainedDebuggerProcessIds(composed)).toEqual([101, 102, 103]);
+  expect(retainedDebuggerProcessIds(new Error("peer"))).toEqual([]);
+  expect(retainedDebuggerProcessIds(undefined)).toEqual([]);
 });

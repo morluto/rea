@@ -3,12 +3,16 @@ import { join, resolve } from "node:path";
 
 import { describe, expect, onTestFinished } from "vitest";
 
+import { MCP_SHUTDOWN_FAILED } from "../../../src/main/messages.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   cliProcessEnvironment,
   cliTest,
 } from "../../support/cli/cliFixture.js";
-import type { ProcessResult } from "../../support/process/processFixture.js";
+import type {
+  ProcessResult,
+  TestProcesses,
+} from "../../support/process/processFixture.js";
 import { rizinTestInferiorTty } from "../providers/RizinTestInferiorTty.js";
 
 /**
@@ -16,6 +20,7 @@ import { rizinTestInferiorTty } from "../providers/RizinTestInferiorTty.js";
  * not exercised: what they do once REA's end of their pipes closes is unverified.
  * Every retained mode stays alive after stdin ends, like a debugger that ignores
  * EOF, so a passing test also shows that REA did not stop what it reports retained.
+ * A request neither fake models is noted, and that note fails the test.
  */
 const fakeDebuggerPrelude = `#!${process.execPath}
 const { appendFileSync } = require("node:fs");
@@ -42,14 +47,18 @@ const fakeRizin = `${fakeDebuggerPrelude}
 process.stdout.write("\\0");
 let silent = false;
 onLines((line) => {
-  if (silent) return;
-  if (line === "olj") {
+  if (line === "dr") process.stdout.write("rax=0x1234\\0");
+  else if (line === "olj") {
+    if (silent) return;
     note("inventory-request");
     if (mode === "unanswered") silent = true;
     else process.stdout.write(mode === "clean" ? "[]\\0" : "not-json\\0");
-  } else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
-  else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
-  else process.stdout.write("rax = 0x0\\0");
+  } else if (/^!echo __REA_(COMMAND|CLEANUP)_COMPLETE_[0-9a-f]+__$/u.test(line)) {
+    if (!silent) process.stdout.write(line.slice(6) + "\\n\\0");
+  } else {
+    note("unmodeled " + line);
+    process.stdout.write("unmodeled\\0");
+  }
 });
 `;
 
@@ -61,14 +70,17 @@ let ttyReads = 0;
 const liveGroup = '^done,groups=[{id="i1",type="process",pid="4194305",threads=[{id="1",state="stopped"}]}]';
 onLines((line) => {
   const [, token, request] = /^(\\d+)(.*)$/u.exec(line) ?? [];
-  if (token === undefined) return;
-  const reply = (tail) => process.stdout.write(token + tail + "\\n");
-  if (request.startsWith("-inferior-tty-set ")) {
+  const reply = (tail) => process.stdout.write(token + tail + "\\n(gdb)\\n");
+  if (request === "-gdb-set auto-load off") reply("^done");
+  else if (request?.startsWith("-inferior-tty-set ")) {
     tty = JSON.parse(request.slice("-inferior-tty-set ".length));
     reply("^done");
   } else if (request === "-inferior-tty-show") {
     ttyReads += 1;
     reply('^done,inferior_tty_terminal="' + (ttyReads > 1 ? "/dev/null" : tty) + '"');
+  } else if (request === '-interpreter-exec console "show version"') {
+    process.stdout.write('~"GNU gdb (fake)\\\\n"\\n');
+    reply("^done");
   } else if (request === "-list-thread-groups --recurse 1") {
     inventoryRequests += 1;
     if (mode === "clean") reply("^done,groups=[]");
@@ -76,9 +88,12 @@ onLines((line) => {
     else if (inventoryRequests <= 2) reply(liveGroup);
     else note("inventory-request");
   } else if (request === "-gdb-exit") {
-    reply("^exit");
+    process.stdout.write(token + "^exit\\n");
     process.exit(0);
-  } else reply("^done");
+  } else {
+    note("unmodeled " + line);
+    if (token !== undefined) reply('^error,msg="unmodeled request"');
+  }
 });
 `;
 
@@ -167,6 +182,9 @@ const prepareLaunch = async (
   onTestFinished(async () => {
     const pid = await debuggerPid().catch(() => undefined);
     if (pid !== undefined && isAlive(pid)) process.kill(pid, "SIGKILL");
+    expect(
+      (await notes()).filter((note) => note.startsWith("unmodeled ")),
+    ).toEqual([]);
   });
   return {
     notes,
@@ -206,6 +224,49 @@ const expectRetainedOutcome = (
     },
   });
   expect(result.stdout).toContain(`"retained_debugger_pids":[${String(pid)}]`);
+};
+
+/** Serve one MCP stdio client that has started a debugger session. */
+const startMcpSession = async (
+  processes: TestProcesses,
+  name: DebuggerName,
+  launch: Awaited<ReturnType<typeof prepareLaunch>>,
+  tty: string,
+) => {
+  const child = processes.spawn(process.execPath, [...launch.command, "mcp"], {
+    env: launch.env,
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk: Buffer) => (stdout += String(chunk)));
+  child.stderr.on("data", (chunk: Buffer) => (stderr += String(chunk)));
+  const request = async (
+    id: number,
+    method: string,
+    params: object,
+  ): Promise<void> => {
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
+    );
+    await expect
+      .poll(() => stdout, { timeout: EXIT_DEADLINE_MS })
+      .toContain(`"id":${String(id)}`);
+  };
+  await request(1, "initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "debugger-one-shot-exit", version: "1" },
+  });
+  child.stdin.write(
+    `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+  );
+  const { startTool } = debuggers[name];
+  await request(2, "tools/call", {
+    name: startTool.name,
+    arguments: startTool.arguments(tty),
+  });
+  expect(stdout).toContain("session_id");
+  return { child, stderr: () => stderr };
 };
 
 describe.skipIf(process.platform === "win32")(
@@ -306,53 +367,46 @@ describe.skipIf(process.platform === "win32")(
       },
     );
 
-    cliTest.for(["rizin", "gdb"] as const)(
-      "ends the stdio MCP server after its client leaves a retained %s session",
+    cliTest.for([
+      ["rizin", "client disconnect"],
+      ["gdb", "client disconnect"],
+      ["rizin", "SIGTERM"],
+    ] as const)(
+      "ends the stdio MCP server holding a retained %s session on %s and names it",
       { timeout: TEST_DEADLINE_MS },
-      async (name, { processes, cliCompileCache }) => {
+      async ([name, trigger], { processes, cliCompileCache }) => {
         const tty = await rizinTestInferiorTty();
         const launch = await prepareLaunch(name, "malformed", cliCompileCache);
 
-        const child = processes.spawn(
-          process.execPath,
-          [...launch.command, "mcp"],
-          { env: launch.env },
+        const { child, stderr } = await startMcpSession(
+          processes,
+          name,
+          launch,
+          tty,
         );
-        let stdout = "";
-        child.stdout.on("data", (chunk: Buffer) => (stdout += String(chunk)));
-        const request = async (
-          id: number,
-          method: string,
-          params: object,
-        ): Promise<void> => {
-          child.stdin.write(
-            `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
-          );
-          await expect
-            .poll(() => stdout, { timeout: EXIT_DEADLINE_MS })
-            .toContain(`"id":${String(id)}`);
-        };
-        await request(1, "initialize", {
-          protocolVersion: "2025-06-18",
-          capabilities: {},
-          clientInfo: { name: "debugger-one-shot-exit", version: "1" },
-        });
-        child.stdin.write(
-          `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
-        );
-        const { startTool } = debuggers[name];
-        await request(2, "tools/call", {
-          name: startTool.name,
-          arguments: startTool.arguments(tty),
-        });
-        expect(stdout).toContain("session_id");
 
-        child.stdin.end();
+        if (trigger === "SIGTERM") child.kill("SIGTERM");
+        else child.stdin.end();
 
         await expect
           .poll(() => child.exitCode, { timeout: EXIT_DEADLINE_MS })
           .toBe(1);
         const pid = await launch.debuggerPid();
+        // Nothing else reports these once the server has exited.
+        await expect
+          .poll(stderr, { timeout: EXIT_DEADLINE_MS })
+          .toContain(`Check process ${String(pid)} and its target`);
+        const logs = stderr()
+          .split("\n")
+          .filter((line) => line.startsWith("{"))
+          .map((line): unknown => JSON.parse(line));
+        for (const msg of [
+          "Provider cleanup failed during server shutdown",
+          MCP_SHUTDOWN_FAILED,
+        ])
+          expect(logs).toContainEqual(
+            expect.objectContaining({ msg, retained_debugger_pids: [pid] }),
+          );
         expect(await launch.notes()).not.toContain("sigterm");
         expect(isAlive(pid)).toBe(true);
       },

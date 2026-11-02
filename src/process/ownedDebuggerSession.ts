@@ -4,6 +4,7 @@ import type { DebuggerAdmissionLimit } from "../config/debuggerSessionLimits.js"
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
+import { OwnedDebuggerCleanupError } from "./ownedDebuggerCleanupError.js";
 
 /** Result of terminating one debugger process owned by this application. */
 export type OwnedDebuggerStopResult =
@@ -371,21 +372,6 @@ interface RetainableDebuggerSession {
     readonly process: { readonly pid?: number | undefined };
   };
   readonly supervisor: { ref(): void; unref(): void };
-}
-
-/** Closing all sessions could not confirm that these debuggers stopped. */
-export class OwnedDebuggerCleanupError extends AggregateError {
-  /** Process IDs when cleanup gave up. Observations, not lasting proof of identity. */
-  readonly retainedProcessIds: readonly number[];
-
-  constructor(
-    failures: readonly Error[],
-    message: string,
-    retainedProcessIds: readonly number[],
-  ) {
-    super(failures, message);
-    this.retainedProcessIds = retainedProcessIds;
-  }
 }
 
 /**

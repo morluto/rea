@@ -76,6 +76,7 @@ const PATH_SCOPES = {
     "src/frida/frida-bindings.d.ts",
     "src/objdump/**",
     "src/cli/reverseEngineeringCommands.ts",
+    "src/process/ownedDebuggerCleanupError.ts",
     "src/process/ownedDebuggerSession.ts",
     "src/rizin/**",
     "src/contracts/*ToolContracts.ts",
