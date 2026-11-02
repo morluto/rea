@@ -41,7 +41,10 @@ const inspectIpcCall = (
   const scoped = scopedIpcDescriptor(node, context);
   const descriptor =
     scoped?.descriptor ??
-    ipcDescriptor(electronCalleePath(node.callee, context));
+    ipcDescriptor(
+      electronCalleePath(node.callee, context) ??
+        context.electronInvocationPath?.(node),
+    );
   if (descriptor === undefined) return;
   const channelNode = argumentNode(node.arguments[0]);
   const channelValue = electronStaticValue(context.source, channelNode);

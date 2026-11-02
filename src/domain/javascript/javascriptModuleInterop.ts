@@ -243,7 +243,18 @@ export const createSemanticModuleInterop = (
 
   const resolveBoundIntrinsic = (
     node: t.Node,
+    callablePath?: (node: t.Node) => readonly string[] | undefined,
   ): JavaScriptIntrinsicInvocation | undefined => {
+    // A caller-selected callable path admits non-intrinsic owners, such as
+    // proven Electron methods, at the bind site itself.
+    const capturedCallable = (
+      callee: t.Node,
+    ): IntrinsicDependency | undefined => {
+      const captured = capturedIntrinsic(callee);
+      if (captured !== undefined || callablePath === undefined) return captured;
+      const path = callablePath(callee);
+      return path === undefined ? undefined : { path, capturedAt: callee };
+    };
     const visited = new Set<string>();
     const argumentGroups: t.CallExpression["arguments"][] = [];
     const bindReads: t.Node[] = [];
@@ -279,7 +290,7 @@ export const createSemanticModuleInterop = (
           current.arguments,
           nativeArrayIteration,
         );
-      let captured = capturedIntrinsic(current.callee);
+      let captured = capturedCallable(current.callee);
       let terminal = captured?.path.at(-1) === "bind";
       let path: readonly string[] | undefined = captured?.path.slice(0, -1);
       if (members.at(-1) === "bind") {
@@ -346,11 +357,12 @@ export const createSemanticModuleInterop = (
   const activeBoundValues = new WeakSet<t.Node>();
   const boundIntrinsic = (
     node: t.Node,
+    callablePath?: (node: t.Node) => readonly string[] | undefined,
   ): JavaScriptIntrinsicInvocation | undefined => {
     if (activeBoundValues.has(node)) return undefined;
     activeBoundValues.add(node);
     try {
-      return resolveBoundIntrinsic(node);
+      return resolveBoundIntrinsic(node, callablePath);
     } finally {
       activeBoundValues.delete(node);
     }
@@ -632,11 +644,15 @@ export const createSemanticModuleInterop = (
       resolveJavaScriptIntrinsicInvocation(
         node,
         callablePath,
-        boundIntrinsic,
+        (value) =>
+          boundIntrinsic(
+            value,
+            callablePath === intrinsicPath ? undefined : callablePath,
+          ),
         intrinsicReadChanged,
         nativeArrayIteration,
       ),
-    boundIntrinsic,
+    boundIntrinsic: (node: t.Node) => boundIntrinsic(node),
     staticString,
     isFreshObject,
     opaqueMutationPath,

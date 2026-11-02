@@ -84,7 +84,8 @@ it.each([
     'const invoke = Reflect.apply; Reflect.apply = () => {}; invoke(app.setAppPath, app, ["./other"]);',
     true,
   ],
-  ['const change = app.setAppPath.bind(app); change("./other");', true],
+  // The bind site may escape; the proven bound invocation is a second change.
+  ['const change = app.setAppPath.bind(app); change("./other");', 2],
   ['app["setAppPath"][`call`](app, "./other");', true],
   [
     'const runtime = app; runtime.setAppPath.apply(runtime, ["./other"]);',
@@ -118,14 +119,12 @@ it.each([
   `);
     expect(analysis.parse_error_count).toBe(0);
     expect(analysis.electron.app_path_changes ?? []).toEqual(
-      expected
-        ? [
-            expect.objectContaining({
-              module_key: null,
-              location: expect.any(Object),
-            }),
-          ]
-        : [],
+      Array.from({ length: Number(expected) }, () =>
+        expect.objectContaining({
+          module_key: null,
+          location: expect.any(Object),
+        }),
+      ),
     );
   },
 );
@@ -157,6 +156,45 @@ it("recovers APIs through an ES module default import of Electron", () => {
     { side: "renderer", operation: "invoke", channel: "default:ping" },
     { side: "main", operation: "handle", channel: "destructured:ping" },
   ]);
+});
+
+it("recovers IPC operations invoked through bound Electron methods", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    const electron_1 = require("electron");
+    const handle = electron_1.ipcMain.handle.bind(electron_1.ipcMain);
+    handle("bound:ping", async () => "pong");
+    const invoke = electron_1.ipcRenderer.invoke.bind(electron_1.ipcRenderer);
+    invoke("bound:ping");
+  `);
+
+  expect(
+    analysis.electron.ipc.map(({ side, operation, channel }) => ({
+      side,
+      operation,
+      channel,
+    })),
+  ).toEqual([
+    { side: "main", operation: "handle", channel: "bound:ping" },
+    { side: "renderer", operation: "invoke", channel: "bound:ping" },
+  ]);
+});
+
+it("recovers a bound IPC registration passed through guard wrappers", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    const electron_1 = require("electron");
+    const electronIpcHandle = electron_1.ipcMain.handle.bind(electron_1.ipcMain);
+    const rawIpcHandle = (channel, listener) =>
+      electronIpcHandle(channel, async (event, ...args) => listener(event, ...args));
+    const protectedIpc = (channel, listener) =>
+      rawIpcHandle(channel, async (event, ...args) => listener(event, ...args));
+    protectedIpc("sites:list", async () => []);
+  `);
+
+  expect(
+    analysis.electron.ipc
+      .filter(({ side }) => side === "main")
+      .map(({ operation, channel }) => ({ operation, channel })),
+  ).toContainEqual({ operation: "handle", channel: "sites:list" });
 });
 
 it("recovers APIs and sender checks written with optional chaining", () => {
