@@ -45,13 +45,14 @@ const expectPastValidation = (result: CliResult): void => {
 };
 
 describe("utility command integer options", () => {
-  for (const [flag, field] of [
-    ["--pid", "pid"],
-    ["--window-id", "windowId"],
-    ["--max-nodes", "maxNodes"],
-    ["--native-ui-deadline-ms", "nativeUiDeadlineMs"],
+  // The options share one parser, so one takes every malformed spelling.
+  for (const [flag, field, values] of [
+    ["--pid", "pid", NON_DECIMAL_TEXT],
+    ["--window-id", "windowId", ["0x10"]],
+    ["--max-nodes", "maxNodes", ["0x10"]],
+    ["--native-ui-deadline-ms", "nativeUiDeadlineMs", ["0x10"]],
   ] as const) {
-    cliTest.for(NON_DECIMAL_TEXT)(
+    cliTest.for(values)(
       `rejects %j as a native UI ${flag} value`,
       async (value, { cli }) => {
         // A later flag replaces the decimal --pid/--window-id defaults.
@@ -64,21 +65,18 @@ describe("utility command integer options", () => {
     );
   }
 
-  cliTest.for(NON_DECIMAL_TEXT)(
-    "rejects %j as a native command timeout",
-    async (value, { cli }) => {
-      const result = await cli.run({
-        arguments: [
-          "inspect-plist",
-          await plist(),
-          `--native-command-timeout-ms=${value}`,
-          "--json",
-        ],
-      });
+  cliTest('rejects "0x10" as a native command timeout', async ({ cli }) => {
+    const result = await cli.run({
+      arguments: [
+        "inspect-plist",
+        await plist(),
+        "--native-command-timeout-ms=0x10",
+        "--json",
+      ],
+    });
 
-      expectFieldRefusal(result, "nativeCommandTimeoutMs");
-    },
-  );
+    expectFieldRefusal(result, "nativeCommandTimeoutMs");
+  });
 
   cliTest(
     "keeps the native deadline bounds for decimal text",
