@@ -396,8 +396,6 @@ export const projectBatchDecompileView = (
 };
 
 const deliveredPageSchema = z.looseObject({
-  kind: z.literal("batch-decompile"),
-  parent_evidence_id: z.string(),
   view: batchDecompileViewRequestSchema,
   items: z
     .array(z.looseObject({ index: z.int(), status: z.string() }))
@@ -405,42 +403,30 @@ const deliveredPageSchema = z.looseObject({
 });
 
 /**
- * The next selection from the retained parent when a delivered page did not
- * fit: fewer rows, then one body's text pages, which need no export. A view
- * record is not a parent, so the selection names the one this page came from.
+ * The next selection when a delivered page did not fit: fewer rows, then one
+ * body's text pages, which need no export. Other views are refused by kind
+ * first, because delivery asks about every view it returns.
  */
 export const smallerBatchDecompileSelection = (
   delivered: unknown,
-):
-  | {
-      readonly parentEvidenceId: string;
-      readonly view: z.input<typeof batchDecompileViewRequestSchema>;
-    }
-  | undefined => {
+): z.input<typeof batchDecompileViewRequestSchema> | undefined => {
+  if (
+    typeof delivered !== "object" ||
+    delivered === null ||
+    !("kind" in delivered) ||
+    delivered.kind !== "batch-decompile"
+  )
+    return undefined;
   const page = deliveredPageSchema.safeParse(delivered);
   if (!page.success) return undefined;
-  const { parent_evidence_id: parentEvidenceId, view, items = [] } = page.data;
+  const { view, items = [] } = page.data;
   if (view.collection === "pseudocode")
     return view.limit > 1
-      ? {
-          parentEvidenceId,
-          view: { ...view, limit: Math.floor(view.limit / 2) },
-        }
+      ? { ...view, limit: Math.floor(view.limit / 2) }
       : undefined;
-  if (items.length > 1)
-    return {
-      parentEvidenceId,
-      view: { ...view, limit: Math.floor(items.length / 2) },
-    };
+  if (items.length > 1) return { ...view, limit: Math.floor(items.length / 2) };
   const [row] = items;
   return row?.status === "ok" && view.include_pseudocode
-    ? {
-        parentEvidenceId,
-        view: {
-          kind: view.kind,
-          collection: "pseudocode",
-          index: row.index,
-        },
-      }
+    ? { kind: view.kind, collection: "pseudocode", index: row.index }
     : undefined;
 };

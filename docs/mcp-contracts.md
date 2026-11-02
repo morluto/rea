@@ -653,8 +653,10 @@ Page `coverage` counts the selection only: exhausting it establishes nothing
 about functions outside the batch. Evidence `limitations` aggregate every item's
 provider observations and are not attributed to one successful item; only error
 items keep their own. A page over the response budget offers a smaller selection
-from the same parent: fewer rows, or one body's `pseudocode` pages when a single
-row does not fit. `export_evidence_bundle` remains the complete alternative. The CLI has no batch command; save the Evidence and use
+from the same `source`: fewer rows, or one body's `pseudocode` pages when a single
+row does not fit. An inline source offers none, because the record cannot be
+repeated in that reply; resend it with a smaller selection.
+`export_evidence_bundle` remains the complete alternative. The CLI has no batch command; save the Evidence and use
 `inspect-analysis-view` with an `evidence-file` source or `--evidence-bundle`.
 
 Completed `inspect_artifact` and atomic `inventory_artifact` Evidence also

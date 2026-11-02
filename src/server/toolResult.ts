@@ -37,15 +37,12 @@ const smallerPage = (
     : null;
 };
 
-/** A named, schema-validated call reading one view of a retained parent. */
+/** A named, schema-validated call reading one view of one source. */
 const continuationOf = (
-  parentEvidenceId: string,
+  source: JsonValue,
   view: unknown,
 ): Readonly<Record<string, JsonValue>> => {
-  const input = inspectAnalysisViewInputSchema.safeParse({
-    source: { kind: "retained-evidence", evidence_id: parentEvidenceId },
-    view,
-  });
+  const input = inspectAnalysisViewInputSchema.safeParse({ source, view });
   if (!input.success) return {};
   return {
     continuation: {
@@ -55,21 +52,28 @@ const continuationOf = (
   };
 };
 
-/** Offer a next page for retained analysis whose owner supports paging. */
+/** Offer a next page for analysis whose owner supports paging. */
 const retainedEvidenceContinuation = (
   evidence: Evidence,
   selected?: JsonValue,
+  viewSource?: JsonValue,
 ): Readonly<Record<string, JsonValue>> => {
+  // A view continues from the caller's own source, which need not be retained.
   if (evidence.operation === INSPECT_ANALYSIS_VIEW_OPERATION) {
-    const next = smallerBatchDecompileSelection(evidence.normalized_result);
-    return next === undefined
+    const view = smallerBatchDecompileSelection(evidence.normalized_result);
+    return view === undefined || viewSource === undefined
       ? {}
-      : continuationOf(next.parentEvidenceId, next.view);
+      : continuationOf(viewSource, view);
   }
   const smaller = smallerPage(selected);
   if (smaller === null) return {};
   const view = smaller ?? ownerFirstPage(evidence);
-  return view === undefined ? {} : continuationOf(evidence.evidence_id, view);
+  return view === undefined
+    ? {}
+    : continuationOf(
+        { kind: "retained-evidence", evidence_id: evidence.evidence_id },
+        view,
+      );
 };
 
 /** The first page an owner offers when its complete retained result does not fit. */

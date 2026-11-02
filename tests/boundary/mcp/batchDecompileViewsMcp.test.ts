@@ -575,6 +575,85 @@ it("reads the same rows from a bundle and an Evidence file without a provider", 
   }
 });
 
+it("keeps the caller's own source when a page cannot fit, without retaining its parent", async () => {
+  const budget = 64 * 1024;
+  const body = `int f(void) { /*${"x".repeat(budget * 2)}*/ }`;
+  const row = {
+    procedure: { status: "resolved", address: "0x1", name: null },
+    status: "ok",
+    pseudocode: body,
+  };
+  const parent = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "batch_decompile",
+      parameters: {},
+      result: {
+        items: [
+          { address: "a", ...row },
+          { address: "b", ...row },
+        ],
+        total: 2,
+        succeeded: 2,
+        failed: 0,
+      },
+      predicateType: "rea.analysis",
+      confidence: "derived",
+      authority: "shipped-artifact",
+    },
+  );
+  const root = await createTestTempDirectory("rea-batch-decompile-source-");
+  const path = join(root, "batch.json");
+  await writeFile(path, JSON.stringify(parent));
+  const session = createTestBinarySession(() => {
+    throw new Error("Retained batch views must not open a provider");
+  });
+  const { client, close } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "batch-decompile-source", version: "1.0.0" },
+    serverOptions: { delivery: createToolResultDelivery(budget) },
+  });
+  onTestFinished(close);
+  const inspect = (source: unknown, selected: Record<string, unknown>) =>
+    client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source, view: { kind: "batch-decompile", ...selected } },
+    });
+  const continuationOf = (result: Parameters<typeof parseMcpToolError>[0]) =>
+    z
+      .object({ details: z.object({ reported_limits: jsonObjectSchema }) })
+      .parse(parseMcpToolError(result).error).details.reported_limits
+      .continuation;
+  const withBodies = { collection: "items", include_pseudocode: true };
+
+  // A file source continues from that file: its parent was never retained.
+  const file = { kind: "evidence-file", path };
+  expect(continuationOf(await inspect(file, withBodies))).toMatchObject({
+    arguments: { source: file, view: { limit: 1 } },
+  });
+  const oneRow = continuationOf(
+    await inspect(file, { ...withBodies, limit: 1 }),
+  );
+  expect(oneRow).toMatchObject({
+    arguments: {
+      source: file,
+      view: { collection: "pseudocode", index: 0 },
+    },
+  });
+  const followed = await client.callTool(
+    z.object({ name: z.string(), arguments: jsonObjectSchema }).parse(oneRow),
+  );
+  expect(followed.isError, JSON.stringify(followed)).not.toBe(true);
+  expect(session.hasEvidence(parent.evidence_id)).toBe(false);
+
+  // An inline record cannot be repeated within the reply it overflowed.
+  const inline = { kind: "inline", evidence: parent };
+  const overflowed = await inspect(inline, withBodies);
+  expect(parseMcpToolError(overflowed).error.code).toBe("resource_constraint");
+  expect(continuationOf(overflowed)).toBeUndefined();
+});
+
 it("delivers no summary without retention, on a ledger failure or after cancellation", async () => {
   onTestFinished(closeEnhancedToolResources);
   let calls = 0;
