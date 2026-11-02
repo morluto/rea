@@ -68,6 +68,14 @@ export const commonJsExportApplicability = (
     ? "detached"
     : (effect?.fields?.get(name) ?? effect?.receiver ?? "connected");
 
+/** Erased expression wrappers preserve the CommonJS receiver's identity. */
+const isCommonJsGlobal = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  name: "module" | "exports",
+): boolean =>
+  isUnshadowedGlobal(unwrapJavaScriptExpression(node).node, state, name);
+
 /** A CommonJS export assignment or `Object.defineProperty` export call. */
 export type CommonJsExportSite = t.AssignmentExpression | t.CallExpression;
 
@@ -179,21 +187,26 @@ const copiedOwnFields = (
 const isCommonJsModuleExports = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
-  isUnshadowedGlobal(node.object, state, "module") &&
-  semanticStaticPropertyKey(node.property, node.computed) === "exports";
+): boolean => {
+  node = unwrapJavaScriptExpression(node).node;
+  return (
+    (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+    isCommonJsGlobal(node.object, state, "module") &&
+    semanticStaticPropertyKey(node.property, node.computed) === "exports"
+  );
+};
 
 /** One syntax owner for CJS export names and their receiver identities. */
 export const commonJsExportName = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): string | undefined => {
+  node = unwrapJavaScriptExpression(node).node;
   if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node))
     return undefined;
   const key = semanticStaticPropertyKey(node.property, node.computed);
   if (
-    isUnshadowedGlobal(node.object, state, "exports") ||
+    isCommonJsGlobal(node.object, state, "exports") ||
     isCommonJsModuleExports(node.object, state)
   )
     return key === null ? "*" : key;
@@ -423,12 +436,12 @@ export function* indexCommonJsExportReceiversSteps(
     target = unwrapJavaScriptExpression(target).node;
     const possiblePublicWrite =
       (t.isMemberExpression(target) || t.isOptionalMemberExpression(target)) &&
-      isUnshadowedGlobal(target.object, state, "module") &&
+      isCommonJsGlobal(target.object, state, "module") &&
       semanticStaticPropertyKey(target.property, target.computed) === null;
     const publicWrite =
       isCommonJsModuleExports(target, state) || possiblePublicWrite;
-    const exportsWrite = isUnshadowedGlobal(target, state, "exports");
-    const moduleWrite = isUnshadowedGlobal(target, state, "module");
+    const exportsWrite = isCommonJsGlobal(target, state, "exports");
+    const moduleWrite = isCommonJsGlobal(target, state, "module");
     if (!publicWrite && !exportsWrite && !moduleWrite) return;
     if (mode === "deferred") {
       // A source offset cannot order an invocation against module completion.
@@ -479,17 +492,17 @@ export function* indexCommonJsExportReceiversSteps(
           commonJsExportName(node.left, state) !== undefined &&
           !isCommonJsModuleExports(node.left, state)
         ) {
+          const left = unwrapJavaScriptExpression(node.left).node;
           const receiver =
-            t.isMemberExpression(node.left) ||
-            t.isOptionalMemberExpression(node.left)
-              ? node.left.object
+            t.isMemberExpression(left) || t.isOptionalMemberExpression(left)
+              ? left.object
               : null;
           captures.set(
             node,
             mode !== "ordered"
               ? null
               : receiver !== null &&
-                  isUnshadowedGlobal(receiver, state, "exports")
+                  isCommonJsGlobal(receiver, state, "exports")
                 ? exportsIdentity
                 : publicIdentity,
           );
@@ -551,16 +564,17 @@ export function* indexCommonJsExportReceiversSteps(
           t.isUpdateExpression(node) ||
           t.isUnaryExpression(node, { operator: "delete" })
         ) {
+          const argument = unwrapJavaScriptExpression(node.argument).node;
           if (t.isUnaryExpression(node, { operator: "delete" })) {
-            const name = commonJsExportName(node.argument, state);
+            const name = commonJsExportName(argument, state);
             if (
               name !== undefined &&
-              !isCommonJsModuleExports(node.argument, state) &&
-              (t.isMemberExpression(node.argument) ||
-                t.isOptionalMemberExpression(node.argument))
+              !isCommonJsModuleExports(argument, state) &&
+              (t.isMemberExpression(argument) ||
+                t.isOptionalMemberExpression(argument))
             ) {
-              const receiver = isUnshadowedGlobal(
-                node.argument.object,
+              const receiver = isCommonJsGlobal(
+                argument.object,
                 state,
                 "exports",
               )
@@ -574,8 +588,8 @@ export function* indexCommonJsExportReceiversSteps(
               deletions.set(receiver, fields);
             }
           }
-          write(node.argument, null, mode);
-        } else if (isUnshadowedGlobal(node, state, "exports")) {
+          write(argument, null, mode);
+        } else if (isCommonJsGlobal(node, state, "exports")) {
           values.set(node, exportsIdentity);
         } else if (isCommonJsModuleExports(node, state)) {
           values.set(node, publicIdentity);
