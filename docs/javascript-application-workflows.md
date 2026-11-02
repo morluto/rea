@@ -1,5 +1,9 @@
 # Cross-layer JavaScript application workflows
 
+For a worked example, [inspect Relay garden's movement rule](relay-garden-movement.md):
+locate a function in a self-authored minified game, trace its caller through CLI
+and MCP, and compare a reconstruction against the artifact.
+
 REA derives a complete reachable feature trace from one authenticated JavaScript
 Application Graph and compares two authenticated graph versions. The MCP tools
 are `inspect_analysis_view`, `trace_application_feature`,
