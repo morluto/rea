@@ -373,6 +373,7 @@ try {
 }
 const report = {
   run_id: run.run_id,
+  input_mode: inspectExisting ? "existing-captures" : "producer-attempt",
   status: primaryError || cleanupFailures.length ? "failed" : "passed",
   finished_at: new Date().toISOString(),
   ...(primaryError
@@ -386,8 +387,11 @@ const report = {
   verifier,
   producer_audit: producerAudit,
   scope:
-    "Real Linux reverse HTTP/3, mitmproxy 12.2.3, aioquic 1.2.0 and guest cURL",
+    "Linux reverse HTTP/3 capture verification for mitmproxy 12.2.3, aioquic 1.2.0 and guest cURL",
   limitations: [
+    ...(inspectExisting
+      ? ["Existing capture producer provenance was not authenticated by this attempt."]
+      : []),
     "No local/WireGuard, browser, QUIC v2, migration, 0-RTT, mTLS or replay claim.",
     "No HAR, interruption, certificate-failure or body-completeness coverage in this profile.",
   ],

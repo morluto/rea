@@ -914,6 +914,7 @@ const selectedRejection = (
   origin,
   code: rejection.code,
   reason: rejection.reason,
+  ...("remediation" in rejection ? { remediation: rejection.remediation } : {}),
   // ProviderSelectionError owns the single defensive diagnostic copy.
   diagnostics: rejection.diagnostics,
 });

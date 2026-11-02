@@ -24,6 +24,7 @@ import {
   createDarwinProcessRunTokenReader,
   type DarwinProcessReaderCompiler,
 } from "./DarwinProcessRunTokenReader.js";
+import { darwinHelperCacheDirectory } from "./DarwinHelperCache.js";
 import {
   ProcessRunTokenReadError,
   readProcessRunTokens,
@@ -1096,6 +1097,11 @@ export const createSystemProcessOwnershipHost = (
           executable: swiftcPath,
           sdkRoot: hostEnvironment.SDKROOT ?? "",
         });
+  const helperCacheDirectory = darwinHelperCacheDirectory({
+    home: hostEnvironment.HOME,
+    compilerSelected: darwinCompiler !== undefined,
+    moduleCachePath: darwinModuleCachePath,
+  });
   const darwinTokens =
     platform === "darwin"
       ? createDarwinProcessRunTokenReader({
@@ -1104,6 +1110,9 @@ export const createSystemProcessOwnershipHost = (
           ...(darwinModuleCachePath === undefined
             ? {}
             : { moduleCachePath: darwinModuleCachePath }),
+          ...(helperCacheDirectory === undefined
+            ? {}
+            : { helperCacheDirectory }),
           ...(options.compileTimeoutMs === undefined
             ? {}
             : { compileTimeoutMs: options.compileTimeoutMs }),

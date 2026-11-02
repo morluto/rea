@@ -26,6 +26,7 @@ it("checks parent subject identity again when signing facts are already cached",
     if (evidence.subject === null || evidence.subject.format !== "apk")
       throw new Error("selected file subject missing");
     const parent = {
+      predicateType: evidence.predicate_type,
       evidenceId: evidence.evidence_id,
       operation: evidence.operation,
       normalizedResult: freezeJsonSnapshot(evidence.normalized_result),

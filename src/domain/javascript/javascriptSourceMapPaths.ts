@@ -57,11 +57,19 @@ export const resolveJavaScriptSourceMapUrl = (
   );
 };
 
+/**
+ * Prefix a source with its declared root before URL resolution. An empty root
+ * adds no prefix: webpack 5 and tsc emit `"sourceRoot": ""` for map-relative
+ * sources. Chrome, Firefox and trace-mapping all skip it, and ECMA-426's
+ * DecodeSourceMapSources steps were written to match them (tc39/ecma426#183).
+ * Only a non-empty root gains a `/` separator, so repeated slashes stay
+ * significant.
+ */
 const sourceMapReference = (
   source: string,
   sourceRoot: string | null | undefined,
 ): string => {
-  if (sourceRoot == null) return source;
+  if (sourceRoot == null || sourceRoot === "") return source;
   return `${sourceRoot}${sourceRoot.endsWith("/") ? "" : "/"}${source}`;
 };
 

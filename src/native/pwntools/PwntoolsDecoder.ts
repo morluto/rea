@@ -65,10 +65,8 @@ import {
   readPwntoolsFailureEvidence,
 } from "./PwntoolsResourceLimits.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
-import {
-  PWNTOOLS_PROVIDER_IDENTITY,
-  PWNTOOLS_LIMITS,
-} from "./PwntoolsRelease.js";
+import { PWNTOOLS_LIMITS } from "./PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
 
 const HOST_REQUIREMENT =

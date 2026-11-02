@@ -610,7 +610,7 @@ describe("signature display name validity", () => {
     const result = inspectDisplayFixture({ fieldSignature: blob });
     expect(result.fields[0]?.signature.parse_status).toBe(status);
     expect(result.fields[0]?.signature.raw_sha256).toBe(
-      signature(blob).raw_sha256,
+      createHash("sha256").update(blob).digest("hex"),
     );
   });
 });

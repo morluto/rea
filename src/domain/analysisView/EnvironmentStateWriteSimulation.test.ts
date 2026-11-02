@@ -2301,14 +2301,8 @@ describe("entities an unmodelled write made", () => {
     ["GET", "/api/books/3", BOOK_NOT_FOUND, 404] as TimedCaptureRow,
   ];
 
-  it("serves a delete of a book an unmodelled import made, which a later item read showed", () => {
-    // The rename ends the initial reads, so the third book is no initial one.
-    expect(
-      gated(deletedAfterRead([RENAME, IMPORT]), "delete_books_by_id"),
-    ).toMatchObject({ served: true, checked_record_ordinals: [7] });
-  });
-
   it("takes a book the state never held only when a write the gate does not model came first", () => {
+    // The rename ends the initial reads, so the third book is no initial one.
     expect(
       gated(deletedAfterRead([RENAME, IMPORT]), "delete_books_by_id"),
     ).toMatchObject({ served: true, checked_record_ordinals: [7] });

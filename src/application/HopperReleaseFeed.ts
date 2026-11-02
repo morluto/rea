@@ -7,7 +7,11 @@ import {
   type SafeJsonParseResult,
 } from "../domain/safeJson.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { HOPPER_DOWNLOAD_BYTES } from "./HopperDownload.js";
+import {
+  describeHopperRequestFailure,
+  HOPPER_DOWNLOAD_BYTES,
+  type HopperRequestFailure,
+} from "./HopperDownload.js";
 import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 
 /** Vendor endpoints, shared by installation and existing-build inspection. */
@@ -100,6 +104,8 @@ const suffixes = { deb: ".deb", rpm: ".rpm", arch: ".pkg.tar.xz" } as const;
 
 export class HopperReleaseError extends Error {
   readonly _tag = "HopperReleaseError";
+  /** The vendor request whose transport failure produced this error. */
+  readonly download: HopperRequestFailure | undefined;
   constructor(
     readonly reason:
       | "release_metadata"
@@ -112,10 +118,23 @@ export class HopperReleaseError extends Error {
       | "cleanup_failed"
       | "cache_missing",
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly download?: HopperRequestFailure },
   ) {
     super(message, options);
     this.name = this._tag;
+    this.download = options?.download;
+  }
+
+  /** Describe a failed vendor request once, from the transport's observed facts. */
+  static fromDownload(
+    reason: HopperReleaseError["reason"],
+    download: HopperRequestFailure,
+  ): HopperReleaseError {
+    return new HopperReleaseError(
+      reason,
+      describeHopperRequestFailure(download),
+      { download },
+    );
   }
 }
 

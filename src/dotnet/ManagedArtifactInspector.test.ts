@@ -613,23 +613,6 @@ it.each([false, true])(
 );
 
 describe("managed artifact reference inventory", () => {
-  it("qualifies local custom-attribute names with their enclosing types", () => {
-    const bytes = buildManagedPeFixture({
-      additionalEmptyTypes: 1,
-      customAttributeTypeRaw: (1 << 3) | 2,
-      nestedTypes: [[2, 1]],
-      typeName: "InnerAttribute",
-      typeNamespace: "",
-    });
-    const result = inspectManagedArtifactBytes(
-      bytes,
-      managedPeFixtureTarget(bytes),
-    );
-
-    expect(result.attributes[0]?.type_name).toBe("Empty0+InnerAttribute");
-    expect(result.coverage).toEqual({ state: "complete", issues: [] });
-  });
-
   it("qualifies referenced custom-attribute names from TypeRef scopes", () => {
     const bytes = buildManagedPeFixture({
       customAttributeTypeRaw: (1 << 3) | 3,

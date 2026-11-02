@@ -1,9 +1,8 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
-import { afterEach, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { expect, it } from "vitest";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -19,9 +18,10 @@ import { SessionProviderRouter } from "../application/binary/SessionProviderRout
 import { toolContract } from "../contracts/toolContracts.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
-import { createServer } from "./createServer.js";
 import { createArtifactBinarySession } from "../composition/binary.js";
 import { build } from "plist";
+import { createApplicationMcpHarness } from "../../tests/fixtures/applicationMcpHarness.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 const identity: ProviderIdentity = {
   id: "bundle-resource-mcp-fixture",
@@ -29,14 +29,8 @@ const identity: ProviderIdentity = {
   version: "1",
 };
 
-const resources: Array<{ close(): Promise<unknown> }> = [];
-
-afterEach(async () => {
-  await Promise.all(resources.splice(0).map((resource) => resource.close()));
-});
-
 it("routes bundle resource MCP calls with null executable identity and retained Evidence", async () => {
-  const parent = await mkdtemp(join(tmpdir(), "rea-bundle-resource-mcp-"));
+  const parent = await createTestTempDirectory("rea-bundle-resource-mcp-");
   const bundle = join(parent, "Fixture.app");
   await mkdir(bundle);
   const plistPath = join(bundle, "Info.plist");
@@ -82,21 +76,10 @@ it("routes bundle resource MCP calls with null executable identity and retained 
     new InvestigationRecords(),
     { createClient: () => ({ client: resourceClient, capabilities: [] }) },
   );
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "bundle-resource-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push({
-    close: async () => {
-      await client.close();
-      await server.close();
-      await session.close();
-      await rm(parent, { recursive: true, force: true });
-    },
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "bundle-resource-test", version: "1" },
   });
-
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
 
   await expectResourceSchemaBranches(client);
 
@@ -192,10 +175,11 @@ it("routes bundle resource MCP calls with null executable identity and retained 
 });
 
 it("exposes the production resource session through the MCP SDK for a keyless bundle", async () => {
-  const parent = await mkdtemp(
-    join(tmpdir(), "rea-bundle-resource-production-mcp-"),
+  const parent = await createTestTempDirectory(
+    "rea-bundle-resource-production-mcp-",
   );
-  const bundle = join(parent, "Fixture.app");
+  const bundle = join(parent, "Fixture");
+  const alias = join(parent, "Caller");
   const resourceDirectory = join(bundle, "Resources");
   await mkdir(resourceDirectory, { recursive: true });
   await writeFile(join(bundle, "Info.plist"), "<plist><dict/></plist>");
@@ -209,28 +193,18 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     }),
   );
 
+  await symlink(bundle, alias, "junction");
+  const canonical = await realpath(bundle);
+
   const session = await createArtifactBinarySession({}, process.platform);
-  const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "production-bundle-resource-test",
-    version: "1",
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "production-bundle-resource-test", version: "1" },
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push({
-    close: async () => {
-      await client.close();
-      await server.close();
-      await session.close();
-      await rm(parent, { recursive: true, force: true });
-    },
-  });
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
 
   const opened = await client.callTool({
     name: "open_bundle_resources",
-    arguments: { path: bundle },
+    arguments: { path: alias },
   });
   expect(opened.isError).not.toBe(true);
   expect(
@@ -238,7 +212,11 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
       opened.structuredContent,
     ),
   ).toMatchObject({
-    result: { canonical_path: bundle, executable_sha256: null },
+    result: {
+      caller_path: alias,
+      canonical_path: canonical,
+      executable_sha256: null,
+    },
   });
 
   const decoded = await client.callTool({
@@ -253,7 +231,11 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     subject: null,
     normalized_result: {
       target_sha256: null,
-      resource_root: { canonical_path: bundle, executable_sha256: null },
+      resource_root: {
+        caller_path: alias,
+        canonical_path: canonical,
+        executable_sha256: null,
+      },
     },
   });
   const decodedEvidenceId = z
@@ -282,10 +264,10 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
       ),
     ).toMatchObject({
       normalized_result: {
-        artifact: { path: bundle, sha256: null },
+        artifact: { path: canonical, sha256: null },
         resource_root: {
-          caller_path: bundle,
-          canonical_path: bundle,
+          caller_path: alias,
+          canonical_path: canonical,
           executable_sha256: null,
         },
       },
@@ -305,7 +287,11 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     normalized_result: {
       archive_path: "Resources/Archive.plist",
       target_sha256: null,
-      resource_root: { canonical_path: bundle, executable_sha256: null },
+      resource_root: {
+        caller_path: alias,
+        canonical_path: canonical,
+        executable_sha256: null,
+      },
       objects: expect.arrayContaining([
         expect.objectContaining({ value: "resource-only-value" }),
       ]),
@@ -318,9 +304,24 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     subject: null,
     operation: "inspect_keyed_archive",
     normalized_result: {
-      resource_root: { canonical_path: bundle, executable_sha256: null },
+      resource_root: {
+        caller_path: alias,
+        canonical_path: canonical,
+        executable_sha256: null,
+      },
     },
   });
+  const closed = await client.callTool({ name: "close_binary", arguments: {} });
+  expect(closed.isError).not.toBe(true);
+  const statusAfterClose = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  expect(
+    toolContract("binary_session").outputSchema.parse(
+      statusAfterClose.structuredContent,
+    ),
+  ).toMatchObject({ result: { open: false } });
 });
 
 const expectResourceSchemaBranches = async (client: Client): Promise<void> => {

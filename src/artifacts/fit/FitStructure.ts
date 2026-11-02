@@ -88,7 +88,8 @@ const propertyOf = (node: FitNode, name: string): FitProperty | undefined =>
 const valueOf = (fdt: Buffer, property: FitProperty): Buffer =>
   fdt.subarray(property.offset, property.offset + property.bytes);
 
-const utf8 = new TextDecoder("utf-8", { fatal: true });
+// A property value is data: a leading U+FEFF is not a file encoding signature.
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const nulCount = (raw: Buffer): number => {
   let count = 0;
   for (const byte of raw) if (byte === 0) count += 1;

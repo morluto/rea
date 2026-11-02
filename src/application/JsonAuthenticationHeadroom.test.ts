@@ -1,6 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
+import {
+  estimateJsonStorage,
+  requireAuthenticationHeadroom,
+} from "./JsonAuthenticationHeadroom.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+
+it("stops a bounded representation scan before visiting an over-budget tail", () => {
+  const value = {
+    first: "x".repeat(1_024),
+    get tail() {
+      throw new Error("The rejected representation must not read its tail");
+    },
+  };
+  const measured = estimateJsonStorage(value, {
+    maximumValueBytes: 512,
+    includeSerialized: false,
+  });
+  expect(measured.valueBytes).toBeGreaterThan(512);
+});
 describe("JSON authentication headroom", () => {
   it("does not queue every row while deciding whether a wide report can fit", () => {
     let pending = 0;

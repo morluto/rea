@@ -192,6 +192,7 @@ describe("client registration environment validation", () => {
 
     const byClient = new Map(statuses.map((status) => [status.client, status]));
     // The failing resolver must not invalidate non-Kimi/Codex registrations.
+    expect(byClient.has("cursor")).toBe(true);
     expect(byClient.get("cursor")?.state).not.toBe("invalid");
     expect(byClient.get("codex")).toMatchObject({
       state: "invalid",

@@ -64,6 +64,11 @@ import {
   sourceToBundleViewContextSchema,
 } from "./sourceToBundleView.js";
 import {
+  featureTraceSummarySchema,
+  featureTraceViewCollections,
+  featureTraceViewContextSchema,
+} from "./featureTraceView.js";
+import {
   gpuCodeObjectsViewRequestSchema,
   gpuCodeObjectsSummarySchema,
   gpuCodeObjectsItemsSchema,
@@ -946,6 +951,42 @@ export const sourceToBundlePageViewResultSchema = z.strictObject({
   items: sourceToBundleViewItemsSchema,
 });
 
+/** Compact retained feature-trace summary; pages carry the same trace context. */
+export const featureTraceSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: z.null(),
+  parent_operation: z.literal("trace_application_feature"),
+  summary: featureTraceSummarySchema,
+});
+const featureTracePage = <
+  Collection extends keyof typeof featureTraceViewCollections,
+>(
+  collection: Collection,
+) =>
+  z.strictObject({
+    ...viewResultBase,
+    ...featureTraceViewContextSchema.shape,
+    kind: z.literal("feature-trace"),
+    artifact: z.null(),
+    parent_operation: z.literal("trace_application_feature"),
+    view: featureTraceViewCollections[collection].request,
+    items: featureTraceViewCollections[collection].rows,
+  });
+// As with Mach-O pages, the kind tag keeps dispatch while each collection is
+// advertised with exactly its own rows.
+export const featureTraceViewResultSchema = z
+  .object({ kind: z.literal("feature-trace") })
+  .passthrough()
+  .pipe(
+    z.union([
+      featureTracePage("paths"),
+      featureTracePage("nodes"),
+      featureTracePage("edges"),
+      featureTracePage("seed_matches"),
+      featureTracePage("native_handoffs"),
+    ]),
+  );
+
 /** Bind the existing nested facet selection to its producer-owned rows. */
 const machoPage = <Facet extends keyof typeof machoViewRows>(facet: Facet) =>
   z.strictObject({
@@ -984,6 +1025,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   javaScriptRoutesViewResultSchema,
   webBundlePageViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  featureTraceViewResultSchema,
   z.strictObject({
     ...viewResultBase,
     ...nativeFunctionMatchingContextSchema.shape,
@@ -1073,6 +1115,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeFunctionMatchingSummaryViewResultSchema,
     nativeFunctionSummaryViewResultSchema,
     sourceToBundleSummaryViewResultSchema,
+    featureTraceSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
   ]),
   z.strictObject({

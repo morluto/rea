@@ -4,14 +4,16 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../../../src/domain/artifactGraph.js";
 import { thinMach } from "../../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { withArtifactClient } from "../../../support/artifactClientScope.js";
+import {
+  createOwnedArtifactClient,
+  withArtifactClient,
+} from "../../../support/artifactClientScope.js";
 
 describe("artifact directory diagnostics", () => {
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
@@ -101,9 +103,10 @@ describe("artifact directory diagnostics", () => {
       try {
         const target = await parseBinaryTarget(appPath);
         if (!target.ok) throw target.error;
-        const result = await new ArtifactProvider(process.env)
-          .createClient(target.value)
-          .execute("inventory_artifact", {});
+        const result = await createOwnedArtifactClient(target.value).execute(
+          "inventory_artifact",
+          {},
+        );
         if (!result.ok) throw result.error;
         const inventory = artifactInventoryResultSchema.parse(
           result.value.result,

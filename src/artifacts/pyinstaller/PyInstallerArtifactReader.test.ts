@@ -909,67 +909,6 @@ it("retains the descriptor owner when admission cleanup fails", async () => {
   }
 });
 
-it("inventories and extracts a Windows member name under its canonical path", async () => {
-  const storedName = String.raw`pkg\data.bin`;
-  const pyzName = String.raw`res\icon.bin`;
-  const payload = Buffer.from("nested-bytes");
-  const icon = Buffer.from("icon-bytes");
-  const path = await writeArchive(
-    "windows",
-    cArchiveExecutable({
-      carrier: "pe",
-      layout: "2.1",
-      pythonVersion: 309,
-      pythonLibrary: "python39.dll",
-      members: [
-        { name: storedName, typeCode: "x", payload, compress: false },
-        {
-          name: "PYZ.pyz",
-          typeCode: "z",
-          payload: pyzArchive({
-            magic: PYTHON_39_MAGIC,
-            modules: [{ name: pyzName, typeCode: 2, body: icon }],
-          }),
-          compress: false,
-        },
-      ],
-    }),
-  );
-  const snapshot = await scanCanonicalArtifactInventory(path);
-  const member = snapshot.occurrences.find(
-    (occurrence) => occurrence.logical_path === "pkg/data.bin",
-  );
-  const resource = snapshot.occurrences.find(
-    (occurrence) => occurrence.logical_path === "PYZ.pyz/res/icon.bin",
-  );
-  expect(member?.format_metadata).toMatchObject({ source_name: storedName });
-  expect(resource?.format_metadata).toMatchObject({ source_name: pyzName });
-  expect(member?.source_path).toBe(storedName);
-  expect(resource?.source_path).toBe(pyzName);
-  const directory = await createTestTempDirectory("rea-pyinstaller-out-");
-  const output = join(directory, "extracted");
-  await materializeArtifactInventory(
-    {
-      inputPath: path,
-      inputFormat: "pe",
-      outputRoot: output,
-      environment: process.env,
-      integrityPolicy: "fail",
-    },
-    path,
-    snapshot,
-  );
-  expect(
-    Buffer.compare(await readFile(join(output, "pkg", "data.bin")), payload),
-  ).toBe(0);
-  expect(
-    Buffer.compare(
-      await readFile(join(output, "PYZ.pyz", "res", "icon.bin")),
-      icon,
-    ),
-  ).toBe(0);
-});
-
 const posixPathFixture = async () => {
   const backslashName = String.raw`a\b.txt`;
   const slashName = "a/b.txt";

@@ -1278,6 +1278,18 @@ const sanitizedTokenReadFailure = (diagnostic: string | undefined): string => {
   if (diagnostic === "apple_vector_unavailable") return diagnostic;
   if (diagnostic === "ambiguous_environment_boundary") return diagnostic;
   if (diagnostic === "malformed_procargs") return diagnostic;
+  // The native parser reports only fixed stage names, never process data.
+  if (
+    diagnostic === "malformed_procargs_header" ||
+    diagnostic === "malformed_procargs_argument_count" ||
+    diagnostic === "malformed_procargs_executable_path" ||
+    diagnostic === "malformed_procargs_pointer_size" ||
+    diagnostic === "malformed_procargs_path_padding" ||
+    diagnostic === "malformed_procargs_arguments" ||
+    diagnostic === "malformed_procargs_terminator" ||
+    diagnostic === "malformed_procargs_trailing_entries"
+  )
+    return diagnostic;
   if (diagnostic === "process_identity_changed_during_token_read")
     return diagnostic;
   if (diagnostic === "process_not_in_snapshot") return diagnostic;

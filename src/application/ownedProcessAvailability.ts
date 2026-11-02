@@ -73,6 +73,7 @@ export const ownedProcessPrerequisiteAvailability = (
       status: "unavailable",
       code: "runtime_unavailable",
       reason: `${refusal.reason}. ${REMEDIATION}`,
+      remediation: REMEDIATION,
       diagnostics: {
         stage: "ownership_preparation",
         prerequisite_provider_id: refusal.providerId,
@@ -85,6 +86,7 @@ export const ownedProcessPrerequisiteAvailability = (
     status: "unavailable",
     code: "runtime_unavailable",
     reason: `${darwin.message}. ${DARWIN_REMEDIATION}`,
+    remediation: DARWIN_REMEDIATION,
     diagnostics: {
       stage: "ownership_preparation",
       ...(darwin.compilerOutcome === undefined

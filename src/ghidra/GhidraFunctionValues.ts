@@ -1,3 +1,4 @@
+import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
@@ -54,23 +55,6 @@ import {
   ghidraProcedureIdentitySchema as procedureIdentity,
   ghidraFunctionIdentitySchema as dossierProcedureIdentity,
 } from "./GhidraInventoryValues.js";
-
-/** Function analysis and annotation operations admitted by the Ghidra adapter. */
-export const GHIDRA_FUNCTION_OPERATIONS = [
-  "annotate_native_function",
-  "inspect_native_data_type",
-  "inspect_native_instruction",
-  "resolve_native_call_targets",
-  "analyze_function",
-  "procedure_assembly",
-  "procedure_callees",
-  "procedure_callers",
-  "procedure_info",
-  "procedure_pseudo_code",
-  "read_function_instructions",
-  "procedure_references",
-  "xrefs",
-] as const;
 
 /** One function-analysis operation implemented by the packaged Java bridge. */
 export type GhidraFunctionOperation =

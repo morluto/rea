@@ -145,6 +145,7 @@ describe.skipIf(process.platform === "win32")(
       if (!first.ok) throw first.error;
       const again = await provider.resolveAnalysisProfile(target);
       if (!again.ok) throw again.error;
+      expect(first.value.profile?.digest).toEqual(expect.any(String));
       expect(again.value.profile?.digest).toBe(first.value.profile?.digest);
       expect(first.value.profile?.parameters).toMatchObject({
         architecture: "mips",
@@ -184,6 +185,7 @@ describe.skipIf(process.platform === "win32")(
       );
       const changed = await provider.resolveAnalysisProfile(target);
       if (!changed.ok) throw changed.error;
+      expect(changed.value.profile?.digest).toEqual(expect.any(String));
       expect(changed.value.profile?.digest).not.toBe(
         first.value.profile?.digest,
       );

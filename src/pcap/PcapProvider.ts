@@ -1,3 +1,4 @@
+import { PCAP_PROVIDER_IDENTITY } from "./PcapProviderIdentity.js";
 import { PCAP_HTTP_URI_FIELDS } from "./PcapHttpUri.js";
 import {
   type ExecutionOptions,
@@ -7,6 +8,7 @@ import {
 } from "../application/AnalysisProvider.js";
 import {
   pcapResultSchemas,
+  PCAP_CAPTURE_HOST_REMEDIATION,
   pcapCaptureHostSupported,
   type PcapRequest,
   type PcapOperation,
@@ -33,6 +35,7 @@ import {
   locateWiresharkTool,
   resolvePcapTools,
   pcapConfigurationAvailability,
+  PCAP_TOOL_REMEDIATION,
   pcapToolUnavailable,
   wiresharkExecutableIdentity,
   type PcapToolSelection,
@@ -67,11 +70,6 @@ import {
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
 
-export const PCAP_PROVIDER_IDENTITY = {
-  id: "pcap",
-  name: "Packet capture analysis",
-  version: null,
-} as const;
 const FIELDS = [
   "frame.number",
   "frame.protocols",
@@ -559,6 +557,7 @@ export class PcapProvider {
           code: "unsupported_host",
           reason:
             "No enforceable native memory boundary is available for capture summaries on this host.",
+          remediation: PCAP_CAPTURE_HOST_REMEDIATION,
           diagnostics: client,
         };
       await this.prepareCaptureBound("inspect_pcap_client", signal);
@@ -583,6 +582,12 @@ export class PcapProvider {
             ? "executable_missing"
             : "version_unresolved",
         reason: cause instanceof Error ? cause.message : String(cause),
+        // Keep the failing owner's repair, such as the limiter's; only an
+        // unattributed tool failure falls back to the Wireshark guidance.
+        remediation:
+          (cause instanceof AnalysisCapabilityUnavailableError
+            ? cause.remediationAction
+            : undefined) ?? PCAP_TOOL_REMEDIATION,
         diagnostics: {},
       };
     }

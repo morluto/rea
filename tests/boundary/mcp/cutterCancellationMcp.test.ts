@@ -114,7 +114,7 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("propagates MCP cancellation into an active Cutter command and reports uncertain completion", async () => {
+it("propagates MCP cancellation into an active Cutter command", async () => {
   let markDispatched: (() => void) | undefined;
   let observedAbort = false;
   const dispatched = new Promise<void>((resolve) => {

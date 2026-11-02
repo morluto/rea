@@ -7,8 +7,7 @@ import {
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { ok } from "../../../src/domain/result.js";
-import { err } from "../../../src/domain/result.js";
+import { ok, err } from "../../../src/domain/result.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";

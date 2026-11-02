@@ -95,7 +95,7 @@ describe("RISC-V ELF header boundaries", () => {
     expect(parseExecutableHeader(header(true, 32, 0x5, 2, 244), "x64")).toEqual(
       {
         ok: false,
-        error: "unsupported ELF architecture",
+        error: "unsupported ELF architecture: e_machine 244",
       },
     );
   });

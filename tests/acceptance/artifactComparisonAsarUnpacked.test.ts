@@ -172,12 +172,16 @@ it("compares ASAR companion declarations from public MCP inventories and preserv
   await writer.add("member.bin", new TextReader("identical child bytes"));
   await writeFile(zipPath, await writer.close());
   const zip = await inspect(zipPath);
+  const zipOccurrences = artifactInventoryResultSchema.parse(
+    zip.normalized_result,
+  ).occurrences;
+  expect(zipOccurrences).toContainEqual(
+    expect.objectContaining({ logical_path: "member.bin" }),
+  );
   expect(
-    artifactInventoryResultSchema
-      .parse(zip.normalized_result)
-      .occurrences.every(
-        (occurrence) => !Object.hasOwn(occurrence, "unpacked"),
-      ),
+    zipOccurrences.every(
+      (occurrence) => !Object.hasOwn(occurrence, "unpacked"),
+    ),
   ).toBe(true);
   const unchanged = await compare(zip, zip);
   expect(unchanged).toMatchObject({

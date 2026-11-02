@@ -95,6 +95,16 @@ cliTest(
     expect(narrow.exitCode, narrow.stderr).toBe(0);
     expect(narrow.json).toMatchObject({
       normalized_result: {
+        items: [
+          expect.objectContaining({
+            classification: "unknown",
+            confidence: "low",
+          }),
+        ],
+      },
+    });
+    expect(narrow.json).toMatchObject({
+      normalized_result: {
         items: [expect.not.objectContaining({ path: expect.anything() })],
       },
     });

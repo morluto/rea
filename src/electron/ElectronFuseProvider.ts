@@ -21,12 +21,8 @@ import {
   readElectronFuseImage,
   type ElectronFuseImage,
 } from "./ElectronFuseReader.js";
-import {
-  ELECTRON_FUSE_PROVIDER_IDENTITY,
-  electronFuseFailure,
-} from "./ElectronFuseFailures.js";
-
-export { ELECTRON_FUSE_PROVIDER_IDENTITY };
+import { electronFuseFailure } from "./ElectronFuseFailures.js";
+import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "./ElectronFuseProviderIdentity.js";
 
 const OPERATION = "inspect_electron_fuses";
 

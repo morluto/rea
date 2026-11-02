@@ -1,3 +1,4 @@
+import { createOwnedArtifactClient } from "../../../support/artifactClientScope.js";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -10,7 +11,6 @@ import {
   CPU,
   machoImage,
 } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
-import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 
@@ -38,9 +38,7 @@ describe("artifact directory inventory", () => {
     await writeFile(join(app, "Contents", "Resources", "main.js"), "main();\n");
     await writeFile(join(app, "Contents", "Resources", "main.js.MAP"), "{}\n");
     await symlink("/etc/passwd", join(app, "Contents", "Resources", "outside"));
-    const client = new ArtifactProvider(process.env).createClient(
-      await target(app),
-    );
+    const client = createOwnedArtifactClient(await target(app));
     const input = {};
     const first = await client.execute("inventory_artifact", input);
     const second = await client.execute("inventory_artifact", input);

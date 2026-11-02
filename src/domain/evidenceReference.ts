@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { prefixedDigestSchema } from "./digests.js";
 import { absoluteLocalPathStringSchema } from "./localPath.js";
+import {
+  declareBorrowedEvidenceInput,
+  declareEvidenceInput,
+} from "./evidenceInputContract.js";
 
 /** Exact reference to Evidence already retained by the current session. */
 export const retainedEvidenceReferenceSchema = z.strictObject({
@@ -24,11 +28,25 @@ export const evidenceFileReferenceSchema = z.strictObject({
 import { evidenceSchema } from "./evidence.js";
 
 /** Portable observation or exact retained identity; semantic authentication follows admission. */
-export const evidenceInputSchema = z.union([
-  evidenceSchema,
-  retainedEvidenceReferenceSchema,
-]);
+export const evidenceInputSchema = declareEvidenceInput(
+  z.union([evidenceSchema, retainedEvidenceReferenceSchema]),
+);
 export type EvidenceInput = z.output<typeof evidenceInputSchema>;
+
+/** Borrow a selected inline record until its resource and format owner admits it. */
+export const borrowEvidenceInput = () => {
+  const input = z.unknown().nonoptional();
+  input._zod.processJSONSchema = evidenceInputSchema._zod.processJSONSchema;
+  return declareBorrowedEvidenceInput(input, evidenceInputSchema);
+};
+
+/** Borrow array width too; its service must admit capacity before resolution. */
+export const borrowEvidenceArray = () => {
+  const declaration = z.array(evidenceInputSchema);
+  const input = z.custom<unknown[]>(Array.isArray);
+  input._zod.processJSONSchema = declaration._zod.processJSONSchema;
+  return declareBorrowedEvidenceInput(input, declaration);
+};
 
 /** Evidence input, or one record read from a local Evidence file or bundle. */
 export const evidenceSourceInputSchema = z.union([

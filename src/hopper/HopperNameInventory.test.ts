@@ -87,10 +87,12 @@ describe("Hopper name inventory labels", () => {
 
   it("leaves malformed provider inventories untouched for the consumer to reject", () => {
     const value = [{ address: 1, value: "__objc_class_HuntRoot_class" }];
+    const original = structuredClone(value);
     expect(projectHopperNameInventory(value)).toEqual({
-      result: value,
+      result: original,
       changed: false,
     });
+    expect(value).toEqual(original);
   });
 
   it("preserves source rows and the exact raw reply through the provider boundary", async () => {
@@ -110,6 +112,7 @@ describe("Hopper name inventory labels", () => {
         objc_class_label: "hopper_legacy_class_object",
       },
     ];
+    const originalSource = structuredClone(source);
     const callTool = vi
       .spyOn(HopperClient.prototype, "callTool")
       .mockResolvedValue(ok(source));
@@ -126,14 +129,13 @@ describe("Hopper name inventory labels", () => {
       format: "analysis-database",
     });
 
-    const result = await client.execute("list_names", {});
-
-    expect(callTool).toHaveBeenCalledOnce();
-    expect(result.ok).toBe(true);
-    if (result.ok) {
+    try {
+      const result = await client.execute("list_names", {});
+      expect(callTool).toHaveBeenCalledOnce();
+      if (!result.ok) throw result.error;
       expect(result.value.result).toEqual([
         {
-          ...source[0],
+          ...originalSource[0],
           objc_class_label: "hopper_legacy_class_object",
         },
         {
@@ -142,9 +144,14 @@ describe("Hopper name inventory labels", () => {
           provider_metadata: { ordinal: 2 },
         },
       ]);
-      expect(result.value.rawResult).toEqual(source);
+      expect(result.value.rawResult).toEqual(originalSource);
+      expect(source).toEqual(originalSource);
+    } finally {
+      try {
+        await client.close();
+      } finally {
+        callTool.mockRestore();
+      }
     }
-    await client.close();
-    callTool.mockRestore();
   });
 });

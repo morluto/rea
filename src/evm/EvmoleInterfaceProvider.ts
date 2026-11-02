@@ -76,11 +76,11 @@ import {
   projectEvmoleFunctions,
 } from "./EvmoleInterfaceAdapter.js";
 import {
-  EVMOLE_PROVIDER_IDENTITY,
   EVM_CPU_SECONDS,
   EVM_INTERFACE_LIMITS,
   EVM_FILE_SIZE_FAILURE_EXIT,
 } from "./EvmoleRelease.js";
+import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
 import { decodeEvmBytecodeCarrier } from "./EvmBytecodeCarrier.js";
 import {
   selectEvmWorkerLimits,
@@ -195,6 +195,8 @@ export const evmLimiterAvailability = async (
         status: "unavailable",
         code: "executable_missing",
         reason: selected.error.reason,
+        // The limiter owner does not yet author a separate repair (#8508).
+        remediation: selected.error.reason,
         diagnostics: selected.error.diagnostics,
       };
 };

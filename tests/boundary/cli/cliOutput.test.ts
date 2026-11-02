@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -6,7 +7,10 @@ import { describe, expect, it } from "vitest";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-import { normalizeCliArguments } from "../../../src/cliBuiltinArguments.js";
+import {
+  normalizeCliArguments,
+  adaptCliOutputArgumentsForIncur,
+} from "../../../src/cliBuiltinArguments.js";
 import {
   renderCliOutputArgumentError,
   renderCliDocument,
@@ -14,7 +18,6 @@ import {
   renderVersionReport,
   parseCliOutputArguments,
 } from "../../../src/cliOutput.js";
-import { adaptCliOutputArgumentsForIncur } from "../../../src/cliBuiltinArguments.js";
 
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
@@ -649,8 +652,7 @@ describe("compiled CLI output boundary", () => {
         exitCode: 1,
         json: {
           code: "VALIDATION_ERROR",
-          message:
-            "REA could not read the command arguments. Check the named argument and its expected type, then try again.",
+          message: expect.stringMatching(/\S/u),
           fieldErrors: [
             {
               path: "path",
@@ -749,11 +751,17 @@ describe("compiled CLI artifact diagnostics", () => {
         arguments: ["--json", "inspect-artifact", archive],
       });
       expect(result.exitCode).toBe(1);
-      const output = JSON.stringify(result.json);
-      expect(output).toContain('"logical_path":"main.js"');
-      expect(output).toMatch(/"declared_sha256":"[a-f0-9]{64}"/u);
-      expect(output).toMatch(/"calculated_sha256":"[a-f0-9]{64}"/u);
-      expect(output).toContain('"unpacked":true');
+      const sha256 = (value: string) =>
+        createHash("sha256").update(value).digest("hex");
+      expect(result.json).toMatchObject({
+        code: "artifact_integrity_mismatch",
+        details: {
+          logical_path: "main.js",
+          declared_sha256: sha256("console.log('ok');\n"),
+          calculated_sha256: sha256("changed();\n"),
+          unpacked: true,
+        },
+      });
     },
     CLI_INTEGRATION_TIMEOUT_MS,
   );

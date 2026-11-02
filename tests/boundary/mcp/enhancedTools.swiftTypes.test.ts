@@ -147,15 +147,24 @@ describe("Swift classification through MCP", () => {
 
   it("returns cancellation during the symbol join", async () => {
     const controller = new AbortController();
+    const reason = { stage: "symbol-join" };
     const tools = new EnhancedTools({
       execute: async (operation) => {
-        if (operation === "list_names") controller.abort();
+        if (operation === "list_names") controller.abort(reason);
         return ok([{ address: "0x1", value: "$s4main4PairVMa" }]);
       },
     });
-    expect(
-      await tools.execute("analyze_swift_types", {}, controller.signal),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+    const result = await tools.execute(
+      "analyze_swift_types",
+      {},
+      controller.signal,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", operation: "list_names" },
+    });
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cause).toBe(reason);
   });
 });
 

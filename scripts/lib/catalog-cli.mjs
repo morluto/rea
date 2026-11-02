@@ -12,6 +12,8 @@ export const createCliInventory = (cli) => {
     if ("_alias" in entry) aliases.push({ name, target: entry.target });
     else primary.push(name);
   }
+  if (primary.length === 0)
+    throw new Error("Incur exposed no primary REA CLI commands");
   return {
     primary: primary.sort((left, right) => left.localeCompare(right)),
     aliases: aliases.sort((left, right) => left.name.localeCompare(right.name)),

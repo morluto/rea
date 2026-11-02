@@ -1,4 +1,6 @@
 import { expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import type {
@@ -7,7 +9,6 @@ import type {
 } from "../AnalysisProvider.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
 import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { ok as resultOk } from "../../domain/result.js";
 
 const identity: ProviderIdentity = {
@@ -66,14 +67,15 @@ it("joins a cancelled unabortable module load and refuses late client acquisitio
   const entered = new Promise<void>((resolve) => {
     enter = resolve;
   });
+  const loading = new Promise<AnalysisProvider>((resolve) => {
+    finishLoading = resolve;
+  });
   const provider = new LazyAnalysisProvider({
     identity,
     capabilities: [],
     load: () => {
       enter();
-      return new Promise((resolve) => {
-        finishLoading = resolve;
-      });
+      return loading;
     },
   });
   const controller = new AbortController();
@@ -86,9 +88,9 @@ it("joins a cancelled unabortable module load and refuses late client acquisitio
       settled = true;
       return value;
     });
-  await entered;
-  controller.abort(reason);
-  try {
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered, pending, "provider module load");
+    controller.abort(reason);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     finishLoading(
@@ -105,11 +107,17 @@ it("joins a cancelled unabortable module load and refuses late client acquisitio
     expect(result.error.cause).toBe(reason);
     expect(creates).toBe(0);
     expect(await client.close()).toEqual(resultOk(null));
-  } finally {
-    finishLoading(providerWithClient());
-    await pending;
-    await client.close();
-  }
+  }, [
+    () => controller.abort(),
+    () => finishLoading(providerWithClient()),
+    async () => {
+      await pending;
+    },
+    async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    },
+  ]);
 });
 
 it("reports that a lazy client was closed before its first operation", async () => {

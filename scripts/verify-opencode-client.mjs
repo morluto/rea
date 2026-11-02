@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
@@ -49,19 +50,15 @@ const skillDirectory = join(
   "skills",
   "reverse-engineer-anything",
 );
-const isManagedSkillTarget = (target) => {
-  const value = relative(skillDirectory, target);
-  return (
-    value === "" ||
-    (value !== ".." && !value.startsWith(`..${sep}`) && !isAbsolute(value))
-  );
-};
 assert.equal(
-  isManagedSkillTarget(`${skillDirectory}-sibling/AGENTS.md`),
+  isPathWithinRoot(skillDirectory, `${skillDirectory}-sibling/AGENTS.md`),
   false,
 );
 assert.equal(
-  isManagedSkillTarget(join(skillDirectory, "..", "outside", "AGENTS.md")),
+  isPathWithinRoot(
+    skillDirectory,
+    join(skillDirectory, "..", "outside", "AGENTS.md"),
+  ),
   false,
 );
 let clientVersion = null;
@@ -271,7 +268,10 @@ await withVerifierCleanup(async () => {
           );
           assert(
             parsed.plannedActions.every(
-              (a) => a.target === configPath || isManagedSkillTarget(a.target),
+              (a) =>
+                a.target === configPath ||
+                (isAbsolute(a.target) &&
+                  isPathWithinRoot(skillDirectory, a.target)),
             ),
           );
         }

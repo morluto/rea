@@ -461,7 +461,7 @@ export const regexMatchingDeadlineError = (
   new AnalysisResourceConstraintError(
     operation,
     "cpu",
-    `Regex matching exceeded its supervised deadline of ${String(deadline.deadlineMs)} ms (source ${deadline.source}). ${regexMatchingDeadlineRecovery(deadline)} The service remains available.`,
+    `Regex matching exceeded its supervised deadline of ${String(deadline.deadlineMs)} ms (source ${deadline.source}). ${regexMatchingDeadlineRecovery(deadline)}`,
     {
       matching_deadline_ms: deadline.deadlineMs,
       matching_deadline_source: deadline.source,
@@ -472,7 +472,12 @@ export const regexMatchingDeadlineError = (
         deadline.deadlineMs,
         deadline.source,
       ),
-      remediationAction: `${regexMatchingDeadlineRecovery(deadline)} Simplify the ECMAScript Unicode regex or use literal mode, then retry in the same session.`,
+      remediationAction: `${regexMatchingDeadlineRecovery(deadline)} Simplify the ECMAScript Unicode regex or use literal mode, then retry.`,
+      // A one-shot invocation has ended its session before the caller retries.
+      continuingCallerGuidance: {
+        userMessage: "The service remains available.",
+        remediationAction: `${regexMatchingDeadlineRecovery(deadline)} Simplify the ECMAScript Unicode regex or use literal mode, then retry in the same session.`,
+      },
     },
   );
 

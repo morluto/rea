@@ -33,7 +33,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { HistoricalCaptureDecoder } from "../../src/browser/history/HistoricalCaptureDecoder.js";
-import { HAR_CAPTURE_PROVIDER_IDENTITY } from "../../src/browser/history/CaptureRelease.js";
+import { HAR_CAPTURE_PROVIDER_IDENTITY } from "../../src/browser/history/CaptureProviderIdentities.js";
 import { WebNetworkCaptureService } from "../../src/application/WebNetworkCaptureService.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { fileSnapshotPartialObservationSchema } from "../../src/domain/fileSnapshotObservation.js";

@@ -2,6 +2,9 @@ import { IL2CPP_METADATA_VERSIONS } from "./il2cpp/il2cppMetadata.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import type { DesktopApplication, DesktopFile } from "./desktopApplication.js";
 
+/** The most next probes this projection derives from any one fact. */
+export const DESKTOP_PROBES_PER_FACT = 2;
+
 /** Interpret only the facts admitted by the directory reader, never target bytes. */
 export const projectDesktopApplication = (
   files: readonly DesktopFile[],

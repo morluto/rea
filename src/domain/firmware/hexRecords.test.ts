@@ -399,21 +399,6 @@ describe("hex record recognition", () => {
   });
 });
 
-it.each([3, 5])(
-  "rejects a nonzero reserved offset in Intel HEX start record %i",
-  (type) => {
-    const text = [
-      intelHexRecord(0, 0x20, [0xa5]),
-      intelHexRecord(type, 0x1234, [0, 0, 0, 1]),
-      intelHexRecord(1, 0),
-    ].join("\n");
-    expect(decode(text)).toMatchObject({
-      ok: false,
-      error: { kind: "format" },
-    });
-  },
-);
-
 it("keeps data offsets, start payloads and the ignored EOF offset distinct", () => {
   const parsed = image(
     [

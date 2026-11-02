@@ -68,6 +68,10 @@ export const createShutdown = (input: {
           failures,
           "Multiple MCP cleanup operations failed",
         );
+      // Other runtime owners can fail after engine cleanup succeeds. Preserve
+      // investigation records until every owner has confirmed completion.
+      const disposed = await session.dispose({ retainProviderDocuments: true });
+      if (!disposed.ok) throw disposed.error;
       if (!shutdownUnregistered) {
         unregisterShutdown();
         shutdownUnregistered = true;

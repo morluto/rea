@@ -72,7 +72,14 @@ export const INVESTIGATION_EXAMPLES = {
       right: PROCESS_CAPTURE_RECONSTRUCTION,
     },
   },
-  find_changed_behavior: { comparisons: [FUNCTION_COMPARISON_EVIDENCE] },
+  find_changed_behavior: {
+    comparisons: [
+      {
+        kind: "retained-evidence",
+        evidence_id: FUNCTION_COMPARISON_EVIDENCE.evidence_id,
+      },
+    ],
+  },
   build_call_path: {
     functions: [FUNCTION_COMPARISON_EXAMPLE.left],
     start: { address: "0x1000" },

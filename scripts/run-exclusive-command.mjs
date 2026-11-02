@@ -33,7 +33,7 @@ if (!process.connected) {
   process.exitCode = signalExitCodes.SIGTERM;
 } else if (
   typeof lockName !== "string" ||
-  !/^[a-z][a-z0-9-]*$/u.test(lockName) ||
+  !(lockName === "--unlocked" || /^[a-z][a-z0-9-]*$/u.test(lockName)) ||
   command.length === 0
 ) {
   console.error("Usage: run-exclusive.mjs <lock-name> <command> [args...]");
@@ -45,19 +45,21 @@ if (!process.connected) {
 
 async function run() {
   try {
-    await mkdir(lockRoot, { recursive: true });
-    // SQLite owns acquisition and OS-backed lock release, including process
-    // death. Keep the database pathname stable; deleting it would split owners.
-    database = new DatabaseSync(join(lockRoot, `${lockName}.sqlite`));
-    try {
-      database.exec("BEGIN EXCLUSIVE");
-    } catch (cause) {
-      if (isBusyError(cause))
-        throw new Error(
-          `Another ${lockName} command is already running. Wait for it to finish.`,
-          { cause },
-        );
-      throw cause;
+    if (lockName !== "--unlocked") {
+      await mkdir(lockRoot, { recursive: true });
+      // SQLite owns acquisition and OS-backed lock release, including process
+      // death. Keep the database pathname stable; deleting it would split owners.
+      database = new DatabaseSync(join(lockRoot, `${lockName}.sqlite`));
+      try {
+        database.exec("BEGIN EXCLUSIVE");
+      } catch (cause) {
+        if (isBusyError(cause))
+          throw new Error(
+            `Another ${lockName} command is already running. Wait for it to finish.`,
+            { cause },
+          );
+        throw cause;
+      }
     }
     if (shutdownSignal === undefined) {
       const result = await runCommand();

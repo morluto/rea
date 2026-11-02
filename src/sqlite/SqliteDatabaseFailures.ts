@@ -30,10 +30,10 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import {
-  SQLITE_PROVIDER_IDENTITY,
   DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
   MAX_SQLITE_WORKER_TIMEOUT_MS,
 } from "../domain/sqlite/sqliteDatabase.js";
+import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 import { SqliteSnapshotAcquisitionFailure } from "./SqliteDatabaseSnapshot.js";
 

@@ -271,9 +271,9 @@ describe("apktoolInvocation", () => {
     expect(apktoolConfigurationAvailability(failure)).toMatchObject({
       status: "unavailable",
       code: "not_configured",
+      remediation: expect.stringContaining(APKTOOL_COMMAND_ENV),
       diagnostics: {
         selected_command: "C:\\tools & more\\apktool.cmd",
-        remediation: expect.stringContaining(APKTOOL_COMMAND_ENV),
       },
     });
   });

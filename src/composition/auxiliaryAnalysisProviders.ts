@@ -7,10 +7,8 @@ import {
   MANAGED_STATIC_PROVIDER,
 } from "../domain/investigationProviders.js";
 import { managedStaticCapabilities } from "../dotnet/ManagedStaticProviderMetadata.js";
-import {
-  NATIVE_MACOS_PROVIDER_IDENTITY,
-  nativeMacOSCapabilities,
-} from "../native/NativeMacOSProviderMetadata.js";
+import { nativeMacOSCapabilities } from "../native/NativeMacOSProviderMetadata.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../native/NativeMacosProviderIdentity.js";
 
 type AuxiliaryProviderDeclaration = ConstructorParameters<
   typeof LazyAnalysisProvider

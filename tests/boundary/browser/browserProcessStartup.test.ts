@@ -157,22 +157,15 @@ describe("browser process startup", () => {
       ),
       "utf8",
     );
-    expect(devtoolsPortDeadlines(source)).toEqual([
-      ["BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS"],
-    ]);
+    expect(source).toContain(
+      "const deadline = performance.now() + BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS",
+    );
+    expect(source).toContain(
+      "timeoutMs: Math.max(1, deadline - performance.now())",
+    );
   });
 });
 
 const temporaryRoot = async (): Promise<string> => {
   return createTestTempDirectory("rea-browser-startup-");
-};
-
-const devtoolsPortDeadlines = (source: string): string[][] => {
-  const calls = /waitForBrowserDevtoolsPort\(\{(?<body>[\s\S]*?)\}\)/gu;
-  const deadlines = /\btimeoutMs:\s*(?<value>[^\n,]+)/gu;
-  return [...source.matchAll(calls)].map((call) =>
-    [...String(call.groups?.body).matchAll(deadlines)].map((deadline) =>
-      String(deadline.groups?.value).trim(),
-    ),
-  );
 };

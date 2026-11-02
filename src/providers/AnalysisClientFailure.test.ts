@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { FileOffsetPartialObservation } from "../domain/native/fileOffsetPartialObservation.js";
 import { analysisClientFailureForOperation } from "./AnalysisClientFailure.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { regexMatchingDeadlineError } from "../process/RegexMatcher.js";
 
 const observation: FileOffsetPartialObservation = {
   operation: "address_to_file_offset",
@@ -61,4 +63,31 @@ it("does not promote ordinary partial evidence into a completed result", () => {
     throw new Error("Expected the cleanup subtype");
   expect(attributed.partialObservation).toBe(observation);
   expect(attributed.completedObservation).toBeUndefined();
+});
+
+it("keeps a regex deadline's continuing-session guidance when attributing it to a provider operation", () => {
+  const source = regexMatchingDeadlineError("search_procedures");
+  const attributed = analysisClientFailureForOperation(
+    source,
+    "hopper",
+    "search_procedures",
+  );
+  for (const lifetime of ["continuing", "invocation"] as const) {
+    const delivered = projectAnalysisError(attributed, lifetime);
+    const owned = projectAnalysisError(source, lifetime);
+    expect(delivered.message).toBe(owned.message);
+    expect(delivered.remediation).toEqual(owned.remediation);
+    expect(delivered.details?.limit).toEqual(owned.details?.limit);
+  }
+  // The two lifetimes receive different guidance from the same owner.
+  expect(projectAnalysisError(attributed).remediation).not.toEqual(
+    projectAnalysisError(attributed, "invocation").remediation,
+  );
+  expect(
+    projectAnalysisError(attributed, "invocation").details?.limit,
+  ).toMatchObject({
+    setting: "regex.matching_deadline_ms",
+    scope: "rea-invocation",
+    environment: "REA_REGEX_MATCHING_DEADLINE_MS",
+  });
 });

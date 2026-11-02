@@ -28,6 +28,10 @@ Assess brittleness in touched code during implementation, debugging, review, and
 
 When fixing a bug, inspect the producing boundary and affected consumers for duplicated interpretation or unclear ownership. Complete any directly related refactor in the same change and remove superseded code. Passing regression tests alone does not establish that the brittleness is resolved. If related cleanup remains, explain what remains and why.
 
+After confirming a bug, search sibling adapters, consumers and similar workflows
+for the same failure. Verify suspected matches, record working comparisons, and
+group findings by root cause instead of filing duplicate reports.
+
 When addressing a review thread, inspect the producing boundary and affected consumers for brittleness. Complete directly related refactoring in the same change. Before resolving the thread, explain the root cause, structural fix, validation, and any remaining cleanup.
 
 Parse unknown boundary values and model expected failures with the tagged error algebra and `Result`. Preserve partial facts and meaningful failure reasons. Keep identity and lookup values separate from display formatting; preserve source values and explicit unknowns when normalization loses information. Absolute paths, file URLs, and HTTP paths have different semantics.
@@ -75,6 +79,9 @@ Use [.nvmrc](.nvmrc) and `package.json#packageManager` for the pinned toolchain.
 
 Use relevant checks for the change. The complete local gate, `npm run check:pr`, is optional for broad changes or CI diagnosis. See [CONTRIBUTING.md](CONTRIBUTING.md) for development, generated-file ownership, and release conventions.
 
+When changing installers or setup recovery, follow
+[Checking installers and publisher downloads](docs/testing.md#checking-installers-and-publisher-downloads).
+
 Coordinate expensive checks across agents. If a test unexpectedly consumes heavy CPU, stop its owned process family and profile a bounded representative case before retrying. Inspect production work, fixture generation, subprocesses, and repeated setup; preserve regression coverage when optimizing. Follow the [test resource guidance](docs/testing.md#developer-commands).
 
 `docs/public/product-catalog.json`, `docs/verification/managed-conformance-*.json`, and `skills/` are ignored outputs. Edit source contracts and `.agents/skills/reverse-engineer-anything/`, then regenerate as needed. `.cache/mcp-tool-catalog.json` is test metadata; runtime builds and source checking do not consume it. Never commit binaries, provider project documents, credentials, `dist/`, `node_modules/`, or local planning artifacts.
@@ -82,6 +89,12 @@ Coordinate expensive checks across agents. If a test unexpectedly consumes heavy
 ## Tool and Test Changes
 
 For tool design, follow [docs/tool-design.md](docs/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Limits must follow real format, protocol, authority, or resource constraints. Account for representation expansion before allocation; derive completeness from examined coverage.
+
+For user- or agent-facing tool problems, prioritize fixing the owning behavior,
+contract, and actionable result or recovery at the point of use. Document the
+result in product docs when explanation is needed. Add skill guidance only for
+workflow judgment or context that the tool cannot reasonably convey; do not use
+a skill as the primary repair for a discoverability or contract defect.
 
 For test changes or provider claims, use [docs/testing.md](docs/testing.md). Select applicable [boundary regressions](docs/testing.md#boundary-regressions) for parser, inventory, snapshot, and projection fixes. Prefer real public CLI/MCP workflows, then production-boundary integration, then producer goldens. Keep module tests for distinct semantics stronger workflows cannot reliably reproduce. Preserve malformed-input, cancellation, cleanup, permission, capacity, and target-identity coverage when pruning. Report unverified coverage explicitly; simulated providers do not establish real-provider behavior.
 

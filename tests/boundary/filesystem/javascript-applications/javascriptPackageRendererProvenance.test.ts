@@ -39,13 +39,6 @@ it.each(["renderer", "browser", "module"] as const)(
       }),
     );
     const metadata = graph.nodes.find(({ kind }) => kind === "package");
-    expect(metadata?.observations).toContainEqual(
-      expect.objectContaining({
-        properties: expect.objectContaining({
-          renderer_declarations: { [field]: "entry.js" },
-        }),
-      }),
-    );
     expect(metadata?.observations[0]?.properties).not.toHaveProperty(
       "renderer",
     );

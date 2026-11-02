@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import {
   PYTHON_39_MAGIC,
@@ -464,6 +464,9 @@ it("extracts CArchive members through extract-artifact", async () => {
   const extracted = artifactExtractionResultSchema.parse(
     parseEvidence(JSON.parse(result.stdout)).normalized_result,
   );
+  onTestFinished(() =>
+    rm(extracted.output_root, { recursive: true, force: true }),
+  );
   expect(extracted.limitations).toContain(
     "PYZ.pyz/app.pyc: Python bytecode header was reconstructed from the archive Python magic; this digest covers the derived file.",
   );
@@ -479,8 +482,13 @@ it("extracts CArchive members through extract-artifact", async () => {
     hello?.bytes_written ?? 0,
   );
   expect(
-    await readFile(join(extracted.output_root, "PYZ.pyz", "app.pyc")),
-  ).toHaveLength(16 + Buffer.from("app-body").length);
+    (await readFile(join(extracted.output_root, "PYZ.pyz", "app.pyc"))).equals(
+      Buffer.concat([
+        Buffer.from("610d0d0a000000000000000000000000", "hex"),
+        Buffer.from("app-body"),
+      ]),
+    ),
+  ).toBe(true);
   expect(
     Buffer.compare(
       await readFile(join(extracted.output_root, "hello")),

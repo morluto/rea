@@ -10,7 +10,10 @@ import type { ApplicationNode } from "../javascript/javascriptApplicationGraphSc
 import { err, ok, type Result } from "../result.js";
 import { z } from "zod";
 import type { JavaScriptModuleReference } from "./javascriptModuleReferences.js";
-import { javascriptModuleReferencesRequestSchema } from "./javascriptModuleReferences.js";
+import {
+  javascriptFactBasis,
+  javascriptModuleReferencesRequestSchema,
+} from "./javascriptModuleReferences.js";
 import {
   javascriptApplicationSourceCoverage,
   javascriptStaticSourceCoverageSummary,
@@ -200,27 +203,21 @@ const moduleReference = ({
   path,
 }: ModuleEntry): JavaScriptModuleReference => {
   let ranges = 0;
-  const support = new Map<string, JavaScriptModuleReference["basis"][number]>();
-  for (const { evidence } of node.observations) {
+  for (const { evidence } of node.observations)
     if (
       evidence.location.available &&
       evidence.location.value.kind === "source-range"
     )
       ranges += 1;
-    const { authority, state, confidence } = evidence;
-    support.set(`${authority}:${state}:${confidence}`, {
-      authority,
-      state,
-      confidence,
-    });
-  }
   return {
     node_id: node.node_id,
     kind: node.kind,
     path,
     identity: node.identity,
     retained_source_range_count: ranges,
-    basis: [...support.values()],
+    basis: javascriptFactBasis(
+      node.observations.map(({ evidence }) => evidence),
+    ),
   };
 };
 

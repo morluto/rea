@@ -139,7 +139,14 @@ it.each([false, true])(
           projectCliAnalysisResult,
         ),
       );
-      expect(evidence.normalized_result).toEqual(summary);
+      // The composed overview labels the counts; the atomic record stays raw.
+      expect(evidence.normalized_result).toEqual({
+        ...summary,
+        inventory_coverage: {
+          scope: "provider_inventory",
+          discovery_coverage: "unknown",
+        },
+      });
       expect(evidence.confidence).toBe("derived");
       const records = fixture.closedRecords();
       const atomic = records.filter(

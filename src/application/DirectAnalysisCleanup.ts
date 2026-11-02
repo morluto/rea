@@ -1,5 +1,12 @@
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  childFailureDiagnostics,
+  projectAnalysisError,
+} from "../domain/analysisErrorProjection.js";
+import {
+  analysisErrorUserMessage,
+  composedCallerGuidance,
+} from "../domain/analysisErrorPresentation.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, type Result } from "../domain/result.js";
@@ -11,12 +18,21 @@ import {
   withEvidenceCallerInputPath,
 } from "../domain/evidence.js";
 
+/**
+ * Project a one-shot failure for its invocation, which has released its
+ * provider session and runtime settings by the time the caller reads it.
+ */
+export const projectInvocationFailure = (
+  error: AnalysisError,
+): ReturnType<typeof projectAnalysisError> =>
+  projectAnalysisError(error, "invocation");
+
 /** Add the actual outer request path to authenticated partial Evidence. */
 export const projectDirectAnalysisFailure = (
   error: AnalysisError,
   callerInputPath: string,
 ): ReturnType<typeof projectAnalysisError> => {
-  const projection = projectAnalysisError(error);
+  const projection = projectInvocationFailure(error);
   const observation = tryParseEvidence(projection.details?.partial_observation);
   return observation === undefined
     ? projection
@@ -63,7 +79,7 @@ export const directAnalysisCleanupFailure = (
 ): JsonValue => {
   const project = (failure: AnalysisError) =>
     callerInputPath === undefined
-      ? projectAnalysisError(failure)
+      ? projectInvocationFailure(failure)
       : projectDirectAnalysisFailure(failure, callerInputPath);
   const cleanup = project(error);
   if (!result.ok) {
@@ -114,18 +130,20 @@ export const managedAnalysisCleanupFailure = (
         : failure,
     );
   }
-  const cleanup = projectAnalysisError(error);
   const failure = new ProviderAdapterError(
     error instanceof ProviderAdapterError ? error.providerId : "rea",
     "close_binary",
     {
       cause: error,
-      remediationAction: cleanup.remediation.action,
-      cleanup: { reason: cleanup.message, resources: error.cleanupResources },
-      diagnostics: {
-        cleanup_error: cleanup,
-        partial_observation: jsonValueSchema.parse(result.value),
+      ...composedCallerGuidance({ remediation: error }),
+      cleanup: {
+        reason: analysisErrorUserMessage(error, "invocation"),
+        resources: error.cleanupResources,
       },
+      ...childFailureDiagnostics(
+        { cleanup_error: { error } },
+        { partial_observation: jsonValueSchema.parse(result.value) },
+      ),
     },
   );
   return err(

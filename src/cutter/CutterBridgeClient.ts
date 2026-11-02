@@ -61,12 +61,6 @@ const descriptorSchema = z.object({
   max_request_bytes: z.int().positive().optional(),
 });
 
-export const CUTTER_PROVIDER_IDENTITY = {
-  id: "cutter.python-plugin",
-  name: "Cutter Python plugin",
-  version: null,
-} as const;
-
 const responseSchema = z.object({
   ok: z.boolean(),
   session_id: z.string().uuid().optional(),
