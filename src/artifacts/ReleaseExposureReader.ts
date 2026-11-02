@@ -1557,9 +1557,11 @@ const examinePackagedBinary = async (
       windows.state === "signature-needed" ||
       (windows.state === "candidate" && windows.signature === "unobserved")
     ) {
-      // The image may be native, so it stays unexamined by the on-disk readers.
+      // The image may be native, so it stays unexamined by the on-disk readers,
+      // and it may carry a package that nothing here can clear.
       state.packagedNative += 1;
       notePeNotExamined(state, member.location);
+      noteUnexaminedPackage(state);
     }
   }
   if (native === null && header !== null && holdsAsarHeader(header)) {

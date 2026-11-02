@@ -2147,6 +2147,7 @@ describe("ReleaseExposureReader unexpanded packages", () => {
     expect(scanned.omitted).toContainEqual(
       expect.objectContaining({ subject: PACKAGED_NATIVE_IMAGES, count: 1 }),
     );
+    expect(scanned.coverage).toBe("unknown");
   });
 });
 
