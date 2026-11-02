@@ -1,3 +1,5 @@
+import type { FirmwareOperation } from "../../domain/firmware/firmwareAnalysis.js";
+
 /** Derive public support facts from one audited, stable release number. */
 const defineToolRequirement = (release: {
   readonly name: string;
@@ -39,3 +41,9 @@ export const FIRMWARE_TOOL_REQUIREMENTS = {
 
 /** Caller-supplied firmware engine selected by the operation. */
 export type FirmwareEngineName = keyof typeof FIRMWARE_TOOL_REQUIREMENTS;
+
+/** The engine required by each existing firmware operation, shared by discovery and execution. */
+export const FIRMWARE_OPERATION_ENGINES = {
+  inspect_firmware_regions: "binwalk",
+  extract_firmware: "unblob",
+} as const satisfies Readonly<Record<FirmwareOperation, FirmwareEngineName>>;
