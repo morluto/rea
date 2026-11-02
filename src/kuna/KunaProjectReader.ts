@@ -350,7 +350,12 @@ export class KunaProjectReader {
         .slice(text.value.indexOf("\n") + 1)
         .replace(/\n+$/u, ""),
       files,
-      limitations: [],
+      limitations:
+        this.project.manifest.inputs.jobs > 1
+          ? [
+              "Parallel Kuna project export does not propagate callee-first prototypes between workers; function signatures and call arguments may differ from a serial export.",
+            ]
+          : [],
     });
   }
 
