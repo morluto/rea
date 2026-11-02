@@ -30,6 +30,7 @@ export default defineConfig({
           { text: "Native binaries", link: "/native-investigation" },
           { text: "Go build metadata", link: "/go-binaries" },
           { text: "IL2CPP metadata", link: "/il2cpp-metadata" },
+          { text: "Unity Addressables", link: "/unity-addressables" },
           { text: "Model artifacts", link: "/model-artifacts" },
           { text: "Rust dependencies", link: "/rust-binaries" },
           { text: "PE certificates", link: "/pe-certificates" },

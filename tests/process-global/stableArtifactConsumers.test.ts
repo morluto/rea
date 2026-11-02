@@ -108,6 +108,7 @@ import { PythonPycProvider } from "../../src/python/PythonPycProvider.js";
 import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.js";
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
 import { Il2cppMetadataProvider } from "../../src/il2cpp/Il2cppMetadataProvider.js";
+import { UnityAddressablesProvider } from "../../src/unity/UnityAddressablesProvider.js";
 import { ElfNotesProvider } from "../../src/native/elf/ElfNotesProvider.js";
 import { AppleIpsProvider } from "../../src/native/apple/AppleIpsProvider.js";
 import { KernelModuleProvider } from "../../src/native/elf/KernelModuleProvider.js";
@@ -130,6 +131,7 @@ import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createRustImage } from "../fixtures/rust/image.js";
 import { createIl2cppMetadataFixture } from "../fixtures/il2cpp/metadata.js";
+import { jsonCatalog } from "../fixtures/unity/addressables.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { mcpTest } from "../support/mcp/mcpFixture.js";
@@ -363,6 +365,68 @@ it.each([false, true])(
       expect(
         projectAnalysisError(result.error).details?.partial_observation,
       ).toEqual(result.error.partialObservation);
+    } finally {
+      fault.blocked.clear();
+      await provider.close();
+    }
+  },
+);
+
+it.each([
+  ["failed close", true, false],
+  ["failed close with cancellation", true, true],
+  ["cancellation during close", false, true],
+])(
+  "returns the decoded Addressables catalog with its completed hash file after a hash %s",
+  async (_name, failClose, cancel) => {
+    const root = await createTestTempDirectory("rea-addressables-hash-close-");
+    const path = join(root, "catalog.json");
+    const hashPath = join(root, "catalog.hash");
+    const hash = "911a1ea20bb2c634df9e7052761a6bb2\n";
+    await writeFile(path, jsonCatalog());
+    await writeFile(hashPath, hash);
+    fault.path = hashPath;
+    fault.blockNew = failClose;
+    const controller = new AbortController();
+    const reason = new Error("cancel during hash close");
+    if (cancel) fault.onClose = () => controller.abort(reason);
+    const provider = new UnityAddressablesProvider();
+    try {
+      const result = await provider.inspect(
+        { path, hash_path: hashPath },
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected the hash close to fail");
+      expect(result.error.cleanupIncomplete).toBe(failClose);
+      if (cancel) {
+        const cancelled = failClose
+          ? result.error.cleanupPrimary
+          : result.error;
+        expect(cancelled).toBeInstanceOf(AnalysisCancelledError);
+        expect(cancelled?.cause).toBe(reason);
+      }
+      const evidence = parseEvidence(result.error.partialObservation);
+      expect(evidence.operation).toBe("inspect_unity_addressables");
+      expect(evidence.parameters).toEqual({ path, hash_path: hashPath });
+      expect(evidence.normalized_result).toMatchObject({
+        hash_file: {
+          artifact: {
+            path: hashPath,
+            sha256: createHash("sha256").update(hash).digest("hex"),
+            bytes: hash.length,
+          },
+          text: hash.trimEnd(),
+        },
+      });
+      const { keys, locations } = evidence.normalized_result as {
+        keys: unknown[];
+        locations: unknown[];
+      };
+      expect([keys.length, locations.length]).toEqual([7, 5]);
+      fault.blocked.clear();
+      await provider.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
     } finally {
       fault.blocked.clear();
       await provider.close();

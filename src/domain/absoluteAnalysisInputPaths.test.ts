@@ -7,6 +7,7 @@ import { inspectPeResourcesInputSchema } from "./native/peResources.js";
 import { inspectElectronFusesInputSchema } from "./electron/electronFuses.js";
 import { inspectPacketCaptureInputSchema } from "./captures/packetCapture.js";
 import { decodeSignalRecordingInputSchema } from "./signals/signalRecording.js";
+import { inspectUnityAddressablesInputSchema } from "./unity/unityAddressables.js";
 
 it.each([
   ["Go binary", inspectGoBinaryInputSchema],
@@ -17,6 +18,7 @@ it.each([
   ["Electron fuses", inspectElectronFusesInputSchema],
   ["packet capture", inspectPacketCaptureInputSchema],
   ["signal recording", decodeSignalRecordingInputSchema],
+  ["Unity Addressables catalog", inspectUnityAddressablesInputSchema],
 ] as const)(
   "reports relative %s paths as a path format issue",
   (_name, schema) => {

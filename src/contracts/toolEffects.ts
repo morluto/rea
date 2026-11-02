@@ -129,6 +129,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   inspect_desktop_application: evidence,
   inspect_go_binary: evidence,
   inspect_il2cpp_metadata: evidence,
+  inspect_unity_addressables: evidence,
   inspect_model_artifact: evidence,
   inspect_gpu_code_objects: evidence,
   inspect_rust_binary: evidence,

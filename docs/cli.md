@@ -379,6 +379,17 @@ selected fields. The CLI defaults to complete Evidence;
 `--detail summary --evidence_output FILE` exports the full result to a new file
 and returns a compact overview. See [IL2CPP metadata](il2cpp-metadata.md).
 
+Inventory a Unity Addressables catalog without Unity:
+
+```bash
+rea inspect-unity-addressables /absolute/path/catalog.bin --json
+```
+
+The command reads `catalog.json` or binary `catalog.bin` (header versions 2 and 3) and reports keys, locations with internal ids and provider ids, dependencies
+and asset bundle hash, CRC, name and size. `--hash PATH` records a
+`catalog.hash` file's text. No bundle is opened. See
+[Unity Addressables](unity-addressables.md).
+
 Inspect an embedded cargo-auditable Rust dependency list without installing
 Rust or configuring a disassembler:
 

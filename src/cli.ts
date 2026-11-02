@@ -16,6 +16,7 @@ import { registerDesktopApplicationCommands } from "./cli/desktopApplicationComm
 import { registerGoCommands } from "./cli/goCommands.js";
 import { registerModelCommands } from "./cli/modelCommands.js";
 import { registerIl2cppCommands } from "./cli/il2cppCommands.js";
+import { registerUnityAddressablesCommands } from "./cli/unityAddressablesCommands.js";
 import { registerRustCommands } from "./cli/rustCommands.js";
 import { registerPythonPycCommands } from "./cli/pythonPycCommands.js";
 import { registerErlangCommands } from "./cli/erlangCommands.js";
@@ -196,6 +197,7 @@ export const createCli = (
       registerDesktopApplicationCommands(cli, logger);
       registerGoCommands(cli, logger);
       registerIl2cppCommands(cli, logger);
+      registerUnityAddressablesCommands(cli, logger);
       registerModelCommands(cli, logger);
       registerGpuCommands(cli, logger);
       registerRustCommands(cli, logger);

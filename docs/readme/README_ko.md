@@ -185,6 +185,7 @@ REA에는 Node.js 22.x(>=22.23.4), 24.x(>=24.22.1) 또는 26+ (>=26.12.1)와 npm
 | GPU 코드 객체          | CUDA/HIP 대상, 선택한 커널 매개변수와 자원, 보존된 PTX 텍스트                 | 내장 정적 검사 ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                             |
 | 모델 파일              | GGUF / safetensors 메타데이터, 텐서 선언과 계산한 합계                        | 헤더 검사; 전체 파일 해시는 선택 사항; [GGUF / safetensors](../model-artifacts.md)                                                |
 | IL2CPP 메타데이터      | Unity global-metadata.dat 어셈블리 이미지, 형식·메서드 이름과 인덱스 범위     | 버전 24, 27, 29, 31, 39 정적 디코딩; Unity 불필요                                                                                 |
+| Unity Addressables     | Catalog keys, locations, dependencies, bundle hash/CRC                        | Static inspection; [Unity Addressables](../unity-addressables.md)                                                                 |
 | Godot PCK              | 아카이브 목록과 추출, 원본 헤더·디렉터리 정보, 선택한 내용 식별 정보          | 정적 형식 2, 3, 4; Godot 불필요                                                                                                   |
 | APK 서명               | v1/v2/v3/v3.1 서명자, 인증서 지문, 키 교체와 다이제스트 자체 일관성           | 내장 정적 검사; `inspect_apk_signature`                                                                                           |
 

@@ -226,6 +226,13 @@ explicit path or endpoint and do not need it.
   binary or disassembler is run. Unrecognized magic (possibly encrypted) and
   other versions are unsupported. Optional matching `binary_path` enables static native addresses and type references; query `method_addresses` with indices or addresses/states, preserving every shared-body method and both artifact identities. Without a linked binary native counts remain unknown. Byte-pattern fallback is inferred; no runtime behavior or same-build pairing is proved. See the
   [IL2CPP metadata guide](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md).
+- Unity Addressables catalogs (`catalog.json`, binary `catalog.bin`):
+  `inspect_unity_addressables` with the explicit local file and optional
+  `hash_path`. Page keys, locations or providers through `inspect_analysis_view`
+  kind `unity-addressables`; locations accept `key_indices` to follow a key.
+  Bundle hash/CRC are recorded values; no bundle is opened and runtime
+  placeholders in internal ids stay unresolved. See the
+  [Addressables guide](https://github.com/morluto/rea/blob/main/docs/unity-addressables.md).
 - Embedded cargo-auditable Rust dependency metadata: `inspect_rust_binary`
   with the explicit local ELF, PE, or thin Mach-O file. This built-in
   target-free inspection requires no Rust installation or disassembler. Preserve
