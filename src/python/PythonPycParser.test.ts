@@ -163,9 +163,7 @@ it("keeps CPython 3.16 pre-release magics outside standalone decoder coverage", 
   expect(() => parse(pythonPycHeader(3706))).toThrow(
     expect.objectContaining({
       kind: "unsupported",
-      message: expect.stringContaining(
-        "outside the pinned CPython 3.7–3.15 table",
-      ),
+      message: expect.stringMatching(/3706.*3\.7.*3\.15/),
     }),
   );
 });
