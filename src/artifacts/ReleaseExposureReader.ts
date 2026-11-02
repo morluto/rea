@@ -1204,15 +1204,19 @@ interface MemberText {
 }
 
 /**
- * A binary plist that cannot be decoded keeps its raw bytes in the scan, for the
- * ASCII strings they show, but its other strings were not examined.
+ * A binary plist that cannot be fully decoded keeps its raw bytes in the scan,
+ * for the ASCII strings they show, beside whatever text it did decode, but its
+ * other strings were not examined.
  */
 const decodeBinaryPlistMember = (bytes: Buffer): MemberText => {
   try {
-    return {
-      text: decodeBinaryPlistText(bytes, RELEASE_EXPOSURE_PLIST_DECODE_BYTES),
-      complete: true,
-    };
+    const decoded = decodeBinaryPlistText(
+      bytes,
+      RELEASE_EXPOSURE_PLIST_DECODE_BYTES,
+    );
+    return decoded.complete
+      ? decoded
+      : { text: `${decoded.text}\n${bytes.toString("utf8")}`, complete: false };
   } catch {
     return { text: bytes.toString("utf8"), complete: false };
   }

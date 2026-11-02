@@ -194,7 +194,7 @@ it("reads a string no object references", () => {
     text("kept"),
     text("orphan"),
   ]);
-  expect(decodeBinaryPlistText(bytes, budget)).toContain("orphan");
+  expect(decodeBinaryPlistText(bytes, budget).text).toContain("orphan");
 });
 
 it("reads the value a later duplicate key replaced", () => {
@@ -205,7 +205,7 @@ it("reads the value a later duplicate key replaced", () => {
     text("final"),
   ]);
   expect(decode(bytes)).toEqual({ key: "final" });
-  expect(decodeBinaryPlistText(bytes, budget)).toContain("replaced");
+  expect(decodeBinaryPlistText(bytes, budget).text).toContain("replaced");
 });
 
 it("reads an unreferenced UTF-16BE string and data object", () => {
@@ -221,19 +221,23 @@ it("reads an unreferenced UTF-16BE string and data object", () => {
     wide,
     data,
   ]);
-  const decoded = decodeBinaryPlistText(bytes, budget);
+  const { text: decoded, complete } = decodeBinaryPlistText(bytes, budget);
   expect(decoded).toContain("é!");
   expect(decoded).toContain("blob");
+  expect(complete).toBe(true);
 });
 
-it("refuses an unreferenced string it cannot read", () => {
+it("keeps readable text beside an unreferenced string it cannot read", () => {
   const bytes = source([
     dictionary(1, 2),
     text("key"),
     text("kept"),
     Buffer.from([0x5f, 0x10, 0xff]),
   ]);
-  expect(() => decodeBinaryPlistText(bytes, budget)).toThrow(RangeError);
+  expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+    text: expect.stringContaining("kept"),
+    complete: false,
+  });
 });
 
 it("bounds the text that overlapping table entries repeat", () => {
@@ -261,5 +265,8 @@ it("bounds the text that overlapping table entries repeat", () => {
   bytes[trailer + 7] = 1;
   bytes.writeBigUInt64BE(BigInt(offsets.length), trailer + 8);
   bytes.writeBigUInt64BE(BigInt(table), trailer + 24);
-  expect(() => decodeBinaryPlistText(bytes, 2 * budget)).toThrow(RangeError);
+  const decoded = decodeBinaryPlistText(bytes, 2 * budget);
+  expect(decoded.complete).toBe(false);
+  expect(decoded.text.length).toBeLessThanOrEqual(2 * budget + offsets.length);
+  expect(decoded.text).toContain("k");
 });
