@@ -172,9 +172,10 @@ describe("target-bound provider routing", () => {
 
     expect(await running).toMatchObject({ ok: true });
     const cancelled = await switching;
-    expect(cancelled).toEqual({
+    expect(cancelled).toMatchObject({
       ok: false,
       error: new AnalysisCancelledError("open_binary", { cause: reason }),
+      targetAtCompletion: { path: target },
     });
     if (!cancelled.ok) expect(cancelled.error.cause).toBe(reason);
     expect(alpha.clients[0]?.closed).toBe(false);
