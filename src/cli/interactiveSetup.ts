@@ -24,6 +24,10 @@ const clientDisplayNames: ReadonlyMap<string, string> = new Map(
     displayName,
   ]),
 );
+const providerDisplayNames: ReadonlyMap<string, string> = new Map([
+  ["ida", "IDA"],
+  ["jadx", "JADX"],
+]);
 
 const promptStreams = {
   input: process.stdin,
@@ -276,7 +280,8 @@ const readyProviders = (result: SetupResult): readonly string[] =>
   result.doctor.availableProviders.map(displayProviderId);
 
 const displayProviderId = (id: string): string =>
-  id.length === 0 ? id : `${id[0]?.toUpperCase() ?? ""}${id.slice(1)}`;
+  providerDisplayNames.get(id) ??
+  (id.length === 0 ? id : `${id[0]?.toUpperCase() ?? ""}${id.slice(1)}`);
 
 const humanList = (values: readonly string[]): string => {
   if (values.length < 2) return values[0] ?? "";
