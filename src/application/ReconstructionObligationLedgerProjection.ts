@@ -17,7 +17,12 @@ export const obligationLedgerEvidenceLinks = (
         ...binding.fixtures.flatMap(({ evidence_ids: ids }) => ids),
         ...(binding.verifier === null
           ? []
-          : [binding.verifier.result_evidence_id]),
+          : [
+              binding.verifier.result_evidence_id,
+              ...(binding.verifier.controls?.map(
+                ({ result_evidence_id: id }) => id,
+              ) ?? []),
+            ]),
       ]),
       ...manifest.contradictions.flatMap(({ evidence_ids: ids }) => ids),
     ]),
