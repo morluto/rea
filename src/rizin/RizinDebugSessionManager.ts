@@ -2276,7 +2276,7 @@ export const parseRizinPtraceRows = (
       observedPids: [],
       overflow: true,
       error: new Error(
-        "Rizin `olj` response exceeds the safe inventory size limit.",
+        "Rizin `olj` response exceeds the safe inventory size limit of 262,144 characters (256 KiB); this release has no runtime override and debugger settings or controls cannot raise it.",
       ),
     };
   let parsed: unknown;
@@ -2301,7 +2301,7 @@ export const parseRizinPtraceRows = (
       observedPids: [],
       overflow: true,
       error: new Error(
-        "Rizin `olj` response exceeds the safe inferior row limit.",
+        "Rizin `olj` response exceeds the safe inferior row limit of 1,024 rows; this release has no runtime override and debugger settings or controls cannot raise it.",
       ),
     };
   const rows: Array<[string, string]> = [];

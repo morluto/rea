@@ -33,7 +33,15 @@ import {
 } from "./RizinTestInferiorTty.js";
 import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
 
+const directories: string[] = [];
 let directory: string | undefined;
+
+const createTempDirectory = async (prefix: string): Promise<string> => {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  directories.push(dir);
+  directory = dir;
+  return dir;
+};
 const managers: Array<{ closeAll(): Promise<void> }> = [];
 const inferiorProcesses: ChildProcess[] = [];
 const ownedProviderProcesses: ProviderProcessHandle[] = [];
@@ -60,20 +68,32 @@ it("rejects an oversized Rizin inferior inventory before retaining rows", () => 
   expect(parsed.overflow).toBe(true);
   expect(parsed.rows).toEqual([]);
   expect(parsed.observedPids).toEqual([]);
-  expect(parsed.error?.message).toContain("safe inferior row limit");
+  expect(parsed.error?.message).toContain(
+    "safe inferior row limit of 1,024 rows",
+  );
+  expect(parsed.error?.message).toContain("no runtime override");
+  expect(parsed.error?.message).toContain(
+    "debugger settings or controls cannot raise it",
+  );
 
   const oversizedText = parseRizinPtraceRows(" ".repeat(256 * 1024 + 1));
   expect(oversizedText.overflow).toBe(true);
   expect(oversizedText.rows).toEqual([]);
   expect(oversizedText.observedPids).toEqual([]);
-  expect(oversizedText.error?.message).toContain("safe inventory size limit");
+  expect(oversizedText.error?.message).toContain(
+    "safe inventory size limit of 262,144 characters",
+  );
+  expect(oversizedText.error?.message).toContain("no runtime override");
+  expect(oversizedText.error?.message).toContain(
+    "debugger settings or controls cannot raise it",
+  );
 });
 
 const startRizinWithProvider = async (
   provider: string,
 ): Promise<{
   manager: RizinDebugSessionManager;
-  sessionId: string | undefined;
+  sessionId: string;
 }> => {
   const manager = createRizinTestManager({ REA_RIZIN_COMMAND: provider });
   managers.push(manager);
@@ -81,10 +101,10 @@ const startRizinWithProvider = async (
     path: "/tmp/fixture.bin",
     inferior_tty: await rizinTestInferiorTty(),
   });
-  expect(started.ok).toBe(true);
+  if (!started.ok) throw started.error;
   return {
     manager,
-    sessionId: started.ok ? started.value.session_id : undefined,
+    sessionId: started.value.session_id,
   };
 };
 
@@ -169,6 +189,9 @@ afterEach(async () => {
       await killed;
     }
   }
+  for (const dir of directories.splice(0)) {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
   directory = undefined;
@@ -221,9 +244,12 @@ const spawnTestInferiorOnTty = async (
 
 const createInferiorInventoryProvider = async (
   rows: readonly { readonly fd: number; readonly pid: number }[],
+  providerDirectory?: string,
 ): Promise<string> => {
-  directory = await mkdtemp(join(tmpdir(), "rea-rizin-owned-inferior-"));
-  const provider = join(directory, "fake-rizin-owned-inferior.mjs");
+  const targetDir =
+    providerDirectory ??
+    (await createTempDirectory("rea-rizin-owned-inferior-"));
+  const provider = join(targetDir, "fake-rizin-owned-inferior.mjs");
   await writeFile(
     provider,
     `#!/usr/bin/env node
@@ -238,7 +264,10 @@ process.stdin.on("data", (chunk) => {
     if (line === "olj") process.stdout.write(JSON.stringify(${JSON.stringify(rows.map(({ fd, pid }) => ({ fd, raised: true, uri: `ptrace://${pid}` })))} ) + "\\0");
     else if (line === "e dbg.exitkills") process.stdout.write("true\\0");
     else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
-    else process.stdout.write("\\0");
+    else {
+      process.stderr.write("unmodeled command: " + line + "\\n");
+      process.exit(1);
+    }
   }
 });
 `,
@@ -249,9 +278,11 @@ process.stdin.on("data", (chunk) => {
 
 const createRetryEmptyInventoryProvider = async (
   pid: number,
+  providerDirectory?: string,
 ): Promise<string> => {
-  directory = await mkdtemp(join(tmpdir(), "rea-rizin-empty-retry-"));
-  const provider = join(directory, "fake-rizin-empty-retry.mjs");
+  const targetDir =
+    providerDirectory ?? (await createTempDirectory("rea-rizin-empty-retry-"));
+  const provider = join(targetDir, "fake-rizin-empty-retry.mjs");
   await writeFile(
     provider,
     `#!/usr/bin/env node
@@ -270,7 +301,10 @@ process.stdin.on("data", (chunk) => {
     }
     else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
     else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
-    else process.stdout.write("\\0");
+    else {
+      process.stderr.write("unmodeled command: " + line + "\\n");
+      process.exit(1);
+    }
   }
 });
 `,
@@ -319,9 +353,12 @@ setInterval(() => {}, 1000);`,
 const createPostDetachInputTransitionProvider = async (
   pid: number,
   commandsPath: string,
+  providerDirectory?: string,
 ): Promise<string> => {
-  directory = await mkdtemp(join(tmpdir(), "rea-rizin-detached-sink-"));
-  const provider = join(directory, "fake-rizin-detached-sink.mjs");
+  const targetDir =
+    providerDirectory ??
+    (await createTempDirectory("rea-rizin-detached-sink-"));
+  const provider = join(targetDir, "fake-rizin-detached-sink.mjs");
   await writeFile(
     provider,
     `#!/usr/bin/env node
@@ -351,7 +388,10 @@ process.stdin.on("data", (chunk) => {
         setTimeout(() => process.stdout.write(marker + "\\0"), 100);
       } else process.stdout.write(marker + "\\0");
     }
-    else process.stdout.write("\\0");
+    else {
+      process.stderr.write("unmodeled command: " + line + "\\n");
+      process.exit(1);
+    }
   }
 });
 `,
@@ -867,7 +907,7 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "keeps session UTF-8 status cumulative while command evidence reports only its frames",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-command-utf8-scope-"));
+    directory = await createTempDirectory("rea-rizin-command-utf8-scope-");
     const provider = join(directory, "fake-rizin-command-utf8-scope.mjs");
     await writeFile(
       provider,
@@ -948,7 +988,7 @@ it.skipIf(process.platform !== "linux")(
     const pid = inferior.pid;
     expect(pid).toBeDefined();
     if (pid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-late-detach-"));
+    directory = await createTempDirectory("rea-rizin-late-detach-");
     const completionPath = join(directory, "complete");
     const provider = await createLateDetachProvider(
       pid,
@@ -979,8 +1019,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: tty,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     const firstClose = await manager.close(started.value.session_id);
     expect(firstClose.ok).toBe(false);
@@ -1012,7 +1051,7 @@ it.skipIf(process.platform !== "linux")(
 it.skipIf(process.platform !== "linux")(
   "reconciles a stale Rizin PID row only when the replacement is not traced by the owned debugger",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-reused-pid-"));
+    directory = await createTempDirectory("rea-rizin-reused-pid-");
     const commandsPath = join(directory, "commands");
     const provider = await createReusedPidPtraceProvider(
       45_678,
@@ -1044,8 +1083,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect(await manager.retryCleanupFailures()).toEqual({
@@ -1066,7 +1104,7 @@ it.skipIf(process.platform !== "linux")(
   "does not retain a first-seen Rizin PID row owned by a foreign tracer",
   async () => {
     const stalePid = 45_680;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-foreign-first-row-"));
+    directory = await createTempDirectory("rea-rizin-foreign-first-row-");
     const provider = await createRetryEmptyInventoryProvider(stalePid);
     const manager = new RizinDebugSessionManager(
       { ...process.env, REA_RIZIN_COMMAND: provider },
@@ -1087,8 +1125,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     const closed = await manager.close(started.value.session_id);
 
@@ -1141,8 +1178,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect(tracerReads).toContain(String(pid));
@@ -1161,7 +1197,7 @@ it.skipIf(process.platform !== "linux")(
     expect(selectedPid).toBeDefined();
     expect(additionalPid).toBeDefined();
     if (selectedPid === undefined || additionalPid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-active-row-retry-"));
+    directory = await createTempDirectory("rea-rizin-active-row-retry-");
     const commandsPath = join(directory, "commands");
     const provider = await createAdditionalActiveAfterDetachProvider(
       selectedPid,
@@ -1199,7 +1235,7 @@ it.skipIf(process.platform !== "linux")(
   "invalidates selected detach proof when a stale selected row hides another active inferior",
   async () => {
     const tty = await rizinTestInferiorTty();
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-stale-proof-retry-"));
+    directory = await createTempDirectory("rea-rizin-stale-proof-retry-");
     const sinksClosedMarker = join(directory, "selected-sinks-closed");
     const selected = await spawnTestInferiorOnTty(tty, true, sinksClosedMarker);
     const additional = await spawnTestInferiorOnTty(tty);
@@ -1268,9 +1304,7 @@ it.skipIf(process.platform !== "linux")(
     const pid = inferior.pid;
     expect(pid).toBeDefined();
     if (pid === undefined) return;
-    directory = await mkdtemp(
-      join(tmpdir(), "rea-rizin-detach-readback-retry-"),
-    );
+    directory = await createTempDirectory("rea-rizin-detach-readback-retry-");
     const commandsPath = join(directory, "commands");
     const provider = await createMalformedDetachReadbackProvider(
       pid,
@@ -1298,7 +1332,7 @@ it.skipIf(process.platform !== "linux")(
     const pid = inferior.pid;
     expect(pid).toBeDefined();
     if (pid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-retryable-detach-"));
+    directory = await createTempDirectory("rea-rizin-retryable-detach-");
     const commandsPath = join(directory, "commands");
     const provider = await createRetryableDetachProvider(pid, commandsPath);
     const manager = new RizinDebugSessionManager(
@@ -1319,8 +1353,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: tty,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
     const sessionId = started.value.session_id;
 
     expect((await manager.close(sessionId)).ok).toBe(false);
@@ -1348,7 +1381,7 @@ it.skipIf(process.platform !== "linux")(
     expect(livePid).toBeDefined();
     if (livePid === undefined) return;
     const stalePid = 45_678;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-stale-row-readback-"));
+    directory = await createTempDirectory("rea-rizin-stale-row-readback-");
     const commandsPath = join(directory, "commands");
     const provider = await createStaleRowAfterDetachProvider(
       stalePid,
@@ -1382,8 +1415,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: tty,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(true);
 
@@ -1403,7 +1435,7 @@ it.skipIf(process.platform !== "linux")(
     expect(selectedPid).toBeDefined();
     if (selectedPid === undefined) return;
     const foreignPid = 45_678;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-disproved-readback-"));
+    directory = await createTempDirectory("rea-rizin-disproved-readback-");
     const commandsPath = join(directory, "commands");
     const provider = join(directory, "fake-rizin-disproved-readback.mjs");
     await writeFile(
@@ -1470,8 +1502,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: tty,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(true);
     expect(foreignPidReads).toBe(2);
@@ -1493,7 +1524,7 @@ it.skipIf(process.platform !== "linux")(
       raised: true,
       uri: `ptrace://${index + 1000}`,
     }));
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-inventory-overflow-"));
+    directory = await createTempDirectory("rea-rizin-inventory-overflow-");
     const provider = join(directory, "fake-rizin-inventory-overflow.mjs");
     await writeFile(
       provider,
@@ -1542,8 +1573,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: tty,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     const closed = await manager.close(started.value.session_id);
     expect(closed.ok).toBe(false);
@@ -1563,7 +1593,7 @@ it.skipIf(process.platform !== "linux")(
     const pid = inferior.pid;
     expect(pid).toBeDefined();
     if (pid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-detach-reused-pid-"));
+    directory = await createTempDirectory("rea-rizin-detach-reused-pid-");
     const commandsPath = join(directory, "commands");
     const provider = await createReusedPidAfterDetachProvider(
       pid,
@@ -1591,8 +1621,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: tty,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -1613,7 +1642,7 @@ it.skipIf(process.platform !== "linux")(
     expect(livePid).toBeDefined();
     if (livePid === undefined) return;
     const stalePid = 45_679;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-reused-row-readback-"));
+    directory = await createTempDirectory("rea-rizin-reused-row-readback-");
     const commandsPath = join(directory, "commands");
     const provider = await createStaleRowAfterDetachProvider(
       stalePid,
@@ -1654,8 +1683,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: tty,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -1677,7 +1705,7 @@ it.skipIf(process.platform !== "linux")(
     expect(mismatched.pid).toBeDefined();
     if (selected.pid === undefined || mismatched.pid === undefined) return;
 
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-mismatched-row-"));
+    directory = await createTempDirectory("rea-rizin-mismatched-row-");
     const commandsPath = join(directory, "commands");
     const provider = join(directory, "fake-rizin-mismatched-row.mjs");
     await writeFile(
@@ -1766,8 +1794,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: tty,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     const selectedExit = new Promise<void>((resolve) =>
       selected.once("exit", () => resolve()),
@@ -1801,7 +1828,7 @@ it.skipIf(process.platform !== "linux")(
     expect(inferior.pid).toBeDefined();
     if (inferior.pid === undefined) return;
 
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-immediate-untraced-"));
+    directory = await createTempDirectory("rea-rizin-immediate-untraced-");
     const commandsPath = join(directory, "commands");
     const provider = join(directory, "fake-rizin-immediate-untraced.mjs");
     await writeFile(
@@ -1864,8 +1891,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: tty,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect(await manager.close(started.value.session_id)).toEqual({
       ok: true,
@@ -1883,7 +1909,7 @@ it.skipIf(process.platform !== "linux")(
   "retries descriptor verification after Rizin confirms detach without detaching twice",
   async () => {
     const ttyPath = await rizinTestInferiorTty();
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-detached-sink-test-"));
+    directory = await createTempDirectory("rea-rizin-detached-sink-test-");
     const statePath = join(directory, "inferior-input-state");
     const commandsPath = join(directory, "commands");
     const inferior = await spawnTestInferiorWithMutableInput(
@@ -1923,7 +1949,7 @@ it.skipIf(process.platform !== "linux")(
   "retains cleanup when a live detached inferior loses its TTY descriptors",
   async () => {
     const ttyPath = await rizinTestInferiorTty();
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-detached-live-sink-"));
+    directory = await createTempDirectory("rea-rizin-detached-live-sink-");
     const statePath = join(directory, "inferior-input-state");
     const commandsPath = join(directory, "commands");
     const inferior = await spawnTestInferiorWithMutableInput(
@@ -1965,9 +1991,7 @@ it.skipIf(process.platform !== "linux")(
     const pid = inferior.pid;
     expect(pid).toBeDefined();
     if (pid === undefined) return;
-    directory = await mkdtemp(
-      join(tmpdir(), "rea-rizin-attached-replacement-"),
-    );
+    directory = await createTempDirectory("rea-rizin-attached-replacement-");
     const commandsPath = join(directory, "commands");
     const provider = await createReusedPidPtraceProvider(
       pid,
@@ -1998,8 +2022,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -2021,7 +2044,7 @@ it.skipIf(process.platform !== "linux")(
 it.skipIf(process.platform !== "linux")(
   "retains cleanup when Rizin cannot determine whether a replacement is still traced",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-unknown-replacement-"));
+    directory = await createTempDirectory("rea-rizin-unknown-replacement-");
     const commandsPath = join(directory, "commands");
     const provider = await createReusedPidPtraceProvider(
       45_678,
@@ -2056,8 +2079,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -2112,8 +2134,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -2131,9 +2152,7 @@ it.skipIf(process.platform !== "linux")(
     const inferior = await spawnTestInferior();
     expect(inferior.pid).toBeDefined();
     if (inferior.pid === undefined) return;
-    directory = await mkdtemp(
-      join(tmpdir(), "rea-rizin-new-pending-identity-"),
-    );
+    directory = await createTempDirectory("rea-rizin-new-pending-identity-");
     const provider = join(directory, "fake-rizin-new-pending-identity.mjs");
     await writeFile(
       provider,
@@ -2202,8 +2221,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect(outcomes[0]).toContain("transient identity read failure");
@@ -2233,7 +2251,7 @@ it.skipIf(process.platform !== "linux").each([
     const inferior = await spawnTestInferior();
     expect(inferior.pid).toBeDefined();
     if (inferior.pid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-pending-reused-pid-"));
+    directory = await createTempDirectory("rea-rizin-pending-reused-pid-");
     const provider = join(directory, "fake-rizin-pending-reused-pid.mjs");
     await writeFile(
       provider,
@@ -2291,8 +2309,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     const retried = await manager.retryCleanupFailures();
@@ -2309,7 +2326,7 @@ it.skipIf(process.platform !== "linux")(
     const inferior = await spawnTestInferior();
     expect(inferior.pid).toBeDefined();
     if (inferior.pid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-pending-identity-"));
+    directory = await createTempDirectory("rea-rizin-pending-identity-");
     const provider = join(directory, "fake-rizin-pending-identity.mjs");
     await writeFile(
       provider,
@@ -2376,8 +2393,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -2395,7 +2411,7 @@ it.skipIf(process.platform !== "linux")(
     expect(earlier.pid).toBeDefined();
     expect(later.pid).toBeDefined();
     if (earlier.pid === undefined || later.pid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-pending-pid-order-"));
+    directory = await createTempDirectory("rea-rizin-pending-pid-order-");
     const commandsPath = join(directory, "commands");
     const provider = join(directory, "fake-rizin-pending-pid-order.mjs");
     await writeFile(
@@ -2481,8 +2497,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -2521,7 +2536,7 @@ it.skipIf(process.platform !== "linux")(
     const retained = await spawnTestInferiorOnTty(await rizinTestInferiorTty());
     expect(retained.pid).toBeDefined();
     if (retained.pid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-malformed-partial-"));
+    directory = await createTempDirectory("rea-rizin-malformed-partial-");
     const commandsPath = join(directory, "commands");
     const provider = join(directory, "fake-rizin-malformed-partial.mjs");
     await writeFile(
@@ -2585,8 +2600,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -2606,7 +2620,7 @@ it.skipIf(process.platform !== "linux")(
     expect(omitted.pid).toBeDefined();
     expect(retained.pid).toBeDefined();
     if (omitted.pid === undefined || retained.pid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-omitted-inferior-"));
+    directory = await createTempDirectory("rea-rizin-omitted-inferior-");
     const commandsPath = join(directory, "commands");
     const provider = await createOmittedInferiorProvider(
       omitted.pid,
@@ -2645,8 +2659,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -2674,7 +2687,7 @@ it.skipIf(process.platform !== "linux")(
     expect(omitted.pid).toBeDefined();
     expect(retained.pid).toBeDefined();
     if (omitted.pid === undefined || retained.pid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-omitted-replacement-"));
+    directory = await createTempDirectory("rea-rizin-omitted-replacement-");
     const commandsPath = join(directory, "commands");
     const provider = join(directory, "fake-rizin-omitted-replacement.mjs");
     await writeFile(
@@ -2750,8 +2763,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -2775,7 +2787,7 @@ it.skipIf(process.platform !== "linux")(
     expect(omitted.pid).toBeDefined();
     expect(newlyObserved.pid).toBeDefined();
     if (omitted.pid === undefined || newlyObserved.pid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-new-omitted-"));
+    directory = await createTempDirectory("rea-rizin-new-omitted-");
     const commandsPath = join(directory, "commands");
     const provider = await createNewOmittedInferiorProvider(
       omitted.pid,
@@ -2814,8 +2826,7 @@ it.skipIf(process.platform !== "linux")(
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -2882,9 +2893,7 @@ it.skipIf(process.platform !== "linux")(
     const pid = inferior.pid;
     expect(pid).toBeDefined();
     if (pid === undefined) return;
-    directory = await mkdtemp(
-      join(tmpdir(), "rea-rizin-ended-after-row-reject-"),
-    );
+    directory = await createTempDirectory("rea-rizin-ended-after-row-reject-");
     const provider = join(directory, "fake-rizin-ended-after-row-reject.mjs");
     await writeFile(
       provider,
@@ -2948,8 +2957,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: tty,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
     const sessionId = started.value.session_id;
 
     expect((await manager.close(sessionId)).ok).toBe(false);
@@ -2983,9 +2991,7 @@ it.skipIf(process.platform !== "linux")(
     expect(detached.pid).toBeDefined();
     expect(unresolved.pid).toBeDefined();
     if (detached.pid === undefined || unresolved.pid === undefined) return;
-    directory = await mkdtemp(
-      join(tmpdir(), "rea-rizin-pending-after-detach-"),
-    );
+    directory = await createTempDirectory("rea-rizin-pending-after-detach-");
     const provider = join(directory, "fake-rizin-pending-after-detach.mjs");
     await writeFile(
       provider,
@@ -3087,8 +3093,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: tty,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     const closed = await manager.close(started.value.session_id);
 
@@ -3129,7 +3134,7 @@ it.skipIf(process.platform !== "linux")(
     const inferior = await spawnTestInferior();
     expect(inferior.pid).toBeDefined();
     if (inferior.pid === undefined) return;
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-unidentified-exit-"));
+    directory = await createTempDirectory("rea-rizin-unidentified-exit-");
     const provider = join(directory, "fake-rizin-unidentified-exit.mjs");
     await writeFile(
       provider,
@@ -3205,8 +3210,7 @@ process.stdin.on("data", (chunk) => {
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     const inferiorExit = new Promise<void>((resolveExit) =>
@@ -3253,7 +3257,7 @@ it.skipIf(process.platform !== "linux")(
 it.skipIf(process.platform === "win32")(
   "retains Rizin cleanup when target state is unknown at debugger exit",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-unknown-target-"));
+    directory = await createTempDirectory("rea-rizin-unknown-target-");
     const provider = join(directory, "fake-rizin-unknown-target.mjs");
     await writeFile(
       provider,
@@ -3291,7 +3295,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "preserves command parameters in Rizin observation evidence",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-command-evidence-"));
+    directory = await createTempDirectory("rea-rizin-command-evidence-");
     const provider = join(directory, "fake-rizin-command-evidence.mjs");
     const inferiorTty = await rizinTestInferiorTty();
     await writeFile(
@@ -3320,8 +3324,7 @@ process.stdin.on("data", (chunk) => {
       path: callerSelectedPath,
       inferior_tty: inferiorTty,
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     const executed = await manager.execute(started.value.session_id, "dr");
 
@@ -3346,7 +3349,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "keeps queued Rizin commands serialized when a waiting request is cancelled",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-queue-cancel-"));
+    directory = await createTempDirectory("rea-rizin-queue-cancel-");
     const provider = join(directory, "fake-rizin-queue-cancel.mjs");
     const overlapPath = join(directory, "overlap");
     await writeFile(
@@ -3391,7 +3394,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "preserves a truncated single Rizin frame that exceeds the protocol limit",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-frame-overflow-"));
+    directory = await createTempDirectory("rea-rizin-frame-overflow-");
     const provider = join(directory, "fake-rizin-frame-overflow.mjs");
     await writeFile(
       provider,
@@ -3441,7 +3444,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "returns bounded partial Rizin output with unknown completion after overflow",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-output-overflow-"));
+    directory = await createTempDirectory("rea-rizin-output-overflow-");
     const provider = join(directory, "fake-rizin-output-overflow.mjs");
     await writeFile(
       provider,
@@ -3485,7 +3488,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "waits for the Rizin process to exit when command correlation times out",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-command-timeout-"));
+    directory = await createTempDirectory("rea-rizin-command-timeout-");
     const provider = join(directory, "fake-rizin-command-timeout.mjs");
     await writeFile(
       provider,
@@ -3506,8 +3509,7 @@ process.stdin.on("data", () => process.stdout.write(Buffer.from([0xff, 0])));
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     const result = await manager.execute(started.value.session_id, "dr");
 
@@ -3533,7 +3535,7 @@ process.stdin.on("data", () => process.stdout.write(Buffer.from([0xff, 0])));
 it.skipIf(process.platform === "win32")(
   "cancels a running Rizin command and retains its closed status",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-command-cancel-"));
+    directory = await createTempDirectory("rea-rizin-command-cancel-");
     const provider = join(directory, "fake-rizin-command-cancel.mjs");
     await writeFile(
       provider,
@@ -3568,8 +3570,7 @@ process.stdin.on("data", (chunk) => {
       path: callerSelectedPath,
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
     const controller = new AbortController();
     const pending = manager.execute(
       started.value.session_id,
@@ -3605,7 +3606,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "reports bounded Rizin stderr retention in session status",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-diagnostic-limit-"));
+    directory = await createTempDirectory("rea-rizin-diagnostic-limit-");
     const provider = join(directory, "fake-rizin-diagnostic-limit.mjs");
     await writeFile(
       provider,
@@ -3624,8 +3625,7 @@ process.stdin.resume();
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
 
     expect(
@@ -3637,7 +3637,7 @@ process.stdin.resume();
 it.skipIf(process.platform === "win32")(
   "returns cancellation when Rizin startup is cancelled after spawn",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-start-cancel-"));
+    directory = await createTempDirectory("rea-rizin-start-cancel-");
     const provider = join(directory, "fake-rizin-start-cancel.mjs");
     await writeFile(
       provider,
@@ -3681,7 +3681,7 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "converts a Rizin stdin pipe failure into a provider session error",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-stdin-error-"));
+    directory = await createTempDirectory("rea-rizin-stdin-error-");
     const provider = join(directory, "fake-rizin-stdin-error.mjs");
     await writeFile(
       provider,
@@ -3700,8 +3700,7 @@ setInterval(() => {}, 1000);
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 80));
 
     const result = await manager.execute(started.value.session_id, "dr");
@@ -3714,7 +3713,7 @@ setInterval(() => {}, 1000);
 it.skipIf(process.platform === "win32")(
   "preserves Rizin process-exit reason and partial command output",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-command-exit-"));
+    directory = await createTempDirectory("rea-rizin-command-exit-");
     const provider = join(directory, "fake-rizin-command-exit.mjs");
     const writerPidPath = join(directory, "writer.pid");
     await writeFile(
@@ -3767,8 +3766,7 @@ process.stdin.on("data", (chunk) => {
       path: callerSelectedPath,
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
 
     const exited = await manager.execute(started.value.session_id, "exit-now");
 
