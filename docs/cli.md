@@ -569,6 +569,17 @@ prints a failure, so it omits the same-session reuse and
 `parameter`) for a new invocation and rerun. For example, a Ghidra decompile
 deadline names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`.
 
+`rea debug-with-gdb` and `rea debug-with-rizin` hold their debugger only for the
+command's own process. If cleanup cannot confirm the debugger stopped, they print
+`cleanup_incomplete` and exit nonzero without stopping it. `remediation.action`
+names the process, as does `retained_debugger_pids` in `details.diagnostics`, or
+in `details.diagnostics.cleanup_error.details.diagnostics` when the command also
+failed or was interrupted. Exiting closes the debugger's command and output pipes.
+REA does not establish what the debugger or its target does next, so check that
+process. An MCP server that shuts down likewise exits with status 1 instead of
+waiting on a debugger it could not stop. It names the process on stderr and as
+`retained_debugger_pids` in its error log.
+
 If one-shot analysis fails and closing its session also fails, the original
 error details remain inline and `details.cleanup_error` describes the later
 close failure. Each diagnostic retains its own reported resources; the later
