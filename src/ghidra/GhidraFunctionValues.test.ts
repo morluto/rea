@@ -807,6 +807,35 @@ const malformedSwiftStringLiterals = (
     },
   ]);
 
+/** A non-canonical unresolved indirect branch address must be refused. */
+const unresolvedBranchMalformedOutput = (
+  dossier: Record<string, JsonValue>,
+  nativeApi: ReturnType<typeof ghidraNativeApiBoundary>,
+): [string, GhidraFunctionOperation, JsonValue] => [
+  "non-canonical unresolved indirect branch",
+  "analyze_function",
+  {
+    ...dossier,
+    native_api: {
+      ...nativeApi,
+      unresolved_indirect_branches: [
+        {
+          branch_address: "401040",
+          decompiler_outcome: "no_jump_table_warning",
+          listing_targets: [],
+          evidence: [
+            {
+              kind: "indirect-branch",
+              source: "ghidra-listing",
+              detail: "computed jump",
+            },
+          ],
+        },
+      ],
+    },
+  },
+];
+
 const malformedOutputs = (): Array<
   [string, GhidraFunctionOperation, JsonValue]
 > => {
@@ -908,30 +937,7 @@ const malformedOutputs = (): Array<
         },
       },
     ],
-    [
-      "non-canonical unresolved indirect branch",
-      "analyze_function",
-      {
-        ...dossier,
-        native_api: {
-          ...nativeApi,
-          unresolved_indirect_branches: [
-            {
-              branch_address: "401040",
-              decompiler_outcome: "no_jump_table_warning",
-              listing_targets: [],
-              evidence: [
-                {
-                  kind: "indirect-branch",
-                  source: "ghidra-listing",
-                  detail: "computed jump",
-                },
-              ],
-            },
-          ],
-        },
-      },
-    ],
+    unresolvedBranchMalformedOutput(dossier, nativeApi),
     [
       "Hopper local provenance",
       "analyze_function",
