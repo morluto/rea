@@ -707,11 +707,13 @@ it("preserves outer operation name and caller cause when artifact digest is canc
       operation: "file_headers",
     });
     expect(result.ok).toBe(false);
-    if (!result.ok && result.error instanceof AnalysisCancelledError) {
-      expect(result.error._tag).toBe("AnalysisCancelledError");
-      expect(result.error.operation).toBe("inspect_with_objdump");
-      expect(result.error.cause).toBe(callerReason);
-    }
+    if (result.ok) throw new Error("Expected cancellation failure");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    if (!(result.error instanceof AnalysisCancelledError))
+      throw new Error("Expected AnalysisCancelledError");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.operation).toBe("inspect_with_objdump");
+    expect(result.error.cause).toBe(callerReason);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -742,18 +744,22 @@ it("preserves original cancellation cause and outer operation when digest descri
       operation: "file_headers",
     });
     expect(result.ok).toBe(false);
-    if (!result.ok && result.error instanceof AnalysisCancelledError) {
-      expect(result.error._tag).toBe("AnalysisCancelledError");
-      expect(result.error.operation).toBe("inspect_with_objdump");
-      expect(result.error.cause).toBe(callerReason);
-      expect(result.error.cleanupIncomplete).toBe(true);
-    }
+    if (result.ok) throw new Error("Expected cancellation failure");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    if (!(result.error instanceof AnalysisCancelledError))
+      throw new Error("Expected AnalysisCancelledError");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.operation).toBe("inspect_with_objdump");
+    expect(result.error.cause).toBe(callerReason);
+    expect(result.error.cleanupIncomplete).toBe(true);
 
     const retried = await service.retryCleanup("unrelated_operation");
     expect(retried.ok).toBe(false);
-    if (!retried.ok && "operation" in retried.error) {
-      expect(retried.error.operation).toBe("inspect_with_objdump");
-    }
+    if (retried.ok) throw new Error("Expected cleanup retry failure");
+    expect("operation" in retried.error).toBe(true);
+    if (!("operation" in retried.error))
+      throw new Error("Expected operation property on retried error");
+    expect(retried.error.operation).toBe("inspect_with_objdump");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
