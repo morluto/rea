@@ -357,3 +357,100 @@ it("reports the actual HAR decoder nesting constraint as a typed selected-input 
     },
   });
 });
+
+it("counts credential-named HAR members by pointer, excluding values the decoder removed", async () => {
+  const root = await createTestTempDirectory("rea-har-credential-names-");
+  const path = join(root, "capture.har");
+  const fixture = historicalHar();
+  const entry = fixture.log.entries[0]!;
+  await writeFile(
+    path,
+    JSON.stringify({
+      log: {
+        ...fixture.log,
+        entries: [
+          {
+            ...entry,
+            request: {
+              ...entry.request,
+              method: "POST",
+              url: "https://example.test/login?api_key=demo-key",
+              headers: [
+                { name: "Authorization", value: "Bearer demo-bearer" },
+                { name: "X-Demo-Token", value: "demo-token" },
+                { name: "Accept", value: "application/json" },
+              ],
+              queryString: [{ name: "api_key", value: "demo-key" }],
+              postData: {
+                mimeType: "application/json",
+                text: '{"user":"demo","password":"demo-pass"}',
+              },
+            },
+            response: {
+              ...entry.response,
+              content: {
+                size: 32,
+                mimeType: "application/json",
+                text: '{"session_token":"demo-session"}',
+              },
+            },
+          },
+        ],
+      },
+    }),
+  );
+  const { call } = await connectLocalToolsMcp();
+  for (const sensitive of [[], ["demo-token", "demo-pass"]]) {
+    const fromCli = await cli(
+      path,
+      "har",
+      sensitive.flatMap((value) => ["--sensitive-value", value]),
+    );
+    expect(fromCli.ok, fromCli.stdout).toBe(true);
+    const cliEvidence = parseEvidence(JSON.parse(fromCli.stdout));
+    const response = await call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "har",
+      sensitive_values: sensitive,
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const evidence = parseEvidence(response.structuredContent);
+    expect(evidence.limitations).toEqual(cliEvidence.limitations);
+    const [limitation, ...others] = evidence.limitations.filter((text) =>
+      text.includes("look like credentials"),
+    );
+    expect(others).toEqual([]);
+    const expected =
+      sensitive.length === 0
+        ? [
+            "record 0 request header X-Demo-Token",
+            "record 0 request query api_key",
+            "record 0 request /password",
+            "record 0 response /session_token",
+          ]
+        : [
+            "record 0 request query api_key",
+            "record 0 response /session_token",
+          ];
+    expect(limitation).toMatch(new RegExp(`^${String(expected.length)} `));
+    for (const pointer of expected) expect(limitation).toContain(pointer);
+    // The decoder already excluded the standard credential and declared values.
+    expect(limitation).not.toContain("Authorization");
+    expect(limitation).not.toContain("Accept");
+    if (sensitive.length > 0) {
+      expect(limitation).not.toContain("X-Demo-Token");
+      expect(limitation).not.toContain("/password");
+    }
+    for (const value of [
+      "demo-bearer",
+      "demo-token",
+      "demo-key",
+      "demo-pass",
+      "demo-session",
+    ])
+      expect(limitation).not.toContain(value);
+    expect(evidence.normalized_result).toMatchObject({
+      limitations: expect.arrayContaining([limitation]),
+    });
+  }
+});

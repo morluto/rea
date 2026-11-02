@@ -22,6 +22,7 @@ import {
   type WebNetworkCapture,
 } from "../domain/webNetworkCapture.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
+import { scanCredentialNames } from "./environment/environmentBuildReport.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 
 const OPERATION = "inspect_web_network_capture";
@@ -201,6 +202,9 @@ export class WebNetworkCaptureService {
             "The explicitly sensitive artifact path is excluded; its size remains available.",
           ]
         : []),
+      ...(safeValue.format === "har"
+        ? credentialNameLimitations(scanCredentialNames(records))
+        : []),
     ].map(redactText);
     const parameters = jsonObjectSchema.parse({
       capture_path: safePath,
@@ -285,6 +289,37 @@ export class WebNetworkCaptureService {
     );
   }
 }
+
+/** A count with its first pointers, as the credential-name scan tallies them. */
+type ScanTally = {
+  readonly count: number;
+  readonly pointers: readonly string[];
+};
+
+const listedPointers = (tally: ScanTally): string =>
+  tally.pointers.length < tally.count
+    ? `first ${String(tally.pointers.length)}: ${tally.pointers.join(", ")}`
+    : tally.pointers.join(", ");
+
+/**
+ * The credential-name scan environment-build runs over selected HAR records,
+ * as limitations: counts and pointers to names that hold a retained value,
+ * never the values, and the bodies too large to scan.
+ */
+const credentialNameLimitations = (
+  scan: ReturnType<typeof scanCredentialNames>,
+): string[] => [
+  ...(scan.count > 0
+    ? [
+        `${String(scan.count)} recorded header, query parameter or body member names look like credentials and hold a retained value (${listedPointers(scan)}); names do not establish sensitivity, so declare the values as explicitly sensitive to exclude them.`,
+      ]
+    : []),
+  ...(scan.skipped.count > 0
+    ? [
+        `${String(scan.skipped.count)} recorded bodies exceed the credential-name scan's 4 MiB limit and were not scanned (${listedPointers(scan.skipped)}).`,
+      ]
+    : []),
+];
 
 const isCapturePartialCandidate = (value: unknown): boolean => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
