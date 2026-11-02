@@ -1347,6 +1347,97 @@ describe("ReleaseExposureReader source-map count", () => {
   });
 });
 
+describe("ReleaseExposureReader sibling map allowance", () => {
+  const countSiblingReads = async (
+    run: () => Promise<ReleaseExposureScan>,
+  ): Promise<{ scanned: ReleaseExposureScan; budgets: number[] }> => {
+    const budgets: number[] = [];
+    const real = stableRead.impl;
+    stableRead.impl = async (...args) => {
+      if (real === undefined) throw new Error("stable read is not installed");
+      if (args[0].endsWith(".map")) budgets.push(args[1]);
+      return real(...args);
+    };
+    try {
+      return { scanned: await run(), budgets };
+    } finally {
+      stableRead.impl = real;
+    }
+  };
+
+  it("stops full sibling map reads at the map count", async () => {
+    const root = await createTestTempDirectory("rea-release-sibling-budget-");
+    const extra = 3;
+    const count = MAX_RELEASE_EXPOSURE_SOURCE_MAPS + extra;
+    await Promise.all(
+      Array.from({ length: count }, (_, index) =>
+        writeFile(
+          join(root, `s${String(index)}.map`),
+          JSON.stringify({ version: 3, sources: [], mappings: "" }),
+        ),
+      ),
+    );
+    await writeFile(join(root, "app"), "plain file");
+    const { scanned, budgets } = await countSiblingReads(() =>
+      inspect(join(root, "app")),
+    );
+    expect(budgets).toHaveLength(count);
+    expect(
+      budgets.filter(
+        (bytes) => bytes === MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES,
+      ),
+    ).toHaveLength(MAX_RELEASE_EXPOSURE_SOURCE_MAPS);
+    expect(
+      budgets.filter(
+        (bytes) => bytes === MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
+      ),
+    ).toHaveLength(extra);
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: extra });
+    expect(scanned.source_maps).toMatchObject({ skipped: 0, samples: [] });
+  });
+
+  it("settles sibling maps from the probe once the selected file spends the count", async () => {
+    const root = await createTestTempDirectory("rea-release-sibling-spent-");
+    const map = Buffer.from(
+      JSON.stringify({ version: 3, sources: [], mappings: "" }),
+    );
+    await writeFile(
+      join(root, "app.dll"),
+      dotnetBundleFixture(
+        Array.from(
+          { length: MAX_RELEASE_EXPOSURE_SOURCE_MAPS },
+          (_, index) => ({
+            path: `m${String(index)}.js.map`,
+            bytes: map,
+            compressed: true,
+          }),
+        ),
+      ).bytes,
+    );
+    const pastProbe = MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES + 1;
+    const linker = "Archive member included to satisfy reference\n";
+    await writeFile(join(root, "short-linker.map"), linker);
+    await writeFile(
+      join(root, "long-linker.map"),
+      linker.padEnd(pastProbe, " "),
+    );
+    await writeFile(join(root, "short-json.map"), map);
+    await writeFile(join(root, "long-json.map"), "{".padEnd(pastProbe, " "));
+    const { scanned, budgets } = await countSiblingReads(() =>
+      inspect(join(root, "app.dll")),
+    );
+    expect(budgets).toEqual(
+      Array.from({ length: 4 }, () => MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES),
+    );
+    expect([...scanned.debug_companions.paths].sort()).toEqual([
+      join(root, "long-linker.map"),
+      join(root, "short-linker.map"),
+    ]);
+    expect(scanned.debug_companions.skipped).toBe(2);
+    expect(scanned.source_maps.skipped).toBe(0);
+  });
+});
+
 const bundled = async (
   files: readonly { path: string; bytes: Buffer }[],
 ): Promise<string> => {

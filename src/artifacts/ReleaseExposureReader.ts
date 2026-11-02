@@ -927,24 +927,32 @@ const examineMapMember = async (
   return loaded?.kind !== "unread";
 };
 
+/**
+ * Take a slot from the map count and return the bytes this read may use. The
+ * read is what the count bounds, so it is charged before the file is opened:
+ * an oversized or unreadable map spends its slot like a parsed one. With no
+ * slot left, only the probe is read, which can still settle a linker map.
+ */
+const chargeMapRead = (
+  state: ScanState,
+): { hasSlot: boolean; bytes: number } => {
+  if (state.mapsRead >= MAX_RELEASE_EXPOSURE_SOURCE_MAPS)
+    return { hasSlot: false, bytes: MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES };
+  state.mapsRead += 1;
+  return { hasSlot: true, bytes: MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES };
+};
+
 /** Returns the read so a caller can also scan its text, or null when nothing was read. */
 const examineMap = async (
   state: ScanState,
   map: Pick<MemberView, "logical" | "location" | "read">,
 ): Promise<MemberRead | null> => {
-  const hasSlot = state.mapsRead < MAX_RELEASE_EXPOSURE_SOURCE_MAPS;
+  const { hasSlot, bytes } = chargeMapRead(state);
   if (!hasSlot && isJavaScriptSourceMapName(map.logical)) {
     state.skippedMaps += 1;
     return null;
   }
-  // The read is what the count bounds, so it is charged before the member is
-  // opened. An oversized or unreadable map spends its slot like a parsed one.
-  if (hasSlot) state.mapsRead += 1;
-  const loaded = await map.read(
-    hasSlot
-      ? MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES
-      : MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
-  );
+  const loaded = await map.read(bytes);
   if (loaded.kind === "unread") noteUnreadMap(state, map, null);
   else if (loaded.kind === "over_allowance")
     noteUnreadMap(state, map, loaded.prefix);
@@ -2106,27 +2114,41 @@ const scanSiblings = async (
     }
     if (!entry.name.toLowerCase().endsWith(".map") || !entry.isFile()) continue;
     if (isJavaScriptSourceMapName(entry.name)) continue;
-    // Siblings are in scope only for debug-companion discovery.
-    const loaded = await readDiskMember(
-      sibling,
-      MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES,
-      undefined,
-      state,
-      input,
-    );
-    if (loaded.kind === "unread") state.skippedCompanions += 1;
-    else if (loaded.kind === "over_allowance") {
-      if (loaded.prefix === null || mayHaveSourceMapPrefix(loaded.prefix))
-        state.skippedCompanions += 1;
-      else state.companionPaths.add(sibling);
-    } else {
-      try {
-        inspectSourceMap(loaded.bytes.toString("utf8"));
-      } catch {
-        if (mayHaveSourceMapPrefix(loaded.bytes)) state.skippedCompanions += 1;
-        else state.companionPaths.add(sibling);
-      }
-    }
+    await classifySiblingMap(sibling, state, input);
+  }
+};
+
+/**
+ * Siblings are in scope only for debug-companion discovery, so a sibling map
+ * never reaches the selected artifact's source-map counts. Its read still
+ * spends the same map count, or a directory of .map files would multiply the
+ * byte allowance by the listing allowance.
+ */
+const classifySiblingMap = async (
+  sibling: string,
+  state: ScanState,
+  input: ConsumeInput,
+): Promise<void> => {
+  const { hasSlot, bytes } = chargeMapRead(state);
+  const loaded = await readDiskMember(sibling, bytes, undefined, state, input);
+  if (loaded.kind === "unread") {
+    state.skippedCompanions += 1;
+    return;
+  }
+  const prefix = loaded.kind === "bytes" ? loaded.bytes : loaded.prefix;
+  if (loaded.kind === "bytes" && hasSlot && parsesAsSourceMap(loaded.bytes))
+    return;
+  if (prefix === null || mayHaveSourceMapPrefix(prefix))
+    state.skippedCompanions += 1;
+  else state.companionPaths.add(sibling);
+};
+
+const parsesAsSourceMap = (bytes: Buffer): boolean => {
+  try {
+    inspectSourceMap(bytes.toString("utf8"));
+    return true;
+  } catch {
+    return false;
   }
 };
 
