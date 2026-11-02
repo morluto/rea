@@ -27,7 +27,7 @@ const CLOSE_RETRY = { operation: "close_binary" } as const;
 
 const retryFixture = async (
   execute: AnalysisClient["execute"] = () => Promise.resolve(ok(null)),
-  onClose?: () => void,
+  onClose?: () => void | Promise<void>,
 ) => {
   const parent = await createTestTempDirectory("rea-session-cleanup-retry-");
   const runtime = join(parent, "owned-runtime");
@@ -58,7 +58,7 @@ const retryFixture = async (
       requests: [],
     }),
     close: async (options) => {
-      onClose?.();
+      await onClose?.();
       if (!allowed) return err(cleanupError);
       await cleanupLease.release();
       if (options?.retainDocument !== true) await rm(document, { force: true });
@@ -494,4 +494,34 @@ it("does not start a replacement cancelled while pending cleanup completes", asy
   });
   expect(created).toBe(1);
   await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("does not report close_cleanup_pending while close is in flight before failure", async () => {
+  const closing = createDeferred<void>();
+  const proceed = createDeferred<void>();
+  const fixture = await retryFixture(undefined, async () => {
+    closing.resolve();
+    await proceed.promise;
+  });
+  const {
+    session,
+    targets: [target],
+  } = fixture;
+  expect((await session.open(target)).ok).toBe(true);
+  const closingPromise = session.close();
+  await closing.promise;
+  const inFlightStatus = (await session.status()) as Record<string, unknown>;
+  expect(inFlightStatus).toMatchObject({
+    open: false,
+    cleanup_pending: false,
+  });
+  expect(inFlightStatus.close_cleanup_pending).toBeUndefined();
+  proceed.resolve();
+  expect((await closingPromise).ok).toBe(false);
+  const failedStatus = (await session.status()) as Record<string, unknown>;
+  expect(failedStatus).toMatchObject({
+    open: false,
+    cleanup_pending: true,
+    close_cleanup_pending: true,
+  });
 });

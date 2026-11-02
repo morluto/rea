@@ -198,6 +198,8 @@ export class BinarySession
   readonly #bundleResourceFactory: BundleResourceClientFactory | undefined;
   #activeBundleResources: ActiveBundleResourceSession | undefined;
   #pendingBundleResourceCleanup: ActiveBundleResourceSession[] = [];
+  readonly #failedBundleResourceCleanup =
+    new Set<ActiveBundleResourceSession>();
   readonly #runtimeAvailability = new SessionRuntimeAvailability();
   readonly #availabilityListeners = new Set<() => void | Promise<void>>();
 
@@ -1023,8 +1025,9 @@ export class BinarySession
   /** Owners the next close retries; external mutation owners retry elsewhere. */
   #retainsCloseCleanup(): boolean {
     return (
-      this.#pendingCleanup !== undefined ||
-      this.#pendingBundleResourceCleanup.length > 0 ||
+      (this.#pendingCleanup !== undefined &&
+        this.#pendingCleanup.failures.size > 0) ||
+      this.#failedBundleResourceCleanup.size > 0 ||
       this.hasPendingFileResources ||
       this.#providerRouter.hasRetainedCleanupFailures()
     );
@@ -1121,6 +1124,7 @@ export class BinarySession
       );
       if (!closed.ok) {
         retained.push(session);
+        this.#failedBundleResourceCleanup.add(session);
         const previous = failure;
         failure =
           previous === undefined
@@ -1135,6 +1139,8 @@ export class BinarySession
           closed.error.cleanupIncomplete
         )
           failure.bindCleanupDependencies([previous, closed.error]);
+      } else {
+        this.#failedBundleResourceCleanup.delete(session);
       }
     }
     this.#pendingBundleResourceCleanup = retained;
