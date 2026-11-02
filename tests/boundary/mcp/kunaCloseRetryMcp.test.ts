@@ -88,9 +88,21 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
     expect(failed.error.remediation.action).toBe(
       `${analysisErrorRemediationAction(delivered.error)} ${cleanupRetryRemediation({ operation: "close_binary" })}`,
     );
-    expect(await sessionStatus(client)).toMatchObject({
+    const pendingStatus = await sessionStatus(client);
+    expect(pendingStatus).toMatchObject({
       open: false,
       cleanup_pending: true,
+      cleanup_retry: { operation: "close_binary" },
+    });
+    const unavailable = pendingStatus.tool_availability.groups.find(
+      ({ names }) => names.includes("procedure_assembly"),
+    );
+    expect(unavailable).toMatchObject({
+      available: false,
+      reason: "target_required",
+      remediation: expect.stringContaining(
+        cleanupRetryRemediation({ operation: "close_binary" }),
+      ),
     });
     // Reopening stays blocked; only close_binary offers its retry.
     const blocked = parseMcpToolError(
@@ -109,10 +121,12 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
     unproven.release();
     const recovered = await call("close_binary");
     expect(recovered.isError, JSON.stringify(recovered.content)).not.toBe(true);
-    expect(await sessionStatus(client)).toMatchObject({
+    const settledStatus = await sessionStatus(client);
+    expect(settledStatus).toMatchObject({
       open: false,
       cleanup_pending: false,
     });
+    expect(settledStatus).not.toHaveProperty("cleanup_retry");
     expect(await readdir(join(fixture.cacheRoot, "staging"))).toEqual([]);
     expect(Buffer.compare(await readFile(program), targetBytes)).toBe(0);
   } finally {
