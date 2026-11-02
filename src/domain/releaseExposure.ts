@@ -546,6 +546,19 @@ export const RELEASE_EXPOSURE_FUSE_SUBJECTS = Object.values(FUSE_SUBJECTS).map(
   (spec) => spec.subject,
 );
 
+/**
+ * Whether a native image may have gone unread: inventory stopped early, the
+ * sample dropped one, or one sits inside a package no owner reader opens.
+ */
+export const nativeImagesMayBeUnread = (scan: ReleaseExposureScan): boolean =>
+  scan.coverage === "unknown" ||
+  scan.omitted.some(
+    (item) =>
+      (item.subject === "native images" ||
+        item.subject === PACKAGED_NATIVE_IMAGES) &&
+      item.count > 0,
+  );
+
 const fuseCheck = (
   id: keyof typeof FUSE_SUBJECTS,
   scan: ReleaseExposureScan,
@@ -562,13 +575,9 @@ const fuseCheck = (
       : [],
   );
   const failed = images.some((image) => image.kind === "failed");
-  const unreadImagePossible =
-    scan.coverage === "unknown" ||
-    scan.omitted.some(
-      (item) => item.subject === "native images" && item.count > 0,
-    );
   const partialFuseSample =
-    unreadImagePossible && owners.electron_executable_included !== true;
+    nativeImagesMayBeUnread(scan) &&
+    owners.electron_executable_included !== true;
   let status: Status;
   if (outcomes.includes(spec.exposed)) status = "exposed";
   else if (owners.electron_family === "not_electron") status = "not_applicable";
@@ -678,15 +687,6 @@ const pdbCheck = (scan: ReleaseExposureScan): ReleaseExposureCheck => {
   );
 };
 
-const metadataUnresolved = (scan: ReleaseExposureScan): boolean =>
-  scan.coverage === "unknown" ||
-  scan.omitted.some(
-    (item) =>
-      (item.subject === "native images" ||
-        item.subject === PACKAGED_NATIVE_IMAGES) &&
-      item.count > 0,
-  );
-
 const metadataStatus = (
   images: readonly MetadataImageFact[],
   present: (image: MetadataImageFact) => boolean,
@@ -723,7 +723,7 @@ const goCheck = (
   const status = metadataStatus(
     images,
     (image) => image.kind === "paths" && image.paths.length > 0,
-    metadataUnresolved(scan) ||
+    nativeImagesMayBeUnread(scan) ||
       images.some(
         (image) => image.kind === "paths" && image.complete === false,
       ),
@@ -757,7 +757,7 @@ const rustCheck = (
   const status = metadataStatus(
     images,
     (image) => image.kind === "packages",
-    metadataUnresolved(scan),
+    nativeImagesMayBeUnread(scan),
   );
   return makeCheck(
     "rust.dependency_metadata",

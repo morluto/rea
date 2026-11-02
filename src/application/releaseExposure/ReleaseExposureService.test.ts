@@ -869,6 +869,31 @@ const runAsNode = async (
     .checks.find((check) => check.id === "electron.run_as_node");
 };
 
+describe("ReleaseExposureService packaged native images", () => {
+  it("keeps safe fuses unknown past a packaged native image", async () => {
+    const { service, electronFuses } = owners({
+      ...directoryScan(["/work/app/helper"]),
+      omitted: [{ subject: PACKAGED_NATIVE_IMAGES, count: 1, reason: "x" }],
+    });
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
+
+  it("keeps safe fuses decided past a packaged image once the hinted executable was read", async () => {
+    const { service, desktop, electronFuses } = owners({
+      ...directoryScan(["/work/app/MyApp.exe"]),
+      omitted: [{ subject: PACKAGED_NATIVE_IMAGES, count: 1, reason: "x" }],
+    });
+    desktop.inspect.mockResolvedValue(ok(evidence(electronDesktopReport())));
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("not_observed");
+  });
+});
+
 describe("ReleaseExposureService Electron applicability", () => {
   const appScan = scan({
     target: {

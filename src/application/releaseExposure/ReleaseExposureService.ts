@@ -34,7 +34,7 @@ import {
   assembleReleaseExposureReport,
   auditReleaseExposureInputSchema,
   MAX_RELEASE_EXPOSURE_NATIVE_IMAGES,
-  PACKAGED_NATIVE_IMAGES,
+  nativeImagesMayBeUnread,
   RELEASE_EXPOSURE_FUSE_SUBJECTS,
   RELEASE_EXPOSURE_OPERATION,
   type FuseImageFact,
@@ -648,13 +648,8 @@ const fuseImagesRuleOutElectron = (
 ): boolean =>
   family === "unknown" &&
   scan.target.kind === "directory" &&
-  scan.coverage === "complete" &&
   images.length > 0 &&
-  !scan.omitted.some(
-    (item) =>
-      item.subject === "native images" ||
-      item.subject === PACKAGED_NATIVE_IMAGES,
-  ) &&
+  !nativeImagesMayBeUnread(scan) &&
   images.every(
     (image) => image.kind === "report" && image.implications?.length === 0,
   );

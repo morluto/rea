@@ -336,7 +336,9 @@ describe("release exposure fuse sampling", () => {
         ?.observation.samples,
     ).toContain("inspect_electron_fuses failed");
   });
+});
 
+describe("release exposure unread fuse images", () => {
   it("does not treat a partial native sample as an absent fuse", () => {
     const sampled = scan({
       omitted: [
@@ -369,6 +371,48 @@ describe("release exposure fuse sampling", () => {
       }),
     );
     expect(statusOf(included, "electron.run_as_node")).toBe("not_observed");
+  });
+
+  it("does not treat a packaged native image as an absent fuse", () => {
+    const packaged = scan({
+      omitted: [
+        {
+          subject: PACKAGED_NATIVE_IMAGES,
+          count: 1,
+          reason: "Fuse readers run on files on disk.",
+        },
+      ],
+    });
+    const fuseFacts = {
+      electron_family: "unknown" as const,
+      fuse_images: [
+        {
+          kind: "report" as const,
+          role: "native-image" as const,
+          implications: [
+            { subject: "electron_run_as_node", outcome: "not_honored" },
+          ],
+        },
+      ],
+    };
+    expect(
+      statusOf(
+        reportFor(
+          packaged,
+          owners({ ...fuseFacts, electron_executable_included: false }),
+        ),
+        "electron.run_as_node",
+      ),
+    ).toBe("unknown");
+    expect(
+      statusOf(
+        reportFor(
+          packaged,
+          owners({ ...fuseFacts, electron_executable_included: true }),
+        ),
+        "electron.run_as_node",
+      ),
+    ).toBe("not_observed");
   });
 
   it("does not treat incomplete inventory as an absent fuse", () => {
