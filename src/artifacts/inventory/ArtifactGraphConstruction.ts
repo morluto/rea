@@ -557,7 +557,10 @@ export const classifyArtifactContent = (
     asarHeader.state !== "rejected"
   ) {
     if (asarHeader.state === "limit")
-      throw asarHeaderAdmissionFailure(asarHeader.admission);
+      throw asarHeaderAdmissionFailure(
+        asarHeader.admission,
+        asarHeader.extents?.headerBytes,
+      );
     if (asarHeader.state === "matched")
       role = { kind: "container", format: "asar" };
     else role = artifactRoleForFormat(path, contentFormat);
