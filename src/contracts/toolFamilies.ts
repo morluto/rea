@@ -16,6 +16,7 @@ import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "./reverseEngineeringToolCont
 import { GDB_TOOL_CONTRACTS } from "./gdbToolContracts.js";
 import { RIZIN_DEBUG_TOOL_CONTRACTS } from "./rizinDebugToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
+import { RELEASE_EXPOSURE_TOOL_CONTRACTS } from "./releaseExposureToolContracts.js";
 import { APK_SIGNATURE_TOOL_CONTRACTS } from "./apkSignature/apkSignatureToolContracts.js";
 import { ERLANG_BEAM_TOOL_CONTRACTS } from "./erlang/beamToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
@@ -87,6 +88,7 @@ export const TOOL_CONTRACT_GROUPS = {
   OFFICIAL_TOOL_CONTRACTS,
   PCAP_TOOL_CONTRACTS,
   PYTHON_PYC_TOOL_CONTRACTS,
+  RELEASE_EXPOSURE_TOOL_CONTRACTS,
   REVERSE_ENGINEERING_TOOL_CONTRACTS,
   RIZIN_DEBUG_TOOL_CONTRACTS,
   RUST_TOOL_CONTRACTS,
@@ -141,6 +143,7 @@ export const TOOL_FAMILY_DEFINITIONS = [
     surface: "artifact-provider",
     contracts: [
       ...TOOL_CONTRACT_GROUPS.ARTIFACT_TOOL_CONTRACTS,
+      ...TOOL_CONTRACT_GROUPS.RELEASE_EXPOSURE_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.DESKTOP_APPLICATION_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.EVM_TOOL_CONTRACTS,
       ...TOOL_CONTRACT_GROUPS.GO_TOOL_CONTRACTS,

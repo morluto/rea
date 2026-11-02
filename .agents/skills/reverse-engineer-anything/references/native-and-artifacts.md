@@ -62,6 +62,16 @@ runtime presence. For compact CLI output, use
 `inspect-desktop-application PATH --detail summary --evidence_output BUNDLE`.
 See [desktop installations](https://github.com/morluto/rea/blob/main/docs/desktop-applications.md).
 
+## Release exposure
+
+Use `audit_release_exposure` (`rea audit-release-exposure PATH`) when the question is what static analysis of a shipped `.app`, install directory, ASAR, or executable recovers. Each check has a stable id, a status, the observation behind it, and fixed remediation. Unknown and unassessed checks stay in the report. The report does not establish that the application is secure.
+
+`text.credential_markers` reports a rule id and location only. Matched bytes, previews, lengths, and hashes of matched bytes are omitted.
+
+`native.hardening`, `macho.hardened_runtime`, and `android.manifest` are not assessed here. Their next probes are `inspect_binary_hardening`, `inspect_signature`, and `inspect_android_package`.
+
+See [release exposure](https://github.com/morluto/rea/blob/main/docs/release-exposure.md).
+
 ## Go build metadata
 
 Use `inspect_go_binary` for an explicit local ELF, PE or Mach-O (universal

@@ -1,10 +1,13 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { binaryPlistObjectTable } from "../../../tests/fixtures/binaryPlistObjectTable.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
 import { projectPlistValue } from "../../domain/apple/plistValue.js";
 import { scanBinaryPlistScalars } from "./PlistScalars.js";
 import { plistUidValue } from "../../domain/apple/plistUid.js";
-import { decodeBinaryPlistValue } from "./BinaryPlistMaterializer.js";
+import {
+  decodeBinaryPlistText,
+  decodeBinaryPlistValue,
+} from "./BinaryPlistMaterializer.js";
 import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 
@@ -178,4 +181,100 @@ it("keeps uint64 wrapping for nine-byte offset and reference declarations", () =
   const original = Buffer.from(bytes);
   expect(decode(bytes)).toEqual([7]);
   expect(bytes.equals(original)).toBe(true);
+});
+
+const dictionary = (...references: readonly number[]): Buffer =>
+  Buffer.from([0xd0 | (references.length / 2), ...references]);
+const budget = 1024 * 1024;
+
+it("reads a string no object references", () => {
+  const bytes = source([
+    dictionary(1, 2),
+    text("key"),
+    text("kept"),
+    text("orphan"),
+  ]);
+  expect(decodeBinaryPlistText(bytes, budget).text).toContain("orphan");
+});
+
+it("reads the value a later duplicate key replaced", () => {
+  const bytes = source([
+    dictionary(1, 1, 2, 3),
+    text("key"),
+    text("replaced"),
+    text("final"),
+  ]);
+  expect(decode(bytes)).toEqual({ key: "final" });
+  expect(decodeBinaryPlistText(bytes, budget).text).toContain("replaced");
+});
+
+it("reads an unreferenced UTF-16BE string and data object", () => {
+  const wide = Buffer.concat([
+    Buffer.from([0x62]),
+    Buffer.from("é!", "utf16le").swap16(),
+  ]);
+  const data = Buffer.concat([Buffer.from([0x44]), Buffer.from("blob")]);
+  const bytes = source([
+    dictionary(1, 2),
+    text("key"),
+    text("kept"),
+    wide,
+    data,
+  ]);
+  const { text: decoded, complete } = decodeBinaryPlistText(bytes, budget);
+  expect(decoded).toContain("é!");
+  expect(decoded).toContain("blob");
+  expect(complete).toBe(true);
+});
+
+it("keeps readable text beside an unreferenced string it cannot read", () => {
+  const bytes = source([
+    dictionary(1, 2),
+    text("key"),
+    text("kept"),
+    Buffer.from([0x5f, 0x10, 0xff]),
+  ]);
+  expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+    text: expect.stringContaining("kept"),
+    complete: false,
+  });
+});
+
+it("bounds the text that overlapping table entries repeat", () => {
+  const entries = 200;
+  const headerBytes = 6;
+  const shared = Buffer.alloc(60_000 + entries * headerBytes, 0x61);
+  const root = Buffer.from([0xd1, 1, 2, 0x51, 0x6b, 0x51, 0x76]);
+  const offsets = [8, 11, 13];
+  for (let entry = 0; entry < entries; entry += 1) {
+    const at = entry * headerBytes;
+    shared.set([0x4f, 0x12], at);
+    shared.writeUInt32BE(shared.length - at - headerBytes, at + 2);
+    offsets.push(8 + root.length + at);
+  }
+  const table = 8 + root.length + shared.length;
+  const bytes = Buffer.alloc(table + offsets.length * 4 + 32);
+  bytes.write("bplist00", "latin1");
+  root.copy(bytes, 8);
+  shared.copy(bytes, 8 + root.length);
+  offsets.forEach((offset, entry) =>
+    bytes.writeUInt32BE(offset, table + entry * 4),
+  );
+  const trailer = bytes.length - 32;
+  bytes[trailer + 6] = 4;
+  bytes[trailer + 7] = 1;
+  bytes.writeBigUInt64BE(BigInt(offsets.length), trailer + 8);
+  bytes.writeBigUInt64BE(BigInt(table), trailer + 24);
+  const toString = vi.spyOn(Buffer.prototype, "toString");
+  const decoded = decodeBinaryPlistText(bytes, 2 * budget);
+  const decodedBytes = toString.mock.contexts.reduce(
+    (total, buffer) => total + (buffer as Buffer).length,
+    0,
+  );
+  toString.mockRestore();
+  expect(decoded.complete).toBe(false);
+  expect(decoded.text.length).toBeLessThanOrEqual(2 * budget + offsets.length);
+  expect(decoded.text).toContain("k");
+  // A range past the remaining budget is rejected before it is decoded.
+  expect(decodedBytes).toBeLessThanOrEqual(2 * budget + bytes.length);
 });

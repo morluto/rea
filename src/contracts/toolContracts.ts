@@ -17,6 +17,7 @@ import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "./analysisViewToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "./native/binaryDiagnosticsToolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "./native/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
+import { RELEASE_EXPOSURE_TOOL_CONTRACTS } from "./releaseExposureToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "./managed/managedToolContracts.js";
 import { FIRMWARE_TOOL_CONTRACTS } from "./firmware/firmwareToolContracts.js";
 import { ANDROID_TOOL_CONTRACTS } from "./android/androidToolContracts.js";
@@ -53,6 +54,7 @@ export const TOOL_CONTRACTS = [
   ...BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
   ...ANALYSIS_VIEW_TOOL_CONTRACTS,
   ...ARTIFACT_TOOL_CONTRACTS,
+  ...RELEASE_EXPOSURE_TOOL_CONTRACTS,
   ...DESKTOP_APPLICATION_TOOL_CONTRACTS,
   ...EVM_TOOL_CONTRACTS,
   ...GO_TOOL_CONTRACTS,

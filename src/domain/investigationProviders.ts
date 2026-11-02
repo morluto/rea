@@ -183,3 +183,10 @@ export const PE_LOAD_CONFIG_PROVIDER = Object.freeze({
   name: "REA PE TLS/load-config parser",
   version: "1",
 } as const);
+
+/** Provider identity for the read-only release exposure audit. */
+export const RELEASE_EXPOSURE_PROVIDER = Object.freeze({
+  id: "rea-release-exposure",
+  name: "REA release exposure audit",
+  version: "1",
+} as const);
