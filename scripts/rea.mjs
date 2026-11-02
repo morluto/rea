@@ -42,6 +42,8 @@ const isMcpHttpMode =
 const SIGPIPE_EXIT_STATUS = 141;
 // Set once the reader of CLI output has closed the pipe.
 let stdoutClosed = false;
+let pendingStdoutWrites = 0;
+let requestedExitCode;
 const runtimeFiles = [
   builtinArgumentRuntime,
   ...(isMcpMode || isMcpHttpMode
@@ -190,7 +192,10 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
                   process.stderr.write(`${cleanupFailureText(cause)}\n`);
                 if (status === 0) status = 1;
               }
-              process.exit(stdoutClosed ? SIGPIPE_EXIT_STATUS : status);
+              // Wait for actual launcher-owned writes. A second empty write
+              // could probe a reader that already consumed the whole document.
+              requestedExitCode = status;
+              finishRequestedExit();
             })();
           },
         });
@@ -271,7 +276,19 @@ function guardClosedStdout() {
 }
 
 function writeStdout(output) {
-  if (!stdoutClosed) process.stdout.write(output);
+  if (stdoutClosed || output.length === 0) return;
+  pendingStdoutWrites += 1;
+  process.stdout.write(output, (cause) => {
+    pendingStdoutWrites -= 1;
+    if (cause?.code === "EPIPE") stdoutClosed = true;
+    else if (cause) throw cause;
+    finishRequestedExit();
+  });
+}
+
+function finishRequestedExit() {
+  if (requestedExitCode !== undefined && pendingStdoutWrites === 0)
+    process.exit(stdoutClosed ? SIGPIPE_EXIT_STATUS : requestedExitCode);
 }
 
 async function compiledRuntimeExists(paths) {
