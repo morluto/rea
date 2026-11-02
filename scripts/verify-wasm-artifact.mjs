@@ -2,20 +2,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
@@ -25,7 +17,11 @@ import {
   mcpTextValue,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  WabtVerifierResources,
+  WabtVerifierTransport,
+} from "./lib/wabt-verifier-resources.mjs";
 import { WABT_OPERATION_TIMEOUT_MS } from "./lib/wabt-verifier-timeouts.mjs";
 
 import { verifyWabtCleanup } from "./lib/verify-wabt-cleanup.mjs";
@@ -73,36 +69,29 @@ const root = await PrivateRuntimeRoot.create({ prefix: "rea-wabt-verifier-" });
 // Keep provider scratch outside the leased private input root. On Windows the
 // root's retained DELETE handle blocks child temp creation beneath that root.
 let childTempRoot;
-try {
-  childTempRoot = await mkdtemp(join(tmpdir(), "rea-wabt-child-temp-"));
-} catch (cause) {
-  try {
-    await root.close();
-  } catch (cleanupCause) {
-    throw new AggregateError(
-      [cause, cleanupCause],
-      "Could not allocate verifier temp space or release its private root.",
-    );
-  }
-  throw cause;
-}
-const client = new Client({ name: "wabt-artifact-verifier", version: "1" });
+const resources = new WabtVerifierResources(root, childTempRoot, run);
+let client;
 const callTool = (request) =>
   client.callTool(request, { timeout: WABT_OPERATION_TIMEOUT_MS });
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [entrypoint, "mcp"],
-  env: {
-    ...environment,
-    TMPDIR: childTempRoot,
-    TMP: childTempRoot,
-    TEMP: childTempRoot,
-  },
-  stderr: "pipe",
-});
 let cases = 0;
 const failures = [];
 try {
+  childTempRoot = await mkdtemp(join(tmpdir(), "rea-wabt-child-temp-"));
+  resources.childTempRoot = childTempRoot;
+  client = new Client({ name: "wabt-artifact-verifier", version: "1" });
+  resources.client = client;
+  const transport = new WabtVerifierTransport({
+    command: process.execPath,
+    args: [entrypoint, "mcp"],
+    env: {
+      ...environment,
+      TMPDIR: childTempRoot,
+      TMP: childTempRoot,
+      TEMP: childTempRoot,
+    },
+    stderr: "pipe",
+  });
+  resources.transport = transport;
   for (const name of ["wat2wasm", "wasm-validate", "wasm-objdump", "wasm2wat"])
     assert.equal(
       (await tool(name, ["--version"], root.path)).stdout.trim(),
@@ -624,34 +613,7 @@ try {
   failures.push(cause);
 }
 try {
-  await client.close();
-} catch (cause) {
-  failures.push(cause);
-}
-try {
-  await transport.close();
-} catch (cause) {
-  failures.push(cause);
-}
-try {
-  assert.ok(
-    !(await readdir(childTempRoot)).some((name) =>
-      name.startsWith("rea-wabt-"),
-    ),
-    "Provider workspace leaked",
-  );
-} catch (cause) {
-  failures.push(cause);
-}
-// Each directory is an independent owner. Attempt every cleanup even if a
-// residue assertion or another owner's close fails, retaining every error.
-try {
-  await root.close();
-} catch (cause) {
-  failures.push(cause);
-}
-try {
-  await rm(childTempRoot, { recursive: true, force: true });
+  await resources.close();
 } catch (cause) {
   failures.push(cause);
 }
@@ -664,7 +626,14 @@ console.log(
       cases,
       tool_profile: "wabt@1.0.42",
       entrypoint,
-      verifier: await completeVerifierRun(run),
+      verifier: resources.verifier,
+      ...(process.platform === "win32"
+        ? {
+            omitted_coverage: [
+              "SDK child exit and output closure are verified; descendants outside its pipes have no retained native Job Object lease",
+            ],
+          }
+        : {}),
     },
     null,
     2,
