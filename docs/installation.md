@@ -640,6 +640,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Factory Droid      | `droid`          |
 | Trae               | `trae`           |
 | WorkBuddy          | `workbuddy`      |
+| LM Studio          | `lm_studio`      |
 | ZCode              | `zcode`          |
 | DeepSeek Harness   | `dsh`            |
 | FreeBuff           | `freebuff`       |
@@ -648,6 +649,8 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
 `freebuff` requires `rea-agents@6.8.0` or later. Older releases reject
 `rea setup --client freebuff` as an unsupported client.
+
+`lm_studio` requires a release after 6.8.0.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
