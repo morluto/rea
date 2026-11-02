@@ -8,10 +8,12 @@ import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   peCertificateFixture,
   peWithoutCertificateTableFixture,
+  pkcs7DualSignedTimestampedFixture,
   pkcs7SignedDataFixture,
   pkcs7SignedDataIndefiniteEnvelopeFixture,
 } from "./PeCertificates.fixture.js";
 import {
+  ASN1_DEPTH_BUDGET,
   ASN1_NODE_BUDGET,
   MAX_DECODED_NAME_BYTES,
   MAX_OID_ARC_BYTES,
@@ -537,6 +539,34 @@ it("stops decoding a certificate payload at the ASN.1 node budget", () => {
   const payload = contentInfo(derSeq(derInt(1), der(0x31, values)));
   expect(() => parse(peCertificateFixture(false, payload))).toThrow(
     /node budget/u,
+  );
+});
+
+it("reads a dual-signed, timestamped signature as deep as signed Windows binaries", () => {
+  const report = parse(
+    peCertificateFixture(true, pkcs7DualSignedTimestampedFixture()),
+  );
+  expect(report.entries[0]?.pkcs7?.signers).toEqual([
+    expect.objectContaining({
+      serial_hex: "11223344",
+      unsigned_attribute_oids: ["1.3.6.1.4.1.311.2.4.1"],
+    }),
+  ]);
+  // The nested signature and its timestamp are not inventoried yet.
+  expect(report.coverage).toEqual({
+    status: "partial",
+    examined_entries: 1,
+    certificates: 1,
+  });
+  expect(report.limitations).toContain(UNSIGNED_ATTRIBUTES_LIMITATION);
+});
+
+it("stops decoding a certificate payload at the ASN.1 depth budget", () => {
+  let nested: Buffer = Buffer.from([0x05, 0x00]);
+  for (let level = 0; level <= ASN1_DEPTH_BUDGET; level += 1)
+    nested = der(0x30, nested);
+  expect(() => readAsn1(nested)).toThrow(
+    `ASN.1 nesting exceeds ${String(ASN1_DEPTH_BUDGET)} levels.`,
   );
 });
 
