@@ -10,6 +10,12 @@ import {
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
+import {
+  accountFullyObservedProcessCapture,
+  emptyUnverifiedProcessCapture,
+} from "../../../src/domain/process/processCapture.fixture.js";
+import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
+import { staticRuntimeCorrelationResultSchema } from "../../../src/domain/staticRuntimeCorrelation.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
@@ -1333,6 +1339,18 @@ it("attributes ASAR integrity contradictions to their actual inputs and withhold
       absent === undefined
     )
       throw new Error("Expected four artifact observations");
+    const leftCapture = correlationCapture("before");
+    const rightCapture = correlationCapture("after");
+    const comparedRuntime = await client.callTool({
+      name: "compare_process_captures",
+      arguments: { left: leftCapture, right: rightCapture },
+    });
+    expect(comparedRuntime.isError).not.toBe(true);
+    const runtime = toolEvidence(comparedRuntime.structuredContent);
+    expect(runtime.normalized_result).toMatchObject({ terminal: "changed" });
+    expect(
+      session.listUnknowns({ domain: "static-runtime-correlation" }),
+    ).toEqual([]);
     for (const [left, right, mismatches, presence] of [
       [stale, current, [stale.evidence_id], "changed"],
       [current, stale, [stale.evidence_id], "changed"],
@@ -1342,8 +1360,8 @@ it("attributes ASAR integrity contradictions to their actual inputs and withhold
       [stale, absent, [stale.evidence_id], "removed"],
       [absent, current, [], "added"],
       [current, absent, [], "removed"],
-    ] as const)
-      await assertIntegrityComparison(
+    ] as const) {
+      const comparison = await assertIntegrityComparison(
         client,
         session,
         left,
@@ -1351,10 +1369,55 @@ it("attributes ASAR integrity contradictions to their actual inputs and withhold
         mismatches,
         presence,
       );
+      // Reuse the same ASAR observations for changed-runtime refusal and its
+      // ordinary-content cochange control, without repeating every input pair.
+      if (
+        (left === stale && right === current) ||
+        (left === originalEvidence && right === current)
+      )
+        await assertIntegrityCorrelation(
+          client,
+          session,
+          comparison,
+          mismatches.length > 0 ? "contradiction" : presence,
+          runtime,
+          "cochanged",
+        );
+    }
+    for (const evidence of [
+      ...observations,
+      PROCESS_CAPTURE_REFERENCE,
+      PROCESS_CAPTURE_RECONSTRUCTION,
+      PROCESS_COMPARISON_EVIDENCE,
+      leftCapture,
+      rightCapture,
+      runtime,
+    ])
+      expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   } finally {
     await mcp.close();
   }
 });
+
+// Retained captures exercise the real comparison consumer without executing a target.
+const correlationCapture = (data: string): Evidence =>
+  createEvidence(undefined, PROCESS_PROVIDER, {
+    predicateType: "rea.process-capture",
+    operation: "capture_process_scenario",
+    parameters: { fixture: data },
+    result: accountFullyObservedProcessCapture({
+      ...emptyUnverifiedProcessCapture(),
+      frames: [{ sequence: 0, at_ms: 0, data }],
+    }),
+    confidence: "observed",
+    authority: "controlled-replay",
+    environment: {
+      id: "fixture",
+      platform: "fixture",
+      architecture: "fixture",
+      isolation: "process",
+    },
+  });
 
 const assertIntegrityComparison = async (
   client: Client,
@@ -1405,11 +1468,34 @@ const assertIntegrityComparison = async (
       ),
     );
   }
+  await assertIntegrityCorrelation(
+    client,
+    session,
+    comparison,
+    mismatches.length > 0 ? "contradiction" : presence,
+    PROCESS_COMPARISON_EVIDENCE,
+    "static_only",
+  );
+  return comparison;
+};
+
+const assertIntegrityCorrelation = async (
+  client: Client,
+  session: ReturnType<typeof createTestBinarySession>,
+  comparison: Evidence,
+  staticStatus: "added" | "removed" | "changed" | "contradiction",
+  runtime: Evidence,
+  expectedPattern: "static_only" | "cochanged",
+) => {
+  const integrityMismatch = staticStatus === "contradiction";
+  const unknownsBefore = session.listUnknowns({
+    domain: "static-runtime-correlation",
+  });
   const correlated = await client.callTool({
     name: "correlate_static_and_runtime",
     arguments: {
       static_comparisons: [comparison],
-      runtime_comparisons: [PROCESS_COMPARISON_EVIDENCE],
+      runtime_comparisons: [runtime],
       mappings: [
         {
           static: {
@@ -1417,36 +1503,89 @@ const assertIntegrityComparison = async (
             selector: { kind: "artifact", logical_path: "main.js" },
           },
           runtime: {
-            comparison_evidence_id: PROCESS_COMPARISON_EVIDENCE.evidence_id,
+            comparison_evidence_id: runtime.evidence_id,
             dimension: "terminal",
           },
           side_alignment: "left_to_left",
           hypothesis: {
-            statement: "Member bytes changed while terminal output did not.",
-            expected_pattern: "static_only",
+            statement:
+              expectedPattern === "cochanged"
+                ? "Static member change co-occurs with terminal change."
+                : "Member bytes changed while terminal output did not.",
+            expected_pattern: expectedPattern,
           },
         },
       ],
     },
   });
   expect(correlated.isError).not.toBe(true);
-  expect(
-    toolEvidence(correlated.structuredContent).normalized_result,
-  ).toMatchObject(
-    mismatches.length > 0
+  const evidence = toolEvidence(correlated.structuredContent);
+  const result = staticRuntimeCorrelationResultSchema.parse(
+    evidence.normalized_result,
+  );
+  expect(result).toMatchObject(
+    integrityMismatch
       ? {
           status: "unknown",
-          summary: { hypotheses: 0, unresolved: 1 },
+          summary: { hypotheses: 0, contradictions: 0, unresolved: 1 },
           correlations: {
             items: [
               {
                 observed_pattern: "unknown",
                 classification: "unresolved_branch",
-                static: { status: "contradiction" },
+                static: {
+                  status: "contradiction",
+                  conclusion_kind: "contradiction",
+                },
               },
             ],
           },
         }
-      : { status: "correlated", summary: { hypotheses: 1, unresolved: 0 } },
+      : {
+          status: "correlated",
+          summary: { hypotheses: 1, contradictions: 0, unresolved: 0 },
+          correlations: {
+            items: [
+              {
+                static: {
+                  status: staticStatus,
+                  conclusion_kind: "derived_relationship",
+                },
+                observed_pattern: expectedPattern,
+                classification: "hypothesis",
+              },
+            ],
+          },
+        },
   );
+  expect(result.correlations.items[0]?.runtime.status).toBe(
+    expectedPattern === "cochanged" ? "changed" : "unchanged",
+  );
+  const links = new Set([
+    comparison.evidence_id,
+    ...comparison.evidence_links,
+    runtime.evidence_id,
+    ...runtime.evidence_links,
+  ]);
+  expect(new Set(result.correlations.items[0]?.evidence_links)).toEqual(links);
+  // The outer Evidence also retains transitive inspection ancestors.
+  expect(evidence.evidence_links).toEqual(expect.arrayContaining([...links]));
+  for (const record of [comparison, runtime, evidence])
+    expect(session.evidenceById(record.evidence_id)).toEqual(record);
+  for (const id of new Set([...links, ...evidence.evidence_links]))
+    expect(session.evidenceById(id)?.evidence_id).toBe(id);
+  const unknownsAfter = session.listUnknowns({
+    domain: "static-runtime-correlation",
+  });
+  if (integrityMismatch) {
+    expect(unknownsAfter).toHaveLength(unknownsBefore.length + 1);
+    expect(unknownsAfter).toEqual(
+      expect.arrayContaining([
+        ...unknownsBefore,
+        expect.objectContaining({
+          supporting_evidence_ids: [evidence.evidence_id],
+        }),
+      ]),
+    );
+  } else expect(unknownsAfter).toEqual(unknownsBefore);
 };
