@@ -1,8 +1,9 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { createPackageWithOptions } from "@electron/asar";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { writeJavaScriptSourceSelectionFixture } from "../../../fixtures/javascriptSourceSelection.js";
@@ -553,5 +554,79 @@ describe("JavaScript application cleanup diagnostics", () => {
       cleanup,
       partialObservation,
     });
+  });
+});
+
+describe("JavaScript ASAR missing manifest availability boundary", () => {
+  it("resolves a directory require through its manifest while present and reports it unavailable once its bytes are missing", async () => {
+    const root = await createTestTempDirectory("rea-js-asar-missing-manifest-");
+    const source = join(root, "source");
+    await mkdir(join(source, "pkg"), { recursive: true });
+    await writeFile(
+      join(source, "package.json"),
+      '{"name":"manifest-repro","version":"1.0.0","main":"main.js"}\n',
+    );
+    await writeFile(
+      join(source, "main.js"),
+      'const pkg = require("./pkg");\nmodule.exports = pkg;\n',
+    );
+    await writeFile(
+      join(source, "pkg", "package.json"),
+      '{"main": "./entry.js"}\n',
+    );
+    await writeFile(join(source, "pkg", "entry.js"), "module.exports = 1;\n");
+    await writeFile(join(source, "pkg", "index.js"), "module.exports = 2;\n");
+    const archive = join(root, "app.asar");
+    await createPackageWithOptions(source, archive, {
+      unpack: "**/pkg/package.json",
+    });
+
+    const present = await analyzeJavaScriptApplication({
+      input_path: archive,
+    });
+    if (!present.ok) throw present.error;
+    const presentAnalysis = javascriptApplicationAnalysisResultSchema.parse(
+      present.value.normalized_result,
+    );
+    expect(
+      presentAnalysis.graph.edges.some(
+        ({ properties }) =>
+          properties.specifier === "./pkg" &&
+          properties.resolution_status === "resolved" &&
+          properties.resolved_path === "pkg/entry.js",
+      ),
+    ).toBe(true);
+
+    await rm(join(`${archive}.unpacked`, "pkg", "package.json"));
+
+    const result = await analyzeJavaScriptApplication({
+      input_path: archive,
+    });
+    if (!result.ok) throw result.error;
+    const analysis = javascriptApplicationAnalysisResultSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(
+      analysis.graph.edges.some(
+        ({ properties }) =>
+          properties.specifier === "./pkg" &&
+          properties.resolution_status === "unavailable" &&
+          properties.resolved_path === null,
+      ),
+    ).toBe(true);
+    expect(
+      analysis.graph.edges.some(
+        ({ properties }) =>
+          properties.specifier === "./pkg" &&
+          properties.resolved_path === "pkg/index.js",
+      ),
+    ).toBe(false);
+    expect(analysis.graph.coverage.status).toBe("partial");
+    expect(
+      analysis.graph.edges
+        .filter(({ properties }) => properties.specifier === "./pkg")
+        .flatMap(({ evidence }) => evidence.limitations)
+        .some((limitation) => limitation.includes("unavailable")),
+    ).toBe(true);
   });
 });
