@@ -5,6 +5,10 @@ import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSess
 
 let ttyPathPromise: Promise<string> | undefined;
 
+/** Matches the terminal device a test shell prints from `tty` on this host. */
+export const rizinTestTtyPathPattern =
+  process.platform === "darwin" ? /\/dev\/ttys[0-9a-z]+/u : /\/dev\/pts\/\d+/u;
+
 export const rizinTestInferiorTty = (): Promise<string> => {
   if (process.platform === "win32")
     return Promise.reject(
@@ -39,11 +43,7 @@ export const rizinTestInferiorTty = (): Promise<string> => {
     });
     terminal.onData((chunk) => {
       output += chunk;
-      const pattern =
-        process.platform === "darwin"
-          ? /\/dev\/ttys[0-9a-z]+/u
-          : /\/dev\/pts\/\d+/u;
-      const match = pattern.exec(output);
+      const match = rizinTestTtyPathPattern.exec(output);
       if (match !== null) {
         clearTimeout(timer);
         resolve(match[0]);
