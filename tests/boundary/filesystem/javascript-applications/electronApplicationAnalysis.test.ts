@@ -430,9 +430,9 @@ const expectElectronSummary = (result: Reconstruction): void => {
     ipc: {
       literal_channels: 5,
       dynamic_channel_operations: 2,
-      paired_renderer_transmissions: 4,
-      ambiguous_renderer_transmissions: 1,
-      unpaired_literal_renderer_transmissions: 1,
+      paired_renderer_transmissions: 0,
+      ambiguous_renderer_transmissions: 7,
+      unpaired_literal_renderer_transmissions: 0,
     },
     sender_validation_observations: 2,
     utility_processes: 1,
@@ -591,12 +591,9 @@ const expectElectronBoundaries = (graph: ApplicationGraph): void => {
     ({ properties }) =>
       properties.pairing_basis === "unique-exact-literal-channel",
   );
-  expect(pairingEdges).toHaveLength(4);
-  expect(
-    pairingEdges.some(
-      ({ properties }) => properties.channel === "rea:ambiguous",
-    ),
-  ).toBe(false);
+  // Unexamined loads leave renderer ownership unresolved, so channel text
+  // alone cannot establish a runtime pairing.
+  expect(pairingEdges).toHaveLength(0);
   expect(graph.limitations.join(" ")).toMatch(/dynamic IPC|ambiguous/iu);
 };
 
