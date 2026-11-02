@@ -358,6 +358,7 @@ try {
             `versionCode=${String(details.version_code)}`,
           );
       }
+
     } finally {
       await rm(transferRoot, { recursive: true, force: true });
     }

@@ -228,6 +228,7 @@ describe("changed behavior", () => {
     });
     expect(aggregate([changed, unknown]).result).toEqual(result);
   });
+
 });
 
 describe("changed-behavior input and Evidence validation", () => {
