@@ -237,7 +237,10 @@ const registerOpenLifecycleTool = ({
             },
             openContract,
           )
-        : server.delivery.toCallToolResult(opened, openContract);
+        : server.delivery.toOpenFailureToolResult(
+            opened,
+            openContract.returnsTargetContent,
+          );
     },
   );
 };

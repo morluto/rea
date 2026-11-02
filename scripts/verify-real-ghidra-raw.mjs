@@ -155,6 +155,11 @@ try {
   assert.notEqual(profiles[1], profiles[2]);
   assert.equal(sessions[0], sessions[1]);
   assert.notEqual(sessions[1], sessions[2]);
+  await call("annotate_native_function", {
+    procedure: "0x9000000",
+    name: "retained_after_failed_open",
+    comment: "Owned session annotation",
+  });
   const rejected = await client.callTool({
     name: "open_binary",
     arguments: {
@@ -166,9 +171,28 @@ try {
   });
   assert.equal(rejected.isError, true);
   assert.match(JSON.stringify(rejected.content), /must be 4-byte aligned/);
+  const rejection = JSON.parse(rejected.content[0].text).error;
+  assert.equal(
+    rejection.details.target_at_open_completion.entry_point,
+    "0x9000000",
+  );
+  assert.equal(rejection.details.provider_id_at_open_completion, "ghidra");
   const unchanged = await call("binary_session");
   assert.equal(unchanged.analysis_run.run_id, sessions[2]);
   assert.equal(unchanged.entry_point, "0x9000000");
+  const retained = await call("analyze_function", {
+    procedure: "0x9000000",
+    detail: "complete",
+  });
+  assert.equal(
+    retained.normalized_result.procedure.name,
+    "retained_after_failed_open",
+  );
+  assert.ok(
+    retained.normalized_result.comments.some(
+      (comment) => comment.text === "Owned session annotation",
+    ),
+  );
   await call("close_binary");
 
   const { stdout } = await promisify(execFile)(

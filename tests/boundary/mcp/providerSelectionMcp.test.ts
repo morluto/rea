@@ -6,11 +6,13 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   createAnalysisExecution,
@@ -170,6 +172,8 @@ describe("provider selection over MCP", () => {
           selection_reason: "ambiguous",
           requested_provider_id: "auto",
           candidate_ids: ["alpha", "beta"],
+          target_at_open_completion: null,
+          provider_id_at_open_completion: null,
         },
       },
     });
@@ -222,8 +226,15 @@ describe("provider selection over MCP", () => {
       arguments: { path: target, provider_id: "missing" },
     });
     expect(unknown.isError).toBe(true);
-    expect(structured(unknown)).toMatchObject({
-      error: { details: { selection_reason: "unknown_provider" } },
+    const refusal = structured(unknown);
+    expect(refusal).toMatchObject({
+      error: {
+        details: {
+          selection_reason: "unknown_provider",
+          target_at_open_completion: structured(opened).result,
+          provider_id_at_open_completion: "beta",
+        },
+      },
     });
     expect(
       structured(
@@ -235,6 +246,14 @@ describe("provider selection over MCP", () => {
     ).toMatchObject({
       analysis_provider_binding: { provider: { id: "beta" } },
     });
+    await checkQueuedSwitchReceipt(
+      mcp,
+      session,
+      target,
+      directory,
+      opened,
+      refusal,
+    );
   });
 });
 
@@ -605,7 +624,6 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   expect(
     (await call("open_binary", { path: first, provider_id: "alpha" })).isError,
   ).not.toBe(true);
-
   const mismatch = async (path: string, provider: string) => {
     const result = await call("open_binary", {
       path,
@@ -615,6 +633,9 @@ it("reports confirmed snapshot binding differences and keeps the active session"
     expect(result.isError).toBe(true);
     const error = parseMcpToolError(result).error;
     expect(error.code).toBe("evidence_integrity_mismatch");
+    expect(error.details?.target_at_open_completion).toMatchObject({
+      sha256: sha("first fixture"),
+    });
     expect(error.remediation.action).toBe(
       analysisErrorRemediationAction(new AnalysisSnapshotMismatchError("")),
     );
@@ -782,6 +803,61 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
     ? parseMcpToolError(result)
     : z.record(z.string(), z.unknown()).parse(result.structuredContent);
 
+const checkQueuedSwitchReceipt = async (
+  mcp: Client,
+  session: ReturnType<typeof composeBinarySession>,
+  target: string,
+  directory: string,
+  opened: CallToolResult,
+  refusal: Record<string, unknown>,
+): Promise<void> => {
+  const other = join(directory, "other.hop");
+  await writeFile(other, "other fixture");
+  const settled = createDeferred<void>();
+  const release = createDeferred<void>();
+  const open = session.open.bind(session);
+  const spy = vi
+    .spyOn(session, "open")
+    .mockImplementation(async (path, options) => {
+      const result = await open(path, options);
+      if (options?.providerId === "missing") {
+        settled.resolve();
+        await release.promise;
+      }
+      return result;
+    });
+  const pending = mcp.callTool({
+    name: "open_binary",
+    arguments: { path: target, provider_id: "missing" },
+  });
+  try {
+    await awaitAcknowledgement(settled.promise, pending, "failed-open receipt");
+    const switched = await mcp.callTool({
+      name: "open_binary",
+      arguments: { path: other, provider_id: "alpha" },
+    });
+    expect(switched.isError).not.toBe(true);
+    expect(session.activeTarget()?.sha256).toBe(
+      createHash("sha256").update("other fixture").digest("hex"),
+    );
+    release.resolve();
+    const queuedRefusal = await pending;
+    for (const result of [structured(queuedRefusal), refusal])
+      expect(result).toMatchObject({
+        error: {
+          details: {
+            target_at_open_completion: structured(opened).result,
+            provider_id_at_open_completion: "beta",
+          },
+        },
+      });
+  } finally {
+    release.resolve();
+    await Promise.allSettled([pending]);
+    spy.mockRestore();
+  }
+};
+
 it("retains attributed mixed profile cleanup through registered MCP calls and partial retry", async () => {
   directory = await createTestTempDirectory("rea-profile-completion-mcp-");
   const path = join(directory, "fixture.hop");
@@ -827,6 +903,8 @@ it("retains attributed mixed profile cleanup through registered MCP calls and pa
     expect(opening.error).toMatchObject({
       code: "cleanup_incomplete",
       details: {
+        target_at_open_completion: null,
+        provider_id_at_open_completion: null,
         resources: ["alpha-file", "beta-file"],
         diagnostics: {
           profile_errors: expect.arrayContaining([

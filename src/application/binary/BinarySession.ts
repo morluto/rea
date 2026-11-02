@@ -34,9 +34,11 @@ import type {
   AnalysisOperation,
 } from "../AnalysisProvider.js";
 import type {
+  BinarySessionOpenResult,
   BinarySessionPort,
   SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
+import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import {
   SessionProviderRouter,
   type SessionProviderRoute,
@@ -477,7 +479,7 @@ export class BinarySession
   open(
     path: string,
     options: BinarySessionOpenOptions = {},
-  ): Promise<Result<BinaryTarget, AnalysisError>> {
+  ): Promise<BinarySessionOpenResult> {
     return this.#open(
       (admitted) =>
         resolveSessionOpen({
@@ -497,7 +499,7 @@ export class BinarySession
   openResolvedTarget(
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
     options: Pick<BinarySessionOpenOptions, "signal" | "snapshot"> = {},
-  ): Promise<Result<BinaryTarget, AnalysisError>> {
+  ): Promise<BinarySessionOpenResult> {
     return this.#open(
       () =>
         Promise.resolve(
@@ -518,17 +520,31 @@ export class BinarySession
       admitted: BinarySessionOpenOptions,
     ) => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
     options: BinarySessionOpenOptions,
-  ): Promise<Result<BinaryTarget, AnalysisError>> {
+  ): Promise<BinarySessionOpenResult> {
     return this.#serialize(async (admittedThrough) => {
-      const refused = this.#targetAcquisitionRefused("open_binary");
-      if (refused !== undefined) return refused;
-      const admitted = await this.#withLoadedSnapshot(options);
-      if (!admitted.ok) return admitted;
-      return this.#openWithinTransition(
-        admittedThrough,
-        () => resolve(admitted.value),
-        admitted.value,
-      );
+      const result = await (async (): Promise<
+        Result<BinaryTarget, AnalysisError>
+      > => {
+        const refused = this.#targetAcquisitionRefused("open_binary");
+        if (refused !== undefined) return refused;
+        const admitted = await this.#withLoadedSnapshot(options);
+        if (!admitted.ok) return admitted;
+        return this.#openWithinTransition(
+          admittedThrough,
+          () => resolve(admitted.value),
+          admitted.value,
+        );
+      })();
+      if (result.ok) return result;
+      return {
+        ...result,
+        targetAtCompletion:
+          this.#active === undefined
+            ? null
+            : binaryTargetSummary(this.#active.target),
+        providerIdAtCompletion:
+          this.#active?.route.binding?.identity.id ?? null,
+      };
     });
   }
 

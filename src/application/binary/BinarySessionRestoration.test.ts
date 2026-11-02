@@ -10,10 +10,84 @@ import { err, ok } from "../../domain/result.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
+import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import {
   SessionProviderRouter,
   type SessionProviderRoute,
 } from "./SessionProviderRouter.js";
+
+it("reports the previous selection after a failed switch restores its provider", async () => {
+  const session = new BinarySession(
+    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), []),
+  );
+  const identity = {
+    id: "restoration-test",
+    name: "Restoration test",
+    version: "1",
+  };
+  const failure = new AnalysisOutputError(
+    "health",
+    "Selected target could not start",
+  );
+  let previousStarts = 0;
+  let previousCloses = 0;
+  let failedCloses = 0;
+  const route: SessionProviderRoute = {
+    identity,
+    capabilities: new Map(),
+    profile: createAnalysisProfile(identity, { fixture: "original" }),
+    binding: null,
+    selection: undefined,
+    createClient: () => {
+      previousStarts += 1;
+      return {
+        execute: async () => ok(createAnalysisExecution(null, identity)),
+        close: async () => {
+          previousCloses += 1;
+          return ok(null);
+        },
+      };
+    },
+  };
+  try {
+    const target = await session.resolveTarget(process.execPath);
+    if (!target.ok) throw target.error;
+    expect(
+      (await session.openResolvedTarget({ target: target.value, route })).ok,
+    ).toBe(true);
+    const result = await session.openResolvedTarget({
+      target: target.value,
+      route: {
+        ...route,
+        profile: createAnalysisProfile(identity, { fixture: "selected" }),
+        createClient: () => ({
+          execute: async () => err(failure),
+          close: async () => {
+            failedCloses += 1;
+            return ok(null);
+          },
+        }),
+      },
+    });
+    if (result.ok) throw new Error("Expected failed switch");
+    expect(result.error).toBe(failure);
+    expect(result.targetAtCompletion).toEqual(
+      binaryTargetSummary(target.value),
+    );
+    expect(session.activeTarget()).toEqual(target.value);
+    expect({ previousStarts, previousCloses, failedCloses }).toEqual({
+      previousStarts: 2,
+      previousCloses: 1,
+      failedCloses: 1,
+    });
+    expect((await session.close()).ok).toBe(true);
+    expect(result.targetAtCompletion).toEqual(
+      binaryTargetSummary(target.value),
+    );
+  } finally {
+    await session.close();
+  }
+});
 
 it.each([
   { cancelled: false, cleanupFails: false },
@@ -98,6 +172,7 @@ it.each([
       );
       expect(result.ok).toBe(false);
       if (result.ok) return;
+      expect(result.targetAtCompletion).toBeNull();
       expect(session.activeTarget()).toBeUndefined();
       expect(await session.status()).toMatchObject({
         open: false,
@@ -112,6 +187,7 @@ it.each([
       });
       expect((await session.close()).ok).toBe(true);
       expect(restorationCloseCalls).toBe(cleanupFails ? 2 : 1);
+      expect(result.targetAtCompletion).toBeNull();
       expect(await session.status()).toMatchObject({
         open: false,
         cleanup_pending: false,

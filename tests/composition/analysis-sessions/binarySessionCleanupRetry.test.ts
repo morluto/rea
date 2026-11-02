@@ -128,7 +128,16 @@ it.each(["close", "switch", "open after close"] as const)(
       transition === "close" ? session.close() : session.open(second);
     const initial =
       transition === "switch" ? await attempt() : await session.close();
-    expect(initial).toEqual(err(cleanupError));
+    expect(initial).toEqual(
+      transition === "switch"
+        ? {
+            ok: false,
+            error: cleanupError,
+            targetAtCompletion: null,
+            providerIdAtCompletion: null,
+          }
+        : err(cleanupError),
+    );
     expect(session.activeTarget()).toBeUndefined();
     expect(await session.status()).toMatchObject({
       open: false,
@@ -149,7 +158,16 @@ it.each(["close", "switch", "open after close"] as const)(
     });
     await access(runtime);
 
-    expect(await attempt()).toEqual(err(cleanupError));
+    expect(await attempt()).toEqual(
+      transition === "close"
+        ? err(cleanupError)
+        : {
+            ok: false,
+            error: cleanupError,
+            targetAtCompletion: null,
+            providerIdAtCompletion: null,
+          },
+    );
     expect(await session.status()).toMatchObject({
       analysis_run: { run_id: fixture.runIds[0] },
     });

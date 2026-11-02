@@ -137,6 +137,13 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
   expect(session.allowsSnapshotReplay("inspect_plist")).toBe(false);
   expect(opened.value.executableSha256).toBeNull();
   expect(openedRoot).toBe(opened.value.canonicalPath);
+  const rejectedBinary = await session.open(join(rootPath, "missing-binary"));
+  if (rejectedBinary.ok) throw new Error("Expected a failed binary open");
+  expect(rejectedBinary.targetAtCompletion).toBeNull();
+  expect(rejectedBinary.providerIdAtCompletion).toBeNull();
+  expect(session.activeBundleResourceRoot()?.canonicalPath).toBe(
+    opened.value.canonicalPath,
+  );
   expect(
     bundleResourceRootSchema.parse({
       caller_path: opened.value.callerPath,
