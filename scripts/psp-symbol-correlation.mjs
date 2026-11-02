@@ -8,6 +8,9 @@ import { pathToFileURL } from "node:url";
 
 const HEX32 = /^(?:0x)?[0-9a-f]{1,8}$/iu;
 const SHA256 = /^[a-f0-9]{64}$/u;
+// Address-space-qualified observations are valid, but never silently rebased
+// into the unqualified PSP address space selected by this script.
+const SPACED_ADDRESS = /^(?:[A-Za-z0-9._~-]|%[0-9a-fA-F]{2})+:0x[0-9a-fA-F]+$/u;
 
 function hex32(value, label) {
   assert.match(value, HEX32, label + " must be a 32-bit hex address");
@@ -90,7 +93,9 @@ export function correlatePspSymbols(source, inventory, options) {
   const sourceStart =
     format === "ppsym" ? 0n : hex32(sourceBase, "source base");
   const analysisStart = hex32(analysisBase, "Ghidra analysis base");
-  const parsed = parsePspSymbols(source, format);
+  const sourceBytes = Buffer.isBuffer(source) ? source : Buffer.from(source, "utf8");
+  const sourceText = new TextDecoder("utf-8", { fatal: true }).decode(sourceBytes);
+  const parsed = parsePspSymbols(sourceText, format);
   if (expectedCrc !== null) {
     const expected = hex32(expectedCrc, "expected module CRC");
     assert.ok(format === "ppsym", "CRC applies only to .ppsym");
@@ -98,6 +103,7 @@ export function correlatePspSymbols(source, inventory, options) {
       assert.equal(parsed.crc, expected, "Module CRC does not match");
   }
   const observed = new Map();
+  let unselectedSpaceRows = 0;
   for (const row of inventory) {
     assert.ok(
       row !== null &&
@@ -106,6 +112,11 @@ export function correlatePspSymbols(source, inventory, options) {
         typeof row.value === "string",
       "Invalid Ghidra inventory row",
     );
+    if (row.address.includes(":")) {
+      assert.match(row.address, SPACED_ADDRESS, "Invalid Ghidra address-space coordinate");
+      unselectedSpaceRows++;
+      continue;
+    }
     const key = addressText(hex32(row.address, "Ghidra function address"));
     if (!observed.has(key)) observed.set(key, []);
     observed.get(key).push(row.value);
@@ -125,6 +136,13 @@ export function correlatePspSymbols(source, inventory, options) {
         (duplicates.get(entry.analysisAddress) ?? 0) + 1,
       );
   }
+  // Keep provider names once per selected address; repeating them on each
+  // caller row could multiply two bounded collections into an unbounded report.
+  const observedLabelsByAddress = Object.fromEntries(
+    [...duplicates.keys()]
+      .filter((address) => observed.has(address))
+      .map((address) => [address, observed.get(address)]),
+  );
   const records = mapped.map(
     ({ line, address: sourceAddress, analysisAddress, name, size }) => {
       const names =
@@ -144,14 +162,13 @@ export function correlatePspSymbols(source, inventory, options) {
         analysis_address: analysisAddress,
         label: name,
         declared_size: addressText(size),
-        observed_labels: names,
         outcome,
       };
     },
   );
   return {
     format,
-    source_sha256: createHash("sha256").update(source).digest("hex"),
+    source_sha256: createHash("sha256").update(sourceBytes).digest("hex"),
     target_sha256: targetSha256,
     selected_bases: {
       source: addressText(sourceStart),
@@ -161,6 +178,8 @@ export function correlatePspSymbols(source, inventory, options) {
     crc_checked:
       format === "ppsym" && parsed.crc !== 0n && expectedCrc !== null,
     ignored_nonfunction_records: parsed.omittedNonfunctions,
+    ignored_unselected_space_rows: unselectedSpaceRows,
+    observed_labels_by_address: observedLabelsByAddress,
     records,
     limitation:
       "Address/name agreement in the supplied inventory is not target or module identity proof; the caller must authenticate and select the matching executable, module and load base. Missing functions and differing names remain unresolved.",
@@ -172,7 +191,7 @@ async function readBounded(path, maxBytes) {
     (await stat(path)).size <= maxBytes,
     "Input exceeds size limit: " + path,
   );
-  return readFile(path, "utf8");
+  return readFile(path);
 }
 
 async function main(args) {
@@ -211,7 +230,9 @@ async function main(args) {
     );
   const source = await readBounded(flags.get("--symbols"), 1024 * 1024);
   const data = JSON.parse(
-    await readBounded(flags.get("--inventory"), 32 * 1024 * 1024),
+    new TextDecoder("utf-8", { fatal: true }).decode(
+      await readBounded(flags.get("--inventory"), 32 * 1024 * 1024),
+    ),
   );
   const inventory = Array.isArray(data) ? data : data.normalized_result;
   const claimedHash = data?.subject?.digest?.sha256;
