@@ -73,7 +73,8 @@ Parent Evidence ID plus source index preserves same-address
 alternatives. Follow `coverage.next_offset` only as far as the question needs;
 exhausting retained rows does not establish complete program discovery.
 
-Read a retained `batch_decompile` through its Evidence ID with
+`batch_decompile` returns every body unless you select `detail: "summary"` when
+the connected tool advertises it. Use its parent Evidence ID with
 `view: {kind: "batch-decompile", collection: "items"}` for body-free rows and
 exact `where.indices`, `addresses`, `procedure_addresses` or `statuses`. Add
 `include_pseudocode: true` for several chosen bodies, or use
