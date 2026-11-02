@@ -1,6 +1,7 @@
 import {
   UpdateCommandRunner,
   UPDATE_COMMAND_OUTPUT_BYTES,
+  type UpdateCommandLimits,
 } from "../../src/application/UpdateCommandRunner.js";
 import { mkdir, readFile, rm, writeFile, access } from "node:fs/promises";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
@@ -642,6 +643,148 @@ describe("update subprocess boundaries", () => {
         packageRoot,
       }),
     ).resolves.toEqual(ok("3.3.0"));
+  });
+});
+
+describe("update subprocess output collection limits", () => {
+  const probeWithLimits = async (
+    command: readonly string[],
+    limits: UpdateCommandLimits,
+  ) => {
+    const runner = new UpdateCommandRunner(undefined, limits);
+    try {
+      return await runner.runProbe(command, process.env);
+    } finally {
+      await runner.close();
+    }
+  };
+
+  it("rejects oversized finite output and reports the retention budget error", async () => {
+    const result = await updateCommands.runProbe(
+      [
+        process.execPath,
+        "-e",
+        `process.stdout.write("x".repeat(${String(UPDATE_COMMAND_OUTPUT_BYTES + 1)}))`,
+      ],
+      process.env,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining(String(UPDATE_COMMAND_OUTPUT_BYTES)),
+      },
+    });
+  });
+
+  it("terminates an endless stream and enforces the default output limit when omitted", async () => {
+    const script = [
+      'const chunk = "x".repeat(64 * 1024);',
+      "const write = () => {",
+      "  while (process.stdout.write(chunk));",
+      '  process.stdout.once("drain", write);',
+      "};",
+      "write();",
+    ].join(" ");
+    const result = await updateCommands.runProbe(
+      [process.execPath, "-e", script],
+      process.env,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining(String(UPDATE_COMMAND_OUTPUT_BYTES)),
+      },
+    });
+  });
+
+  it("enforces a custom collection limit when supplied", async () => {
+    const result = await probeWithLimits(
+      [
+        process.execPath,
+        "-e",
+        'while(true) process.stdout.write("excessive output chunk ");',
+      ],
+      { maxOutputBytes: 1024 },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining("1024"),
+      },
+    });
+  });
+
+  it("escalates to SIGKILL and reports the limit error when a child process ignores SIGTERM", async () => {
+    const script = [
+      'process.on("SIGTERM", () => {});',
+      'while (true) process.stdout.write("excessive output chunk ");',
+    ].join(" ");
+    const result = await probeWithLimits([process.execPath, "-e", script], {
+      maxOutputBytes: 1024,
+      terminationGraceMs: 200,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining("1024"),
+      },
+    });
+  });
+
+  it("escalates immediately to SIGKILL when terminationGraceMs is zero", async () => {
+    const script = [
+      'process.on("SIGTERM", () => {});',
+      'while (true) process.stdout.write("excessive output chunk ");',
+    ].join(" ");
+    const result = await probeWithLimits([process.execPath, "-e", script], {
+      maxOutputBytes: 1024,
+      terminationGraceMs: 0,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining("1024"),
+      },
+    });
+  });
+
+  it("enforces the shared output budget across stdout and stderr when each stream is below the limit", async () => {
+    // 60 bytes on stdout and 50 bytes on stderr; neither stream exceeds the 100-byte limit alone,
+    // but the combined 110 bytes exceeds the shared budget.
+    const result = await probeWithLimits(
+      [
+        process.execPath,
+        "-e",
+        'process.stdout.write("a".repeat(60)); process.stderr.write("b".repeat(50));',
+      ],
+      { maxOutputBytes: 100 },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining("100"),
+      },
+    });
+  });
+
+  it("succeeds when combined stdout and stderr output totals exactly the configured limit", async () => {
+    // 60 bytes on stdout and 40 bytes on stderr total exactly 100 bytes.
+    const stdoutContent = "a".repeat(60);
+    const result = await probeWithLimits(
+      [
+        process.execPath,
+        "-e",
+        `process.stdout.write(${JSON.stringify(stdoutContent)}); process.stderr.write("b".repeat(40));`,
+      ],
+      { maxOutputBytes: 100 },
+    );
+    expect(result).toEqual(ok(stdoutContent));
   });
 });
 
