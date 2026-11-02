@@ -1,14 +1,13 @@
 /** Audit a local Electron .app before and after fuse and source-map remediation. */
-import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
-const exec = promisify(execFile);
 const { ELECTRON_FUSE_SENTINEL } = await importVerifierSource(
   new URL("../src/domain/electron/electronFuses.ts", import.meta.url).href,
   import.meta.url,
@@ -99,14 +98,13 @@ const audit = async (directory, extraArgs = []) => {
     ...extraArgs,
   ];
   try {
-    const { stdout } = await exec(process.execPath, args, {
-      encoding: "utf8",
+    const { stdout } = await commands.exec(process.execPath, args, {
       maxBuffer: 32 * 1024 * 1024,
       timeout: 180000,
     });
     return { status: 0, stdout };
   } catch (cause) {
-    const stdout = typeof cause.stdout === "string" ? cause.stdout : "";
+    const stdout = cause.snapshot?.stdout.text ?? "";
     const status = typeof cause.code === "number" ? cause.code : undefined;
     if (status !== undefined && stdout.length > 0) return { status, stdout };
     throw cause;
@@ -157,7 +155,7 @@ const table = (checks) => {
 const installFuses = async (root) => {
   const prefix = join(root, "fuses");
   await mkdir(prefix);
-  await exec(
+  await commands.exec(
     "npm",
     [
       "install",
@@ -165,10 +163,7 @@ const installFuses = async (root) => {
       prefix,
       `@electron/fuses@${ELECTRON_FUSES_VERSION}`,
     ],
-    {
-      encoding: "utf8",
-      timeout: 180000,
-    },
+    { timeout: 180000 },
   );
   const packageJson = JSON.parse(
     await readFile(
@@ -197,8 +192,9 @@ const installFuses = async (root) => {
   return { version: packageJson.version, api };
 };
 
+const commands = await createVerifierCommands();
 const root = await mkdtemp(join(tmpdir(), "rea-release-exposure-"));
-try {
+await withVerifierCleanup(async () => {
   const beforeApp = join(root, "before", "MyApp.app");
   const afterApp = join(root, "after", "MyApp.app");
   const enabled = [0x31, 0x31, 0x31, 0x31, 0x30, 0x30];
@@ -301,6 +297,4 @@ ${table(afterChecks)}
   console.log(`node ${process.version}`);
   console.log(`@electron/fuses ${version}`);
   console.log(`fail_on high exit ${String(gated.status)}`);
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+}, [() => commands.close(), () => rm(root, { recursive: true, force: true })]);
