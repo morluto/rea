@@ -41,32 +41,30 @@ export const readBoundedFileBytes = async (
       expectedSize > maxBytes)
   )
     throw new RangeError("Expected file size must fit the byte limit");
-  if (expectedSize === undefined) {
-    const chunks: Buffer[] = [];
-    const buffer = Buffer.allocUnsafe(Math.min(64 * 1_024, maxBytes + 1));
-    let total = 0;
-    for (;;) {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  if (expectedSize !== undefined && expectedSize > 0) {
+    const initial = Buffer.allocUnsafe(expectedSize);
+    while (total < expectedSize) {
       assertActive();
-      const { bytesRead } = await read(
-        buffer,
-        0,
-        Math.min(buffer.length, maxBytes - total + 1),
-      );
-      if (bytesRead === 0) return Buffer.concat(chunks, total);
+      const { bytesRead } = await read(initial, total, expectedSize - total);
+      if (bytesRead === 0) return initial.subarray(0, total);
       total += bytesRead;
       if (total > maxBytes) return undefined;
-      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
     }
+    chunks.push(initial);
   }
-  const buffer = Buffer.allocUnsafe(expectedSize);
-  if (expectedSize === 0) return buffer;
-  let total = 0;
+  const buffer = Buffer.allocUnsafe(Math.min(64 * 1_024, maxBytes + 1));
   for (;;) {
     assertActive();
-    const { bytesRead } = await read(buffer, total, expectedSize - total);
-    if (bytesRead === 0) return buffer.subarray(0, total);
+    const { bytesRead } = await read(
+      buffer,
+      0,
+      Math.min(buffer.length, maxBytes - total + 1),
+    );
+    if (bytesRead === 0) return Buffer.concat(chunks, total);
     total += bytesRead;
     if (total > maxBytes) return undefined;
-    if (total === expectedSize) return buffer;
+    chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
   }
 };
