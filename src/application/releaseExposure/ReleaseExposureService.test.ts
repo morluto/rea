@@ -18,6 +18,7 @@ import type { GoBinary } from "../../domain/go/goBinary.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
 import {
+  PACKAGED_NATIVE_IMAGES,
   RELEASE_EXPOSURE_CHECK_IDS,
   releaseExposureReportSchema,
   type ReleaseExposureScan,
@@ -882,6 +883,15 @@ describe("ReleaseExposureService Electron applicability", () => {
     const { service, electronFuses } = owners({
       ...directoryScan(paths.map((name) => `/work/app/${name}`)),
       coverage: input.coverage,
+    });
+    electronFuses.inspect.mockResolvedValue(noSentinel);
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
+
+  it("does not rule out Electron past a packaged native image", async () => {
+    const { service, electronFuses } = owners({
+      ...directoryScan(["/work/app/one"]),
+      omitted: [{ subject: PACKAGED_NATIVE_IMAGES, count: 1, reason: "x" }],
     });
     electronFuses.inspect.mockResolvedValue(noSentinel);
     expect((await runAsNode(service))?.status).toBe("unknown");

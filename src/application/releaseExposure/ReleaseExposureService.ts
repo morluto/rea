@@ -34,6 +34,7 @@ import {
   assembleReleaseExposureReport,
   auditReleaseExposureInputSchema,
   MAX_RELEASE_EXPOSURE_NATIVE_IMAGES,
+  PACKAGED_NATIVE_IMAGES,
   RELEASE_EXPOSURE_FUSE_SUBJECTS,
   RELEASE_EXPOSURE_OPERATION,
   type FuseImageFact,
@@ -623,7 +624,8 @@ const desktopFamily = (
 
 /**
  * A directory is not Electron only when every native image in it was read and
- * none holds a fuse sentinel. An unread image could be the Electron executable.
+ * none holds a fuse sentinel. An unread image could be the Electron executable,
+ * including one inside a packaged member the fuse reader was never sent.
  */
 const fuseImagesRuleOutElectron = (
   family: DesktopFamilyFact["family"],
@@ -634,7 +636,11 @@ const fuseImagesRuleOutElectron = (
   scan.target.kind === "directory" &&
   scan.coverage === "complete" &&
   images.length > 0 &&
-  !scan.omitted.some((item) => item.subject === "native images") &&
+  !scan.omitted.some(
+    (item) =>
+      item.subject === "native images" ||
+      item.subject === PACKAGED_NATIVE_IMAGES,
+  ) &&
   images.every(
     (image) => image.kind === "report" && image.implications?.length === 0,
   );
