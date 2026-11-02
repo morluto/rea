@@ -953,7 +953,7 @@ const examineMember = async (
     readable = await examinePackagedBinary(state, member, context);
   else if (map) readable = await examineMapMember(state, member);
   else if (isText(member.logical, member.kind))
-    readable = await examineTextMember(state, member);
+    readable = await examineTextMember(state, member, context);
   else if (packageFormat !== null)
     readable = await examinePackagedBinary(state, member, context);
   else if (asNativeFormat(member.format) === null)
@@ -961,6 +961,7 @@ const examineMember = async (
       state,
       member,
       await member.read(MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES),
+      context,
     );
   if (packageFormat === null) return;
   if (!readable) {
@@ -1180,6 +1181,7 @@ const readSourceMap = (
 const examineTextMember = async (
   state: ScanState,
   member: MemberView,
+  context: ScanContext,
 ): Promise<boolean> => {
   // CSS can declare inline maps, but the directive parser only handles JavaScript.
   if (isCssMember(member)) state.skippedMaps += 1;
@@ -1193,6 +1195,11 @@ const examineTextMember = async (
   const loaded = await member.read(
     Math.min(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES, remaining),
   );
+  const native = packagedNativeOfTextName(member, loaded);
+  if (native !== null) {
+    state.textBytes += state.memberBytesRead - bytesReadBefore;
+    return examinePackagedBinary(state, { ...member, format: native }, context);
+  }
   if (loaded.kind === "bytes") {
     const text = decodeMemberText(loaded.bytes);
     scanText(state, member, loaded.bytes.length, text);
@@ -1235,10 +1242,29 @@ const hasNodeShebang = (prefix: Buffer): boolean => {
  * `server.key`, or `credentials` is not a complete statement of what a file is.
  * Content that could not be probed leaves text coverage undecided.
  */
+/**
+ * A name is not a format: a package member called `payload.json` can be a PE.
+ * The text read's own bytes decide, so real text costs no further read.
+ */
+const packagedNativeOfTextName = (
+  member: MemberView,
+  loaded: MemberRead,
+): NativeFormat | null => {
+  if (member.packageFormat === null || member.kind !== "file") return null;
+  if (loaded.kind === "unread") return null;
+  const header = loaded.kind === "bytes" ? loaded.bytes : loaded.prefix;
+  if (header === null) return null;
+  return sniffNativeFormat(
+    header,
+    loaded.kind === "bytes" ? header.length : member.declaredSize,
+  );
+};
+
 const examineProbedText = async (
   state: ScanState,
   member: MemberView,
   probe: MemberRead,
+  context: ScanContext,
 ): Promise<void> => {
   const prefix =
     probe.kind === "bytes"
@@ -1249,12 +1275,12 @@ const examineProbedText = async (
   if (prefix === null) state.skippedText += 1;
   else if (hasNodeShebang(prefix)) {
     state.examinedScripts.add(memberLocationKey(member.location));
-    await examineTextMember(state, { ...member, kind: "javascript" });
+    await examineTextMember(state, { ...member, kind: "javascript" }, context);
   } else if (
     prefix.length > 0 &&
     (!prefix.includes(0) || declaresTextEncoding(prefix))
   )
-    await examineTextMember(state, member);
+    await examineTextMember(state, member, context);
 };
 
 /**
@@ -1573,7 +1599,7 @@ const examinePackagedBinary = async (
   if (native !== null) {
     state.packagedNative += 1;
     await probePackagedImage(state, member, native, context);
-  } else await examineProbedText(state, member, probe);
+  } else await examineProbedText(state, member, probe, context);
   if (native !== "pe") return true;
   if (state.packagedPeReads >= MAX_RELEASE_EXPOSURE_PACKAGED_PE_READS) {
     notePeNotExamined(state, member.location);

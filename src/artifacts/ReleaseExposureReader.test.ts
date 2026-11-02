@@ -2152,6 +2152,26 @@ describe("ReleaseExposureReader unexpanded packages", () => {
 });
 
 describe("ReleaseExposureReader unexpanded package PE reads", () => {
+  it("reads a native member by its bytes when its name says text", async () => {
+    const root = await bundled([
+      {
+        path: "payload.json",
+        bytes: pe(0x8664, 64, 0x0002, false, {
+          pdbPath: "C:\\build\\payload.pdb",
+        }),
+      },
+      { path: "plain.json", bytes: Buffer.from('{"plain":true}') },
+    ]);
+    const scanned = await inspect(root);
+    expect(scanned.pdb.paths).toContain("C:\\build\\payload.pdb");
+    expect(scanned.pdb.image_paths).toEqual([
+      `${join(root, "app.dll")}/payload.json`,
+    ]);
+    expect(scanned.textLocations).toEqual([
+      `${join(root, "app.dll")}/plain.json`,
+    ]);
+  });
+
   it("retains each compressed duplicate entry across PE reads", async () => {
     const root = await createTestTempDirectory("rea-release-duplicate-pe-");
     const paths = ["C:\\build\\first.pdb", "C:\\build\\second.pdb"];
