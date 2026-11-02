@@ -2440,3 +2440,107 @@ describe("ReleaseExposureReader inline map reads", () => {
     expect((await inspect(root)).source_maps.embedded).toBe(1);
   });
 });
+
+describe("ReleaseExposureReader HTML script references", () => {
+  const inlineMap = `//# sourceMappingURL=data:application/json;base64,${Buffer.from(
+    JSON.stringify({
+      version: 3,
+      sources: ["src/app.ts"],
+      sourcesContent: ["export {};"],
+      mappings: "",
+    }),
+  ).toString("base64")}\n`;
+
+  const directory = async (
+    files: Readonly<Record<string, string>>,
+  ): Promise<string> => {
+    const root = await createTestTempDirectory("rea-release-exposure-html-");
+    for (const [name, text] of Object.entries(files))
+      await writeFile(join(root, name), text);
+    return root;
+  };
+
+  it("reads the inline map of an extensionless script an HTML file loads", async () => {
+    const scanned = await inspect(
+      await directory({
+        "index.html": '<script src="main"></script>',
+        main: inlineMap,
+      }),
+    );
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
+  it("reads an extensionless script an ASAR's HTML loads", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-html-");
+    const path = join(root, "app.asar");
+    await writeFile(
+      path,
+      asarArchive([
+        {
+          name: "index.html",
+          bytes: Buffer.from('<script src="main"></script>'),
+        },
+        { name: "main", bytes: Buffer.from(inlineMap) },
+      ]),
+    );
+    expect(sourceMapSourcesStatus(await inspect(path))).toBe("exposed");
+  });
+
+  it("resolves a script against the document base", async () => {
+    const root = await directory({
+      "index.html": '<base href="static/"><script src="main?v=1"></script>',
+    });
+    await mkdir(join(root, "static"));
+    await writeFile(join(root, "static", "main"), inlineMap);
+    expect(sourceMapSourcesStatus(await inspect(root))).toBe("exposed");
+  });
+
+  it("does not count a script two pages share as unread", async () => {
+    const scanned = await inspect(
+      await directory({
+        "a.html": '<script src="main"></script>',
+        main: inlineMap,
+        "z.html": '<script src="main"></script>',
+      }),
+    );
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+  });
+
+  it("keeps coverage unknown for a script read before its HTML file", async () => {
+    const scanned = await inspect(
+      await directory({
+        app: inlineMap,
+        "index.html": '<script src="app"></script>',
+      }),
+    );
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
+
+  it.each([
+    ["a missing member", "main"],
+    ["a path from a root the audit cannot place", "/main"],
+    ["a scheme the audit cannot resolve", "app://./main"],
+  ])("keeps coverage unknown for %s", async (_, src) => {
+    const scanned = await inspect(
+      await directory({ "index.html": `<script src="${src}"></script>` }),
+    );
+    expect(scanned.source_maps.skipped).toBe(1);
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
+
+  it("leaves coverage alone for remote, named, and data-block references", async () => {
+    const scanned = await inspect(
+      await directory({
+        "app.js": "run();\n",
+        "index.html":
+          '<script src="https://cdn.example/lib"></script>' +
+          '<script src="app.js?v=1"></script>' +
+          '<script type="text/plain" src="notes"></script>',
+      }),
+    );
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("not_observed");
+  });
+});

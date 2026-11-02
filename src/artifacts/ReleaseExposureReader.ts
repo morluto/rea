@@ -3,7 +3,7 @@ import type { Dirent } from "node:fs";
 import { lstat, opendir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type { Readable } from "node:stream";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type {
   ReleaseExposurePort,
@@ -539,7 +539,7 @@ const scanOccurrences = async (
     });
   }
   if (!input.directory) await scanSiblings(input, state);
-  noteUnreachedMapTargets(state);
+  noteUnreachedTargets(state);
   const kind = targetKind(input.path, rootFormat, input.directory);
   const nativeImages = [...state.native.entries()].map(([path, format]) => {
     const sha256 = state.nativeDigests.get(path);
@@ -609,7 +609,7 @@ const scanOccurrences = async (
               subject: "source maps",
               count: state.skippedMaps,
               reason:
-                "A source map exceeded the map count or byte allowance, could not be read, was past the package entry cap or the HTML inline script limit, or was declared but not found; inline CSS source-map directives are not inspected.",
+                "A source map exceeded the map count or byte allowance, could not be read, was past the package entry cap or the HTML inline script limit, was declared but not found, or sat in a script an HTML file loads that was not examined as one; inline CSS source-map directives are not inspected.",
             },
           ]
         : []),
@@ -697,6 +697,10 @@ interface ScanState {
   examinedLocations: Set<string>;
   /** Members already examined as a source map. */
   examinedMaps: Set<string>;
+  /** Local script elements' targets whose names do not say JavaScript. */
+  scriptTargets: Set<string>;
+  /** Members already examined as a script. */
+  examinedScripts: Set<string>;
   visitText: ReleaseExposureTextVisitor;
 }
 
@@ -734,6 +738,8 @@ const createState = (visitText: ReleaseExposureTextVisitor): ScanState => ({
   mapTargets: new Set(),
   examinedLocations: new Set(),
   examinedMaps: new Set(),
+  scriptTargets: new Set(),
+  examinedScripts: new Set(),
   visitText,
 });
 
@@ -842,15 +848,21 @@ const examineSelectedFile = async (
  */
 const examineMember = async (
   state: ScanState,
-  member: MemberView,
+  listed: MemberView,
 ): Promise<void> => {
-  const { packageFormat } = member;
+  const { packageFormat } = listed;
   if (packageFormat !== null) state.formats.add(packageFormat);
   let readable = false;
-  const map = isDeclaredMap(state, member);
-  (map ? state.examinedMaps : state.examinedLocations).add(
-    memberLocationKey(member.location),
-  );
+  const key = memberLocationKey(listed.location);
+  const map = isDeclaredMap(state, listed);
+  const member =
+    !map &&
+    asNativeFormat(listed.format) === null &&
+    state.scriptTargets.has(key)
+      ? { ...listed, kind: "javascript" }
+      : listed;
+  (map ? state.examinedMaps : state.examinedLocations).add(key);
+  if (!map && isJavaScriptMember(member)) state.examinedScripts.add(key);
   if (member.encrypted) noteUnreadMember(state, member);
   else if (map) readable = await examineMapMember(state, member);
   else if (isText(member.logical, member.kind))
@@ -1130,7 +1142,11 @@ const examineHtmlScripts = (
   member: MemberView,
   source: string,
 ): void => {
-  const { inlineScripts, inlineScriptCount } = htmlArtifactReferences(source);
+  const { baseHref, scripts, inlineScripts, inlineScriptCount } =
+    htmlArtifactReferences(source);
+  for (const { scriptPath, scriptType } of scripts)
+    if (scriptType !== null)
+      noteScriptReference(state, member, scriptPath, baseHref);
   for (const script of inlineScripts)
     examineInlineMaps(
       state,
@@ -1139,6 +1155,40 @@ const examineHtmlScripts = (
       script.scriptType === "module" ? "inline.mjs" : "inline.js",
     );
   state.skippedMaps += inlineScriptCount - inlineScripts.length;
+};
+
+/**
+ * A script element loads its target whatever the file is called. A name that
+ * says JavaScript is examined as a script anyway, and a remote script is not
+ * shipped. Any other target is recorded so it is examined as a script when it
+ * is reached. A target that cannot be placed on disk stays unassessed.
+ */
+const noteScriptReference = (
+  state: ScanState,
+  member: MemberView,
+  scriptPath: string,
+  baseHref: string | null,
+): void => {
+  try {
+    const page = pathToFileURL(member.location);
+    const url = new URL(
+      scriptPath,
+      baseHref === null ? page : new URL(baseHref, page),
+    );
+    if (url.protocol === "http:" || url.protocol === "https:") return;
+    if (JAVASCRIPT_MEMBER_NAME.test(url.pathname)) return;
+    noteScriptTarget(state, fileURLToPath(url));
+  } catch {
+    state.skippedMaps += 1;
+  }
+};
+
+const noteScriptTarget = (state: ScanState, location: string): void => {
+  const target = memberLocationKey(location);
+  if (state.examinedScripts.has(target)) return;
+  if (state.examinedLocations.has(target) || state.examinedMaps.has(target))
+    state.skippedMaps += 1;
+  else state.scriptTargets.add(target);
 };
 
 const examineInlineMaps = (
@@ -1242,10 +1292,12 @@ const isDeclaredMap = (state: ScanState, member: MemberView): boolean =>
   isSourceMap(member.logical, member.kind) ||
   state.mapTargets.has(memberLocationKey(member.location));
 
-/** A declared map target that was never reached was not assessed. */
-const noteUnreachedMapTargets = (state: ScanState): void => {
+/** A declared map or script target that was never reached was not assessed. */
+const noteUnreachedTargets = (state: ScanState): void => {
   for (const target of state.mapTargets)
     if (!state.examinedMaps.has(target)) state.skippedMaps += 1;
+  for (const target of state.scriptTargets)
+    if (!state.examinedScripts.has(target)) state.skippedMaps += 1;
 };
 
 /** Text decoded from a member; `complete` is false when part of it went unread. */
