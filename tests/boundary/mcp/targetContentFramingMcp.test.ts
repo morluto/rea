@@ -272,3 +272,39 @@ describe.each([
     },
   );
 });
+
+it.each([
+  { scope: "direct", sessionAvailable: false },
+  { scope: "session,direct", sessionAvailable: true },
+])(
+  "guides a missing target using the advertised scope ($scope)",
+  async ({ scope, sessionAvailable }) => {
+    const client = await connect({
+      ...process.env,
+      REA_MCP_TOOL_FAMILIES: scope,
+    });
+    const names = (await client.listTools()).tools.map(({ name }) => name);
+    expect(names.includes("open_binary")).toBe(sessionAvailable);
+    const { error } = parseMcpToolError(
+      await client.callTool({
+        name: "read_bytes",
+        arguments: { address: "0x1000", length: 4 },
+      }),
+    );
+    expect(error.code).toBe("target_unavailable");
+    if (sessionAvailable) {
+      expect(error.remediation.action).toContain("call open_binary");
+      expect(error.remediation.action).not.toContain("REA_MCP_TOOL_FAMILIES");
+    } else {
+      expect(error.remediation.action).toContain("REA_MCP_TOOL_FAMILIES");
+      expect(error.remediation.action).toContain("session");
+      expect(error.remediation.action).toContain("restart");
+      expect(error.remediation.action).toContain(
+        "does not advertise open_binary",
+      );
+      await expect(
+        client.callTool({ name: "open_binary", arguments: { path: "/tmp/x" } }),
+      ).rejects.toThrow(/disabled/u);
+    }
+  },
+);
