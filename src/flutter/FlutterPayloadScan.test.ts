@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  LabeledStringScanner,
+  FlutterEngineStringScanner,
   SnapshotHashScanner,
 } from "./FlutterPayloadScan.js";
 
@@ -124,9 +124,9 @@ it("distinguishes a full candidate set from omitted conflicts", () => {
   expect(scanner.result().candidates).toHaveLength(64);
 });
 
-describe("LabeledStringScanner", () => {
+describe("FlutterEngineStringScanner", () => {
   const assertSingleToolchainLine = (line: string): void => {
-    const scanner = new LabeledStringScanner();
+    const scanner = new FlutterEngineStringScanner();
     scanner.push(
       Uint8Array.from(
         Array.from(`\x00${line}\x00`, (character) => character.charCodeAt(0)),
@@ -141,7 +141,7 @@ describe("LabeledStringScanner", () => {
   });
 
   it("reads a labeled Dart VM version string when a build carries one", () => {
-    const scanner = new LabeledStringScanner();
+    const scanner = new FlutterEngineStringScanner();
     scanner.push(
       Uint8Array.from(
         Array.from(
@@ -162,7 +162,7 @@ describe("LabeledStringScanner", () => {
       );
     });
     it("does not claim a toolchain cap for unrelated overlong strings", () => {
-      const scanner = new LabeledStringScanner();
+      const scanner = new FlutterEngineStringScanner();
       const license = `Apache License Version 2.0 ${"x".repeat(700)}`;
       scanner.push(
         Uint8Array.from(
@@ -183,7 +183,7 @@ describe("LabeledStringScanner", () => {
         [`Dart VM version: ${"3".repeat(700)}`, false, true],
         [`based on LLVM 9 ${"x".repeat(700)}`, true, false],
       ] as const) {
-        const scanner = new LabeledStringScanner();
+        const scanner = new FlutterEngineStringScanner();
         scanner.push(
           Uint8Array.from(
             Array.from(`\x00${text}\x00`, (character) =>
@@ -214,7 +214,7 @@ describe("LabeledStringScanner", () => {
         for (const suffix of ["", "x", "x".repeat(1000)]) {
           const payload = Buffer.from(`${line}${suffix}\x00`);
           for (const chunkSize of [1, 7, payload.length]) {
-            const scanner = new LabeledStringScanner();
+            const scanner = new FlutterEngineStringScanner();
             for (let offset = 0; offset < payload.length; offset += chunkSize)
               scanner.push(payload.subarray(offset, offset + chunkSize));
             const valid = suffix === "";
@@ -231,7 +231,7 @@ describe("LabeledStringScanner", () => {
 
     it("preserves whitespace and separates distinct Dart-label omissions", () => {
       assertSingleToolchainLine("based on LLVM 9  ");
-      const scanner = new LabeledStringScanner();
+      const scanner = new FlutterEngineStringScanner();
       scanner.push(Buffer.from("Dart VM version: 3.1\0Dart VM version: 3.2\0"));
       expect(scanner.result()).toMatchObject({
         dartVersion: "Dart VM version: 3.1",
