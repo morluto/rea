@@ -1,6 +1,6 @@
 ---
 name: reverse-engineer-anything
-description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
+description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, map online-platform workflows, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
   version: "59"
 ---
@@ -12,6 +12,14 @@ requested runtime evidence, or comparison with
 behavior not established by available source. For ordinary analysis of a
 complete source repository, use normal repository tools and do not run REA
 readiness or provider commands.
+
+## Online platform reconstruction
+
+For requests to recreate an online platform or investigate several web features,
+read [platform reconstruction](references/platform-reconstruction.md). It adds
+screen, flow, role, and feature coverage plus an implementation handoff to REA's
+existing evidence workflow. Apply only the requested phases; investigation alone
+does not authorize building, deploying, or changing the original platform.
 
 ## Connect only when needed
 
