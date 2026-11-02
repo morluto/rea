@@ -1450,6 +1450,29 @@ const bundled = async (
   return root;
 };
 
+/** One dictionary whose value objects are the given encoded objects. */
+const binaryPlist = (key: string, value: Buffer): Buffer => {
+  const objects = [
+    Buffer.from([0xd1, 1, 2]),
+    Buffer.concat([Buffer.from([0x50 | key.length]), Buffer.from(key)]),
+    value,
+  ];
+  const table =
+    8 + objects.reduce((length, object) => length + object.length, 0);
+  const bytes = Buffer.alloc(table + objects.length + 32);
+  let cursor = 8;
+  const offsets = objects.map((object) => {
+    const offset = cursor;
+    object.copy(bytes, cursor);
+    cursor += object.length;
+    return offset;
+  });
+  return binaryPlistObjectTable(bytes, offsets, table);
+};
+/** Length-prefixed object body; every test value here exceeds the short form. */
+const plistObject = (type: number, length: number, body: Buffer): Buffer =>
+  Buffer.concat([Buffer.from([(type << 4) | 0x0f, 0x10, length]), body]);
+
 describe("ReleaseExposureReader text encodings", () => {
   const marker = "-----BEGIN PRIVATE KEY-----\n";
   const inlineMap = `//# sourceMappingURL=data:application/json;base64,${Buffer.from(
@@ -1537,29 +1560,6 @@ describe("ReleaseExposureReader text encodings", () => {
     expect(members).toEqual({ scanned: 0, skipped: 1 });
   });
 
-  /** One dictionary whose value objects are the given encoded objects. */
-  const binaryPlist = (key: string, value: Buffer): Buffer => {
-    const objects = [
-      Buffer.from([0xd1, 1, 2]),
-      Buffer.concat([Buffer.from([0x50 | key.length]), Buffer.from(key)]),
-      value,
-    ];
-    const table =
-      8 + objects.reduce((length, object) => length + object.length, 0);
-    const bytes = Buffer.alloc(table + objects.length + 32);
-    let cursor = 8;
-    const offsets = objects.map((object) => {
-      const offset = cursor;
-      object.copy(bytes, cursor);
-      cursor += object.length;
-      return offset;
-    });
-    return binaryPlistObjectTable(bytes, offsets, table);
-  };
-  /** Length-prefixed object body; every test value here exceeds the short form. */
-  const plistObject = (type: number, length: number, body: Buffer): Buffer =>
-    Buffer.concat([Buffer.from([(type << 4) | 0x0f, 0x10, length]), body]);
-
   it.each([
     ["ASCII", plistObject(5, marker.length, Buffer.from(marker))],
     [
@@ -1574,6 +1574,30 @@ describe("ReleaseExposureReader text encodings", () => {
   ])("scans a binary plist's %s value", async (_encoding, value) => {
     const root = await createTestTempDirectory("rea-release-exposure-text-");
     await writeFile(join(root, "Info.plist"), binaryPlist("key", value));
+    const { texts, members } = await visited(root);
+    expect(texts.join("")).toContain(marker);
+    expect(members).toEqual({ scanned: 1, skipped: 0 });
+  });
+
+  it("scans a binary plist a package member's name does not announce as text", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-text-");
+    const wide = plistObject(6, marker.length, utf16(marker, "be").subarray(2));
+    await writeFile(
+      join(root, "app.exe"),
+      cArchiveExecutable({
+        carrier: "pe",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          {
+            name: "Localizable.strings",
+            typeCode: "x",
+            compress: true,
+            payload: binaryPlist("key", wide),
+          },
+        ],
+      }),
+    );
     const { texts, members } = await visited(root);
     expect(texts.join("")).toContain(marker);
     expect(members).toEqual({ scanned: 1, skipped: 0 });

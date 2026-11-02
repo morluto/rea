@@ -1154,7 +1154,7 @@ const examineProbedText = async (
   if (prefix === null) state.skippedText += 1;
   else if (
     prefix.length > 0 &&
-    (!prefix.includes(0) || byteOrderMarkEncoding(prefix) !== null)
+    (!prefix.includes(0) || declaresTextEncoding(prefix))
   )
     await examineTextMember(state, member);
 };
@@ -1360,6 +1360,14 @@ const decodeBinaryPlistMember = (bytes: Buffer): MemberText => {
     return { text: bytes.toString("utf8"), complete: false };
   }
 };
+
+/**
+ * Bytes that name their own text encoding, whose NULs are that encoding's
+ * structure rather than a sign of binary data. `decodeMemberText` reads each of
+ * these; a probe that admits on NULs alone would drop them unexamined.
+ */
+const declaresTextEncoding = (bytes: Buffer): boolean =>
+  byteOrderMarkEncoding(bytes) !== null || hasBinaryPlistSignature(bytes);
 
 /**
  * The text a member's bytes encode, or null when they cannot be read as text.
