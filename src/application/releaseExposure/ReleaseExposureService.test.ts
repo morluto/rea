@@ -894,6 +894,66 @@ describe("ReleaseExposureService packaged native images", () => {
   });
 });
 
+describe("ReleaseExposureService Electron host identity", () => {
+  it("keeps safe fuses decided when inventory stopped after the named executable", async () => {
+    const { service, desktop, electronFuses } = owners({
+      ...directoryScan(["/work/app/app.exe"]),
+      coverage: "unknown",
+    });
+    desktop.inspect.mockResolvedValue(ok(evidence(electronDesktopReport())));
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("not_observed");
+  });
+
+  it("keeps safe fuses unknown when inventory stopped after an unnamed sibling", async () => {
+    const { service, desktop, electronFuses } = owners({
+      ...directoryScan(["/work/app/helper.exe"]),
+      coverage: "unknown",
+    });
+    desktop.inspect.mockResolvedValue(ok(evidence(electronDesktopReport())));
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
+
+  it("keeps safe fuses unknown when the sample dropped an executable that could be the host", async () => {
+    const { service, desktop, electronFuses } = owners(
+      directoryScan(
+        ["one", "two", "three", "four", "five"].map(
+          (name) => `/work/app/${name}.exe`,
+        ),
+      ),
+    );
+    desktop.inspect.mockResolvedValue(ok(evidence(electronDesktopReport())));
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+    expect(electronFuses.inspect).toHaveBeenCalledTimes(4);
+  });
+
+  it("keeps safe fuses decided when the sample kept the named host among many siblings", async () => {
+    const { service, desktop, electronFuses } = owners(
+      directoryScan(
+        ["one", "two", "three", "four", "app"].map(
+          (name) => `/work/app/${name}.exe`,
+        ),
+      ),
+    );
+    desktop.inspect.mockResolvedValue(ok(evidence(electronDesktopReport())));
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("not_observed");
+    expect(electronFuses.inspect.mock.calls[0]?.[0]).toMatchObject({
+      path: "/work/app/app.exe",
+    });
+  });
+});
+
 describe("ReleaseExposureService Electron applicability", () => {
   const appScan = scan({
     target: {
@@ -937,18 +997,6 @@ describe("ReleaseExposureService Electron applicability", () => {
       ok(evidence(fuseReport([slice(0)]))),
     );
     expect((await runAsNode(service))?.status).toBe("unknown");
-  });
-
-  it("keeps safe fuses decided when inventory stopped after the hinted executable", async () => {
-    const { service, desktop, electronFuses } = owners({
-      ...directoryScan(["/work/app/MyApp.exe"]),
-      coverage: "unknown",
-    });
-    desktop.inspect.mockResolvedValue(ok(evidence(electronDesktopReport())));
-    electronFuses.inspect.mockResolvedValue(
-      ok(evidence(fuseReport([slice(0)]))),
-    );
-    expect((await runAsNode(service))?.status).toBe("not_observed");
   });
 
   it("keeps safe fuses decided on a selected executable with unknown inventory", async () => {

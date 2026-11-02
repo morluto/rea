@@ -679,9 +679,14 @@ const limitNativeSample = (
     scan.fuse_candidates.some((candidate) => candidate.role === "app-bundle") ||
     kept.some(
       (image) =>
-        preferredPaths.has(image.path) ||
-        image.path === scan.target.selected_path,
-    );
+        image.path === scan.target.selected_path ||
+        (ranked.get(image.path) ?? ANY_SIBLING_RANK) < ANY_SIBLING_RANK,
+    ) ||
+    // No name picks the host out, so it counts as read only when every
+    // executable it could be was listed and sampled.
+    (scan.coverage !== "unknown" &&
+      preferred.length > 0 &&
+      preferred.length <= MAX_RELEASE_EXPOSURE_NATIVE_IMAGES);
   return {
     electronExecutableIncluded,
     scan: {
@@ -710,6 +715,12 @@ const limitNativeSample = (
   };
 };
 
+/**
+ * A lower rank names the Electron host. This one only orders the sample: any
+ * executable beside the archive could be a helper.
+ */
+const ANY_SIBLING_RANK = 2;
+
 const electronExecutableRank = (
   images: readonly ReleaseExposureNativeImage[],
   basisPaths: readonly string[],
@@ -732,8 +743,9 @@ const electronExecutableRank = (
       let score = 3;
       if (lower === folderName || lower === `${folderName}.exe`) score = 0;
       else if (lower === "electron" || lower === "electron.exe") score = 1;
-      else if (lower.endsWith(".exe") || !name.includes(".")) score = 2;
-      if (score <= 2) remember(image.path, score);
+      else if (lower.endsWith(".exe") || !name.includes("."))
+        score = ANY_SIBLING_RANK;
+      if (score <= ANY_SIBLING_RANK) remember(image.path, score);
     }
   }
   return ranked;

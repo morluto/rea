@@ -101,6 +101,7 @@ import {
   inspectSourceMapValue,
   SourceMapFormatFailure,
 } from "../javascript/sourceMaps/SourceMapFormat.js";
+import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferences.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";
 import { createJavaScriptAnalysisAccumulator } from "../domain/javascript/javascriptStaticAnalysisState.js";
@@ -137,6 +138,7 @@ const MEMBER_ENCODING_HEADER_BYTES = 512;
 const WIDE_TEXT_NUL_DIVISOR = 8;
 const PE_MEMBER_NAME = /\.(?:dll|exe|sys)$/iu;
 const JAVASCRIPT_MEMBER_NAME = /\.(?:[cm]?[jt]s|[jt]sx)$/iu;
+const HTML_MEMBER_NAME = /\.html?$/iu;
 
 type NativeFormat = "elf" | "mach-o" | "mach-o-universal" | "pe";
 type InventoryOccurrence = ArtifactInventoryResult["occurrences"][number];
@@ -514,7 +516,10 @@ const scanOccurrences = async (
     await examineMember(state, {
       logical,
       format: nativeFormat ?? format,
-      kind: occurrence.artifact_kind,
+      kind: ownerMemberKind(
+        occurrence.format_metadata,
+        occurrence.artifact_kind,
+      ),
       encrypted: occurrence.encrypted,
       location,
       packageFormat:
@@ -604,7 +609,7 @@ const scanOccurrences = async (
               subject: "source maps",
               count: state.skippedMaps,
               reason:
-                "A source map exceeded the map count or byte allowance, could not be read, was past the package entry cap, or was declared but not found; inline CSS source-map directives are not inspected.",
+                "A source map exceeded the map count or byte allowance, could not be read, was past the package entry cap or the HTML inline script limit, or was declared but not found; inline CSS source-map directives are not inspected.",
             },
           ]
         : []),
@@ -749,6 +754,25 @@ const isJavaScriptMember = (member: MemberView): boolean =>
 const isCssMember = (member: MemberView): boolean =>
   member.logical.toLowerCase().endsWith(".css");
 
+const isHtmlMember = (member: MemberView): boolean =>
+  HTML_MEMBER_NAME.test(member.logical);
+
+/** A member whose scripts can declare a map the directive parser reads. */
+const holdsScripts = (member: MemberView): boolean =>
+  isJavaScriptMember(member) || isHtmlMember(member);
+
+/**
+ * The role a package reader states for its entry. A Bun sourcemap region is
+ * named `.bunmap`, so its name alone does not say it is a source map.
+ */
+const ownerMemberKind = (
+  metadata: ArtifactOccurrence["format_metadata"],
+  kind: string,
+): string =>
+  metadata?.kind === "bun-standalone-entry" && metadata.region === "sourcemap"
+    ? "source-map"
+    : kind;
+
 const asNativeFormat = (
   format: string | null | undefined,
 ): NativeFormat | null =>
@@ -849,7 +873,7 @@ const examineMember = async (
 };
 
 const noteUnreadMember = (state: ScanState, member: MemberView): void => {
-  if (isJavaScriptMember(member) || isCssMember(member)) state.skippedMaps += 1;
+  if (holdsScripts(member) || isCssMember(member)) state.skippedMaps += 1;
   if (isDeclaredMap(state, member)) {
     noteUnreadMap(state, member, null);
     state.skippedText += 1;
@@ -874,8 +898,9 @@ const examineMapMember = async (
   state: ScanState,
   member: MemberView,
 ): Promise<boolean> => {
-  // A member a script names as its map is a JavaScript map whatever it is called.
-  const declared = isSourceMap(member.logical, member.kind)
+  // A member a script names or an owner marks as a map is a JavaScript map
+  // whatever it is called.
+  const declared = member.logical.toLowerCase().endsWith(".map")
     ? member
     : { ...member, logical: `${member.logical}.js.map` };
   const loaded = await examineMap(state, declared);
@@ -1048,7 +1073,7 @@ const examineTextMember = async (
   const remaining = MAX_RELEASE_EXPOSURE_TEXT_BYTES - state.textBytes;
   if (remaining <= 0) {
     state.skippedText += 1;
-    if (isJavaScriptMember(member)) state.skippedMaps += 1;
+    if (holdsScripts(member)) state.skippedMaps += 1;
     return true;
   }
   const loaded = await member.read(
@@ -1057,13 +1082,15 @@ const examineTextMember = async (
   if (loaded.kind === "bytes") {
     const text = decodeMemberText(loaded.bytes);
     scanText(state, member, loaded.bytes.length, text);
-    if (isJavaScriptMember(member)) {
+    if (holdsScripts(member)) {
       if (text === null) state.skippedMaps += 1;
-      else examineInlineMaps(state, member, text.text);
+      else if (isJavaScriptMember(member))
+        examineInlineMaps(state, member, text.text, member.logical);
+      else examineHtmlScripts(state, member, text.text);
     }
   } else {
     state.skippedText += 1;
-    if (isJavaScriptMember(member)) state.skippedMaps += 1;
+    if (holdsScripts(member)) state.skippedMaps += 1;
   }
   return loaded.kind !== "unread";
 };
@@ -1092,12 +1119,33 @@ const examineProbedText = async (
     await examineTextMember(state, member);
 };
 
-const examineInlineMaps = (
+/**
+ * A script element's body declares maps as a script file does. Bodies past the
+ * HTML owner's retained limit were not read, so each counts as a skipped map.
+ */
+const examineHtmlScripts = (
   state: ScanState,
   member: MemberView,
   source: string,
 ): void => {
-  const parsed = parseJavaScriptSource(source, member.logical);
+  const { inlineScripts, inlineScriptCount } = htmlArtifactReferences(source);
+  for (const script of inlineScripts)
+    examineInlineMaps(
+      state,
+      member,
+      script.text,
+      script.scriptType === "module" ? "inline.mjs" : "inline.js",
+    );
+  state.skippedMaps += inlineScriptCount - inlineScripts.length;
+};
+
+const examineInlineMaps = (
+  state: ScanState,
+  member: MemberView,
+  source: string,
+  sourcePath: string,
+): void => {
+  const parsed = parseJavaScriptSource(source, sourcePath);
   if (parsed === null) {
     state.skippedMaps += 1;
     return;
@@ -1612,7 +1660,9 @@ const scanUnexpandedContainer = async (
     await examineMember(state, {
       logical: entry.path,
       format: seaMainScript ? "javascript-bundle" : "file",
-      kind: seaMainScript ? "javascript" : "file",
+      kind: seaMainScript
+        ? "javascript"
+        : ownerMemberKind(entry.formatMetadata, "file"),
       encrypted: entry.encrypted,
       location,
       packageFormat: format,

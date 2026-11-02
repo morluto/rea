@@ -10,6 +10,11 @@ import { describe, expect, it, vi } from "vitest";
 import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
 import { pe } from "../domain/binaryTarget.fixture.js";
 import { nodeSeaElf } from "./nodeSea/NodeSea.fixture.js";
+import {
+  bunModuleGraphPayload,
+  bunPrefixedPayload,
+  elfBunSection,
+} from "./bun/BunStandalone.fixture.js";
 import { dotnetBundleFixture } from "./dotnet/DotnetBundle.fixture.js";
 import { cArchiveExecutable } from "./pyinstaller/CArchive.fixture.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
@@ -32,6 +37,7 @@ import {
   PACKAGED_NATIVE_IMAGES,
   type ReleaseExposureScan,
 } from "../domain/releaseExposure.js";
+import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../domain/javascript/htmlArtifactReferences.js";
 import { ReleaseExposureReader } from "./ReleaseExposureReader.js";
 
 const stableRead = vi.hoisted(() => ({
@@ -2214,6 +2220,109 @@ describe("ReleaseExposureReader inline map reads", () => {
       mappings: "",
     }),
   ).toString("base64");
+
+  const dataUrl = `data:application/json;base64,${map}`;
+
+  it.each([
+    ["a classic script", "<script>"],
+    ["a module script", '<script type="module">'],
+  ])("reads an inline map in %s of an HTML file", async (_, open) => {
+    const root = await createTestTempDirectory("rea-release-exposure-html-");
+    await writeFile(
+      join(root, "index.html"),
+      `<!doctype html>${open}\nrun();\n//# sourceMappingURL=${dataUrl}\n</script>`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
+  it("reads an inline map in an HTML member of an ASAR", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-html-");
+    const path = join(root, "app.asar");
+    await writeFile(
+      path,
+      asarArchive([
+        {
+          name: "index.html",
+          bytes: Buffer.from(
+            `<script>//# sourceMappingURL=${dataUrl}\n</script>`,
+          ),
+        },
+      ]),
+    );
+    expect(sourceMapSourcesStatus(await inspect(path))).toBe("exposed");
+  });
+
+  it("does not read a map in a data block or a script that loads by URL", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-html-");
+    await writeFile(
+      join(root, "index.html"),
+      `<script type="application/json">//# sourceMappingURL=${dataUrl}\n</script>` +
+        `<script src="app.js">//# sourceMappingURL=${dataUrl}\n</script>`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("not_observed");
+  });
+
+  it("keeps HTML map coverage unknown for scripts it did not read", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-html-");
+    const path = join(root, "index.html");
+    await writeFile(
+      path,
+      "<script>x</script>".repeat(HTML_INLINE_SCRIPT_LOCATION_LIMIT + 2),
+    );
+    const past = await inspect(path);
+    expect(past.source_maps.skipped).toBe(2);
+    expect(sourceMapSourcesStatus(past)).toBe("unknown");
+    await writeFile(
+      path,
+      Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1, 0x20),
+    );
+    expect((await inspect(path)).source_maps.skipped).toBe(1);
+  });
+
+  const bunExecutable = (sourcemap: Buffer): Buffer =>
+    elfBunSection(
+      bunPrefixedPayload(
+        bunModuleGraphPayload({
+          modules: [
+            {
+              name: "/$bunfs/root/main.js",
+              contents: Buffer.from("run();\n"),
+              sourcemap,
+            },
+          ],
+        }),
+      ),
+    );
+
+  it.each([
+    ["a selected executable", (root: string) => join(root, "server")],
+    ["an executable in a directory", (root: string) => root],
+  ])("reads a Bun sourcemap region in %s", async (_, selected) => {
+    const root = await createTestTempDirectory("rea-release-exposure-bun-");
+    await writeFile(
+      join(root, "server"),
+      bunExecutable(Buffer.from(map, "base64")),
+    );
+    const scanned = await inspect(selected(root));
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, unparsed: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
+  it("keeps a binary Bun sourcemap region unresolved instead of a companion", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-bun-");
+    await writeFile(
+      join(root, "server"),
+      bunExecutable(Buffer.from([1, 0, 0, 0, 0xff, 0xfe, 0, 0])),
+    );
+    const scanned = await inspect(join(root, "server"));
+    expect(scanned.source_maps.unparsed).toBe(1);
+    expect(scanned.debug_companions.paths).toEqual([]);
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
 
   it("reads a percent-escaped base64 inline map", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-map-");
