@@ -51,23 +51,24 @@ server; older servers keep the complete request after schema discovery.
 
 `inspect_dart_aot` reads one ABI's `libapp.so` in full and reports:
 
-- **Snapshot sections** — the four `_kDart*Snapshot*` symbols located
-  through the ELF **dynamic symbol table** (ELF32 and ELF64, little-endian,
+- **Snapshot sections** — the exported snapshot symbols located
+  through the ELF **dynamic symbol table**: `_kDartSnapshotData` and
+  `_kDartSnapshotText` in the layout introduced by
+  [Dart SDK d36adbacaf](https://github.com/dart-lang/sdk/commit/d36adbacafee01d9852cf8e960cf2d8654d91e7e),
+  which removed the separate VM snapshot, otherwise the four
+  `_kDartVm*`/`_kDartIsolate*` symbols of earlier releases (ELF32 and ELF64, little-endian,
   every read bounds-checked), each with file offset, size, and — for data
   sections, which carry the `f5f5dcdc` magic — the parsed header kind and
   length (the stored length excludes the four magic bytes). Data headers
   whose declared snapshot length does not fit their symbol retain their
   observed fields and report partial coverage. Complete structural coverage
-  currently requires kind 3, the FullAOT value in the supported
+  requires the FullAOT kind of the located layout: kind 2 in the renamed
+  layout, whose
+  [`Snapshot::Kind`](https://github.com/dart-lang/sdk/blob/d36adbacafee01d9852cf8e960cf2d8654d91e7e/runtime/vm/snapshot.h)
+  no longer has `kFullCore`, and kind 3 in the supported
   [Dart 2.14 layout](https://github.com/dart-lang/sdk/blob/2.14.0/runtime/vm/snapshot.h).
   Kind numbers vary across Dart releases; other values are preserved with
   partial coverage, without guessing their interpretation.
-  Unified `_kDartSnapshotData` / `_kDartSnapshotText` exports are a different
-  unsupported profile. The [upstream VM-isolate removal](https://github.com/dart-lang/sdk/commit/d36adbacafee01d9852cf8e960cf2d8654d91e7e)
-  changes both the source layout and the FullAOT kind value. REA reports the
-  observed export names and library identity with a typed unsupported-profile
-  refusal when only unified exports are available; it does not alias one header
-  into two independent sources.
   Address resolution examines every overlapping `PT_LOAD` interpretation,
   including partial overlaps. Equivalent mappings are coalesced; conflicting
   mappings leave affected symbols unresolved and qualify coverage. Dynamic
@@ -75,10 +76,12 @@ server; older servers keep the complete request after schema discovery.
   A payload without exported snapshot symbols is refused rather
   than guessed at.
 - **The snapshot hash** from the header at the start of each exported data
-  symbol. Complete hash coverage requires a valid header from both the VM
-  and isolate; duplicate records inside one symbol cannot stand in for the
+  symbol. Complete hash coverage requires a valid header from every data
+  symbol of the layout (one in the renamed layout, both the VM and isolate
+  in the earlier one); duplicate records inside one symbol cannot stand in for the
   other's header. Aliased or overlapping data symbols report partial coverage.
-- **A string-pool projection from the isolate data section**: distinct
+- **A string-pool projection from the app's data section**
+  (`_kDartSnapshotData`, or `_kDartIsolateSnapshotData` in the earlier layout): distinct
   `package:` source URIs (the app's own and its dependencies' Dart files —
   a dependency inventory), `dart:` SDK URIs (which SDK libraries the app
   uses), and identifier-shaped tokens, each bounded with counts and
@@ -101,7 +104,8 @@ server; older servers keep the complete request after schema discovery.
   kept in `snapshot_hash_candidates` with `snapshot_hash: null` and
   `coverage: "partial"` rather than silently picking one.
   Identification can retain a single byte-scanned hash from a unified payload;
-  its partial status does not establish truncation or support for that profile.
+  its partial status does not establish truncation. `inspect_dart_aot` reads
+  that layout's exported headers.
 - **`elf_header_valid`** checks the supported little-endian ELF32/ELF64
   header, table entry widths, and full table extents against the library's
   actual byte length. Truncated, malformed, or unsupported headers report

@@ -539,10 +539,15 @@ export const readElfSymbols = async (
   };
 };
 
-/** Read one Dart snapshot section header from its file offset. */
+/**
+ * Read one Dart snapshot section header from its file offset. `fullAotKind`
+ * is the FullAOT value of `Snapshot::Kind` for the symbol layout the caller
+ * located the section through.
+ */
 export const readSnapshotHeader = (
   bytes: Buffer,
   offset: number,
+  fullAotKind = 3,
 ): {
   magicValid: boolean;
   kind: number | null;
@@ -575,13 +580,13 @@ export const readSnapshotHeader = (
   // Dart's stored length excludes the four magic bytes and includes the
   // 20-byte fixed header and the version hash. Aligned data may follow it
   // inside the exported symbol, but the serialized snapshot must fit.
-  // Kind 3 is FullAOT in the supported Dart 2.14 layout; enum values change
-  // across SDK versions, so other kinds remain uninterpreted observations.
+  // Enum values change across SDK versions, so kinds other than the
+  // layout's FullAOT value remain uninterpreted observations.
   const complete =
     headerLength !== null &&
     headerLength >= SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH - 4 &&
     headerLength <= bytes.length - offset - 4 &&
-    kind === 3 &&
+    kind === fullAotKind &&
     hash !== null;
   return { magicValid: true, kind, headerLength, hash, complete };
 };
