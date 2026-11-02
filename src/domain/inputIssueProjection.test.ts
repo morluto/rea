@@ -173,7 +173,7 @@ describe("input issue argument guidance", () => {
         {
           path: ["address"],
           reason: "unknown_argument",
-          expected: guidance!.expected,
+          expected: "procedure",
           message: guidance!.message,
         },
         { path: ["count"], reason: "unknown_argument" },
@@ -199,7 +199,7 @@ describe("input issue argument guidance", () => {
         {
           path: ["query"],
           reason: "unknown_argument",
-          expected: guidance!.expected,
+          expected: "pattern",
           message: guidance!.message,
         },
       ]);
@@ -226,7 +226,7 @@ describe("input issue argument guidance", () => {
         {
           path: ["procedure"],
           reason: "unknown_argument",
-          expected: guidance!.expected,
+          expected: "address",
           message: guidance!.message,
         },
       ]);
@@ -249,7 +249,7 @@ describe("input issue argument guidance", () => {
       {
         path: ["procedure"],
         reason: "unknown_argument",
-        expected: xrefsGuidance!.expected,
+        expected: "address",
         message: xrefsGuidance!.message,
       },
     ]);
@@ -283,7 +283,7 @@ describe("input issue argument guidance", () => {
         {
           path: ["pattern"],
           reason: "unknown_argument",
-          expected: guidance!.expected,
+          expected: "query",
           message: guidance!.message,
         },
       ]);
@@ -351,7 +351,7 @@ describe("input issue argument guidance suppression", () => {
     expect(errorMissing.issues).toContainEqual({
       path: ["address"],
       reason: "unknown_argument",
-      expected: missingGuidance!.expected,
+      expected: "procedure",
       message: missingGuidance!.message,
     });
     const missingAction = projectAnalysisError(errorMissing).remediation.action;
@@ -466,7 +466,7 @@ describe("bounded input issue projection", () => {
       {
         path: ["address"],
         reason: "unknown_argument",
-        expected: guidance!.expected,
+        expected: "procedure",
         message: guidance!.message,
       },
     ]);

@@ -432,7 +432,7 @@ describe("SDK argument name guidance", () => {
         expect.objectContaining({
           path: ["address"],
           reason: "unknown_argument",
-          expected: guidance!.expected,
+          expected: "procedure",
           message: guidance!.message,
         }),
       );
@@ -464,7 +464,7 @@ describe("SDK argument name guidance", () => {
         expect.objectContaining({
           path: ["query"],
           reason: "unknown_argument",
-          expected: guidance!.expected,
+          expected: "pattern",
           message: guidance!.message,
         }),
       );
@@ -498,7 +498,7 @@ describe("SDK argument name guidance", () => {
         expect.objectContaining({
           path: ["address"],
           reason: "unknown_argument",
-          expected: guidance!.expected,
+          expected: "procedure",
           message: guidance!.message,
         }),
       );
