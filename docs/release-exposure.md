@@ -42,6 +42,8 @@ The audit composes existing readers. It does not reread Electron fuse bytes itse
 | `macho.hardened_runtime`        | Not assessed in this audit                                               |          |
 | `android.manifest`              | Not assessed in this audit                                               |          |
 
+`go.build_paths` reads a flag's arguments by the rules of the tool that takes them. A linker `-X` value is an application string, so a relative one is not a path. A rooted one cannot be told from a file path, so it is reported: `-X main.route=/api/v1` is sampled like `-X main.root=/srv/build`, because dropping both would miss the second.
+
 `text.credential_markers` matches provider-prefixed forms such as a PEM private-key header and documented vendor token prefixes. The report contains the rule id and location only. Matched bytes, previews, lengths, and hashes of matched bytes are omitted.
 
 `native.hardening`, `macho.hardened_runtime`, and `android.manifest` stay `not_assessed`. Their next probes are `inspect_binary_hardening`, `inspect_signature`, and `inspect_android_package`.
