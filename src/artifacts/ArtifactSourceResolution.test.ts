@@ -52,7 +52,9 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "rejects desktop inspection when the selected spelling traverses a regular file",
   async () => {
-    const root = await createTestTempDirectory("rea-desktop-enotdir-intermediate-");
+    const root = await createTestTempDirectory(
+      "rea-desktop-enotdir-intermediate-",
+    );
     const app = join(root, "Demo.app");
     await mkdir(app);
     await writeFile(
@@ -94,7 +96,6 @@ it.skipIf(process.platform === "win32")(
     }
   },
 );
-
 
 it.skipIf(process.platform === "win32")(
   "reports a replaced ancestor symlink loop as a changed admitted source",
