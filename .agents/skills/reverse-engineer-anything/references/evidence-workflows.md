@@ -73,6 +73,13 @@ Parent Evidence ID plus source index preserves same-address
 alternatives. Follow `coverage.next_offset` only as far as the question needs;
 exhausting retained rows does not establish complete program discovery.
 
+Read a retained `batch_decompile` through its Evidence ID with
+`view: {kind: "batch-decompile", collection: "items"}` for body-free rows and
+exact `where.indices`, `addresses`, `procedure_addresses` or `statuses`. Add
+`include_pseudocode: true` for several chosen bodies, or use
+`collection: "pseudocode"` with one row's `index` to page a large body. Batch
+limitations aggregate every item, so do not attribute them to one successful row.
+
 Use `record_unknown` to track unresolved questions in the user's investigation
 and name the authority or environment still required. Supply supporting and
 contradicting evidence IDs. It updates the session registry directly.

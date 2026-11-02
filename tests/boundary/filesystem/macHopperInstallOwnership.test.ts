@@ -288,7 +288,9 @@ it("reports only retained Mac cleanup roots and clears the live report after exa
   const temporary = join(home, "owned-dmg");
   const stage = join(home, "owned-stage");
   await Promise.all([mkdir(temporary), mkdir(stage)]);
-  const host = systemMacHopperInstallHost(home, { HOME: home });
+  const host = systemMacHopperInstallHost(home, { HOME: home }, () =>
+    Promise.resolve("14.0"),
+  );
   let allowTemporary = false;
   let allowStage = false;
   let temporaryCalls = 0;
