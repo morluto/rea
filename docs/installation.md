@@ -1717,6 +1717,8 @@ remediation and are preserved. Move an old local installation aside deliberately
 before installing a different version. Interrupted downloads retain their owned
 cleanup until the installer process has stopped. Ctrl-C awaits staging cleanup
 before setup exits; failed cleanup stays owned for retry.
+Mixed-client setup keeps Cursor's installer scope open through marketplace
+commands and final checks, then joins installer cleanup before removing staging.
 The setup cancellation signal also covers discovery, approval and final plugin
 checks. An interrupt stops later command launches, registrations, skill copies
 and plugin publication. An admitted host transaction settles before setup

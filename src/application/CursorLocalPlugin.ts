@@ -2,7 +2,6 @@ import { lstat, mkdir, realpath, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
@@ -61,14 +60,10 @@ export class CursorLocalPlugin extends SetupPluginCommands {
     const commands = new ArtifactResourceScope();
     super(environment, commands, launch);
     this.directory = join(home, ".cursor", "plugins", "local", "rea");
-    resources.retain({
-      kind: "lease",
-      resource: this.directory,
-      lease: new AnalysisCleanupLease(async () => {
-        // Keep the staging root until every installer child has been joined.
-        await commands.close();
-        await this.staging?.close();
-      }, [this.directory]),
+    resources.addCloseHook(async () => {
+      // End the manager lifetime only when setup closes, after installer cleanup.
+      await commands.close();
+      await this.staging?.close();
     });
   }
 
