@@ -357,6 +357,42 @@ it("recovers History API URL arguments without mistaking state and title for rou
   ).toBe(false);
 });
 
+it("recovers browser location.assign destinations without trusting local lookalikes", () => {
+  const facts = analyze(`
+    window.location.assign('/checkout?step=1');
+    globalThis.location.assign('/account#details');
+    function local(location) { location.assign('/shadowed'); }
+  `);
+  expect(
+    facts.candidates
+      .filter(({ mechanism }) => mechanism === "navigation-target")
+      .map(({ path }) => path),
+  ).toEqual(["/checkout", "/account"]);
+});
+
+it("preserves uncertainty for dynamic or modified Location.assign calls", () => {
+  for (const source of [
+    `location.assign = custom; location.assign('/patched');`,
+    `window.location = other; window.location.assign('/patched');`,
+    `function f(window) { window.location.assign('/shadowed'); }`,
+    `const other = {assign(){}}; other.assign('/not-location');`,
+  ]) {
+    expect(
+      analyze(source).candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+  }
+  const dynamic = analyze(
+    `location.assign(target); location.assign('../relative');`,
+  );
+  expect(
+    dynamic.unresolved.filter(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toHaveLength(2);
+});
+
 it("does not infer History API routes from shadowed or overwritten globals", () => {
   for (const source of [
     `function f(history) { history.pushState(null, '', '/shadowed'); }`,

@@ -48,6 +48,31 @@ it("recovers History API paths through the public MCP workflow", async () => {
   );
 });
 
+it("recovers Location.assign paths through the public MCP workflow", async () => {
+  const path = await createTestTempDirectory("rea-location-routes-");
+  await writeFile(
+    join(path, "app.js"),
+    `window.location.assign('/checkout?step=1');
+     globalThis.location.assign('/account#details');
+     function local(location) { location.assign('/shadowed'); }`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toHaveLength(2);
+  expect(view.items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/account" }),
+      expect.objectContaining({ path: "/checkout" }),
+    ]),
+  );
+});
+
 const interceptedSource = "export default function Photo(){return null;}";
 const independentPaths = [
   "/checks/independent",

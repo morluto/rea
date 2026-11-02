@@ -163,6 +163,15 @@ const historyNavigation = (
     isUnmodifiedGlobalReference(node.callee, index.bindings, ["history", name])
   );
 };
+/** Recognize the ambient browser Location.assign without guessing local methods. */
+const locationAssign = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  index: JavaScriptBindingIndex,
+): boolean =>
+  isUnmodifiedGlobalReference(node.callee, index.bindings, [
+    "location",
+    "assign",
+  ]);
 const localNavigationFields = new Set(["pathname", "query", "search", "hash"]);
 const nextNames = new Set(["TURBOPACK", "webpackChunk_N_E", "__NEXT_DATA__"]);
 const isRouteChildKey = (key: string, typed: boolean): boolean =>
@@ -345,7 +354,9 @@ export class JavaScriptRouteScan {
             }
             const parts = calleeName(node.callee).split(".");
             if (
-              navigationRecognition(parts.at(-1)!, parts.at(-2) ?? "") !== true
+              navigationRecognition(parts.at(-1)!, parts.at(-2) ?? "") !==
+                true &&
+              !locationAssign(node, this.index)
             )
               return;
             const first = node.arguments[0];
@@ -698,7 +709,12 @@ export class JavaScriptRouteScan {
     )
       return;
     const recognized = navigationRecognition(name, parts.at(-2) ?? "");
-    if (recognized === true) this.#navigation(first);
+    if (
+      recognized === true ||
+      ((t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        locationAssign(node, this.index))
+    )
+      this.#navigation(first);
     else if (recognized === false) {
       // Method spelling alone does not make array/string data a destination.
       const value = this.#resolve(first, undefined, this.index);
