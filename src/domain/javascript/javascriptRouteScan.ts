@@ -33,6 +33,7 @@ import {
 } from "./javascriptSemanticAliasSelections.js";
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
@@ -151,6 +152,17 @@ const navigationRecognition = (
     ? (name !== "push" && name !== "replace") ||
       navigationReceivers.has(receiver)
     : undefined;
+/** Only the browser History API uses the third argument as its URL. */
+const historyNavigation = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  index: JavaScriptBindingIndex,
+): boolean => {
+  const name = calleeName(node.callee).split(".").at(-1);
+  return (
+    (name === "pushState" || name === "replaceState") &&
+    isUnmodifiedGlobalReference(node.callee, index.bindings, ["history", name])
+  );
+};
 const localNavigationFields = new Set(["pathname", "query", "search", "hash"]);
 const nextNames = new Set(["TURBOPACK", "webpackChunk_N_E", "__NEXT_DATA__"]);
 const isRouteChildKey = (key: string, typed: boolean): boolean =>
@@ -319,6 +331,18 @@ export class JavaScriptRouteScan {
         skip: () => this.#result.capacity !== null,
         enter: (node) => {
           if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+            if (historyNavigation(node, this.index)) {
+              const url = node.arguments[2];
+              if (
+                url !== undefined &&
+                !node.arguments
+                  .slice(0, 3)
+                  .some((argument) => t.isSpreadElement(argument)) &&
+                !t.isArgumentPlaceholder(url)
+              )
+                remember(url, node);
+              return;
+            }
             const parts = calleeName(node.callee).split(".");
             if (
               navigationRecognition(parts.at(-1)!, parts.at(-2) ?? "") !== true
@@ -635,6 +659,30 @@ export class JavaScriptRouteScan {
         this.onLegacyRoute?.({ node, value, mechanism: `call:${fullName}` });
     }
     if (this.#result.capacity !== null || t.isNewExpression(node)) return;
+    if (historyNavigation(node, this.index)) {
+      // The state and title are data, not navigation destinations.
+      for (const argument of node.arguments.slice(0, 2)) {
+        if (t.isSpreadElement(argument) || t.isArgumentPlaceholder(argument))
+          continue;
+        this.#propertyValues.add(unwrapJavaScriptExpression(argument).node);
+        this.#ownDynamicValue(argument, false, true, true);
+      }
+      const url = node.arguments[2];
+      if (
+        node.arguments
+          .slice(0, 3)
+          .some((argument) => t.isSpreadElement(argument))
+      ) {
+        this.#unknown(
+          "navigation-target",
+          node,
+          "Spread arguments leave the History API destination unknown.",
+        );
+      } else if (url !== undefined && !t.isArgumentPlaceholder(url)) {
+        this.#navigation(url);
+      }
+      return;
+    }
     if (structuredCalls.has(name)) {
       if (this.#queue(node))
         this.#calls.push({

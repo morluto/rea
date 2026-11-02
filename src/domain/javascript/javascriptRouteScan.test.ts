@@ -336,6 +336,57 @@ it("excludes generic config paths and SVG data while retaining navigation candid
     facts.candidates.some(({ path }) => path.includes("state/items")),
   ).toBe(false);
 });
+
+it("recovers History API URL arguments without mistaking state and title for routes", () => {
+  const facts = analyze(`
+    const target = '/profile?tab=info';
+    window.history.pushState({ path: '/decoy', nested: { path: '/decoy-child', component: View } }, '/title', '/checkout?step=1');
+    globalThis.history.replaceState(null, '', target);
+    history.pushState(null, '', '/help#contact');
+  `);
+  expect(
+    facts.candidates
+      .filter(({ mechanism }) => mechanism === "navigation-target")
+      .map(({ path }) => path),
+  ).toEqual(["/checkout", "/profile", "/help"]);
+  expect(
+    facts.candidates.some(
+      ({ path }) =>
+        path === "/decoy" || path === "/decoy-child" || path === "/title",
+    ),
+  ).toBe(false);
+});
+
+it("does not infer History API routes from shadowed or overwritten globals", () => {
+  for (const source of [
+    `function f(history) { history.pushState(null, '', '/shadowed'); }`,
+    `function f(window) { window.history.pushState(null, '', '/shadowed'); }`,
+    `history.pushState = custom; history.pushState(null, '', '/patched');`,
+    `window.history = other; window.history.pushState(null, '', '/patched');`,
+  ]) {
+    expect(
+      analyze(source).candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+  }
+});
+
+it("keeps dynamic and relative History API destinations unresolved", () => {
+  const facts = analyze(
+    `history.pushState(null, '', target); history.replaceState(null, '', '../edit'); history.pushState(...args, '', '/not-known');`,
+  );
+  expect(
+    facts.candidates.filter(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toEqual([]);
+  expect(
+    facts.unresolved.filter(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toHaveLength(3);
+});
 it.each([
   ["/_next/static/chunks/app/page-123.js", "/"],
   ["https://example.test/app/_next/static/chunks/app/page.tsx", "/"],
