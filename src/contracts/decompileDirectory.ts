@@ -202,7 +202,9 @@ export const decompileDirectoryManifestSchema = z
       ),
     limitations: z
       .array(z.string())
-      .describe("Limits of this export. Pseudocode is not included."),
+      .describe(
+        "Limits of this export directory, including retained function records. Pseudocode is not included.",
+      ),
     resume: z.boolean().describe("Whether this call continued a journal."),
   })
   .superRefine((manifest, context) => {
@@ -309,7 +311,11 @@ export const decompileDirectoryIndexSchema = z.strictObject({
   analysis_profile_digest: digestSchema.nullable(),
   layout: layoutSchema,
   layout_status: z.enum(["address", "debug_layout_unavailable"]),
-  limitations: z.array(z.string()),
+  limitations: z
+    .array(z.string())
+    .describe(
+      "Limits of this export directory, including retained function records.",
+    ),
   functions: z.array(decompileDirectoryFunctionSchema),
 });
 
