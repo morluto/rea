@@ -192,7 +192,13 @@ it("returns a directly usable partial analysis reference for an oversized timeou
     );
   const nextRoot = await createTestTempDirectory("rea-js-timeout-recovery-");
   await writeFile(join(nextRoot, "main.js"), "export const recovered = 9;\n");
-  const { client, transport, diagnostics } = createResourceClient();
+  // This case tests timeout/transport recovery of the full 1500-file result.
+  // Its measured original-error authentication projection is about 736 MiB;
+  // keep finite parent room for retention and later views. The worker remains
+  // at 128 MiB, and the separate parent-capacity case retains its 512 MiB heap.
+  const { client, transport, diagnostics } = createResourceClient({
+    parentHeapMb: 1536,
+  });
   try {
     await client.connect(transport);
     const response = await client.callTool(
@@ -208,7 +214,35 @@ it("returns a directly usable partial analysis reference for an oversized timeou
       { timeout: 60000 },
     );
     const { error } = parseMcpToolError(response);
-    expect(error.code).toBe("provider_timeout");
+    const status = await client.callTool({
+      name: "binary_session",
+      arguments: {},
+    });
+    const { investigation } = z
+      .object({
+        result: z.object({
+          investigation: z.object({
+            evidence_records: z.number(),
+            retained_representation_bytes: z.number(),
+            maximum_representation_bytes: z.number(),
+          }),
+        }),
+      })
+      .parse(status.structuredContent).result;
+    expect(
+      error.code,
+      JSON.stringify({
+        code: error.code,
+        message: error.message,
+        reported_limits: error.details?.reported_limits,
+        investigation,
+        diagnostics: diagnostics(),
+      }),
+    ).toBe("provider_timeout");
+    expect(investigation.evidence_records).toBe(1);
+    expect(investigation.retained_representation_bytes).toBeLessThanOrEqual(
+      investigation.maximum_representation_bytes,
+    );
     const partial = retainedEvidenceReferenceSchema.parse(
       error.details?.partial_observation,
     );
@@ -306,7 +340,9 @@ const verifyRecovery = async (
   await client.ping();
 };
 
-const createResourceClient = () => {
+const createResourceClient = ({
+  parentHeapMb = 512,
+}: { readonly parentHeapMb?: number } = {}) => {
   const client = new Client({ name: "javascript-resources", version: "1" });
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -314,7 +350,7 @@ const createResourceClient = () => {
     cwd: process.cwd(),
     env: {
       PATH: process.env.PATH ?? "",
-      NODE_OPTIONS: "--max-old-space-size=512 --max-semi-space-size=8",
+      NODE_OPTIONS: `--max-old-space-size=${String(parentHeapMb)} --max-semi-space-size=8`,
     },
     stderr: "pipe",
   });

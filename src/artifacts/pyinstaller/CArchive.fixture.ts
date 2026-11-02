@@ -5,7 +5,8 @@ import {
   pythonPycHeader,
 } from "../../python/PythonPyc.fixture.js";
 
-import { PYINSTALLER_COOKIE_MAGIC } from "./CArchiveLayout.js";
+// PyInstaller CArchiveWriter's on-disk cookie signature, independent of REA's reader.
+const CARCHIVE_COOKIE_MAGIC = Buffer.from("4d45490c0b0a0b0e", "hex");
 
 /** Final CPython 3.9 bytecode magic, little-endian with the CR LF trailer. */
 export const PYTHON_39_MAGIC = Buffer.from("610d0d0a", "hex");
@@ -172,7 +173,7 @@ export const cArchiveBytecodeExecutable = () => {
 /** Cookie whose package range starts before the file. */
 export const cookieRangeOutsideFile = (): Buffer => {
   const cookie = Buffer.alloc(88);
-  PYINSTALLER_COOKIE_MAGIC.copy(cookie, 0);
+  CARCHIVE_COOKIE_MAGIC.copy(cookie, 0);
   cookie.writeUInt32BE(200, 8);
   cookie.writeUInt32BE(80, 12);
   cookie.writeUInt32BE(32, 16);
@@ -255,7 +256,7 @@ const cookieBytes = (input: {
 }): Buffer => {
   const size = input.layout === "2.1" ? 88 : 24;
   const bytes = Buffer.alloc(size);
-  PYINSTALLER_COOKIE_MAGIC.copy(bytes, 0);
+  CARCHIVE_COOKIE_MAGIC.copy(bytes, 0);
   bytes.writeUInt32BE(input.tocOffset + input.tocLength + size, 8);
   bytes.writeUInt32BE(input.tocOffset, 12);
   bytes.writeUInt32BE(input.tocLength, 16);

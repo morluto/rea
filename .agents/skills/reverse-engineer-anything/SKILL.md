@@ -377,8 +377,9 @@ unless the group overrides them. The grouped name union is the complete tool
 inventory; use `tools/list` for canonical tool schemas. The default summary keeps
 each provider candidate's availability and target-support status, code and
 reason; `omitted_fields` lists what it leaves out. Request `{"detail": "complete"}`
-only when you need provider diagnostics, candidate capability sets, or tool
-surface, effect and annotation flags; in those closed flag vocabularies, listed
+only when you need an unavailable candidate's remediation, provider
+diagnostics, candidate capability sets, or tool surface, effect and annotation
+flags; in those closed flag vocabularies, listed
 flags are true and omitted known flags are false. Provider candidate facts
 describe possible providers, while top-level session capabilities describe the
 current route and `analysis_provider_binding` names the selected provider. Do
@@ -431,7 +432,10 @@ output also streams without a single MCP frame.
 When the retained parent ID is unknown, use `get_evidence_bundle` with
 `detail: "summary"` and exact filters for operation, target SHA-256,
 analysis-profile digest or canonical procedure address. Select its returned
-Evidence ID for the next view instead of requesting the complete bundle.
+Evidence ID for the next view instead of requesting the complete bundle. When
+that record has no supported view (for example an annotation), read it with
+`detail: "records"` and an `evidence_id` filter; `missing_evidence_links`
+names linked sources this session does not retain.
 `retention: "complete-record"` means the whole record is stored; native
 value-flow truncation and unknown metadata remain separate. For an exported
 portable bundle, use `rea inspect-evidence-bundle` with JSON containing `path`,
@@ -514,4 +518,8 @@ as complete while required questions remain open.
 Explain findings in plain language and tie them to returned evidence. When the
 user asks to build something, use normal coding tools and separate observed
 behavior from design choices. Close an opened native session with
-`close_binary` when the investigation is complete.
+`close_binary` when its engine is no longer needed. Evidence references and Unknown
+history remain in memory on the same MCP connection. End the investigation with
+`reset_investigation`; supply `save_path` to checkpoint the complete bundle before
+clearing. Import the saved bundle to restore original references and Unknown
+history in a new process. Retention is bounded and is not automatic persistence.

@@ -1,5 +1,4 @@
 import type { EvidenceWriter } from "./InvestigationRecordPort.js";
-import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -52,7 +51,7 @@ export const retainAnalysisResultSources = <Value>(
 export const recordEvidenceSources = (
   recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
   sources: readonly Evidence[],
-): Result<null, EvidenceIntegrityError> => {
+): Result<null, AnalysisError> => {
   for (const source of sources) {
     const recorded = recordEvidence?.(source);
     if (recorded !== undefined && !recorded.ok) return recorded;

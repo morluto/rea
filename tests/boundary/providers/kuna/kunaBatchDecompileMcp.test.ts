@@ -1,3 +1,4 @@
+import { batchDecompileResultSchema } from "../../../../src/domain/native/batchDecompile.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -92,7 +93,9 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
       throw new Error(
         "Missing batch_decompile or get_evidence_bundle contract",
       );
-    const result = batchDecompile.outputSchema.parse(batch).normalized_result;
+    const result = batchDecompileResultSchema.parse(
+      batchDecompile.outputSchema.parse(batch).normalized_result,
+    );
     expect(result).toMatchObject({ total: 4, succeeded: 1, failed: 3 });
     const [main, failed, imported, unknown] = result.items;
     expect(main).toMatchObject({ address: "main", status: "ok" });

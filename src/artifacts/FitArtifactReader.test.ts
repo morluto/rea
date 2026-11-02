@@ -55,6 +55,41 @@ const firstEntry = async (reader: FitArtifactReader) => {
   return entry;
 };
 
+it.each(["close", "cancel"] as const)(
+  "refuses to finish a paused FIT inventory after %s",
+  async (action) => {
+    const reader = new FitArtifactReader(
+      await writeFit("paused-inventory.itb", FIT_EXTERNAL),
+    );
+    const controller = new AbortController();
+    const reason = { stage: "after final entry" };
+    const iterator = reader.entries(controller.signal)[Symbol.asyncIterator]();
+    try {
+      expect((await iterator.next()).done).toBe(false);
+      expect((await iterator.next()).done).toBe(false);
+      if (action === "close") await reader.close();
+      else controller.abort(reason);
+      const failure: unknown = await iterator.next().then(
+        () => {
+          throw new Error("Expected the paused inventory to fail");
+        },
+        (cause: unknown) => cause,
+      );
+      expect(failure).toMatchObject(
+        action === "close"
+          ? { reason: "unavailable" }
+          : { reason: "cancelled" },
+      );
+      if (action === "cancel") {
+        if (!(failure instanceof ArtifactReaderFailure)) throw failure;
+        expect(failure.cause).toBe(reason);
+      }
+    } finally {
+      await reader.close();
+    }
+  },
+);
+
 it.each([
   ["embedded", FIT_EMBEDDED, "embedded"],
   ["external", FIT_EXTERNAL, "data-offset"],

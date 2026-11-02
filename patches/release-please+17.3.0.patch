@@ -81,6 +81,51 @@
                  // In this case, there is no squashed merge commit. This could be a simple
                  // merge commit, a rebase merge commit, or a direct commit to the branch.
                  // Fallback to fetching the list of commits from the REST API. In the future
+@@ -1154,15 +1154,40 @@
+      * @returns {string} HTML URL of the new file
+      */
+     async createFileOnNewBranch(filename, contents, newBranchName, baseBranchName) {
+-        // create or update new branch to match base branch
+-        await this.forkBranch(newBranchName, baseBranchName);
+-        // use the single file upload API
++        // Preserve existing notes until the replacement file is committed.
++        // A failed write must not leave an open proposal pointing at a missing file.
++        if (!(await this.getBranchSha(newBranchName))) {
++            const baseSha = await this.getBranchSha(baseBranchName);
++            if (!baseSha) {
++                throw new Error(`Unable to find base branch: ${baseBranchName}`);
++            }
++            await this.createNewBranch(newBranchName, baseSha);
++        }
++        let existingSha;
++        try {
++            const { data } = await this.octokit.repos.getContent({
++                owner: this.repository.owner,
++                repo: this.repository.repo,
++                path: filename,
++                ref: newBranchName,
++            });
++            if (Array.isArray(data) || data.type !== 'file' || !data.sha) {
++                throw new Error(`Expected a file at ${filename} on branch: ${newBranchName}`);
++            }
++            existingSha = data.sha;
++        }
++        catch (error) {
++            if (!(error instanceof request_error_1.RequestError && error.status === 404)) {
++                throw error;
++            }
++        }
+         const { data: { content }, } = await this.octokit.repos.createOrUpdateFileContents({
+             owner: this.repository.owner,
+             repo: this.repository.repo,
+             path: filename,
+             // contents need to be base64 encoded
+-            content: Buffer.from(contents, 'binary').toString('base64'),
++            content: Buffer.from(contents, 'utf8').toString('base64'),
++            ...(existingSha ? { sha: existingSha } : {}),
+             message: 'Saving release notes',
+             branch: newBranchName,
+         });
 --- a/build/src/github.d.ts
 +++ b/build/src/github.d.ts
 @@ -47,6 +47,8 @@

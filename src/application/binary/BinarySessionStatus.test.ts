@@ -25,9 +25,13 @@ import {
 } from "./BinarySessionStatus.js";
 import {
   APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
-  NATIVE_MACOS_PROVIDER_IDENTITY,
   nativeMacOSCapabilities,
 } from "../../native/NativeMacOSProviderMetadata.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../native/NativeMacosProviderIdentity.js";
+import {
+  buildCapabilityInventory,
+  MULTI_MODE_REMEDIATION,
+} from "../CapabilityInventory.js";
 
 const projectedStatusSchema = z.object({
   capabilities: sessionProviderFacts.shape.capabilities,
@@ -172,6 +176,14 @@ const projectStatus = async (
     candidateStatuses: async () => candidates,
   };
   return binarySessionStatus({
+    investigation: {
+      evidence_records: 0,
+      unknown_revisions: 0,
+      unknown_heads: 0,
+      retained_representation_bytes: 0,
+      maximum_representation_bytes: 0,
+      persistence: "memory",
+    },
     target: options.target,
     route,
     router,
@@ -509,6 +521,146 @@ it.each(["elf", "pe"] as const)(
   },
 );
 
+const dispatchTarget = (format: "elf" | "mach-o"): BinaryTarget => ({
+  kind: "executable",
+  format,
+  path: "/fixture",
+  sha256: "a".repeat(64),
+  architecture: "x86_64",
+  availableArchitectures: ["x86_64"],
+});
+
+it.each([
+  { format: "elf", symbols: false, nativeAvailable: false, route: false },
+  { format: "elf", symbols: true, nativeAvailable: false, route: true },
+  { format: "mach-o", symbols: false, nativeAvailable: true, route: true },
+] as const)(
+  "projects $format dispatch applicability and symbol fallback ($symbols)",
+  async ({ format, symbols, nativeAvailable, route }) => {
+    const target = dispatchTarget(format);
+    const native = nativeMacOSCapabilities("darwin").find(
+      (item) => item.operation === "inspect_native_dispatch_metadata",
+    );
+    if (native === undefined) throw new Error("Missing native dispatch reader");
+    const capabilities = [
+      native,
+      descriptor(providerA, "decode_interface_builder", []),
+      descriptor(providerA, "procedure_address", []),
+      descriptor(providerA, "procedure_callees", []),
+      ...(symbols ? [descriptor(providerA, "list_names", [])] : []),
+    ];
+    const status = await projectStatus(capabilities, [], { target });
+    const parsed = projectedStatusSchema.parse(status);
+    const projected = expandCanonicalCapabilities(parsed.capabilities).find(
+      (item) => item.operation === "inspect_native_dispatch_metadata",
+    );
+    expect(projected).toMatchObject({
+      available: nativeAvailable,
+      availability_code: nativeAvailable ? null : "target_format_unsupported",
+    });
+    const inventory = buildCapabilityInventory(status, {
+      processCaptureEnabled: false,
+    });
+    const dispatch = inventory.find(
+      (item) => item.name === "inspect_native_dispatch_metadata",
+    );
+    expect(dispatch?.available).toBe(route);
+    const trace = inventory.find(
+      (item) => item.name === "trace_native_ui_action",
+    );
+    expect(
+      trace?.modes?.find((mode) => mode.name === "native_seed_call_trace"),
+    ).toMatchObject({
+      available: route,
+      missing_operations: route
+        ? []
+        : ["inspect_native_dispatch_metadata", "list_names"],
+    });
+    if (!route) {
+      expect(trace?.remediation).toBe(MULTI_MODE_REMEDIATION);
+      const authored = trace?.modes?.find(
+        (mode) => mode.name === "authored_ui_dispatch",
+      );
+      const nativeSeed = trace?.modes?.find(
+        (mode) => mode.name === "native_seed_call_trace",
+      );
+      expect(authored?.remediation).not.toBe(nativeSeed?.remediation);
+      expect(authored?.missing_operations).toContain(
+        "decode_interface_builder",
+      );
+    }
+  },
+);
+
+it("does not impose the Apple reader's target rule on another provider", async () => {
+  const target = dispatchTarget("elf");
+  const status = await projectStatus(
+    [descriptor(providerA, "inspect_native_dispatch_metadata", [])],
+    [],
+    { target },
+  );
+  const projected = expandCanonicalCapabilities(
+    projectedStatusSchema.parse(status).capabilities,
+  );
+  expect(projected).toMatchObject([
+    { operation: "inspect_native_dispatch_metadata", available: true },
+  ]);
+  const inventory = buildCapabilityInventory(status, {
+    processCaptureEnabled: false,
+  });
+  expect(
+    inventory.find((item) => item.name === "inspect_native_dispatch_metadata"),
+  ).toMatchObject({ available: true });
+});
+
+it("keeps distinct recovery for an unbound non-bundle session", async () => {
+  const native = nativeMacOSCapabilities("darwin").find(
+    (item) => item.operation === "inspect_native_dispatch_metadata",
+  );
+  if (native === undefined) throw new Error("Missing native dispatch reader");
+  const status = await projectStatus(
+    [native, descriptor(providerA, "decode_interface_builder", [])],
+    [],
+    { target: dispatchTarget("mach-o") },
+  );
+  const inventory = buildCapabilityInventory(status, {
+    processCaptureEnabled: false,
+  });
+  const trace = inventory.find(
+    (item) => item.name === "trace_native_ui_action",
+  );
+  expect(trace).toMatchObject({
+    available: false,
+    reason: "provider_unavailable",
+    remediation: MULTI_MODE_REMEDIATION,
+  });
+  const authored = trace?.modes?.find(
+    (mode) => mode.name === "authored_ui_dispatch",
+  );
+  const nativeSeed = trace?.modes?.find(
+    (mode) => mode.name === "native_seed_call_trace",
+  );
+  expect(authored?.missing_operations).toContain("decode_interface_builder");
+  expect(nativeSeed?.missing_operations).toContain("procedure_address");
+  expect(authored?.remediation).not.toBe(nativeSeed?.remediation);
+});
+
+it("keeps host unavailability ahead of target applicability", async () => {
+  const native = nativeMacOSCapabilities("linux").find(
+    (item) => item.operation === "inspect_native_dispatch_metadata",
+  );
+  if (native === undefined) throw new Error("Missing native dispatch reader");
+  const target = dispatchTarget("elf");
+  const projected = await project([native], [], new Map(), target);
+  expect(expandCanonicalCapabilities(projected.capabilities)).toMatchObject([
+    {
+      operation: "inspect_native_dispatch_metadata",
+      available: false,
+      availability_code: "unsupported_host",
+    },
+  ]);
+});
+
 describe("binary session summary projection", () => {
   it("keeps each candidate's status, code and reason in summary without diagnostics or capability sets", async () => {
     const unavailable: AnalysisProviderCandidateStatus = {
@@ -516,7 +668,8 @@ describe("binary session summary projection", () => {
       availability: {
         status: "unavailable",
         code: "not_configured",
-        reason: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+        reason: "PROVIDER_B_HOME is not set.",
+        remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
         diagnostics: { checks: [{ name: "configuration", ok: false }] },
       },
       targetSupport: {
@@ -574,7 +727,7 @@ describe("binary session summary projection", () => {
         availability: {
           status: "unavailable",
           code: "not_configured",
-          reason: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+          reason: "PROVIDER_B_HOME is not set.",
         },
         target_support: {
           status: "unsupported",
@@ -585,6 +738,13 @@ describe("binary session summary projection", () => {
       },
     ]);
     expect(JSON.stringify(raw)).not.toContain("diagnostics");
+    // Complete detail keeps the owner's repair; summary omits it.
+    expect(
+      complete.analysis_provider_candidates[1]?.availability,
+    ).toMatchObject({
+      remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+    });
+    expect(JSON.stringify(raw)).not.toContain("PROVIDER_B_HOME;");
     expect(
       analysisProviderCandidate
         .array()
@@ -622,4 +782,69 @@ it("narrows summary capabilities without inventing omitted candidate facts", asy
     code: null,
     reason: "No target is open.",
   });
+});
+
+it("groups readiness repairs exactly and drops one replaced by a runtime observation", async () => {
+  const unavailable = (
+    operation: CapabilityDescriptor["operation"],
+    remediation: string,
+  ): CapabilityDescriptor => {
+    const declared = descriptor(providerA, operation, [], {
+      available: false,
+      reason: "Configured registration is invalid.",
+    });
+    if (declared.available) throw new Error("Expected an unavailable fixture");
+    return { ...declared, remediation };
+  };
+  const status = await project(
+    [
+      unavailable("procedure_info", "Correct REA_FIXTURE_CONFIG."),
+      unavailable("read_bytes", "Correct REA_FIXTURE_CONFIG."),
+      unavailable("list_names", "Unset REA_FIXTURE_CACHE."),
+      unavailable("xrefs", "Correct REA_FIXTURE_CONFIG."),
+    ],
+    [],
+    new Map([["xrefs", { reason: "Runtime operation failure" }]]),
+  );
+  const groups = status.capabilities.flatMap(({ groups }) => groups);
+  expect(groups).toEqual([
+    expect.objectContaining({
+      operations: ["list_names"],
+      remediation: "Unset REA_FIXTURE_CACHE.",
+    }),
+    expect.objectContaining({
+      operations: ["procedure_info", "read_bytes"],
+      reason: "Configured registration is invalid.",
+      remediation: "Correct REA_FIXTURE_CONFIG.",
+    }),
+    expect.not.objectContaining({ remediation: expect.anything() }),
+  ]);
+  expect(groups[2]).toMatchObject({
+    operations: ["xrefs"],
+    reason: "Runtime operation failure",
+  });
+  const inventory = new Map(
+    buildCapabilityInventory(
+      { open: true, kind: "executable", capabilities: status.capabilities },
+      { processCaptureEnabled: true },
+    ).map((entry) => [entry.name, entry]),
+  );
+  expect(inventory.get("procedure_info")?.remediation).toBe(
+    "Correct REA_FIXTURE_CONFIG.",
+  );
+  // A static or runtime-only refusal has no separate repair to prefer.
+  expect(inventory.get("xrefs")?.remediation).toBe("Runtime operation failure");
+  // A scoped registration narrows operations without dropping their repair.
+  const scoped = projectedStatusSchema.parse(
+    restrictAdvertisedCapabilities(
+      status,
+      (operation) => operation === "procedure_info",
+    ),
+  );
+  expect(scoped.capabilities.flatMap(({ groups }) => groups)).toEqual([
+    expect.objectContaining({
+      operations: ["procedure_info"],
+      remediation: "Correct REA_FIXTURE_CONFIG.",
+    }),
+  ]);
 });

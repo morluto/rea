@@ -38,6 +38,7 @@ const parent = (): AnalysisViewParent => {
     },
   );
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     subject: evidence.subject,

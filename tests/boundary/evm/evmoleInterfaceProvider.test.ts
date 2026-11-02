@@ -40,6 +40,7 @@ it.runIf(unsupportedHost)(
       encoding: "hex",
     });
     if (result.ok) throw new Error("Expected a host refusal");
+    expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
     const projected = projectAnalysisError(result.error);
     expect(projected).toMatchObject({ code: "capability_unavailable" });
     expect(projected.message).toContain("Linux x64");
@@ -712,21 +713,6 @@ it.runIf(!unsupportedHost)(
     } finally {
       await service.close();
     }
-  },
-);
-
-it.runIf(unsupportedHost)(
-  "reports unverified host coverage before acquiring a provider",
-  async () => {
-    expect(
-      await new EvmoleInterfaceProvider({}).inspect({
-        path: "/selected.hex",
-        encoding: "hex",
-      }),
-    ).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisCapabilityUnavailableError" },
-    });
   },
 );
 

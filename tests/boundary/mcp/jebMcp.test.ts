@@ -32,7 +32,8 @@ it("discovers current JEB operation support and recovery through binary_session"
   let availability: JebAnalysisAvailability = {
     status: "unavailable",
     code: "not_configured",
-    reason: "Start JEB at REA_JEB_MCP_URL",
+    reason: "The JEB MCP endpoint did not respond.",
+    remediation: "Start JEB at REA_JEB_MCP_URL",
     diagnostics: {},
   };
   let probes = 0;
@@ -71,7 +72,10 @@ it("discovers current JEB operation support and recovery through binary_session"
   expect(unavailable).toHaveLength(4);
   expect(
     unavailable.every(
-      (tool) => !tool.available && tool.remediation === availability.reason,
+      (tool) =>
+        !tool.available &&
+        availability.status === "unavailable" &&
+        tool.remediation === availability.remediation,
     ),
   ).toBe(true);
   availability = {

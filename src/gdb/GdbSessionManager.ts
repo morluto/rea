@@ -1,3 +1,4 @@
+import { GDB_PROVIDER_IDENTITY } from "./GdbProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import { snapshotGdbCommandRecords } from "./GdbCommandRecords.js";
@@ -114,12 +115,6 @@ const cancelledWithCallerReason = (
     cancellation.bindCleanupDependencies([previous]);
   return cancellation;
 };
-
-export const GDB_PROVIDER_IDENTITY = {
-  id: "gnu.gdb",
-  name: "GNU GDB",
-  version: null,
-} as const;
 
 interface PendingCommand {
   readonly token: number;
@@ -2169,6 +2164,8 @@ export class GdbSessionManager {
           );
         });
       }, this.#commandTimeoutMs);
+      // Cleanup bounds its own wait, so a late reply must not hold the host open.
+      if (session.cleanupStarted) timer.unref();
       pending = {
         token,
         command,

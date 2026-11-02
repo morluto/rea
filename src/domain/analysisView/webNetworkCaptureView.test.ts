@@ -69,6 +69,7 @@ const capture = () => {
   return {
     report,
     parent: {
+      predicateType: evidence.predicate_type,
       evidenceId: evidence.evidence_id,
       operation: evidence.operation,
       normalizedResult: report,
@@ -126,6 +127,7 @@ it("uses qlog event headlines without promoting HTTP-shaped extensions", () => {
   );
   const preview = projectAnalysisView(
     {
+      predicateType: evidence.predicate_type,
       evidenceId: evidence.evidence_id,
       operation: evidence.operation,
       normalizedResult: qlog,
@@ -349,6 +351,7 @@ const nativePreview = (
   });
   const preview = projectAnalysisView(
     {
+      predicateType: evidence.predicate_type,
       evidenceId: evidence.evidence_id,
       operation: evidence.operation,
       normalizedResult: report,

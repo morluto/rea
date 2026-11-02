@@ -25,7 +25,8 @@ import {
 } from "./WakaruCommand.js";
 import { parseWakaruReports } from "./WakaruReport.js";
 import { publishWakaruArtifacts } from "./WakaruPublication.js";
-import { RECOVERY_LIMITS, WAKARU_PROVIDER_IDENTITY } from "./WakaruRelease.js";
+import { RECOVERY_LIMITS } from "./WakaruRelease.js";
+import { WAKARU_PROVIDER_IDENTITY } from "./WakaruProviderIdentity.js";
 import { admitWakaruVersion } from "./WakaruVersion.js";
 
 const OPERATION = "recover_javascript_sources";

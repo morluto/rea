@@ -31,7 +31,7 @@ import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
   UNBLOB_PROVIDER_IDENTITY,
-} from "./FirmwareRelease.js";
+} from "./FirmwareProviderIdentities.js";
 import {
   startFirmwareDeadline,
   type FirmwareDeadline,

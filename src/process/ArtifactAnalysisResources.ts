@@ -366,7 +366,7 @@ export class ArtifactAnalysisResources {
       failures.flatMap((failure) => failure.cleanupResources),
       {
         reason: "One or more analysis runtime resources remain owned.",
-        failures: failures.map(projectAnalysisError),
+        failures: failures.map((failure) => projectAnalysisError(failure)),
       },
       {
         operation: failures[0]?.operation ?? this.#artifacts.operation,

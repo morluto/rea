@@ -20,6 +20,7 @@ import {
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { ok } from "../../../src/domain/result.js";
@@ -125,9 +126,11 @@ describe("MCP external command snapshot retirement", () => {
       );
       const closed = await closeRequest;
       expect(closed.isError).toBe(true);
-      expect(JSON.stringify(closed.content)).toContain(
-        "Analysis snapshots are unavailable",
-      );
+      // Retirement removes the engine binding and its invalidation marker.
+      // Saving remains unavailable until an explicit fresh open.
+      expect(parseMcpToolError(closed)).toMatchObject({
+        error: { code: "target_unavailable" },
+      });
       expect(session.activeTarget()).toBeUndefined();
       await expect(access(snapshotPath)).rejects.toMatchObject({
         code: "ENOENT",
@@ -353,9 +356,11 @@ describe("MCP composed workflow snapshot replay", () => {
       arguments: {},
     });
     expect(retained.isError, JSON.stringify(retained.content)).not.toBe(true);
-    const retainedBundle = toolContract(
-      "get_evidence_bundle",
-    ).outputSchema.parse(retained.structuredContent).result;
+    const retainedBundle = evidenceBundleSchema.parse(
+      toolContract("get_evidence_bundle").outputSchema.parse(
+        retained.structuredContent,
+      ).result,
+    );
     expect(
       retainedBundle.records.find(
         ({ evidence_id }) => evidence_id === primitiveEvidence.evidence_id,

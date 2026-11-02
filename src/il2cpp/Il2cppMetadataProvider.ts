@@ -1,3 +1,4 @@
+import { IL2CPP_METADATA_PROVIDER_IDENTITY } from "./Il2CppMetadataProviderIdentity.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
@@ -55,12 +56,6 @@ import {
   type Il2cppBinaryLink,
 } from "./Il2cppBinaryFile.js";
 
-/** Bundled format reader identity; the metadata version is a separate observed fact. */
-export const IL2CPP_METADATA_PROVIDER_IDENTITY = {
-  id: "il2cpp-metadata",
-  name: "REA IL2CPP global-metadata reader",
-  version: "1",
-} as const;
 const OPERATION = "inspect_il2cpp_metadata";
 const INPUT_BYTES = 256 * 1024 * 1024;
 // GameAssembly binaries of large games reach several hundred megabytes.

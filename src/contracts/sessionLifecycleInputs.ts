@@ -111,3 +111,13 @@ export const closeBinaryInputSchema = z.strictObject({
   snapshot_path: snapshotPathSchema.optional(),
   overwrite: z.boolean().default(false),
 });
+
+/** Optional complete checkpoint before explicitly ending the current investigation. */
+export const resetInvestigationInputSchema = z.strictObject({
+  save_path: absoluteLocalPathStringSchema
+    .describe(
+      "Absolute path for a complete Evidence bundle saved before clearing records.",
+    )
+    .optional(),
+  overwrite: z.boolean().default(false),
+});
