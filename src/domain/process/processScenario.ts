@@ -122,9 +122,12 @@ export const processScenarioCommitment = (
   scenario: ProcessScenario,
   executableSha256?: string,
 ): Readonly<Record<string, unknown>> => {
-  // A zero interval is today's immediate kill; leaving it out keeps the
-  // committed identity of every scenario that predates the field unchanged.
-  const { finalization_ms: finalizationMs, ...committed } = scenario;
+  // dry_run selects a preparation operation, not a different scenario.
+  const {
+    dry_run: _dryRun,
+    finalization_ms: finalizationMs,
+    ...committed
+  } = scenario;
   return {
     ...committed,
     ...(finalizationMs > 0 ? { finalization_ms: finalizationMs } : {}),
@@ -181,6 +184,12 @@ export const processScenarioSchema = z
   .strictObject({
     executable: childProcessString.min(1),
     arguments: z.array(childProcessString).default([]),
+    dry_run: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Validate and return the resolved scenario without launching it. A planned result is not capture Evidence and records no process observation.",
+      ),
     working_directory: childProcessString.default("."),
     environment: processEnvironmentSchema.default({}),
     filesystem_observation_paths: z
@@ -343,5 +352,55 @@ const eventsOutOfOrder = (
 ): boolean =>
   event !== undefined && previous !== undefined && event.at_ms < previous.at_ms;
 
+/** Project a resolved scenario for planning without exposing sensitive input bytes. */
+export const processScenarioPlanProjection = (
+  scenario: ProcessScenario | Omit<ProcessScenario, "dry_run">,
+) => {
+  const { dry_run: _dryRun, ...rest } = scenario as ProcessScenario;
+  return {
+    ...rest,
+    events: committedScenarioEvents(rest.events, true),
+  };
+};
+
 /** Parsed instructions and resource bounds for one process experiment. */
 export type ProcessScenario = z.infer<typeof processScenarioSchema>;
+
+const processScenarioPlanEventSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    ...timedEventBase,
+    type: z.literal("input"),
+    data: z.string(),
+    sensitive: z.boolean(),
+    input_bytes: z.int().safe().nonnegative().optional(),
+  }),
+  z.strictObject({
+    ...timedEventBase,
+    type: z.literal("resize"),
+    columns: z.int().min(PROCESS_TERMINAL_MIN_COLUMNS).max(65_535),
+    rows: z.int().min(1).max(65_535),
+  }),
+  z.strictObject({
+    ...timedEventBase,
+    type: z.literal("signal"),
+    signal: z.enum(["SIGINT", "SIGTERM", "SIGKILL"]),
+  }),
+]);
+
+// The source scenario is already refined by processScenarioSchema. The plan
+// schema validates the resolved projection without repeating those checks.
+const {
+  dry_run: _dryRun,
+  events: _events,
+  ...processScenarioPlanShape
+} = processScenarioSchema.shape;
+
+/** Resolved, non-executing scenario returned by a dry run. */
+export const processScenarioPlanSchema = z.strictObject({
+  status: z.literal("planned"),
+  scenario: z.strictObject({
+    ...processScenarioPlanShape,
+    events: z.array(processScenarioPlanEventSchema).default([]),
+  }),
+  ambient_environment: z.literal("inherited-at-run"),
+});

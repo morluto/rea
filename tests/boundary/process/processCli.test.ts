@@ -1,4 +1,4 @@
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -377,6 +377,36 @@ describe("process CLI evidence validation", () => {
     expect(
       parsed.value.capture.frames.map(({ data }) => data).join(""),
     ).toContain("minimal-capture");
+  });
+
+  it("plans the minimal scenario without launching it", async () => {
+    const root = await createTestTempDirectory("rea-process-cli-");
+    const scenario = join(root, "scenario.json");
+    const marker = join(root, "launched");
+    await writeFile(
+      scenario,
+      JSON.stringify({
+        executable: process.execPath,
+        arguments: [
+          "-e",
+          "require('node:fs').writeFileSync(process.argv[1], 'launched')",
+          marker,
+        ],
+        dry_run: true,
+      }),
+    );
+
+    const evidence = await captureProcessScenarioFile(scenario);
+    expect(evidence).toMatchObject({
+      predicate_type: "rea.process-scenario-plan",
+      operation: "capture_process_scenario",
+      normalized_result: {
+        status: "planned",
+        ambient_environment: "inherited-at-run",
+        scenario: { executable: process.execPath },
+      },
+    });
+    await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects unrelated capture evidence", async () => {

@@ -231,6 +231,7 @@ function registerPromptRenderingContracts(): void {
       "expected observations, timeout, and cleanup",
     );
     expect(content.text).toContain("do not authorize execution");
+    expect(content.text).toContain("dry_run");
     expect(content.text).toContain("not a required sequence");
     expect(content.text).toContain("never as authorization");
     expect(content.text).not.toContain("Run the caller-provided scenario");
