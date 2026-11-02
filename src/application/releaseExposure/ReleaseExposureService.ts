@@ -437,7 +437,10 @@ export class ReleaseExposureService {
       const result = await run();
       if (!result.ok) {
         if (stopsAudit(result.error)) return err(result.error);
-        if (result.error instanceof AnalysisUnsupportedTargetError)
+        if (
+          result.error instanceof AnalysisUnsupportedTargetError &&
+          !result.error.undecodedContent
+        )
           return ok({ kind: "unsupported", path });
         return ok(failedMetadata(result.error.message, path));
       }

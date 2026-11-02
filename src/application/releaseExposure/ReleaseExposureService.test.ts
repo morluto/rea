@@ -1872,3 +1872,41 @@ describe("ReleaseExposureService Go tool path options", () => {
     expect((await buildPaths(key, value))?.status).toBe("not_observed");
   });
 });
+
+describe("ReleaseExposureService undecoded metadata", () => {
+  const statuses = async (undecodedContent: boolean) => {
+    const { service, goBinaries, rustBinaries } = owners(
+      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
+    );
+    for (const [owner, operation] of [
+      [goBinaries, "inspect_go_binary"],
+      [rustBinaries, "inspect_rust_binary"],
+    ] as const)
+      owner.inspect.mockResolvedValue(
+        err(
+          new AnalysisUnsupportedTargetError(
+            operation,
+            "/work/app",
+            "Compressed section",
+            { undecodedContent },
+          ),
+        ),
+      );
+    const result = await service.inspect({ path: "/work/app" });
+    if (!result.ok) throw result.error;
+    const { checks } = releaseExposureReportSchema.parse(
+      result.value.normalized_result,
+    );
+    return ["go.build_paths", "rust.dependency_metadata"].map(
+      (id) => checks.find((check) => check.id === id)?.status,
+    );
+  };
+
+  it("stays unknown when the image holds metadata it cannot decode", async () => {
+    expect(await statuses(true)).toEqual(["unknown", "unknown"]);
+  });
+
+  it("stays not applicable when the target itself is unsupported", async () => {
+    expect(await statuses(false)).toEqual(["not_applicable", "not_applicable"]);
+  });
+});
