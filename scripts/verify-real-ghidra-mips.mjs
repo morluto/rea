@@ -448,16 +448,19 @@ try {
         );
         assert.equal(BigInt(vfpuDossier.procedure.address), vfpuAddress);
         const flow = vfpuDossier.native_value_flow;
+        const hasHighPcode = flow?.available === true;
         vfpuCoverage = {
           decoded_instructions: vfpuInstructions.length,
           prefix_sites: 4,
           vadd_sites: 3,
-          high_pcode: flow.available ? "observed" : "unavailable",
-          opaque_high_pcode_operations: flow.available
+          high_pcode: hasHighPcode ? "observed" : "unavailable",
+          opaque_high_pcode_operations: hasHighPcode
             ? flow.operations.filter(({ opcode }) => opcode === "CALLOTHER").length
             : null,
-          truncated: flow.available ? flow.truncated : null,
-          unavailable_reason: flow.available ? null : flow.reason,
+          truncated: hasHighPcode ? flow.truncated : null,
+          unavailable_reason: flow?.available === false
+            ? flow.reason
+            : hasHighPcode ? null : "Ghidra did not report a HighFunction value flow",
           pseudocode_nonempty: vfpuDossier.pseudocode.trim().length > 0,
           numeric_vector_semantics: "not_verified",
         };
