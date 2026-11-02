@@ -115,7 +115,6 @@ it.each([
     true,
   ],
   ["client.get('/accounts');", true],
-  ["eval('Map.prototype.get = fetch'); new Map().get('/accounts');", true],
 ] as const)(
   "shares Map receiver certainty with application analysis: %s",
   (source, candidate) => {
@@ -144,6 +143,26 @@ it.each([
     );
   },
 );
+
+it("keeps requests after opaque eval unconfirmed in both analyzers", () => {
+  const source =
+    "eval('Map.prototype.get = fetch'); new Map().get('/accounts'); fetch('/network');";
+  const web = analyzeWebBundleFixture(inspection(source));
+  expect(web.observations.endpoints).toEqual([]);
+  expect(
+    web.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value)
+      .sort(),
+  ).toEqual(["/accounts", "/network"]);
+  const app = analyzeJavaScriptStaticSource(source);
+  expect(
+    app.endpoints.map(({ value, interpretation }) => [
+      value,
+      interpretation ?? null,
+    ]),
+  ).toEqual([["/accounts", "candidate"]]);
+});
 
 it("discloses widened returned-reference effects only for the affected script", () => {
   const captured = inspection(`
@@ -1209,6 +1228,51 @@ const inspection = (source: string) =>
       cdpHash: "hash",
     },
   ]);
+
+it("retains XHR identity uncertainty and exact inline destinations per script", () => {
+  const captured = inspection(`
+    new XMLHttpRequest().open('GET', '/first');
+    XMLHttpRequest.prototype.open = custom;
+    new XMLHttpRequest().open('GET', '/second');
+    new XMLHttpRequest().open('GET', dynamicTarget);
+  `);
+  const script = captured.scripts.items.find(isIncludedScript);
+  if (script === undefined) throw new Error("Missing included script fixture");
+  const serialized = JSON.parse(
+    JSON.stringify(analyzeCapturedWebScript(script)),
+  );
+  const workerFacts = webBundleScriptAnalysisSchema.parse(serialized);
+  expect(workerFacts).toMatchObject({ uncertain_xhr_identity: true });
+  const report = analyzeWebBundleFixture(captured);
+  expect(report.completeness.status).toBe("partial");
+  expect(report.unknowns).toContainEqual({
+    dimension: "network_identity",
+    reason: expect.stringContaining("XHR request identity"),
+    affected_script_keys: [script.script_key],
+  });
+  expect(report.observations.endpoints.map(({ value }) => value)).toContain(
+    "/first",
+  );
+  expect(report.observations.endpoints.map(({ value }) => value)).not.toContain(
+    "/second",
+  );
+  expect(report.inferences).toContainEqual(
+    expect.objectContaining({
+      kind: "endpoint_candidate",
+      value: "/second",
+    }),
+  );
+  expect(JSON.stringify(report)).not.toContain('"value":"dynamicTarget"');
+});
+
+it("does not mark unrelated open methods as uncertain XHR", () => {
+  const report = analyzeWebBundleFixture(
+    inspection("client.open('GET','/candidate');"),
+  );
+  expect(
+    report.unknowns.some(({ dimension }) => dimension === "network_identity"),
+  ).toBe(false);
+});
 
 describe("per-script web bundle analysis", () => {
   it("keeps parser failures as analyzed outcomes with their own coverage", () => {

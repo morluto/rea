@@ -294,6 +294,28 @@ const waitForExit = async (child: ProviderProcessHandle): Promise<void> => {
   });
 };
 
+it("transfers XHR identity uncertainty through the real worker protocol", async () => {
+  const worker = new WebBundleAnalysisWorker(
+    WEB_BUNDLE_WORKER_LIMITS.heapMb,
+    launcherFor({ kind: "source" }),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript(
+        "XMLHttpRequest.prototype.open=custom; new XMLHttpRequest().open('GET','/candidate');",
+      ),
+      10_000,
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      status: "analyzed",
+      uncertain_xhr_identity: true,
+    });
+  } finally {
+    await worker.close();
+  }
+});
+
 it("reuses one real owned worker for completed facts from consecutive scripts", async () => {
   const children: ProviderProcessHandle[] = [];
   const worker = new WebBundleAnalysisWorker(

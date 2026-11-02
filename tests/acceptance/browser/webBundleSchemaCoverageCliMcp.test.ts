@@ -1,10 +1,11 @@
 import { webBundleAnalysisSchema } from "../../../src/domain/webBundleAnalysis.js";
-import { expect } from "vitest";
+import { expect, it } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const capturedSource = `
@@ -33,6 +34,53 @@ document.modelContext.registerTool({
   }
 });
 `;
+
+it("preserves uncertain XHR identity through MCP worker and retained summary", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandResult: ({ method }) =>
+      method === "Debugger.getScriptSource"
+        ? {
+            scriptSource:
+              "XMLHttpRequest.prototype.open=custom; new XMLHttpRequest().open('GET','/candidate');",
+          }
+        : undefined,
+  });
+  try {
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("analyze_web_bundle", {
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+      include_script_sources: true,
+      fetch_source_maps: false,
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const evidence = parseEvidence(response.structuredContent);
+    const report = webBundleAnalysisSchema.parse(evidence.normalized_result);
+    expect(report.completeness.status).toBe("partial");
+    expect(report.unknowns).toContainEqual(
+      expect.objectContaining({ dimension: "network_identity" }),
+    );
+    expect(report.inferences).toContainEqual(
+      expect.objectContaining({
+        kind: "endpoint_candidate",
+        value: "/candidate",
+      }),
+    );
+    const summary = await call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id: evidence.evidence_id },
+      view: { kind: "web-bundle", collection: "summary" },
+    });
+    expect(summary.isError, JSON.stringify(summary)).not.toBe(true);
+    const summaryEvidence = parseEvidence(summary.structuredContent);
+    expect(summaryEvidence.normalized_result).toMatchObject({
+      summary: { completeness: { status: "partial" } },
+    });
+  } finally {
+    await browser.close();
+  }
+}, 120_000);
 
 const inspectDeclarations = (document: unknown) => {
   const parsed =
@@ -95,7 +143,9 @@ cliTest(
     });
     try {
       const contract = toolContract("analyze_web_bundle");
+      const home = await createTestTempDirectory("rea-web-bundle-home-");
       const cliReply = await cli.run({
+        environment: { HOME: home },
         arguments: [
           "analyze-web-bundle",
           browser.endpoint,

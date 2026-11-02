@@ -20,6 +20,8 @@ export const webBundleScriptAnalysisSchema = z
       parse_status: z.enum(["parsed", "recovered", "failed"]),
       visited_ast_nodes: z.number().int().min(0),
       widened_return_references: z.boolean(),
+      // Optional for retained results produced before this coverage signal existed.
+      uncertain_xhr_identity: z.boolean().optional(),
       route_facts: javaScriptRouteSourceFactsSchema.nullable().optional(),
       observations: observationsSchema,
       inferences: webBundleAnalysisSchema.shape.inferences,
@@ -108,6 +110,7 @@ export const webBundleScriptAnalysisSchema = z
       if (
         result.visited_ast_nodes !== 0 ||
         result.widened_return_references ||
+        result.uncertain_xhr_identity === true ||
         hasFindings
       )
         context.addIssue({

@@ -23,6 +23,7 @@ export interface AnalysisAccumulator {
   readonly failedScripts: string[];
   readonly recoveredScripts: string[];
   readonly widenedScripts: string[];
+  readonly uncertainXhrScripts: string[];
 }
 
 export const createWebBundleAnalysisAccumulator = (): AnalysisAccumulator => ({
@@ -37,6 +38,7 @@ export const createWebBundleAnalysisAccumulator = (): AnalysisAccumulator => ({
   failedScripts: [],
   recoveredScripts: [],
   widenedScripts: [],
+  uncertainXhrScripts: [],
 });
 
 export const isIncludedScript = (

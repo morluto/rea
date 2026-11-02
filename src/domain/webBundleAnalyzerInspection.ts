@@ -111,7 +111,7 @@ export const analyzeScript = (
         openReceiverFacts,
         isMapLookup,
         index.bindings,
-        (target) => isXhrRequest(target) === true,
+        isXhrRequest,
       );
       const endpoint = rpc.inspect(node);
       if (endpoint !== undefined)
@@ -149,7 +149,7 @@ const inspectNode = (
     node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   ) => boolean,
   bindings: JavaScriptSemanticAnalysisState,
-  isXhrRequest: (node: t.Node) => boolean,
+  isXhrRequest: (node: t.Node) => boolean | "unknown",
 ): void => {
   const moduleSource = semanticStaticModuleSource(node);
   if (moduleSource !== null)
@@ -196,7 +196,7 @@ const inspectCall = (
     node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   ) => boolean,
   bindings: JavaScriptSemanticAnalysisState,
-  isXhrRequest: (node: t.Node) => boolean,
+  isXhrRequest: (node: t.Node) => boolean | "unknown",
 ): void => {
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
@@ -233,12 +233,25 @@ const inspectCall = (
     openReceiverFacts.get(node.start ?? -1),
   );
   const mapLookup = isMapLookup(node);
-  const knownRequest =
-    isBrowserNetworkRequest(node, bindings) || isXhrRequest(node);
+  const xhr = isXhrRequest(node);
+  if (
+    xhr === "unknown" &&
+    !accumulator.uncertainXhrScripts.includes(script.script_key)
+  )
+    accumulator.uncertainXhrScripts.push(script.script_key);
+  const knownRequest = isBrowserNetworkRequest(node, bindings) || xhr === true;
   const networkEndpoint =
     endpoint !== undefined && !mapLookup
       ? { ...endpoint, kind: knownRequest ? "endpoint" : endpoint.kind }
-      : undefined;
+      : endpoint === undefined &&
+          xhr !== false &&
+          !mapLookup &&
+          stringValue(node.arguments[1]) !== undefined
+        ? {
+            kind: xhr === true ? "endpoint" : "candidate",
+            value: stringValue(node.arguments[1])!,
+          }
+        : undefined;
   if (networkEndpoint?.kind === "candidate")
     addEndpointCandidate(
       script,
