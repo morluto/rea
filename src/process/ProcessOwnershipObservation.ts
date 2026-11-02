@@ -19,7 +19,7 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
-import { execFileOutput } from "./ExecFileOutput.js";
+import { execFileOutput, execFileOutputFailure } from "./ExecFileOutput.js";
 import {
   createDarwinProcessRunTokenReader,
   type DarwinProcessReaderCompiler,
@@ -1071,6 +1071,90 @@ const isExpectedAbort = (
   (cause === signal.reason ||
     (cause instanceof Error && cause.name === "AbortError"));
 
+/** Read process identities from one FreeBSD ps snapshot. */
+const readFreeBsdProcessIdentities = async (
+  processes: readonly { readonly pid: number }[],
+  hostEnvironment: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<ReadonlyMap<number, ProcessIdentityObservation>> => {
+  // FreeBSD has no procfs by default. One ps snapshot reports the start
+  // time (lstart, to the second), relation, effective UID and state; a
+  // PID absent from that snapshot has exited.
+  const identities = new Map<number, ProcessIdentityObservation>(
+    processes.map(({ pid }) => [
+      pid,
+      { state: "absent", reason: "not-in-snapshot" } as const,
+    ]),
+  );
+  try {
+    const { stdout } = await execFileOutput(
+      "ps",
+      [
+        "-o",
+        "pid=",
+        "-o",
+        "ppid=",
+        "-o",
+        "pgid=",
+        "-o",
+        "uid=",
+        "-o",
+        "stat=",
+        "-o",
+        "lstart=",
+        "-p",
+        processes.map(({ pid }) => String(pid)).join(","),
+      ],
+      {
+        env: hostEnvironment,
+        stopSignal: "SIGTERM",
+        ...(signal === undefined ? {} : { signal }),
+      },
+    );
+    for (const match of stdout.matchAll(
+      /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/gmu,
+    )) {
+      const state = match[5] ?? "";
+      identities.set(Number(match[1]), {
+        state: "readable",
+        identity: `freebsd-lstart:${match[6] ?? ""}`,
+        effectiveUid: Number(match[4]),
+        lifecycle: {
+          state: "observed",
+          lifecycle: state.includes("Z")
+            ? "zombie"
+            : state.includes("E")
+              ? "exiting"
+              : "non-zombie",
+        },
+        relation: {
+          state: "observed",
+          parentPid: Number(match[2]),
+          processGroupId: Number(match[3]),
+        },
+      });
+    }
+  } catch (cause: unknown) {
+    if (isExpectedAbort(cause, signal)) throw cause;
+    // FreeBSD ps exits 1 without output when no requested PID exists.
+    const failure = execFileOutputFailure(cause);
+    if (
+      failure?.code === 1 &&
+      failure.stdout.trim() === "" &&
+      failure.stderr.trim() === ""
+    )
+      return identities;
+    const reason = errorMessage(cause);
+    return new Map(
+      processes.map(({ pid }) => [
+        pid,
+        { state: "unavailable", reason } as const,
+      ]),
+    );
+  }
+  return identities;
+};
+
 /** Create the operating-system process inspector for an explicit host context. */
 export const createSystemProcessOwnershipHost = (
   platform: NodeJS.Platform = process.platform,
@@ -1122,7 +1206,23 @@ export const createSystemProcessOwnershipHost = (
     if (platform === "win32") return [];
     const { stdout } = await execFileOutput(
       "ps",
-      ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
+      // One -o per column: BSD ps treats everything after the first "=" as
+      // the header.
+      [
+        "-ax",
+        "-o",
+        "pid=",
+        "-o",
+        "ppid=",
+        "-o",
+        "pgid=",
+        "-o",
+        "uid=",
+        "-o",
+        "stat=",
+        "-o",
+        "command=",
+      ],
       {
         env: hostEnvironment,
         stopSignal: "SIGTERM",
@@ -1321,6 +1421,8 @@ export const createSystemProcessOwnershipHost = (
           }),
         ),
       );
+    if (platform === "freebsd")
+      return readFreeBsdProcessIdentities(processes, hostEnvironment, signal);
     if (darwinTokens === undefined) return new Map();
     try {
       return await darwinTokens.identities(processes, signal);
@@ -1338,7 +1440,12 @@ export const createSystemProcessOwnershipHost = (
   const captureBaseline = async (
     signal?: AbortSignal,
   ): Promise<ProcessOwnershipBaseline> => {
-    if (platform !== "linux" && darwinTokens === undefined) return [];
+    if (
+      platform !== "linux" &&
+      platform !== "freebsd" &&
+      darwinTokens === undefined
+    )
+      return [];
     const processes = liveProcesses(await listProcesses(signal));
     let identities = await processIdentities(processes, signal);
     const unreadable = processes.filter(
@@ -1453,7 +1560,9 @@ export const createSystemProcessOwnershipHost = (
         );
       }
     },
-    ...(platform !== "linux" && darwinTokens === undefined
+    ...(platform !== "linux" &&
+    platform !== "freebsd" &&
+    darwinTokens === undefined
       ? {}
       : {
           processIdentities,
