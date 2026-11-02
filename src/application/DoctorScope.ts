@@ -25,6 +25,8 @@ export interface DoctorScopeReport {
 interface DoctorProviderState {
   readonly hopperAvailable: boolean;
   readonly hopperConfigured: boolean;
+  /** A launcher was found, whether or not its later checks pass. */
+  readonly hopperDiscovered?: boolean;
   readonly providerInspections: readonly DoctorProviderInspection[] | undefined;
 }
 
@@ -35,6 +37,122 @@ interface DoctorScopeInput {
   readonly providers: DoctorProviderState;
   readonly scope: DoctorScopeReport;
 }
+
+/**
+ * The clients, providers and skill this host has set up, with their readiness
+ * under the explicit-scope rules, so an audit-wide report can tell a failure in
+ * the configured workflow apart from one in components the user never set up.
+ */
+export interface DoctorConfiguredScopeReport {
+  readonly clients: readonly string[];
+  readonly providers: readonly string[];
+  readonly skill: boolean;
+  readonly healthy: boolean;
+  /** The exact, unquoted arguments of the doctor invocation for this scope. */
+  readonly argv: readonly string[];
+  /** `argv` quoted for this host's shell: PowerShell on Windows, POSIX elsewhere. */
+  readonly command: string;
+  /** The checks that make this scope unhealthy; empty when it is healthy. */
+  readonly failing_checks: readonly DoctorCheck[];
+}
+
+/** Clients and providers this host has set up; absent when none is. */
+export interface DoctorConfiguredSelection {
+  readonly clients: readonly string[];
+  readonly providers: readonly string[];
+}
+
+/**
+ * Select registered clients (any state except missing or manual) and
+ * configured or discovered providers.
+ */
+export const selectConfiguredDoctorScope = (
+  input: Pick<DoctorScopeInput, "registrations" | "providers">,
+): DoctorConfiguredSelection | undefined => {
+  const clients = uniqueSorted(
+    input.registrations
+      .filter(({ state }) => state !== "missing" && state !== "manual")
+      .map(({ client }) => client),
+  );
+  const providers = uniqueSorted([
+    ...(input.providers.providerInspections ?? [])
+      .filter(({ configured }) => configured)
+      .map(({ id }) => id),
+    // Select by presence, not readiness, so a found but failing Hopper stays
+    // in the workflow and its failure stays visible.
+    ...(input.providers.hopperConfigured ||
+    input.providers.hopperDiscovered === true
+      ? ["hopper"]
+      : []),
+  ]);
+  return clients.length === 0 && providers.length === 0
+    ? undefined
+    : { clients, providers };
+};
+
+/**
+ * Judge a configured selection as `rea doctor` would for its explicit scope.
+ * `skillState` and the `skill:identity` check must come from the skill copies
+ * of the selected clients, which the explicit scope reads, not from the
+ * audit's read of every installed copy.
+ */
+export const configuredDoctorScope = (
+  input: Omit<DoctorScopeInput, "scope"> & {
+    readonly selection: DoctorConfiguredSelection;
+    readonly target: string | null;
+    /** Whether any selected skill copy exists, including a partial install. */
+    readonly skillInstalled: boolean;
+    readonly platform: NodeJS.Platform;
+    /** How this process was launched: `rea`, or `npx`/`bunx rea-agents`. */
+    readonly launcher: readonly string[];
+  },
+): DoctorConfiguredScopeReport => {
+  const { clients, providers } = input.selection;
+  const skill = input.skillInstalled;
+  const scope: DoctorScopeReport = {
+    mode: "explicit",
+    clients,
+    providers,
+    skill,
+    target: input.target,
+  };
+  const argv = [
+    ...input.launcher,
+    "doctor",
+    ...clients.flatMap((client) => ["--client", client]),
+    ...providers.flatMap((provider) => ["--provider", provider]),
+    ...(skill ? ["--skill"] : []),
+    ...(input.target === null ? [] : ["--target", input.target]),
+  ];
+  const judged = scopeDoctorChecks({ ...input, scope });
+  return {
+    clients,
+    providers,
+    skill,
+    healthy: judged.healthy,
+    argv,
+    command: argv
+      .map((argument) => shellArgument(argument, input.platform))
+      .join(" "),
+    failing_checks: judged.scopeChecks.filter(({ ok }) => !ok),
+  };
+};
+
+/**
+ * Quote one argument only when it needs it: single quotes with doubled quotes
+ * for PowerShell, REA's documented Windows shell, or POSIX escaping elsewhere.
+ * PowerShell also gives a leading `@` (splatting, `@()`, `@{}`) and `,` (array
+ * construction) special meaning in argument mode, so those are quoted there.
+ */
+const shellArgument = (value: string, platform: NodeJS.Platform): string => {
+  if (platform === "win32")
+    return /^(?!@)[\w./:@%+=-]+$/u.test(value)
+      ? value
+      : `'${value.replaceAll("'", "''")}'`;
+  return /^[\w./:@%+=,-]+$/u.test(value)
+    ? value
+    : `'${value.replaceAll("'", "'\\''")}'`;
+};
 
 /** Normalize a caller-selected doctor readiness boundary. */
 export const normalizeDoctorScope = (
