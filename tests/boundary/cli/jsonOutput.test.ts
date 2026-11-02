@@ -2,11 +2,12 @@ import { constants } from "node:buffer";
 import { createHash } from "node:crypto";
 import { Writable } from "node:stream";
 
-import { Cli } from "incur";
+import { Cli, Filter } from "incur";
 import { estimateTokenCount } from "tokenx";
 import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 
+import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import { writeJsonOutput } from "../../../src/cli/jsonOutput.js";
 import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import {
@@ -17,6 +18,7 @@ import { logCliCommand } from "../../../src/cliLogging.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
 import { silentLogger } from "../../../src/logger.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
 
 const collect = async (
   value: unknown,
@@ -754,6 +756,262 @@ describe("CLI result output surface", () => {
       },
       meta: { command: "inspect-managed-members" },
     });
+  }, 60_000);
+});
+
+const sink = () => {
+  const chunks: Buffer[] = [];
+  const destination = new Writable({
+    write(chunk: Buffer, _encoding, callback) {
+      chunks.push(chunk);
+      callback();
+    },
+  });
+  return { destination, text: () => Buffer.concat(chunks).toString("utf8") };
+};
+
+const serve = async (
+  argv: readonly string[],
+  value: JsonValue,
+  stream: boolean,
+): Promise<{ readonly text: string; readonly exitCode: number }> => {
+  const { destination, text } = sink();
+  let fallback = "";
+  let exitCode = 0;
+  const output = stream
+    ? createCliResultOutput(parseCliOutputArguments(argv), destination)
+    : undefined;
+  const cli = Cli.create("rea-output-test", { sync: false });
+  registerManagedCommands(cli, silentLogger, async () => ({
+    ok: false,
+    error: value,
+  }));
+  if (output !== undefined) streamCliCommandResults(cli, output);
+  await cli.serve([...argv], {
+    stdout: (chunk) => {
+      if (output?.handled !== true) fallback += chunk;
+    },
+    exit: (code) => {
+      exitCode = code;
+    },
+  });
+  return {
+    text: (fallback + text()).replace(/duration: \d+ms/gu, "duration: <ms>"),
+    exitCode,
+  };
+};
+
+/** Tabular rows whose TOON lines fit, while the whole document does not. */
+const leaf = "x".repeat(64 * 1024);
+const row = `  ${leaf}\n`;
+const rows = Math.ceil(constants.MAX_STRING_LENGTH / row.length) + 1;
+const oversized = (): JsonValue => ({
+  methods: Array.from({ length: rows }, () => ({ name: leaf })),
+});
+const metadata = { command: "fixture", duration: "1ms", format: "toon" };
+
+describe("streamed CLI TOON output", () => {
+  const scalars = {
+    none: null,
+    blank: "",
+    off: false,
+    zero: 0,
+    note: "first\nsecond",
+  };
+
+  // Paths main delegates to Incur. Owned filter projections keep their own
+  // formatter and never reach streaming below the string limit.
+  it.each([[[]], [["--format", "toon"]], [["--full-output"]]])(
+    "keeps TOON that fits a runtime string unchanged for %j",
+    async (options) => {
+      const argv = ["inspect-managed-members", "fixture.dll", ...options];
+      for (const value of [
+        {
+          assembly: "Fixture",
+          methods: [
+            { name: "Run", token: 100663297 },
+            { name: "Stop\nNow", token: 100663298 },
+          ],
+          flags: ["static", "public"],
+          empty: {},
+          ...scalars,
+        },
+        {},
+        ...Object.values(scalars),
+      ]) {
+        const streamed = await serve(argv, value, true);
+        const incur = await serve(argv, value, false);
+        expect(streamed).toEqual(incur);
+      }
+    },
+  );
+
+  it("streams TOON output past the engine string limit", async () => {
+    const header = `methods[${rows}]{name}:\n`;
+    const expected = createHash("sha256").update(header);
+    for (let index = 0; index < rows; index += 1) expected.update(row);
+    const expectedBytes = header.length + rows * row.length;
+    expect(expectedBytes).toBeGreaterThan(constants.MAX_STRING_LENGTH);
+
+    const actual = createHash("sha256");
+    let bytes = 0;
+    const argv = ["inspect-managed-members", "fixture.dll"];
+    const output = createCliResultOutput(
+      parseCliOutputArguments(argv),
+      new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          bytes += chunk.length;
+          actual.update(chunk);
+          callback();
+        },
+      }),
+    );
+    if (output === undefined) throw new Error("Missing TOON output surface");
+    const cli = Cli.create("rea-output-test", { sync: false });
+    registerManagedCommands(cli, silentLogger, async () => ({
+      ok: false,
+      error: oversized(),
+    }));
+    streamCliCommandResults(cli, output);
+    let fallbackBytes = 0;
+    // Incur's one-string formatter fails; the launcher then asks the output
+    // owner to recover, as scripts/rea.mjs does.
+    const formatting = await cli
+      .serve(argv, {
+        stdout: (text) => {
+          if (!output.handled) fallbackBytes += text.length;
+        },
+      })
+      .then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+    expect(formatting).toMatchObject({
+      name: "RangeError",
+      message: "Invalid string length",
+    });
+    expect(await output.recoverFormattingFailure(formatting)).toBe(true);
+    expect(output.recoveredByStreaming).toBe(true);
+    expect(fallbackBytes).toBe(0);
+    expect(output.error).toBeUndefined();
+    expect(bytes).toBe(expectedBytes);
+    expect(actual.digest("hex")).toBe(expected.digest("hex"));
+  }, 60_000);
+});
+
+describe("owned TOON projections", () => {
+  it.each([
+    ["methods", { methods: [{ name: "Run" }, { name: "Stop" }] }],
+    ["empty", { empty: {}, other: 1 }],
+  ] as const)(
+    "keeps the owned --filter-output %s text and trailing newline",
+    async (filter, value) => {
+      const { destination, text } = sink();
+      const output = createCliResultOutput(
+        parseCliOutputArguments([
+          "inspect-managed-members",
+          "fixture.dll",
+          "--filter-output",
+          filter,
+        ]),
+        destination,
+      );
+      if (output === undefined) throw new Error("Missing TOON output surface");
+      expect(await output.write(value, metadata)).toBe(true);
+      expect(text()).toBe(
+        `${formatCliOutput(Filter.apply(value, Filter.parse(filter)), "toon")}\n`,
+      );
+    },
+  );
+});
+
+describe("oversized CLI TOON output", () => {
+  it("keeps the typed capacity failure for an oversized failure envelope", async () => {
+    const { destination, text } = sink();
+    const output = createCliResultOutput(
+      parseCliOutputArguments([
+        "inspect-managed-members",
+        "fixture.dll",
+        "--format",
+        "toon",
+        "--full-output",
+      ]),
+      destination,
+    );
+    if (output === undefined) throw new Error("Missing TOON output surface");
+    expect(
+      await output.write(
+        {
+          error: "Analysis failed",
+          code: "target_unavailable",
+          category: "unavailable",
+          message: "The selected artifact is missing.",
+          retryable: false,
+          remediation: { action: "Check that the path exists." },
+          details: oversized(),
+        },
+        metadata,
+      ),
+    ).toBe(true);
+    expect(output.recoveredByStreaming).not.toBe(true);
+    expect(output.error).toMatchObject({ code: "resource_constraint" });
+    expect(text()).toMatch(/^ok: false\nerror:\n/u);
+    expect(text()).not.toContain(leaf.slice(0, 64));
+  }, 60_000);
+
+  it.each([
+    ["a default-format terminal", [], true],
+    ["a token count", ["--format", "toon", "--token-count"], false],
+  ] as const)(
+    "keeps the typed capacity failure for oversized TOON on %s",
+    async (_case, options, terminal) => {
+      const { destination, text } = sink();
+      if (terminal)
+        Object.defineProperty(destination, "isTTY", { value: true });
+      const output = createCliResultOutput(
+        parseCliOutputArguments([
+          "inspect-managed-members",
+          "fixture.dll",
+          ...options,
+        ]),
+        destination,
+      );
+      if (output === undefined) throw new Error("Missing TOON output surface");
+      expect(await output.write(oversized(), metadata)).toBe(false);
+      expect(output.handled).toBe(false);
+      // Incur's formatter then fails; recovery keeps the typed failure.
+      expect(
+        await output.recoverFormattingFailure(
+          new RangeError("Invalid string length"),
+        ),
+      ).toBe(true);
+      expect(output.recoveredByStreaming).not.toBe(true);
+      expect(output.error).toMatchObject({ code: "resource_constraint" });
+      expect(text()).not.toContain(leaf.slice(0, 64));
+    },
+    60_000,
+  );
+
+  it("reports a TOON line longer than the string limit as a capacity failure", async () => {
+    const { destination, text } = sink();
+    const output = createCliResultOutput(
+      parseCliOutputArguments(["inspect-managed-members", "fixture.dll"]),
+      destination,
+    );
+    if (output === undefined) throw new Error("Missing TOON output surface");
+    // Primitive arrays are one TOON line, so this document cannot stream; the
+    // line fails before any output and recovery writes the typed failure.
+    const inline = { names: Array.from({ length: rows }, () => leaf) };
+    expect(await output.write(inline, metadata)).toBe(false);
+    expect(
+      await output.recoverFormattingFailure(
+        new RangeError("Invalid string length"),
+      ),
+    ).toBe(true);
+    expect(output.recoveredByStreaming).not.toBe(true);
+    expect(output.error).toMatchObject({ code: "resource_constraint" });
+    expect(text()).toMatch(/^code: resource_constraint\n/u);
+    expect(text()).not.toContain(leaf.slice(0, 64));
   }, 60_000);
 });
 
