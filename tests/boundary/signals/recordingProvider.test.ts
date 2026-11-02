@@ -95,6 +95,15 @@ const fixture = async (
   const configuredCommand =
     mode === "symlink" ? join(directory, "configured-tool") : script;
   if (mode === "symlink") await symlink(script, configuredCommand);
+  // A separate limiter that refuses to start the wrapped tool.
+  const limiter = join(directory, "limiter.mjs");
+  if (mode === "limiter-refused") {
+    await writeFile(
+      limiter,
+      "console.error('prlimit: failed to execute sigrok-cli'); process.exitCode = 1;\n",
+    );
+    await chmod(limiter, 0o700);
+  }
   const controller = new AbortController();
   let calls = 0;
   let mayClean = !failCleanup;
@@ -104,7 +113,8 @@ const fixture = async (
     {
       ...process.env,
       REA_SIGROK_COMMAND: configuredCommand,
-      REA_SIGROK_PRLIMIT_COMMAND: configuredCommand,
+      REA_SIGROK_PRLIMIT_COMMAND:
+        mode === "limiter-refused" ? limiter : configuredCommand,
     },
     async (input) => {
       calls++;
@@ -127,7 +137,10 @@ const fixture = async (
       const spawned = await spawnOwnedProviderProcess({
         ...input,
         command: process.execPath,
-        arguments: [script, ...input.arguments],
+        arguments: [
+          mode === "limiter-refused" ? limiter : script,
+          ...input.arguments,
+        ],
         expectedCommand: process.execPath,
       });
       if (mode === "wait" && !input.arguments.includes("--version"))
@@ -1412,6 +1425,34 @@ it("classifies completed nonzero version probes as configuration failures for bo
         },
       },
     });
+  }
+  expect(f.calls()).toBe(2);
+});
+
+it("does not blame sigrok-cli alone when the limiter fails the version probe", async () => {
+  const f = await fixture("limiter-refused");
+  for (const task of [
+    () => f.service.decode({ path: f.path, decoders: "uart" }),
+    () => f.service.inspectDecoders({}),
+  ]) {
+    const result = await task();
+    if (result.ok) throw new Error("Expected version admission refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      message: expect.stringContaining("REA_SIGROK_PRLIMIT_COMMAND"),
+      details: {
+        captured_output: {
+          exit_code: 1,
+          stdout: "",
+          stderr: "prlimit: failed to execute sigrok-cli\n",
+        },
+      },
+    });
+    expect(projected.message).toContain("limiter or from sigrok-cli");
+    expect(projected.message).not.toContain(
+      "sigrok-cli installation failed its --version probe",
+    );
   }
   expect(f.calls()).toBe(2);
 });
