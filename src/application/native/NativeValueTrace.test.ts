@@ -1404,6 +1404,44 @@ describe("native value trace thunk targets", () => {
     expect(attempted).toEqual([["analyze_function", { procedure: "0xc000" }]]);
   });
 
+  it("keeps a thunk whose resolved call reaches its target and traverses it", async () => {
+    const graph = staticValueGraph(
+      { "0x2000": { operations: [node("return", "0x2000", "RETURN")] } },
+      { "0xc000": [{ destination: "0x2000", status: "direct" }] },
+    );
+    const thunk = thunkDossier("0x2000", [
+      node("call", "0xc000", "CALL"),
+      node("return", "0xc004", "RETURN"),
+    ]);
+    const port: AnalysisOperationPort = {
+      execute: (operation, parameters) =>
+        operation === "analyze_function" && parameters.procedure === "0xc000"
+          ? Promise.resolve(
+              ok(createAnalysisExecution(thunk, provider, { subject })),
+            )
+          : graph.port.execute(operation, parameters),
+    };
+    const result = await traceNativeValues(port, { procedure: "0xc000" });
+    if (!result.ok) throw result.error;
+    const parsed = nativeValueTraceSchema.parse(result.value);
+    expect(parsed).toMatchObject({
+      decompilations: 2,
+      traversal: { status: "complete" },
+      edges: expect.arrayContaining([
+        expect.objectContaining({
+          source: "0xc000/call",
+          target: "0x2000",
+          kind: "call",
+          status: "direct",
+        }),
+      ]),
+    });
+    expect(parsed.unknowns.map(({ reason }) => reason)).not.toContainEqual(
+      expect.stringContaining("Thunk target"),
+    );
+    expect(graph.analyzed).toEqual(["0x2000"]);
+  });
+
   it("reports the thunk target alongside a missing def-use model", async () => {
     const { port } = thunkPort(
       jsonValueSchema.parse({
