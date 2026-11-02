@@ -140,6 +140,20 @@ it("advertises attached IDA UI and network effects in SDK and session discovery"
     );
     expect(addressContext?.effects).toContain("accessesNetwork");
     expect(addressContext?.annotations).toContain("open_world");
+    for (const name of [
+      "open_binary",
+      "open_bundle_resources",
+      "close_binary",
+      "reset_investigation",
+    ]) {
+      const advertised = tools.find((tool) => tool.name === name);
+      expect(advertised?.annotations?.openWorldHint, name).toBe(true);
+      const availability = status.tool_availability.groups.find(({ names }) =>
+        names.includes(name),
+      );
+      expect(availability?.effects, name).toContain("accessesNetwork");
+      expect(availability?.annotations, name).toContain("open_world");
+    }
   } finally {
     await mcp.close();
     await session?.close();

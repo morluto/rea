@@ -751,17 +751,28 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   project_android_application_graph: evidence,
   project_apple_application_graph: evidence,
   project_harmony_application_graph: evidence,
-  open_binary: effects({ mutatesSession: true, launchesProcess: true }),
-  open_bundle_resources: effects({ mutatesSession: true }),
+  // Lifecycle transitions can retire an IDA client, including a pending
+  // cleanup from an earlier provider, over its configured MCP transport.
+  open_binary: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  open_bundle_resources: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+  }),
   close_binary: effects({
     mutatesSession: true,
     writesFilesystem: true,
+    accessesNetwork: true,
     mayDiscardData: true,
     idempotent: false,
   }),
   reset_investigation: effects({
     mutatesSession: true,
     writesFilesystem: true,
+    accessesNetwork: true,
     mayDiscardData: true,
     idempotent: false,
   }),

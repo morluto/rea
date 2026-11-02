@@ -300,6 +300,23 @@ it("advertises IDA provider effects while retaining session bases", () => {
   }
 });
 
+it("audits network access during lifecycle cleanup across provider changes", () => {
+  for (const name of [
+    "open_binary",
+    "open_bundle_resources",
+    "close_binary",
+    "reset_investigation",
+  ]) {
+    expect(toolSessionEffects(name).accessesNetwork, name).toBe(true);
+    expect(TOOL_EFFECTS[name]?.accessesNetwork, name).toBe(true);
+    expect(
+      TOOL_CONTRACTS.find((contract) => contract.name === name)?.annotations
+        .openWorldHint,
+      name,
+    ).toBe(true);
+  }
+});
+
 it("advertises signature inspection's temporary snapshot filesystem writes", () => {
   expect(TOOL_EFFECTS.inspect_signature).toMatchObject({
     writesFilesystem: true,

@@ -25,6 +25,33 @@ it("audits every IDA operation's network transport without adding it to the sess
   }
 });
 
+it("retains network cleanup effects in session discovery for lifecycle tools", () => {
+  const entries = buildCapabilityInventory(
+    {
+      open: true,
+      kind: "executable",
+      capabilities: providerCapabilitySets(
+        idaCapabilities(IDA_COMPATIBILITY_PROFILES.modern, false),
+      ),
+    },
+    enabledPolicy,
+  );
+  for (const name of [
+    "open_binary",
+    "open_bundle_resources",
+    "close_binary",
+    "reset_investigation",
+  ]) {
+    expect(
+      entries.find((entry) => entry.name === name),
+      name,
+    ).toMatchObject({
+      effects: { accessesNetwork: true },
+      annotations: { open_world: true },
+    });
+  }
+});
+
 it.each([
   ["legacy", false],
   ["native", true],
