@@ -623,6 +623,10 @@ it("reports confirmed snapshot binding differences and keeps the active session"
     expect(result.isError).toBe(true);
     const error = parseMcpToolError(result).error;
     expect(error.code).toBe("evidence_integrity_mismatch");
+    expect(error.details?.target_at_open_completion).toMatchObject({
+      path: first,
+      sha256: sha("first fixture"),
+    });
     expect(error.remediation.action).toBe(
       analysisErrorRemediationAction(new AnalysisSnapshotMismatchError("")),
     );
