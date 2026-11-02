@@ -1,5 +1,9 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
 import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
 import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptSourceAnalysisLimits } from "../../domain/javascript/javascriptSourceAnalysis.js";
@@ -55,7 +59,20 @@ export const discoverJavaScriptPreloadPaths = async (
         packageTypeFor(file),
         "preload-discovery",
       );
-      if (!result.ok) throw result.error.error;
+      if (!result.ok) {
+        const { error } = result.error;
+        if (signal?.aborted === true || error instanceof AnalysisCancelledError)
+          throw error;
+        // Normal analysis meets the same source and owns its failure and the
+        // partial Evidence. A per-source limit only loses this source's
+        // declarations; any other failure would stop that pass here too.
+        if (
+          error instanceof AnalysisResourceConstraintError &&
+          error.reportedLimits?.parent_result_budget_exhausted !== true
+        )
+          continue;
+        break;
+      }
       for (const window of result.value.javascript.electron.browser_windows) {
         if (window.preload_path === null) continue;
         const resolution = resolveArtifactPathByContext({

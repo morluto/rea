@@ -1,6 +1,9 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../../../src/domain/analysisErrorCore.js";
 import type {
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,
@@ -83,6 +86,37 @@ it("resolves an exact preload before its declaring source regardless of inventor
   expect([...result]).toEqual(["a".repeat(64) + ":preload.js"]);
   expect(close).toHaveBeenCalledOnce();
   expect(analyze.mock.calls.every((call) => call[2] === undefined)).toBe(true);
+});
+it("keeps discovering after one source exceeds its worker limit", async () => {
+  const files = fixture();
+  const limited = vi.fn(
+    async (source: JavaScriptArtifactFile, ...rest: unknown[]) =>
+      source.path === "big.js"
+        ? err({
+            error: new AnalysisResourceConstraintError(
+              "analyze_javascript_application",
+              "memory",
+              "big.js exhausted the worker heap",
+              { max_heap_mb: 128 },
+            ),
+            javascript: null,
+            module: null,
+            projection: null,
+          })
+        : analyze(source, ...(rest as [unknown, undefined, unknown, "module"])),
+  );
+  acquire.mockResolvedValue({ analyze: limited, close });
+  const result = await discoverJavaScriptPreloadPaths(
+    { ...files, files: [file("big.js", ""), ...files.files] },
+    limits,
+    new ArtifactResourceScope(),
+  );
+  expect([...result]).toEqual(["a".repeat(64) + ":preload.js"]);
+  expect(limited.mock.calls.map(([source]) => source.path)).toEqual([
+    "big.js",
+    "preload.js",
+    "main.mjs",
+  ]);
 });
 it("does not turn an invalid ESM require declaration into a preload identity", async () => {
   const files = fixture();

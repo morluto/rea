@@ -358,6 +358,9 @@ unresolved, excluded-source, and cross-container declarations do not establish
 a preload identity; this static association is not proof that Electron loaded
 the file. Discovery performs another static pass, while semantic projection
 runs once and existing heap, deadline, cancellation, and cleanup controls remain.
+A source that exceeds its worker limits during discovery contributes no
+declarations, and any other discovery failure ends discovery; source analysis
+then records that failure and retains partial Evidence as usual.
 
 Selected bounded text is then parsed as inert data to recover:
 
