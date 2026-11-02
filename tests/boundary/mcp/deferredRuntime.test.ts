@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { resolve, join, dirname } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
+import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
@@ -112,15 +113,20 @@ registerHooks({
     const { client, stderr } = await connect("legacy", environment, [
       `--import=${hook}`,
     ]);
-    await client.listTools();
+    const discovery = await client.listTools();
     await client.listPrompts();
     expect(await loadedModules()).toEqual(
       new Set(eager ? ["entrypoint", ...modules] : ["entrypoint"]),
     );
-    const result = await client.callTool({
-      name: "list_unknowns",
-      arguments: {},
-    });
+    // Keep output-off coverage too, using this connection's named definition.
+    const toolDefinition = discovery.tools.find(
+      ({ name }) => name === "list_unknowns",
+    );
+    if (toolDefinition === undefined) throw new Error("Missing list_unknowns");
+    const result = await client.callTool(
+      { name: "list_unknowns", arguments: {} },
+      { toolDefinition },
+    );
     expect(result.isError).not.toBe(true);
     expect(await loadedModules()).toEqual(new Set(["entrypoint", ...modules]));
     expect(stderr()).toBe("");
@@ -195,9 +201,14 @@ it.each([
           prompt,
       ),
     );
+    // Discovery is checked in full above. Validate each called tool's actual
+    // schema without compiling unrelated outputs in every fresh SDK client.
     const results = await Promise.all([
-      client.callTool({ name: "list_unknowns", arguments: {} }),
-      client.callTool({ name: "list_unknowns", arguments: { limit: 1 } }),
+      artifactMcpCall(client, { name: "list_unknowns", arguments: {} }),
+      artifactMcpCall(client, {
+        name: "list_unknowns",
+        arguments: { limit: 1 },
+      }),
     ]);
     expect(results.every((result) => result.isError !== true)).toBe(true);
     expect(results.map((result) => result.structuredContent)).toEqual([
@@ -205,7 +216,7 @@ it.each([
       { result: { items: [], total: 0, offset: 0, next_offset: null } },
     ]);
     expect(await client.listTools()).toEqual(before);
-    const invalid = await client.callTool({
+    const invalid = await artifactMcpCall(client, {
       name: "list_unknowns",
       arguments: { limit: 1.5 },
     });
@@ -238,7 +249,7 @@ it("composes a scoped registration instead of serving the recorded catalog", asy
   expect(advertised).not.toContain("inspect_macho");
   // The recorded catalog cannot verify a scoped identity, so the scope must
   // serve real calls instead of failing every one after materialization.
-  const status = await client.callTool({
+  const status = await artifactMcpCall(client, {
     name: "binary_session",
     arguments: {},
   });
@@ -263,7 +274,7 @@ globalThis.Date = class extends NativeDate {
   const { client } = await connect("legacy", {}, [`--import=${hook}`]);
   await client.listTools();
   await writeFile(clock, "2021-01-01T00:00:00.000Z");
-  const first = await client.callTool({
+  const first = await artifactMcpCall(client, {
     name: "binary_session",
     arguments: {},
   });
@@ -271,7 +282,7 @@ globalThis.Date = class extends NativeDate {
   expect(first.structuredContent).toMatchObject({
     result: { server_identity: { server: { started_at: startedAt } } },
   });
-  const again = await client.callTool({
+  const again = await artifactMcpCall(client, {
     name: "binary_session",
     arguments: {},
   });
@@ -596,10 +607,14 @@ it.each([{}, { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" }])(
           )
         : catalog.tools;
     expect(before.tools).toEqual(expected);
-    const result = await client.callTool({
-      name: "list_unknowns",
-      arguments: {},
-    });
+    const toolDefinition = before.tools.find(
+      ({ name }) => name === "list_unknowns",
+    );
+    if (toolDefinition === undefined) throw new Error("Missing list_unknowns");
+    const result = await client.callTool(
+      { name: "list_unknowns", arguments: {} },
+      { toolDefinition },
+    );
     expect(result.isError).not.toBe(true);
     expect(await client.listTools()).toEqual(before);
   },
