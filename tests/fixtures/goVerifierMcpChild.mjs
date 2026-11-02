@@ -2,6 +2,8 @@
 // and transport launch and frame a disposable child whose exit timing is authored.
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const mode = process.env.GO_VERIFIER_CHILD_MODE;
 const lifetime = setTimeout(() => process.exit(1), 30_000);
@@ -58,7 +60,7 @@ process.stdin.on("end", () => {
         stdio: ["ignore", "inherit", "inherit"],
       },
     );
-    writeFileSync(process.env.GO_VERIFIER_PIPE_HOLDER, String(holder.pid));
+    writeFileSync(join(tmpdir(), "pipe-holder.pid"), String(holder.pid));
     holder.unref();
   }
   clearTimeout(lifetime);

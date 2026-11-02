@@ -6,6 +6,7 @@ import { once } from "node:events";
 import { chmodSync, existsSync, readdirSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -15,9 +16,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { PrivateRuntimeRoot } from "../../dist/process/PrivateRuntimeRoot.js";
 
 const scenario = process.argv[2];
-const temporary = process.env.TMPDIR;
 assert.equal(typeof scenario, "string");
-assert.equal(typeof temporary, "string");
+// The launching test selects this directory, and the verifier allocates there.
+assert.notEqual(process.env.TMPDIR, undefined);
+const temporary = tmpdir();
 
 const verifier = new URL("../../scripts/verify-go-binary.mjs", import.meta.url);
 const events = [];
@@ -195,7 +197,6 @@ const scenarios = {
   },
   "pipe-holder": () => {
     const holder = join(temporary, "pipe-holder.pid");
-    process.env.GO_VERIFIER_PIPE_HOLDER = holder;
     useDisposableChild("leaves-pipe-holder");
     beforeRetry = async (owner) => {
       await expectRefusal(owner, /pipes/u);
@@ -227,8 +228,9 @@ const scenarios = {
     };
   },
 };
-assert.ok(Object.hasOwn(scenarios, scenario), scenario);
-scenarios[scenario]();
+const setUpScenario = new Map(Object.entries(scenarios)).get(scenario);
+assert.ok(setUpScenario, `Unknown scenario: ${scenario}`);
+setUpScenario();
 
 const consoleError = console.error;
 let report;
