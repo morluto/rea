@@ -276,13 +276,14 @@ describe.each([
 it.each([
   { scope: "direct", sessionAvailable: false },
   { scope: "session,direct", sessionAvailable: true },
+  { scope: undefined, sessionAvailable: true },
 ])(
   "guides a missing target using the advertised scope ($scope)",
   async ({ scope, sessionAvailable }) => {
-    const client = await connect({
-      ...process.env,
-      REA_MCP_TOOL_FAMILIES: scope,
-    });
+    const environment = { ...process.env };
+    if (scope === undefined) delete environment.REA_MCP_TOOL_FAMILIES;
+    else environment.REA_MCP_TOOL_FAMILIES = scope;
+    const client = await connect(environment);
     const names = (await client.listTools()).tools.map(({ name }) => name);
     expect(names.includes("open_binary")).toBe(sessionAvailable);
     const { error } = parseMcpToolError(
