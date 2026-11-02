@@ -245,6 +245,36 @@ describe("parseDumpsysPackageOutput", () => {
       ).toBe(10234);
     },
   );
+  it.each(["45 minSdk=24 targetSdk=34", "-4294967296", "9007199254740993"])(
+    "admits the whole versionCode token %s",
+    (value) => {
+      const details = parseDumpsysPackageOutput(
+        `Package [com.example] (abcdef):\n  versionCode=${value}\n`,
+      );
+      expect(details.versionCode).toBe(value.split(" ")[0]);
+      expect(details.numericIssues).toEqual({ sample: [], total: 0 });
+    },
+  );
+
+  it("reports a versionCode with attached text instead of its digit prefix", () => {
+    const line = "  versionCode=45abc minSdk=24 targetSdk=34";
+    const details = parseDumpsysPackageOutput(
+      `Package [com.example] (abcdef):\n${line}\n`,
+    );
+    expect(details.versionCode).toBeNull();
+    expect(details.numericIssues).toEqual({
+      sample: [
+        {
+          command: "dumpsys package",
+          field: "version_code",
+          reason: "invalid_format",
+          raw_line: line,
+        },
+      ],
+      total: 1,
+    });
+  });
+
   it("reports unknown requested permissions when the package is null", () => {
     expect(
       parseDumpsysPackageOutput("Package [com.example] (abcdef):\n  pkg=null\n")

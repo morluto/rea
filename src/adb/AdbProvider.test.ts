@@ -817,6 +817,32 @@ it("reports a null installer declaration as an absent installer", async () => {
   });
 });
 
+it("reports a version code with attached text as unknown and partial", async () => {
+  const { binary } = await writeAdbStub(
+    shellStub({
+      "dumpsys:package": `Packages:
+  Package [com.example] (abcdef):
+    pkg=Package{abcdef com.example}
+    versionCode=45abc minSdk=24 targetSdk=34
+    versionName=1.0
+`,
+    }),
+  );
+  const result = await evidenceResult(providerOver(binary), {
+    operation: "inspect_adb_package",
+    input: { serial: "emulator-5554", package: "com.example" },
+  });
+  expect(result).toMatchObject({
+    version_code: null,
+    version_name: "1.0",
+    numeric_issues: {
+      sample: [{ field: "version_code", reason: "invalid_format" }],
+      total: 1,
+    },
+    coverage: "partial",
+  });
+});
+
 // PackageInfo.getLongVersionCode() combines versionCodeMajor and versionCode
 // into a signed 64-bit long, which JSON numbers cannot hold exactly.
 it.each(["9007199254740993", "-4294967296"])(

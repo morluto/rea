@@ -148,6 +148,9 @@ and during shutdown.
   `raw_line`, plus the exact `total`. Reasons are `invalid_format` or
   `unsafe_integer`. Any issue makes package coverage partial; existing section
   omissions can also make it partial. `version_code` remains exact source text.
+  A `versionCode` token with attached non-decimal text, such as `45abc`, is not
+  admitted; it stays null and is recorded as a `version_code` `invalid_format`
+  issue.
 - **Display nulls preserve uncertainty.** `inspect_adb_display` admits positive
   safe integers. Absent or malformed optional values are null; `numeric_issues`
   distinguishes malformed declarations from absence. It keeps the first ten

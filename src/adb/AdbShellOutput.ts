@@ -410,8 +410,16 @@ export const parseDumpsysPackageOutput = (
     } else if (key === "versionName" && details.versionName === null)
       details.versionName = rawValue;
     else if (key === "versionCode" && details.versionCode === null) {
-      const parsed = /^(-?\d+)/u.exec(value);
+      // The token must end at whitespace: `45abc` does not establish version 45.
+      const parsed = /^(-?\d+)(?:\s|$)/u.exec(value);
       if (parsed !== null) details.versionCode = parsed[1]!;
+      else
+        issues.add({
+          command: "dumpsys package",
+          field: "version_code",
+          reason: "invalid_format",
+          raw_line: line,
+        });
     } else if (key === "firstInstallTime" && details.firstInstallTime === null)
       details.firstInstallTime = value === "" ? null : value;
     else if (key === "lastUpdateTime" && details.lastUpdateTime === null)

@@ -544,12 +544,12 @@ export type AdbDisplayNumericIssues = z.infer<
   typeof adbDisplayNumericIssuesSchema
 >;
 
-/** Bounded source diagnostics for Package Manager's userId/appId declarations. */
+/** Bounded source diagnostics for Package Manager's numeric declarations. */
 export const adbPackageNumericIssuesSchema = z.strictObject({
   sample: z.array(
     z.strictObject({
       command: z.literal("dumpsys package"),
-      field: z.literal("user_id"),
+      field: z.enum(["user_id", "version_code"]),
       reason: z.enum(["invalid_format", "unsafe_integer"]),
       raw_line: z.string().min(1),
     }),
