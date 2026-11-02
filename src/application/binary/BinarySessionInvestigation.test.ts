@@ -99,8 +99,10 @@ it("publishes engine retirement with its pending cleanup owner already visible",
     pending.push(closing);
     await awaitAcknowledgement(entered.promise, closing, "engine close entry");
     expect(notifications.length).toBeGreaterThan(0);
-    for (const status of await Promise.all(notifications))
+    for (const status of await Promise.all(notifications)) {
       expect(status).toMatchObject({ open: false, cleanup_pending: true });
+      expect(status).not.toHaveProperty("cleanup_retry");
+    }
     release.resolve();
     expect((await closing).ok).toBe(true);
     expect(await session.status()).toMatchObject({
