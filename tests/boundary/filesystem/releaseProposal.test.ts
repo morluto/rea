@@ -10,7 +10,6 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { RequestError } from "@octokit/request-error";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { z } from "zod";
 
@@ -106,15 +105,11 @@ it("creates overflow notes on a new branch without requiring an existing file", 
     createNewBranch,
     octokit: {
       repos: {
-        getContent: vi.fn().mockRejectedValue(
-          new RequestError("missing", 404, {
-            request: {
-              method: "GET",
-              url: "https://example.test/notes",
-              headers: {},
-            },
-          }),
-        ),
+        getContent: vi
+          .fn()
+          .mockRejectedValue(
+            Object.assign(new Error("missing"), { status: 404 }),
+          ),
         createOrUpdateFileContents: write,
       },
     },
