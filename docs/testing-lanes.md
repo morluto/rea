@@ -421,7 +421,10 @@ the first cold pseudocode answer comes from a single-function run or an export
 that already finished, assembly waits for and serves from that export, and
 pseudocode and both dossier facets match their recorded file spans and digests,
 a fresh server reuses the export without rebuilding it, staging is empty after
-a completed export, and no owned process survives. Pass
+a completed export, and no owned process survives. A separate forced 1 ms
+project deadline checks that a timed-out inventory recommends raising the
+project deadline without changing jobs; a fresh server retries with 60 seconds
+and the same two-worker setting. Pass
 `--targets DIR --functions a,b` to add caller-built binaries laid out as
 `DIR/<flavor>/<name>` beside `<name>.stripped`; addresses come from the
 symbol-bearing build. `--compare-ghidra` with `GHIDRA_INSTALL_DIR` runs those
