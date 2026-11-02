@@ -26,6 +26,7 @@ export const enhancedInputSchemas = {
   batch_decompile: z.strictObject({
     addresses: z
       .array(z.string().describe("A provider-normalized procedure address"))
+      .max(MAX_ENHANCED_RECORDS)
       .default([]),
   }),
   decompile_all: decompileDirectoryInputSchema,
