@@ -116,6 +116,149 @@ describe("Electron constant option evidence", () => {
   );
 });
 
+describe("Electron module-level constant options in functions", () => {
+  it("resolves a module-level webPreferences const in createWindow", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { app, BrowserWindow } = require("electron");
+      const webPreferences = { nodeIntegration: true, contextIsolation: false };
+      function createWindow() {
+        return new BrowserWindow({ width: 800, height: 600, webPreferences });
+      }
+      app.whenReady().then(createWindow);
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "object-literal",
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          {
+            name: "contextIsolation",
+            value: { status: "literal", value: false },
+          },
+          {
+            name: "nodeIntegration",
+            value: { status: "literal", value: true },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it.each([
+    "function createWindow() { return new BrowserWindow(options); }",
+    "app.whenReady().then(() => new BrowserWindow(options));",
+  ])("resolves a whole module-level options const in a function: %s", (call) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { app, BrowserWindow } = require("electron");
+      const options = { webPreferences: { sandbox: true } };
+      ${call}
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "object-literal",
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          { name: "sandbox", value: { status: "literal", value: true } },
+        ],
+      },
+    ]);
+  });
+
+  it.each([
+    "options.webPreferences.sandbox = false;",
+    "mutate(options);",
+  ])("keeps a module-level options const in a function unknown when changed or escaped: %s", (setup) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      const options = { webPreferences: { sandbox: true } };
+      ${setup}
+      function createWindow() { return new BrowserWindow(options); }
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { options_status: "dynamic", web_preferences_status: "dynamic" },
+    ]);
+  });
+
+  it("keeps a module-level let options object unknown in a function", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      let options = { webPreferences: { sandbox: true } };
+      function createWindow() { return new BrowserWindow(options); }
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { options_status: "dynamic", web_preferences_status: "dynamic" },
+    ]);
+  });
+
+  it.each([
+    'export const options = { webPreferences: { sandbox: true } };',
+    'const options = { webPreferences: { sandbox: true } }; export { options };',
+    'const options = { webPreferences: { sandbox: true } }; export default options;',
+  ])("keeps an exported module-level options const unknown in a function: %s", (declaration) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      import { BrowserWindow } from "electron";
+      ${declaration}
+      function createWindow() { return new BrowserWindow(options); }
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { options_status: "dynamic", web_preferences_status: "dynamic" },
+    ]);
+  });
+
+  it("keeps two windows sharing one module-level const unknown in functions", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      const options = { webPreferences: { sandbox: true } };
+      function createWindow() { new BrowserWindow(options); return new BrowserWindow(options); }
+    `);
+    expect(
+      analysis.electron.browser_windows.map(
+        ({ options_status }) => options_status,
+      ),
+    ).toEqual(["dynamic", "dynamic"]);
+  });
+
+  it("resolves a local options const inside an exported function", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      import { BrowserWindow } from "electron";
+      export function createWindow() {
+        const options = { webPreferences: { sandbox: true } };
+        return new BrowserWindow(options);
+      }
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "object-literal",
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          { name: "sandbox", value: { status: "literal", value: true } },
+        ],
+      },
+    ]);
+  });
+
+  it("resolves a local options const that shadows an exported name", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      import { BrowserWindow } from "electron";
+      const options = { webPreferences: { sandbox: false } };
+      export { options };
+      function createWindow() {
+        const options = { webPreferences: { sandbox: true } };
+        return new BrowserWindow(options);
+      }
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "object-literal",
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          { name: "sandbox", value: { status: "literal", value: true } },
+        ],
+      },
+    ]);
+  });
+});
+
 describe("Electron option captures and initialization", () => {
   it.each([
     ["inner.current = second;", [true, false], ["object-literal", "dynamic"]],
