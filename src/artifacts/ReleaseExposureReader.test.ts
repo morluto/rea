@@ -2661,6 +2661,17 @@ describe("ReleaseExposureReader HTML script references", () => {
     expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
   });
 
+  it("still reads a page another page loads as a script as HTML", async () => {
+    const scanned = await inspect(
+      await directory({
+        "a.html": '<script src="z.html"></script>',
+        "z.html": `<!doctype html><script>\nrun();\n${inlineMap}</script>`,
+      }),
+    );
+    expect(scanned.source_maps.embedded).toBe(1);
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
   it("keeps a script past the target allowance unassessed", async () => {
     const baseBytes = 64 * 1024;
     const references = Array.from(

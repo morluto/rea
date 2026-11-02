@@ -1114,9 +1114,12 @@ const examineTextMember = async (
     scanText(state, member, loaded.bytes.length, text);
     if (holdsScripts(member)) {
       if (text === null) state.skippedMaps += 1;
-      else if (isJavaScriptMember(member))
-        examineInlineMaps(state, member, text.text, member.logical);
-      else examineHtmlScripts(state, member, text.text);
+      else {
+        if (isJavaScriptMember(member))
+          examineInlineMaps(state, member, text.text, member.logical);
+        // A page another page loads as a script still ships as a page.
+        if (isHtmlMember(member)) examineHtmlScripts(state, member, text.text);
+      }
     }
   } else {
     // The allowance bounds the read, so a read that yielded no text still spends it.
