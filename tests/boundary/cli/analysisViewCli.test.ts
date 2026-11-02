@@ -47,6 +47,72 @@ import {
 import { inspectEvidenceBundle } from "../../../src/application/investigation/InspectEvidenceBundle.js";
 
 cliTest(
+  "reads selected batch rows and one body from a saved bundle without a provider",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-batch-view-cli-");
+    const path = join(root, "bundle.json");
+    const body = "int main(void) { return 0; }";
+    const parent = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "batch_decompile",
+        parameters: { addresses: ["main", "main"] },
+        result: {
+          items: ["main", "main"].map((address) => ({
+            address,
+            procedure: { status: "resolved", address: "0x1", name: "main" },
+            status: "ok",
+            pseudocode: body,
+          })),
+          total: 2,
+          succeeded: 2,
+          failed: 0,
+        },
+        confidence: "derived",
+        authority: "shipped-artifact",
+      },
+    );
+    await writeFile(path, JSON.stringify(createEvidenceBundle([parent])));
+    const inspect = async (view: JsonValue) => {
+      const result = await cli.run({
+        arguments: [
+          "inspect-analysis-view",
+          JSON.stringify({
+            source: {
+              kind: "retained-evidence",
+              evidence_id: parent.evidence_id,
+            },
+            view,
+          }),
+          "--evidence-bundle",
+          path,
+          "--json",
+        ],
+      });
+      expect(result.exitCode).toBe(0);
+      return parseEvidence(result.json).normalized_result;
+    };
+    expect(
+      await inspect({ kind: "batch-decompile", collection: "items" }),
+    ).toMatchObject({
+      batch: { total: 2 },
+      items: [
+        { index: 0, pseudocode_code_units: body.length },
+        { index: 1, pseudocode_code_units: body.length },
+      ],
+    });
+    expect(
+      await inspect({
+        kind: "batch-decompile",
+        collection: "pseudocode",
+        index: 1,
+      }),
+    ).toMatchObject({ item: { index: 1, text: body } });
+  },
+);
+
+cliTest(
   "authenticates an exact portable parent for non-managed views and rejects ambiguous or altered sources",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-analysis-bundle-cli-");
