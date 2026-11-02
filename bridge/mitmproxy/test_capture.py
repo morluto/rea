@@ -12,7 +12,7 @@ def load_capture():
     """Load the adapter with fresh mitmproxy stand-ins scoped to its import."""
     fake_mitmproxy = types.ModuleType("mitmproxy")
     fake_mitmproxy.ctx = types.SimpleNamespace()
-    fake_mitmproxy.version = types.SimpleNamespace(VERSION="12.2.3")
+    fake_mitmproxy.version = types.SimpleNamespace(VERSION="12.3.1")
     fake_io = types.ModuleType("mitmproxy.io")
     fake_io.tnetstring = types.ModuleType("mitmproxy.io.tnetstring")
     stand_ins = {
@@ -259,6 +259,19 @@ class TransportUserinfoTests(unittest.TestCase):
     def test_non_special_schemes_keep_backslashes_in_the_authority(self):
         self.assertEqual(capture.without_userinfo("foo://a\\b@host/x"), "foo://host/x")
         self.assertEqual(capture.without_userinfo(b"//a\\b@host"), b"//a\\b@host")
+
+
+class ProfileGateTests(unittest.TestCase):
+    def test_profile_matches_verified_mitmproxy_release(self):
+        self.assertEqual(capture.PROFILE, "12.3.1")
+
+    def test_decode_rejects_a_different_runtime_version(self):
+        with mock.patch.object(capture.version, "VERSION", "12.2.3"):
+            with self.assertRaises(capture.CaptureFailure) as raised:
+                capture.decode({"snapshot_path": "/tmp/unused.mitm", "sensitive_values": []})
+        self.assertEqual(raised.exception.reason, "unsupported")
+        self.assertIn("12.3.1", str(raised.exception))
+        self.assertIn("12.2.3", str(raised.exception))
 
 
 if __name__ == "__main__":

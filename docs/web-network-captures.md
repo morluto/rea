@@ -90,7 +90,7 @@ may be absent, `-1`, or nonnegative. `cache` must be an object, while its option
 Invalid values fail with their source JSON pointer before record selection or
 sensitivity projection. Measurements are not invented or repaired. Decoder
 provenance names these corrections as `har-schema-corrections@1`.
-The observed mitmproxy 12.2.3 `SaveHar` profile can emit `postData.text: null`
+The observed mitmproxy 12.2.3/12.3.1 `SaveHar` profile can emit `postData.text: null`
 for a missing request body. REA preserves that reported null, omitting the
 optional field only from its validation copy for this exact producer profile;
 it does not invent an empty string or body bytes.
@@ -102,7 +102,7 @@ only from its validation copy, only for this declared producer and a valid IPv6
 literal. Invalid addresses, bracketed IPv4, ports and zone identifiers remain
 validation failures. Producer declarations do not authenticate origin.
 
-Native mitmproxy decoding requires a caller-supplied **mitmdump 12.2.3 on
+Native mitmproxy decoding requires a caller-supplied **mitmdump 12.3.1 on
 Linux**. Set its absolute executable path:
 
 ```sh
@@ -114,8 +114,8 @@ directory, `--no-server`, and the unchanged upstream `mitmproxy.io.tnetstring`
 decoder. It does not run `FlowReader` migrations or convert native states to
 HAR. Raw IDs, state versions, flow types, backup states and unknown extensions
 are preserved without synthesizing connections, timestamps or content. The
-tested upstream source is tag `v12.2.3`, commit
-`6c09d56e4c29a92f5ad01b03199977584b8ea14f`; other native tool versions return
+tested upstream source is tag `v12.3.1`, commit
+`51c1d6b2d8d3367a773411eb7a3eeccec82b3ea7`; other native tool versions return
 an explicit unsupported-profile diagnostic. Non-Linux native decoding is not
 supported by this adapter.
 
