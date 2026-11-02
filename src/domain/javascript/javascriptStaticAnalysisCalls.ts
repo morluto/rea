@@ -570,13 +570,15 @@ const inspectEndpointCall = (
   // A local or shadowed function with a familiar network name is not a known
   // browser request API. Do not let the literal fallback turn it into one.
   if (
-    (t.isCallExpression(node) ||
-      t.isOptionalCallExpression(node) ||
-      t.isNewExpression(node)) &&
-    browserNetworkReferenceStatus(node, bindings) === "unknown"
+    t.isCallExpression(node) ||
+    t.isOptionalCallExpression(node) ||
+    t.isNewExpression(node)
   ) {
-    context.accumulator.unknownFindings++;
-    return;
+    const status = browserNetworkReferenceStatus(node, bindings);
+    if (status === "unknown") context.accumulator.unknownFindings++;
+    // A recognized global with a known replacement is not the browser API.
+    // Do not reinterpret it through the generic endpoint-name fallback.
+    if (status !== "unrelated") return;
   }
   if (isNetworkRequestSpelling(name)) {
     return;

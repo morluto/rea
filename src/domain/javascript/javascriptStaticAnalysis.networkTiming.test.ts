@@ -48,3 +48,25 @@ describe.each(apis)(
     });
   },
 );
+
+it("does not reinterpret replaced qualified browser APIs as generic endpoint candidates", () => {
+  for (const root of ["window", "globalThis", "self", "global"]) {
+    const result = analyzeJavaScriptStaticSource(
+      `${root}.navigator.sendBeacon('/first', ''); ${root}.navigator.sendBeacon=custom; ${root}.navigator.sendBeacon('/second', '');`,
+    );
+    expect(result.endpoints.map(({ value }) => value)).toEqual(["/first"]);
+    expect(result.analysis_coverage!.semantics.unknown_findings).toBe(0);
+  }
+});
+
+it("keeps unrelated same-named methods as candidates", () => {
+  const result = analyzeJavaScriptStaticSource(
+    "client.sendBeacon('/candidate');",
+  );
+  expect(result.endpoints).toContainEqual(
+    expect.objectContaining({
+      value: "/candidate",
+      interpretation: "candidate",
+    }),
+  );
+});

@@ -23,3 +23,22 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     );
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "does not recover a replaced qualified sendBeacon through $0",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-qualified-beacon-");
+    await writeFixtureFiles(root, {
+      "main.js":
+        "globalThis.navigator.sendBeacon('/first',''); globalThis.navigator.sendBeacon=custom; globalThis.navigator.sendBeacon('/second','');",
+    });
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const endpoints = graph.nodes
+      .filter(({ kind }) => kind === "endpoint")
+      .flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties.value),
+      );
+    expect(endpoints).toContain("/first");
+    expect(endpoints).not.toContain("/second");
+  },
+);
