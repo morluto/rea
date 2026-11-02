@@ -465,6 +465,9 @@ describe("Classic-script global function activation", () => {
     const source = `
       const { BrowserWindow } = require("electron");
       const other = { createWindow() {} };
+      let root = other;
+      root = globalThis;
+      root.document;
       other.createWindow();
       const webPreferences = { nodeIntegration: true };
       function createWindow() { return new BrowserWindow({ webPreferences }); }

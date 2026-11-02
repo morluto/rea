@@ -922,12 +922,12 @@ const moduleFunctionFirstRead = (
           unknown = true;
       }
       const result = global ? true : unknown ? null : false;
+      // The union belongs to this receiver, not each of its possible origins.
       globalReceivers.set(input, result);
-      // These are conservative may-alias facts, shared within this source scan.
-      for (const node of seen) globalReceivers.set(node, result);
       return result;
     };
     const active = new Set<t.Function>();
+    let unknownPropertyRead: number | null = Infinity;
     for (let index = 0; index < body.length; index++) {
       const statement = body[index];
       if (statement === undefined) continue;
@@ -976,15 +976,11 @@ const moduleFunctionFirstRead = (
             if (globalReceiver(receiver) !== false) {
               name = semanticStaticPropertyKey(node.property, node.computed);
               if (name === null) {
-                for (const fn of functions.values()) {
-                  if (fn == null) continue;
-                  const current = indexedReads.get(fn);
-                  if (current !== null && current !== undefined)
-                    indexedReads.set(
-                      fn,
-                      active.size > 0 ? null : Math.min(current, index),
-                    );
-                }
+                if (unknownPropertyRead !== null)
+                  unknownPropertyRead =
+                    active.size > 0
+                      ? null
+                      : Math.min(unknownPropertyRead, index);
                 return;
               }
             }
@@ -1006,6 +1002,18 @@ const moduleFunctionFirstRead = (
           if (t.isFunction(node)) active.delete(node);
         },
       });
+    }
+    // Unknown global keys share one timing fact across the module functions.
+    for (const fn of functions.values()) {
+      if (fn == null) continue;
+      const current = indexedReads.get(fn);
+      if (current !== null && current !== undefined)
+        indexedReads.set(
+          fn,
+          unknownPropertyRead === null
+            ? null
+            : Math.min(current, unknownPropertyRead),
+        );
     }
   }
   const first = reads.get(declaration);
