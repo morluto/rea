@@ -65,8 +65,19 @@ processTest.for([
           name: "get_evidence_bundle", arguments: {} }));
         for (const record of [evidence, compared])
           assert.deepEqual(bundle.records.find(item => item.evidence_id === record.evidence_id), record);
-        await assert.rejects(() => compareRetainedFunctionEvidence(client,
-          { ...evidence, evidence_id: "ev_" + "b".repeat(64) }));
+        const missingId = "ev_" + "b".repeat(64);
+        let missingFailure;
+        const checkedClient = { callTool: async (...args) => {
+          const reply = await client.callTool(...args);
+          assert.equal(reply.isError, true);
+          missingFailure = JSON.parse(reply.content.find(item => item.type === "text").text).error;
+          return reply;
+        } };
+        await assert.rejects(() => compareRetainedFunctionEvidence(checkedClient,
+          { ...evidence, evidence_id: missingId }), { name: "AssertionError" });
+        assert.equal(missingFailure.details.reason, "missing");
+        assert.equal(missingFailure.details.evidence_id, missingId);
+        assert.match(missingFailure.message, /not available from the selected source/);
         console.log(JSON.stringify({ status: compared.normalized_result.status,
           exact_source_link: true, complete_records_retained: true, missing_reference_refused: true }));
       } finally {
