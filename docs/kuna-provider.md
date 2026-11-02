@@ -11,6 +11,16 @@ binary without the old snapshot and save a new one, or choose a new export
 directory. Existing snapshot Evidence can be extracted from its
 `evidence_bundle` JSON member and imported as a separate Evidence bundle; that
 does not restore cached workflow entries or resume the old directory export.
+For example, using `jq` and a new output path:
+
+```bash
+jq -e '.evidence_bundle | select(type == "object")' old-snapshot.json > history.json
+rea evidence-import history.json --json
+```
+
+The CLI command validates the bundle in a one-shot session. To use the records
+in an MCP session, call `import_evidence_bundle` with the extracted file path.
+This validates the embedded bundle, not the rest of the snapshot container.
 
 ## Configure
 
