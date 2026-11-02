@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { Errors, Parser, z } from "incur";
 
 import { splitIncurBuiltinArguments } from "../cliBuiltinArguments.js";
+import { parseCliOutputArguments, renderCliDocument } from "../cliOutput.js";
 import type { CliInstance } from "./types.js";
 import { visitRegisteredCommands } from "./visitRegisteredCommands.js";
 
@@ -39,6 +40,57 @@ const optionTokenShape = (schema: z.ZodObject): z.ZodObject =>
     ),
   );
 
+/** Incur's built-in MCP registration bypasses the registered command middleware. */
+const mcpAddSurplusError = (
+  arguments_: readonly string[],
+  displayName: string,
+): string | undefined => {
+  const split = splitIncurBuiltinArguments(arguments_);
+  const outputValueIndexes = new Set(
+    split.outputValues.map(({ index }) => index),
+  );
+  if (
+    arguments_.some(
+      (token, index) =>
+        !outputValueIndexes.has(index) &&
+        (token === "--help" || token === "-h"),
+    )
+  )
+    return undefined;
+
+  const { command } = split;
+  const commandOffset = command[0] === displayName ? 1 : 0;
+  if (command[commandOffset] !== "mcp" || command[commandOffset + 1] !== "add")
+    return undefined;
+
+  const tail = "__rea_unbound_positionals";
+  let parsed: ReturnType<typeof Parser.parse>;
+  try {
+    parsed = Parser.parse(command.slice(commandOffset + 2), {
+      args: z.object({ [tail]: z.array(z.string()).optional() }),
+      options: z.object({
+        agent: z.unknown().optional(),
+        command: z.unknown().optional(),
+        noGlobal: z.boolean().optional(),
+      }),
+      alias: { command: "c" },
+    });
+  } catch {
+    // Leave malformed flags to Incur so it retains its normal diagnostics.
+    return undefined;
+  }
+
+  const surplus: unknown = (parsed.args as Record<string, unknown>)[tail];
+  if (!Array.isArray(surplus) || surplus.length === 0) return undefined;
+  return `Unexpected positional arguments: ${surplus.map((value) => JSON.stringify(value)).join(" ")}. Use '${displayName} mcp add --help' for the declared argument shape.`;
+};
+
+/** Keep the outer mcp-add registration guard from treating a parse rejection as success. */
+export const hasMcpAddSurplusArguments = (
+  arguments_: readonly string[],
+  displayName = "rea",
+): boolean => mcpAddSurplusError(arguments_, displayName) !== undefined;
+
 /**
  * Incur 0.6.1 drops unbound positionals. Its public parser owns token binding,
  * but provides neither a strict-count option nor raw argv in middleware.
@@ -47,6 +99,7 @@ const optionTokenShape = (schema: z.ZodObject): z.ZodObject =>
  */
 export const rejectSurplusCliArguments = (
   cli: CliInstance,
+  displayName = "rea",
 ): ((
   arguments_: readonly string[],
   options: ServeOptions,
@@ -102,8 +155,38 @@ export const rejectSurplusCliArguments = (
       ...(command.middleware ?? []),
     ];
   });
-  return (arguments_, options, serve) =>
-    invocation.run(splitIncurBuiltinArguments(arguments_).command, () =>
+  return (arguments_, options, serve) => {
+    const started = performance.now();
+    const surplusError = mcpAddSurplusError(arguments_, displayName);
+    const output = parseCliOutputArguments(arguments_);
+    if (surplusError !== undefined && output.validation.ok) {
+      const stdout =
+        options.stdout ?? ((text: string) => process.stdout.write(text));
+      const exit = options.exit ?? ((code: number) => process.exit(code));
+      const failure = { code: "UNKNOWN", message: surplusError };
+      const document = output.fullOutput
+        ? {
+            ok: false,
+            error: failure,
+            meta: {
+              command: "mcp add",
+              duration: `${Math.round(performance.now() - started)}ms`,
+            },
+          }
+        : failure;
+      const format =
+        output.format === "csv" || output.format === "tsv"
+          ? "json"
+          : output.format;
+      stdout(
+        renderCliDocument(document, format, process.stdout.isTTY === true),
+      );
+      exit(1);
+      return Promise.resolve();
+    }
+
+    return invocation.run(splitIncurBuiltinArguments(arguments_).command, () =>
       serve([...arguments_], options),
     );
+  };
 };

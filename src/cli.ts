@@ -77,7 +77,10 @@ import {
 import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
 import { registerCutterCommands } from "./cli/cutterCommands.js";
 import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArguments.js";
-import { rejectSurplusCliArguments } from "./cli/strictPositionals.js";
+import {
+  hasMcpAddSurplusArguments,
+  rejectSurplusCliArguments,
+} from "./cli/strictPositionals.js";
 import { presentCliArgumentErrors } from "./cli/argumentErrors.js";
 import { completionHelpNote, createCliCompletions } from "./cli/completions.js";
 import {
@@ -242,7 +245,10 @@ export const createCli = (
   });
   presentOmittableDefaults(cli);
   if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
-  const serveStrict = rejectSurplusCliArguments(cli);
+  const serveStrict = rejectSurplusCliArguments(
+    cli,
+    PRODUCT_IDENTITY.cliBinary,
+  );
   presentCliArgumentErrors(cli);
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
   const serve = cli.serve.bind(cli);
@@ -253,6 +259,13 @@ export const createCli = (
   cli.serve = (arguments_ = process.argv.slice(2), options) => {
     if (complete(arguments_, options ?? {})) return Promise.resolve();
     const normalized = normalizeCliArguments(arguments_);
+    // Let strict-positionals reject malformed built-in registration before
+    // the Amp postcondition runs; otherwise its missing-file check adds a
+    // second JSON result after the original parse error.
+    if (hasMcpAddSurplusArguments(normalized, PRODUCT_IDENTITY.cliBinary))
+      return serveStrict(normalized, options ?? {}, (tokens, selected) =>
+        serveDeclared(tokens, selected, serve),
+      );
     const { command, flags } = splitIncurBuiltinArguments(normalized);
     const builtin = command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
     if (
