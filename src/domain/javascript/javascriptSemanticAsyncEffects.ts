@@ -146,6 +146,9 @@ const rejectsEventListener = (listener: t.Node): boolean => {
   if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
     return false;
   if (t.isClassExpression(value)) return false;
+  // A numeric literal is always a number, including the non-finite value Babel
+  // stores for `1e999`, which the exact-value reader refuses to price.
+  if (t.isNumericLiteral(value)) return true;
   // Every unary operator yields a primitive, and a primitive is never callable.
   return (
     t.isUnaryExpression(value) ||
@@ -177,7 +180,14 @@ const collectEvent = (
   const listenerArgument = EVENT_LISTENER_METHODS.includes(method)
     ? node.arguments[1]
     : undefined;
-  if (listenerArgument !== undefined && rejectsEventListener(listenerArgument))
+  // A leading spread shifts the runtime argument positions, so argument 1 is not
+  // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
+  // trailing `1`.
+  if (
+    !t.isSpreadElement(eventArgument) &&
+    listenerArgument !== undefined &&
+    rejectsEventListener(listenerArgument)
+  )
     return;
   const emitter = emitterIdentity(member.object, state);
   const eventName = dataEffectLiteralString(eventArgument);

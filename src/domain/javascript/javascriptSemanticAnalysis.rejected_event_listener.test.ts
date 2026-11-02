@@ -83,3 +83,33 @@ it("keeps removeAllListeners with a literal event name", () => {
     { kind: "remove", method: "removeAllListeners", eventName: "x" },
   ]);
 });
+
+/**
+ * Two review findings.
+ *
+ * Babel stores `1e999` as a `NumericLiteral` holding `Infinity`, which the
+ * exact-value reader refuses to price, so the non-finite value was missed:
+ *
+ *   e.on("x", 1e999)  -> THREW ERR_INVALID_ARG_TYPE
+ *
+ * A leading spread shifts the runtime argument positions, so argument 1 is not
+ * provably the listener:
+ *
+ *   e.on(...["x", fn], 1)  -> registers fn; the trailing 1 is ignored
+ */
+it.each([
+  ["an overflowing numeric listener", `e.on("x", 1e999)`],
+  ["another overflowing numeric listener", `e.on("x", 1e400)`],
+] as const)("emits no event operation for %s", (_name, call) => {
+  expect(eventsFor(call)).toEqual([]);
+});
+
+it.each([
+  ["a leading spread", `e.on(...args, 1)`, "on"],
+  ["a leading spread with a literal array", `e.on(...["x", fn], 1)`, "on"],
+  ["a leading spread on once", `e.once(...args, 0)`, "once"],
+] as const)("keeps the event operation for %s", (_name, call, method) => {
+  expect(eventsFor(call)).toEqual([
+    { kind: "register", method, eventName: null },
+  ]);
+});
