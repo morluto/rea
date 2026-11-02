@@ -265,7 +265,6 @@ export class KunaProvider implements AnalysisProviderCandidate {
           kuna_sha256: value.sha256,
           kuna_command: value.configuration.command,
           kuna_executable: value.executable,
-          verified_release: value.verified,
           jobs: value.configuration.jobs,
           export: "decompile-project",
           reference_graph: {

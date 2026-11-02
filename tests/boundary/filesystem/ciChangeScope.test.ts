@@ -346,6 +346,7 @@ it.each([
   "tests/support/reverseEngineeringService.ts",
   "tests/support/ownedRizinCommandEvidenceTests.ts",
   "tests/support/reverseDebuggerMcpTestHelpers.ts",
+  "tests/boundary/cli/debuggerOneShotExit.test.ts",
   "tests/boundary/cli/gdbStartupCleanupCli.test.ts",
   "vitest.reverse-tools.config.ts",
   "vitest.reverse-tools-semantics.config.ts",
@@ -894,6 +895,18 @@ it.each([
   ],
   [
     "tests/boundary/cli/nativePlistCli.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/process/nativeUiVerifierLane.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/providers/native/nativeUiOffscreenWindow.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/conformance/native/ui-offscreen.swift",
     { code: true, apple: true, package: false, runtime: false },
   ],
   [

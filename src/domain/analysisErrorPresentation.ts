@@ -56,6 +56,10 @@ export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with 
 /** Next step when one MCP frame cannot carry a selected page of complete records. */
 export const MCP_TRANSPORT_EVIDENCE_RECORDS = `Request fewer records with get_evidence_bundle detail: records, a smaller limit or an exact evidence_id filter; inspect compatible records in pages through inspect_analysis_view. A single record larger than one response needs export. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
 
+/** Next step when one MCP frame cannot carry a selected page of link rows. */
+export const MCP_TRANSPORT_EVIDENCE_LINKS =
+  "Request fewer rows with get_evidence_bundle detail: links, a smaller limit or an exact evidence_id filter, then follow next_offset.";
+
 /** Name the next step that is true for how long the caller keeps REA's runtime and session. */
 export const analysisErrorRemediationAction = (
   error: AnalysisError,

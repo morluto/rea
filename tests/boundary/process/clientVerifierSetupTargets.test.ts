@@ -5,25 +5,29 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
-it.each(([
-  ["gemini", "relative path", false],
-  ["gemini", "profile traversal", false],
-  ["gemini", "profile root alias", false],
-  ["gemini", "skill root alias", false],
-  ["gemini", "skill traversal", false],
-  ["gemini", "owned child", true],
-  ["copilot", "relative path", false],
-  ["copilot", "sibling", false],
-  ["copilot", "skill traversal", false],
-  ["copilot", "owned child", true],
-  ["qwen", "relative path", false],
-  ["qwen", "profile traversal", false],
-  ["qwen", "profile root alias", false],
-  ["qwen", "skill root alias", false],
-  ["qwen", "skill traversal", false],
-  ["qwen", "profile child", true],
-  ["qwen", "skill child", true],
-] as const).filter(([client]) => process.platform !== "win32" || client !== "copilot"))(
+it.each(
+  (
+    [
+      ["gemini", "relative path", false],
+      ["gemini", "profile traversal", false],
+      ["gemini", "profile root alias", false],
+      ["gemini", "skill root alias", false],
+      ["gemini", "skill traversal", false],
+      ["gemini", "owned child", true],
+      ["copilot", "relative path", false],
+      ["copilot", "sibling", false],
+      ["copilot", "skill traversal", false],
+      ["copilot", "owned child", true],
+      ["qwen", "relative path", false],
+      ["qwen", "profile traversal", false],
+      ["qwen", "profile root alias", false],
+      ["qwen", "skill root alias", false],
+      ["qwen", "skill traversal", false],
+      ["qwen", "profile child", true],
+      ["qwen", "skill child", true],
+    ] as const
+  ).filter(([client]) => process.platform !== "win32" || client !== "copilot"),
+)(
   "%s checks %s setup-plan targets before writing",
   async (client, kind, allowed) => {
     const state = await mkdtemp(join(tmpdir(), "rea-client-plan-"));
