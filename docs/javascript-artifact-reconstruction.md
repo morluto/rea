@@ -1002,7 +1002,12 @@ reason in the renderer observations.
 HTML script source ranges follow the HTML parser across LF, CRLF, and bare CR
 line endings, preserving UTF-16 columns.
 Inline JavaScript in local HTML, meaning classic or module `<script>` bodies
-without a `src` attribute, is not analyzed. Each HTML file that has one gets an
+without a `src` attribute, is not analyzed. Embedded SVG scripts use `href`
+(or `xlink:href` when `href` is absent) instead: an existing reference, even
+an empty one, suppresses the inline body. SVG's `src` and HTML-only `language`
+attributes do not suppress its JavaScript body. SVG references and inline
+bodies share the same inert parsing and source coordinates as HTML scripts;
+template content stays inert. Each HTML file that has an inline body gets an
 unknown `parse-html-inline-scripts` scope with the exact body count and the
 script type and source range of the first 100 bodies; beyond that, coverage is
 truncated under the `html_inline_script_locations_per_file` limit, and the
