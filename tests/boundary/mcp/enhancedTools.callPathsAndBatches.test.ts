@@ -582,7 +582,7 @@ describe("enhanced MCP batches", () => {
             retryable: false,
             remediation: {
               action:
-                "Analysis returned an unreadable result. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.",
+                "Run `rea doctor` and review the reported details to correct the request or provider setup before running the analysis again.",
             },
           },
         },
