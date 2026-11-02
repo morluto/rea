@@ -54,7 +54,7 @@ export const evidenceBundleSummarySchema = z.strictObject({
   matching_records: countSchema,
   unknown_revisions: countSchema,
   direct_links: countSchema.describe(
-    "evidence_links of the matching records; detail links names them.",
+    "Distinct evidence_links of each matching record; detail links names them.",
   ),
   missing_direct_links: countSchema.describe(
     "Those direct links whose records this session or bundle does not retain. Zero establishes no transitive closure or analysis coverage.",
@@ -155,6 +155,10 @@ function* matchingEvidenceRecords(
   }
 }
 
+/** A record's distinct direct links; the Evidence schema does not deduplicate them. */
+const directLinksOf = ({ evidence_links: links }: Evidence): string[] =>
+  uniqueSorted(links);
+
 /** Discover retained Evidence without reading or copying its complete payloads. */
 export const summarizeEvidenceBundle = (
   bundle: EvidenceBundle,
@@ -165,9 +169,10 @@ export const summarizeEvidenceBundle = (
   let directLinks = 0;
   let missingDirectLinks = 0;
   for (const { evidence, native } of matchingEvidenceRecords(bundle, filters)) {
-    directLinks += evidence.evidence_links.length;
-    for (const link of evidence.evidence_links)
+    for (const link of directLinksOf(evidence)) {
+      directLinks += 1;
       if (!retained.has(link)) missingDirectLinks += 1;
+    }
     records.push({
       evidence_id: evidence.evidence_id,
       subject: evidence.subject,
@@ -359,9 +364,10 @@ export const inspectEvidenceLinks = (
   const counts = { total: 0, retained: 0, missing: 0 };
   let matchingLinks = 0;
   // Bundle order is canonical, so a page stays stable across requests.
-  for (const { evidence_id: id, evidence_links: links } of bundle.records) {
+  for (const evidence of bundle.records) {
+    const id = evidence.evidence_id;
     if (!examined.has(id)) continue;
-    for (const link of uniqueSorted(links)) {
+    for (const link of directLinksOf(evidence)) {
       const status = retained.has(link) ? "retained" : "missing";
       counts.total += 1;
       counts[status] += 1;

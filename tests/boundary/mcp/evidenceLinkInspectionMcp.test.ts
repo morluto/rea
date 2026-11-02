@@ -188,6 +188,21 @@ it("follows retained links only when asked and leaves the rest unknown", async (
   });
 });
 
+it("counts a repeated link once in every delivery", async () => {
+  const repeated = record("trace_feature", [
+    source.evidence_id,
+    source.evidence_id,
+  ]);
+  const { links, summary } = await connect({ records: [repeated] });
+  expect(await summary()).toMatchObject({
+    direct_links: 1,
+    missing_direct_links: 1,
+  });
+  const inspected = await links();
+  expect(inspected.links).toEqual({ total: 1, retained: 0, missing: 1 });
+  expect(inspected.rows).toHaveLength(1);
+});
+
 it("pages selected link rows in a stable order without skips or duplicates", async () => {
   const { links } = await connect();
   const everything = await links({ link_status: "all" });
