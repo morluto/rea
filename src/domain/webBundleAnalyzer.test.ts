@@ -1274,6 +1274,62 @@ it("does not mark unrelated open methods as uncertain XHR", () => {
   ).toBe(false);
 });
 
+it.each([
+  "fetch('/endpoint')",
+  "fetch(target)",
+  "new WebSocket('wss://example.test/socket')",
+  "new EventSource('/events')",
+  "navigator.sendBeacon('/beacon')",
+])(
+  "reports uncertain browser network identity after opaque code: %s",
+  (call) => {
+    const report = analyzeWebBundleFixture(inspection(`eval(code); ${call};`));
+    expect(report.completeness.status).toBe("partial");
+    expect(report.unknowns).toContainEqual(
+      expect.objectContaining({
+        dimension: "network_identity",
+        reason: expect.stringContaining("Browser network API identity"),
+      }),
+    );
+  },
+);
+
+it("does not report uncertain browser network identity for an intact or replaced API", () => {
+  for (const source of [
+    "fetch('/before');",
+    "fetch = custom; fetch('/after');",
+    "client.fetch('/other');",
+  ]) {
+    const report = analyzeWebBundleFixture(inspection(source));
+    expect(
+      report.unknowns.some(({ reason }) =>
+        reason.includes("Browser network API identity"),
+      ),
+    ).toBe(false);
+  }
+});
+
+it("marks missing browser network identity coverage uncollected", () => {
+  const captured = inspection("fetch('/independent');");
+  const script = captured.scripts.items.find(isIncludedScript);
+  if (script === undefined) throw new Error("Missing included script fixture");
+  const facts = analyzeCapturedWebScript(script);
+  if (facts.status !== "analyzed") throw new Error("Expected analyzed script");
+  const { uncertain_network_identity: _omitted, ...historical } = facts;
+  const report = buildCapturedWebBundleAnalysis(
+    captured,
+    { status: "not_requested", requested: 0, processed: 0, items: [] },
+    [historical],
+  );
+  expect(report.completeness.status).toBe("partial");
+  expect(report.unknowns).toContainEqual({
+    dimension: "network_identity",
+    reason:
+      "Browser network identity coverage was not collected by the script analyzer",
+    affected_script_keys: [script.script_key],
+  });
+});
+
 it("preserves missing historical XHR identity coverage as uncollected", () => {
   const captured = inspection("fetch('/independent');");
   const script = captured.scripts.items.find(isIncludedScript);

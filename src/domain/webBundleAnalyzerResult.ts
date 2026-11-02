@@ -98,6 +98,8 @@ export const buildCapturedWebBundleAnalysis = (
     accumulator.recoveredScripts.length > 0 ||
     accumulator.widenedScripts.length > 0 ||
     accumulator.uncertainXhrScripts.length > 0 ||
+    accumulator.uncertainNetworkScripts.length > 0 ||
+    accumulator.uncollectedNetworkScripts.length > 0 ||
     accumulator.uncollectedXhrScripts.length > 0 ||
     unavailable.length > 0 ||
     unavailableAnalyses.length > 0 ||
@@ -188,6 +190,8 @@ export const buildCapturedWebBundleAnalysis = (
       recoveredScripts: accumulator.recoveredScripts,
       widenedScripts: accumulator.widenedScripts,
       uncertainXhrScripts: accumulator.uncertainXhrScripts,
+      uncertainNetworkScripts: accumulator.uncertainNetworkScripts,
+      uncollectedNetworkScripts: accumulator.uncollectedNetworkScripts,
       uncollectedXhrScripts: accumulator.uncollectedXhrScripts,
       unavailableAnalyses,
       sourceMaps,
@@ -223,6 +227,10 @@ const mergeScriptResults = (
       accumulator.recoveredScripts.push(result.script_key);
     if (result.widened_return_references)
       accumulator.widenedScripts.push(result.script_key);
+    if (result.uncertain_network_identity === true)
+      accumulator.uncertainNetworkScripts.push(result.script_key);
+    else if (result.uncertain_network_identity === undefined)
+      accumulator.uncollectedNetworkScripts.push(result.script_key);
     if (result.uncertain_xhr_identity === true)
       accumulator.uncertainXhrScripts.push(result.script_key);
     else if (result.uncertain_xhr_identity === undefined)
@@ -277,6 +285,8 @@ interface UnknownsInput {
   readonly recoveredScripts: readonly string[];
   readonly widenedScripts: readonly string[];
   readonly uncertainXhrScripts: readonly string[];
+  readonly uncertainNetworkScripts: readonly string[];
+  readonly uncollectedNetworkScripts: readonly string[];
   readonly uncollectedXhrScripts: readonly string[];
   readonly unavailableAnalyses: readonly Extract<
     WebBundleScriptAnalysis,
@@ -289,6 +299,26 @@ interface UnknownsInput {
 }
 
 const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
+  ...(input.uncollectedNetworkScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "network_identity",
+          reason:
+            "Browser network identity coverage was not collected by the script analyzer",
+          affected_script_keys: [...input.uncollectedNetworkScripts],
+        },
+      ]),
+  ...(input.uncertainNetworkScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "network_identity",
+          reason:
+            "Browser network API identity may have changed; request findings are unconfirmed",
+          affected_script_keys: [...input.uncertainNetworkScripts],
+        },
+      ]),
   ...(input.uncollectedXhrScripts.length === 0
     ? []
     : [

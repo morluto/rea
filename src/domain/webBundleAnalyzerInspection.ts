@@ -1,5 +1,5 @@
 import {
-  isBrowserNetworkRequest,
+  browserNetworkReferenceStatus,
   createXhrOpenRequestQuery,
 } from "./javascript/javascriptNetworkRequests.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSemanticState.js";
@@ -239,7 +239,13 @@ const inspectCall = (
     !accumulator.uncertainXhrScripts.includes(script.script_key)
   )
     accumulator.uncertainXhrScripts.push(script.script_key);
-  const knownRequest = isBrowserNetworkRequest(node, bindings) || xhr === true;
+  const networkStatus = browserNetworkReferenceStatus(node, bindings);
+  if (
+    networkStatus === "unknown" &&
+    !accumulator.uncertainNetworkScripts.includes(script.script_key)
+  )
+    accumulator.uncertainNetworkScripts.push(script.script_key);
+  const knownRequest = networkStatus === "unmodified" || xhr === true;
   const networkEndpoint =
     endpoint !== undefined && !mapLookup
       ? { ...endpoint, kind: knownRequest ? "endpoint" : endpoint.kind }

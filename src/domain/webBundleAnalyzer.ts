@@ -23,6 +23,7 @@ export const analyzeCapturedWebScript = (
     visited_ast_nodes: accumulator.visitedNodes,
     widened_return_references: accumulator.widenedScripts.length > 0,
     uncertain_xhr_identity: accumulator.uncertainXhrScripts.length > 0,
+    uncertain_network_identity: accumulator.uncertainNetworkScripts.length > 0,
     route_facts: routeFacts,
     observations: {
       edges: accumulator.edges,
