@@ -25,8 +25,7 @@ it("returns observed Evidence for a SerializedFile", async () => {
   const service = createUnityAssetsService();
   try {
     const result = await service.inspect({ path });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       operation: "inspect_unity_assets",
       confidence: "observed",
