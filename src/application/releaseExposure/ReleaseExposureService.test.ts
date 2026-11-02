@@ -1401,17 +1401,17 @@ describe("ReleaseExposureService Go Windows paths", () => {
   });
 });
 
-describe("ReleaseExposureService Go relative flag paths", () => {
-  const goModule = (settings: { key: string; value: string }[]) => ({
-    path: "github.com/acme/app",
-    main: null,
-    dependencies: [],
-    settings,
-    unparsed_lines: [],
-    unparsed_line_bytes_base64: [],
-    complete: true,
-  });
+const goModule = (settings: { key: string; value: string }[]) => ({
+  path: "github.com/acme/app",
+  main: null,
+  dependencies: [],
+  settings,
+  unparsed_lines: [],
+  unparsed_line_bytes_base64: [],
+  complete: true,
+});
 
+describe("ReleaseExposureService Go relative flag paths", () => {
   it("keeps relative paths given to compiler path flags, attached or not", async () => {
     const report = await goReport(
       goModule([
@@ -1841,3 +1841,34 @@ const goReport = async (
   if (!result.ok) throw result.error;
   return releaseExposureReportSchema.parse(result.value.normalized_result);
 };
+
+describe("ReleaseExposureService Go tool path options", () => {
+  const buildPaths = async (key: string, value: string) => {
+    const report = await goReport(goModule([{ key, value }]));
+    return report.checks.find((item) => item.id === "go.build_paths");
+  };
+
+  it.each([
+    ["-gcflags", "-I private-sdk"],
+    ["-gcflags", "-I=private-sdk"],
+    ["-gcflags", "--I private-sdk"],
+    ["-gcflags", "all=-N -l -I private-sdk"],
+    ["-gcflags", "-importcfg private-sdk"],
+    ["-gcflags", "-trimpath private-sdk"],
+    ["-asmflags", "-I private-sdk"],
+    ["-asmflags", "all=-trimpath=private-sdk"],
+  ])("finds the relative path in %s %s", async (key, value) => {
+    const check = await buildPaths(key, value);
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual(["private-sdk"]);
+  });
+
+  it.each([
+    ["-gcflags", "all=-N -l"],
+    ["-gcflags", "-p main -lang go1.26 -m"],
+    ["-gcflags", "-X main.path=private-sdk"],
+    ["-asmflags", "-D GOAMD64_v1 -p main"],
+  ])("finds no path in %s %s", async (key, value) => {
+    expect((await buildPaths(key, value))?.status).toBe("not_observed");
+  });
+});

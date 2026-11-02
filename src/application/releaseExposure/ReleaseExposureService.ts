@@ -825,6 +825,16 @@ const GO_COMPILER_PATH_FLAG =
   /^-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT])=?\s*(.*)$/su;
 /** `go tool link` takes a library directory as `-L dir` or `-L=dir`, never attached. */
 const GO_LINKER_PATH_FLAG = /^-{1,2}L(?:=|\s+|$)(.*)$/su;
+/** The options `go tool compile -h` documents as taking a directory, path or file. */
+const GO_COMPILE_PATH_FLAG =
+  /^-{1,2}(?:D|I|asmhdr|bench|blockprofile|coveragecfg|cpuprofile|embedcfg|importcfg|linkobj|memprofile|mutexprofile|o|pgoprofile|symabis|traceprofile|trimpath)(?:=|\s+|$)(.*)$/su;
+/** `go tool asm` shares `-I`, `-o` and `-trimpath`, but its `-D` defines a symbol. */
+const GO_ASSEMBLE_PATH_FLAG = /^-{1,2}(?:I|o|trimpath)(?:=|\s+|$)(.*)$/su;
+const GO_TOOL_PATH_FLAGS = new Map([
+  ["-asmflags", GO_ASSEMBLE_PATH_FLAG],
+  ["-gcflags", GO_COMPILE_PATH_FLAG],
+  ["-ldflags", GO_LINKER_PATH_FLAG],
+]);
 /** The one `pattern=` that `go build` allows before a setting's first flag. */
 const GO_PACKAGE_SELECTOR = /^[^\s=-][^\s=]*=(?=-)/u;
 /** `-X name=value` sets a string, which names no option. */
@@ -843,8 +853,8 @@ const splitGoField = (field: string): string[] => field.split(/\s+(?=-)/u);
 const goFlags = (value: string): string[] =>
   goFields(value).flatMap(splitGoField);
 
-/** Linker flags in one value, each `-X` kept apart from the string it sets. */
-const goLinkerFlags = (value: string): string[] => {
+/** One Go tool's flags, each `-X` kept apart from the string it sets. */
+const goToolFlags = (value: string): string[] => {
   const flags: string[] = [];
   let setsString = false;
   for (const [index, field] of goFields(value).entries()) {
@@ -891,9 +901,10 @@ const goRelativeFlagPaths = (flags: string[], pathFlag: RegExp): string[] =>
 const goSettingRelativePaths = (key: string, value: string): string[] => {
   if (GO_COMPILER_SETTING.test(key))
     return goRelativeFlagPaths(goFlags(value), GO_COMPILER_PATH_FLAG);
-  return key === "-ldflags"
-    ? goRelativeFlagPaths(goLinkerFlags(value), GO_LINKER_PATH_FLAG)
-    : [];
+  const pathFlag = GO_TOOL_PATH_FLAGS.get(key);
+  return pathFlag === undefined
+    ? []
+    : goRelativeFlagPaths(goToolFlags(value), pathFlag);
 };
 
 const goPaths = (
