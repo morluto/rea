@@ -3,7 +3,7 @@ import type { ReverseEngineeringCommandPort } from "../application/reverse/Rever
 import { ReverseEngineeringService } from "../application/reverse/ReverseEngineeringService.js";
 import { objdumpCommand } from "../objdump/ObjdumpCommand.js";
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
-import { rizinCommand } from "../rizin/RizinCommand.js";
+import { rizinCommand, RIZIN_VERSION_PROBE } from "../rizin/RizinCommand.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
 import { resolveWindowsProviderExecutable } from "./resolveWindowsProviderExecutable.js";
 
@@ -29,6 +29,7 @@ export const createReverseEngineeringCommandPort = (
     ),
     arguments: rizinCommand(input),
     identity: RIZIN_PROVIDER_IDENTITY,
+    versionProbe: RIZIN_VERSION_PROBE,
   }),
 });
 

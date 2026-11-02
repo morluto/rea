@@ -8,6 +8,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 
 import {
   execFileBytes,
+  execFileFailureCapturedOutput,
   execFileOutput,
   execFileOutputFailure,
 } from "./ExecFileOutput.js";
@@ -669,6 +670,21 @@ describe("execFileOutput failure metadata", () => {
       signal: null,
       killed: false,
       outputTruncated: true,
+    });
+  });
+  it("reports no exit status in captured output that was not fully collected", () => {
+    const failure = execFileOutputFailure(
+      Object.assign(new Error("owned output collection failed"), {
+        stdout: "partial stdout",
+        stderr: "",
+        code: 0,
+        collectionFailure: true,
+      }),
+    );
+    if (failure === undefined) throw new Error("Expected failure metadata");
+    expect(execFileFailureCapturedOutput(failure)).toMatchObject({
+      stdout: "partial stdout",
+      exit_code: null,
     });
   });
 });

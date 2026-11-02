@@ -213,14 +213,15 @@ it("uses stoppable process mode for caller-selected provider commands", async ()
   }
 });
 
-it.skipIf(process.platform === "win32")(
-  "waits for a cancelled Rizin process to exit before returning",
-  async () => {
+it.skipIf(process.platform === "win32").each(["command", "version probe"])(
+  "waits for a Rizin process cancelled during its %s to exit before returning",
+  async (phase) => {
     const directory = await mkdtemp(join(tmpdir(), "rea-rizin-cancel-settle-"));
     const path = join(directory, "fixture.bin");
     const providerPidMarker = join(directory, "provider-pid");
     const descendantStartedMarker = join(directory, "descendant-started");
     const descendantPidMarker = join(directory, "descendant-pid");
+    const invocations = join(directory, "invocations");
     const provider = join(directory, "slow-rizin.mjs");
     const descendantScript = [
       "const fs = require('node:fs');",
@@ -233,7 +234,13 @@ it.skipIf(process.platform === "win32")(
       provider,
       `#!${process.execPath}
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
+const versionProbe = process.argv.includes("-v");
+appendFileSync(process.env.REA_TEST_INVOCATIONS, versionProbe ? "probe\\n" : "command\\n");
+if (versionProbe && process.env.REA_TEST_HANG !== "version probe") {
+  process.stdout.write("rizin 0.9.1 @ linux-x86-64\\n");
+  process.exit(0);
+}
 writeFileSync(process.env.REA_TEST_PROVIDER_PID, String(process.pid));
 process.stdout.write("provider output before cancellation");
 const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendantScript)}], { env: process.env, stdio: "ignore" });
@@ -247,6 +254,8 @@ setInterval(() => {}, 1000);
       environment: {
         REA_RIZIN_COMMAND: provider,
         REA_TEST_ARTIFACT: path,
+        REA_TEST_HANG: phase,
+        REA_TEST_INVOCATIONS: invocations,
         REA_TEST_PROVIDER_PID: providerPidMarker,
         REA_TEST_DESCENDANT_STARTED: descendantStartedMarker,
         REA_TEST_DESCENDANT_PID: descendantPidMarker,
@@ -267,7 +276,17 @@ setInterval(() => {}, 1000);
       });
       controller.abort();
 
-      expectCancelledResult(await settleCancelledProvider(pending));
+      const result = await settleCancelledProvider(pending);
+      if (phase === "command") expectCancelledResult(result);
+      else {
+        if (result.ok) throw new Error("Expected cancellation");
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cleanup).toBeUndefined();
+        expect(result.error.cause).toBe(controller.signal.reason);
+      }
+      expect(await readFile(invocations, "utf8")).toBe(
+        phase === "command" ? "probe\ncommand\n" : "probe\n",
+      );
       expect(await readFile(path, "utf8")).toBe("before");
       expect(await waitForProcessExit(processIds.descendantPid, 2_000)).toBe(
         true,

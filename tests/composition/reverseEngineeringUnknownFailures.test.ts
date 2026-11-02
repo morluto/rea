@@ -7,6 +7,7 @@ import { ReverseEngineeringService } from "../../src/application/reverse/Reverse
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { findsNoExecutable } from "../support/reverseEngineeringService.js";
 
 it.each([
   { stage: "stat", cause: null },
@@ -29,7 +30,7 @@ it.each([
               throw cause;
             }
           : stat,
-      run,
+      processes: { lookup: findsNoExecutable, run },
       commands: {
         objdump: () => ({
           executable: "unused-objdump",
