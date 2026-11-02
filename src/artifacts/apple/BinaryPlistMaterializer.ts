@@ -2,6 +2,7 @@ import { readBinaryPlistLayout } from "./BinaryPlistLayout.js";
 import { parseBinary } from "plist";
 import { markPlistDictionary } from "../../domain/apple/plistUid.js";
 import {
+  binaryPlistObjectEnd,
   decodeBinaryPlistScalars,
   scanBinaryPlistScalars,
   type BinaryPlistScalarMetadata,
@@ -132,34 +133,63 @@ export const decodeBinaryPlistValue = (
   return root.value;
 };
 
-const collectPlistText = (value: unknown, texts: string[]): void => {
-  if (typeof value === "string") texts.push(value);
-  else if (value instanceof Uint8Array)
-    texts.push(
-      Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString(
-        "utf8",
-      ),
-    );
-  else if (Array.isArray(value))
-    for (const item of value) collectPlistText(item, texts);
-  else if (value !== null && typeof value === "object")
-    for (const [key, item] of Object.entries(value)) {
-      texts.push(key);
-      collectPlistText(item, texts);
-    }
+/** The bytes of one stored string or data object, or null for any other type. */
+const storedPlistText = (
+  bytes: Buffer,
+  offset: number,
+  objectEnd: number,
+  referenceWidth: number,
+): { readonly text: string; readonly bytes: number } | null => {
+  const marker = bytes[offset];
+  if (marker === undefined) throw new RangeError("plist object is truncated");
+  const type = marker >> 4;
+  if (type !== 4 && type !== 5 && type !== 6 && type !== 7) return null;
+  const end = binaryPlistObjectEnd(bytes, offset, objectEnd, referenceWidth);
+  if (end === undefined) throw new RangeError("plist object is truncated");
+  const payload =
+    (marker & 0x0f) === 0x0f
+      ? offset + 2 + (1 << (bytes[offset + 1]! & 0x0f))
+      : offset + 1;
+  const stored = bytes.subarray(payload, end);
+  const text =
+    type === 5
+      ? stored.toString("latin1")
+      : type === 6
+        ? Buffer.from(stored).swap16().toString("utf16le")
+        : stored.toString("utf8");
+  return { text, bytes: stored.length };
 };
 
 /**
- * Decode a binary plist's strings, dictionary keys and data payloads to text.
- * Its strings are stored per object as ASCII or UTF-16BE, so the raw bytes do
- * not show them all. Throws on a plist that cannot be decoded within `maxBytes`.
+ * Decode every string, dictionary key and data payload a binary plist stores.
+ * Its strings are stored per object as ASCII, UTF-16BE or UTF-8, so the raw
+ * bytes do not show them all. This reads the object table rather than the
+ * decoded value, because a value drops objects its root no longer references
+ * and entries a later duplicate key replaced, and those bytes still ship.
+ * Throws on a plist that cannot be decoded within `maxBytes`, on a stored object
+ * it cannot read, and when overlapping table entries exceed `maxBytes` of text.
  */
 export const decodeBinaryPlistText = (
   bytes: Buffer,
   maxBytes: number,
 ): string => {
-  const plan = preflightPropertyListDecode(bytes, maxBytes);
+  decodeBinaryPlistValue(bytes, preflightPropertyListDecode(bytes, maxBytes));
+  const layout = readBinaryPlistLayout(bytes);
+  if (!layout.ok) throw new RangeError("binary plist trailer is truncated");
   const texts: string[] = [];
-  collectPlistText(decodeBinaryPlistValue(bytes, plan), texts);
+  let decoded = 0;
+  for (const offset of new Set(layout.value.objectOffsets())) {
+    const stored = storedPlistText(
+      bytes,
+      Number(offset),
+      layout.value.trailerOffset,
+      layout.value.referenceWidth,
+    );
+    if (stored === null) continue;
+    decoded += stored.bytes;
+    if (decoded > maxBytes)
+      throw new RangeError("binary plist text exceeds the decode budget");
+    texts.push(stored.text);
+  }
   return texts.join("\n");
 };
