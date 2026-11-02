@@ -770,8 +770,9 @@ parent for another invocation.
 
 When an admitted `open_binary` attempt fails, its error details include
 `target_at_open_completion`: the selected binary target when that attempt
-settled, or `null` when none was selected. A later lifecycle operation can
-change the selection; call `binary_session` for current state. This field does
+settled, or `null` when none was selected. `provider_id_at_open_completion`
+names its bound deep provider, or `null` if none was bound. A later lifecycle
+operation can change either selection; call `binary_session` for current state. This field does
 not establish provider readiness or resource cleanup.
 
 `binary_session` reports the active package, server, SDK, and negotiated

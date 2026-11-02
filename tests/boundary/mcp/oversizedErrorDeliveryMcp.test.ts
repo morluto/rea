@@ -190,6 +190,7 @@ it("retains an oversized failed-open receipt with its original error", async () 
           },
         ]),
         targetAtCompletion: selected,
+        providerIdAtCompletion: "ghidra",
       },
       false,
     ),
@@ -222,7 +223,10 @@ it("retains an oversized failed-open receipt with its original error", async () 
     expect(retained[0]?.normalized_result).toMatchObject({
       error: {
         code: "invalid_request",
-        details: { target_at_open_completion: selected },
+        details: {
+          target_at_open_completion: selected,
+          provider_id_at_open_completion: "ghidra",
+        },
       },
     });
   } finally {

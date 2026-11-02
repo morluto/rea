@@ -195,6 +195,7 @@ export class ToolResultDelivery {
         details: {
           ...projected.details,
           target_at_open_completion: failure.targetAtCompletion,
+          provider_id_at_open_completion: failure.providerIdAtCompletion,
         },
       },
       targetContent,

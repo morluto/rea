@@ -542,6 +542,8 @@ export class BinarySession
           this.#active === undefined
             ? null
             : binaryTargetSummary(this.#active.target),
+        providerIdAtCompletion:
+          this.#active?.route.binding?.identity.id ?? null,
       };
     });
   }

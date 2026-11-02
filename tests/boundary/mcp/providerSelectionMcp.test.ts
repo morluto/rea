@@ -6,11 +6,12 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createDeferred } from "../../fixtures/binarySession.js";
 
 import {
   createAnalysisExecution,
@@ -171,6 +172,7 @@ describe("provider selection over MCP", () => {
           requested_provider_id: "auto",
           candidate_ids: ["alpha", "beta"],
           target_at_open_completion: null,
+          provider_id_at_open_completion: null,
         },
       },
     });
@@ -229,6 +231,7 @@ describe("provider selection over MCP", () => {
         details: {
           selection_reason: "unknown_provider",
           target_at_open_completion: structured(opened).result,
+          provider_id_at_open_completion: "beta",
         },
       },
     });
@@ -242,7 +245,14 @@ describe("provider selection over MCP", () => {
     ).toMatchObject({
       analysis_provider_binding: { provider: { id: "beta" } },
     });
-    await checkQueuedSwitchReceipt(mcp, target, directory, opened, refusal);
+    await checkQueuedSwitchReceipt(
+      mcp,
+      session,
+      target,
+      directory,
+      opened,
+      refusal,
+    );
   });
 });
 
@@ -794,6 +804,7 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
 
 const checkQueuedSwitchReceipt = async (
   mcp: Client,
+  session: ReturnType<typeof composeBinarySession>,
   target: string,
   directory: string,
   opened: CallToolResult,
@@ -801,23 +812,48 @@ const checkQueuedSwitchReceipt = async (
 ): Promise<void> => {
   const other = join(directory, "other.hop");
   await writeFile(other, "other fixture");
-  const [queuedRefusal, switched] = await Promise.all([
-    mcp.callTool({
+  const settled = createDeferred<void>();
+  const release = createDeferred<void>();
+  const open = session.open.bind(session);
+  const spy = vi
+    .spyOn(session, "open")
+    .mockImplementation(async (path, options) => {
+      const result = await open(path, options);
+      if (options?.providerId === "missing") {
+        settled.resolve();
+        await release.promise;
+      }
+      return result;
+    });
+  try {
+    const pending = mcp.callTool({
       name: "open_binary",
       arguments: { path: target, provider_id: "missing" },
-    }),
-    mcp.callTool({
+    });
+    await settled.promise;
+    const switched = await mcp.callTool({
       name: "open_binary",
       arguments: { path: other, provider_id: "alpha" },
-    }),
-  ]);
-  expect(switched.isError).not.toBe(true);
-  for (const result of [structured(queuedRefusal), refusal])
-    expect(result).toMatchObject({
-      error: {
-        details: { target_at_open_completion: structured(opened).result },
-      },
     });
+    expect(switched.isError).not.toBe(true);
+    expect(session.activeTarget()?.sha256).toBe(
+      createHash("sha256").update("other fixture").digest("hex"),
+    );
+    release.resolve();
+    const queuedRefusal = await pending;
+    for (const result of [structured(queuedRefusal), refusal])
+      expect(result).toMatchObject({
+        error: {
+          details: {
+            target_at_open_completion: structured(opened).result,
+            provider_id_at_open_completion: "beta",
+          },
+        },
+      });
+  } finally {
+    release.resolve();
+    spy.mockRestore();
+  }
 };
 
 it("retains attributed mixed profile cleanup through registered MCP calls and partial retry", async () => {
@@ -866,6 +902,7 @@ it("retains attributed mixed profile cleanup through registered MCP calls and pa
       code: "cleanup_incomplete",
       details: {
         target_at_open_completion: null,
+        provider_id_at_open_completion: null,
         resources: ["alpha-file", "beta-file"],
         diagnostics: {
           profile_errors: expect.arrayContaining([

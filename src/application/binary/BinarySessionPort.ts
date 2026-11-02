@@ -40,6 +40,7 @@ export type BinarySessionOpenResult =
       readonly targetAtCompletion: ReturnType<
         typeof binaryTargetSummary
       > | null;
+      readonly providerIdAtCompletion: string | null;
     };
 
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */

@@ -81,6 +81,7 @@ it.each([
           cause: signal.reason,
         }),
         targetAtCompletion: null,
+        providerIdAtCompletion: null,
       };
     });
     let closeFails = failedClose;
