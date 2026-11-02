@@ -27,13 +27,22 @@ const VIEW = { kind: "cyclonedx" } as const;
 const VERSION = Buffer.from("go1.22.0");
 const MODULE_TEXT = Buffer.from("module");
 
-const parentFor = (operation: string, report: unknown): AnalysisViewParent => {
+const parentFor = (
+  operation: string,
+  report: unknown,
+  subject: {
+    format: "elf" | "mach-o-universal";
+    architecture: "x86_64" | "arm64";
+  } = {
+    format: "elf",
+    architecture: "x86_64",
+  },
+): AnalysisViewParent => {
   const evidence = createEvidence(
     {
       path: "/artifacts/program",
       sha256: SHA,
-      format: "elf",
-      architecture: "x86_64",
+      ...subject,
     },
     { id: "cyclonedx-test", name: "CycloneDX test", version: "1" },
     {
@@ -271,6 +280,70 @@ it("projects Go modules with Package URLs, replacements and main-module edges", 
     ]),
   );
   expect(JSON.stringify(view.document)).not.toContain('"complete"');
+});
+
+const SLICE = {
+  kind: "macho-selected-image-v1",
+  container: "fat",
+  offset: 16_384,
+  byte_length: 200,
+  cpu_type: 0x0100000c,
+  cpu_subtype: 0x80000002,
+  container_table_sha256: "b".repeat(64),
+} as const;
+
+const SLICE_PROPERTIES = [
+  { name: "rea:macho:architecture", value: "arm64" },
+  { name: "rea:macho:container", value: "fat" },
+  { name: "rea:macho:offset", value: "16384" },
+  { name: "rea:macho:byte_length", value: "200" },
+  { name: "rea:macho:cpu_type", value: "16777228" },
+  { name: "rea:macho:cpu_subtype", value: "2147483650" },
+  { name: "rea:macho:container_table_sha256", value: "b".repeat(64) },
+];
+
+const projectSlice = (operation: string, report: unknown) => {
+  const result = projectAnalysisView(
+    parentFor(operation, report, {
+      format: "mach-o-universal",
+      architecture: "arm64",
+    }),
+    VIEW,
+  );
+  if (!result.ok) throw result.error;
+  if (result.value.kind !== "cyclonedx")
+    throw new Error("Expected a CycloneDX view");
+  return result.value;
+};
+
+it("keeps the selected Mach-O slice in the standalone Go and Rust documents", () => {
+  const sliced = (report: GoBinary | RustBinary) => ({
+    ...report,
+    artifact: { ...report.artifact, bytes: 32_768 },
+    format: "macho",
+    architecture: "arm64",
+    selected_slice: SLICE,
+  });
+  const go = projectSlice(
+    "inspect_go_binary",
+    goBinarySchema.parse(sliced(goReport(null))),
+  );
+  expect(go.document.metadata.component.properties).toEqual(SLICE_PROPERTIES);
+
+  const rust = projectSlice(
+    "inspect_rust_binary",
+    rustBinarySchema.parse({
+      ...sliced(rustMetadata([], [], [], null)),
+      auditable_metadata: null,
+    }),
+  );
+  expect(rust.document.metadata.component.properties).toEqual(SLICE_PROPERTIES);
+});
+
+it("omits slice properties when no Mach-O slice was selected", () => {
+  expect(
+    projectGo(goReport(null)).document.metadata.component,
+  ).not.toHaveProperty("properties");
 });
 
 it("carries reader limitations into the standalone Go and Rust documents", () => {

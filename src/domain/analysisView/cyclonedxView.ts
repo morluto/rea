@@ -32,6 +32,7 @@ import {
   type AnalysisViewParent,
 } from "./analysisViewParent.js";
 import { goBinaryUnknowns } from "./goBinaryView.js";
+import type { MachoTargetSelection } from "../apple/machoTargetSelection.js";
 import { requireMetadataReportSubject } from "./metadataReportSubject.js";
 import { rustBinaryUnknowns } from "./rustBinaryView.js";
 
@@ -118,7 +119,9 @@ type CycloneDxProperty = z.output<typeof propertySchema>;
 type SourceCoverage = z.output<typeof cycloneDxSourceCoverageSchema>;
 type ReportSubject = {
   readonly artifact: { readonly path: string; readonly sha256: string };
+  readonly architecture: string;
   readonly limitations: readonly string[];
+  readonly selected_slice?: MachoTargetSelection;
 };
 type GoModuleIdentity = {
   readonly path: string;
@@ -332,6 +335,33 @@ const documentAllowanceExceeded = (
     ),
   );
 
+/**
+ * The artifact hash names a whole universal file, while the inventory covers one
+ * image of it. These properties keep that selection in an extracted document.
+ */
+const selectedSliceProperties = (
+  report: ReportSubject,
+): CycloneDxProperty[] => {
+  const slice = report.selected_slice;
+  if (slice === undefined) return [];
+  return [
+    { name: "rea:macho:architecture", value: report.architecture },
+    { name: "rea:macho:container", value: slice.container },
+    { name: "rea:macho:offset", value: String(slice.offset) },
+    { name: "rea:macho:byte_length", value: String(slice.byte_length) },
+    { name: "rea:macho:cpu_type", value: String(slice.cpu_type) },
+    { name: "rea:macho:cpu_subtype", value: String(slice.cpu_subtype) },
+    ...(slice.container_table_sha256 === null
+      ? []
+      : [
+          {
+            name: "rea:macho:container_table_sha256",
+            value: slice.container_table_sha256,
+          },
+        ]),
+  ];
+};
+
 const projectSizedDocument = (
   parent: AnalysisViewParent,
   view: z.output<typeof cycloneDxViewRequestSchema>,
@@ -373,6 +403,7 @@ const projectSizedDocument = (
   );
   const binaryRef = `sha256:${report.artifact.sha256}`;
   const componentRefs = components.map((component) => component["bom-ref"]);
+  const sliceProperties = selectedSliceProperties(report);
   const draft = {
     bomFormat: "CycloneDX" as const,
     specVersion: "1.6" as const,
@@ -384,6 +415,7 @@ const projectSizedDocument = (
         "bom-ref": binaryRef,
         name: fileComponentName(report.artifact.path),
         hashes: [{ alg: "SHA-256" as const, content: report.artifact.sha256 }],
+        ...(sliceProperties.length > 0 ? { properties: sliceProperties } : {}),
       },
       tools: {
         components: [

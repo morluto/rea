@@ -11,6 +11,12 @@ The same Evidence produces the same bytes. The document has no timestamp.
 hash is the artifact SHA-256. `metadata.tools` names REA and the package
 version that produced the document.
 
+That hash covers the whole file, and the inventory of a universal Mach-O covers
+one slice of it. For a slice, `metadata.component.properties` names the selection
+with `rea:macho:architecture`, `rea:macho:container`, `rea:macho:offset`,
+`rea:macho:byte_length`, `rea:macho:cpu_type`, `rea:macho:cpu_subtype` and
+`rea:macho:container_table_sha256`.
+
 Components use Package URLs:
 
 - Go modules use `pkg:golang/<module path>@<version>`. Slashes in the module
