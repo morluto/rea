@@ -66,6 +66,7 @@ export const NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS = [
 export const NATIVE_OBSERVATION_OPERATIONS = [
   ...NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS,
   "get_call_graph",
+  "xrefs",
 ] as const;
 export type NativeObservationOperation =
   (typeof NATIVE_OBSERVATION_OPERATIONS)[number];
@@ -74,6 +75,7 @@ export const nativeObservationSourceSchemas = {
   procedure_address: z.string(),
   procedure_callees: nativeAddressListSchema,
   procedure_callers: nativeAddressListSchema,
+  xrefs: nativeAddressListSchema,
   resolve_containing_procedure: containingProcedureResolutionSchema,
   get_call_graph: nativeCallGraphSchema,
 };
