@@ -3285,3 +3285,31 @@ describe("ReleaseExposureReader cumulative text allowance", () => {
     });
   });
 });
+
+describe("ReleaseExposureReader packaged map identity", () => {
+  it.each([
+    ["app.js", { embedded: 0, unparsed: 1, skipped: 0 }],
+    ["z.js", { embedded: 0, unparsed: 0, skipped: 1 }],
+  ])(
+    "keeps a packaged malformed assets.map that %s declares unresolved",
+    async (script, expected) => {
+      const root = await createTestTempDirectory("rea-release-packaged-map-");
+      const archive = join(root, "app.asar");
+      await writeFile(
+        archive,
+        asarArchive([
+          {
+            name: script,
+            bytes: Buffer.from(
+              "const value = 1;\n//# sourceMappingURL=assets.map\n",
+            ),
+          },
+          { name: "assets.map", bytes: Buffer.from("not a map\n") },
+        ]),
+      );
+      const scanned = await inspect(archive);
+      expect(scanned.source_maps).toMatchObject(expected);
+      expect(scanned.debug_companions.paths).toEqual([]);
+    },
+  );
+});
