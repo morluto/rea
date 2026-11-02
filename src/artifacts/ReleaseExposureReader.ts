@@ -20,6 +20,7 @@ import {
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
+  type ArtifactResourceOwner,
 } from "./ArtifactResourceScope.js";
 import {
   artifactFileCancellationCause,
@@ -1786,19 +1787,38 @@ const embeddedPackageFormatOfBytes = async (
 ): Promise<EmbeddedPackageProbe> => {
   try {
     const root = await mkdtemp(join(tmpdir(), "rea-release-member-"));
+    const owner: ArtifactResourceOwner = {
+      kind: "lease",
+      resource: root,
+      lease: { release: () => rm(root, { force: true, recursive: true }) },
+    };
+    let settled: Result<EmbeddedPackageProbe, unknown>;
     try {
       const filePath = join(root, "member");
       await writeFile(filePath, bytes, { flag: "wx", mode: 0o600 });
-      return await embeddedPackageFormat(
-        filePath,
-        nativeFormat,
-        state,
-        context,
-        member.location,
+      settled = ok(
+        await embeddedPackageFormat(
+          filePath,
+          nativeFormat,
+          state,
+          context,
+          member.location,
+        ),
       );
-    } finally {
-      await rm(root, { force: true, recursive: true });
+    } catch (cause) {
+      settled = err(cause);
     }
+    // The directory holds the member's bytes, so a failed removal stays owned.
+    const removal = await context.resources.release(owner);
+    if (removal.kind === "failed")
+      throw context.resources.cleanupFailure(
+        settled.ok
+          ? { kind: "completed" }
+          : { kind: "failed", cause: settled.error },
+        [removal],
+      );
+    if (!settled.ok) throw settled.error;
+    return settled.value;
   } catch (cause) {
     rethrowReadFailure(cause);
     pushLimitation(
