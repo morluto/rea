@@ -5,6 +5,9 @@ import { digestSchema } from "../digests.js";
 /** Full logical ZIP path budget, enforced by Flutter library inventory. */
 export const MAX_FLUTTER_LIBRARY_PATH_BYTES = 1024;
 
+/** Retained GNU build-ID descriptor budget, in bytes. */
+export const MAX_FLUTTER_BUILD_ID_BYTES = 64;
+
 /**
  * A libapp label can occupy every remaining byte of an admitted path. Its
  * Unicode character count cannot exceed that byte count. The query permits
@@ -19,7 +22,7 @@ const ABI_SELECTOR_MAX_CHARACTERS =
  * the label; Zod max() counts UTF-16 units. Advertise the same code-point
  * budget as JSON Schema maxLength, including every trailing line terminator.
  */
-const ABI_SELECTOR_MESSAGE = `ABI must be the exact lib/ directory label: 1–${String(ABI_SELECTOR_MAX_CHARACTERS)} Unicode characters without '/'.`;
+export const ABI_SELECTOR_MESSAGE = `ABI must be the exact lib/ directory label: 1–${String(ABI_SELECTOR_MAX_CHARACTERS)} Unicode characters without '/'.`;
 const abiSelectorSchema = z
   .string()
   .min(1, ABI_SELECTOR_MESSAGE)
