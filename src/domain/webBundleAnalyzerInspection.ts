@@ -246,10 +246,21 @@ const inspectCall = (
   )
     accumulator.uncertainNetworkScripts.push(script.script_key);
   const knownRequest = networkStatus === "unmodified" || xhr === true;
+  const intrinsicEndpoint =
+    (networkStatus === "unmodified" || networkStatus === "unknown") &&
+    first !== undefined
+      ? { kind: "candidate" as const, value: first }
+      : undefined;
+  const resolvedEndpoint = endpoint ?? intrinsicEndpoint;
   const networkEndpoint =
-    endpoint !== undefined && !mapLookup && networkStatus !== "replacement"
-      ? { ...endpoint, kind: knownRequest ? "endpoint" : endpoint.kind }
-      : endpoint === undefined &&
+    resolvedEndpoint !== undefined &&
+    !mapLookup &&
+    networkStatus !== "replacement"
+      ? {
+          ...resolvedEndpoint,
+          kind: knownRequest ? "endpoint" : resolvedEndpoint.kind,
+        }
+      : resolvedEndpoint === undefined &&
           xhr !== false &&
           !mapLookup &&
           stringValue(node.arguments[1]) !== undefined
