@@ -126,6 +126,12 @@ describe("curated Windows test lane", () => {
     );
   });
 
+  it("keeps ADB snapshot cleanup ownership coverage in the lane", async () => {
+    expect(await explicitPaths("windows")).toContain(
+      "tests/boundary/providers/adb/adbInputSnapshotOwnership.test.ts",
+    );
+  });
+
   it("installs and verifies native command ownership before the source build", async () => {
     const workflow = workflowSchema.parse(
       parse(await readFile(WORKFLOW, "utf8")),
