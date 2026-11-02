@@ -38,6 +38,7 @@ import {
   isUnmodifiedGlobalReference,
 } from "./javascriptSemanticGlobalReference.js";
 import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
+import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
@@ -173,6 +174,11 @@ const locationAssign = (
   index: JavaScriptBindingIndex,
 ): boolean =>
   isUnmodifiedGlobalReference(node.callee, index.bindings, [
+    "location",
+    "assign",
+  ]) ||
+  isUnmodifiedGlobalReference(node.callee, index.bindings, [
+    "document",
     "location",
     "assign",
   ]);
@@ -574,6 +580,35 @@ export class JavaScriptRouteScan {
     if (this.#result.capacity !== null) return;
     if (
       t.isAssignmentExpression(node) &&
+      (globalReferenceNamespace(node.left, this.index.bindings, [
+        "location",
+      ]) !== undefined ||
+        (t.isMemberExpression(node.left) &&
+          ["href", "pathname"].includes(
+            semanticStaticPropertyName(
+              node.left.property,
+              node.left.computed,
+            ) ?? "",
+          ) &&
+          (globalReferenceNamespace(node.left.object, this.index.bindings, [
+            "location",
+          ]) !== undefined ||
+            globalReferenceNamespace(node.left.object, this.index.bindings, [
+              "document",
+              "location",
+            ]) !== undefined))) &&
+      semanticOpaqueGlobalMayHaveChanged(node, this.index.bindings)
+    ) {
+      this.#ownDynamicValue(node.right, true, true, true);
+      this.#unknown(
+        "navigation-target",
+        node,
+        "An earlier opaque global effect makes the navigation identity uncertain.",
+      );
+      return;
+    }
+    if (
+      t.isAssignmentExpression(node) &&
       locationPropertyWrite(node, this.index)
     ) {
       const property = t.isMemberExpression(node.left)
@@ -756,6 +791,35 @@ export class JavaScriptRouteScan {
         this.onLegacyRoute?.({ node, value, mechanism: `call:${fullName}` });
     }
     if (this.#result.capacity !== null || t.isNewExpression(node)) return;
+    if (
+      ["pushState", "replaceState", "assign", "replace"].includes(name) &&
+      [
+        ["history", "pushState"],
+        ["history", "replaceState"],
+        ["location", "assign"],
+        ["location", "replace"],
+        ["document", "location", "assign"],
+      ].some(
+        (path) =>
+          globalReferenceNamespace(
+            node.callee,
+            this.index.bindings,
+            path as [string, ...string[]],
+          ) !== undefined,
+      ) &&
+      semanticOpaqueGlobalMayHaveChanged(node, this.index.bindings)
+    ) {
+      for (const argument of node.arguments) {
+        if (!t.isSpreadElement(argument) && !t.isArgumentPlaceholder(argument))
+          this.#ownDynamicValue(argument, true, true, true);
+      }
+      this.#unknown(
+        "navigation-target",
+        node,
+        "An earlier opaque global effect makes the navigation identity uncertain.",
+      );
+      return;
+    }
     if (historyNavigation(node, this.index)) {
       // The state and title are data, not navigation destinations.
       for (const argument of node.arguments.slice(0, 2)) {

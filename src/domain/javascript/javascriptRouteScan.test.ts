@@ -475,17 +475,42 @@ it("recovers direct global location assignment while preserving uncertainty", ()
   ).toEqual([]);
 });
 
+it("keeps browser navigation uncertain after opaque global mutation", () => {
+  for (const source of [
+    `eval('window.location = custom'); window.location.assign('/false');`,
+    `eval('history.pushState = custom'); history.pushState(null, '', '/false');`,
+    `eval('location = custom'); window.location.href = '/false';`,
+    `eval('location = custom'); window.location = '/false';`,
+    `eval('document.location = custom'); document.location.assign('/false');`,
+  ]) {
+    const facts = analyze(source);
+    expect(
+      facts.candidates.filter(
+        (candidate) => candidate.mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+    expect(
+      facts.unresolved.some((item) => item.mechanism === "navigation-target"),
+    ).toBe(true);
+  }
+  const earlier = analyze(
+    `window.location.assign('/early'); eval('location = custom');`,
+  );
+  expect(earlier.candidates.some((item) => item.path === "/early")).toBe(true);
+});
+
 it("recovers browser location.assign destinations without trusting local lookalikes", () => {
   const facts = analyze(`
     window.location.assign('/checkout?step=1');
     globalThis.location.assign('/account#details');
+    document.location.assign('/document');
     function local(location) { location.assign('/shadowed'); }
   `);
   expect(
     facts.candidates
       .filter(({ mechanism }) => mechanism === "navigation-target")
       .map(({ path }) => path),
-  ).toEqual(["/checkout", "/account"]);
+  ).toEqual(["/checkout", "/account", "/document"]);
 });
 
 it("preserves uncertainty for dynamic or modified Location.assign calls", () => {

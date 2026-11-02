@@ -23,6 +23,24 @@ const expectAccountRoutes = (items: unknown[]) => {
   );
 };
 
+it("reports opaque global navigation as uncertain through MCP", async () => {
+  const path = await createTestTempDirectory("rea-opaque-navigation-");
+  await writeFile(
+    join(path, "app.js"),
+    `eval('location = custom'); window.location.assign('/untrusted');`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "unknowns" },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.source_coverage.candidate_enumeration).toBe("partial");
+  expect(view.items.length).toBeGreaterThan(0);
+});
+
 it("recovers History API paths through the public MCP workflow", async () => {
   const path = await createTestTempDirectory("rea-history-routes-");
   await writeFile(
