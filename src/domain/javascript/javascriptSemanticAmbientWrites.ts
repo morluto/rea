@@ -842,6 +842,67 @@ export type GlobalReferenceRead =
   | { readonly status: "unmodified" | "unrelated" | "unknown" }
   | { readonly status: "replacement"; readonly value: t.Expression };
 
+type TimedAmbientEffect =
+  JavaScriptSemanticAnalysisState["ambientWriteEffects"][number];
+const timedAmbientEffects = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  Map<string, { generation: number; matches: TimedAmbientEffect[] }>
+>();
+
+/** Missing provenance remains unknown; a read is safe only before all matching effects. */
+export const semanticAmbientPathMayHaveChangedAt = (
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly string[],
+  read: t.Node,
+): boolean => {
+  const check = (
+    covered: boolean,
+    effects: typeof state.ambientWriteEffects,
+    kind: string,
+  ) => {
+    if (!covered) return false;
+    let cache = timedAmbientEffects.get(state);
+    if (cache === undefined) {
+      cache = new Map();
+      timedAmbientEffects.set(state, cache);
+    }
+    const key = JSON.stringify([kind, path]);
+    let entry = cache.get(key);
+    if (entry === undefined || entry.generation !== effects.length) {
+      entry = {
+        generation: effects.length,
+        matches: effects.filter(
+          (effect) =>
+            effect.path.length <= path.length &&
+            effect.path.every((key, index) =>
+              semanticPropertyPathKeyMatches(key, path[index]!),
+            ),
+        ),
+      };
+      cache.set(key, entry);
+    }
+    const matching = entry.matches;
+    return (
+      matching.length === 0 ||
+      matching.some(
+        (effect) => semanticEffectTiming(read, effect.node, state) !== "after",
+      )
+    );
+  };
+  return (
+    check(
+      state.ambientWrites.covers(path),
+      state.ambientWriteEffects,
+      "write",
+    ) ||
+    check(
+      state.ambientEscapes.covers(path),
+      state.ambientEscapeEffects,
+      "escape",
+    )
+  );
+};
+
 /** Reuse retained write provenance and activation ordering at a selected read.
  * The reader retains only matching effects, refreshing when their owner grows.
  * Missing timing, possibly repeated activations, conditional replacements and

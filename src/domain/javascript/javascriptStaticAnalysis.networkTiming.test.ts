@@ -70,3 +70,103 @@ it("keeps unrelated same-named methods as candidates", () => {
     }),
   );
 });
+
+it("recognizes XHR before later constructor or prototype mutation", () => {
+  for (const write of [
+    "XMLHttpRequest=custom",
+    "XMLHttpRequest.prototype.open=custom",
+    "globalThis.XMLHttpRequest.prototype.open=custom",
+    "custom(XMLHttpRequest.prototype)",
+  ]) {
+    const result = analyzeJavaScriptStaticSource(
+      `const x=new XMLHttpRequest();x.open('GET','/early');${write};`,
+    );
+    expect(result.endpoints).toContainEqual(
+      expect.objectContaining({ kind: "network", value: "/early" }),
+    );
+    expect(result.endpoints[0]).not.toHaveProperty(
+      "interpretation",
+      "candidate",
+    );
+  }
+});
+
+it("does not confirm XHR when constructor or prototype identity may have changed", () => {
+  for (const source of [
+    "XMLHttpRequest=custom;const x=new XMLHttpRequest();x.open('GET','/a');",
+    "XMLHttpRequest.prototype.open=custom;const x=new XMLHttpRequest();x.open('GET','/a');",
+    "globalThis.XMLHttpRequest.prototype.open=custom;const x=new XMLHttpRequest();x.open('GET','/a');",
+    "if(flag) XMLHttpRequest.prototype.open=custom;const x=new XMLHttpRequest();x.open('GET','/a');",
+    "function f(){const x=new XMLHttpRequest();x.open('GET','/a');} XMLHttpRequest.prototype.open=custom;",
+    "custom(XMLHttpRequest.prototype);const x=new XMLHttpRequest();x.open('GET','/a');",
+    "if(flag) custom(XMLHttpRequest.prototype);const x=new XMLHttpRequest();x.open('GET','/a');",
+    "function f(){const x=new XMLHttpRequest();x.open('GET','/a');} custom(XMLHttpRequest.prototype);",
+    "eval('XMLHttpRequest=custom');const x=new XMLHttpRequest();x.open('GET','/a');",
+  ]) {
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(result.endpoints).not.toContainEqual(
+      expect.objectContaining({
+        kind: "network",
+        value: "/a",
+        interpretation: undefined,
+      }),
+    );
+    expect(
+      result.endpoints.every(
+        (endpoint) => endpoint.interpretation === "candidate",
+      ),
+    ).toBe(true);
+    expect(
+      result.analysis_coverage!.semantics.unknown_findings,
+    ).toBeGreaterThan(0);
+    expect(result.parse_status).toBe("partial");
+  }
+});
+
+it("does not mark unrelated open methods as uncertain XHR", () => {
+  const result = analyzeJavaScriptStaticSource(
+    "client.open('GET','/candidate');",
+  );
+  expect(result.analysis_coverage!.semantics.unknown_findings).toBe(0);
+});
+
+it("preserves uncertainty on a reused XHR after its open method changes", () => {
+  for (const replacement of [
+    "XMLHttpRequest.prototype.open=custom",
+    "x.open=custom",
+  ]) {
+    const result = analyzeJavaScriptStaticSource(
+      `const x=new XMLHttpRequest();x.open('GET','/first');${replacement};x.open('GET','/second');`,
+    );
+    expect(result.endpoints).toEqual([
+      expect.objectContaining({ value: "/first" }),
+      expect.objectContaining({
+        value: "/second",
+        interpretation: "candidate",
+      }),
+    ]);
+    expect(result.endpoints[0]).not.toHaveProperty(
+      "interpretation",
+      "candidate",
+    );
+    expect(
+      result.analysis_coverage!.semantics.unknown_findings,
+    ).toBeGreaterThan(0);
+    expect(result.parse_status).toBe("partial");
+  }
+});
+
+it("recovers inline XHR destinations and keeps compromised identities uncertain", () => {
+  const result = analyzeJavaScriptStaticSource(
+    "new XMLHttpRequest().open('GET','/first');XMLHttpRequest.prototype.open=custom;new XMLHttpRequest().open('GET','/second');",
+  );
+  expect(result.endpoints).toEqual([
+    expect.objectContaining({ value: "/first" }),
+    expect.objectContaining({ value: "/second", interpretation: "candidate" }),
+  ]);
+  expect(result.endpoints[0]).not.toHaveProperty("interpretation", "candidate");
+  expect(result.analysis_coverage!.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
+  expect(result.parse_status).toBe("partial");
+});

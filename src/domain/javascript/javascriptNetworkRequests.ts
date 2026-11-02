@@ -5,6 +5,7 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import { globalReferenceNamespace } from "./javascriptSemanticGlobalReference.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -14,7 +15,7 @@ import {
 import * as t from "@babel/types";
 import {
   createGlobalReferenceReader,
-  isUnmodifiedGlobalReference,
+  semanticAmbientPathMayHaveChangedAt,
 } from "./javascriptSemanticAmbientWrites.js";
 
 const networkReaders = new WeakMap<
@@ -84,7 +85,7 @@ const isXhrOpenRequest = (
   node: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
   index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
-): boolean | undefined => {
+): boolean | "unknown" | undefined => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
   const callee = unwrapJavaScriptExpression(node.callee).node;
@@ -93,35 +94,16 @@ const isXhrOpenRequest = (
     semanticStaticPropertyName(callee.property, callee.computed) !== "open"
   )
     return false;
-  if (
-    ["XMLHttpRequest", "Object"].some((owner) =>
-      ["open", "__proto__"].some(
-        (member) =>
-          bindings.ambientWrites.covers([
-            "global",
-            owner,
-            "prototype",
-            member,
-          ]) ||
-          bindings.ambientEscapes.covers([
-            "global",
-            owner,
-            "prototype",
-            member,
-          ]),
-      ),
-    )
-  )
-    return false;
   let receiver = unwrapJavaScriptExpression(callee.object).node;
   const seen = new Set<string>();
+  let receiverMayHaveChanged = false;
   while (t.isIdentifier(receiver)) {
     if (
       index !== undefined &&
       (index.referenceMayHaveChangedAt(node, receiver, ["open"]) ||
         index.referenceMayHaveChangedAt(node, receiver, ["__proto__"]))
     )
-      return false;
+      receiverMayHaveChanged = true;
     const binding = resolveSemanticBindingState(
       bindings,
       receiver,
@@ -131,6 +113,16 @@ const isXhrOpenRequest = (
     seen.add(binding.bindingId);
     const initializer = semanticStableInitializer(binding, bindings);
     if (
+      initializer !== undefined &&
+      initializer.projection.length === 0 &&
+      t.isNewExpression(initializer.node) &&
+      globalReferenceNamespace(initializer.node.callee, bindings, [
+        "XMLHttpRequest",
+      ]) !== undefined &&
+      semanticOpaqueGlobalMayHaveChanged(callee, bindings)
+    )
+      return "unknown";
+    if (
       initializer === undefined ||
       initializer.projection.length !== 0 ||
       !semanticBindingAtRead(binding, receiver, bindings.parentsByNode)
@@ -139,21 +131,38 @@ const isXhrOpenRequest = (
       return false;
     receiver = unwrapJavaScriptExpression(initializer.node).node;
   }
+  if (!t.isNewExpression(receiver)) return false;
   if (
-    !t.isNewExpression(receiver) ||
-    !isUnmodifiedGlobalReference(receiver.callee, bindings, "XMLHttpRequest") ||
-    semanticOpaqueGlobalMayHaveChanged(callee, bindings)
+    globalReferenceNamespace(receiver.callee, bindings, ["XMLHttpRequest"]) ===
+    undefined
   )
     return false;
-  return index === undefined && seen.size > 0 ? undefined : true;
+  if (index === undefined && seen.size > 0) return undefined;
+  if (
+    receiverMayHaveChanged ||
+    networkReferenceStatus(receiver.callee, bindings, ["XMLHttpRequest"]) !==
+      "unmodified" ||
+    semanticOpaqueGlobalMayHaveChanged(callee, bindings) ||
+    ["XMLHttpRequest", "Object"].some((owner) =>
+      ["open", "__proto__"].some((member) =>
+        semanticAmbientPathMayHaveChangedAt(
+          bindings,
+          ["global", owner, "prototype", member],
+          node,
+        ),
+      ),
+    )
+  )
+    return "unknown";
+  return true;
 };
 
 /** Resolve once through the shared mutation index when lexical proof needs it. */
 export const createXhrOpenRequestQuery =
-  (index: JavaScriptBindingIndex): ((node: t.Node) => boolean) =>
+  (index: JavaScriptBindingIndex): ((node: t.Node) => boolean | "unknown") =>
   (node) => {
     const proof = isXhrOpenRequest(node, index.bindings);
     if (proof !== undefined) return proof;
     completeSemanticSteps(index.indexMemberMutationFactsSteps());
-    return isXhrOpenRequest(node, index.bindings, index) === true;
+    return isXhrOpenRequest(node, index.bindings, index) ?? "unknown";
   };

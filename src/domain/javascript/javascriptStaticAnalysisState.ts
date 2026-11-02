@@ -112,7 +112,7 @@ export interface JavaScriptFindingContext {
   ) =>
     | { readonly owner: t.NewExpression; readonly path: readonly string[] }
     | undefined;
-  readonly xhrOpenRequest?: (node: t.Node) => boolean;
+  readonly xhrOpenRequest?: (node: t.Node) => boolean | "unknown";
   readonly rendererLoad?: (callee: t.Node, site: t.Node) => boolean;
   readonly rpcScan: JavaScriptRpcScan;
   /** Shared bounded argv/nullish argument shapes for optional-slot signatures. */

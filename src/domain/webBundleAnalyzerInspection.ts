@@ -111,7 +111,7 @@ export const analyzeScript = (
         openReceiverFacts,
         isMapLookup,
         index.bindings,
-        isXhrRequest,
+        (target) => isXhrRequest(target) === true,
       );
       const endpoint = rpc.inspect(node);
       if (endpoint !== undefined)

@@ -617,17 +617,41 @@ const inspectLiteralEndpointCall = (
     node.callee,
     receiverFact,
   );
-  if (endpoint !== undefined)
+  if (endpoint === undefined) {
+    const xhr = context.xhrOpenRequest?.(node);
+    if (xhr === true || xhr === "unknown") {
+      if (xhr === "unknown") context.accumulator.unknownFindings++;
+      const target = argumentNode(node.arguments[1]);
+      if (target === undefined) return;
+      const value = stringValue(target);
+      if (value === undefined) {
+        addPartialNetworkEndpoint(context, node, name, target);
+      } else {
+        addEndpoint(context, {
+          node,
+          kind: "network",
+          value,
+          mechanism: `call:${name}`,
+          ...(xhr === "unknown" ? { interpretation: "candidate" } : {}),
+        });
+      }
+    }
+    return;
+  }
+  if (endpoint !== undefined) {
+    const xhr =
+      endpoint.kind === "candidate" ? context.xhrOpenRequest?.(node) : false;
+    if (xhr === "unknown") context.accumulator.unknownFindings++;
     addEndpoint(context, {
       node,
       kind: "network",
       value: endpoint.value,
       mechanism: `call:${name}`,
-      ...(endpoint.kind === "candidate" &&
-      context.xhrOpenRequest?.(node) !== true
+      ...(endpoint.kind === "candidate" && xhr !== true
         ? { interpretation: "candidate" }
         : {}),
     });
+  }
 };
 
 const isNetworkRequestSpelling = (name: string): boolean =>
