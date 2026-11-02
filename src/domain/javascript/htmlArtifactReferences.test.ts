@@ -161,6 +161,7 @@ it("shares precise body coordinates and location limits across HTML and SVG", ()
   ).toEqual([
     {
       scriptType: "classic",
+      text: body,
       location: { start: { line: 2, column: 30 }, end: { line: 4, column: 0 } },
     },
   ]);
