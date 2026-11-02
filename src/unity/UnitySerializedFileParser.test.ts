@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseUnitySerializedFile } from "./UnitySerializedFileParser.js";
+import {
+  parseUnitySerializedFile,
+  UNITY_SERIALIZED_FILE_MAX_TABLE_ENTRIES,
+} from "./UnitySerializedFileParser.js";
 import { UnityAssetsFormatFailure } from "./UnityAssets.errors.js";
 import {
   buildSerializedFile,
@@ -211,6 +214,19 @@ it("rejects duplicate path IDs and overlapping object spans", () => {
       }),
     ),
   ).toThrow(/overlaps another object/u);
+});
+
+it("refuses an external table above the retained allowance", () => {
+  const bytes = buildSerializedFile({
+    objects: [],
+    externals: Array.from(
+      { length: UNITY_SERIALIZED_FILE_MAX_TABLE_ENTRIES + 1 },
+      () => ({ path: "" }),
+    ),
+  });
+  expect(() => parse(bytes)).toThrow(
+    expect.objectContaining({ kind: "limit" }),
+  );
 });
 
 it("bounds-checks the trailing reference-type table", () => {

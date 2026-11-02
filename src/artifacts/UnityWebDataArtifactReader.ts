@@ -17,6 +17,7 @@ import {
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
+  artifactFixedLimitFailure,
   ArtifactReaderFailure,
   copyArtifactEntry,
   sameArtifactEntry,
@@ -223,6 +224,12 @@ export class UnityWebDataArtifactReader implements ArtifactReader {
     );
     const parsed = parseUnityWebDataDirectory(directory, initial.size);
     if (typeof parsed === "string") throw formatFailure(parsed);
+    if ("memberLimit" in parsed)
+      throw artifactFixedLimitFailure(
+        "The Unity WebGL data member allowance",
+        parsed.memberLimit,
+        "members",
+      );
     // Overlapping records would multiply readable plaintext; charge every one.
     let readable = 0;
     const budget = artifactExpansionBudgetBytes(initial.size);

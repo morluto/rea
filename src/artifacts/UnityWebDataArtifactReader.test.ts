@@ -20,9 +20,9 @@ it("bounds retained directory records before allocating them", () => {
     (_, index) => ({ path: String(index), bytes: Buffer.alloc(0) }),
   );
   const carrier = buildUnityWebData(members);
-  expect(parseUnityWebDataDirectory(carrier, carrier.length)).toMatch(
-    /more than 65536 members/u,
-  );
+  expect(parseUnityWebDataDirectory(carrier, carrier.length)).toEqual({
+    memberLimit: UNITY_WEB_DATA_MAX_MEMBERS,
+  });
 });
 
 const collect = async (stream: Readable): Promise<Buffer> => {

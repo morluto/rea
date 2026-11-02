@@ -76,8 +76,9 @@ not match its layout keeps null fields, is counted in
 fields. A malformed header or metadata table fails without partial success:
 this includes a data offset inside the header or metadata, duplicate path IDs,
 overlapping object spans and a reference-type table or user string that does
-not fit. A file declaring more than 1,048,576 objects is refused as a fixed
-count allowance before the object table is retained.
+not fit. A file declaring more than 1,048,576 objects, or more than 65,536
+types or externals, is refused as a fixed count allowance before the table is
+retained.
 
 `submesh_vertex_extent` is the largest `firstVertex + vertexCount` across a
 mesh's submeshes. It is derived from submesh ranges and is not

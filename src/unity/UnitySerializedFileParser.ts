@@ -40,6 +40,17 @@ const MIN_OBJECT_ROW_BYTES = 20;
  * is admitted by count before allocation rather than by source bytes alone.
  */
 export const UNITY_SERIALIZED_FILE_MAX_OBJECTS = 1_048_576;
+/** Same policy for the retained type and external tables; real files hold hundreds. */
+export const UNITY_SERIALIZED_FILE_MAX_TABLE_ENTRIES = 65_536;
+
+const admitRetained = (count: number, maximum: number, table: string) => {
+  if (count > maximum)
+    throw new UnityAssetsFormatFailure(
+      "limit",
+      `SerializedFile declares ${String(count)} ${table}, above the ${String(maximum)}-entry inventory allowance`,
+    );
+  return count;
+};
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** Bounded cursor over the metadata region; alignment is file-absolute. */
@@ -265,17 +276,20 @@ export const parseUnitySerializedFile = (
   const unityVersion = reader.cstring("Unity version");
   const targetPlatform = reader.i32("target platform");
   const typeTree = reader.u8("type tree flag") !== 0;
-  const typeCount = reader.count("types", 4);
+  const typeCount = admitRetained(
+    reader.count("types", 4),
+    UNITY_SERIALIZED_FILE_MAX_TABLE_ENTRIES,
+    "types",
+  );
   const typeClasses: number[] = [];
   for (let index = 0; index < typeCount; index += 1)
     typeClasses.push(readType(reader, version, typeTree, false));
 
-  const objectCount = reader.count("objects", MIN_OBJECT_ROW_BYTES);
-  if (objectCount > UNITY_SERIALIZED_FILE_MAX_OBJECTS)
-    throw new UnityAssetsFormatFailure(
-      "limit",
-      `SerializedFile declares ${String(objectCount)} objects, above the ${String(UNITY_SERIALIZED_FILE_MAX_OBJECTS)}-object inventory allowance`,
-    );
+  const objectCount = admitRetained(
+    reader.count("objects", MIN_OBJECT_ROW_BYTES),
+    UNITY_SERIALIZED_FILE_MAX_OBJECTS,
+    "objects",
+  );
   const rows: ObjectRow[] = [];
   const pathIds = new Set<string>();
   for (let index = 0; index < objectCount; index += 1) {
@@ -291,6 +305,8 @@ export const parseUnitySerializedFile = (
     const size = reader.u32("object size");
     const typeId = reader.i32("object type");
     let classId: number;
+    // Formats before 16 store the object's class as an unsigned u16 (114 for
+    // scripts); the signed script class lives on the type ID, not here.
     if (version < 16) classId = reader.i16("object class ID") & 0xffff;
     else {
       const typed = typeClasses[typeId];
@@ -325,7 +341,11 @@ export const parseUnitySerializedFile = (
     reader.align();
     reader.skip(8, "script identifier");
   }
-  const externalCount = reader.count("externals", 22);
+  const externalCount = admitRetained(
+    reader.count("externals", 22),
+    UNITY_SERIALIZED_FILE_MAX_TABLE_ENTRIES,
+    "externals",
+  );
   const externals: UnityAssets["externals"] = [];
   for (let index = 0; index < externalCount; index += 1) {
     reader.cstring("external placeholder");

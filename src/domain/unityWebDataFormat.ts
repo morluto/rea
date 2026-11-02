@@ -58,13 +58,13 @@ export const readUnityWebDataDirectoryEnd = (
 
 /**
  * Decode every directory record from the complete directory bytes. Returns a
- * reason string for malformed input; members must lie after the directory and
- * inside the file.
+ * reason string for malformed input, or the member allowance a well-formed
+ * directory exceeds; members must lie after the directory and inside the file.
  */
 export const parseUnityWebDataDirectory = (
   directory: Uint8Array,
   fileSize: number,
-): UnityWebDataDirectory | string => {
+): UnityWebDataDirectory | string | { readonly memberLimit: number } => {
   const directoryEnd = readUnityWebDataDirectoryEnd(directory);
   if (directoryEnd === undefined)
     return "signature or directory end is missing";
@@ -81,7 +81,7 @@ export const parseUnityWebDataDirectory = (
   let cursor = UNITY_WEB_DATA_PREFIX_BYTES;
   while (cursor < directoryEnd) {
     if (members.length >= UNITY_WEB_DATA_MAX_MEMBERS)
-      return `directory declares more than ${String(UNITY_WEB_DATA_MAX_MEMBERS)} members`;
+      return { memberLimit: UNITY_WEB_DATA_MAX_MEMBERS };
     if (cursor + 12 > directoryEnd)
       return `record ${String(members.length)} is truncated`;
     const offset = bytes.readUInt32LE(cursor);

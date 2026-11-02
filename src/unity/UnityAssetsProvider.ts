@@ -34,6 +34,7 @@ import { UnityAssetsFormatFailure } from "./UnityAssets.errors.js";
 import {
   parseUnitySerializedFile,
   UNITY_SERIALIZED_FILE_MAX_OBJECTS,
+  UNITY_SERIALIZED_FILE_MAX_TABLE_ENTRIES,
 } from "./UnitySerializedFileParser.js";
 
 const OPERATION = "inspect_unity_assets";
@@ -74,7 +75,10 @@ const failureForPrimary = (
       OPERATION,
       "memory",
       cause.message,
-      { max_objects: UNITY_SERIALIZED_FILE_MAX_OBJECTS },
+      {
+        max_objects: UNITY_SERIALIZED_FILE_MAX_OBJECTS,
+        max_table_entries: UNITY_SERIALIZED_FILE_MAX_TABLE_ENTRIES,
+      },
       {
         cause,
         retryable: false,
