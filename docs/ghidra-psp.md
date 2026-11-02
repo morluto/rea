@@ -100,8 +100,11 @@ node scripts/psp-symbol-correlation.mjs \
 ```
 
 For `.sym`, the selected bases translate the source addresses to Ghidra's
-address space. For `.ppsym`, offsets are already module-relative; the analysis
-base must refer to that same loaded module. CRC checking is reported as unknown
+address space. For `.ppsym`, addresses are relative for a loaded module, so the
+analysis base must refer to that module. PPSSPP's module-index-zero game/RAM
+records instead store absolute addresses: use `--analysis-base 0x0` for those
+records. The file does not establish its module index; the caller selects
+whether its addresses are relative or absolute. CRC checking is reported as unknown
 when either the file or independent expected CRC is unavailable. Returned
 `address_and_label_agree` means agreement only in the supplied inventory,
 not proved program correspondence or equivalent code. Duplicates, differing
