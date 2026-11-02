@@ -133,32 +133,36 @@ export const decodeBinaryPlistValue = (
   return root.value;
 };
 
-/** The bytes of one stored string or data object, or null for any other type. */
-const storedPlistText = (
+/** The payload of one stored string or data object, or null for any other type. */
+const storedPlistPayload = (
   bytes: Buffer,
   offset: number,
   objectEnd: number,
   referenceWidth: number,
-): { readonly text: string; readonly bytes: number } | "unreadable" | null => {
+):
+  | { readonly type: number; readonly payload: Buffer }
+  | "unreadable"
+  | null => {
   const marker = bytes[offset];
   if (marker === undefined) return "unreadable";
   const type = marker >> 4;
   if (type !== 4 && type !== 5 && type !== 6 && type !== 7) return null;
   const end = binaryPlistObjectEnd(bytes, offset, objectEnd, referenceWidth);
   if (end === undefined) return "unreadable";
-  const payload =
+  const start =
     (marker & 0x0f) === 0x0f
       ? offset + 2 + (1 << (bytes[offset + 1]! & 0x0f))
       : offset + 1;
-  const stored = bytes.subarray(payload, end);
-  const text =
-    type === 5
-      ? stored.toString("latin1")
-      : type === 6
-        ? Buffer.from(stored).swap16().toString("utf16le")
-        : stored.toString("utf8");
-  return { text, bytes: stored.length };
+  return { type, payload: bytes.subarray(start, end) };
 };
+
+/** Decode a payload `storedPlistPayload` found; call only once it fits the budget. */
+const storedPlistText = (type: number, payload: Buffer): string =>
+  type === 5
+    ? payload.toString("latin1")
+    : type === 6
+      ? Buffer.from(payload).swap16().toString("utf16le")
+      : payload.toString("utf8");
 
 /** The text a binary plist stores; `complete` is false when part of it went unread. */
 export interface BinaryPlistText {
@@ -187,19 +191,19 @@ export const decodeBinaryPlistText = (
   let decoded = 0;
   let complete = true;
   for (const offset of new Set(layout.value.objectOffsets())) {
-    const stored = storedPlistText(
+    const stored = storedPlistPayload(
       bytes,
       Number(offset),
       layout.value.trailerOffset,
       layout.value.referenceWidth,
     );
     if (stored === null) continue;
-    if (stored === "unreadable" || decoded + stored.bytes > maxBytes) {
+    if (stored === "unreadable" || decoded + stored.payload.length > maxBytes) {
       complete = false;
       continue;
     }
-    decoded += stored.bytes;
-    texts.push(stored.text);
+    decoded += stored.payload.length;
+    texts.push(storedPlistText(stored.type, stored.payload));
   }
   return { text: texts.join("\n"), complete };
 };

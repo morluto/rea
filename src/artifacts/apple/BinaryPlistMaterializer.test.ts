@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { binaryPlistObjectTable } from "../../../tests/fixtures/binaryPlistObjectTable.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
 import { projectPlistValue } from "../../domain/apple/plistValue.js";
@@ -265,8 +265,16 @@ it("bounds the text that overlapping table entries repeat", () => {
   bytes[trailer + 7] = 1;
   bytes.writeBigUInt64BE(BigInt(offsets.length), trailer + 8);
   bytes.writeBigUInt64BE(BigInt(table), trailer + 24);
+  const toString = vi.spyOn(Buffer.prototype, "toString");
   const decoded = decodeBinaryPlistText(bytes, 2 * budget);
+  const decodedBytes = toString.mock.contexts.reduce(
+    (total, buffer) => total + (buffer as Buffer).length,
+    0,
+  );
+  toString.mockRestore();
   expect(decoded.complete).toBe(false);
   expect(decoded.text.length).toBeLessThanOrEqual(2 * budget + offsets.length);
   expect(decoded.text).toContain("k");
+  // A range past the remaining budget is rejected before it is decoded.
+  expect(decodedBytes).toBeLessThanOrEqual(2 * budget + bytes.length);
 });
