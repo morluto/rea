@@ -940,6 +940,14 @@ is `unavailable` with a reason when ownership could not be revalidated, or
 at that bounded check. These are historical snapshots, not live process
 inventories, and do not claim that no short-lived descendant existed.
 
+After a failed close retires the target, `binary_session.cleanup_retry` names
+`close_binary` only while that session still retains the cleanup bound to the
+close error. Target-dependent availability then gives the same conditional
+cleanup guidance before suggesting `open_binary`. The hint disappears after
+cleanup succeeds. A pending flag alone does not establish this retry: active
+targets, an in-flight initial close, and external-mutation blockers keep their
+own recovery and do not receive this hint.
+
 `binary_session.cleanup_pending` reports whether the session retains a provider
 client, session file resource, or provider-candidate resource whose cleanup
 has not succeeded. It can be true with
