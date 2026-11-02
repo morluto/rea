@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { SWIFTC_INTERRUPT } from "../../dist/process/DarwinProcessRunTokenReader.js";
+import { execFileOutput } from "../../dist/process/ExecFileOutput.js";
 import { cleanupOwnedProcessGroup } from "../../dist/process/ProcessOwnership.js";
 import {
   observeProcessStartIdentity,
@@ -76,6 +78,7 @@ class NativeUiFixtureOwner {
   #launcherCommand;
   #readyTimeoutMs;
   #application;
+  #compiling;
   #launching;
   #launcher;
   #ownership;
@@ -86,6 +89,17 @@ class NativeUiFixtureOwner {
     this.root = root;
     this.#launcherCommand = launcherCommand;
     this.#readyTimeoutMs = readyTimeoutMs;
+  }
+
+  /** Compile into the root; release stops this as swiftc requires and joins it. */
+  compile(arguments_) {
+    const compiling = execFileOutput("/usr/bin/xcrun", arguments_, {
+      signal: this.#lifetime.signal,
+      stopSignal: SWIFTC_INTERRUPT,
+      lifetimePipe: true,
+    });
+    this.#compiling = Promise.allSettled([this.#compiling, compiling]);
+    return compiling;
   }
 
   /** Launch one fixture and return its token-verified ready scope. */
@@ -172,8 +186,8 @@ class NativeUiFixtureOwner {
   }
 
   async #release() {
-    // Join acquisition: a launcher created before the abort stays owned here.
-    await this.#launching?.catch(() => undefined);
+    // Join acquisition: a compile or launcher admitted before the abort stays owned.
+    await Promise.allSettled([this.#compiling, this.#launching]);
     try {
       // Attempt each: a stuck launcher must not spare a token-proven fixture. A clean
       // sweep proves nothing while a launch can still start, so every attempt sweeps

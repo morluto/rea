@@ -60,6 +60,8 @@ import { join } from "node:path";
 import { runNativeUiFixtureLane } from ${JSON.stringify(lifecycle)};
 const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
 const report = await runNativeUiFixtureLane(async (fixture) => {
+  if (config.holdCompile !== undefined)
+    await fixture.compile(["swiftc", "-o", join(fixture.root, config.holdCompile)]);
   const application = join(fixture.root, "Fixture.app");
   await mkdir(application);
   const launching = fixture.launch(application);
@@ -78,6 +80,27 @@ const report = await runNativeUiFixtureLane(async (fixture) => {
   return { completed: true, pid: scope.pid };
 }, { launcherCommand: config.launcherEntry });
 process.stdout.write(JSON.stringify(report) + "\\n");
+`;
+
+// Stands in for swiftc, which finishes its jobs inside the root only on SIGINT. Its
+// last write fails, and nothing is recorded, if the root is gone by then.
+const compilerSource = `
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
+const [output] = process.argv.slice(2);
+const record = (event) => appendFileSync(config.events, JSON.stringify(event) + "\\n");
+process.on("SIGINT", () => {
+  setTimeout(() => {
+    writeFileSync(output, "");
+    record({ kind: "compiler-stopped" });
+    process.exit(1);
+  }, 300);
+});
+record({ kind: "compiler", pid: process.pid });
+setInterval(() => {
+  if (existsSync(config.release)) process.exit(0);
+}, 10);
+setTimeout(() => process.exit(0), 60000);
 `;
 
 // Stands in for the launch service that keeps working after the launcher dies. The
@@ -153,7 +176,6 @@ const preloadSource = `
 import { appendFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { basename } from "node:path";
-import { promisify } from "node:util";
 const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
 const require = createRequire(import.meta.url);
 const childProcess = require("node:child_process");
@@ -176,27 +198,25 @@ if (config.holdRemoval) {
     return rm(path, options);
   };
 }
-const { execFile, spawn } = childProcess;
+const { spawn } = childProcess;
 const compile = (args) => {
   const output = args[args.indexOf("-o") + 1];
   writeFileSync(output, "#!/bin/sh\\nprintf '%s\\\\n' '{\\"a\\":\\"b\\"}' '{\\"n\\":1.0}'\\n");
   chmodSync(output, 0o755);
 };
-const patchedExecFile = (file, args, ...rest) => {
-  if (file !== "/usr/bin/xcrun") return execFile(file, args, ...rest);
+const holdsCompile = (args) => basename(args[args.indexOf("-o") + 1]) === config.holdCompile;
+childProcess.spawn = (file, args, options) => {
+  if (file === "/usr/bin/open")
+    return spawn(process.execPath, [config.launcherEntry, ...args], options);
+  // REA's own helpers also compile through xcrun; only the lane's output is authored.
+  const output = args[args.indexOf("-o") + 1];
+  if (file !== "/usr/bin/xcrun" || !output?.includes("rea-ui-fixture-"))
+    return spawn(file, args, options);
+  if (holdsCompile(args))
+    return spawn(process.execPath, [config.compilerEntry, args[args.indexOf("-o") + 1]], options);
   compile(args);
-  rest.at(-1)(null, "", "");
+  return spawn(process.execPath, ["-e", ""], options);
 };
-patchedExecFile[promisify.custom] = (file, args, ...rest) => {
-  if (file !== "/usr/bin/xcrun") return execFile[promisify.custom](file, args, ...rest);
-  compile(args);
-  return Promise.resolve({ stdout: "", stderr: "" });
-};
-childProcess.execFile = patchedExecFile;
-childProcess.spawn = (file, args, options) =>
-  file === "/usr/bin/open"
-    ? spawn(process.execPath, [config.launcherEntry, ...args], options)
-    : spawn(file, args, options);
 syncBuiltinESMExports();
 if (config.clockJump) {
   let jumped = false;
@@ -240,6 +260,7 @@ interface ScenarioConfig {
   readonly holdRelease?: boolean;
   readonly holdRemoval?: boolean;
   readonly operation?: "completes" | "hangs";
+  readonly holdCompile?: string;
 }
 
 const isLive = async (pid: number): Promise<boolean> =>
@@ -270,6 +291,7 @@ const createScenario = async (config: ScenarioConfig = {}) => {
     removalGate: join(workspace, "removal-gate"),
     launchGate: join(workspace, "launch-gate"),
     launcherEntry: join(workspace, "launcher.mjs"),
+    compilerEntry: join(workspace, "compiler.mjs"),
   };
   await writeFile(paths.events, "");
   await writeFile(
@@ -279,6 +301,7 @@ const createScenario = async (config: ScenarioConfig = {}) => {
   await chmod(paths.launcherEntry, 0o755);
   await writeFile(join(workspace, "fixture.mjs"), fixtureSource);
   await writeFile(join(workspace, "launch-service.mjs"), launchServiceSource);
+  await writeFile(paths.compilerEntry, compilerSource);
   await writeFile(join(workspace, "preload.mjs"), preloadSource);
   await writeFile(
     join(workspace, "lane.mjs"),
@@ -811,6 +834,38 @@ posixIt(
   },
 );
 
+// The compiler stand-in stays live until something stops it, so a verifier that only
+// removes the root and exits leaves it behind with no record of a clean stop.
+const expectCompileStopped = async (
+  scenario: Scenario,
+  entry: RunningEntry,
+) => {
+  await waitUntil(
+    async () =>
+      (await scenario.events()).some(({ kind }) => kind === "compiler"),
+    "the compile to start",
+  );
+  const compiler = z
+    .object({ pid: z.number().int().positive() })
+    .parse((await scenario.events()).find(({ kind }) => kind === "compiler"));
+  entry.child.kill("SIGTERM");
+  expect(await entry.exit, entry.stderr()).toEqual({ code: 143, signal: null });
+  expect(
+    (await scenario.events()).some(({ kind }) => kind === "compiler-stopped"),
+  ).toBe(true);
+  expect(await isLive(compiler.pid)).toBe(false);
+  expect(await entry.roots()).toEqual([]);
+};
+
+posixIt(
+  "the lane stops and joins a compile before removing the root it writes into",
+  { timeout: 30_000 },
+  async () => {
+    const scenario = await createScenario({ holdCompile: "object" });
+    await expectCompileStopped(scenario, await lane(scenario));
+  },
+);
+
 posixIt(
   "the lane reports a completed run with a held release and no signal",
   { timeout: 30_000 },
@@ -1094,3 +1149,13 @@ macosIt(
     expect(await isLive(fixture.pid)).toBe(true);
   },
 );
+
+for (const output of ["child-retrieval-test", "fixture"])
+  macosIt(
+    `the verifier stops and joins its ${output} compile before removing the root`,
+    { timeout: 40_000 },
+    async () => {
+      const scenario = await createScenario({ holdCompile: output });
+      await expectCompileStopped(scenario, await runVerifier(scenario));
+    },
+  );

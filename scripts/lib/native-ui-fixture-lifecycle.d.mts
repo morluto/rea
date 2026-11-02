@@ -7,6 +7,8 @@ export interface NativeUiFixtureScope {
 /** Owns one LaunchServices fixture from before its launch through verified exit. */
 export interface NativeUiFixtureOwner {
   readonly root: string;
+  /** Compile into the root; release stops this as swiftc requires and joins it. */
+  compile(arguments_: readonly string[]): Promise<unknown>;
   /** Launch one fixture and return its token-verified ready scope. */
   launch(application: string): Promise<NativeUiFixtureScope>;
   /** Release every owned resource; failure retains them for another close. */

@@ -16,7 +16,7 @@ if (process.platform !== "darwin")
 const report = await runNativeUiFixtureLane(async (fixture) => {
   const { root } = fixture;
   const childRetrievalTest = join(root, "child-retrieval-test");
-  await promisify(execFile)("/usr/bin/xcrun", [
+  await fixture.compile([
     "swiftc",
     fileURLToPath(
       new URL("../bridge/native/NativeUIChildren.swift", import.meta.url),
@@ -73,7 +73,7 @@ const report = await runNativeUiFixtureLane(async (fixture) => {
     `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>fixture</string><key>CFBundleIdentifier</key><string>io.rea.source-owned-ui-fixture</string><key>CFBundleName</key><string>REA UI Fixture</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`,
   );
   const executable = join(contents, "MacOS", "fixture");
-  await promisify(execFile)("/usr/bin/xcrun", [
+  await fixture.compile([
     "swiftc",
     "-module-cache-path",
     join(root, "modules"),
