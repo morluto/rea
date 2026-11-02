@@ -33,7 +33,10 @@ import {
 } from "./hopperStartupFailure.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
-import { projectAnalysisError } from "./analysisErrorProjection.js";
+import {
+  childFailureDiagnostics,
+  projectAnalysisError,
+} from "./analysisErrorProjection.js";
 import {
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
@@ -1528,6 +1531,24 @@ describe("analysis error projection: composed failures for a caller lifetime", (
         primary_error: projectAnalysisError(primary, lifetime),
         cleanup_error: { code: "cleanup_incomplete" },
       });
+  });
+
+  it("keeps caller lifetime for a secondary failure embedded in child diagnostics", () => {
+    const primary = new AnalysisInputError("read_bytes", undefined, []);
+    const secondary = new AnalysisTimeoutError("search_strings", 250, {
+      limit: analysisSettingLimit("regex.matching_deadline_ms", 250, "setting"),
+      continuingCallerGuidance: continuingOnly,
+    });
+    primary.retainSecondaryFailure(secondary);
+    const history = childFailureDiagnostics({
+      primary_error: { error: primary },
+    });
+    expect(history.diagnostics?.primary_error).toEqual(
+      projectAnalysisError(primary, "continuing"),
+    );
+    expect(history.invocationDiagnostics?.primary_error).toEqual(
+      projectAnalysisError(primary, "invocation"),
+    );
   });
 
   it("records one lifetime form when no child depends on the caller", () => {

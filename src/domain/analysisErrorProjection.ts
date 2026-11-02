@@ -301,8 +301,8 @@ export const childFailureDiagnostics = (
       entries.map(([key, child]) => [key, project(child, "continuing")]),
     ),
   };
-  const varying = entries.filter(([, { error }]) =>
-    projectionDependsOnCallerLifetime(error),
+  const varying = entries.filter(([, { error, omitRecovery }]) =>
+    projectionDependsOnCallerLifetime(error, omitRecovery !== true),
   );
   return varying.length === 0
     ? { diagnostics: continuing }
@@ -317,19 +317,33 @@ export const childFailureDiagnostics = (
       };
 };
 
-/** Every lifetime-dependent input the projection reads lies on this chain. */
-const projectionDependsOnCallerLifetime = (error: AnalysisError): boolean => {
+/** Check the primary chain and the secondary failures included in its projection. */
+const projectionDependsOnCallerLifetime = (
+  error: AnalysisError,
+  includeSecondary: boolean,
+): boolean => {
+  const chainDepends = (first: AnalysisError): boolean => {
+    for (
+      let node: AnalysisError | undefined = first;
+      node !== undefined;
+      node = node.cleanupPrimary
+    )
+      if (
+        node.limit !== undefined ||
+        node.continuingCallerGuidance !== undefined ||
+        node.invocationDiagnostics !== undefined
+      )
+        return true;
+    return false;
+  };
+  if (chainDepends(error)) return true;
+  if (!includeSecondary) return false;
   for (
     let node: AnalysisError | undefined = error;
     node !== undefined;
     node = node.cleanupPrimary
   )
-    if (
-      node.limit !== undefined ||
-      node.continuingCallerGuidance !== undefined ||
-      node.invocationDiagnostics !== undefined
-    )
-      return true;
+    if (node.secondaryFailures.some(chainDepends)) return true;
   return false;
 };
 
