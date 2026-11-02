@@ -1,7 +1,8 @@
 import { isUtf8 } from "node:buffer";
 import type { Dirent } from "node:fs";
-import { lstat, opendir } from "node:fs/promises";
-import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { lstat, mkdtemp, opendir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -555,7 +556,7 @@ const scanOccurrences = async (
       }
       continue;
     }
-    await examineMember(state, {
+    await examineMember(state, input, {
       logical,
       format: nativeFormat ?? format,
       kind: ownerMemberKind(
@@ -699,7 +700,7 @@ const assembleScan = (
             {
               subject: "embedded package probes",
               count: state.unprobedImages,
-              reason: `Only ${String(EMBEDDED_PROBE_LIMIT)} native images are probed for an embedded package.`,
+              reason: `Only ${String(EMBEDDED_PROBE_LIMIT)} native images on disk, and packaged images up to the file byte allowance in total, are probed for an embedded package.`,
             },
           ]
         : []),
@@ -739,6 +740,8 @@ interface ScanState {
   /** Bytes member reads produced, kept even when the read then failed. */
   memberBytesRead: number;
   embeddedProbes: number;
+  /** Member bytes spent probing packaged images for an embedded package. */
+  packagedProbeBytes: number;
   unprobedImages: number;
   native: Map<string, NativeFormat>;
   nativeDigests: Map<string, string>;
@@ -787,6 +790,7 @@ const createState = (visitText: ReleaseExposureTextVisitor): ScanState => ({
   textBytes: 0,
   memberBytesRead: 0,
   embeddedProbes: 0,
+  packagedProbeBytes: 0,
   unprobedImages: 0,
   native: new Map(),
   nativeDigests: new Map(),
@@ -891,7 +895,7 @@ const examineSelectedFile = async (
       state.nativeDigests.set(input.path, input.sha256);
   }
   if (nativeFormat === "pe") readPdb(state, bytes, input.path);
-  await examineMember(state, {
+  await examineMember(state, input, {
     logical: basename(input.path),
     format: rootFormat,
     kind: "file",
@@ -910,6 +914,7 @@ const examineSelectedFile = async (
  */
 const examineMember = async (
   state: ScanState,
+  context: ScanContext,
   listed: MemberView,
 ): Promise<void> => {
   const { packageFormat } = listed;
@@ -930,12 +935,12 @@ const examineMember = async (
     packageFormat !== null && asNativeFormat(member.format) !== null;
   if (member.encrypted) noteUnreadMember(state, member);
   else if (nativePackaged)
-    readable = await examinePackagedBinary(state, member);
+    readable = await examinePackagedBinary(state, member, context);
   else if (map) readable = await examineMapMember(state, member);
   else if (isText(member.logical, member.kind))
     readable = await examineTextMember(state, member);
   else if (packageFormat !== null)
-    readable = await examinePackagedBinary(state, member);
+    readable = await examinePackagedBinary(state, member, context);
   else if (asNativeFormat(member.format) === null)
     await examineProbedText(
       state,
@@ -1484,6 +1489,7 @@ const scanText = (
 const examinePackagedBinary = async (
   state: ScanState,
   member: MemberView,
+  context: ScanContext,
 ): Promise<boolean> => {
   const probe = await member.read(MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES);
   if (probe.kind === "unread") {
@@ -1514,8 +1520,10 @@ const examinePackagedBinary = async (
     noteNestedPackage(state, "asar", member.location);
     return true;
   }
-  if (native !== null) state.packagedNative += 1;
-  else await examineProbedText(state, member, probe);
+  if (native !== null) {
+    state.packagedNative += 1;
+    await probePackagedImage(state, member, native, context);
+  } else await examineProbedText(state, member, probe);
   if (native !== "pe") return true;
   if (state.packagedPeReads >= MAX_RELEASE_EXPOSURE_PACKAGED_PE_READS) {
     notePeNotExamined(state, member.location);
@@ -1710,13 +1718,14 @@ const embeddedPackageFormat = async (
   nativeFormat: NativeFormat,
   state: ScanState,
   context: ScanContext,
+  location = filePath,
 ): Promise<EmbeddedPackageProbe> => {
   try {
     return await withMemberDescriptor(filePath, context, async (source) => {
       if (source.initial.size > context.maxFileBytes) {
         pushLimitation(
           state,
-          `Did not probe ${filePath} for an embedded package because it exceeds ${String(context.maxFileBytes)} bytes.`,
+          `Did not probe ${location} for an embedded package because it exceeds ${String(context.maxFileBytes)} bytes.`,
         );
         return { kind: "unreadable" };
       }
@@ -1738,10 +1747,82 @@ const embeddedPackageFormat = async (
     rethrowReadFailure(cause);
     pushLimitation(
       state,
-      `Could not probe ${filePath} for an embedded package.`,
+      `Could not probe ${location} for an embedded package.`,
     );
     return { kind: "unreadable" };
   }
+};
+
+/**
+ * The embedded-package probes read carrier offsets from a file, and a package
+ * member has no file of its own, so its bytes stay on disk for the probe alone.
+ */
+const embeddedPackageFormatOfBytes = async (
+  bytes: Buffer,
+  member: MemberView,
+  nativeFormat: NativeFormat,
+  state: ScanState,
+  context: ScanContext,
+): Promise<EmbeddedPackageProbe> => {
+  try {
+    const root = await mkdtemp(join(tmpdir(), "rea-release-member-"));
+    try {
+      const filePath = join(root, "member");
+      await writeFile(filePath, bytes, { flag: "wx", mode: 0o600 });
+      return await embeddedPackageFormat(
+        filePath,
+        nativeFormat,
+        state,
+        context,
+        member.location,
+      );
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  } catch (cause) {
+    rethrowReadFailure(cause);
+    pushLimitation(
+      state,
+      `Could not probe ${member.location} for an embedded package.`,
+    );
+    return { kind: "unreadable" };
+  }
+};
+
+/**
+ * A packaged executable can carry its own package, whose members this scan does
+ * not expand. Only an image the embedded-package owner cleared leaves member
+ * coverage intact. All members share one file's byte allowance.
+ */
+const probePackagedImage = async (
+  state: ScanState,
+  member: MemberView,
+  nativeFormat: NativeFormat,
+  context: ScanContext,
+): Promise<void> => {
+  const allowance = context.maxFileBytes - state.packagedProbeBytes;
+  const image = allowance > 0 ? await member.read(allowance) : null;
+  if (image?.kind !== "bytes") {
+    state.packagedProbeBytes = context.maxFileBytes;
+    state.unprobedImages += 1;
+    noteUnexaminedPackage(state);
+    pushLimitation(
+      state,
+      `Did not probe ${member.location} for an embedded package.`,
+    );
+    return;
+  }
+  state.packagedProbeBytes += image.bytes.length;
+  const probe = await embeddedPackageFormatOfBytes(
+    image.bytes,
+    member,
+    nativeFormat,
+    state,
+    context,
+  );
+  if (probe.kind === "unreadable") noteUnexaminedPackage(state);
+  else if (probe.kind === "package")
+    noteNestedPackage(state, probe.format, member.location);
 };
 
 const scanEmbeddedPackage = async (
@@ -1835,7 +1916,7 @@ const scanUnexpandedContainer = async (
     const seaMainScript =
       entry.formatMetadata?.kind === "node-sea-entry" &&
       entry.formatMetadata.role === "main-script";
-    await examineMember(state, {
+    await examineMember(state, input, {
       logical: entry.path,
       format: seaMainScript ? "javascript-bundle" : "file",
       kind: seaMainScript

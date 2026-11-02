@@ -1334,6 +1334,100 @@ describe("ReleaseExposureReader nested packages in a host", () => {
     expect(scanned.extractable.formats).toContain("asar");
     expect(scanned.limitations.join("\n")).toContain("was not expanded");
   });
+
+  it.each([
+    [
+      "PyInstaller",
+      cArchiveExecutable({
+        carrier: "elf",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          {
+            name: "app.js.map",
+            typeCode: "x",
+            compress: true,
+            payload: embeddedSourceMap(),
+          },
+        ],
+      }),
+    ],
+    [
+      "Bun",
+      elfBunSection(
+        bunPrefixedPayload(
+          bunModuleGraphPayload({
+            modules: [
+              {
+                name: "/$bunfs/root/main.js",
+                contents: Buffer.from("run();\n"),
+                sourcemap: embeddedSourceMap(),
+              },
+            ],
+          }),
+        ),
+      ),
+    ],
+    ["Node SEA", nodeSeaElf()],
+    [
+      ".NET",
+      dotnetBundleFixture([{ path: "app.js.map", bytes: embeddedSourceMap() }])
+        .bytes,
+    ],
+  ])("keeps a %s executable in an ASAR unknown", async (_, executable) => {
+    const root = await createTestTempDirectory("rea-release-nested-exe-");
+    await writeFile(
+      join(root, "app.asar"),
+      asarArchive([{ name: "tool", bytes: executable }]),
+    );
+    const scanned = await inspect(join(root, "app.asar"));
+    expect(scanned.source_maps.embedded).toBe(0);
+    expect(scanned.coverage).toBe("unknown");
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+    expect(scanned.limitations.join("\n")).toContain("was not expanded");
+    expect(scanned.extractable.readable_members).toBe(1);
+  });
+
+  it("keeps coverage complete past a packaged image with no package", async () => {
+    const root = await createTestTempDirectory("rea-release-plain-exe-");
+    const elf = Buffer.alloc(64);
+    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    await writeFile(
+      join(root, "app.asar"),
+      asarArchive([{ name: "addon.node", bytes: elf }]),
+    );
+    const scanned = await inspect(join(root, "app.asar"));
+    expect(scanned.coverage).toBe("complete");
+    expect(sourceMapSourcesStatus(scanned)).toBe("not_observed");
+  });
+
+  it("keeps a packaged image past the byte allowance unknown", async () => {
+    const root = await createTestTempDirectory("rea-release-large-exe-");
+    const elf = Buffer.alloc(64);
+    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    await writeFile(
+      join(root, "app.asar"),
+      asarArchive([
+        { name: "first.node", bytes: elf },
+        { name: "second.node", bytes: elf },
+      ]),
+    );
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await reader.inspect(
+        { path: root, max_file_bytes: 96 },
+        undefined,
+        () => undefined,
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.coverage).toBe("unknown");
+      expect(result.value.omitted).toContainEqual(
+        expect.objectContaining({ subject: "embedded package probes" }),
+      );
+    } finally {
+      await reader.close();
+    }
+  });
 });
 
 describe("ReleaseExposureReader source-map count", () => {
