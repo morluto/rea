@@ -1357,6 +1357,31 @@ describe("ReleaseExposureService Go relative flag paths", () => {
     const check = report.checks.find((item) => item.id === "go.build_paths");
     expect(check?.status).toBe("not_observed");
   });
+
+  it.each([
+    ["-L private-sdk -s -w", "private-sdk"],
+    [`"-L private-sdk -s -w"`, "private-sdk"],
+    ["-L=private-sdk -s -w", "private-sdk"],
+    ["all=-L private-sdk -s -w", "private-sdk"],
+  ])("keeps the relative linker directory in %s", async (value, path) => {
+    const report = await goReport(
+      goModule([{ key: "-ldflags", value: `-B gobuildid ${value}` }]),
+    );
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual([path]);
+  });
+
+  it.each([
+    [`"-isystem /opt/my sdk/include"`, "/opt/my sdk/include"],
+    [`"-I private sdk/include"`, "private sdk/include"],
+  ])("reports %s once, without the separating space", async (value, path) => {
+    const report = await goReport(goModule([{ key: "CGO_CFLAGS", value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual([path]);
+    expect(check?.observation.counts.paths).toBe(1);
+  });
 });
 
 describe("ReleaseExposureService Go paths", () => {

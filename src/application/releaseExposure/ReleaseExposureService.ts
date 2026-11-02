@@ -798,7 +798,17 @@ const GO_FLAG_PATH =
  */
 const GO_COMPILER_SETTING = /^(?:CGO_[A-Z]+FLAGS|-gccgoflags)$/u;
 const GO_COMPILER_PATH_FLAG =
-  /^-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT])=?(.*)$/su;
+  /^-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT])=?\s*(.*)$/su;
+/**
+ * `go tool link` takes a library directory as `-L dir` or `-L=dir`, never
+ * attached, and `go build` may prefix the flags with `pattern=`.
+ */
+const GO_LINKER_PATH_FLAG = /^(?:[^\s=-][^\s=]*=)?-{1,2}L(?:=|\s+|$)(.*)$/su;
+
+const goPathFlag = (key: string): RegExp | null => {
+  if (GO_COMPILER_SETTING.test(key)) return GO_COMPILER_PATH_FLAG;
+  return key === "-ldflags" ? GO_LINKER_PATH_FLAG : null;
+};
 
 /** Flags in one value, with a quoted path kept whole up to the next flag. */
 const goFlags = (value: string): string[] =>
@@ -817,9 +827,9 @@ const goFlagPaths = (value: string): string[] =>
  * A path flag's relative argument, attached or in the next field. A rooted
  * argument belongs to `goFlagPaths`, which keeps its `=` and `,` structure.
  */
-const goCompilerFlagPaths = (value: string): string[] =>
+const goRelativeFlagPaths = (value: string, pathFlag: RegExp): string[] =>
   goFlags(value).flatMap((flag, index, flags) => {
-    const attached = GO_COMPILER_PATH_FLAG.exec(flag)?.[1]?.trimEnd();
+    const attached = pathFlag.exec(flag)?.[1]?.trimEnd();
     if (attached === undefined) return [];
     const next = flags[index + 1];
     const argument =
@@ -849,8 +859,10 @@ const goPaths = (
   for (const setting of module.settings) {
     if (!GO_FLAG_SETTING.test(setting.key)) continue;
     for (const path of goFlagPaths(setting.value)) add(path);
-    if (GO_COMPILER_SETTING.test(setting.key))
-      for (const path of goCompilerFlagPaths(setting.value)) paths.add(path);
+    const pathFlag = goPathFlag(setting.key);
+    if (pathFlag !== null)
+      for (const path of goRelativeFlagPaths(setting.value, pathFlag))
+        paths.add(path);
   }
   return [...paths];
 };
