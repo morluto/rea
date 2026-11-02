@@ -1004,7 +1004,9 @@ with a path-specific gap and incomplete capture coverage. Null alone does not
 establish that an accessibility value was successfully read or absent.
 
 An initial PID or window mismatch is `invalid_request` on `pid` or
-`window_id` and leaves provider availability intact. An unavailable executable
+`window_id` and leaves provider availability intact. A selected window that
+exists off screen is not a mismatch: selection succeeds and the permission and
+capture checks report their own outcome. An unavailable executable
 URL or unresolved executable path leaves identity unknown and reports
 `capability_unavailable`. Identity or window loss
 after the initial capture remains an observation failure with collected facts.

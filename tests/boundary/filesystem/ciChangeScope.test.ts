@@ -898,6 +898,18 @@ it.each([
     { code: true, apple: true, package: false, runtime: false },
   ],
   [
+    "tests/boundary/process/nativeUiVerifierLane.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/providers/native/nativeUiOffscreenWindow.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/conformance/native/ui-offscreen.swift",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
     "src/artifacts/InesArtifactReader.ts",
     { code: true, apple: true, package: false, runtime: true },
   ],
