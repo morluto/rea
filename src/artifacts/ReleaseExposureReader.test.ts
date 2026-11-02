@@ -3287,6 +3287,19 @@ describe("ReleaseExposureReader cumulative text allowance", () => {
 });
 
 describe("ReleaseExposureReader packaged map identity", () => {
+  it("keeps a named companion that a later script declares as its map", async () => {
+    const root = await createTestTempDirectory("rea-release-named-companion-");
+    await writeFile(join(root, "symbols.pdb"), "debug companion");
+    await writeFile(
+      join(root, "z.js"),
+      "const value = 1;\n//# sourceMappingURL=symbols.pdb\n",
+    );
+    const scanned = await inspect(root);
+    expect(scanned.debug_companions.paths).toEqual([
+      expect.stringMatching(/symbols\.pdb$/u),
+    ]);
+  });
+
   it.each([
     ["app.js", { embedded: 0, unparsed: 1, skipped: 0 }],
     ["z.js", { embedded: 0, unparsed: 0, skipped: 1 }],

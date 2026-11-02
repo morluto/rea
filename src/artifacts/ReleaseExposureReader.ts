@@ -497,7 +497,7 @@ const scanOccurrences = async (
     const format = formatOf(occurrence);
     const logical = occurrence.logical_path;
     const location = diskPath(input, occurrence, byId, formatOf) ?? logical;
-    if (hasCompanionName(logical)) noteCompanion(state, location);
+    if (hasCompanionName(logical)) state.companionPaths.add(location);
     if (occurrence.entry_kind !== "file") continue;
     const nativeFormat = nativeFormatOf(occurrence, nodeFormat);
     const onDisk =
@@ -638,7 +638,10 @@ const assembleScan = (
       samples: [...state.memberSamples],
     },
     debug_companions: {
-      paths: [...state.companionPaths.values()].flatMap((paths) => [...paths]),
+      paths: [
+        ...state.companionPaths,
+        ...[...state.linkerMapGuesses.values()].flatMap((paths) => [...paths]),
+      ],
       skipped: state.skippedCompanions,
     },
     pdb: {
@@ -727,8 +730,13 @@ interface ScanState {
   readable: number;
   unreadable: number;
   memberSamples: string[];
-  /** Reported spellings by lookup identity. Symlinks can make them differ. */
-  companionPaths: Map<string, Set<string>>;
+  /** Companions identified by name. A later declaration does not change them. */
+  companionPaths: Set<string>;
+  /**
+   * Maps read as non-JSON, by lookup identity, each with its reported spellings,
+   * which symlinks can make differ. A later declaration retracts the guess.
+   */
+  linkerMapGuesses: Map<string, Set<string>>;
   skippedCompanions: number;
   pdbExamined: number;
   pdbPaths: string[];
@@ -779,7 +787,8 @@ const createState = (visitText: ReleaseExposureTextVisitor): ScanState => ({
   readable: 0,
   unreadable: 0,
   memberSamples: [],
-  companionPaths: new Map(),
+  companionPaths: new Set(),
+  linkerMapGuesses: new Map(),
   skippedCompanions: 0,
   pdbExamined: 0,
   pdbPaths: [],
@@ -1057,7 +1066,7 @@ const noteUnreadMap = (
     return;
   }
   if (prefix !== null && !mayHaveSourceMapPrefix(prefix)) {
-    noteCompanion(state, map.location);
+    noteLinkerMapGuess(state, map.location);
     return;
   }
   state.skippedMaps += 1;
@@ -1158,7 +1167,7 @@ const readSourceMap = (
       !isJavaScriptSourceMapName(map.logical) &&
       !mayHaveSourceMapPrefix(bytes)
     ) {
-      noteCompanion(state, map.location);
+      noteLinkerMapGuess(state, map.location);
       return;
     }
     pushSample(state.mapSamples, map.location);
@@ -1405,8 +1414,8 @@ const noteLocalMapReference = (
 const noteMapTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(location);
   // A map read before its declaration may have settled as a linker map.
-  state.skippedMaps += state.companionPaths.get(target)?.size ?? 0;
-  state.companionPaths.delete(target);
+  state.skippedMaps += state.linkerMapGuesses.get(target)?.size ?? 0;
+  state.linkerMapGuesses.delete(target);
   if (state.examinedMaps.has(target) || state.mapTargets.has(target)) return;
   if (state.examinedLocations.has(target)) {
     state.skippedMaps += 1;
@@ -1426,10 +1435,10 @@ const noteMapTarget = (state: ScanState, location: string): void => {
 const memberLocationKey = (location: string): string =>
   logicalPathNfc(resolve(location));
 
-const noteCompanion = (state: ScanState, location: string): void => {
+const noteLinkerMapGuess = (state: ScanState, location: string): void => {
   const key = memberLocationKey(location);
-  const paths = state.companionPaths.get(key) ?? new Set();
-  state.companionPaths.set(key, paths.add(location));
+  const paths = state.linkerMapGuesses.get(key) ?? new Set();
+  state.linkerMapGuesses.set(key, paths.add(location));
 };
 
 const isDeclaredMap = (state: ScanState, member: MemberView): boolean =>
@@ -1965,7 +1974,7 @@ const scanUnexpandedContainer = async (
         cause: input.signal.reason,
       });
     const location = `${filePath}/${entry.path}`;
-    if (hasCompanionName(entry.path)) noteCompanion(state, location);
+    if (hasCompanionName(entry.path)) state.companionPaths.add(location);
     if (entry.kind !== "file") continue;
     // A SEA entry's code path need not name a script, so its role says what it is.
     const seaMainScript =
@@ -2391,7 +2400,7 @@ const scanSiblings = async (
     if (entry.name === own || entry.isSymbolicLink()) continue;
     const sibling = appendCallerPath(directory, entry.name);
     if (hasCompanionName(entry.name)) {
-      noteCompanion(state, sibling);
+      state.companionPaths.add(sibling);
       continue;
     }
     if (!entry.name.toLowerCase().endsWith(".map") || !entry.isFile()) continue;
@@ -2422,7 +2431,7 @@ const classifySiblingMap = async (
     return;
   if (prefix === null || mayHaveSourceMapPrefix(prefix))
     state.skippedCompanions += 1;
-  else noteCompanion(state, sibling);
+  else noteLinkerMapGuess(state, sibling);
 };
 
 const parsesAsSourceMap = (bytes: Buffer): boolean => {
