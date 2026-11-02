@@ -20,8 +20,8 @@ import {
   createAnalysisSnapshotEntry,
   createAnalysisSnapshotWorkflowEntry,
   snapshotBinding,
+  snapshotBindingMismatch,
   snapshotMatchesProfile,
-  snapshotMatchesTarget,
   snapshotTarget,
   parseAnalysisSnapshot,
   immutableAnalysisSnapshot,
@@ -30,6 +30,7 @@ import {
   type AnalysisSnapshotWorkflowEntry,
   type AnalysisSnapshotBinding,
   type AnalysisSnapshotTarget,
+  type SnapshotBindingMismatch,
 } from "../../domain/analysisSnapshot.js";
 import type {
   AnalysisExecution,
@@ -158,13 +159,22 @@ export class AnalysisSnapshotCache {
     target: BinaryTarget,
     profile: AnalysisProfileCommitment | undefined,
   ): boolean {
-    return (
-      (this.#target === undefined && this.#binding === undefined) ||
-      (this.#target !== undefined &&
-        this.#binding !== undefined &&
-        profile !== undefined &&
-        snapshotMatchesTarget(this.#target, target) &&
-        snapshotMatchesProfile(this.#binding, profile))
+    return this.mismatch(target, profile) === undefined;
+  }
+
+  /** Explain staged mismatch without treating missing binding facts as absent. */
+  mismatch(
+    target: BinaryTarget,
+    profile: AnalysisProfileCommitment | undefined,
+  ): SnapshotBindingMismatch | undefined {
+    if (this.#target === undefined && this.#binding === undefined)
+      return undefined;
+    if (this.#target === undefined || this.#binding === undefined)
+      return { staged_binding: "incomplete" };
+    return snapshotBindingMismatch(
+      { target: this.#target, binding: this.#binding },
+      target,
+      profile,
     );
   }
 
@@ -388,16 +398,20 @@ export class AnalysisSnapshotCache {
         }),
       );
     }
-    if (
-      active !== undefined &&
-      (!snapshotMatchesTarget(validated.target, active.target) ||
-        !snapshotMatchesProfile(validated.binding, active.profile))
-    )
-      return err(
-        new AnalysisSnapshotMismatchError(
-          "Analysis snapshot profile_mismatch: target, provider, or analysis profile does not match the active binary",
-        ),
+    if (active !== undefined) {
+      const mismatch = snapshotBindingMismatch(
+        validated,
+        active.target,
+        active.profile,
       );
+      if (mismatch !== undefined)
+        return err(
+          new AnalysisSnapshotMismatchError(
+            "Analysis snapshot target, provider, or analysis profile does not match the active binary",
+            mismatch,
+          ),
+        );
+    }
     const importedEvidence = mergeEvidence(validated.evidence_bundle);
     return importedEvidence.ok ? ok(this.stage(validated)) : importedEvidence;
   }

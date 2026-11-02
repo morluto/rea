@@ -32,6 +32,9 @@ import {
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
 
+/** Predicate shared by ordinary provider analysis observations. */
+export const ANALYSIS_EVIDENCE_PREDICATE = "rea.analysis";
+
 /** Provider identity schema shared by evidence-bearing persistence formats. */
 export const providerSchema = z.strictObject({
   id: z.string().min(1),
@@ -448,7 +451,7 @@ export const evidenceEnvelopeForAdmission = (
       version: provider.version,
     },
     analysis_profile: observation.analysisProfile ?? null,
-    predicate_type: observation.predicateType ?? "rea.analysis",
+    predicate_type: observation.predicateType ?? ANALYSIS_EVIDENCE_PREDICATE,
     operation: observation.operation,
     parameters: observation.parameters,
     raw_result: observation.rawResult ?? null,

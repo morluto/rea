@@ -19,6 +19,8 @@ import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js"
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
   MCP_TRANSPORT_EVIDENCE_EXPORT,
+  MCP_TRANSPORT_EVIDENCE_LINKS,
+  MCP_TRANSPORT_EVIDENCE_RECORDS,
 } from "../domain/analysisErrorPresentation.js";
 import {
   nodeStringCeilingRecovery,
@@ -65,10 +67,10 @@ export const mcpResponseOverflowProjection = (input: {
 };
 
 /**
- * A summary projection has already used `detail: "summary"`.
- * Export still writes the retained bundle outside one MCP frame.
+ * The bundle projection a get_evidence_bundle result already selected.
+ * Each projection owns a different next step when it exceeds one MCP frame.
  */
-const evidenceBundleSummary = (value: JsonValue): boolean => {
+const evidenceBundleProjection = (value: JsonValue): JsonValue | undefined => {
   const payload =
     typeof value === "object" &&
     value !== null &&
@@ -76,12 +78,23 @@ const evidenceBundleSummary = (value: JsonValue): boolean => {
     "result" in value
       ? value.result
       : value;
-  return (
-    typeof payload === "object" &&
+  return typeof payload === "object" &&
     payload !== null &&
-    !Array.isArray(payload) &&
-    payload.kind === "evidence-bundle-summary"
-  );
+    !Array.isArray(payload)
+    ? payload.kind
+    : undefined;
+};
+
+const evidenceBundleOverflowStep = (value: JsonValue): string => {
+  const projection = evidenceBundleProjection(value);
+  // A summary already used detail: summary; export writes outside one frame.
+  if (projection === "evidence-bundle-summary")
+    return MCP_TRANSPORT_EVIDENCE_EXPORT;
+  if (projection === "evidence-link-inspection")
+    return MCP_TRANSPORT_EVIDENCE_LINKS;
+  return projection === "evidence-record-selection"
+    ? MCP_TRANSPORT_EVIDENCE_RECORDS
+    : MCP_TRANSPORT_EVIDENCE_DISCOVERY;
 };
 
 /** Immutable encoding and recovery policy shared by one MCP server. */
@@ -92,6 +105,8 @@ export class ToolResultDelivery {
     maximumResponseBytes: number,
     private readonly nativeContinuation: (
       evidence: Evidence,
+      selected?: JsonValue,
+      viewSource?: JsonValue,
     ) => Readonly<Record<string, JsonValue>> = () => ({}),
   ) {
     this.maximumResponseBytes = maximumResponseBytes;
@@ -124,6 +139,7 @@ export class ToolResultDelivery {
     evidence: Evidence,
     contract: ToolContract,
     recorded: Result<unknown, AnalysisError> | undefined,
+    viewSource?: JsonValue,
   ): CallToolResult {
     return recorded !== undefined && !recorded.ok
       ? this.toErrorToolResult(recorded.error, contract.returnsTargetContent)
@@ -136,8 +152,34 @@ export class ToolResultDelivery {
                   kind: "retained-evidence",
                   evidence_id: evidence.evidence_id,
                 },
-                ...this.nativeContinuation(evidence),
               }),
+          // A view names its caller's source, which needs no session to read again.
+          ...(recorded === undefined && viewSource === undefined
+            ? {}
+            : this.nativeContinuation(evidence, undefined, viewSource)),
+        });
+  }
+
+  /**
+   * Deliver a caller-selected view of an already retained parent. Overflow
+   * recovery names that parent and a smaller page of the same selection,
+   * since the view record itself is not an analysis-view parent.
+   */
+  toSelectedViewToolResult(
+    view: Evidence,
+    selection: { readonly parent: Evidence; readonly request: JsonValue },
+    contract: ToolContract,
+    recorded: Result<unknown, AnalysisError> | undefined,
+  ): CallToolResult {
+    return recorded !== undefined && !recorded.ok
+      ? this.toErrorToolResult(recorded.error, contract.returnsTargetContent)
+      : this.successResult(view, contract, {
+          evidence_id: view.evidence_id,
+          evidence_reference: {
+            kind: "retained-evidence",
+            evidence_id: selection.parent.evidence_id,
+          },
+          ...this.nativeContinuation(selection.parent, selection.request),
         });
   }
 
@@ -294,9 +336,7 @@ export class ToolResultDelivery {
             : contract.name === "list_unknowns"
               ? "Call list_unknowns on this same connection with the same filters and offset, using a smaller limit, then follow next_offset. If a single unknown cannot fit, export the session with export_evidence_bundle to recover it."
               : contract.name === "get_evidence_bundle"
-                ? evidenceBundleSummary(value)
-                  ? MCP_TRANSPORT_EVIDENCE_EXPORT
-                  : MCP_TRANSPORT_EVIDENCE_DISCOVERY
+                ? evidenceBundleOverflowStep(value)
                 : contract.name === "inspect_address_context"
                   ? "Call get_evidence_bundle with detail summary to discover retained facet observations, then export_evidence_bundle to inspect complete records. Some facets may not have been retained; a new analysis can differ."
                   : "Use complete CLI JSON output to consume the analysis.";

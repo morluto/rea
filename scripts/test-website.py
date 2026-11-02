@@ -539,11 +539,13 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
                             self.assertIn(b"color: black", response.read())
                         with self.assertRaises(HTTPError) as error:
                             urlopen(base + prefix + "missing")
-                        self.assertEqual(error.exception.code, 404)
+                        with contextlib.closing(error.exception) as response:
+                            self.assertEqual(response.code, 404)
                         if prefix != "/":
                             with self.assertRaises(HTTPError) as error:
                                 urlopen(base + "/guide/")
-                            self.assertEqual(error.exception.code, 404)
+                            with contextlib.closing(error.exception) as response:
+                                self.assertEqual(response.code, 404)
                     finally:
                         server.shutdown()
                         worker.join()

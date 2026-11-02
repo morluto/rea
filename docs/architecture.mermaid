@@ -8,7 +8,7 @@ graph TD
     end
 
     subgraph "Production Composition"
-        COMPOSITION["src/composition/<br/>fresh typed provider and session factories<br/>one-shot binding and independent optional loading<br/>static WASM/EVM descriptors: named contracts, factories, retryable lifetimes"]
+        COMPOSITION["src/composition/<br/>fresh typed provider and session factories<br/>one-shot binding and independent optional loading<br/>typed capability bindings: construction, availability and retryable lifetimes<br/>pure capability declarations feed provider catalogs"]
     end
 
     subgraph "Adapters"
@@ -23,6 +23,7 @@ graph TD
         SESSION["SessionProviderRouter + BinarySession<br/>one immutable deep binding per target<br/>disjoint auxiliary routing"]
         REGISTRY["AnalysisProviderRegistry<br/>sorted deep candidates<br/>deterministic selection, no fallback<br/>ProviderInspectionScope: prerequisite observation lifetime"]
         RECORDS["src/application/investigation/<br/>composed InvestigationRecords + narrow ports<br/>EvidenceLedger and Unknown ownership"]
+        LIFETIMES["CapabilityScope<br/>host-owned service close capabilities<br/>released peers removed; failed cleanup retained for retry"]
         SNAPSHOT["BinarySessionRecords + AnalysisSnapshotCache<br/>binary target/profile snapshots and session file ownership<br/>record coordination and post-commit notifications"]
         JS_RECON["src/application/javascript/ + src/artifacts/javascript/<br/>JavaScript artifact reconstruction<br/>directory/ASAR reads<br/>AST-only bundle projection"]
     end
@@ -99,6 +100,7 @@ graph TD
     MAIN --> COMPOSITION
     CLI --> COMPOSITION
     SERVER --> COMPOSITION
+    COMPOSITION --> LIFETIMES
     COMPOSITION --> SESSION
     APP --> FIRMWARE
     FIRMWARE --> PROCESS
@@ -149,8 +151,7 @@ graph TD
     OBJDUMP --> DOMAIN
     COMPOSITION --> RIZIN
     RIZIN --> DOMAIN
-    CLI --> GDB
-    SERVER --> GDB
+    COMPOSITION --> GDB
     GDB --> PROCESS
     GDB --> DOMAIN
     HOPPER --> HOPPER_BRIDGE
@@ -206,8 +207,7 @@ graph TD
     NATIVE_READERS --> DOMAIN
     COMPOSITION --> FORMAT_READERS
     FORMAT_READERS --> DOMAIN
-    SERVER --> RUNTIME
-    CLI --> RUNTIME
+    COMPOSITION --> RUNTIME
     RUNTIME --> DOMAIN
     PROCESS --> FILESYSTEM
     AUX --> FILESYSTEM

@@ -1,12 +1,6 @@
 import type { ObjdumpSelection } from "../domain/reverseEngineering.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
-export const OBJDUMP_PROVIDER_IDENTITY = {
-  id: "gnu.objdump",
-  name: "GNU objdump",
-  version: null,
-} as const;
-
 /** Build GNU objdump argv without invoking a shell or following DWARF links by default. */
 export const objdumpCommand = (input: ObjdumpSelection): readonly string[] => {
   if (input.operation === "architectures") return ["-i"];

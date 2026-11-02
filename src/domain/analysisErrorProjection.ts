@@ -31,6 +31,7 @@ import {
 } from "./configurationErrors.js";
 import { BrowserObservationError } from "./browserObservationError.js";
 import {
+  AnalysisSnapshotMismatchError,
   EvidenceFileError,
   EvidenceIntegrityError,
   EvidenceReferenceError,
@@ -50,49 +51,76 @@ import {
   primaryAnalysisError,
   resolvedAnalysisError,
   sourcePublicationRecoveryOf,
+  type AnalysisCallerLifetime,
   type AnalysisError,
+  type AnalysisErrorOptions,
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
+import { invocationSettingLimit } from "./analysisSettingDefinitions.js";
 
-/** Project expected failures into exhaustive, secret-safe caller fields. */
+/**
+ * Project expected failures into exhaustive, secret-safe caller fields. The
+ * default describes a continuing caller, such as an MCP connection, and is
+ * also the adapter-independent form retained inside Evidence. An adapter that
+ * releases its provider session and runtime after this request, such as a
+ * one-shot CLI command, passes `"invocation"`.
+ */
 export const projectAnalysisError = (
   error: AnalysisError,
+  callerLifetime: AnalysisCallerLifetime = "continuing",
 ): AnalysisErrorProjection =>
-  projectError(error, {
-    capturedOutput: true,
-    partialObservation: true,
-    secondary: true,
-  });
+  projectError(
+    error,
+    {
+      capturedOutput: true,
+      partialObservation: true,
+      secondary: true,
+    },
+    callerLifetime,
+  );
 
 /** Cleanup history references output retained by its enclosing error owner. */
 export const projectAnalysisErrorWithoutCapturedOutput = (
   error: AnalysisError,
+  callerLifetime: AnalysisCallerLifetime = "continuing",
 ): AnalysisErrorProjection =>
-  projectError(error, {
-    capturedOutput: false,
-    partialObservation: true,
-    secondary: true,
-  });
+  projectError(
+    error,
+    {
+      capturedOutput: false,
+      partialObservation: true,
+      secondary: true,
+    },
+    callerLifetime,
+  );
 
 /** Bounded fallback when the completed observation itself cannot be delivered. */
 export const projectAnalysisErrorWithoutPartialObservation = (
   error: AnalysisError,
 ): AnalysisErrorProjection =>
-  projectError(error, {
-    capturedOutput: true,
-    partialObservation: false,
-    secondary: true,
-  });
+  projectError(
+    error,
+    {
+      capturedOutput: true,
+      partialObservation: false,
+      secondary: true,
+    },
+    "continuing",
+  );
 
 /** Cleanup diagnostics reference facts carried by the enclosing error. */
 export const projectAnalysisErrorForCleanupHistory = (
   error: AnalysisError,
 ): AnalysisErrorProjection =>
-  projectError(error, {
-    capturedOutput: false,
-    partialObservation: false,
-    secondary: false,
-  });
+  projectError(
+    error,
+    {
+      capturedOutput: false,
+      partialObservation: false,
+      secondary: false,
+    },
+    "continuing",
+  );
 
 export interface UnretainedEvidenceCandidate {
   readonly field: "partial_observation" | "completed_observation";
@@ -235,6 +263,76 @@ export const recoveryOmissionRemediation = (retention: string): string =>
       ? "The omitted observation's retention is unknown, and it could not fit within MCP delivery limits."
       : "The observation could not fit within MCP delivery limits.";
 
+/** A child failure embedded in a composed error's diagnostics. */
+export interface AnalysisChildFailure {
+  readonly error: AnalysisError;
+  /** Omit output that the composing error already retains. */
+  readonly capturedOutput?: "omit";
+  /** Omit recovery facts retained by the composing error. */
+  readonly omitRecovery?: boolean;
+}
+
+/**
+ * Record child failures as composition-time snapshots, so cleanup history
+ * keeps the state it had. The invocation form is recorded only when a child's
+ * projection depends on the caller lifetime; the final projection selects it.
+ */
+export const childFailureDiagnostics = (
+  children: Readonly<Record<string, AnalysisChildFailure>>,
+  diagnostics: Readonly<Record<string, JsonValue>> = {},
+): Pick<AnalysisErrorOptions, "diagnostics" | "invocationDiagnostics"> => {
+  const entries = Object.entries(children);
+  const project = (
+    { error, capturedOutput, omitRecovery }: AnalysisChildFailure,
+    callerLifetime: AnalysisCallerLifetime,
+  ) =>
+    projectError(
+      error,
+      {
+        capturedOutput: capturedOutput !== "omit",
+        partialObservation: omitRecovery !== true,
+        secondary: omitRecovery !== true,
+      },
+      callerLifetime,
+    );
+  const continuing = {
+    ...diagnostics,
+    ...Object.fromEntries(
+      entries.map(([key, child]) => [key, project(child, "continuing")]),
+    ),
+  };
+  const varying = entries.filter(([, { error }]) =>
+    projectionDependsOnCallerLifetime(error),
+  );
+  return varying.length === 0
+    ? { diagnostics: continuing }
+    : {
+        diagnostics: continuing,
+        invocationDiagnostics: {
+          ...continuing,
+          ...Object.fromEntries(
+            varying.map(([key, child]) => [key, project(child, "invocation")]),
+          ),
+        },
+      };
+};
+
+/** Every lifetime-dependent input the projection reads lies on this chain. */
+const projectionDependsOnCallerLifetime = (error: AnalysisError): boolean => {
+  for (
+    let node: AnalysisError | undefined = error;
+    node !== undefined;
+    node = node.cleanupPrimary
+  )
+    if (
+      node.limit !== undefined ||
+      node.continuingCallerGuidance !== undefined ||
+      node.invocationDiagnostics !== undefined
+    )
+      return true;
+  return false;
+};
+
 const projectError = (
   error: AnalysisError,
   options: {
@@ -242,6 +340,7 @@ const projectError = (
     readonly partialObservation: boolean;
     readonly secondary: boolean;
   },
+  callerLifetime: AnalysisCallerLifetime,
 ): AnalysisErrorProjection => {
   const composed = error;
   error = resolvedAnalysisError(error);
@@ -251,7 +350,9 @@ const projectError = (
     diagnosticSource.cleanupPrimary !== undefined
   )
     diagnosticSource = diagnosticSource.cleanupPrimary;
-  const diagnostics = diagnosticSource.diagnostics;
+  const diagnostics = diagnosticSource.diagnosticsFor(callerLifetime);
+  const cleanupHistory =
+    composed === error ? undefined : composed.diagnosticsFor(callerLifetime);
   const capturedOutput = composed.capturedOutput ?? error.capturedOutput;
   const publication = sourcePublicationRecoveryOf(composed);
   const secondary = new Set<AnalysisError>();
@@ -294,12 +395,23 @@ const projectError = (
   const primaryDetails = errorDetails(primary);
   const details = {
     ...primaryDetails,
-    ...(primary.limit === undefined ? {} : { limit: { ...primary.limit } }),
+    ...(primary.limit === undefined
+      ? {}
+      : {
+          limit:
+            callerLifetime === "invocation"
+              ? { ...invocationSettingLimit(primary.limit) }
+              : { ...primary.limit },
+        }),
     ...(!options.secondary || secondary.size === 0
       ? {}
       : {
           secondary_failures: [...secondary].map((failure) =>
-            projectError(failure, { ...options, secondary: false }),
+            projectError(
+              failure,
+              { ...options, secondary: false },
+              callerLifetime,
+            ),
           ),
         }),
     ...(cleanupReport === undefined
@@ -313,9 +425,9 @@ const projectError = (
             ? {}
             : { provider_diagnostics: primaryDetails.diagnostics }),
         }),
-    ...(composed === error || composed.diagnostics === undefined
+    ...(cleanupHistory === undefined
       ? {}
-      : { cleanup_history: composed.diagnostics }),
+      : { cleanup_history: cleanupHistory }),
     ...(error.cleanupIncomplete
       ? {
           cleanup: "incomplete",
@@ -360,7 +472,7 @@ const projectError = (
     cleanupRetry === undefined
       ? errorRecovery(error)
       : cleanupRetryRecovery(cleanupRetry);
-  const remediation = analysisErrorRemediationAction(error);
+  const remediation = analysisErrorRemediationAction(error, callerLifetime);
   const includesUnretainedEvidence =
     options.partialObservation &&
     [partialObservation, completedSourceObservation].some(
@@ -379,7 +491,7 @@ const projectError = (
   return {
     code,
     category: analysisErrorCategory(error),
-    message: analysisErrorUserMessage(error),
+    message: analysisErrorUserMessage(error, callerLifetime),
     retryable:
       RETRYABLE_CODES.has(code) ||
       (error instanceof AnalysisCapabilityUnavailableError &&
@@ -629,6 +741,13 @@ const requestErrorDetails = (
       expected: error.expected,
       actual: error.actual,
     };
+  if (error instanceof AnalysisSnapshotMismatchError)
+    return {
+      reason: error.message,
+      ...(error.bindingMismatch === undefined
+        ? {}
+        : { binding_mismatch: jsonValueSchema.parse(error.bindingMismatch) }),
+    };
   if (error instanceof EvidenceIntegrityError) return { reason: error.message };
   return undefined;
 };
@@ -711,6 +830,9 @@ const providerErrorDetails = (
         origin: rejection.origin,
         code: rejection.code,
         reason: rejection.reason,
+        ...(rejection.remediation === undefined
+          ? {}
+          : { remediation: rejection.remediation }),
         diagnostics: rejection.diagnostics,
       })),
     };

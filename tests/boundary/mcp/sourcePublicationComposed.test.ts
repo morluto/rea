@@ -8,7 +8,11 @@ import { compareFunctionEvidence } from "../../../src/application/investigation/
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
-import { JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
+import {
+  JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
+  JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+  SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
+} from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { compareApplicationVersionsEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { recoveryOmissionRemediation } from "../../../src/domain/analysisErrorProjection.js";
@@ -221,3 +225,107 @@ it("reports a preexisting primary when source admission fails", async () => {
     unknownRevisions: 0,
   });
 });
+
+it.each([
+  {
+    name: "trace_application_feature",
+    input: JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+  },
+  {
+    name: "compare_source_to_bundle",
+    input: SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
+  },
+] as const)(
+  "returns the selected $name view when source publication is refused",
+  async ({ name, input }) => {
+    const session = new BinarySession(
+      createTestProviderRouter(() => {
+        throw new Error("no provider needed");
+      }),
+      new InvestigationRecords({ maximumRepresentationBytes: 0 }),
+    );
+    const { client } = await createApplicationMcpHarness({ session });
+    const result = await client.callTool({
+      name,
+      arguments: { ...input, view: { kind: "summary" } },
+    });
+    const { error } = parseMcpToolError(result);
+    expect(error).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        partial_observation: { kind: "unretained-evidence" },
+        completed_observation: {
+          kind: "inline-evidence",
+          retention: "unknown",
+          source_closure: "not-established",
+          evidence: { normalized_result: { kind: "summary" } },
+        },
+      },
+    });
+    expect(session.exportEvidenceBundle().records).toEqual([]);
+  },
+);
+
+it.each([
+  {
+    name: "trace_application_feature",
+    input: JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+  },
+  {
+    name: "compare_source_to_bundle",
+    input: SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
+  },
+] as const)(
+  "preserves the completed $name parent when a selected view cannot be retained",
+  async ({ name, input }) => {
+    const router = () =>
+      createTestProviderRouter(() => {
+        throw new Error("no provider needed");
+      });
+    const normal = new BinarySession(router(), new InvestigationRecords());
+    const normalHarness = await createApplicationMcpHarness({
+      session: normal,
+    });
+    const complete = await normalHarness.client.callTool({
+      name,
+      arguments: input,
+    });
+    expect(complete.isError).not.toBe(true);
+    const parent = parseEvidence(complete.structuredContent);
+    const sizing = new InvestigationRecords();
+    expect(parent.evidence_links.length).toBeGreaterThan(0);
+    for (const id of parent.evidence_links) {
+      const source = normal.evidenceForAnalysis(id);
+      if (source === undefined) throw new Error(`Missing source ${id}`);
+      expect(sizing.recordEvidence(source).ok).toBe(true);
+    }
+    const session = new BinarySession(
+      router(),
+      new InvestigationRecords({
+        maximumRepresentationBytes:
+          sizing.statistics().retainedRepresentationBytes,
+      }),
+    );
+    const { client } = await createApplicationMcpHarness({ session });
+    const result = await client.callTool({
+      name,
+      arguments: { ...input, view: { kind: "summary" } },
+    });
+    const { error } = parseMcpToolError(result);
+    expect(error).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        partial_observation: {
+          kind: "unretained-evidence",
+          evidence: { evidence_id: parent.evidence_id, operation: name },
+        },
+      },
+    });
+    expect(
+      session
+        .exportEvidenceBundle()
+        .records.map((record) => record.evidence_id)
+        .sort(),
+    ).toEqual([...parent.evidence_links].sort());
+  },
+);

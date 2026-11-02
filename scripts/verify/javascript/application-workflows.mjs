@@ -41,10 +41,18 @@ const [leftPath, rightPath] = await Promise.all([
 ]);
 if (leftPath === rightPath)
   throw new Error("--left and --right must resolve to distinct paths");
-const [left, right] = await Promise.all([
+const analyses = await Promise.allSettled([
   analyze(options.left),
   analyze(options.right),
 ]);
+const failures = analyses.filter((result) => result.status === "rejected");
+if (failures.length === 1) throw failures[0].reason;
+if (failures.length > 1)
+  throw new AggregateError(
+    failures.map((result) => result.reason),
+    "Application analyses failed",
+  );
+const [left, right] = analyses.map((result) => result.value);
 const comparison = compareApplicationVersionsEvidence({ left, right });
 if (!comparison.ok) throw comparison.error;
 const comparisonResult = comparison.value.result;

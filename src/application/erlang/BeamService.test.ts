@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { BeamService } from "./BeamService.js";
-import { ERLANG_BEAM_PROVIDER_IDENTITY } from "../../erlang/BeamProvider.js";
+import { ERLANG_BEAM_PROVIDER_IDENTITY } from "../../erlang/ErlangBeamProviderIdentity.js";
 import type { ErlangBeam } from "../../domain/erlang/beam.js";
 import { ok } from "../../domain/result.js";
 import {

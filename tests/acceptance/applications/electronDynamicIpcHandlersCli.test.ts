@@ -79,7 +79,7 @@ ipcRenderer.send("app:log", 1);`,
 
 for (const surface of ["CLI", "stdio MCP"] as const)
   cliTest.for(cases)(
-    `keeps literal sends unknown beside $shape through ${surface}`,
+    `classifies literal sends beside $shape through ${surface}`,
     async ({ main, preload, pairing }, { cli }) => {
       const root = await createTestTempDirectory("rea-electron-dynamic-ipc-");
       await writeFixtureFiles(root, {

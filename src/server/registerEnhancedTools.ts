@@ -19,11 +19,13 @@ import {
   executeComposedWorkflow,
   retainComposedWorkflowSources,
   createWorkflowEvidence,
+  retainPartialWorkflowEvidence,
   workflowSnapshotRecord,
   recordWorkflowUnknowns,
 } from "../application/WorkflowEvidence.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { ok } from "../domain/result.js";
@@ -62,7 +64,8 @@ export interface EnhancedToolRegistration {
   readonly evidenceById?: EvidenceLookup | undefined;
   readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
   readonly allowsSnapshotReplay:
-    ((operation: ValidatedEnhancedCall["name"]) => boolean) | undefined;
+    | ((operation: ValidatedEnhancedCall["name"]) => boolean)
+    | undefined;
   readonly recordWorkflowSnapshot:
     | ((
         input: Parameters<BinarySessionPort["recordWorkflowSnapshot"]>[0],
@@ -133,10 +136,11 @@ export const registerEnhancedTools = (
   server.registerTool(
     batchDecompile.name,
     toolRegistrationOptions(batchDecompile),
-    (input, context) =>
+    ({ detail, ...input }, context) =>
       executeEnhancedTool(registration, batchDecompile, {
         validatedCall: { name: "batch_decompile", input },
         context,
+        detail,
       }),
   );
   server.registerTool(
@@ -281,6 +285,12 @@ const executeEnhancedTool = async (
           composedLimitationBudget(name),
         ),
       );
+      retainPartialWorkflowEvidence(result, {
+        target: registration.activeTarget?.(),
+        operation: name,
+        parameters,
+        upstreamProfile: registration.analysisProfile?.(name),
+      });
       result = retainComposedWorkflowSources(
         registration.recordEvidence,
         result,
@@ -351,7 +361,7 @@ const executeEnhancedTool = async (
             : recorded,
         );
       }
-      return registration.delivery.toCallToolResult(result, contract);
+      return deliverEnhancedFailure(registration, contract, result.error);
     },
   );
   return admitted.ok
@@ -436,7 +446,7 @@ const deliverFunctionAnalysis = async (
   );
   await reportOperationEnd(progress, "analyze_function", result.ok);
   if (!result.ok)
-    return registration.delivery.toCallToolResult(result, contract);
+    return deliverEnhancedFailure(registration, contract, result.error);
   if (detail === "summary") {
     const summary = summarizeRetainedAnalysis(result.value, {
       recordEvidence: registration.recordEvidence,
@@ -456,6 +466,23 @@ const deliverFunctionAnalysis = async (
     registration.recordEvidence?.(result.value),
   );
 };
+
+/**
+ * Deliver an analysis failure with any partial Evidence it carries, whether a
+ * stopped workflow or its failing read produced that partial.
+ */
+const deliverEnhancedFailure = (
+  registration: EnhancedToolRegistration & {
+    readonly delivery: ToolResultDelivery;
+  },
+  contract: ToolContract,
+  error: AnalysisError,
+): CallToolResult =>
+  registration.delivery.toPartialErrorToolResult(
+    error,
+    contract.returnsTargetContent,
+    registration.recordEvidence,
+  );
 
 const jsonParameters = (
   input: Readonly<Record<string, JsonValue | undefined>>,
