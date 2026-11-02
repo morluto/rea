@@ -14,6 +14,7 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 
+import type { UniversalMachOSlice } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   AnalysisArtifactChangedError,
@@ -28,11 +29,16 @@ import {
 /** Immutable target copy admitted to one ephemeral Ghidra import. */
 export interface GhidraTargetSnapshot {
   readonly path: string;
+  /** Digest of the imported bytes: the selected slice for a universal Mach-O. */
   readonly sha256: string;
   readonly admission?: JsonValue;
 }
 
-/** Copy one target and require its bytes to match the parsed target identity. */
+/**
+ * Copy one target and require its bytes to match the parsed target identity.
+ * A universal Mach-O is thinned to the admitted slice so Ghidra imports the
+ * architecture admission selected; the whole-source digest anchors the copy.
+ */
 export const createGhidraTargetSnapshot = async (
   sourcePath: string,
   runtimeRoot: string,
@@ -41,6 +47,7 @@ export const createGhidraTargetSnapshot = async (
     readonly signal?: AbortSignal;
     readonly platform?: NodeJS.Platform;
     readonly resourceScope?: ArtifactResourceScope;
+    readonly slice?: UniversalMachOSlice;
   } = {},
 ): Promise<GhidraTargetSnapshot> => {
   if (!/^[a-f0-9]{64}$/u.test(expectedSha256))
@@ -50,7 +57,10 @@ export const createGhidraTargetSnapshot = async (
     runtimeRoot,
     `target-${expectedSha256.slice(0, 12)}${suffix}`,
   );
+  const slice = options.slice;
   if ((options.platform ?? process.platform) === "win32") {
+    if (slice !== undefined)
+      throw new TypeError("Windows Ghidra snapshots cannot thin a slice");
     const observed = await windowsPrivateRuntime(runtimeRoot)
       .snapshot(
         sourcePath,
@@ -95,16 +105,38 @@ export const createGhidraTargetSnapshot = async (
             async (destination) => {
               await destination.chmod(0o600);
               const hash = createHash("sha256");
+              const sliceHash =
+                slice === undefined ? undefined : createHash("sha256");
+              let position = 0;
+              let written = 0;
               const input = readArtifactFileChunks(source, {
                 end: initial.size,
                 signal: options.signal,
               });
               for await (const chunk of input) {
                 assertArtifactReadActive(options.signal);
+                hash.update(chunk);
+                const start =
+                  slice === undefined
+                    ? 0
+                    : Math.max(0, slice.offset - position);
+                const end =
+                  slice === undefined
+                    ? chunk.length
+                    : Math.min(
+                        chunk.length,
+                        slice.offset + slice.size - position,
+                      );
+                position += chunk.length;
+                // A chunk outside the slice has end <= start; a negative
+                // subarray bound would count from the chunk's end instead.
+                if (end <= start) continue;
+                const bytes = chunk.subarray(start, end);
                 // writeFile completes the entire supplied chunk at the current
                 // descriptor offset. Only this owner closes either descriptor.
-                await destination.writeFile(chunk);
-                hash.update(chunk);
+                await destination.writeFile(bytes);
+                sliceHash?.update(bytes);
+                written += bytes.length;
                 assertArtifactReadActive(options.signal);
               }
               const coverage = input.readCoverage();
@@ -114,7 +146,8 @@ export const createGhidraTargetSnapshot = async (
                 coverage.kind !== "complete" ||
                 coverage.bytes !== initial.size ||
                 !sameRegularFileState(initial, after) ||
-                observed !== expectedSha256
+                observed !== expectedSha256 ||
+                (slice !== undefined && written !== slice.size)
               )
                 throw new AnalysisArtifactChangedError(
                   "open_binary",
@@ -122,7 +155,10 @@ export const createGhidraTargetSnapshot = async (
                   `Ghidra target snapshot digest or source identity changed: expected ${expectedSha256}, observed ${observed}`,
                 );
               assertArtifactReadActive(options.signal);
-              return { path: snapshotPath, sha256: observed };
+              return {
+                path: snapshotPath,
+                sha256: sliceHash?.digest("hex") ?? observed,
+              };
             },
           );
         },

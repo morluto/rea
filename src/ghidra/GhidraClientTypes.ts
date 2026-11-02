@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
+import type { UniversalMachOSlice } from "../domain/binaryTargetTypes.js";
 import type { Result } from "../domain/result.js";
 import type { LinuxCgroupMemoryState } from "../process/LinuxCgroupMemory.js";
 import type { GhidraLauncher } from "./GhidraLauncher.js";
@@ -40,6 +41,8 @@ export interface GhidraClientOptions {
   readonly targetPath: string;
   readonly targetSha256: string;
   readonly existingProject?: boolean;
+  /** Selected universal Mach-O slice the private snapshot is thinned to. */
+  readonly universalSlice?: UniversalMachOSlice;
   /** Installation host shared by runtime allocation and snapshot admission. */
   readonly platform?: NodeJS.Platform;
   readonly transport?: GhidraTransportKind;
