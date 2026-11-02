@@ -1,4 +1,5 @@
 import type { Locator, Page } from "playwright-core";
+import type { ScenarioRedirectResponse } from "./PlaywrightScenarioRedirect.js";
 
 import {
   SAVED_URL_PLACEHOLDER,
@@ -46,6 +47,7 @@ interface PerformActionInput {
   /** Cancellation of the step; a request step that sees it before sending sends nothing. */
   readonly signal?: AbortSignal | undefined;
   readonly onOpaqueRedirect?: () => void;
+  readonly onRedirectResponse?: (response: ScenarioRedirectResponse) => void;
 }
 
 /** Watch the response selector before the UI action; matching does not prove action causality. */
@@ -146,6 +148,7 @@ export const performPlaywrightScenarioAction = async (
         startOrigin,
         signal,
         onOpaqueRedirect: input.onOpaqueRedirect,
+        onRedirectResponse: input.onRedirectResponse,
       });
       return;
     default: {

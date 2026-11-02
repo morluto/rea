@@ -171,6 +171,27 @@ export const readCdpRequestWillBeSent = (
   };
 };
 
+/** Header objects of the network service carry strings only; anything else is a protocol failure. */
+const stringRecord = (
+  value: UnknownRecord | undefined,
+): Readonly<Record<string, string>> | undefined => {
+  if (value === undefined) return undefined;
+  for (const name in value)
+    if (typeof value[name] !== "string") return undefined;
+  return value as Readonly<Record<string, string>>;
+};
+
+/** The status and raw headers the network service saw, which can include a redirect Playwright withholds. */
+export const readCdpResponseReceivedExtraInfo = (reported: unknown) => {
+  const source = recordValue(reported);
+  return {
+    source,
+    requestId: requestIdentity(source),
+    statusCode: numberValue(source?.statusCode),
+    headers: stringRecord(recordValue(source?.headers)),
+  };
+};
+
 export const readCdpResponseReceived = (reported: unknown) => {
   const source = recordValue(reported);
   return {

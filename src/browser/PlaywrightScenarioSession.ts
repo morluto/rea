@@ -3,6 +3,7 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import type { BrowserContext } from "playwright-core";
+import type { ScenarioRedirectResponse } from "./PlaywrightScenarioRedirect.js";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
@@ -490,6 +491,12 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           startOrigin: this.startOrigin,
           signal,
           onOpaqueRedirect: () => this.eventCapture.opaqueRequestRedirect(),
+          ...(this.eventCapture.capturesNetwork()
+            ? {
+                onRedirectResponse: (response: ScenarioRedirectResponse) =>
+                  this.eventCapture.redirectResponse(response),
+              }
+            : {}),
         }),
       "timeout_ms" in action ? action.timeout_ms : undefined,
       signal,

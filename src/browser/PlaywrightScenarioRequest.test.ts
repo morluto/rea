@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import type { Page, Route } from "playwright-core";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
@@ -476,6 +477,148 @@ describe("request step confinement", () => {
       ),
     ).rejects.toThrow("the page moved");
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("request step redirect capture", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("hands a redirect the browser reported to network capture instead of disclosing a gap", async () => {
+    const parsed = scenario([requestStep({})]);
+    const action = parsed.actions[0]!;
+    const session = Object.assign(new EventEmitter(), {
+      send: async () => ({}),
+      detach: vi.fn(async () => {}),
+    });
+    const base = fakePage({});
+    const emitter = new EventEmitter();
+    // A detach that only finishes once the route guard is gone: a step that
+    // awaited it first would wait for the bounded timeout instead.
+    let releaseDetach: () => void = () => {};
+    session.detach.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDetach = resolve;
+        }),
+    );
+    const page = Object.assign(emitter, base, {
+      on: emitter.on.bind(emitter),
+      off: emitter.off.bind(emitter),
+      unroute: async () => {
+        releaseDetach();
+      },
+      context: () => ({ newCDPSession: async () => session }),
+    }) as unknown as Page;
+    const url = `${ORIGIN}/api/folders`;
+    vi.stubGlobal("fetch", async () => {
+      session.emit("Network.requestWillBeSent", {
+        requestId: "7.1",
+        request: { url, method: "POST" },
+      });
+      emitter.emit("request", {
+        url: () => url,
+        method: () => "POST",
+        postData: () => null,
+      });
+      session.emit("Network.responseReceivedExtraInfo", {
+        requestId: "7.1",
+        statusCode: 302,
+        headers: { Location: "/destination" },
+      });
+      return { type: "opaqueredirect", status: 0 };
+    });
+    const onOpaqueRedirect = vi.fn();
+    const onRedirectResponse = vi.fn();
+    const started = Date.now();
+    await expect(
+      performPlaywrightScenarioAction({
+        page,
+        action,
+        secrets: resolved(parsed),
+        startOrigin: ORIGIN,
+        onOpaqueRedirect,
+        onRedirectResponse,
+      }),
+    ).rejects.toThrow("The browser reported the redirect to network capture");
+    expect(onRedirectResponse).toHaveBeenCalledOnce();
+    expect(onRedirectResponse.mock.calls[0]![0].status()).toBe(302);
+    expect(onOpaqueRedirect).not.toHaveBeenCalled();
+    expect(session.detach).toHaveBeenCalledOnce();
+    expect(Date.now() - started).toBeLessThan(1_500);
+  });
+});
+
+describe("request step redirect observer ordering", () => {
+  it("installs no route guard when the step expires during the attachment", async () => {
+    const route = vi.fn(async () => {});
+    const session = Object.assign(new EventEmitter(), {
+      send: async () => ({}),
+      detach: vi.fn(async () => {}),
+    });
+    const emitter = new EventEmitter();
+    const page = Object.assign(emitter, fakePage({}), {
+      on: emitter.on.bind(emitter),
+      off: emitter.off.bind(emitter),
+      route,
+      context: () => ({
+        newCDPSession: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          return session;
+        },
+      }),
+    }) as unknown as Page;
+    const calls = stubFetch(200);
+    const parsed = scenario([requestStep({ timeout_ms: 10 })]);
+    await expect(
+      performPlaywrightScenarioAction({
+        page,
+        action: parsed.actions[0]!,
+        secrets: resolved(parsed),
+        startOrigin: ORIGIN,
+        onRedirectResponse: vi.fn(),
+      }),
+    ).rejects.toThrow("ran out of time");
+    expect(route).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+    expect(session.detach).toHaveBeenCalledOnce();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("attaches the redirect observer before the aborting route guard is installed", async () => {
+    const order: string[] = [];
+    const session = Object.assign(new EventEmitter(), {
+      send: async () => ({}),
+      detach: async () => {},
+    });
+    const emitter = new EventEmitter();
+    const page = Object.assign(emitter, fakePage({}), {
+      on: emitter.on.bind(emitter),
+      off: emitter.off.bind(emitter),
+      route: async () => {
+        order.push("route");
+      },
+      context: () => ({
+        newCDPSession: async () => {
+          order.push("attach");
+          return session;
+        },
+      }),
+    }) as unknown as Page;
+    stubFetch(200);
+    const parsed = scenario([requestStep({})]);
+    await performPlaywrightScenarioAction({
+      page,
+      action: parsed.actions[0]!,
+      secrets: resolved(parsed),
+      startOrigin: ORIGIN,
+      onRedirectResponse: vi.fn(),
+    });
+    expect(order).toEqual(["attach", "route"]);
   });
 
   it("sends nothing when its time runs out while header values are read, or the step is cancelled", async () => {

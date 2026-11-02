@@ -27,6 +27,7 @@ import type { BrowserScenarioCaptureLimits } from "../domain/browserScenarioCapt
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
 import { captureNetworkBody } from "./network/PlaywrightNetworkContent.js";
 import { PlaywrightScenarioNetwork } from "./network/PlaywrightScenarioNetwork.js";
+import type { ScenarioRedirectResponse } from "./PlaywrightScenarioRedirect.js";
 
 type EventName =
   | "console"
@@ -123,6 +124,9 @@ export class PlaywrightScenarioEvents {
   private readonly incompleteFamilies = new Set<EventName>();
   private readonly network: PlaywrightScenarioNetwork | undefined;
   private stopNetwork: (() => void) | undefined;
+  private observeRedirect:
+    | ((response: ScenarioRedirectResponse) => void)
+    | undefined;
   private readonly stopListeners = new Map<object, Set<() => void>>();
   private sealed = false;
   private sourcePrivacyIncomplete = false;
@@ -179,6 +183,9 @@ export class PlaywrightScenarioEvents {
       const onResponse = (response: Response) => {
         if (inScope(response.request())) collector.response(response);
       };
+      this.observeRedirect = (response) => {
+        if (inScope(response.request())) collector.response(response);
+      };
       const onFailed = (request: Request) => {
         if (inScope(request)) collector.failed(request);
       };
@@ -201,6 +208,16 @@ export class PlaywrightScenarioEvents {
 
   setStep(index: number): void {
     this.stepIndex = index;
+  }
+
+  /** Network events are selected, so withheld redirect answers can be recovered. */
+  capturesNetwork(): boolean {
+    return this.enabled.has("network");
+  }
+
+  /** A request step's redirect answer that Playwright withheld, offered to network capture. */
+  redirectResponse(response: ScenarioRedirectResponse): void {
+    if (!this.sealed) this.observeRedirect?.(response);
   }
 
   /** Manual page fetch can conceal a redirect response from Playwright. */
