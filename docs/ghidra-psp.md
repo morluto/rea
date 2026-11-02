@@ -104,8 +104,14 @@ address space. For `.ppsym`, addresses are relative for a loaded module, so the
 analysis base must refer to that module. PPSSPP's module-index-zero game/RAM
 records instead store absolute addresses: use `--analysis-base 0x0` for those
 records. The file does not establish its module index; the caller selects
-whether its addresses are relative or absolute. CRC checking is reported as unknown
-when either the file or independent expected CRC is unavailable. Returned
+whether its addresses are relative or absolute. Ghidra function inventory
+rows in other address spaces (such as `EXTERNAL:0x1`) are preserved in the input
+but excluded from an unqualified PSP mapping; the report counts these rows.
+Observed names are listed once per matching coordinate in
+`observed_labels_by_address`, avoiding repeated names for duplicate source rows.
+CRC checking is reported as unknown when either the file or independent
+expected CRC is unavailable. The symbol file is hashed as original bytes and
+invalid UTF-8 is refused. Returned
 `address_and_label_agree` means agreement only in the supplied inventory,
 not proved program correspondence or equivalent code. Duplicates, differing
 labels, generated placeholders, absent rows and out-of-range addresses retain
@@ -113,8 +119,11 @@ separate outcomes. The report includes the input symbol SHA-256 and selected
 target SHA-256 but cannot prove that a caller's symbol file belongs to that
 binary. Verify module identity, residency, relocation and any CRC independently.
 
-Run the fast source-only controls with
-`node scripts/verify-psp-symbol-correlation.mjs`. The existing `--psp` real
+Run the fast source-only and command controls with
+`node scripts/verify-psp-symbol-correlation.mjs`. They cover raw-array and
+Evidence-shaped inventory files, target-digest refusal, verbatim input paths,
+address-space filtering, UTF-8 refusal, and duplicate-heavy output.
+The existing `--psp` real
 Ghidra lane additionally correlates export-shaped **source-owned** labels
 created from independent PSP GNU readelf symbols against the observed REA
 inventory, including a wrong-base negative control. That fixture is not a
