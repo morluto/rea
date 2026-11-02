@@ -1,5 +1,6 @@
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { expect } from "vitest";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -10,7 +11,12 @@ cliTest(
   "public Cursor setup downloads a local plugin only after opt-in and approval",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-cursor-local-cli-");
-    const bin = join(home, "selected tools");
+    const bin = join(
+      home,
+      process.platform === "win32"
+        ? "selected # tools"
+        : "selected # ? % tools",
+    );
     await mkdir(bin);
     const downloads = join(home, "downloads.json");
     const hijacked = join(home, "hijacked");
@@ -43,7 +49,7 @@ await writeFile(${JSON.stringify(downloads)}, JSON.stringify(count + 1));
       join(bin, process.platform === "win32" ? "npm.cmd" : "npm"),
       process.platform === "win32"
         ? `@"${process.execPath}" "${script}" %*\r\n`
-        : `#!/usr/bin/env node\nimport ${JSON.stringify(script)};\n`,
+        : `#!/usr/bin/env node\nimport ${JSON.stringify(pathToFileURL(script).href)};\n`,
       { mode: 0o755 },
     );
     if (process.platform === "win32") {

@@ -1,5 +1,6 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -35,7 +36,10 @@ for (const [id, command] of [
     `public setup installs the ${id} plugin after approval and is idempotent`,
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-plugin-first-");
-      const home = join(root, "client home");
+      const home = join(
+        root,
+        process.platform === "win32" ? "client # home" : "client # ? % home",
+      );
       await mkdir(home);
       const bin = join(home, "bin");
       await mkdir(bin);
@@ -51,7 +55,7 @@ for (const [id, command] of [
         join(bin, `${command}${process.platform === "win32" ? ".cmd" : ""}`),
         process.platform === "win32"
           ? `@"${process.execPath}" "${script}" %*\r\n`
-          : `#!/usr/bin/env node\nimport ${JSON.stringify(script)};\n`,
+          : `#!/usr/bin/env node\nimport ${JSON.stringify(pathToFileURL(script).href)};\n`,
         { mode: 0o755 },
       );
       const state = join(home, "plugin-state.json");

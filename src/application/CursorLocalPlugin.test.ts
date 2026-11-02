@@ -165,6 +165,7 @@ const fixture = async () => {
     local,
     target,
     downloads,
+    launch,
     setupOptions,
     host: (cursorPlugin = true, signal?: AbortSignal) =>
       withPluginSetup(
@@ -264,6 +265,72 @@ it("installs the pinned Cursor local plugin and leaves its runtime stable on rer
   expect(await readdir(f.local)).toEqual(["rea"]);
   await expect(access(f.config)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+it.each(["codex", "claude_code"] as const)(
+  "keeps Cursor usable across mixed %s marketplace commands",
+  async (client) => {
+    const f = await fixture();
+    const configPath = join(f.home, client, "config");
+    f.base.clients = [
+      ...f.base.clients,
+      { name: client, configPath, format: "json" },
+    ];
+    f.base.clientInspections.set(client, { status: "create" });
+    f.base.productRegistrations = [
+      ...f.base.productRegistrations,
+      {
+        client,
+        config_path: configPath,
+        command: [],
+        state: "missing",
+        remediation: "Install REA.",
+      },
+    ];
+    let installed = false;
+    const launch: SetupPluginCommandLauncher = (command, args, invocation) =>
+      invocation.resources.run(async () => {
+        if (command !== "codex" && command !== "claude")
+          return f.launch(command, args, invocation);
+        if (args[1] !== "list") installed = true;
+        const entries = installed
+          ? [
+              {
+                pluginId: "rea@rea",
+                id: "rea@rea",
+                name: "rea",
+                enabled: true,
+                scope: "user",
+              },
+            ]
+          : [];
+        return {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          stderr: "",
+          stdout: JSON.stringify(
+            command === "codex" ? { installed: entries } : entries,
+          ),
+        };
+      });
+    const host = () =>
+      withPluginSetup(
+        f.base,
+        {},
+        { preferPlugins: true, cursorPlugin: true },
+        launch,
+      );
+    const selected = { ...f.setupOptions, clientIds: ["cursor", client] };
+    const result = await runSetup(selected, host());
+    expect(result.status).toBe("ready");
+    expect(result.doctor.scope.plugin_clients).toEqual(["cursor", client]);
+    expect(installed).toBe(true);
+    expect((await runSetup(selected, host())).status).toBe("ready");
+    expect(f.downloads).toHaveLength(1);
+    expect(f.base.configurations + f.base.skillInstalls).toBe(0);
+    expect(await readdir(f.local)).toEqual(["rea"]);
+  },
+);
 
 it.each(MCP_BOOTSTRAP_FILES)(
   "preserves and refuses a local plugin missing bootstrap file %s",
