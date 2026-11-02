@@ -1173,7 +1173,50 @@ describe("doctor Linux and Hopper discovery", () => {
     );
     expect(
       result.checks.find(({ name }) => name === "hopper-version")?.remediation,
-    ).toContain("Check HOPPER_LAUNCHER_PATH");
+    ).toContain("HOPPER_LAUNCHER_PATH");
+  });
+  it("does not blame a configured launcher when publisher verification cannot download", async () => {
+    const path = "/custom/Hopper";
+    const result = await runDoctor(
+      undefined,
+      host({
+        platform: "linux",
+        configuredHopperPath: path,
+        linuxDistribution: () =>
+          Promise.resolve({
+            id: "ubuntu",
+            versionId: "24.04",
+            packageFamily: "deb",
+            hopperSetupSupported: true,
+          }),
+        executable: (candidate) => Promise.resolve(candidate === path),
+        inspectLinuxHopper: () =>
+          Promise.resolve(
+            err(
+              new HopperReleaseError(
+                "download",
+                "The official Hopper package is unavailable for publisher verification.",
+              ),
+            ),
+          ),
+      }),
+    );
+
+    expect(
+      result.checks.find(({ name }) => name === "hopper-version"),
+    ).toMatchObject({
+      classification: "unknown",
+      details: { reason: "download" },
+      remediation: expect.stringContaining(
+        "publisher verification could not complete",
+      ),
+    });
+    expect(
+      result.checks.find(({ name }) => name === "hopper-version")?.remediation,
+    ).toContain("official Hopper package is unavailable");
+    expect(
+      result.checks.find(({ name }) => name === "hopper-version")?.remediation,
+    ).not.toContain("does not match");
   });
 });
 

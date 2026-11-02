@@ -31,6 +31,7 @@ import {
 } from "../../../src/application/LinuxHopperPublisher.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import {
+  HOPPER_RELEASES_URL,
   HOPPER_LINUX_PRIMARY_FINGERPRINT,
   HOPPER_RELEASES_URL,
   type LinuxHopperRelease,
@@ -283,6 +284,47 @@ it("rejects malformed UTF-8 fetched release metadata without repairing a vendor 
 });
 
 describe("Linux signed package retention boundary", () => {
+  linux(
+    "reports a package download failure after the current release matches the launcher",
+    async () => {
+      const f = await fixture();
+      const response = vi.fn(async (input: string | URL | Request) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        if (url === HOPPER_RELEASES_URL)
+          return new Response(
+            JSON.stringify({
+              "Ubuntu / Mint": f.release,
+              Fedora: {
+                ...f.release,
+                filename: f.release.filename.replace(".deb", ".rpm"),
+              },
+              Arch: {
+                ...f.release,
+                filename: f.release.filename.replace(".deb", ".pkg.tar.xz"),
+              },
+            }),
+          );
+        expect(url).toBe(f.release.filename);
+        return new Response("unavailable", { status: 503 });
+      });
+      vi.stubGlobal("fetch", response);
+      try {
+        expect(await f.publisher.inspectLauncher(f.launcher)).toMatchObject({
+          ok: false,
+          error: { reason: "download" },
+        });
+        expect(response).toHaveBeenCalledTimes(2);
+      } finally {
+        await f.publisher.close();
+      }
+    },
+  );
+
   linux(
     "rejects a cryptographically valid package signed by another publisher",
     async () => {
