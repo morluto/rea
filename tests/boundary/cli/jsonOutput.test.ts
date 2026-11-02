@@ -110,6 +110,41 @@ describe("SDK output completion", () => {
     expect(text).not.toContain("\n  ");
     expect(JSON.parse(text)).toEqual(value);
   });
+
+  it("counts tokens for piped SDK JSON documents instead of rewriting them", async () => {
+    const value = {
+      version: "incur.v1",
+      commands: [{ name: "inspect-devicetree" }],
+    };
+    const indented = `${JSON.stringify(value, null, 2)}\n`;
+    const compact = `${JSON.stringify(value)}\n`;
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: unknown, _encoding, callback) {
+        if (!Buffer.isBuffer(chunk)) {
+          callback(new TypeError("Expected a UTF-8 output buffer"));
+          return;
+        }
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const output = createCliResultOutput(
+      parseCliOutputArguments([
+        "--llms-full",
+        "--format",
+        "json",
+        "--token-count",
+      ]),
+      destination,
+    );
+    if (output === undefined) throw new Error("Expected valid output controls");
+    expect(output.captureSdkOutput(indented)).toBe(true);
+    await output.finishSdkOutput(0);
+    expect(Buffer.concat(chunks).toString("utf8")).toBe(
+      `${estimateTokenCount(compact)}\n`,
+    );
+  });
 });
 
 describe("incremental CLI JSON", () => {

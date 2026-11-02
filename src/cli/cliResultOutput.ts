@@ -337,7 +337,26 @@ export const createCliResultOutput = (
               result = JSON.parse(text);
             } catch {
               // Preserve non-JSON SDK diagnostics verbatim.
+              if (exitCode === 0 && options.tokenCount) {
+                await writeOutputText(
+                  destination,
+                  `${estimateTokenCount(text)}\n`,
+                );
+                return;
+              }
               await writeOutputText(destination, text);
+              return;
+            }
+            // Compact rewrite must not skip token controls for SDK documents
+            // (`--llms` / `--schema` with --token-count on a pipe).
+            if (exitCode === 0 && options.tokenCount) {
+              const compact = [...jsonOutputParts(result, "json", false)].join(
+                "",
+              );
+              await writeOutputText(
+                destination,
+                `${estimateTokenCount(compact)}\n`,
+              );
               return;
             }
             await writeJsonOutput(result, destination, "json");
