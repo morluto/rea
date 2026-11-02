@@ -103,6 +103,7 @@ const PATH_SCOPES = {
     "tests/boundary/providers/RizinInferiorTty.test.ts",
     "tests/boundary/providers/RizinTestInferiorTty.ts",
     "tests/boundary/process/ownedDebuggerSession.test.ts",
+    "tests/boundary/cli/debuggerOneShotExit.test.ts",
     "tests/boundary/cli/gdbStartupCleanupCli.test.ts",
     "tests/boundary/cli/reverseEngineeringCommands.test.ts",
     "tests/boundary/mcp/cutter*.test.ts",

@@ -28,6 +28,7 @@ import {
   createRizinDebugSessionManager,
 } from "../composition/debuggerSessions.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { OwnedDebuggerCleanupError } from "../process/ownedDebuggerSession.js";
 import {
   analysisEvidenceDeliveryOptions,
   cliEvidenceDeliveryInputError,
@@ -144,6 +145,13 @@ const closeDebuggerCommandSession = async (
   try {
     await manager.closeAll();
   } catch (cause) {
+    // This process is the only owner, so a caller gets the debugger to check
+    // rather than a retry that no later command could perform.
+    const retainedPids =
+      cause instanceof OwnedDebuggerCleanupError
+        ? cause.retainedProcessIds
+        : [];
+    const identified = retainedPids.length > 0;
     throw new ProviderCleanupError(
       providerId,
       sessionId === undefined ? [] : [sessionId],
@@ -158,8 +166,17 @@ const closeDebuggerCommandSession = async (
             : cause instanceof Error
               ? cause.message
               : String(cause),
+        ...(identified ? { retained_debugger_pids: [...retainedPids] } : {}),
       },
-      { cause, operation },
+      {
+        cause,
+        operation,
+        ...(identified
+          ? {
+              remediationAction: `REA exits without confirming that the debugger stopped, and no later REA command can retry this cleanup. Check process ${retainedPids.join(", ")} and its target, and stop them if they are still running.`,
+            }
+          : {}),
+      },
     );
   }
 };

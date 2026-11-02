@@ -364,42 +364,73 @@ export const stopOwnedDebuggerProcess = async (
   );
 };
 
+/** What closing all sessions needs from a session it may have to retain. */
+interface RetainableDebuggerSession {
+  readonly id: string;
+  readonly launched: {
+    readonly process: { readonly pid?: number | undefined };
+  };
+  readonly supervisor: { ref(): void; unref(): void };
+}
+
+/** Closing all sessions could not confirm that these debuggers stopped. */
+export class OwnedDebuggerCleanupError extends AggregateError {
+  /** Process IDs when cleanup gave up. Observations, not lasting proof of identity. */
+  readonly retainedProcessIds: readonly number[];
+
+  constructor(
+    failures: readonly Error[],
+    message: string,
+    retainedProcessIds: readonly number[],
+  ) {
+    super(failures, message);
+    this.retainedProcessIds = retainedProcessIds;
+  }
+}
+
 /**
  * Stop every owned session and retain failed sessions for possible recovery.
  * Callers must block replacement admission and drain in-flight starts until
  * this settles; incomplete cleanup leaves the old owner in the map for retry.
+ *
+ * Closing all sessions means their owner is finishing, so a retained session
+ * stops holding the host's event loop, as a supervised provider does after
+ * incomplete cleanup. Ownership in this process is unchanged, and a retry
+ * restores the references.
  */
 export const closeOwnedDebuggerSessions = async <
-  Session extends { id: string },
+  Session extends RetainableDebuggerSession,
 >(
   sessions: Map<string, Session>,
   stop: (session: Session) => Promise<OwnedDebuggerStopResult>,
   debuggerName: string,
 ): Promise<void> => {
+  const entries = [...sessions.entries()];
+  for (const [, session] of entries) session.supervisor.ref();
   const results = await Promise.allSettled(
-    [...sessions.entries()].map(async ([key, session]) => ({
-      key,
-      session,
-      result: await stop(session),
-    })),
+    entries.map(async ([, session]) => stop(session)),
   );
   const failures: Error[] = [];
-  for (const settled of results) {
+  const retained: Session[] = [];
+  for (const [index, settled] of results.entries()) {
+    const [key, session] = entries[index]!;
     if (settled.status === "rejected") {
       failures.push(
         settled.reason instanceof Error
           ? settled.reason
           : new Error(String(settled.reason)),
       );
-      continue;
-    }
-    const { key, session, result } = settled.value;
-    if (result.status === "incomplete") failures.push(new Error(result.reason));
-    else if (sessions.get(key) === session) sessions.delete(key);
+      retained.push(session);
+    } else if (settled.value.status === "incomplete") {
+      failures.push(new Error(settled.value.reason));
+      retained.push(session);
+    } else if (sessions.get(key) === session) sessions.delete(key);
   }
-  if (failures.length > 0)
-    throw new AggregateError(
-      failures,
-      `One or more owned ${debuggerName} processes did not stop cleanly`,
-    );
+  if (failures.length === 0) return;
+  for (const session of retained) session.supervisor.unref();
+  throw new OwnedDebuggerCleanupError(
+    failures,
+    `One or more owned ${debuggerName} processes did not stop cleanly`,
+    retained.flatMap(({ launched }) => launched.process.pid ?? []),
+  );
 };
