@@ -424,6 +424,22 @@ The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](elf-notes.md).
 
+Inspect ELF needed libraries and required symbol versions without executing
+the image or invoking the dynamic loader:
+
+```bash
+rea inspect-elf-dependencies /absolute/path/to/program --json
+```
+
+The workflow reports ordered `DT_NEEDED` names, `DT_SONAME`, `DT_RPATH` /
+`DT_RUNPATH` as written (including `$ORIGIN` / `$LIB` / `$PLATFORM` tokens),
+decoded `DT_FLAGS` / `DT_FLAGS_1`, `PT_INTERP`, GNU version requirements and
+definitions, derived per-namespace version maxima, and undefined `.dynsym`
+imports joined to `library@version` when known. A missing `PT_DYNAMIC` is an
+observed empty inventory. Relocatable objects use `inspect-kernel-module`;
+core dumps use `inspect-recorded-crash`. See
+[ELF dynamic dependencies](elf-dependencies.md).
+
 Inspect an Apple `.ips` crash report without executing a target:
 
 ```bash

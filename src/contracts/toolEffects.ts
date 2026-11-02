@@ -265,6 +265,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   inspect_apple_ips: evidence,
   inspect_devicetree: evidence,
   inspect_kernel_module: evidence,
+  inspect_elf_dependencies: evidence,
   inspect_pe_load_config: evidence,
   inspect_analysis_view: evidence,
   inspect_firmware_regions: effects({

@@ -6,6 +6,7 @@ import {
   devicetreeSummaryViewResultSchema,
   binaryLayoutSummaryViewResultSchema,
   nativeExportsSummaryViewResultSchema,
+  elfDependenciesSummaryViewResultSchema,
 } from "../../domain/analysisView/analysisView.js";
 import {
   inspectPeLoadConfigInputSchema,
@@ -56,6 +57,10 @@ import {
   inspectKernelModuleInputSchema,
   kernelModuleSchema,
 } from "../../domain/native/kernelModule.js";
+import {
+  inspectElfDependenciesInputSchema,
+  elfDependenciesSchema,
+} from "../../domain/native/elfDependencies.js";
 
 /** Caller-selected delivery of completed binary layout Evidence. */
 export const inspectBinaryLayoutRequestSchema =
@@ -63,6 +68,9 @@ export const inspectBinaryLayoutRequestSchema =
 
 export const inspectNativeExportsRequestSchema =
   inspectNativeExportsInputSchema.extend({ detail: analysisDetailSchema });
+
+export const inspectElfDependenciesRequestSchema =
+  inspectElfDependenciesInputSchema.extend({ detail: analysisDetailSchema });
 
 /** Public byte-entropy input retains the producer schema's closed-object policy. */
 export const inspectByteEntropyRequestSchema =
@@ -149,6 +157,24 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
         title:
           "Inspect Linux kernel module license, vermagic, and dependencies",
         input: { path: "/artifacts/demo.ko" },
+      },
+    ],
+  },
+  {
+    name: "inspect_elf_dependencies",
+    ...toolContractMetadata("inspect_elf_dependencies"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local ELF32/ELF64 ET_EXEC or ET_DYN image's load-time dynamic dependencies without executing it, invoking the dynamic loader, or opening a disassembler. Returns ordered DT_NEEDED libraries (duplicates preserved), DT_SONAME, DT_RPATH and DT_RUNPATH as written including $ORIGIN/$LIB/$PLATFORM tokens, decoded DT_FLAGS and DT_FLAGS_1, PT_INTERP, GNU version requirements and definitions, derived per-namespace version maxima, and undefined .dynsym imports joined to library@version when known. A missing PT_DYNAMIC is an observed empty inventory. Relocatable objects use inspect_kernel_module; core dumps use inspect_recorded_crash. Reads a stable regular file; cyclic version chains and exhausted named budgets return no partial success. Unreadable strings or missing tables are reported as partial coverage with issues; complete coverage never retains issues. Omitted/complete detail preserves inline delivery. Select detail summary to retain complete Evidence and return identity, counts and source coverage. Query inspect_analysis_view kind elf-dependencies, collection needed, versions, definitions, maxima, imports or issues, with exact names/original indices, fields and matching-row pagination. Portable on supported Node hosts.",
+    inputSchema: inspectElfDependenciesRequestSchema,
+    outputSchema: analysisDetailOutputSchemaOf(
+      elfDependenciesSchema,
+      elfDependenciesSummaryViewResultSchema,
+    ),
+    examples: [
+      {
+        title: "Inspect ELF needed libraries and required symbol versions",
+        input: { path: "/artifacts/program" },
       },
     ],
   },

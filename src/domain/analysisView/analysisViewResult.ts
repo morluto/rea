@@ -45,6 +45,11 @@ import {
   nativeExportsViewItemsSchema,
   nativeExportsSummarySchema,
 } from "./nativeExportsView.js";
+import {
+  elfDependenciesViewRequestSchema,
+  elfDependenciesViewItemsSchema,
+  elfDependenciesSummarySchema,
+} from "./elfDependenciesView.js";
 import { byteEntropySummarySchema } from "./byteEntropyView.js";
 import {
   javaScriptRoutesViewRequestSchema,
@@ -314,6 +319,7 @@ const viewResultBase = {
     "inspect_devicetree",
     "inspect_byte_entropy",
     "inspect_native_exports",
+    "inspect_elf_dependencies",
     "inspect_binary_layout",
     "inspect_go_binary",
     "gdb_console",
@@ -436,6 +442,12 @@ export const byteEntropySummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   summary: byteEntropySummarySchema,
   parent_operation: z.literal("inspect_byte_entropy"),
+});
+
+export const elfDependenciesSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_elf_dependencies"),
+  summary: elfDependenciesSummarySchema,
 });
 
 export const nativeExportsSummaryViewResultSchema = z.strictObject({
@@ -1082,6 +1094,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     devicetreeSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
+    elfDependenciesSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,
     gdbCommandSummaryViewResultSchema,
     objdumpSummaryViewResultSchema,
@@ -1135,6 +1148,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: nativeExportsViewRequestSchema,
     exports: nativeExportsSummarySchema,
     items: nativeExportsViewItemsSchema,
+  }),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("elf-dependencies"),
+    parent_operation: z.literal("inspect_elf_dependencies"),
+    view: elfDependenciesViewRequestSchema,
+    dependencies: elfDependenciesSummarySchema,
+    items: elfDependenciesViewItemsSchema,
   }),
   z.strictObject({
     ...viewResultBase,

@@ -9,6 +9,7 @@ import { byteEntropySchema } from "../native/byteEntropy.js";
 import { projectErlangBeamView } from "./erlangBeamView.js";
 import { projectPythonPycView } from "./pythonPycView.js";
 import { projectNativeExportsView } from "./nativeExportsView.js";
+import { projectElfDependenciesView } from "./elfDependenciesView.js";
 import { projectByteEntropyView } from "./byteEntropyView.js";
 import {
   parseAnalysisViewResult,
@@ -99,6 +100,7 @@ import {
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
   nativeExportsSummaryViewResultSchema,
+  elfDependenciesSummaryViewResultSchema,
   devicetreeSummaryViewResultSchema,
   erlangBeamSummaryViewResultSchema,
   erlangBeamTableViewResultSchema,
@@ -165,6 +167,7 @@ export {
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
   nativeExportsSummaryViewResultSchema,
+  elfDependenciesSummaryViewResultSchema,
   devicetreeSummaryViewResultSchema,
   erlangBeamSummaryViewResultSchema,
   erlangBeamTableViewResultSchema,
@@ -303,6 +306,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
   retain("inspect_native_exports", projectNativeExportsView),
+  retain("inspect_elf_dependencies", projectElfDependenciesView),
   retain("inspect_native_load_image", projectNativeLoadImageView),
   retain("inspect_python_pyc", projectPythonPycView),
   retain("frida_session_status", projectFridaSessionStatusView),

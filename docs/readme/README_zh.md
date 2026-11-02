@@ -159,6 +159,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | PE certificates       | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                            |
 | PE imports            | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash   | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                      |
 | ELF notes             | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields              | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                       |
+| ELF dependencies      | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports        | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                         |
 | Apple IPS crashes     | .ips metadata, threads, images, registers and crash classes                  | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                      |
 | Linux kernel modules  | .modinfo keys, __versions CRCs, this_module presence, and signature trailer  | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                             |
 | 已记录的 Linux 崩溃   | 原始 note 记录、每个已记录线程的寄存器/信号及可选的映射候选项                | Linux x64 上由调用方提供的 pwntools；可选的 GDB/pwndbg；[已记录崩溃](../recorded-crashes.md)                       |
