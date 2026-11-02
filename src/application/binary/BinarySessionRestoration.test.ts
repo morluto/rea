@@ -98,6 +98,7 @@ it.each([
       );
       expect(result.ok).toBe(false);
       if (result.ok) return;
+      expect(result.targetAtCompletion).toBeNull();
       expect(session.activeTarget()).toBeUndefined();
       expect(await session.status()).toMatchObject({
         open: false,

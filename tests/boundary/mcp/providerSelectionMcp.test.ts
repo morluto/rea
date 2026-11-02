@@ -170,6 +170,7 @@ describe("provider selection over MCP", () => {
           selection_reason: "ambiguous",
           requested_provider_id: "auto",
           candidate_ids: ["alpha", "beta"],
+          target_at_open_completion: null,
         },
       },
     });
@@ -222,8 +223,14 @@ describe("provider selection over MCP", () => {
       arguments: { path: target, provider_id: "missing" },
     });
     expect(unknown.isError).toBe(true);
-    expect(structured(unknown)).toMatchObject({
-      error: { details: { selection_reason: "unknown_provider" } },
+    const refusal = structured(unknown);
+    expect(refusal).toMatchObject({
+      error: {
+        details: {
+          selection_reason: "unknown_provider",
+          target_at_open_completion: structured(opened).result,
+        },
+      },
     });
     expect(
       structured(
@@ -235,6 +242,7 @@ describe("provider selection over MCP", () => {
     ).toMatchObject({
       analysis_provider_binding: { provider: { id: "beta" } },
     });
+    await checkQueuedSwitchReceipt(mcp, target, directory, opened, refusal);
   });
 });
 
@@ -782,6 +790,34 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
     ? parseMcpToolError(result)
     : z.record(z.string(), z.unknown()).parse(result.structuredContent);
 
+const checkQueuedSwitchReceipt = async (
+  mcp: Client,
+  target: string,
+  directory: string,
+  opened: CallToolResult,
+  refusal: Record<string, unknown>,
+): Promise<void> => {
+  const other = join(directory, "other.hop");
+  await writeFile(other, "other fixture");
+  const [queuedRefusal, switched] = await Promise.all([
+    mcp.callTool({
+      name: "open_binary",
+      arguments: { path: target, provider_id: "missing" },
+    }),
+    mcp.callTool({
+      name: "open_binary",
+      arguments: { path: other, provider_id: "alpha" },
+    }),
+  ]);
+  expect(switched.isError).not.toBe(true);
+  for (const result of [structured(queuedRefusal), refusal])
+    expect(result).toMatchObject({
+      error: {
+        details: { target_at_open_completion: structured(opened).result },
+      },
+    });
+};
+
 it("retains attributed mixed profile cleanup through registered MCP calls and partial retry", async () => {
   directory = await createTestTempDirectory("rea-profile-completion-mcp-");
   const path = join(directory, "fixture.hop");
@@ -827,6 +863,7 @@ it("retains attributed mixed profile cleanup through registered MCP calls and pa
     expect(opening.error).toMatchObject({
       code: "cleanup_incomplete",
       details: {
+        target_at_open_completion: null,
         resources: ["alpha-file", "beta-file"],
         diagnostics: {
           profile_errors: expect.arrayContaining([

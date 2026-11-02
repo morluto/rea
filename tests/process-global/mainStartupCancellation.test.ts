@@ -75,9 +75,13 @@ it.each([
       await new Promise<void>((resolve) =>
         signal.addEventListener("abort", () => resolve(), { once: true }),
       );
-      return err(
-        new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-      );
+      return {
+        ok: false,
+        error: new AnalysisCancelledError("open_binary", {
+          cause: signal.reason,
+        }),
+        targetAtCompletion: null,
+      };
     });
     let closeFails = failedClose;
     const close = vi.spyOn(session, "close").mockImplementation(async () =>
@@ -139,7 +143,7 @@ it.each(["optional", "late-handle"] as const)(
   "closes resources settling after startup cancellation at %s",
   async (stage) => {
     const session = sessionOwner();
-    vi.spyOn(session, "open").mockResolvedValue(ok(target));
+    vi.spyOn(session, "open").mockResolvedValue({ ok: true, value: target });
     const closeSession = vi.spyOn(session, "close").mockResolvedValue(ok(null));
     const input = new PassThrough();
     const signals = new EventEmitter();

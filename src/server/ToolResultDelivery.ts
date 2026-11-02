@@ -3,6 +3,7 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
+import type { BinarySessionOpenResult } from "../application/binary/BinarySessionPort.js";
 import type { Evidence } from "../domain/evidence.js";
 import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
@@ -178,6 +179,24 @@ export class ToolResultDelivery {
   ): CallToolResult {
     return this.projectedErrorResult(
       projectAnalysisError(error),
+      targetContent,
+    );
+  }
+
+  /** Include the session owner's selection at the end of this open attempt. */
+  toOpenFailureToolResult(
+    failure: Extract<BinarySessionOpenResult, { ok: false }>,
+    targetContent: boolean,
+  ): CallToolResult {
+    const projected = projectAnalysisError(failure.error);
+    return this.projectedErrorResult(
+      {
+        ...projected,
+        details: {
+          ...projected.details,
+          target_at_open_completion: failure.targetAtCompletion,
+        },
+      },
       targetContent,
     );
   }

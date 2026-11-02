@@ -768,6 +768,12 @@ parent for another invocation.
 
 ## Identity and discovery
 
+When an admitted `open_binary` attempt fails, its error details include
+`target_at_open_completion`: the selected binary target when that attempt
+settled, or `null` when none was selected. A later lifecycle operation can
+change the selection; call `binary_session` for current state. This field does
+not establish provider readiness or resource cleanup.
+
 `binary_session` reports the active package, server, SDK, and negotiated
 protocol details. `rea doctor` separately inspects supported JSON/TOML client
 registrations, reports their command vectors as aligned, stale, missing, or
