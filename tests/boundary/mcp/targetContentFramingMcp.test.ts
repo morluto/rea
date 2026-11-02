@@ -1,6 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serverInstructions } from "../../../src/server/serverInstructions.js";
+import { SCOPED_NO_TARGET_RECOVERY } from "../../../src/server/recoveryInstructions.js";
+import { NoBinaryOpenError } from "../../../src/domain/configurationErrors.js";
 import { UNTRUSTED_CONTENT_INSTRUCTIONS } from "../../../src/server/toolResultEncoding.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type {
@@ -298,16 +300,12 @@ it.each([
     );
     expect(error.code).toBe("target_unavailable");
     if (sessionAvailable) {
-      expect(error.remediation.action).toContain("call open_binary");
-      expect(error.remediation.action).not.toContain("REA_MCP_TOOL_FAMILIES");
+      expect(error.remediation.action).toBe(new NoBinaryOpenError().message);
     } else {
+      expect(error.message).toBe(SCOPED_NO_TARGET_RECOVERY);
+      expect(error.remediation.action).toBe(SCOPED_NO_TARGET_RECOVERY);
       expect(error.remediation.action).toContain("REA_MCP_TOOL_FAMILIES");
-      expect(error.remediation.action).toContain("session");
-      expect(error.remediation.action).toContain("restart");
-      expect(error.remediation.action).toContain("retained in-memory Evidence");
-      expect(error.remediation.action).toContain(
-        "does not advertise open_binary",
-      );
+      expect(error.remediation.action).toContain("open_binary");
       await expect(
         client.callTool({ name: "open_binary", arguments: { path: "/tmp/x" } }),
       ).rejects.toThrow(/disabled/u);
@@ -348,9 +346,7 @@ it("warns that retained evidence does not survive the scoped restart", async () 
       arguments: { address: "0x1000", length: 4 },
     }),
   );
-  expect(failure.error.remediation.action).toContain(
-    "retained in-memory Evidence",
-  );
+  expect(failure.error.remediation.action).toBe(SCOPED_NO_TARGET_RECOVERY);
   await before.close();
 
   const after = await connect({

@@ -3,6 +3,7 @@ import {
   type CapabilityServiceOptions,
 } from "../composition/capabilityServices.js";
 import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
+import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { registerAnalysisSettingsTools } from "./registerAnalysisSettingsTools.js";
@@ -178,9 +179,7 @@ export const createServer = (
     session !== undefined &&
     advertisedToolFamilies !== undefined &&
     !advertisedToolFamilies.has("session")
-      ? baseDelivery.withNoTargetRecovery(
-          "No target is open, and this MCP connection does not advertise open_binary. Preserve needed outputs before restarting; retained in-memory Evidence will not carry over. Add session to REA_MCP_TOOL_FAMILIES in the environment that starts REA and restart the server; then call open_binary with the chosen local path.",
-        )
+      ? baseDelivery.withNoTargetRecovery(SCOPED_NO_TARGET_RECOVERY)
       : baseDelivery;
   const capabilities = createCapabilityServices({
     environment,
