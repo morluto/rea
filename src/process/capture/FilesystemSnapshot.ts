@@ -399,8 +399,19 @@ export const snapshotRoots = async (
   const unobservedSubtrees: NonNullable<
     FilesystemCoverage["unobserved_subtrees"]
   > = [];
+  const resolvedObserverPaths = await Promise.all(
+    observerPaths.map(async (path) => {
+      try {
+        return await realpath(path);
+      } catch (cause: unknown) {
+        const code = filesystemSystemCode(cause);
+        if (code === "ENOENT" || code === "ENOTDIR") return undefined;
+        throw cause;
+      }
+    }),
+  );
   const observerRoots = new Set(
-    await Promise.all(observerPaths.map((path) => realpath(path))),
+    resolvedObserverPaths.filter((path): path is string => path !== undefined),
   );
   const observerNames = new Set(
     [...observerRoots].map((path) => basename(path)),
