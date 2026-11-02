@@ -80,7 +80,7 @@ The inline Evidence result contains the artifact path, SHA-256, and byte length.
 `header` contains:
 
 - `magic`, the 16-bit little-endian field;
-- `python_version` and `code_layout`, mapped from the pinned CPython 3.7–3.13
+- `python_version` and `code_layout`, mapped from the pinned CPython 3.7–3.15
   table (`py37`, `py38`, or `py311`); 3.11 alpha magics before 3494 used
   other code layouts and are unsupported. The 3.7.0a1/a2 magics 3390/3391
   used 12-byte headers and are outside this reader's supported format;
@@ -102,6 +102,12 @@ Each object reports name, optional qualname,
 filename, the signed 32-bit `co_firstlineno` value, argument counts, flags,
 names, locals (or `localsplusnames` on 3.11+), const
 summaries, and bytecode length plus SHA-256.
+
+CPython 3.14 marshals folded slice subscripts such as `a[1:10:2]` as slice
+constants. They are summarized as `slice`, walked for nested code like other
+containers, and compare as CPython slices do: through their start, stop, and
+step, never equal to a tuple. A slice tag in a pyc older than magic 3608 is
+malformed, as it is for CPython.
 
 Code-object equality used by sets and dictionaries follows the selected CPython format:
 3.7–3.10 derive `CO_NOFREE` from the free/cell tables for equality, while
@@ -180,7 +186,7 @@ name-table entry (`co_names`, varnames, freevars, cellvars, and
 Copied constant tables and each reported nested code relationship count
 against that same object budget. Integer digits and expanded
 set or dictionary keys, including a shared tuple repeated at each level, count
-against the string budget. Magics outside the pinned 3.7–3.13 table,
+against the string budget. Magics outside the pinned 3.7–3.15 table,
 truncated headers, trailing marshal bytes, and a non-code top-level object are
 typed failures.
 
