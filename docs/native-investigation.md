@@ -457,6 +457,9 @@ in other operations are excluded, so an empty effect list does not establish
 that the function accesses no memory. `procedure_references` can supply
 complementary recorded instruction references, with its own coverage limits. A
 `STORE` may describe stack memory and does not itself prove persistent state.
+The Ghidra analysis profile commits to this effect scope. Snapshots from before
+that commitment are rejected; analyze without the snapshot and save a fresh one.
+Separately exported historical Evidence remains importable without rewriting it.
 
 Jump-table evidence keeps numeric `mappings`, explicit `default_targets`, and
 backing `data_sources` separate. A null case value denotes an unresolved
