@@ -2422,6 +2422,8 @@ const classifySiblingMap = async (
   state: ScanState,
   input: ConsumeInput,
 ): Promise<void> => {
+  // A declared map stays a source map, and `noteUnreachedTargets` counts it.
+  if (state.mapTargets.has(memberLocationKey(sibling))) return;
   const { hasSlot, bytes } = chargeMapRead(state);
   const loaded = await readDiskMember(sibling, bytes, undefined, state, input);
   if (loaded.kind === "unread") {

@@ -3343,6 +3343,18 @@ describe("ReleaseExposureReader unfollowed map links", () => {
 });
 
 describe("ReleaseExposureReader packaged map identity", () => {
+  it("keeps a malformed sibling map the selected script declares unresolved", async () => {
+    const root = await createTestTempDirectory("rea-release-sibling-map-");
+    await writeFile(
+      join(root, "app.js"),
+      "const value = 1;\n//# sourceMappingURL=assets.map\n",
+    );
+    await writeFile(join(root, "assets.map"), "not a map\n");
+    const scanned = await inspect(join(root, "app.js"));
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+  });
+
   it("keeps a named companion that a later script declares as its map", async () => {
     const root = await createTestTempDirectory("rea-release-named-companion-");
     await writeFile(join(root, "symbols.pdb"), "debug companion");
