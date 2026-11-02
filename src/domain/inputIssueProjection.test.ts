@@ -36,6 +36,35 @@ describe("input issue projection", () => {
     ]);
   });
 
+  it("reports inclusive bounds and never names an excluded bound as allowed", () => {
+    const schema = z.object({
+      positive: z.number().int().positive(),
+      below: z.number().lt(10),
+      atLeast: z.number().int().min(1),
+      atMost: z.number().max(5),
+    });
+    const input = { positive: 0, below: 10, atLeast: 0, atMost: 6 };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const issues = projectInputIssues(parsed.error.issues, input);
+
+    expect(issues).toEqual([
+      {
+        path: ["positive"],
+        reason: "out_of_range",
+        message: expect.stringContaining(">0"),
+      },
+      {
+        path: ["below"],
+        reason: "out_of_range",
+        message: expect.stringContaining("<10"),
+      },
+      { path: ["atLeast"], reason: "out_of_range", minimum: 1 },
+      { path: ["atMost"], reason: "out_of_range", maximum: 5 },
+    ]);
+    expect(JSON.stringify(issues)).not.toContain('"minimum":0');
+  });
+
   it("preserves static regex guidance without echoing the rejected value", () => {
     const schema = z.object({
       value: z.string().regex(/^[^\0]*$/u, "Values cannot contain NUL"),
