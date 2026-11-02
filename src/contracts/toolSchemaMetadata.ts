@@ -253,7 +253,7 @@ const hasRelativeSchemaReference = (
   return false;
 };
 
-const withAdvertisedJsonSchema = <Schema extends z.ZodType>(
+export const withAdvertisedJsonSchema = <Schema extends z.ZodType>(
   canonical: Schema,
   io: "input" | "output",
   advertise: (project: JsonSchemaProjection) => JsonSchemaProjection = (
@@ -263,7 +263,9 @@ const withAdvertisedJsonSchema = <Schema extends z.ZodType>(
   // Zod's input projection drops root metadata when a descendant transforms.
   // Preserve the parser and let the SDK own conversion of everything else.
   const schema = canonical.meta(z.globalRegistry.get(canonical) ?? {});
-  const standard = schema["~standard"];
+  // Keep an existing contract-owned projection when metadata clones its Zod
+  // container; rebuilding from the clone would discard accepted input forms.
+  const standard = canonical["~standard"];
   const project = standard.jsonSchema?.[io];
   if (project === undefined)
     throw new TypeError(
