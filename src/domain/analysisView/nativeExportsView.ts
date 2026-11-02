@@ -67,6 +67,7 @@ export const nativeExportsViewItemsSchema = z.union([
       name_utf8_decodable: elfRow.shape.name_utf8_decodable
         .removeDefault()
         .optional(),
+      visibility: elfRow.shape.visibility.removeDefault().optional(),
     }),
   ),
   z.array(issue.extend(sourceIndex)),
