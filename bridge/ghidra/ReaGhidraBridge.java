@@ -2433,7 +2433,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Address address = explicitAddress ? parseReaAddress(value) : tryParseAddress(value);
         if (address == null)
             throw new RequestFailure("not_found", "Unknown Ghidra procedure name or address: " + value +
-                "; use search_procedures to find the exact symbol or select its entry address");
+                "; use list_names to inspect symbols, including entry aliases, or select an entry address");
         Function function = functionAtOrContaining(address);
         if (function == null)
             // Other procedure operations retain their analysis-address semantics.

@@ -114,7 +114,7 @@ export async function verifyGhidraEntryAliases({
     );
     assert.match(
       JSON.stringify(failure.details.issues),
-      /use search_procedures to find the exact symbol or select its entry address/u,
+      /use list_names to inspect symbols, including entry aliases, or select an entry address/u,
     );
     assert.equal(
       await call("procedure_address", { procedure: interior.address }),
