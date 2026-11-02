@@ -175,6 +175,7 @@ const fetchHopperResponse = async (
     return err("invalid_url");
   }
   let requested = url;
+  const expectedOrigin = selected.origin;
   for (let redirects = 0; ; redirects++) {
     if (selected.protocol !== "https:") return err("non_https");
     // Fetch cannot request userinfo and would echo it in its TypeError message.
@@ -196,6 +197,9 @@ const fetchHopperResponse = async (
     } catch {
       return err("invalid_url");
     }
+    // Redirects may leave the validated origin; only the initial URL was
+    // checked by callers, so refuse a hop another origin would produce.
+    if (next.origin !== expectedOrigin) return undefined;
     // Fetch inherits the previous fragment when Location has none.
     if (!location.includes("#")) next.hash = selected.hash;
     selected = next;
