@@ -96,6 +96,8 @@ describe("headless IDA timeout through the one-shot CLI", () => {
           },
         },
       });
+      // The one-shot CLI exits after its close, so no close_binary retry exists.
+      expect(JSON.stringify(result.json)).not.toContain("retry_cleanup");
     },
   );
 });

@@ -132,23 +132,23 @@ it("selects the latest trusted full run that actually published timing history",
   expect(output).toBe("run-id=11\nartifact-name=test-timings-full\n");
   expect(calls).toContain("name=test-timings-full");
   expect(calls).toContain("per_page=100");
+  expect(calls).not.toContain("actions/runs/13");
   expect(calls.match(/actions\/runs\//gu)).toHaveLength(3);
   expect(calls).not.toContain("actions/workflows");
 });
 
-it("rejects expired, foreign, old, and pull-request candidates", async () => {
+it("rejects expired, old, and pull-request candidates", async () => {
   const { result, output } = await invoke(
     [
       artifact(15, { expired: true }),
-      artifact(14, {
-        workflow_run: { ...artifact(14).workflow_run, head_repository_id: 2 },
-      }),
       artifact(13, {
         created_at: new Date(now - 31 * 24 * 60 * 60 * 1000).toISOString(),
       }),
       artifact(12),
     ],
     {
+      15: run(15),
+      13: run(13),
       12: run(12, { event: "pull_request" }),
     },
     { tier: "full" },
@@ -197,22 +197,25 @@ it("bounds run lookups to five artifacts even when inventory has more", async ()
   expect(calls.match(/actions\/runs\//gu)).toHaveLength(5);
 });
 
-it("returns empty history without querying for an invalid repository identity", async () => {
-  const { result, output, calls } = await invoke(
-    [],
-    {},
-    {
-      repository: "owner/repo?per_page=100",
-      repositoryId: "not-an-id",
-    },
-  );
-  expect(JSON.parse(result.stdout)).toEqual({
-    run_id: "",
-    artifact_name: "",
-  });
-  expect(output).toBe("run-id=\nartifact-name=\n");
-  expect(calls).toBe("");
-});
+it.each([
+  { repository: "owner/repo?per_page=100", repositoryId: "1" },
+  { repository: "example/rea", repositoryId: "not-an-id" },
+])(
+  "returns empty history without querying for an invalid repository identity: %j",
+  async (identity) => {
+    const { result, output, calls } = await invoke(
+      [],
+      {},
+      { ...identity, tier: "full" },
+    );
+    expect(JSON.parse(result.stdout)).toEqual({
+      run_id: "",
+      artifact_name: "",
+    });
+    expect(output).toBe("run-id=\nartifact-name=\n");
+    expect(calls).toBe("");
+  },
+);
 
 it("selects fast history without reading the full-tier artifact", async () => {
   const { result, calls } = await invoke(

@@ -60,6 +60,17 @@ export const preflightPropertyListDecode = (
   return expansion;
 };
 
+/**
+ * Peak heap of the XML decoder's DOM: each element measured 1,000–1,160
+ * bytes, each text, comment, CDATA or attribute node up to 240 bytes, and
+ * each entity or character reference about 26 bytes beyond its characters,
+ * with @xmldom/xmldom on 64-bit Node. Number projection adds literal metadata.
+ */
+const XML_ELEMENT_BYTES = 1280;
+const XML_NUMBER_PROJECTION_ELEMENT_BYTES = 256;
+const XML_NODE_BYTES = 384;
+const XML_REFERENCE_BYTES = 64;
+
 const estimateXmlPlistExpansion = (
   bytes: Buffer,
   maxBytes: number,
@@ -72,36 +83,68 @@ const estimateXmlPlistExpansion = (
   ) => Error = propertyListDecodeBudgetFailure,
 ): number => {
   const xml = xmlText ?? decodeXmlPlistText(bytes);
-  const decodedSourceBytes = xml.length * 2;
-  let elementCount = 0;
-  // Reserve room for numeric source metadata and the projected attribute copy.
-  const elementBytes = numberProjection ? 256 : 128;
+  // The decoded text and the DOM's copies of its character data.
+  let estimate = xml.length * 4;
+  const elementBytes =
+    XML_ELEMENT_BYTES +
+    (numberProjection ? XML_NUMBER_PROJECTION_ELEMENT_BYTES : 0);
   // Value nesting is bounded by the shared plist parser, which counts plist
   // value depth; raw element depth would also count the envelope and keys.
   for (const token of xmlPreflightTokens(xml)) {
-    if (token.doctype) {
+    if (token.internalSubset)
       // Only a declaration outside opaque text can introduce an internal
       // subset. Brackets in quoted external identifiers are literal text.
-      if (token.internalSubset)
-        throw fail(
-          "expansion",
-          `XML plist internal entity expansion exceeds ${budget}`,
-        );
-      continue;
-    }
-    elementCount += 1;
-    if (decodedSourceBytes * 2 + elementCount * elementBytes > maxBytes)
-      return maxBytes + 1;
+      throw fail(
+        "expansion",
+        `XML plist internal entity expansion exceeds ${budget}`,
+      );
+    if (token.text) estimate += XML_NODE_BYTES;
+    estimate += token.references * XML_REFERENCE_BYTES;
+    if (token.kind === "element")
+      estimate += elementBytes + token.attributes * XML_NODE_BYTES;
+    else if (token.kind === "node") estimate += XML_NODE_BYTES;
+    if (estimate > maxBytes) return maxBytes + 1;
   }
-  return decodedSourceBytes * 2 + elementCount * elementBytes;
+  return estimate;
 };
 
-/** Consume each XML span once; malformed tokens cannot restart suffix scans. */
-function* xmlPreflightTokens(xml: string) {
+/**
+ * Consume each XML span once; malformed tokens cannot restart suffix scans.
+ * Each token reports the DOM node it creates (none for an end tag), whether
+ * character data, which becomes a text node, precedes it, and the references
+ * the parser expands in that text and in the tag's attribute values. Opaque
+ * comment, CDATA, PI and declaration content holds no references.
+ */
+function* xmlPreflightTokens(xml: string): Generator<{
+  readonly kind: "element" | "node" | "none";
+  readonly text: boolean;
+  /** Unquoted "=" signs; each attribute of a well-formed tag has one. */
+  readonly attributes: number;
+  /** "&" in the preceding text and in this start tag's attribute values. */
+  readonly references: number;
+  readonly internalSubset: boolean;
+}> {
+  const textReferences = (from: number, to: number): number => {
+    let count = 0;
+    for (let index = from; index < to; index += 1)
+      if (xml.charCodeAt(index) === 0x26) count += 1;
+    return count;
+  };
   let cursor = 0;
   while (cursor < xml.length) {
     const start = xml.indexOf("<", cursor);
-    if (start < 0) return;
+    if (start < 0) {
+      yield {
+        kind: "none",
+        text: true,
+        attributes: 0,
+        references: textReferences(cursor, xml.length),
+        internalSubset: false,
+      };
+      return;
+    }
+    const text = start > cursor;
+    const references = textReferences(cursor, start);
     const opaqueEnd = xml.startsWith("<!--", start)
       ? "-->"
       : xml.startsWith("<![CDATA[", start)
@@ -113,24 +156,47 @@ function* xmlPreflightTokens(xml: string) {
       const end = xml.indexOf(opaqueEnd, start + 2);
       if (end < 0) return;
       cursor = end + opaqueEnd.length;
+      yield {
+        kind: "node",
+        text,
+        attributes: 0,
+        references,
+        internalSubset: false,
+      };
       continue;
     }
+    // Classify by the character after "<" rather than a name pattern: any
+    // other markup starts an element, whatever its name's script. Saxes
+    // rejects malformed markup before the DOM is built, so over-counting it
+    // is harmless.
     const doctype = /^<!DOCTYPE\b/iu.test(xml.slice(start, start + 10));
-    const element = /^<\/?[A-Za-z]/u.test(xml.slice(start, start + 4));
+    const declaration = xml[start + 1] === "!";
+    const endTag = xml[start + 1] === "/";
+    const element = !declaration && !endTag;
     let quote: string | undefined;
     let internalSubset = false;
+    let attributes = 0;
+    let attributeReferences = 0;
     let end = start + 1;
     for (; end < xml.length; end += 1) {
       const character = xml[end];
       if (quote !== undefined) {
         if (character === quote) quote = undefined;
+        else if (element && character === "&") attributeReferences += 1;
       } else if (character === '"' || character === "'") quote = character;
       else if (character === ">") break;
+      else if (character === "=") attributes += 1;
       else if (doctype && character === "[") internalSubset = true;
     }
     if (end === xml.length) return;
     cursor = end + 1;
-    if (doctype || element) yield { doctype, internalSubset };
+    yield {
+      kind: element ? "element" : declaration ? "node" : "none",
+      text,
+      attributes,
+      references: references + attributeReferences,
+      internalSubset,
+    };
   }
 }
 

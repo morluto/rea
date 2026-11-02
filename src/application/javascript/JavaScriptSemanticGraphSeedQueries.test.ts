@@ -77,9 +77,13 @@ it("queries an empty event name as an exact retained event identity", () => {
     }),
   );
   expect(trace.seed_node_ids.length).toBeGreaterThan(0);
-  expect(
-    trace.nodes
-      .filter(({ node_id }) => trace.seed_node_ids.includes(node_id))
-      .every(({ properties }) => properties.event_name === ""),
-  ).toBe(true);
+  const seeds = trace.nodes.filter(({ node_id }) =>
+    trace.seed_node_ids.includes(node_id),
+  );
+  expect(seeds.map(({ node_id }) => node_id).sort()).toEqual(
+    [...trace.seed_node_ids].sort(),
+  );
+  expect(seeds.every(({ properties }) => properties.event_name === "")).toBe(
+    true,
+  );
 });

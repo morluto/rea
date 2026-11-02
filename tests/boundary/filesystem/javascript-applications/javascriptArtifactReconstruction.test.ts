@@ -18,7 +18,10 @@ import {
   readJavaScriptArtifactFiles,
 } from "../../../support/javascriptApplicationScope.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
-import { analyzeArtifactFiles } from "../../../fixtures/javascriptArtifactAnalysis.js";
+import {
+  analyzeArtifactFiles,
+  withArtifactFileAnalyzer,
+} from "../../../fixtures/javascriptArtifactAnalysis.js";
 import type { JavaScriptAnalyzedSource } from "../../../../src/domain/javascript/javascriptSourceAnalysis.js";
 import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
@@ -404,93 +407,95 @@ it("keeps known IPC pairings when a different Electron value is dynamic", async 
   const snapshot = await scanCanonicalArtifactInventory(root, {});
   const reader = createJavaScriptArtifactReader(root, "directory");
   try {
-    const files = await readJavaScriptArtifactFiles(reader, snapshot);
-    const { analysis } = await analyzeArtifactFiles(files);
-    expect(
-      analysis.files.find(({ file }) => file.path === "main.js")?.javascript,
-    ).toMatchObject({ parse_status: "partial", parse_error_count: 0 });
-    const { graph, electronSummary } = await completeJavaScriptAnalysisSteps(
-      buildImmutableJavaScriptArtifactGraphSteps(snapshot, files, analysis),
-    );
-    expect(graph.coverage.status).toBe("partial");
-    expect(electronSummary.ipc).toMatchObject({
-      paired_renderer_transmissions: 1,
-      ambiguous_renderer_transmissions: 0,
-    });
+    await withArtifactFileAnalyzer(async (analyze) => {
+      const files = await readJavaScriptArtifactFiles(reader, snapshot);
+      const { analysis } = await analyze(files);
+      expect(
+        analysis.files.find(({ file }) => file.path === "main.js")?.javascript,
+      ).toMatchObject({ parse_status: "partial", parse_error_count: 0 });
+      const { graph, electronSummary } = await completeJavaScriptAnalysisSteps(
+        buildImmutableJavaScriptArtifactGraphSteps(snapshot, files, analysis),
+      );
+      expect(graph.coverage.status).toBe("partial");
+      expect(electronSummary.ipc).toMatchObject({
+        paired_renderer_transmissions: 1,
+        ambiguous_renderer_transmissions: 0,
+      });
 
-    // An unselected source map cannot hide an IPC handler.
-    const withoutMap = await readJavaScriptArtifactFiles(
-      reader,
-      snapshot,
-      undefined,
-      ["package.json", "main.js", "preload.js", "hidden.js"],
-    );
-    const withoutMapAnalysis = (await analyzeArtifactFiles(withoutMap))
-      .analysis;
-    const nonJsResult = await completeJavaScriptAnalysisSteps(
-      buildImmutableJavaScriptArtifactGraphSteps(
+      // An unselected source map cannot hide an IPC handler.
+      const withoutMap = await readJavaScriptArtifactFiles(
+        reader,
         snapshot,
-        withoutMap,
-        withoutMapAnalysis,
-      ),
-    );
-    expect(nonJsResult.graph.coverage.status).toBe("partial");
-    expect(nonJsResult.electronSummary.ipc.paired_renderer_transmissions).toBe(
-      1,
-    );
+        undefined,
+        ["package.json", "main.js", "preload.js", "hidden.js"],
+      );
+      const withoutMapAnalysis = (await analyze(withoutMap)).analysis;
+      const nonJsResult = await completeJavaScriptAnalysisSteps(
+        buildImmutableJavaScriptArtifactGraphSteps(
+          snapshot,
+          withoutMap,
+          withoutMapAnalysis,
+        ),
+      );
+      expect(nonJsResult.graph.coverage.status).toBe("partial");
+      expect(
+        nonJsResult.electronSummary.ipc.paired_renderer_transmissions,
+      ).toBe(1);
 
-    // A source outside the requested scope can hide a competing IPC handler,
-    // even when the observed sender and handler have a known package owner.
-    const selected = await readJavaScriptArtifactFiles(
-      reader,
-      snapshot,
-      undefined,
-      ["package.json", "main.js", "preload.js"],
-    );
-    const selectedAnalysis = (await analyzeArtifactFiles(selected)).analysis;
-    const selectionResult = await completeJavaScriptAnalysisSteps(
-      buildImmutableJavaScriptArtifactGraphSteps(
+      // A source outside the requested scope can hide a competing IPC handler,
+      // even when the observed sender and handler have a known package owner.
+      const selected = await readJavaScriptArtifactFiles(
+        reader,
         snapshot,
-        selected,
-        selectedAnalysis,
-      ),
-    );
-    expect(selectionResult.electronSummary.ipc).toMatchObject({
-      paired_renderer_transmissions: 0,
-      ambiguous_renderer_transmissions: 1,
-    });
+        undefined,
+        ["package.json", "main.js", "preload.js"],
+      );
+      const selectedAnalysis = (await analyze(selected)).analysis;
+      const selectionResult = await completeJavaScriptAnalysisSteps(
+        buildImmutableJavaScriptArtifactGraphSteps(
+          snapshot,
+          selected,
+          selectedAnalysis,
+        ),
+      );
+      expect(selectionResult.electronSummary.ipc).toMatchObject({
+        paired_renderer_transmissions: 0,
+        ambiguous_renderer_transmissions: 1,
+      });
 
-    const hidden = files.files.find(({ path }) => path === "hidden.js");
-    if (hidden === undefined) throw new Error("Missing hidden source fixture");
-    const unavailable = {
-      ...files,
-      files: files.files.filter(({ path }) => path !== hidden.path),
-      unavailable_relevant_files: [
-        ...files.unavailable_relevant_files,
-        {
-          path: hidden.path,
-          container_sha256: hidden.container_sha256,
-          sha256: hidden.sha256,
-          bytes: hidden.bytes,
-          inventory_artifact_id: hidden.inventory_artifact_id,
-          kind: hidden.kind,
-        },
-      ],
-    };
-    const unavailableAnalysis = {
-      ...analysis,
-      files: analysis.files.filter(({ file }) => file.path !== hidden.path),
-    };
-    const unavailableResult = await completeJavaScriptAnalysisSteps(
-      buildImmutableJavaScriptArtifactGraphSteps(
-        snapshot,
-        unavailable,
-        unavailableAnalysis,
-      ),
-    );
-    expect(unavailableResult.electronSummary.ipc).toMatchObject({
-      paired_renderer_transmissions: 0,
-      ambiguous_renderer_transmissions: 1,
+      const hidden = files.files.find(({ path }) => path === "hidden.js");
+      if (hidden === undefined)
+        throw new Error("Missing hidden source fixture");
+      const unavailable = {
+        ...files,
+        files: files.files.filter(({ path }) => path !== hidden.path),
+        unavailable_relevant_files: [
+          ...files.unavailable_relevant_files,
+          {
+            path: hidden.path,
+            container_sha256: hidden.container_sha256,
+            sha256: hidden.sha256,
+            bytes: hidden.bytes,
+            inventory_artifact_id: hidden.inventory_artifact_id,
+            kind: hidden.kind,
+          },
+        ],
+      };
+      const unavailableAnalysis = {
+        ...analysis,
+        files: analysis.files.filter(({ file }) => file.path !== hidden.path),
+      };
+      const unavailableResult = await completeJavaScriptAnalysisSteps(
+        buildImmutableJavaScriptArtifactGraphSteps(
+          snapshot,
+          unavailable,
+          unavailableAnalysis,
+        ),
+      );
+      expect(unavailableResult.electronSummary.ipc).toMatchObject({
+        paired_renderer_transmissions: 0,
+        ambiguous_renderer_transmissions: 1,
+      });
     });
   } finally {
     await reader.close();
@@ -511,34 +516,36 @@ it("keeps IPC pairings uncertain when inline HTML scripts are not examined", asy
   const snapshot = await scanCanonicalArtifactInventory(root, {});
   const reader = createJavaScriptArtifactReader(root, "directory");
   try {
-    const files = await readJavaScriptArtifactFiles(reader, snapshot);
-    const { analysis } = await analyzeArtifactFiles(files);
-    expect(analysis.html_inline_scripts.length).toBeGreaterThan(0);
-    const result = await completeJavaScriptAnalysisSteps(
-      buildImmutableJavaScriptArtifactGraphSteps(snapshot, files, analysis),
-    );
-    expect(result.electronSummary.ipc).toMatchObject({
-      paired_renderer_transmissions: 0,
-      ambiguous_renderer_transmissions: 1,
-    });
+    await withArtifactFileAnalyzer(async (analyze) => {
+      const files = await readJavaScriptArtifactFiles(reader, snapshot);
+      const { analysis } = await analyze(files);
+      expect(analysis.html_inline_scripts.length).toBeGreaterThan(0);
+      const result = await completeJavaScriptAnalysisSteps(
+        buildImmutableJavaScriptArtifactGraphSteps(snapshot, files, analysis),
+      );
+      expect(result.electronSummary.ipc).toMatchObject({
+        paired_renderer_transmissions: 0,
+        ambiguous_renderer_transmissions: 1,
+      });
 
-    const selected = await readJavaScriptArtifactFiles(
-      reader,
-      snapshot,
-      undefined,
-      ["package.json", "main.js", "preload.js"],
-    );
-    const selectedAnalysis = (await analyzeArtifactFiles(selected)).analysis;
-    const selectedResult = await completeJavaScriptAnalysisSteps(
-      buildImmutableJavaScriptArtifactGraphSteps(
+      const selected = await readJavaScriptArtifactFiles(
+        reader,
         snapshot,
-        selected,
-        selectedAnalysis,
-      ),
-    );
-    expect(selectedResult.electronSummary.ipc).toMatchObject({
-      paired_renderer_transmissions: 0,
-      ambiguous_renderer_transmissions: 1,
+        undefined,
+        ["package.json", "main.js", "preload.js"],
+      );
+      const selectedAnalysis = (await analyze(selected)).analysis;
+      const selectedResult = await completeJavaScriptAnalysisSteps(
+        buildImmutableJavaScriptArtifactGraphSteps(
+          snapshot,
+          selected,
+          selectedAnalysis,
+        ),
+      );
+      expect(selectedResult.electronSummary.ipc).toMatchObject({
+        paired_renderer_transmissions: 0,
+        ambiguous_renderer_transmissions: 1,
+      });
     });
   } finally {
     await reader.close();

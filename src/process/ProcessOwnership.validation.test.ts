@@ -160,6 +160,42 @@ describe("owned process-group cleanup validation: ownership and lineage", () => 
 });
 
 describe("owned process-group cleanup liveness rechecks", () => {
+  it("reports fixed malformed procargs stages and sanitizes the cleanup summary", async () => {
+    const reasons = [
+      "malformed_procargs_header",
+      "malformed_procargs_argument_count",
+      "malformed_procargs_executable_path",
+      "malformed_procargs_pointer_size",
+      "malformed_procargs_path_padding",
+      "malformed_procargs_arguments",
+      "malformed_procargs_terminator",
+      "malformed_procargs_trailing_entries",
+      "malformed_procargs_private-data",
+    ];
+    const members = reasons.map((_, index) => ({
+      pid: 100 + index,
+      parentPid: 100,
+      processGroupId: 100,
+      state: "S",
+      command: "fixture",
+    }));
+    const signalGroup = vi.fn();
+    const adapter: ProcessOwnershipHost = {
+      listProcesses: async () => members,
+      environment: async (pid) => {
+        throw new Error(reasons[pid - 100]);
+      },
+      signalGroup,
+    };
+    const result = await cleanupOwnedProcessGroup(ownership, adapter);
+    expect(result.cleaned).toBe(false);
+    if (result.cleaned) throw new Error("expected cleanup to retain ownership");
+    for (const reason of reasons.slice(0, -1))
+      expect(result.reason).toContain(reason);
+    expect(result.reason).toContain("108=other_unavailable");
+    expect(result.reason).not.toContain("private-data");
+    expect(signalGroup).not.toHaveBeenCalled();
+  });
   it("rechecks all unreadable members after the token phase in one fresh snapshot", async () => {
     const members = [100, 101, 102, 103].map((pid) => ({
       pid,

@@ -227,17 +227,20 @@ export const systemSetupHost = (
             }
             if (result.status === "installed")
               return { status: "installed", launcherPath: result.launcherPath };
-            const failure = setupInstallFailure(
-              result.reason,
-              result.packageFailure,
-              "linux",
-            );
+            const failure = setupInstallFailure(result.reason, {
+              packageFailure: result.packageFailure,
+              platform: "linux",
+              download: result.download,
+            });
+            // A failed vendor request is already described by its owned facts.
             const detail =
-              result.verificationFailure?.message ??
-              result.pythonRuntimeFailure?.message ??
-              (result.operationFailure === undefined
+              result.download !== undefined
                 ? undefined
-                : `${result.operationFailure.operation}${result.operationFailure.path === undefined ? "" : ` at ${result.operationFailure.path}`}: ${result.operationFailure.systemCode === undefined ? "" : `${result.operationFailure.systemCode}: `}${result.operationFailure.detail}`);
+                : (result.verificationFailure?.message ??
+                  result.pythonRuntimeFailure?.message ??
+                  (result.operationFailure === undefined
+                    ? undefined
+                    : `${result.operationFailure.operation}${result.operationFailure.path === undefined ? "" : ` at ${result.operationFailure.path}`}: ${result.operationFailure.systemCode === undefined ? "" : `${result.operationFailure.systemCode}: `}${result.operationFailure.detail}`));
             return detail !== undefined
               ? {
                   ...failure,
@@ -264,7 +267,9 @@ export const systemSetupHost = (
                 ? {}
                 : { cleanupFailure: result.cleanupFailure }),
             };
-          const failure = setupInstallFailure(result.reason);
+          const failure = setupInstallFailure(result.reason, {
+            download: result.download,
+          });
           const diagnostic = setupInstallerDiagnostic(result.diagnostic);
           return {
             ...failure,

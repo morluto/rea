@@ -8,7 +8,11 @@ import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ok } from "../domain/result.js";
+import {
+  evidenceBundleOption,
+  runEvidenceInputCommand,
+} from "./evidenceInputCommand.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
@@ -188,16 +192,29 @@ const registerImportManagedReconstruction = (
         .string()
         .describe("Inline managed reconstruction JSON or JSON file path"),
     }),
-    run: ({ args }) =>
-      logCliCommand(logger, "import-managed-reconstruction", async () => {
-        const input = await parseCliJsonInput(
-          args.inputJson,
-          "import-managed-reconstruction",
-        );
-        if (!input.ok) return input.error;
-        const result = importManagedReconstructionEvidence(input.value);
-        return result.ok ? result.value : projectAnalysisError(result.error);
-      }),
+    options: z.object({ evidenceBundle: evidenceBundleOption }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "import-managed-reconstruction", async () => {
+          const input = await parseCliJsonInput(
+            args.inputJson,
+            "import-managed-reconstruction",
+            signal,
+          );
+          if (!input.ok) return input.error;
+          return runEvidenceInputCommand(
+            "import_managed_reconstruction",
+            options.evidenceBundle,
+            signal,
+            (lookup) =>
+              Promise.resolve(
+                importManagedReconstructionEvidence(input.value, lookup, {
+                  signal,
+                }),
+              ),
+          ).then(projectCliAnalysisResult);
+        }),
+      ),
   });
 };
 
@@ -213,17 +230,32 @@ const registerVerifyManagedNativeBoundaries = (
         .string()
         .describe("Inline managed/native verification JSON or JSON file path"),
     }),
-    run: ({ args }) =>
-      logCliCommand(logger, "verify-managed-native-boundaries", async () => {
-        const input = await parseCliJsonInput(
-          args.inputJson,
-          "verify-managed-native-boundaries",
-        );
-        if (!input.ok) return input.error;
-        const result = executeManagedNativeBoundaries(input.value);
-        return result.ok
-          ? result.value.evidence
-          : projectAnalysisError(result.error);
-      }),
+    options: z.object({ evidenceBundle: evidenceBundleOption }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "verify-managed-native-boundaries", async () => {
+          const input = await parseCliJsonInput(
+            args.inputJson,
+            "verify-managed-native-boundaries",
+            signal,
+          );
+          if (!input.ok) return input.error;
+          return runEvidenceInputCommand(
+            "verify_managed_native_boundaries",
+            options.evidenceBundle,
+            signal,
+            (lookup) => {
+              const result = executeManagedNativeBoundaries(
+                input.value,
+                lookup,
+                { signal },
+              );
+              return Promise.resolve(
+                result.ok ? ok(result.value.evidence) : result,
+              );
+            },
+          ).then(projectCliAnalysisResult);
+        }),
+      ),
   });
 };

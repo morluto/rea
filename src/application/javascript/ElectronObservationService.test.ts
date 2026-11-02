@@ -150,6 +150,7 @@ it("returns a typed output error for malformed Electron target output after abor
 
 it("retains completed target facts when cancellation arrives before Evidence publication", async () => {
   const controller = new AbortController();
+  const reason = { requested: "stop after listing targets" };
   const targets = electronTargetListSchema.parse({
     browser: inspection.browser,
     targets: [],
@@ -159,7 +160,7 @@ it("retains completed target facts when cancellation arrives before Evidence pub
   const provider: ElectronObservationPort = {
     identity: () => identity,
     listTargets: async () => {
-      controller.abort();
+      controller.abort(reason);
       return ok(targets);
     },
     inspectPage: async () =>
@@ -173,8 +174,22 @@ it("retains completed target facts when cancellation arrives before Evidence pub
   expect(result.ok).toBe(false);
   if (!result.ok) {
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
     expect(parseEvidence(result.error.partialObservation)).toMatchObject({
       operation: "list_electron_targets",
+      provider: identity,
+      parameters: { cdp_endpoint: input.cdp_endpoint },
+      confidence: "observed",
+      authority: "external-service",
+      environment: {
+        id: `${inspection.browser.product}@${inspection.browser.revision}`,
+        platform: "unknown",
+        architecture: "unknown",
+        isolation: "none",
+      },
+      limitations: expect.arrayContaining([
+        "Browser host platform and architecture were not observed.",
+      ]),
       normalized_result: targets,
     });
   }

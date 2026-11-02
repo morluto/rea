@@ -103,11 +103,11 @@ it("names an EPERM execute refusal separately from missing permission", async ()
   );
   await expect(inspectAdbClient(selection)).rejects.toMatchObject({
     code: "binary_not_executable",
+    remediation: expect.stringContaining("REA_ADB_PATH") as unknown,
     diagnostics: {
       selected_binary: "/host/adb",
       path_source: "environment",
       filesystem_error: "EPERM",
-      remediation: expect.stringContaining("REA_ADB_PATH") as unknown,
     },
   });
 });
@@ -128,11 +128,11 @@ it("names any other not-started spawn errno without an exit code", async () => {
   );
   expect(failure).toMatchObject({
     code: "binary_not_executable",
+    remediation: expect.stringContaining("REA_ADB_PATH") as unknown,
     diagnostics: {
       selected_binary: "/host/adb",
       path_source: "environment",
       filesystem_error: "EINVAL",
-      remediation: expect.stringContaining("REA_ADB_PATH") as unknown,
     },
   });
   expect(failure).not.toHaveProperty("diagnostics.exit_code");
@@ -154,11 +154,11 @@ it("does not blame the selected path for exhausted host spawn capacity", async (
   );
   expect(failure).toMatchObject({
     code: "host_capacity",
+    remediation: expect.any(String) as unknown,
     diagnostics: {
       selected_binary: "/host/adb",
       path_source: "environment",
       filesystem_error: "EMFILE",
-      remediation: expect.any(String) as unknown,
     },
   });
   expect(failure).not.toHaveProperty("diagnostics.exit_code");
@@ -166,5 +166,6 @@ it("does not blame the selected path for exhausted host spawn capacity", async (
   expect(adbConfigurationAvailability(failure)).toMatchObject({
     status: "unavailable",
     code: "runtime_unavailable",
+    remediation: failure.remediation,
   });
 });

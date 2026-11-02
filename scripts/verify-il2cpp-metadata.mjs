@@ -17,7 +17,7 @@ import { hashVerifierFile } from "./lib/verifier-file-resources.mjs";
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
   console.log(
-    "Usage: npm run verify:il2cpp:metadata -- [--metadata PATH]\nPATH is a caller-owned, unencrypted global-metadata.dat (version 24, 27, 29, 31 or 39). Without --metadata, only the advertised contract is verified.",
+    "Usage: npm run verify:il2cpp:metadata -- [--metadata PATH]\nPATH is a caller-owned, unencrypted global-metadata.dat (version 24, 27, 29, 31 or 39). Without --metadata, only the MCP tool name is checked.",
   );
   process.exit(0);
 }
@@ -178,4 +178,8 @@ await withVerifierCleanup(async () => {
     );
   }
 }, [() => client.close(), () => transport.close(), () => resources.close()]);
-console.log("All asserted IL2CPP metadata CLI/MCP checks passed");
+console.log(
+  path === null
+    ? "IL2CPP metadata MCP tool presence check passed"
+    : "All asserted IL2CPP metadata CLI/MCP checks passed",
+);

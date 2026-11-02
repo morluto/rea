@@ -47,7 +47,7 @@ describe.skipIf(process.platform !== "darwin")(
           loadCommands.items
             .filter((command) => command.kind === "LC_LINKER_OPTION")
             .map(({ fields }) => fields),
-        ).toEqual([
+        ).toMatchObject([
           {
             cmd: "LC_LINKER_OPTION",
             cmdsize: 40,

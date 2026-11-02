@@ -221,7 +221,7 @@ export const exportKunaProject = async (
   await mkdir(request.output, { recursive: true, mode: 0o700 });
 
   const copied = await copyAndHash(request.targetPath, input, signal);
-  if (copied !== request.targetSha256)
+  if (copied.sha256 !== request.targetSha256)
     return {
       kind: "done",
       result: err(

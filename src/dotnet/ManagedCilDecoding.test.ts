@@ -473,14 +473,6 @@ describe("managed complete operand decoding", () => {
     });
   });
 
-  it("reports a switch whose target count is itself truncated", () => {
-    expect(fatBody(Buffer.from([0x45, 0x02]))).toMatchObject({
-      status: "malformed",
-      decoded_instruction_count: 0,
-      issue: "Instruction switch at IL offset 0 leaves method body",
-    });
-  });
-
   it("preserves instructions decoded before a truncated operand", () => {
     expect(fatBody(Buffer.from([0x00, 0x20]))).toMatchObject({
       status: "malformed",

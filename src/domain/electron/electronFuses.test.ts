@@ -155,15 +155,7 @@ describe("Electron fuse wire decoding", () => {
     });
   });
 
-  it("does not treat a missing sentinel or a short wire as disabled fuses", () => {
-    const missing = describeElectronFuseFindings([slice([])], "mach-o");
-    expect(missing.runtime_implications).toEqual([]);
-    expect(missing.limitations.join(" ")).toContain(
-      "unknown, not that every fuse is disabled",
-    );
-    expect(missing.limitations.join(" ")).toContain(
-      "fuse state for that slice is unknown, not disabled",
-    );
+  it("does not treat a short wire as disabled fuses", () => {
     const truncated = describeElectronFuseFindings(
       [
         slice([

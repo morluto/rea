@@ -28,10 +28,8 @@ import {
   analyzeJavaScriptApplicationInputSchema,
   javascriptApplicationAnalysisResultSchema,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import {
-  javascriptRuntimeReconciliationResultSchema,
-  reconcileJavaScriptRuntimeInputSchema,
-} from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
+import { javascriptRuntimeReconciliationResultSchema } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
+import { reconcileJavaScriptRuntimeRequestSchema } from "./applicationWorkflowInputContracts.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "./javascriptRuntimeReconciliationExample.js";
 
 const listOutputSchema = evidenceResultOf(electronTargetListSchema);
@@ -149,7 +147,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
     description:
       "Reconcile verified static JavaScript application graphs with existing passive web/Electron CDP, passive V8 Inspector, or provider-owned active Electron Evidence. Active Electron captures contribute an explicitly partial target-only runtime record; they never invent renderer scripts, frames, workers, or execution claims. Exact captured-source digests take priority over caller-declared file/URL mappings; target, frame, script, and worker ambiguity remains explicit, and source-map authority stays separate.",
     kind: "electron-provider",
-    inputSchema: reconcileJavaScriptRuntimeInputSchema,
+    inputSchema: reconcileJavaScriptRuntimeRequestSchema,
     outputSchema: reconciliationOutputSchema,
     examples: [
       {

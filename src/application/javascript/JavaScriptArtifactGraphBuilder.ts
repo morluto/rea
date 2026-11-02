@@ -366,7 +366,8 @@ const graphLimitations = (
           javascript.electron.ipc.length +
           javascript.electron.sender_validations.length +
           javascript.electron.utility_processes.length +
-          javascript.electron.native_addon_bindings.length),
+          javascript.electron.native_addon_bindings.length +
+          javascript.electron.protocols.length),
     0,
   );
   return [

@@ -3,17 +3,29 @@ import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import { bundleComparisonInputSchema } from "../domain/bundleComparison.js";
 
-import { processTraceSpecificationSchema } from "../domain/process/processTraceSpecification.js";
-import { evidenceSchema } from "../domain/evidence.js";
-import { evidenceSourceInputSchema } from "../domain/evidenceReference.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
-import { evidenceRecordFiltersSchema } from "../domain/evidenceRecordSummary.js";
+import {
+  EVIDENCE_RECORD_SELECTION_LIMIT,
+  evidenceRecordFiltersSchema,
+} from "../domain/evidenceRecordSummary.js";
 import { residualUnknownSchema } from "../domain/residualUnknown.js";
 
-/** Complete retained Evidence, or selected discovery metadata without payloads. */
+/** Complete retained Evidence, selected discovery metadata, or a page of selected complete records. */
 export const getEvidenceBundleInputSchema = z.strictObject({
-  detail: z.enum(["complete", "summary"]).default("complete"),
+  detail: z.enum(["complete", "summary", "records"]).default("complete"),
   filters: evidenceRecordFiltersSchema.optional(),
+  offset: z
+    .int()
+    .nonnegative()
+    .optional()
+    .describe("records only: first matching record to return; default 0."),
+  limit: z
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      `records only: maximum complete records to return; default ${String(EVIDENCE_RECORD_SELECTION_LIMIT)}.`,
+    ),
 });
 
 /** Optional document selection for volatile navigation context. */
@@ -44,23 +56,6 @@ export const bundleComparisonMcpInputSchema =
       "Absolute local filesystem path to the right Evidence bundle.",
     ),
   });
-
-/** Evidence references for deterministic process comparison. */
-export const processComparisonInputSchema = z.strictObject({
-  left: evidenceSchema,
-  right: evidenceSchema,
-  trace_spec: processTraceSpecificationSchema.optional(),
-  max_capture_age_ms: z.int().nonnegative().optional(),
-});
-
-/** Name each compared artifact inventory once: inline, retained, or in a local Evidence file. */
-export const artifactComparisonInputSchema = z.strictObject({
-  left: evidenceSourceInputSchema,
-  right: evidenceSourceInputSchema,
-});
-export type ArtifactComparisonInput = z.output<
-  typeof artifactComparisonInputSchema
->;
 
 /** Residual-unknown list filters. */
 export const listUnknownsInputSchema = z.strictObject({

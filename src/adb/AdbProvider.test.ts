@@ -600,7 +600,8 @@ it("reports a missing selected binary as a capability gap with recovery", async 
   const availability = await provider.inspectAvailability();
   expect(availability).toMatchObject({ status: "unavailable" });
   if (availability.status !== "unavailable") return;
-  expect(availability.diagnostics.remediation).toContain("REA_ADB_PATH");
+  expect(availability.remediation).toContain("REA_ADB_PATH");
+  expect(availability.diagnostics).not.toHaveProperty("remediation");
   const result = await provider.execute({
     operation: "list_adb_devices",
     input: {},
@@ -653,10 +654,8 @@ it("reports exhausted host capacity at the version probe as a retryable constrai
         },
       },
     });
-    // One remediation text, owned by the configuration classifier.
-    expect(projected.details?.diagnostics).toMatchObject({
-      remediation: projected.remediation?.action,
-    });
+    // One remediation, carried by the constraint rather than its diagnostics.
+    expect(projected.details?.diagnostics).not.toHaveProperty("remediation");
   }
 });
 

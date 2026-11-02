@@ -1,3 +1,4 @@
+import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "./RizinDebuggerProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
@@ -53,12 +54,6 @@ const MIN_QUEUED_FRAME_CHARGE_BYTES = 64;
 const MAX_COMMAND_FRAMES = 4096;
 const MAX_RECENT_FRAME_BYTES = 16 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
-
-export const RIZIN_DEBUGGER_PROVIDER_IDENTITY = {
-  id: "rizin.debugger",
-  name: "Rizin debugger",
-  version: null,
-} as const;
 
 interface RizinLaunchProvenance {
   readonly caller_selected_path: string;

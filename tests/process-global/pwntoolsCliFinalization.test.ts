@@ -18,7 +18,7 @@ import { resolvedAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { PwntoolsLayoutProvider } from "../../src/native/pwntools/PwntoolsLayoutProvider.js";
 import type { PwntoolsLauncher } from "../../src/native/pwntools/PwntoolsDecoder.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "../../src/native/pwntools/PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../../src/native/pwntools/PwntoolsProviderIdentity.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
 import { cleanupOwnedProcessGroup } from "../../src/process/ProcessOwnership.js";
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";

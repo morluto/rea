@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import {
@@ -91,6 +93,7 @@ it("uses one owner readiness snapshot for candidate availability and capabilitie
           status: "unavailable",
           code: "runtime_unavailable",
           reason: "native inspection failed",
+          remediation: "Repair the fixture provider.",
           diagnostics: { failure_stage: "self-test" },
         },
         capabilities: [capability(base.identity())],
@@ -460,6 +463,7 @@ describe("analysis provider registry: rejection origins", () => {
           status: "unavailable",
           code: "open_options_invalid",
           reason: "Configured registration is invalid",
+          remediation: "Repair the fixture provider.",
           diagnostics: { registration_path: "/configured/alpha.json" },
         }),
       },
@@ -651,14 +655,15 @@ describe("analysis provider registry: profile and cleanup failures", () => {
         selected = true;
         return result;
       });
-    await pending;
-    controller.abort(reason);
     let closed = false;
-    const closing = registry.closeOwnedResources().then((result) => {
-      closed = true;
-      return result;
-    });
-    try {
+    let closing: ReturnType<typeof registry.closeOwnedResources> | undefined;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(pending, selecting, "profile probe");
+      controller.abort(reason);
+      closing = registry.closeOwnedResources().then((result) => {
+        closed = true;
+        return result;
+      });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(selected).toBe(false);
       expect(closed).toBe(false);
@@ -674,10 +679,18 @@ describe("analysis provider registry: profile and cleanup failures", () => {
       expect(await closing).toEqual(ok(null));
       expect(registry.hasPendingOwnedResources()).toBe(false);
       expect(alpha.created).toEqual([]);
-    } finally {
-      finish?.();
-      await Promise.all([selecting, closing]);
-    }
+    }, [
+      () => {
+        controller.abort(reason);
+        finish?.();
+      },
+      async () => {
+        await Promise.allSettled([selecting, closing]);
+      },
+      async () => {
+        expect(await registry.closeOwnedResources()).toEqual(ok(null));
+      },
+    ]);
   });
 });
 
@@ -716,6 +729,7 @@ const candidate = (
             status: "unavailable",
             code: options.unconfigured ? "not_configured" : "runtime_missing",
             reason: `${id} runtime is unavailable`,
+            remediation: "Repair the fixture provider.",
             diagnostics: { executable_path: `/opt/${id}/bin/analyze` },
           },
     inspectTargetSupport: (target): ProviderTargetSupport =>
@@ -970,41 +984,62 @@ describe("automatic profile cleanup ownership", () => {
           };
         }),
       );
-      const result = await registry.select(DATABASE_TARGET, "auto", {
+      const selecting = registry.select(DATABASE_TARGET, "auto", {
         signal: controller.signal,
       });
-      if (result.ok) throw new Error("Mixed failed profiles admitted");
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(result.error.cleanupResources).toEqual([
-        "alpha-file",
-        "beta-file",
+      await withVerifierCleanup(async () => {
+        await awaitAcknowledgement(
+          admitted,
+          selecting,
+          "profile children admission",
+        );
+        const result = await selecting;
+        if (result.ok) throw new Error("Mixed failed profiles admitted");
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(result.error.cleanupResources).toEqual([
+          "alpha-file",
+          "beta-file",
+        ]);
+        expect(result.error.diagnostics?.profile_errors).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ provider_id: "alpha" }),
+            expect.objectContaining({ provider_id: "beta" }),
+          ]),
+        );
+        const close1 = await registry.closeOwnedResources();
+        expect(close1.ok).toBe(false);
+        released.add(first);
+        const close2 = await registry.closeOwnedResources();
+        expect(close2.ok).toBe(false);
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(result.error.cleanupResources).toEqual([
+          first === "alpha" ? "beta-file" : "alpha-file",
+        ]);
+        expect(close1.ok ? [] : close1.error.cleanupResources).toEqual([
+          first === "alpha" ? "beta-file" : "alpha-file",
+        ]);
+        released.add(first === "alpha" ? "beta" : "alpha");
+        expect(await registry.closeOwnedResources()).toEqual(ok(null));
+        expect(result.error.cleanupIncomplete).toBe(false);
+        if (close1.ok || close2.ok)
+          throw new Error("Cleanup unexpectedly succeeded");
+        expect(close1.error.cleanupIncomplete).toBe(false);
+        expect(close2.error.cleanupIncomplete).toBe(false);
+        expect(registry.hasPendingOwnedResources()).toBe(false);
+      }, [
+        () => {
+          released.add("alpha");
+          released.add("beta");
+          controller.abort(reason);
+          admitChildren?.();
+        },
+        async () => {
+          await Promise.allSettled([selecting]);
+        },
+        async () => {
+          expect(await registry.closeOwnedResources()).toEqual(ok(null));
+        },
       ]);
-      expect(result.error.diagnostics?.profile_errors).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ provider_id: "alpha" }),
-          expect.objectContaining({ provider_id: "beta" }),
-        ]),
-      );
-      const close1 = await registry.closeOwnedResources();
-      expect(close1.ok).toBe(false);
-      released.add(first);
-      const close2 = await registry.closeOwnedResources();
-      expect(close2.ok).toBe(false);
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(result.error.cleanupResources).toEqual([
-        first === "alpha" ? "beta-file" : "alpha-file",
-      ]);
-      expect(close1.ok ? [] : close1.error.cleanupResources).toEqual([
-        first === "alpha" ? "beta-file" : "alpha-file",
-      ]);
-      released.add(first === "alpha" ? "beta" : "alpha");
-      expect(await registry.closeOwnedResources()).toEqual(ok(null));
-      expect(result.error.cleanupIncomplete).toBe(false);
-      if (close1.ok || close2.ok)
-        throw new Error("Cleanup unexpectedly succeeded");
-      expect(close1.error.cleanupIncomplete).toBe(false);
-      expect(close2.error.cleanupIncomplete).toBe(false);
-      expect(registry.hasPendingOwnedResources()).toBe(false);
     },
   );
 });
@@ -1034,10 +1069,12 @@ it("registers before production and gates fresh selections until shutdown has jo
     },
   ]);
   const selecting = registry.select(DATABASE_TARGET, "alpha");
-  await entered;
-  const closing = registry.closeOwnedResources();
-  const next = registry.select(DATABASE_TARGET, "alpha");
-  try {
+  let closing: ReturnType<typeof registry.closeOwnedResources> | undefined;
+  let next: ReturnType<typeof registry.select> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered, selecting, "profile finalization");
+    closing = registry.closeOwnedResources();
+    next = registry.select(DATABASE_TARGET, "alpha");
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(calls).toBe(1);
     expect(registry.hasPendingOwnedResources()).toBe(true);
@@ -1050,11 +1087,15 @@ it("registers before production and gates fresh selections until shutdown has jo
     expect((await next).ok).toBe(true);
     expect(calls).toBe(2);
     expect(registry.hasPendingOwnedResources()).toBe(false);
-  } finally {
-    finish?.();
-    await Promise.all([selecting, closing, next]);
-    await registry.closeOwnedResources();
-  }
+  }, [
+    () => finish?.(),
+    async () => {
+      await Promise.allSettled([selecting, closing, next]);
+    },
+    async () => {
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    },
+  ]);
 });
 
 it("joins cancelled readiness finalization and shutdown before admitting another observation", async () => {
@@ -1094,15 +1135,17 @@ it("joins cancelled readiness finalization and shutdown before admitting another
       settled = true;
       return cause;
     });
-  await entered;
-  controller.abort(reason);
   let closed = false;
-  const closing = registry.closeOwnedResources().then((value) => {
-    closed = true;
-    return value;
-  });
-  const next = registry.candidates();
-  try {
+  let closing: ReturnType<typeof registry.closeOwnedResources> | undefined;
+  let next: ReturnType<typeof registry.candidates> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered, observing, "readiness observation");
+    controller.abort(reason);
+    closing = registry.closeOwnedResources().then((value) => {
+      closed = true;
+      return value;
+    });
+    next = registry.candidates();
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     expect(closed).toBe(false);
@@ -1125,11 +1168,18 @@ it("joins cancelled readiness finalization and shutdown before admitting another
     expect(await registry.candidates()).toHaveLength(1);
     expect(calls).toBe(2);
     expect(registry.hasPendingOwnedResources()).toBe(false);
-  } finally {
-    finish();
-    await Promise.allSettled([observing, closing, next]);
-    await registry.closeOwnedResources();
-  }
+  }, [
+    () => {
+      controller.abort(reason);
+      finish();
+    },
+    async () => {
+      await Promise.allSettled([observing, closing, next]);
+    },
+    async () => {
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    },
+  ]);
 });
 
 it.each(["alpha", "beta"])(
@@ -1208,8 +1258,12 @@ it("joins every candidate and retains physical failure with exact mixed cleanup 
     settled = true;
     return cause;
   });
-  await entered;
-  try {
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(
+      entered,
+      observing,
+      "mixed readiness observation",
+    );
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     finish();
@@ -1245,11 +1299,15 @@ it("joins every candidate and retains physical failure with exact mixed cleanup 
       details: { diagnostics: { reason: "physical observation failed" } },
     });
     expect(registry.hasPendingOwnedResources()).toBe(false);
-  } finally {
-    finish();
-    await observing;
-    await registry.closeOwnedResources();
-  }
+  }, [
+    finish,
+    async () => {
+      await observing;
+    },
+    async () => {
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    },
+  ]);
 });
 
 it("registers selection before async readiness can race shutdown", async () => {

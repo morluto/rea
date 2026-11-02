@@ -549,6 +549,87 @@ describe("Apple bundle layouts and containers", () => {
   });
 });
 
+describe("Shallow bundle Info.plist", () => {
+  it("reads a flattened framework's Info.plist from Resources/", () => {
+    const framework = "Contents/Frameworks/Core.framework";
+    const result = project(
+      inventoryEvidence("directory", "Fixture.app", [
+        { path: "Contents/Info.plist" },
+        macho("Contents/MacOS/Fixture"),
+        macho(`${framework}/Core`),
+        { path: `${framework}/Resources/Info.plist` },
+        { path: `${framework}/_CodeSignature/CodeResources` },
+      ]),
+    );
+    expect(result.bundles.find(({ path }) => path === framework)).toEqual({
+      path: framework,
+      parent_path: ".",
+      layout: "shallow",
+      role: "framework",
+      role_basis: "path-convention",
+      info_plist_path: `${framework}/Resources/Info.plist`,
+      executable_candidates: [`${framework}/Core`],
+      signing_paths: [`${framework}/_CodeSignature/CodeResources`],
+    });
+    expect(result.platforms).toEqual(["macos"]);
+    expect(result.coverage.status).toBe("complete-within-inventory");
+  });
+
+  it.each([
+    {
+      name: "a root Info.plist over Resources/",
+      entries: [
+        { path: "Core.framework/Info.plist" },
+        { path: "Core.framework/Resources/Info.plist" },
+      ],
+      plist: "Core.framework/Info.plist",
+    },
+    {
+      name: "a folded resources/info.plist",
+      entries: [{ path: "Core.framework/resources/info.plist" }],
+      plist: "Core.framework/resources/info.plist",
+    },
+    {
+      name: "no plist from a Resources file",
+      entries: [{ path: "Core.framework/Resources" }],
+      plist: null,
+    },
+    {
+      name: "no plist from a nested bundle's Resources/",
+      entries: [{ path: "Core.framework/Data.bundle/Resources/Info.plist" }],
+      plist: null,
+    },
+  ])("selects $name in a shallow bundle", ({ entries, plist }) => {
+    const root = "Payload/Fixture.app";
+    const result = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        { path: `${root}/Info.plist` },
+        ...entries.map(({ path }) => ({ path: `${root}/${path}` })),
+      ]),
+    );
+    expect(
+      result.bundles.find(({ path }) => path === `${root}/Core.framework`)
+        ?.info_plist_path,
+    ).toBe(plist === null ? null : `${root}/${plist}`);
+    expect(result.platforms).toEqual(["ios"]);
+  });
+
+  it("does not classify a Resources/-only application root as iOS", () => {
+    const root = "Payload/Fixture.app";
+    const result = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        { path: `${root}/Resources/Info.plist` },
+      ]),
+    );
+    expect(result.bundles[0]).toMatchObject({
+      path: root,
+      layout: "shallow",
+      info_plist_path: `${root}/Resources/Info.plist`,
+    });
+    expect(result.platforms).toEqual([]);
+  });
+});
+
 describe("Apple IPA components", () => {
   it("excludes AppleDouble sidecars from IPA components", () => {
     const result = project(

@@ -302,6 +302,7 @@ it.each(["success", "timeout"])(
     expect((await session.open(target)).ok).toBe(true);
     expect(session.activeTarget()?.path).toBe(target);
     const originalDigest = session.activeTarget()?.sha256;
+    expect(originalDigest).toEqual(expect.any(String));
 
     const { server, handler } = createReverseEngineeringMcpHarness();
     const service = new ReverseEngineeringService({
@@ -370,6 +371,7 @@ it.each(["success", "timeout"])(
     expect(session.activeTarget()).toBeUndefined();
     expect((await session.execute("address_name", {})).ok).toBe(false);
     expect((await session.open(target)).ok).toBe(true);
+    expect(session.activeTarget()?.sha256).toEqual(expect.any(String));
     expect(session.activeTarget()?.sha256).not.toBe(originalDigest);
     await session.close();
     await rm(dirname(target), { recursive: true, force: true });

@@ -29,6 +29,12 @@ export const adbHostCapacityRemediation = (code: string): string =>
   `The host ran out of process, memory or file-descriptor capacity (${code}). Close unused processes or files, or raise the process or open-file limit of the REA process, then retry; ${ADB_BINARY_ENV} does not need to change.`;
 
 const VERSION_TIMEOUT_MS = 10_000;
+
+const ADB_VERSION_REMEDIATION = `Set ${ADB_BINARY_ENV} to an Android SDK Platform-Tools adb binary whose \`adb version\` reports its version, or put one on PATH.`;
+/** Repair when the selected adb binary does not exist. */
+export const ADB_MISSING_REMEDIATION = `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary.`;
+/** Repair when execution of the adb binary selected by the environment is denied. */
+export const ADB_NOT_EXECUTABLE_REMEDIATION = `Set ${ADB_BINARY_ENV} to an absolute path to the adb executable file, not a directory, and check execute permission on it and search permission on its parent directories.`;
 const VERSION_MAX_OUTPUT_BYTES = 64 * 1024;
 
 /** How the adb binary was selected for this provider instance. */
@@ -67,6 +73,7 @@ export const resolveAdbBinary = async (
     throw new AdbConfigurationFailure(
       "not_absolute",
       `${ADB_BINARY_ENV} must be an absolute path to the adb binary`,
+      `Set ${ADB_BINARY_ENV} to an absolute adb executable path, or unset it to use adb from PATH.`,
       { configured_path: configured },
     );
   return {
@@ -99,10 +106,10 @@ const resolveWindowsAdb = async (
     throw new AdbConfigurationFailure(
       failure.kind === "missing" ? "binary_missing" : "binary_unresolved",
       "The adb binary could not be selected from the Windows PATH/PATHEXT",
+      `Set ${ADB_BINARY_ENV} to an absolute adb executable, or add it to PATH/PATHEXT.`,
       {
         selected_binary: "adb",
         path_source: "path",
-        remediation: `Set ${ADB_BINARY_ENV} to an absolute adb executable, or add it to PATH/PATHEXT`,
         ...(failure.kind === "invalid_extension"
           ? { invalid_extension: failure.extension }
           : {}),
@@ -130,10 +137,12 @@ export type AdbConfigurationFailureCode =
   | "host_capacity"
   | "version_unresolved";
 
+/** Why the selected adb binary is unusable, with the owner's repair instruction. */
 export class AdbConfigurationFailure extends Error {
   constructor(
     readonly code: AdbConfigurationFailureCode,
     message: string,
+    readonly remediation: string,
     readonly diagnostics: Readonly<Record<string, JsonValue>> = {},
     options?: ErrorOptions,
   ) {
@@ -188,6 +197,7 @@ export const inspectAdbClient = async (
       throw new AdbConfigurationFailure(
         "version_unresolved",
         "The selected adb binary exited successfully but did not report a recognizable protocol or build version",
+        ADB_VERSION_REMEDIATION,
         {
           selected_binary: selection.binary,
           path_source: selection.pathSource,
@@ -257,10 +267,8 @@ export const inspectAdbClient = async (
         throw new AdbConfigurationFailure(
           "binary_missing",
           `The selected adb binary was not found: ${selection.binary}`,
-          {
-            ...facts,
-            remediation: `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary`,
-          },
+          ADB_MISSING_REMEDIATION,
+          facts,
           { cause },
         );
       // The host lacked process, memory or descriptor capacity; the selected
@@ -269,10 +277,8 @@ export const inspectAdbClient = async (
         throw new AdbConfigurationFailure(
           "host_capacity",
           `The host could not start the selected adb binary (${code}): ${selection.binary}`,
-          {
-            ...facts,
-            remediation: adbHostCapacityRemediation(code),
-          },
+          adbHostCapacityRemediation(code),
+          facts,
           { cause },
         );
       throw new AdbConfigurationFailure(
@@ -280,23 +286,21 @@ export const inspectAdbClient = async (
         code === "EACCES" || code === "EPERM"
           ? `Execution of the selected adb binary was denied (${code}): ${selection.binary}`
           : `The selected adb binary could not be started (${code}): ${selection.binary}`,
-        {
-          ...facts,
-          remediation:
-            code === "EACCES"
-              ? fromEnvironment
-                ? `Set ${ADB_BINARY_ENV} to an absolute path to the adb executable file, not a directory, and check execute permission on it and search permission on its parent directories`
-                : `Make sure the adb found on PATH is a file with execute permission, not a directory, and that its parent directories have search permission, or set ${ADB_BINARY_ENV} to an absolute path to an executable adb binary`
-              : code === "EPERM"
-                ? `The host refused to run this adb binary, for example because of a security policy or file flags; allow it to run, or set ${ADB_BINARY_ENV} to an absolute path to an adb binary the host permits`
-                : `Select an adb executable this host can start directly: set ${ADB_BINARY_ENV} to its absolute path, or make it the adb found on PATH`,
-        },
+        code === "EACCES"
+          ? fromEnvironment
+            ? ADB_NOT_EXECUTABLE_REMEDIATION
+            : `Make sure the adb found on PATH is a file with execute permission, not a directory, and that its parent directories have search permission, or set ${ADB_BINARY_ENV} to an absolute path to an executable adb binary.`
+          : code === "EPERM"
+            ? `The host refused to run this adb binary, for example because of a security policy or file flags; allow it to run, or set ${ADB_BINARY_ENV} to an absolute path to an adb binary the host permits.`
+            : `Select an adb executable this host can start directly: set ${ADB_BINARY_ENV} to its absolute path, or make it the adb found on PATH.`,
+        facts,
         { cause },
       );
     }
     throw new AdbConfigurationFailure(
       "version_unresolved",
       `The selected adb binary did not report a usable version: ${selection.binary}`,
+      ADB_VERSION_REMEDIATION,
       {
         selected_binary: selection.binary,
         path_source: selection.pathSource,
@@ -328,10 +332,10 @@ const rejectionCodeOf = (
 
 export const adbConfigurationAvailability = (
   cause: AdbConfigurationFailure,
-): ProviderAvailability =>
-  ({
-    status: "unavailable",
-    code: rejectionCodeOf(cause.code),
-    reason: cause.message,
-    diagnostics: { ...cause.diagnostics },
-  }) as ProviderAvailability;
+): ProviderAvailability => ({
+  status: "unavailable",
+  code: rejectionCodeOf(cause.code),
+  reason: cause.message,
+  remediation: cause.remediation,
+  diagnostics: { ...cause.diagnostics },
+});

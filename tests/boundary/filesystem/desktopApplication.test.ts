@@ -13,7 +13,10 @@ import { createServer as createNetServer } from "node:net";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
-import { desktopApplicationSchema } from "../../../src/domain/desktopApplication.js";
+import {
+  desktopApplicationSchema,
+  type DesktopFact,
+} from "../../../src/domain/desktopApplication.js";
 import { createDesktopApplicationEvidence } from "../../../src/domain/desktopApplicationEvidence.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
@@ -35,6 +38,7 @@ import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifac
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { artifactFilePrimaryFacts } from "../../../src/artifacts/ArtifactFileOperation.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
+import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
 import { DesktopApplicationService } from "../../../src/application/artifacts/DesktopApplicationService.js";
 
 const inspect = async (path: string, extra: Record<string, number> = {}) => {
@@ -701,7 +705,7 @@ it("bounds omitted-entry retention before allocating rows or serializing identit
       reader.entries = async function* (_signal, options) {
         if (typeof options === "function")
           throw new Error("Expected traversal options");
-        for (let index = 0; index < 400; index++) {
+        for (let index = 0; index < 5000; index++) {
           examined++;
           options?.onOmission?.({
             path: `${prefix}/${index}/entry`,
@@ -716,7 +720,7 @@ it("bounds omitted-entry retention before allocating rows or serializing identit
   const result = await service.inspect({ path: root });
   if (!result.ok) throw result.error;
   const report = desktopApplicationSchema.parse(result.value.normalized_result);
-  expect(examined).toBeLessThan(400);
+  expect(examined).toBeLessThan(5000);
   expect(report.omissions).toHaveLength(examined - 1);
   expect(report.coverage).toMatchObject({
     status: "partial",
@@ -726,6 +730,155 @@ it("bounds omitted-entry retention before allocating rows or serializing identit
   expect(report.limitations).toContainEqual(
     expect.stringContaining("representation budget"),
   );
+});
+
+/** Inspect simulated directory rows without creating their filesystem tree. */
+const inspectSimulatedRows = async (
+  count: number,
+  path: (index: number) => string,
+  kind: "file" | "directory" = "directory",
+) => {
+  const root = await createTestTempDirectory("rea-desktop-row-capacity-");
+  let yielded = 0;
+  const service = new DesktopApplicationService(
+    new DesktopApplicationReader((selected) => {
+      const reader = new DirectoryArtifactReader(selected);
+      reader.entries = async function* () {
+        for (let index = 0; index < count; index++) {
+          yielded++;
+          yield {
+            path: path(index),
+            kind,
+            declaredSize: kind === "file" ? 1 : null,
+            compressedSize: null,
+            executable: false,
+            encrypted: false,
+            byteOffset: null,
+            declaredIntegrity: null,
+            unpacked: false,
+            limitations: [],
+            adapterKey: `${root}/${path(index)}`,
+          };
+        }
+      };
+      return reader;
+    }),
+  );
+  onTestFinished(() => service.close());
+  const result = await service.inspect({ path: root, max_entries: count });
+  if (!result.ok) throw result.error;
+  return {
+    yielded,
+    report: desktopApplicationSchema.parse(result.value.normalized_result),
+  };
+};
+
+it("admits bundle-sized rows up to max_entries within the representation budget", async () => {
+  // Localized resources dominate large macOS bundles such as iWork apps.
+  const { report } = await inspectSimulatedRows(
+    20_000,
+    (index) =>
+      `Contents/Resources/${String(index % 40).padStart(2, "0")}.lproj/Localizable${index}.strings`,
+  );
+  expect(report.files).toHaveLength(20_000);
+  expect(report.coverage).toMatchObject({
+    status: "complete-within-scan",
+    entries_examined: 20_000,
+  });
+  expect(report.limitations).not.toContainEqual(
+    expect.stringContaining("representation budget"),
+  );
+});
+
+it("charges escaped JSON expansion before retaining control-character paths", async () => {
+  const { yielded, report } = await inspectSimulatedRows(
+    6000,
+    (index) => `${"\u0001".repeat(1000)}/${index}`,
+  );
+  expect(report.files.length).toBeLessThan(6000);
+  expect(report.files).toHaveLength(yielded - 1);
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    entries_examined: yielded,
+  });
+  expect(report.limitations).toContainEqual(
+    expect.stringContaining("representation budget"),
+  );
+  // Escaping makes each path six times longer in JSON than in memory.
+  expect(Buffer.byteLength(JSON.stringify(report.files))).toBeLessThan(
+    32 * 1024 * 1024,
+  );
+});
+
+it.each([
+  ["Unreal pack", "Content/Paks/pakchunk0.pak", 0],
+  ["Electron archive", "resources/app.asar", 2],
+])(
+  "charges %s convention facts and probes that repeat control-character paths",
+  async (_name, suffix, probes) => {
+    const { yielded, report } = await inspectSimulatedRows(
+      3000,
+      (index) => `${"\u0001".repeat(1000)}/${index}/${suffix}`,
+      "file",
+    );
+    expect(report.files.length).toBeLessThan(3000);
+    expect(report.files).toHaveLength(yielded - 1);
+    // The fact value and each next probe repeat the escaped path.
+    expect(report.files[0]?.facts).toHaveLength(1);
+    expect(report.next_probes).toHaveLength(probes * report.files.length);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.limitations).toContainEqual(
+      expect.stringContaining("representation budget"),
+    );
+    expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThan(
+      32 * 1024 * 1024,
+    );
+  },
+);
+
+it("charges the next probes a header fact offers before retaining the fact", async () => {
+  const root = await createTestTempDirectory("rea-desktop-fact-probes-");
+  const bytes = buildManagedPeFixture();
+  await put(root, "Managed.dll", bytes);
+  // Each managed fact offers a probe that repeats this escaped local path.
+  const localPath = "\u0001".repeat(100_000);
+  const inspectWithin = async (maximumRetainedBytes: number) => {
+    const row = {
+      file_id: `dsf_${"a".repeat(64)}`,
+      path: "Managed.dll",
+      local_path: localPath,
+      kind: "file" as const,
+      bytes: bytes.length,
+      identity: null,
+      read_status: "not-selected" as const,
+      ranges: [],
+      facts: [] as DesktopFact[],
+      issues: [] as string[],
+    };
+    const file = await open(join(root, "Managed.dll"), "r");
+    try {
+      await inspectDesktopFile(file, row, {
+        bytes: 0,
+        maximum: 1024 * 1024,
+        retainedBytes: 0,
+        maximumRetainedBytes,
+      });
+    } finally {
+      await file.close();
+    }
+    return row;
+  };
+  const refused = await inspectWithin(1024 * 1024);
+  expect(refused.facts).toEqual([]);
+  expect(refused.issues).toEqual([
+    "Directory facts reached the retained metadata budget",
+  ]);
+  const admitted = await inspectWithin(32 * 1024 * 1024);
+  expect(admitted.facts.map((fact) => fact.kind)).toEqual([
+    "native-image-header",
+    "pe-cli-directory",
+  ]);
+  expect(admitted.issues).toEqual([]);
 });
 
 it("preserves the selected root alias and directs follow-ups to the admitted physical root", async () => {

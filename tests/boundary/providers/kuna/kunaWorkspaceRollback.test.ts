@@ -1,9 +1,11 @@
 import { unlink, writeFile } from "node:fs/promises";
 import { expect, it as test, vi } from "vitest";
+import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 import { KunaTargetCommands } from "../../../../src/kuna/KunaTargetCommands.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { session } from "./kunaSessionFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
@@ -103,18 +105,28 @@ it.each(["clean", "refuse"] as const)(
       });
     const pending = commands.prepare();
     let settled = false;
-    void pending.then(() => {
-      settled = true;
-    });
+    void pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
     let closing: ReturnType<typeof commands.close> | undefined;
-    try {
-      await started;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(started, pending, "workspace rollback");
       lifetime.abort({ caller: "shutdown during rollback" });
       closing = commands.close();
       let closed = false;
-      void closing.then(() => {
-        closed = true;
-      });
+      void closing.then(
+        () => {
+          closed = true;
+        },
+        () => {
+          closed = true;
+        },
+      );
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);
       expect(closed).toBe(false);
@@ -131,14 +143,23 @@ it.each(["clean", "refuse"] as const)(
       }
       expect(result.error.cleanupIncomplete).toBe(false);
       expect(projectAnalysisError(result.error).code).toBe("artifact_changed");
-    } finally {
-      holdFailures = false;
-      release();
-      await Promise.all([pending, closing]);
-      rootClose?.mockRestore();
-      roots.mockRestore();
-      expect((await commands.close()).ok).toBe(true);
-    }
+    }, [
+      () => {
+        holdFailures = false;
+        release();
+      },
+      async () => {
+        await pending;
+      },
+      async () => {
+        await closing;
+      },
+      () => rootClose?.mockRestore(),
+      () => roots.mockRestore(),
+      async () => {
+        expect((await commands.close()).ok).toBe(true);
+      },
+    ]);
   },
 );
 
