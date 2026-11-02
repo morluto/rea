@@ -3669,6 +3669,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 " targetless computed jump(s); their destinations and whether they transfer to another function remain unknown.");
             if (!directions.contains(new com.google.gson.JsonPrimitive("callees"))) directions.add("callees");
         }
+        if (calls != null && calls.computedJumpsWithKnownDestinations() > 0) {
+            limitations.add("Ghidra decoded " + calls.computedJumpsWithKnownDestinations() +
+                " computed jump(s) with known destinations; their exhaustive destination coverage and possible transfers to other functions remain unknown.");
+            if (!directions.contains(new com.google.gson.JsonPrimitive("callees"))) directions.add("callees");
+        }
         if (calls != null && calls.unrepresentedExternalJumps() > 0) {
             limitations.add("Ghidra decoded " + calls.unrepresentedExternalJumps() +
                 " unconditional jump(s) outside this function without an established callee; whether they are tail calls remains unknown.");
@@ -3738,6 +3743,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 instruction.getFlows().length == 0) {
                 boundary.unresolvedComputedJumps++;
             }
+            if (instruction.getFlowType().isJump() && instruction.getFlowType().isComputed() &&
+                instruction.getFlows().length > 0) {
+                boundary.computedJumpsWithKnownDestinations++;
+            }
             if (instruction.getFlowType().isJump() && !instruction.getFlowType().isConditional()) {
                 for (Address target : instruction.getFlows()) {
                     if (!function.getBody().contains(target) &&
@@ -3771,7 +3780,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         return new CallBoundaryObservation(boundary.values(),
             returnedCallees == null ? null : calls.unrepresented, calls.unresolvedCalls(),
-            boundary.unresolvedComputedJumps, boundary.unrepresentedExternalJumps,
+            boundary.unresolvedComputedJumps, boundary.computedJumpsWithKnownDestinations,
+            boundary.unrepresentedExternalJumps,
             boundary.unrepresentedConditionalExternalJumps);
     }
 
@@ -3779,6 +3789,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         private final Function function;
         private final List<String> limitations = new ArrayList<>();
         private int unresolvedComputedJumps;
+        private int computedJumpsWithKnownDestinations;
         private int unrepresentedExternalJumps;
         private int unrepresentedConditionalExternalJumps;
         private Instruction beforePrevious;
@@ -5230,7 +5241,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
     private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage, boolean decompilerFailed) {}
-    private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls, int unresolvedComputedJumps, int unrepresentedExternalJumps, int unrepresentedConditionalExternalJumps) {}
+    private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls, int unresolvedComputedJumps, int computedJumpsWithKnownDestinations, int unrepresentedExternalJumps, int unrepresentedConditionalExternalJumps) {}
     private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}
     private record SwiftLiteralLayout(
         String representation,

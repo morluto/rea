@@ -96,9 +96,15 @@ export async function verifyGhidraTailBoundaries({
         ),
       );
       const conditionalBinary = join(directory, "conditional-tail");
+      const switchSource = fileURLToPath(
+        new URL(
+          "../../tests/conformance/ghidra/relative-switch.S",
+          import.meta.url,
+        ),
+      );
       await promisify(execFile)(
         process.env.REA_CC ?? "cc",
-        [conditionalSource, "-o", conditionalBinary],
+        [conditionalSource, switchSource, "-o", conditionalBinary],
         { env, timeout: 30000 },
       );
       await call("open_binary", {
@@ -146,6 +152,48 @@ export async function verifyGhidraTailBoundaries({
           /conditional jump\(s\) outside this function/u,
         );
       }
+      for (const symbol of ["_rea_computed_partial", "_rea_computed_known"]) {
+        const selected = conditionalNames.find(({ value }) => value === symbol);
+        assert.ok(selected, `Missing ${symbol}`);
+        const computed = await evidence("analyze_function", {
+          procedure: selected.address,
+          detail: "complete",
+        });
+        assert.ok(
+          computed.normalized_result.outgoing_references.some(
+            ({ kind }) => kind.computed === true && kind.jump === true,
+          ),
+          `${symbol} must retain an observed computed jump destination`,
+        );
+        assert.equal(computed.relationship_coverage.status, "partial");
+        assert.ok(
+          computed.relationship_coverage.limited_directions.includes("callees"),
+        );
+        assert.match(
+          computed.relationship_coverage.limitations.join("\n"),
+          /computed jump\(s\) with known destinations/u,
+        );
+      }
+      const switchEntry = conditionalNames.find(
+        ({ value }) => value === "_rea_relative_switch",
+      );
+      assert.ok(switchEntry, "Missing internal jump-table control");
+      const switchControl = await evidence("analyze_function", {
+        procedure: switchEntry.address,
+        detail: "complete",
+      });
+      assert.ok(
+        switchControl.normalized_result.assembly.some((line) =>
+          /\bbr\s/u.test(line),
+        ),
+        "Jump-table control must contain a computed jump",
+      );
+      assert.equal(switchControl.relationship_coverage.status, "partial");
+      assert.ok(
+        switchControl.relationship_coverage.limited_directions.includes(
+          "callees",
+        ),
+      );
       await call("close_binary");
     }
     await call("open_binary", { path: target.path, provider_id: "ghidra" });
