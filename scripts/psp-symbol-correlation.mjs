@@ -93,8 +93,12 @@ export function correlatePspSymbols(source, inventory, options) {
   const sourceStart =
     format === "ppsym" ? 0n : hex32(sourceBase, "source base");
   const analysisStart = hex32(analysisBase, "Ghidra analysis base");
-  const sourceBytes = Buffer.isBuffer(source) ? source : Buffer.from(source, "utf8");
-  const sourceText = new TextDecoder("utf-8", { fatal: true }).decode(sourceBytes);
+  const sourceBytes = Buffer.isBuffer(source)
+    ? source
+    : Buffer.from(source, "utf8");
+  const sourceText = new TextDecoder("utf-8", { fatal: true }).decode(
+    sourceBytes,
+  );
   const parsed = parsePspSymbols(sourceText, format);
   if (expectedCrc !== null) {
     const expected = hex32(expectedCrc, "expected module CRC");
@@ -113,7 +117,11 @@ export function correlatePspSymbols(source, inventory, options) {
       "Invalid Ghidra inventory row",
     );
     if (row.address.includes(":")) {
-      assert.match(row.address, SPACED_ADDRESS, "Invalid Ghidra address-space coordinate");
+      assert.match(
+        row.address,
+        SPACED_ADDRESS,
+        "Invalid Ghidra address-space coordinate",
+      );
       unselectedSpaceRows++;
       continue;
     }
