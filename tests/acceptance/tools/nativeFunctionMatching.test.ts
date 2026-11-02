@@ -948,8 +948,16 @@ cliTest(
         },
       },
     });
-    expect(error.remediation?.action).toContain("original matching Evidence");
-    expect(error.remediation?.action).toContain("if retained");
+    const report = nativeFunctionMatchingSchema.parse(
+      matchingEvidence.normalized_result,
+    );
+    expect(report.byte_sources).toEqual([
+      {
+        side: "left",
+        evidence_id: read.evidence_id,
+        limitations: read.limitations,
+      },
+    ]);
     const lookup = await offline.call("get_evidence_bundle", {
       detail: "records",
       filters: { evidence_id: read.evidence_id },
