@@ -46,6 +46,7 @@ workspaceCliTest(
         ]),
       },
     });
+    expect(result.json).not.toHaveProperty("details.target_at_open_completion");
     expect(owner.remediation).toContain("REA_IDA_MCP_CONFIG");
   },
 );
