@@ -17,6 +17,7 @@ import {
 } from "./bun/BunStandalone.fixture.js";
 import { dotnetBundleFixture } from "./dotnet/DotnetBundle.fixture.js";
 import { cArchiveExecutable } from "./pyinstaller/CArchive.fixture.js";
+import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
@@ -76,10 +77,10 @@ const inventoryRead = vi.hoisted(() => ({
     | undefined
     | ((
         ...args: Parameters<
-          typeof import("./inventory/ArtifactInventory.js").inventoryArtifact
+          typeof import("./inventory/ArtifactInventory.js").inventoryArtifactInScope
         >
       ) => ReturnType<
-        typeof import("./inventory/ArtifactInventory.js").inventoryArtifact
+        typeof import("./inventory/ArtifactInventory.js").inventoryArtifactInScope
       >),
 }));
 
@@ -89,8 +90,9 @@ vi.mock("./inventory/ArtifactInventory.js", async () => {
   >("./inventory/ArtifactInventory.js");
   return {
     ...actual,
-    inventoryArtifact: (...args: Parameters<typeof actual.inventoryArtifact>) =>
-      (inventoryRead.impl ?? actual.inventoryArtifact)(...args),
+    inventoryArtifactInScope: (
+      ...args: Parameters<typeof actual.inventoryArtifactInScope>
+    ) => (inventoryRead.impl ?? actual.inventoryArtifactInScope)(...args),
   };
 });
 
@@ -743,7 +745,7 @@ describe("ReleaseExposureReader package cleanup", () => {
     >("./inventory/ArtifactInventory.js");
     let inventoried = false;
     inventoryRead.impl = async (...args) => {
-      const inventory = await actual.inventoryArtifact(...args);
+      const inventory = await actual.inventoryArtifactInScope(...args);
       await writeFile(
         archive,
         asarArchive([
@@ -1069,14 +1071,15 @@ describe("ReleaseExposureReader acquisition and sibling review regressions", () 
     >("./inventory/ArtifactInventory.js");
     // Exercise real acquisition with a small cap instead of hashing 65,536
     // members; verify the production allowance is forwarded separately.
-    const acquire = vi.fn<typeof actual.inventoryArtifact>((path, options) =>
-      actual.inventoryArtifact(path, {
-        ...options,
-        acquisitionLimits: {
-          maximumEntries: entryCap,
-          maximumBytes: MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
-        },
-      }),
+    const acquire = vi.fn<typeof actual.inventoryArtifactInScope>(
+      (path, options) =>
+        actual.inventoryArtifactInScope(path, {
+          ...options,
+          acquisitionLimits: {
+            maximumEntries: entryCap,
+            maximumBytes: MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
+          },
+        }),
     );
     inventoryRead.impl = acquire;
     let inventoryReader: ArtifactReader | undefined;
@@ -1899,7 +1902,7 @@ describe("ReleaseExposureReader package traversal coverage", () => {
     >("./inventory/ArtifactInventory.js");
     let inventoried = false;
     inventoryRead.impl = async (...args) => {
-      const inventory = await actual.inventoryArtifact(...args);
+      const inventory = await actual.inventoryArtifactInScope(...args);
       inventoried = true;
       return inventory;
     };
@@ -2239,7 +2242,7 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
         typeof import("./inventory/ArtifactInventory.js")
       >("./inventory/ArtifactInventory.js");
       inventoryRead.impl = async (...args) => {
-        const inventory = await actual.inventoryArtifact(...args);
+        const inventory = await actual.inventoryArtifactInScope(...args);
         regularFiles.failClose = (path) => path.endsWith(selected);
         return inventory;
       };
@@ -2731,6 +2734,37 @@ describe("ReleaseExposureReader inline map reads", () => {
       }),
     );
     expect((await inspect(root)).source_maps.embedded).toBe(1);
+  });
+});
+
+describe("ReleaseExposureReader resource admission", () => {
+  it("holds one scope admission for a whole audit", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-scope-");
+    await writeFile(join(root, "app.js"), "run();\n");
+    const run = ArtifactResourceScope.prototype.run;
+    let depth = 0;
+    let deepest = 0;
+    const admitted = vi
+      .spyOn(ArtifactResourceScope.prototype, "run")
+      .mockImplementation(async function (
+        this: ArtifactResourceScope,
+        operation,
+      ) {
+        depth += 1;
+        deepest = Math.max(deepest, depth);
+        try {
+          return await run.call(this, operation);
+        } finally {
+          depth -= 1;
+        }
+      } as typeof run);
+    try {
+      await inspect(root);
+      await inspect(join(root, "app.js"));
+    } finally {
+      admitted.mockRestore();
+    }
+    expect(deepest).toBe(1);
   });
 });
 

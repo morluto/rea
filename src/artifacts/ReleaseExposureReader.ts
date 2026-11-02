@@ -30,7 +30,7 @@ import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js"
 import { createAsarHeaderSignatureProbe } from "./AsarHeader.js";
 import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
-import { inventoryArtifact } from "./inventory/ArtifactInventory.js";
+import { inventoryArtifactInScope } from "./inventory/ArtifactInventory.js";
 import {
   openRootArtifact,
   releaseRootArtifact,
@@ -240,7 +240,7 @@ const scanDirectory = async (
   path: string,
   context: ScanContext,
 ): Promise<ReleaseExposureScan> => {
-  const inventory = await inventoryArtifact(path, {
+  const inventory = await inventoryArtifactInScope(path, {
     acquisitionLimits: {
       maximumEntries: MAX_RELEASE_EXPOSURE_INVENTORY_ENTRIES,
       maximumBytes: MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
@@ -272,7 +272,7 @@ const scanFile = async (
   let inventory: ArtifactInventoryResult | undefined;
   const limitations: string[] = [];
   try {
-    inventory = await inventoryArtifact(path, {
+    inventory = await inventoryArtifactInScope(path, {
       acquisitionLimits: {
         maximumEntries: MAX_RELEASE_EXPOSURE_INVENTORY_ENTRIES,
         maximumBytes: MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
