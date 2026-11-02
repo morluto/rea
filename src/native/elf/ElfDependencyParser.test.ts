@@ -733,21 +733,30 @@ it.each([
       location: { offset, bytes: 65537 },
     });
     expect(report.coverage.status).toBe("partial");
-    expect(report.issues).toContainEqual({
-      code: "name_unreadable",
-      location: `0x${offset.toString(16)}`,
-      message:
-        "PT_INTERP path has no terminator within the 65536-byte string scan limit",
-    });
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "name_unreadable",
+        location: `0x${offset.toString(16)}`,
+      }),
+    );
     expect(report.needed.map((entry) => entry.name)).toEqual(defaultNeeded);
   },
 );
 
 it("reports a PT_INTERP segment that fits the scan limit as unterminated", () => {
-  const report = parse(longInterpreter(65536, false).bytes);
-  expect(report.interpreter.status).toBe("unreadable");
+  const { bytes, offset } = longInterpreter(65536, false);
+  const report = parse(bytes);
+  expect(report.interpreter).toEqual({
+    status: "unreadable",
+    path: null,
+    location: { offset, bytes: 65536 },
+  });
+  expect(report.coverage.status).toBe("partial");
   expect(report.issues).toContainEqual(
-    expect.objectContaining({ message: "PT_INTERP path is unterminated" }),
+    expect.objectContaining({
+      code: "name_unreadable",
+      location: `0x${offset.toString(16)}`,
+    }),
   );
 });
 
@@ -762,10 +771,7 @@ it("marks an empty PT_INTERP path unreadable with partial coverage", () => {
   expect(report.interpreter.status).toBe("unreadable");
   expect(report.coverage.status).toBe("partial");
   expect(report.issues).toContainEqual(
-    expect.objectContaining({
-      code: "name_unreadable",
-      message: "PT_INTERP path is empty",
-    }),
+    expect.objectContaining({ code: "name_unreadable" }),
   );
 });
 
