@@ -27,7 +27,7 @@ describe("IDA profile operation admission", () => {
       expect(
         idaOperationUnavailableReason("procedure_callers", profile) ===
           undefined,
-      ).toBe(name === "legacy");
+      ).toBe(profile.protocol !== "native");
       expect(
         idaOperationUnavailableReason("procedure_callees", profile),
       ).toBeUndefined();

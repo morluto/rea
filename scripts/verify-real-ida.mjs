@@ -25,6 +25,7 @@ const { values } = parseArgs({
     "second-marker": { type: "string" },
     "expected-string": { type: "string" },
     "expected-xref": { type: "string" },
+    "expected-caller": { type: "string" },
     "package-root": { type: "string" },
     report: { type: "string" },
   },
@@ -41,7 +42,11 @@ if (
   throw new Error(
     "IDA verification requires --second-procedure and a nonempty --second-marker together; choose a marker unique to the second function's pseudocode.",
   );
-if (values["expected-string"] === "" || values["expected-xref"] === "")
+if (
+  values["expected-string"] === "" ||
+  values["expected-xref"] === "" ||
+  values["expected-caller"] === ""
+)
   throw new Error("IDA verification oracles must be nonempty.");
 const packageRoot = resolve(
   values["package-root"] ?? fileURLToPath(new URL("..", import.meta.url)),
@@ -100,6 +105,17 @@ const expectedXref =
   values["expected-xref"] === undefined
     ? undefined
     : idaAddressSchema.parse(values["expected-xref"]);
+const expectedCaller =
+  values["expected-caller"] === undefined
+    ? undefined
+    : idaAddressSchema.parse(values["expected-caller"]);
+const assertCallerOracle = (callers, surface) => {
+  if (expectedCaller !== undefined)
+    assert.ok(
+      callers.includes(expectedCaller),
+      `${surface} omitted the independently expected caller ${expectedCaller}.`,
+    );
+};
 let phase = "target admission";
 const workspaces = new Set();
 const databases = new Set();
@@ -157,6 +173,10 @@ const cli = async () => {
   assert.ok(dossier.pseudocode.length > 0);
   assert.ok(dossier.assembly.length > 0);
   assert.equal(dossier.procedure.body.available, false);
+  assertCallerOracle(
+    dossier.callers.map(({ address }) => address),
+    "CLI dossier",
+  );
   report.checks.push("production CLI and complete function Evidence");
   return dossier;
 };
@@ -192,6 +212,14 @@ const mcp = async (cliDossier) => {
     assert.deepEqual(dossier.procedure, cliDossier.procedure);
     assert.equal(dossier.pseudocode, cliDossier.pseudocode);
     assert.deepEqual(dossier.assembly, cliDossier.assembly);
+    assert.deepEqual(
+      dossier.callers.map(({ address }) => address).sort(),
+      cliDossier.callers.map(({ address }) => address).sort(),
+    );
+    assertCallerOracle(
+      dossier.callers.map(({ address }) => address),
+      "MCP dossier",
+    );
     assert.equal(analyzed.operation, "analyze_function");
     for (const [name, args] of [
       ["list_procedures", {}],
@@ -199,7 +227,7 @@ const mcp = async (cliDossier) => {
       ["procedure_address", { procedure: dossier.procedure.name }],
       ["procedure_assembly", { procedure: dossier.procedure.address }],
       ["procedure_callees", { procedure: dossier.procedure.address }],
-      ...(config.mode === "attached" && config.protocol !== "native"
+      ...(dossier.facet_availability?.callers?.available === true
         ? [["procedure_callers", { procedure: dossier.procedure.address }]]
         : []),
       ["search_procedures", { pattern: dossier.procedure.name }],
@@ -246,6 +274,8 @@ const mcp = async (cliDossier) => {
             [...value].sort(),
             expected.map((item) => item.address).sort(),
           );
+          if (name === "procedure_callers")
+            assertCallerOracle(value, "MCP caller query");
           break;
         }
         case "read_function_instructions":
@@ -334,6 +364,20 @@ const mcp = async (cliDossier) => {
       report.checks.push(
         "string inventory and literal search contain the expected literal",
       );
+    if (dossier.facet_availability?.callers?.available === true) {
+      if (expectedCaller === undefined)
+        report.unverified.push(
+          "Caller correctness: no independent expected caller address supplied.",
+        );
+      else
+        report.checks.push(
+          "CLI and MCP callers contain the independently expected caller address",
+        );
+    } else if (expectedCaller !== undefined) {
+      throw new Error(
+        "The selected profile cannot verify the supplied expected caller.",
+      );
+    }
     if (expectedXref === undefined)
       report.unverified.push(
         "Xref correctness: no independent expected source address supplied.",

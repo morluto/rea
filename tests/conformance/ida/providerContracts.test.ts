@@ -74,12 +74,7 @@ describe.each(["attached", "headless"] as const)(
             operation,
             parametersFor(operation),
           );
-          if (mode === "headless" && operation === "procedure_callers")
-            expect(execution).toMatchObject({
-              ok: false,
-              error: { _tag: "AnalysisCapabilityUnavailableError" },
-            });
-          else if (!execution.ok) throw execution.error;
+          if (!execution.ok) throw execution.error;
         } finally {
           expect((await client.close()).ok).toBe(true);
         }
@@ -113,14 +108,6 @@ describe.each(["attached", "headless"] as const)(
         try {
           const parameters = parametersFor(operation);
           const execution = await client.execute(operation, parameters);
-          if (mode === "headless" && operation === "procedure_callers") {
-            expect(execution.ok).toBe(false);
-            if (!execution.ok)
-              expect(execution.error._tag).toBe(
-                "AnalysisCapabilityUnavailableError",
-              );
-            return;
-          }
           if (!execution.ok) throw execution.error;
           const evidence = createEvidence(target, execution.value.provider, {
             operation,
