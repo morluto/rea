@@ -27,6 +27,7 @@ import { MINIMUM_ARTIFACT_EXPANDED_BYTES } from "../domain/artifactExpansionBudg
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "./ArtifactHash.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+import { analysisErrorUserMessage } from "../domain/analysisErrorPresentation.js";
 
 /** Small real ZIP carriers with forged sizes; metadata-only controls, never decompressed. */
 const writeZipWithDeclaredSize = async (
@@ -115,25 +116,28 @@ const admittedZip = async () => {
   return { path, content, handle, positional, initial };
 };
 
+/** Read the first member of one method-93 ZIP fixture. */
+const readFirstZstandardMember = async (archive: Buffer): Promise<Buffer> => {
+  const root = await createTestTempDirectory("rea-zip-zstd-");
+  const path = join(root, "method93.zip");
+  await writeFile(path, archive);
+  const reader = new ZipArtifactReader(path, "zip");
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("Missing ZIP member");
+    const chunks: Buffer[] = [];
+    for await (const chunk of await reader.open(entry))
+      chunks.push(Buffer.from(chunk));
+    return Buffer.concat(chunks);
+  } finally {
+    await reader.close();
+  }
+};
+
 describe("ZIP Zstandard method 93", () => {
-  const read = async (archive: Buffer): Promise<Buffer> => {
-    const root = await createTestTempDirectory("rea-zip-zstd-");
-    const path = join(root, "method93.zip");
-    await writeFile(path, archive);
-    const reader = new ZipArtifactReader(path, "zip");
-    try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const entry = entries[0];
-      if (entry === undefined) throw new Error("Missing ZIP member");
-      const chunks: Buffer[] = [];
-      for await (const chunk of await reader.open(entry))
-        chunks.push(Buffer.from(chunk));
-      return Buffer.concat(chunks);
-    } finally {
-      await reader.close();
-    }
-  };
+  const read = readFirstZstandardMember;
 
   it.each([
     Buffer.alloc(0),
@@ -178,7 +182,6 @@ describe("ZIP Zstandard method 93", () => {
   it.each([
     ["bad frame", Buffer.from("not a Zstandard frame")],
     ["truncated frame", Buffer.from("28b52ffd", "hex")],
-    ["excessive decoder window", Buffer.from("28b52ffd0090010000", "hex")],
   ] as const)("reports %s as an archive fault", async (_label, compressed) => {
     await expect(
       read(zstandardZipFixture(Buffer.alloc(0), { compressed })),
@@ -264,6 +267,47 @@ describe("ZIP Zstandard method 93", () => {
     ).rejects.toMatchObject({
       reason: "limit",
     });
+  });
+});
+
+describe("ZIP Zstandard decoder window", () => {
+  it("reports a valid frame above the decoder window as a resource limit", async () => {
+    const content = Buffer.from("REA independent frame control\n");
+    // Window descriptor 0x90 declares 256 MiB; the single raw block is valid.
+    const largeWindow = Buffer.from(
+      "28b52ffd0090f1000052454120696e646570656e64656e74206672616d6520636f6e74726f6c0a",
+      "hex",
+    );
+    const failure = await readFirstZstandardMember(
+      zstandardZipFixture(content, { compressed: largeWindow }),
+    ).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      name: "ArtifactReaderFailure",
+      reason: "limit",
+      boundary: "memory",
+      message: expect.stringContaining("fixed 128 MiB allowance"),
+      cause: { code: "ZSTD_error_frameParameter_windowTooLarge" },
+    });
+    const translated = translateArtifactFailure("extract_artifact", failure);
+    expect(translated).toMatchObject({
+      reason: "limit",
+      boundary: "memory",
+      detail: expect.stringContaining("fixed 128 MiB allowance"),
+    });
+    const userMessage = analysisErrorUserMessage(translated);
+    expect(userMessage).toContain("fixed 128 MiB allowance");
+    expect(userMessage).not.toContain("fresh copy");
+
+    // Control: the same frame with a 1 MiB window descriptor decodes exactly.
+    const smallWindow = Buffer.from(largeWindow);
+    smallWindow[5] = 0x50;
+    expect(
+      (
+        await readFirstZstandardMember(
+          zstandardZipFixture(content, { compressed: smallWindow }),
+        )
+      ).equals(content),
+    ).toBe(true);
   });
 });
 

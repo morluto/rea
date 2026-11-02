@@ -52,6 +52,13 @@ const ZIP_UTF8_DECODER = new TextDecoder("utf-8", {
   ignoreBOM: true,
 });
 
+/** Fixed method-93 decoder window: 2^27 bytes, matching the ELF/GPU decoders. */
+const ZIP_ZSTANDARD_WINDOW_LOG_MAX = 27;
+
+/** A frame above the window cap is a deliberate resource refusal, not damage. */
+const ZIP_ZSTANDARD_WINDOW_LIMIT =
+  "ZIP Zstandard member requires a decoder window above REA's fixed 128 MiB allowance; the archive is not necessarily corrupt, and this limit cannot be raised at runtime. Recompress the member with a window of at most 128 MiB, or decompress it with a tool that admits larger windows, then retry.";
+
 /** Keep zip.js's framing, CRC, size checks and backpressure for method 93. */
 class ZipZstandardDecompressionStream {
   readonly readable;
@@ -62,7 +69,9 @@ class ZipZstandardDecompressionStream {
       createZstdDecompress({
         chunkSize: options?.chunkSize,
         // Match the existing ELF/GPU Zstandard decoder's 128 MiB window cap.
-        params: { [constants.ZSTD_d_windowLogMax]: 27 },
+        params: {
+          [constants.ZSTD_d_windowLogMax]: ZIP_ZSTANDARD_WINDOW_LOG_MAX,
+        },
       }),
     );
     this.readable = stream.readable;
@@ -519,6 +528,14 @@ const typedZipFailure = (
       "ZIP archive uses an unsupported Zstandard dictionary",
       { cause },
     );
+  if (
+    compressionMethod === 93 &&
+    code === "ZSTD_error_frameParameter_windowTooLarge"
+  )
+    return new ArtifactReaderFailure("limit", ZIP_ZSTANDARD_WINDOW_LIMIT, {
+      cause,
+      boundary: "memory",
+    });
   const invalidZstandard =
     compressionMethod === 93 &&
     (code === "ZSTD_error_prefix_unknown" ||
@@ -526,7 +543,6 @@ const typedZipFailure = (
       code === "ZSTD_error_corruption_detected" ||
       code === "ZSTD_error_dictionary_corrupted" ||
       code === "ZSTD_error_frameParameter_unsupported" ||
-      code === "ZSTD_error_frameParameter_windowTooLarge" ||
       code === "Z_BUF_ERROR");
   const reason =
     ZIP_FAILURE_REASONS.get(cause.message) ??
