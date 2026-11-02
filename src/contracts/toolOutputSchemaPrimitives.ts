@@ -5,6 +5,7 @@ import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
+import { cleanupRetryRecoverySchema } from "../domain/analysisErrorRecovery.js";
 import {
   evidenceSchema,
   validateAnalysisProfileProvider,
@@ -544,6 +545,7 @@ export const sessionProviderFacts = z
   .object({
     investigation: investigationStatisticsSchema,
     cleanup_pending: z.boolean(),
+    cleanup_recovery: cleanupRetryRecoverySchema.nullable(),
     capabilities: z.array(providerCapabilitySet),
     analysis_run: analysisRun,
     analysis_activity: analysisActivity,

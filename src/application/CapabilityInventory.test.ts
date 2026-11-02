@@ -55,6 +55,10 @@ const enabledPolicy: Parameters<typeof buildCapabilityInventory>[1] = {
 const status = (
   options: {
     readonly open?: boolean;
+    readonly cleanup_recovery?: {
+      readonly kind: "retry_cleanup";
+      readonly operation: string;
+    };
     readonly kind?: "executable" | "database" | "archive" | "artifact";
     readonly format?: string;
     readonly capabilities?: readonly {
@@ -66,6 +70,9 @@ const status = (
   } = {},
 ) => ({
   open: options.open ?? false,
+  ...(options.cleanup_recovery === undefined
+    ? {}
+    : { cleanup_recovery: options.cleanup_recovery }),
   ...(options.kind === undefined ? {} : { kind: options.kind }),
   ...(options.format === undefined ? {} : { format: options.format }),
   capabilities:
@@ -1026,5 +1033,25 @@ describe("summary tool availability", () => {
         .map(({ surface: _s, effects: _e, annotations: _a, ...entry }) => entry)
         .toSorted(byName),
     );
+  });
+});
+
+it("names the retained cleanup retry before open_binary while the session retains it", () => {
+  expect(
+    entry(
+      "current_address",
+      status({
+        cleanup_recovery: { kind: "retry_cleanup", operation: "close_binary" },
+      }),
+    ),
+  ).toMatchObject({
+    available: false,
+    reason: "target_required",
+    remediation:
+      "Cleanup retained from the previous target blocks a new one until it succeeds. Call close_binary without snapshot_path and check its result, then call open_binary with a supported local target.",
+  });
+  expect(entry("current_address", status())).toMatchObject({
+    reason: "target_required",
+    remediation: "Call open_binary with a supported local target.",
   });
 });

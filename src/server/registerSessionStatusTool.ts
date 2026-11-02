@@ -25,6 +25,7 @@ import { createServerIdentity } from "../serverIdentity.js";
 import { mcpClientMetadata } from "./mcpClientMetadata.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { CLOSE_RETRY } from "./registerCloseLifecycleTool.js";
 import { err } from "../domain/result.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 
@@ -103,6 +104,7 @@ export const registerSessionStatusTool = (
         status = await session.status({
           signal: context.mcpReq.signal,
           detail: input.detail,
+          cleanupRetry: CLOSE_RETRY,
         });
       } catch (cause) {
         if (!(cause instanceof AnalysisError)) throw cause;

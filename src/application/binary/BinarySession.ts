@@ -66,7 +66,10 @@ import {
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
+import {
+  cleanupRetryRecovery,
+  type AnalysisCleanupRetry,
+} from "../../domain/analysisErrorRecovery.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { profilelessNativeDispatchProfile } from "./ProfilelessNativeWorkflowSnapshot.js";
@@ -1225,12 +1228,14 @@ export class BinarySession
   }
 
   /** Describe the active binary session. */
-  status(
-    options: {
-      readonly signal?: AbortSignal;
-      readonly detail?: BinarySessionDetail;
-    } = {},
-  ): Promise<JsonValue> {
+  status({
+    cleanupRetry,
+    ...options
+  }: {
+    readonly signal?: AbortSignal;
+    readonly detail?: BinarySessionDetail;
+    readonly cleanupRetry?: AnalysisCleanupRetry;
+  } = {}): Promise<JsonValue> {
     const resourceRun = this.#activeBundleResources;
     const run =
       this.#active ??
@@ -1258,6 +1263,12 @@ export class BinarySession
       cleanupPending:
         this.#externalMutationCleanupFailure?.cleanupIncomplete === true ||
         this.#retainsCloseCleanup(),
+      // Only the owners the next close retries establish this recovery;
+      // external mutation owners keep their own.
+      cleanupRecovery:
+        cleanupRetry !== undefined && this.#retainsCloseCleanup()
+          ? cleanupRetryRecovery(cleanupRetry)
+          : null,
     });
   }
 

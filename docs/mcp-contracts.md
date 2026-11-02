@@ -955,6 +955,13 @@ inspection fails or is cancelled before a provider client exists. If no client
 remains, no provider run or health observation is available; follow the cleanup
 error's reported resources.
 
+`binary_session.cleanup_recovery` is `{"kind": "retry_cleanup", "operation":
+"close_binary"}` while the session retains owners that the next `close_binary`
+on this connection retries, and `null` otherwise, including while only an
+external debugger's cleanup remains pending. While it is set, target-dependent
+tools stay `target_required` in `tool_availability` and their remediation names
+that retry before `open_binary`. It does not promise that the retry succeeds.
+
 ### Retained cleanup retry
 
 A `close_binary` that retires the target clears engine replay state while

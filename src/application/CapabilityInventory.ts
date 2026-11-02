@@ -33,6 +33,10 @@ import {
 } from "../contracts/toolEffects.js";
 import type { ToolKind } from "../contracts/toolContractTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import {
+  cleanupRetryRecoverySchema,
+  type CleanupRetryRecovery,
+} from "../domain/analysisErrorRecovery.js";
 import { isMachOFormat } from "../domain/binaryTargetTypes.js";
 import type {
   AnalysisOperation,
@@ -50,6 +54,7 @@ const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
 
 const statusSchema = z.object({
   open: z.boolean(),
+  cleanup_recovery: cleanupRetryRecoverySchema.nullable().default(null),
   session_kind: z.literal("bundle_resources").optional(),
   kind: z.enum(["executable", "database", "archive", "artifact"]).optional(),
   format: z.string().optional(),
@@ -135,6 +140,7 @@ type AvailabilityContext = {
   readonly name: string;
   readonly kind: ToolKind;
   readonly targetOpen: boolean;
+  readonly cleanupRecovery: CleanupRetryRecovery | null;
   readonly resourceSession: boolean;
   readonly requiresActiveTarget: boolean;
   readonly targetKind:
@@ -263,6 +269,7 @@ export const buildCapabilityInventory = (
       name: contract.name,
       kind: contract.kind,
       targetOpen: status.open,
+      cleanupRecovery: status.cleanup_recovery,
       resourceSession: status.session_kind === "bundle_resources",
       requiresActiveTarget:
         "requiresActiveTarget" in contract &&
@@ -779,13 +786,19 @@ const targetAvailability = ({
   targetKind,
   targetFormat,
   targetOpen,
+  cleanupRecovery,
   requiresActiveTarget,
   descriptors,
 }: AvailabilityContext): Availability | null => {
   if (!targetOpen && requiresActiveTarget)
     return {
       reason: "target_required",
-      remediation: "Call open_binary with a supported local target.",
+      // open_binary retries retained cleanup first and fails when it stays
+      // incomplete, so name that retry before directing a caller to open.
+      remediation:
+        cleanupRecovery === null
+          ? "Call open_binary with a supported local target."
+          : `Cleanup retained from the previous target blocks a new one until it succeeds. Call ${cleanupRecovery.operation} without snapshot_path and check its result, then call open_binary with a supported local target.`,
     };
   const descriptor = descriptors.get(name);
   if (

@@ -7,6 +7,7 @@ import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
+import type { CleanupRetryRecovery } from "../../domain/analysisErrorRecovery.js";
 import type {
   CapabilityDescriptor,
   ProviderIdentity,
@@ -43,6 +44,7 @@ interface BinarySessionStatusInput {
   readonly requestActivitySnapshots: readonly ProviderRequestActivitySnapshot[];
   readonly providerOperationHealth?: ProviderOperationHealth | null;
   readonly cleanupPending?: boolean;
+  readonly cleanupRecovery?: CleanupRetryRecovery | null;
   readonly detail?: BinarySessionDetail;
   readonly signal?: AbortSignal;
 }
@@ -61,6 +63,7 @@ export const binarySessionStatus = async ({
   requestActivitySnapshots,
   providerOperationHealth,
   cleanupPending = false,
+  cleanupRecovery = null,
   detail = "complete",
   signal,
 }: BinarySessionStatusInput): Promise<JsonValue> => {
@@ -137,6 +140,7 @@ export const binarySessionStatus = async ({
   const common = {
     investigation,
     cleanup_pending: cleanupPending,
+    cleanup_recovery: cleanupRecovery,
     capabilities,
     analysis_provider_binding: analysisProviderBinding,
     analysis_provider_candidates: analysisProviderCandidates,

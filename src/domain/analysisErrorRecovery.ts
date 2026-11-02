@@ -31,9 +31,15 @@ export interface AnalysisCleanupRetry {
   readonly operation: "close_binary";
 }
 
+/** The recovery a session reports while it retains cleanup for that retry. */
+export type CleanupRetryRecovery = Extract<
+  AnalysisErrorRecovery,
+  { kind: "retry_cleanup" }
+>;
+
 export const cleanupRetryRecovery = (
   retry: AnalysisCleanupRetry,
-): AnalysisErrorRecovery => ({
+): CleanupRetryRecovery => ({
   kind: "retry_cleanup",
   operation: retry.operation,
 });
@@ -41,6 +47,13 @@ export const cleanupRetryRecovery = (
 /** Retry advice is conditional; it never promises release or process exit. */
 export const cleanupRetryRemediation = (retry: AnalysisCleanupRetry): string =>
   `This connection retains that cleanup. Keep it open; after the reported condition settles or is resolved, call ${retry.operation} without snapshot_path and check its result. That call retries the retained cleanup without rerunning the failed analysis, preserves investigation Evidence and Unknown history, and can report cleanup_incomplete again.`;
+
+export const cleanupRetryRecoverySchema = z
+  .object({
+    kind: z.literal("retry_cleanup"),
+    operation: z.string().min(1),
+  })
+  .strict();
 
 export const analysisErrorRecoverySchema: z.ZodType<AnalysisErrorRecovery> =
   z.discriminatedUnion("kind", [
@@ -57,10 +70,5 @@ export const analysisErrorRecoverySchema: z.ZodType<AnalysisErrorRecovery> =
         timeout_ms: z.number().int().positive(),
       })
       .strict(),
-    z
-      .object({
-        kind: z.literal("retry_cleanup"),
-        operation: z.string().min(1),
-      })
-      .strict(),
+    cleanupRetryRecoverySchema,
   ]);

@@ -29,7 +29,7 @@ const closeResult = async <Value>(
 };
 
 /** This tool retries the session and process-capture cleanup it retains. */
-const CLOSE_RETRY: AnalysisCleanupRetry = { operation: "close_binary" };
+export const CLOSE_RETRY: AnalysisCleanupRetry = { operation: "close_binary" };
 
 /** The process-capture scope keeps failed leases for the next close_binary. */
 const retainedProcessCleanup = (error: AnalysisError): AnalysisError =>

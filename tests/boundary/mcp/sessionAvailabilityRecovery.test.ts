@@ -242,11 +242,21 @@ it("keeps a retired run and its lineage visible over MCP until cleanup succeeds"
         (await client.callTool({ name: "close_binary", arguments: {} }))
           .isError,
       ).toBe(true);
-      expect(await readStatus()).toMatchObject({
+      const retained = await readStatus();
+      expect(retained).toMatchObject({
         open: false,
         cleanup_pending: true,
+        cleanup_recovery: { kind: "retry_cleanup", operation: "close_binary" },
         analysis_run: before.analysis_run,
       });
+      expect(retained.tool_availability.groups).toContainEqual(
+        expect.objectContaining({
+          names: expect.arrayContaining(["current_address"]),
+          reason: "target_required",
+          remediation:
+            "Cleanup retained from the previous target blocks a new one until it succeeds. Call close_binary without snapshot_path and check its result, then call open_binary with a supported local target.",
+        }),
+      );
     }
     allowed = true;
     expect(
@@ -255,6 +265,7 @@ it("keeps a retired run and its lineage visible over MCP until cleanup succeeds"
     expect(await readStatus()).toMatchObject({
       open: false,
       cleanup_pending: false,
+      cleanup_recovery: null,
       analysis_run: null,
     });
   } finally {

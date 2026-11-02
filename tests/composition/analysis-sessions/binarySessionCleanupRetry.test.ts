@@ -24,6 +24,7 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const CLOSE_RETRY = { operation: "close_binary" } as const;
+const CLOSE_RECOVERY = { kind: "retry_cleanup", ...CLOSE_RETRY } as const;
 
 const retryFixture = async (
   execute: AnalysisClient["execute"] = () => Promise.resolve(ok(null)),
@@ -130,9 +131,10 @@ it.each(["close", "switch", "open after close"] as const)(
       transition === "switch" ? await attempt() : await session.close();
     expect(initial).toEqual(err(cleanupError));
     expect(session.activeTarget()).toBeUndefined();
-    expect(await session.status()).toMatchObject({
+    expect(await session.status({ cleanupRetry: CLOSE_RETRY })).toMatchObject({
       open: false,
       cleanup_pending: true,
+      cleanup_recovery: CLOSE_RECOVERY,
       analysis_run: {
         run_id: fixture.runIds[0],
         process_lineage: {
@@ -143,6 +145,11 @@ it.each(["close", "switch", "open after close"] as const)(
         },
       },
       provider_operation_health: { state: "unreachable", stage: "connection" },
+    });
+    // A caller that names no retry is offered none.
+    expect(await session.status()).toMatchObject({
+      cleanup_pending: true,
+      cleanup_recovery: null,
     });
     expect(await session.execute("address_name", {})).toMatchObject({
       ok: false,
@@ -158,7 +165,10 @@ it.each(["close", "switch", "open after close"] as const)(
 
     fixture.allowCleanup();
     expect((await attempt()).ok).toBe(true);
-    expect(await session.status()).toMatchObject({ cleanup_pending: false });
+    expect(await session.status({ cleanupRetry: CLOSE_RETRY })).toMatchObject({
+      cleanup_pending: false,
+      cleanup_recovery: null,
+    });
     await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
     expect(fixture.created()).toBe(transition === "close" ? 1 : 2);
     expect(await session.status()).toMatchObject({

@@ -112,10 +112,15 @@ export interface BinarySessionPort
       readonly cleanupRetry?: AnalysisCleanupRetry;
     },
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>>;
-  /** Default complete detail; summary omits provider diagnostics and candidate capabilities. */
+  /**
+   * Default complete detail; summary omits provider diagnostics and candidate
+   * capabilities. `cleanupRetry` is the caller's same-connection cleanup retry,
+   * reported as `cleanup_recovery` only while the session retains cleanup it covers.
+   */
   status(options?: {
     readonly signal?: AbortSignal;
     readonly detail?: BinarySessionDetail;
+    readonly cleanupRetry?: AnalysisCleanupRetry;
   }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
   /** Read a snapshot with failed descriptors retained for session cleanup retry. */
