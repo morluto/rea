@@ -784,18 +784,45 @@ const GO_FLAG_FIELD = /(?:[^\s"']|"[^"]*"|'[^']*')+/gu;
 const GO_FLAG_PATH =
   /(?:^|[\s=,])(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT]))?((?:\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\{2}[^\\\s=,]+\\)[^=,]+)/gu;
 
-/** Paths in one flag value, with a quoted path kept whole up to the next flag. */
-const goFlagPaths = (value: string): string[] =>
+/**
+ * Settings read by a C compiler, where the flags below take a directory or file.
+ * Go's own tools reuse those letters: `-ldflags` takes `-B gobuildid` and
+ * `-T 0x1000`, so their relative arguments are not paths.
+ */
+const GO_COMPILER_SETTING = /^(?:CGO_[A-Z]+FLAGS|-gccgoflags)$/u;
+const GO_COMPILER_PATH_FLAG =
+  /^-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT])=?(.*)$/su;
+
+/** Flags in one value, with a quoted path kept whole up to the next flag. */
+const goFlags = (value: string): string[] =>
   [...value.matchAll(GO_FLAG_FIELD)].flatMap(([field]) =>
-    field
-      .replace(/["']/gu, "")
-      .split(/\s+(?=-)/u)
-      .flatMap((flag) =>
-        [...flag.matchAll(GO_FLAG_PATH)].flatMap(([, path]) =>
-          path === undefined ? [] : [path.trimEnd()],
-        ),
-      ),
+    field.replace(/["']/gu, "").split(/\s+(?=-)/u),
   );
+
+const goFlagPaths = (value: string): string[] =>
+  goFlags(value).flatMap((flag) =>
+    [...flag.matchAll(GO_FLAG_PATH)].flatMap(([, path]) =>
+      path === undefined ? [] : [path.trimEnd()],
+    ),
+  );
+
+/**
+ * A path flag's relative argument, attached or in the next field. A rooted
+ * argument belongs to `goFlagPaths`, which keeps its `=` and `,` structure.
+ */
+const goCompilerFlagPaths = (value: string): string[] =>
+  goFlags(value).flatMap((flag, index, flags) => {
+    const attached = GO_COMPILER_PATH_FLAG.exec(flag)?.[1]?.trimEnd();
+    if (attached === undefined) return [];
+    const next = flags[index + 1];
+    const argument =
+      attached.length > 0 || next?.startsWith("-") === true ? attached : next;
+    return argument === undefined ||
+      argument.length === 0 ||
+      filesystemPath(argument) !== null
+      ? []
+      : [argument];
+  });
 
 const goPaths = (
   module: NonNullable<GoBinary["build_info"]>["module"],
@@ -815,6 +842,8 @@ const goPaths = (
   for (const setting of module.settings) {
     if (!GO_FLAG_SETTING.test(setting.key)) continue;
     for (const path of goFlagPaths(setting.value)) add(path);
+    if (GO_COMPILER_SETTING.test(setting.key))
+      for (const path of goCompilerFlagPaths(setting.value)) paths.add(path);
   }
   return [...paths];
 };

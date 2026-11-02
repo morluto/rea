@@ -1323,6 +1323,42 @@ describe("ReleaseExposureService Go Windows paths", () => {
   });
 });
 
+describe("ReleaseExposureService Go relative flag paths", () => {
+  const goModule = (settings: { key: string; value: string }[]) => ({
+    path: "github.com/acme/app",
+    main: null,
+    dependencies: [],
+    settings,
+    unparsed_lines: [],
+    unparsed_line_bytes_base64: [],
+    complete: true,
+  });
+
+  it("keeps relative paths given to compiler path flags, attached or not", async () => {
+    const report = await goReport(
+      goModule([
+        { key: "CGO_CFLAGS", value: "-Iprivate-sdk -O2 -isystem vendor/sdk" },
+        { key: "CGO_LDFLAGS", value: "-Llibs -lssl" },
+      ]),
+    );
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual([
+      "private-sdk",
+      "vendor/sdk",
+      "libs",
+    ]);
+  });
+
+  it("does not read Go linker arguments as relative paths", async () => {
+    const report = await goReport(
+      goModule([{ key: "-ldflags", value: "-B gobuildid -T 0x1000 -s -w" }]),
+    );
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("not_observed");
+  });
+});
+
 describe("ReleaseExposureService Go paths", () => {
   it("keeps Go paths with spaces and attached compiler flags whole", async () => {
     const report = await goReport({
