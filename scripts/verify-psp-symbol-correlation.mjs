@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Source-only checks for caller-selected, read-only PSP symbol comparison.
 import assert from "node:assert/strict";
-import { correlatePspSymbols, parsePspSymbols } from "./psp-symbol-correlation.mjs";
+import {
+  correlatePspSymbols,
+  parsePspSymbols,
+} from "./psp-symbol-correlation.mjs";
 
 const targetSha256 = "a".repeat(64);
 const inventory = [
@@ -21,11 +24,10 @@ const legacy = [
   "",
 ].join("\n");
 const report = correlatePspSymbols(legacy, inventory, settings);
-assert.deepEqual(report.records.map((row) => row.outcome), [
-  "address_and_label_agree",
-  "address_only",
-  "not_observed",
-]);
+assert.deepEqual(
+  report.records.map((row) => row.outcome),
+  ["address_and_label_agree", "address_only", "not_observed"],
+);
 assert.equal(report.records[0].source_address, "0x8005000");
 assert.equal(report.records[0].analysis_address, "0x8805000");
 assert.equal(report.selected_bases.source, "0x8000000");
@@ -38,13 +40,18 @@ const wrongBase = correlatePspSymbols(legacy, inventory, {
   ...settings,
   analysisBase: "0x08810000",
 });
-assert.ok(wrongBase.records.every((row) => row.outcome !== "address_and_label_agree"));
+assert.ok(
+  wrongBase.records.every((row) => row.outcome !== "address_and_label_agree"),
+);
 const repeated = correlatePspSymbols(
   "08005000 hunter_init,0020\n08005000 alias,0020\n",
   inventory,
   settings,
 );
-assert.deepEqual(repeated.records.map((row) => row.outcome), ["ambiguous", "ambiguous"]);
+assert.deepEqual(
+  repeated.records.map((row) => row.outcome),
+  ["ambiguous", "ambiguous"],
+);
 const placeholder = correlatePspSymbols(
   "08005000 z_un_08005000,0010\n",
   inventory,
@@ -57,8 +64,8 @@ assert.equal(
   "outside_selected_mapping",
 );
 assert.equal(
-  correlatePspSymbols(legacy, [inventory[0], inventory[0]], settings)
-    .records[0].outcome,
+  correlatePspSymbols(legacy, [inventory[0], inventory[0]], settings).records[0]
+    .outcome,
   "ambiguous",
 );
 
@@ -83,18 +90,41 @@ assert.equal(module.records[0].analysis_address, "0x8805000");
 assert.equal(module.module_crc, "0x12345678");
 assert.equal(module.crc_checked, true);
 assert.equal(module.ignored_nonfunction_records, 2);
-assert.throws(() => correlatePspSymbols(modern, inventory, {
-  format: "ppsym",
-  analysisBase: "0x08804000",
-  expectedCrc: "0x87654321",
-  targetSha256,
-}), /CRC does not match/u);
-assert.throws(() => parsePspSymbols(".ppsym 2\ncrc 12345678\n", "ppsym"), /Unsupported/u);
-assert.throws(() => parsePspSymbols("08005000 unbounded,nothex\n", "sym"), /Invalid/u);
-assert.throws(() => correlatePspSymbols(legacy, inventory, {
-  ...settings, targetSha256: "invalid",
-}), /SHA-256/u);
-assert.throws(() => correlatePspSymbols(legacy, [
-  { address: "not-an-address", value: "name" },
-], settings), /hex address/u);
-console.log("PSP_SYMBOL_CORRELATION_SOURCE_PASS: legacy and module-relative maps, identity, ambiguity and refusals");
+assert.throws(
+  () =>
+    correlatePspSymbols(modern, inventory, {
+      format: "ppsym",
+      analysisBase: "0x08804000",
+      expectedCrc: "0x87654321",
+      targetSha256,
+    }),
+  /CRC does not match/u,
+);
+assert.throws(
+  () => parsePspSymbols(".ppsym 2\ncrc 12345678\n", "ppsym"),
+  /Unsupported/u,
+);
+assert.throws(
+  () => parsePspSymbols("08005000 unbounded,nothex\n", "sym"),
+  /Invalid/u,
+);
+assert.throws(
+  () =>
+    correlatePspSymbols(legacy, inventory, {
+      ...settings,
+      targetSha256: "invalid",
+    }),
+  /SHA-256/u,
+);
+assert.throws(
+  () =>
+    correlatePspSymbols(
+      legacy,
+      [{ address: "not-an-address", value: "name" }],
+      settings,
+    ),
+  /hex address/u,
+);
+console.log(
+  "PSP_SYMBOL_CORRELATION_SOURCE_PASS: legacy and module-relative maps, identity, ambiguity and refusals",
+);
