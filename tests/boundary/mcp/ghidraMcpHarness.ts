@@ -3,6 +3,7 @@ import type { GhidraJavaObservation } from "../../../src/ghidra/GhidraJavaProbe.
 import { expect } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import type { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
@@ -33,6 +34,8 @@ export const connectGhidraMcp = async (
     readonly sessionTarget?: GhidraSessionInfo["target"];
     readonly attestDosTargetSnapshot?: ReturnType<GhidraProviderClientFactory>["attestDosTargetSnapshot"];
     readonly close?: ReturnType<GhidraProviderClientFactory>["close"];
+    readonly environment?: Readonly<Record<string, string>>;
+    readonly schemaValidator?: ReturnType<typeof createMcpSchemaValidation>;
   } = {},
 ) => {
   const calls: GhidraOperation[] = [];
@@ -72,11 +75,15 @@ export const connectGhidraMcp = async (
   const { client: mcp, close } = await createApplicationMcpHarness({
     session,
     clientIdentity: { name, version: "1.0.0" },
+    ...(fixture.schemaValidator === undefined
+      ? {}
+      : { schemaValidator: fixture.schemaValidator }),
     serverOptions: {
       logger: silentLogger,
       environment: {
         ...process.env,
         REA_MCP_MAX_INPUT_ELEMENTS: process.env.REA_MCP_MAX_INPUT_ELEMENTS,
+        ...fixture.environment,
       },
     },
   });
