@@ -535,19 +535,20 @@ describe("independent script publication failure", () => {
         new Error("physical output write failed"),
         { code: "EIO" },
       );
+      const failWrite = vi.fn(async () => {
+        controller.abort(
+          sameReason ? physical : { request: "later cancellation" },
+        );
+        throw physical;
+      });
       openMock.mockImplementation(async (...args) => {
         const handle = await actualFs.open(...args);
         if (
           String(args[0]).startsWith(input.output_directory) &&
           typeof args[1] === "number" &&
-          (args[1] & constants.O_WRONLY) !== 0
+          (args[1] & (constants.O_WRONLY | constants.O_RDWR)) !== 0
         )
-          vi.spyOn(handle, "write").mockImplementation(async () => {
-            controller.abort(
-              sameReason ? physical : { request: "later cancellation" },
-            );
-            throw physical;
-          });
+          vi.spyOn(handle, "write").mockImplementation(failWrite);
         return handle;
       });
       const rollback = rollbackFails
@@ -560,6 +561,7 @@ describe("independent script publication failure", () => {
         result = await exportWebScripts(input, resources, {
           signal: controller.signal,
         });
+        expect(failWrite).toHaveBeenCalledOnce();
         if (result.ok) throw new Error("Expected physical output failure");
         expect(projectAnalysisError(result.error)).toMatchObject({
           code: rollbackFails
