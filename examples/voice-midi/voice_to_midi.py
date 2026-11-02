@@ -25,11 +25,11 @@ def estimate_frequency(samples: Any, sample_rate: int, min_hz: float = 65.0, max
     if float(np.dot(centered, centered)) <= 1e-8:
         return None
 
+    if count < math.ceil(3 * sample_rate / min_hz):
+        return None
     min_lag = max(1, int(sample_rate / max_hz))
     max_lag = min(count - 2, int(sample_rate / min_hz))
     if min_lag >= max_lag:
-        return None
-    if count < (3 * max_lag) + 1:
         return None
 
     correlation = np.correlate(centered, centered, mode="full")[count - 1:]
@@ -138,14 +138,19 @@ def run(device: str | int | None, midi_port: str | None, sample_rate: int, block
 
     output = mido.open_output(midi_port) if midi_port else mido.open_output()
     tracker = MidiNoteTracker()
+    analysis_window = math.ceil(3 * sample_rate / 65.0)
+    history: list[float] = []
 
     def callback(indata: Any, frames: int, time_info: Any, status: Any) -> None:
         del frames, time_info
         if status:
             print(status, flush=True)
         samples = indata[:, channel]
+        history.extend(float(sample) for sample in samples)
+        if len(history) > analysis_window:
+            del history[:-analysis_window]
         event = tracker.update(
-            estimate_frequency(samples, sample_rate),
+            estimate_frequency(history, sample_rate),
             rms(samples),
         )
         for kind, note in event:
