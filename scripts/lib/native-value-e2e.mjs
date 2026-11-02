@@ -17,6 +17,7 @@ import {
   requireMcpOutput,
 } from "./mcp-verifier-results.mjs";
 import { verifyGhidraBoundaries } from "./real-ghidra-boundaries.mjs";
+import { verifyLegacyValueScopeSnapshot } from "./ghidra-value-scope-snapshot-e2e.mjs";
 
 const defaultEntrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 const environment = () => ({
@@ -281,6 +282,12 @@ async function verifyNativeValueAdapters(
       functionEvidence.analysis_profile,
     );
     assert.deepEqual(functionProfile, upstreamProfile);
+    await verifyLegacyValueScopeSnapshot(client, {
+      target,
+      procedure,
+      observed: functionEvidence,
+      env,
+    });
     const comparison = await client.callTool(
       {
         name: "compare_functions",

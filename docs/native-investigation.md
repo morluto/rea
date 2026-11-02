@@ -459,7 +459,9 @@ complementary recorded instruction references, with its own coverage limits. A
 `STORE` may describe stack memory and does not itself prove persistent state.
 The Ghidra analysis profile commits to this effect scope. Snapshots from before
 that commitment are rejected; analyze without the snapshot and save a fresh one.
-Separately exported historical Evidence remains importable without rewriting it.
+To keep historical Evidence, copy the old snapshot's `evidence_bundle` object to
+a separate JSON file and import that bundle. Import validates the Evidence; it
+does not replay the old provider analysis.
 
 Jump-table evidence keeps numeric `mappings`, explicit `default_targets`, and
 backing `data_sources` separate. A null case value denotes an unresolved
