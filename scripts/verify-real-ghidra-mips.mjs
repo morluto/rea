@@ -455,12 +455,16 @@ try {
           vadd_sites: 3,
           high_pcode: hasHighPcode ? "observed" : "unavailable",
           opaque_high_pcode_operations: hasHighPcode
-            ? flow.operations.filter(({ opcode }) => opcode === "CALLOTHER").length
+            ? flow.operations.filter(({ opcode }) => opcode === "CALLOTHER")
+                .length
             : null,
           truncated: hasHighPcode ? flow.truncated : null,
-          unavailable_reason: flow?.available === false
-            ? flow.reason
-            : hasHighPcode ? null : "Ghidra did not report a HighFunction value flow",
+          unavailable_reason:
+            flow?.available === false
+              ? flow.reason
+              : hasHighPcode
+                ? null
+                : "Ghidra did not report a HighFunction value flow",
           pseudocode_nonempty: vfpuDossier.pseudocode.trim().length > 0,
           numeric_vector_semantics: "not_verified",
         };
@@ -728,7 +732,9 @@ try {
           "independent ELF/ABI and symbols",
           "loaded Ghidra identity",
           "fixed instruction bytes and immediate",
-          ...(psp ? ["VFPU prefix/vadd opcode decoding (not arithmetic equivalence)"] : []),
+          ...(psp
+            ? ["VFPU prefix/vadd opcode decoding (not arithmetic equivalence)"]
+            : []),
           psp
             ? "Allegrex BITREV decoding and A-B-A target identity"
             : "conditional branch destination",
