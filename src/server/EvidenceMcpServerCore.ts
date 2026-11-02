@@ -9,6 +9,7 @@ import {
   isJSONRPCRequest,
   isJSONRPCNotification,
   isJSONRPCResultResponse,
+  SUPPORTED_PROTOCOL_VERSIONS,
   type CallToolResult,
   type Implementation,
   type Icon,
@@ -105,6 +106,18 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
 /** Signal for the completion request currently being dispatched by the SDK. */
 export const currentMcpRequestSignal = (): AbortSignal | undefined =>
   currentRequestSignal.getStore();
+
+/**
+ * The newest wire revision this server speaks. Revision 2026-07-28 made
+ * `resultType` a REQUIRED member of every result; the SDK stamps it on
+ * outbound results only for modern-era requests, which are negotiated
+ * exclusively via `server/discover` — a handler the SDK installs only when
+ * the supported list names a modern revision. Without this entry a client
+ * on 2026-07-28 (itself the default in current Claude Code builds) cannot
+ * negotiate and every delayed `tools/call` result is discarded with
+ * "missing required resultType".
+ */
+const MODERN_PROTOCOL_VERSION = "2026-07-28";
 
 /** A Zod schema whose standard interface exposes a JSON Schema projection. */
 const hasAdvertisedInputJsonSchema = (value: unknown): boolean => {
@@ -359,7 +372,19 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   ) {
     const maximumInputElements =
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
-    super(info, { ...options, maxToolInputElements: maximumInputElements });
+    super(
+      info,
+      options.supportedProtocolVersions === undefined
+        ? {
+            ...options,
+            supportedProtocolVersions: [
+              ...SUPPORTED_PROTOCOL_VERSIONS,
+              MODERN_PROTOCOL_VERSION,
+            ],
+            maxToolInputElements: maximumInputElements,
+          }
+        : { ...options, maxToolInputElements: maximumInputElements },
+    );
     this.maximumInputElements = maximumInputElements;
     this.compactPresentation =
       compactPresentation === undefined
