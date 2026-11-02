@@ -106,8 +106,10 @@ const stream = (key, flags, inherited) => {
     ? inherited
     : fs.openSync(path, flags | fs.constants.O_NOCTTY);
 };
-// Like a ptrace stop, the gate holds the target before it touches stdin.
-const script = (config.prelude ?? "") + ' : >"$1"; cat "$2" >/dev/null; exec ' + config.target;
+// Like a ptrace stop, the gate holds the target before it touches stdin. These
+// commands carry no redirection: dash applies one to the shell itself until the
+// command returns, and this shell's descriptors are the target's in /proc.
+const script = (config.prelude ?? "") + ' touch "$1"; cat "$2"; exec ' + config.target;
 const target = spawn("/bin/sh", ["-c", script, "sh", config.readyPath, config.gatePath], {
   detached: true,
   stdio: [
@@ -122,7 +124,7 @@ const deadline = Date.now() + 5000;
 while (!fs.existsSync(config.readyPath) && Date.now() < deadline)
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
 let attached = config.reportsInferior;
-const resume = () => fs.writeFileSync(config.gatePath, "resume");
+const resume = () => fs.closeSync(fs.openSync(config.gatePath, "w"));
 const answer = (line) => {
   if (line === "olj")
     process.stdout.write(JSON.stringify(attached ? [{ raised: true, fd: 3, uri: "ptrace://" + target.pid }] : []) + "\\0");
