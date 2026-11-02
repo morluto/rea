@@ -81,9 +81,10 @@ export const rustBinarySchema = z
       sha256: digestSchema,
       bytes: index,
     }),
-    format: z.enum(["elf", "pe", "macho"]),
+    format: z.enum(["elf", "pe", "macho", "wasm"]),
     architecture: z.string(),
-    bits: z.union([z.literal(32), z.literal(64)]),
+    /** Native containers declare a word size; WebAssembly declares none. */
+    bits: z.union([z.literal(32), z.literal(64)]).nullable(),
     byte_order: z.enum(["little", "big"]),
     /** The universal slice that was read; file offsets stay inside it. */
     selected_slice: machoTargetSelectionSchema.exactOptional(),
@@ -92,6 +93,20 @@ export const rustBinarySchema = z
     limitations: z.array(z.string()),
   })
   .superRefine((report, context) => {
+    if ((report.format === "wasm") !== (report.bits === null))
+      issue(
+        context,
+        ["bits"],
+        "Word size is null exactly when the container is WebAssembly.",
+      );
+    if ((report.format === "wasm") !== (report.architecture === "wasm"))
+      issue(
+        context,
+        ["architecture"],
+        "Architecture is wasm exactly when the container is WebAssembly.",
+      );
+    if (report.format === "wasm" && report.byte_order !== "little")
+      issue(context, ["byte_order"], "A WebAssembly module is little-endian.");
     const metadata = report.auditable_metadata;
     if (metadata !== null) {
       checkSection(report.artifact.bytes, metadata, context);

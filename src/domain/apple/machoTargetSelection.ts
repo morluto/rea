@@ -102,16 +102,21 @@ export const sameMachoTargetSelection = (
   left.cpu_subtype === right.cpu_subtype &&
   left.container_table_sha256 === right.container_table_sha256;
 
-/** Evidence subject format of a metadata report that read an ELF, PE, thin Mach-O or universal slice. */
+/**
+ * Evidence subject format of a metadata report that read an ELF, PE, thin
+ * Mach-O or universal slice, or a WebAssembly module, which is a file as for WABT.
+ */
 export const metadataReportSubjectFormat = (report: {
-  readonly format: "elf" | "pe" | "macho";
+  readonly format: "elf" | "pe" | "macho" | "wasm";
   readonly selected_slice?: MachoTargetSelection;
-}): "elf" | "pe" | "mach-o" | "mach-o-universal" =>
-  report.format !== "macho"
-    ? report.format
-    : report.selected_slice === undefined
-      ? "mach-o"
-      : "mach-o-universal";
+}): "elf" | "pe" | "mach-o" | "mach-o-universal" | "file" =>
+  report.format === "wasm"
+    ? "file"
+    : report.format !== "macho"
+      ? report.format
+      : report.selected_slice === undefined
+        ? "mach-o"
+        : "mach-o-universal";
 
 /**
  * Whether a metadata report's own container and CPU agree with the universal
@@ -119,7 +124,7 @@ export const metadataReportSubjectFormat = (report: {
  */
 export const selectedSliceAgreesWithReport = (
   selection: MachoTargetSelection,
-  format: "elf" | "pe" | "macho",
+  format: "elf" | "pe" | "macho" | "wasm",
   architecture: BinaryArchitecture | undefined,
 ): boolean =>
   selection.container === "fat" &&

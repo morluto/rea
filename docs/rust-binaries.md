@@ -2,8 +2,9 @@
 
 `inspect_rust_binary` / `inspect-rust-binary` answers which crate names,
 versions, sources, and dependency edges are embedded by cargo-auditable in one
-selected local executable or library. It reads the file without running it and
-requires no Rust installation, active binary target, Hopper, Ghidra, or IDA.
+selected local executable, library, or WebAssembly module. It reads the file
+without running it and requires no Rust installation, active binary target,
+Hopper, Ghidra, or IDA.
 
 ```bash
 rea inspect-rust-binary /absolute/path/to/application --json
@@ -93,9 +94,11 @@ The inline Evidence result contains the artifact path, SHA-256, byte length,
 container format, architecture, word size, and byte order. When a `.dep-v0`
 section is present, `auditable_metadata` contains:
 
-- `section_name`, `.dep-v0` for ELF and PE or `__DATA,.dep-v0` for Mach-O;
+- `section_name`, `.dep-v0` for ELF, PE, and WebAssembly or `__DATA,.dep-v0`
+  for Mach-O;
 - `file_offset` and `section_bytes`, the exact file range of the dependency
   section in the selected artifact, including accepted PE file-alignment bytes;
+  for WebAssembly, the custom-section payload after its name;
 - `compressed_bytes`, the zlib stream length used for the inflate-ratio limit,
   and `uncompressed_bytes`;
 - `format_version`, the embedded integer, or `null` when the field is omitted;
@@ -118,7 +121,8 @@ removed the field entirely, as recorded in its
 [changelog](https://github.com/rust-secure-code/cargo-auditable/blob/v0.5.0/CHANGELOG.md).
 
 `rustc_commit` is present only when a `/rustc/<40-hex>/` path is found in
-read-only data; its `evidence_kind` is `inferred`. For ELF, read-only
+read-only data, or in the data section of a WebAssembly module; its
+`evidence_kind` is `inferred`. For ELF, read-only
 non-executable `PT_LOAD` file ranges are searched alongside read-only sections,
 so an optional missing section-header
 table does not remove this search source. An empty or unavailable section name
@@ -130,6 +134,24 @@ REA preserves known empty names separately from unavailable names; an unavailabl
 name table still leaves `.dep-v0` presence unknown.
 The hash is not a claim that that compiler produced the binary. Several
 distinct hashes leave a single commit unknown.
+
+## WebAssembly modules
+
+cargo-auditable stores the same zlib-compressed JSON in a WebAssembly custom
+section named `.dep-v0`. For a version 1 core module, such as
+`wasm32-unknown-unknown` or `wasm32-wasip1` output, the reader walks the
+section framing without validating, instantiating, or executing the module.
+The report's `format` and `architecture` are `wasm` and its `byte_order` is
+`little`. `bits` is `null`: WebAssembly declares no container word size, and
+memory address types are not inspected. The Evidence subject format is
+`file`, as for `inspect_wasm_artifact`.
+
+A section or custom-section name that extends past its enclosing range, a size
+that is not a 32-bit LEB128 integer, a custom-section name that is not UTF-8, a
+second `.dep-v0` section, or a second data section is malformed. WebAssembly
+components, such as `wasm32-wasip2` output, embed several core modules. They
+are unsupported: no input selects one embedded module the way `architecture`
+selects a universal Mach-O slice.
 
 ## Limits and failures
 
@@ -157,8 +179,8 @@ verified. An omitted revision remains `null` and follows revision 0 semantics.
 Embedded names and versions are file content. They do not authenticate the
 packages or the compiler.
 
-ELF, PE, thin Mach-O and one selected slice of a universal Mach-O are the
-supported containers.
+ELF, PE, thin Mach-O, one selected slice of a universal Mach-O, and
+WebAssembly core modules are the supported containers.
 A universal (FAT) Mach-O needs `architecture` (`x86`, `x86_64`, `arm`
 or `arm64`; CLI `--architecture`). REA reads its own FAT table, without `lipo`,
 and validates the selected slice's range, alignment and Mach-O header CPU
@@ -173,6 +195,11 @@ Package and dependency counts are checked against the minimum required JSON
 representation before graph allocation or schema cloning. Oversized graphs
 report the output byte budget; the compiler-path capacity reports
 `maximum_rustc_hashes` in hashes, independently of byte limits.
+
+WebAssembly section framing is walked synchronously, and the format sets no
+section count, so a module with more than 65,536 sections is refused with a
+`cpu` resource constraint that reports `maximum_wasm_sections`. Producer output
+holds a few dozen sections.
 
 Reader architecture names remain verbatim in the report. Evidence subjects use
 the recognized canonical family: `386` maps to `x86`, `amd64` to `x86_64`, and
