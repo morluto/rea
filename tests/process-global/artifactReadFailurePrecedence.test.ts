@@ -39,7 +39,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (
         args[0] !== fault.path ||
         typeof flags !== "number" ||
-        (flags & (constants.O_WRONLY | constants.O_RDWR)) !== 0
+        (flags & constants.O_WRONLY) !== 0
       )
         return handle;
       fault.opened.push(handle);
