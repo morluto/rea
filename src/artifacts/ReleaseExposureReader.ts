@@ -27,6 +27,7 @@ import {
 } from "./ArtifactFileOperation.js";
 import { decodeBinaryPlistText } from "./apple/BinaryPlistMaterializer.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
+import { createAsarHeaderSignatureProbe } from "./AsarHeader.js";
 import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
 import { inventoryArtifact } from "./inventory/ArtifactInventory.js";
@@ -546,13 +547,11 @@ const scanOccurrences = async (
       packageKind !== null &&
       !parentsWithChildren.has(occurrence.occurrence_id)
     ) {
-      state.formats.add(packageKind);
-      noteUnexaminedPackage(state);
+      noteNestedPackage(state, packageKind, location);
       if (!occurrence.encrypted) {
         state.readable += 1;
         pushSample(state.memberSamples, location);
       }
-      pushLimitation(state, `Nested package ${location} was not expanded.`);
       continue;
     }
     await examineMember(state, {
@@ -1491,6 +1490,10 @@ const examinePackagedBinary = async (
       notePeNotExamined(state, member.location);
     }
   }
+  if (native === null && header !== null && holdsAsarHeader(header)) {
+    noteNestedPackage(state, "asar", member.location);
+    return true;
+  }
   if (native !== null) state.packagedNative += 1;
   else await examineProbedText(state, member, probe);
   if (native !== "pe") return true;
@@ -1840,6 +1843,20 @@ const noteUnexaminedPackage = (state: ScanState): void => {
   state.unreadable += 1;
   state.coverageUnknown = true;
 };
+
+const noteNestedPackage = (
+  state: ScanState,
+  format: PackageFormat,
+  location: string,
+): void => {
+  state.formats.add(format);
+  noteUnexaminedPackage(state);
+  pushLimitation(state, `Nested package ${location} was not expanded.`);
+};
+
+/** The ASAR owner's signature test. A match does not establish a valid archive. */
+const holdsAsarHeader = (bytes: Buffer): boolean =>
+  createAsarHeaderSignatureProbe().write(bytes).state === "matched";
 
 const readListedEntry = async (
   container: OpenContainer | undefined,

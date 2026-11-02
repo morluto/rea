@@ -1260,6 +1260,34 @@ describe("ReleaseExposureReader member allowances", () => {
   });
 });
 
+describe("ReleaseExposureReader nested packages in a host", () => {
+  it("leaves coverage unknown for an ASAR a PyInstaller host carries", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-nest-");
+    await writeFile(
+      join(root, "app.exe"),
+      cArchiveExecutable({
+        carrier: "pe",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          {
+            name: "resources",
+            typeCode: "x",
+            compress: true,
+            payload: asarArchive([
+              { name: "app.js.map", bytes: Buffer.from("{}") },
+            ]),
+          },
+        ],
+      }),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.coverage).toBe("unknown");
+    expect(scanned.extractable.formats).toContain("asar");
+    expect(scanned.limitations.join("\n")).toContain("was not expanded");
+  });
+});
+
 describe("ReleaseExposureReader source-map count", () => {
   it.each([
     [
