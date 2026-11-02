@@ -194,24 +194,14 @@ describe("CLI integer arguments", () => {
   );
 });
 
-// Numeric coercion reads each of these block-size tokens as 256, and the
-// empty token as 0.
-const NON_DECIMAL_BLOCK_SIZE_TEXT = [
-  "",
-  " 256",
-  "256\n",
-  "0x100",
-  "0b100000000",
-  "2.56e2",
-  "+256",
-  "256.0",
-];
-
 describe("byte-entropy window options", () => {
+  // The options share one parser, so one takes every malformed spelling.
+  // Numeric coercion reads "0x10" as a valid length and "0x100" as a valid
+  // block size; "384" is decimal but not a power of two.
   for (const [flag, field, values] of [
     ["--offset", "offset", NON_INTEGER_OPTION_TEXT],
-    ["--length", "length", NON_INTEGER_OPTION_TEXT],
-    ["--block-size", "blockSize", NON_DECIMAL_BLOCK_SIZE_TEXT],
+    ["--length", "length", ["0x10"]],
+    ["--block-size", "blockSize", ["0x100", "384"]],
   ] as const) {
     cliTest.for(values)(
       `rejects %j as a byte-entropy ${flag} value`,

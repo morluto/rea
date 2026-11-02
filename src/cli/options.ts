@@ -14,15 +14,24 @@ import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import type { Logger } from "pino";
 
 /** Parse decimal integer tokens before Number coercion can erase their syntax. */
-export const cliIntegerArgument = (
-  min: number,
-  max = Number.MAX_SAFE_INTEGER,
-) =>
+export const cliIntegerArgument = (min: number) =>
   z
     .string()
     .regex(/^[0-9]+$/u, "Expected a decimal integer")
-    // Bounds follow .safe(), whose range check would replace them.
-    .pipe(z.coerce.number<string>().safe().min(min).max(max));
+    .pipe(z.coerce.number<string>().safe().min(min));
+
+/** Parse a decimal token, then let the canonical numeric field own bounds and defaults. */
+export const cliDecimalField = (
+  field: z.ZodDefault<z.ZodNumber> | z.ZodOptional<z.ZodNumber>,
+) => {
+  const parsed = z
+    .string()
+    .regex(/^[0-9]+$/u, "Expected a decimal integer")
+    .pipe(z.coerce.number<string>())
+    .pipe(field.unwrap());
+  const omitted = field.parse(undefined);
+  return omitted === undefined ? parsed.optional() : parsed.default(omitted);
+};
 
 export const providerSelectionOption = analysisProviderSelectorSchema
   .optional()

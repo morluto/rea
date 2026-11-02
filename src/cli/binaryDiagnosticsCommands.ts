@@ -1,8 +1,9 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { inspectDevicetreeInputSchema } from "../domain/firmware/devicetree.js";
 import { inspectPeLoadConfigInputSchema } from "../domain/native/peLoadConfig.js";
+import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
 import { z } from "incur";
-import { cliIntegerArgument } from "./options.js";
+import { cliDecimalField } from "./options.js";
 import {
   createByteEntropyService,
   createRecordedCrashService,
@@ -209,18 +210,18 @@ export const registerBinaryDiagnosticsCommands = (
     args: z.object({ path: localPathStringSchema.describe("Local file") }),
     options: z.object({
       // Decimal tokens only: numeric coercion would read "" as 0 and accept
-      // "0x10" or "1e2". The service schema still checks the power of two.
-      blockSize: cliIntegerArgument(256, 65536)
-        .default(4096)
-        .describe(
-          "Power-of-two block size from 256 to 65536 bytes (default 4096)",
-        ),
-      offset: cliIntegerArgument(0)
-        .default(0)
-        .describe("Window start as a decimal file byte offset (default 0)"),
-      length: cliIntegerArgument(0)
-        .optional()
-        .describe("Window length in bytes; omit to extend through EOF"),
+      // "0x10" or "1e2".
+      blockSize: cliDecimalField(
+        inspectByteEntropyInputSchema.shape.block_size,
+      ).describe(
+        "Power-of-two block size from 256 to 65536 bytes (default 4096)",
+      ),
+      offset: cliDecimalField(
+        inspectByteEntropyInputSchema.shape.offset,
+      ).describe("Window start as a decimal file byte offset (default 0)"),
+      length: cliDecimalField(
+        inspectByteEntropyInputSchema.shape.length,
+      ).describe("Window length in bytes; omit to extend through EOF"),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
