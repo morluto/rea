@@ -620,6 +620,38 @@ never upgrades `trace_coverage`, and graph connectivity does not prove runtime
 reachability. The CLI keeps complete trace JSON; save it and use
 `inspect-analysis-view` with an `evidence-file` source.
 
+### Selected batch decompile results
+
+`batch_decompile` returns every pseudocode body. `inspect_analysis_view` selects
+from that completed record, retained in the session, saved as an Evidence file or
+imported from a portable bundle, and never repeats decompilation.
+`view: {"kind":"summary"}` reports the producer counts, `source_provider` (the
+composing workflow), `source_analysis_profile_digest`, `decompiling_provider`,
+procedure identity counts, total and largest `pseudocode` size, and
+`limitation_count`.
+
+A `batch-decompile` view selects one `collection` and repeats the batch counts
+and provider identities:
+
+- `items`: rows in retained order with their original `index`, so duplicate
+  selectors stay distinct. A row keeps the selector in `address`, its `procedure`
+  identity and `status`, plus `pseudocode_code_units` or its exact `error` and
+  `limitations`. `where.indices`, `where.addresses`, `where.procedure_addresses`
+  and `where.statuses` filter exactly and combine; an item with unknown identity
+  never matches `procedure_addresses`. Omitted filters select all, and empty
+  arrays select none. `offset` and `limit` default to 0 and 64.
+  `include_pseudocode: true` adds each selected body.
+- `pseudocode`: one `index`'s text in UTF-16 code-unit pages. `offset` and `limit`
+  default to 0 and 16,384, and `coverage` measures that body. An offset inside a
+  surrogate pair is refused, and a limit ending inside one stops before it. An
+  error item has no text and is refused with a pointer to `items`.
+
+Page `coverage` counts the selection only: exhausting it establishes nothing
+about functions outside the batch. Evidence `limitations` aggregate every item's
+provider observations and are not attributed to one successful item; only error
+items keep their own. The CLI has no batch command; save the Evidence and use
+`inspect-analysis-view` with an `evidence-file` source or `--evidence-bundle`.
+
 Completed `inspect_artifact` and atomic `inventory_artifact` Evidence also
 support summary and inventory views. A summary reports the manifest's expected
 counts separately from available record counts, observed entry kinds, inventory
