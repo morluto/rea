@@ -184,6 +184,7 @@
     "test:watch:all": "vitest --changed",
     "typecheck": "node scripts/run-typescript.mjs --noEmit",
     "verify:test-temp-hygiene": "npm run test:prepare && node scripts/verify-test-temp-hygiene.mjs",
+    "verify:unreal:pak": "npm run build:cached && node scripts/verify-unreal-pak.mjs",
     "verify:hopper": "npm run verify:fixtures && npm run build:cached && node scripts/verify-real-hopper.mjs",
     "verify:hopper:callers": "npm run build:cached && node scripts/verify-real-hopper-callers.mjs",
     "verify:hopper:deadlines": "npm run verify:fixtures && npm run build:cached && node scripts/verify-real-hopper-deadlines.mjs",

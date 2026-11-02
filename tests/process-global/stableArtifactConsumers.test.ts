@@ -124,12 +124,14 @@ import { inspectNativeExportsInputSchema } from "../../src/domain/native/nativeE
 import { inspectErlangBeamInputSchema } from "../../src/domain/erlang/beam.js";
 import { ModelArtifactProvider } from "../../src/model/ModelArtifactProvider.js";
 import { ggufFixture } from "../fixtures/model/model.js";
+import { UnrealPakProvider } from "../../src/unreal/UnrealPakProvider.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
 import { peResourceFixture } from "../../src/native/pe/PeResources.fixture.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createRustImage } from "../fixtures/rust/image.js";
 import { createIl2cppMetadataFixture } from "../fixtures/il2cpp/metadata.js";
+import { createPakFixture } from "../fixtures/unreal/pak.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { mcpTest } from "../support/mcp/mcpFixture.js";
@@ -149,6 +151,7 @@ const staticProviders = [
   ["Go", () => new GoBinaryProvider()],
   ["PE", () => new PeResourcesProvider()],
   ["IL2CPP metadata", () => new Il2cppMetadataProvider()],
+  ["Unreal pak", () => new UnrealPakProvider()],
 ] as const;
 
 it.each(
@@ -274,14 +277,15 @@ it.each(
   },
 );
 
-const expectIl2cppSource = (
+const expectSource = (
+  operation: string,
   error: AnalysisError,
   path: string,
   bytes: Buffer,
 ) => {
   const source = parseEvidence(error.partialObservation);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
-  expect(source.operation).toBe("observe_il2cpp_metadata_source");
+  expect(source.operation).toBe(operation);
   expect(source.subject).toMatchObject({
     local_path: path,
     digest: { sha256 },
@@ -292,6 +296,15 @@ const expectIl2cppSource = (
   });
 };
 
+const expectIl2cppSource = (
+  error: AnalysisError,
+  path: string,
+  bytes: Buffer,
+) => expectSource("observe_il2cpp_metadata_source", error, path, bytes);
+const expectPakSource = (error: AnalysisError, path: string, bytes: Buffer) =>
+  expectSource("observe_unreal_pak_source", error, path, bytes);
+const pakBytes = createPakFixture({ layout: "v11" }).bytes;
+
 it.each(staticProviders)(
   "preserves the exact late-close cancellation cause through %s inspection",
   async (_name, makeProvider) => {
@@ -301,6 +314,7 @@ it.each(staticProviders)(
       await writeFile(path, peResourceFixture().bytes);
     if (provider instanceof Il2cppMetadataProvider)
       await writeFile(path, createIl2cppMetadataFixture().bytes);
+    if (provider instanceof UnrealPakProvider) await writeFile(path, pakBytes);
     const controller = new AbortController();
     const reason = new Error("cancel during confirmed descriptor close");
     fault.blockNew = false;
@@ -322,6 +336,8 @@ it.each(staticProviders)(
           path,
           createIl2cppMetadataFixture().bytes,
         );
+      if (provider instanceof UnrealPakProvider)
+        expectPakSource(result.error, path, pakBytes);
       expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
     } finally {
       fault.blocked.clear();
@@ -330,13 +346,22 @@ it.each(staticProviders)(
   },
 );
 
-it.each([false, true])(
-  "retains completed IL2CPP source facts through failed close (cancel: %s)",
-  async (cancel) => {
+it.each([
+  ["IL2CPP", false],
+  ["IL2CPP", true],
+  ["Unreal pak", false],
+  ["Unreal pak", true],
+] as const)(
+  "retains completed %s source facts through failed close (cancel: %s)",
+  async (name, cancel) => {
     const path = await selectedImage();
-    const { bytes } = createIl2cppMetadataFixture();
+    const bytes =
+      name === "IL2CPP" ? createIl2cppMetadataFixture().bytes : pakBytes;
     await writeFile(path, bytes);
-    const provider = new Il2cppMetadataProvider();
+    const provider =
+      name === "IL2CPP"
+        ? new Il2cppMetadataProvider()
+        : new UnrealPakProvider();
     const controller = new AbortController();
     const reason = new Error("cancel during failed close");
     if (cancel) fault.onClose = () => controller.abort(reason);
@@ -353,7 +378,8 @@ it.each([false, true])(
         expect(result.error.cleanupPrimary?.cause).toBe(reason);
       }
       expect(result.error.cleanupIncomplete).toBe(true);
-      expectIl2cppSource(result.error, path, bytes);
+      if (name === "IL2CPP") expectIl2cppSource(result.error, path, bytes);
+      else expectPakSource(result.error, path, bytes);
       expect(fault.handles).toHaveLength(1);
       expect(fault.handles[0]?.fd).toBeGreaterThanOrEqual(0);
       fault.blocked.clear();
@@ -411,7 +437,10 @@ it.each(
       if (result.ok) throw new Error("Expected primary read failure");
       expect(result.error).toBeInstanceOf(expected);
       expect(result.error.cause).toBe(primary);
-      if (provider instanceof Il2cppMetadataProvider)
+      if (
+        provider instanceof Il2cppMetadataProvider ||
+        provider instanceof UnrealPakProvider
+      )
         expect(result.error.partialObservation).toBeUndefined();
       expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
     } finally {
@@ -449,7 +478,10 @@ it.each(staticProviders)(
       const [original] = aggregate.errors;
       expect(original).toBeInstanceOf(AnalysisArtifactChangedError);
       expect((original as AnalysisArtifactChangedError).cause).toBe(primary);
-      if (provider instanceof Il2cppMetadataProvider)
+      if (
+        provider instanceof Il2cppMetadataProvider ||
+        provider instanceof UnrealPakProvider
+      )
         expect(result.error.partialObservation).toBeUndefined();
       fault.blocked.clear();
       await provider.close();

@@ -12,6 +12,7 @@ import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
 import { RUST_TOOL_CONTRACTS } from "./rust/rustToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
 import { ERLANG_BEAM_TOOL_CONTRACTS } from "./erlang/beamToolContracts.js";
+import { UNREAL_TOOL_CONTRACTS } from "./unreal/unrealToolContracts.js";
 import { SQLITE_TOOL_CONTRACTS } from "./sqlite/sqliteToolContracts.js";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "./analysisViewToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "./native/binaryDiagnosticsToolContracts.js";
@@ -62,6 +63,7 @@ export const TOOL_CONTRACTS = [
   ...RUST_TOOL_CONTRACTS,
   ...PYTHON_PYC_TOOL_CONTRACTS,
   ...ERLANG_BEAM_TOOL_CONTRACTS,
+  ...UNREAL_TOOL_CONTRACTS,
   ...WASM_TOOL_CONTRACTS,
   ...APK_SIGNATURE_TOOL_CONTRACTS,
   ...SQLITE_TOOL_CONTRACTS,

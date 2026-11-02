@@ -40,6 +40,7 @@ export default defineConfig({
           { text: "Linux kernel modules", link: "/kernel-modules" },
           { text: "CPython pyc files", link: "/python-pyc" },
           { text: "Erlang BEAM", link: "/erlang-beam" },
+          { text: "Unreal pak indexes", link: "/unreal-pak" },
           {
             text: "JavaScript and Electron",
             link: "/javascript-artifact-reconstruction",
