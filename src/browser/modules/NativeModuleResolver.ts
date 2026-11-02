@@ -33,6 +33,7 @@ import type {
 } from "../../domain/webModuleTrace.js";
 import { webModuleResolutionSchema } from "../../domain/webModuleTrace.js";
 import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
+import { importMapForTrustedResolver } from "./importMapForTrustedResolver.js";
 
 const OPERATION = "trace_web_module_imports";
 const TIMEOUT_MS = 20000;
@@ -367,7 +368,7 @@ const resolveInBrowser = async (
         await route.fulfill({
           status: 200,
           contentType: "text/html",
-          body: `<!doctype html>${input.importMap === null ? "" : `<base href="${htmlAttribute(new URL(input.importMap.baseUrl).href)}"><script type="importmap">${scriptJson(input.importMap.value)}</script>`}`,
+          body: `<!doctype html>${input.importMap === null ? "" : `<base href="${htmlAttribute(new URL(input.importMap.baseUrl).href)}"><script type="importmap">${scriptJson(importMapForTrustedResolver(input.importMap.value, importerUrl, input.importMap.baseUrl))}</script>`}`,
         });
       } else if (
         !stubSent &&
