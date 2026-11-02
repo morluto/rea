@@ -1096,60 +1096,87 @@ describe("relationship coverage snapshot replay", () => {
   });
 });
 
-it("does not replay pre-envelope call graphs under the revised workflow profile", () => {
-  const cache = new AnalysisSnapshotCache();
-  const target = ANALYSIS_SNAPSHOT_TARGET;
-  const profile = ANALYSIS_SNAPSHOT_PROFILE;
-  const operation = "get_call_graph" as const;
-  const parameters = { address: "0x1000", direction: "forward" };
-  const oldProfile = workflowAnalysisProfile(profile);
-  const revisedProfile = workflowAnalysisProfile(profile, operation);
-  const oldResult = { "0": [] };
-  cache.recordWorkflow({
-    target,
-    profile,
-    operation,
-    parameters,
-    execution: {
-      ...createAnalysisExecution(oldResult, REA_WORKFLOW_PROVIDER, {
-        subject: target,
-        rawResult: oldResult,
-      }),
-      analysisProfile: oldProfile,
+it.each([
+  {
+    operation: "get_call_graph",
+    parameters: { address: "0x1000", direction: "forward" },
+    result: { "0": [] },
+  },
+  {
+    operation: "trace_native_values",
+    parameters: { procedure: "0x1000" },
+    result: {
+      seed: "0x1000",
+      target_sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+      nodes: [],
+      edges: [],
+      procedures: [],
+      unknowns: [],
+      total_nodes: 0,
+      total_edges: 0,
+      decompilations: 1,
+      next_offset: null,
+      page_truncated: false,
+      traversal: { status: "complete" },
+      truncated: false,
+      limitations: [],
     },
-  });
-  const evidence = createEvidence(target, REA_WORKFLOW_PROVIDER, {
-    operation,
-    confidence: "derived",
-    parameters,
-    result: oldResult,
-    rawResult: oldResult,
-    analysisProfile: oldProfile,
-  });
-  const exported = cache.export(
-    target,
-    profile,
-    createEvidenceBundle([evidence]),
-  );
-  if (!exported.ok) throw exported.error;
-  const snapshot = parseAnalysisSnapshot(exported.value);
-
-  expect(
-    snapshotEvidenceForQuery(snapshot, {
+  },
+] as const)(
+  "does not replay old $operation results under the revised workflow profile",
+  ({ operation, parameters, result: oldResult }) => {
+    const cache = new AnalysisSnapshotCache();
+    const target = ANALYSIS_SNAPSHOT_TARGET;
+    const profile = ANALYSIS_SNAPSHOT_PROFILE;
+    const oldProfile = workflowAnalysisProfile(profile);
+    const revisedProfile = workflowAnalysisProfile(profile, operation);
+    cache.recordWorkflow({
       target,
-      bindingProfile: profile,
+      profile,
       operation,
       parameters,
-      provider: REA_WORKFLOW_PROVIDER,
-      evidenceProfile: revisedProfile,
-    }),
-  ).toBeUndefined();
-  expect(
-    enhancedOutputSchemas.get_call_graph.safeParse({
-      normalized_result: oldResult,
-    }).success,
-  ).toBe(false);
-});
+      execution: {
+        ...createAnalysisExecution(oldResult, REA_WORKFLOW_PROVIDER, {
+          subject: target,
+          rawResult: oldResult,
+        }),
+        analysisProfile: oldProfile,
+      },
+    });
+    const evidence = createEvidence(target, REA_WORKFLOW_PROVIDER, {
+      operation,
+      confidence: "derived",
+      parameters,
+      result: oldResult,
+      rawResult: oldResult,
+      analysisProfile: oldProfile,
+    });
+    const exported = cache.export(
+      target,
+      profile,
+      createEvidenceBundle([evidence]),
+    );
+    if (!exported.ok) throw exported.error;
+    const snapshot = parseAnalysisSnapshot(exported.value);
+
+    expect(
+      snapshotEvidenceForQuery(snapshot, {
+        target,
+        bindingProfile: profile,
+        operation,
+        parameters,
+        provider: REA_WORKFLOW_PROVIDER,
+        evidenceProfile: revisedProfile,
+      }),
+    ).toBeUndefined();
+    if (operation === "get_call_graph")
+      expect(
+        enhancedOutputSchemas.get_call_graph.safeParse({
+          normalized_result: oldResult,
+        }).success,
+      ).toBe(false);
+  },
+);
 
 it("declines source-bearing snapshot entries while replaying omitted and empty source controls", () => {
   const cache = new AnalysisSnapshotCache();

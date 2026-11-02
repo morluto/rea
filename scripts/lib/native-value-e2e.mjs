@@ -212,6 +212,14 @@ async function verifyNativeValueAdapters(
       procedure,
       globalAddress,
     );
+    assert.ok(
+      mcpGraph.limitations.some(
+        (value) =>
+          value.includes("analyze_function") &&
+          value.includes("LOAD and STORE") &&
+          value.includes("address varnodes"),
+      ),
+    );
     assert.deepEqual(mcpEvidence.normalized_result, mcpGraph);
     assert.deepEqual(mcpGraph, cliGraph);
     const analyzed = await client.callTool(
