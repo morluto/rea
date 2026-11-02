@@ -384,7 +384,7 @@ export const createServer = (
                 operation,
                 rebindFailure,
               ),
-        true,
+        source.kind !== "fixed",
         evidenceById,
       );
       registerCutterTools(

@@ -889,6 +889,7 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
         "nativeaot",
         "ghidra_bridge",
         "website",
+        "reverse_providers",
       ].map((name) => [name, { fast: [name], full: [name] }]),
     ),
   };
