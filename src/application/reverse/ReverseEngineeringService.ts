@@ -58,7 +58,6 @@ export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
   | "execute_rizin_command";
 
-const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_COMBINED_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Eight concurrent captures bound retained provider output to 128 MiB.
 const MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS = 8;

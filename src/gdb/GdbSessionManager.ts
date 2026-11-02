@@ -1379,7 +1379,7 @@ export class GdbSessionManager {
       this.#closing ||
       session === undefined ||
       !session.ready ||
-      session.cleanupStarted ||
+      (session.cleanupStarted && !interrupt) ||
       session.exited ||
       session.protocolError !== undefined ||
       (session.commandAbandoned !== undefined && !interrupt)
@@ -1392,7 +1392,7 @@ export class GdbSessionManager {
         if (
           this.#closing ||
           this.#sessions.get(sessionId) !== session ||
-          session.cleanupStarted ||
+          (session.cleanupStarted && !interrupt) ||
           session.exited ||
           session.protocolError !== undefined ||
           (session.commandAbandoned !== undefined && !interrupt)
@@ -2304,15 +2304,11 @@ export class GdbSessionManager {
     for (const pending of session.pending.values()) {
       clearTimeout(pending.timer);
       pending.cleanup();
-      const records = [...pending.lines];
       pending.reject(
         new GdbProtocolFailureError(message, {
           command: pending.evidenceCommand,
           mi: "",
-          records,
-          console: records.filter((line) => line.startsWith("~")).join("\n"),
-          target: records.filter((line) => line.startsWith("@")).join("\n"),
-          log: records.filter((line) => line.startsWith("&")).join("\n"),
+          ...snapshotGdbCommandRecords(pending.lines),
           output_truncated: pending.outputTruncated,
           ...(pending.outputInvalidUtf8
             ? { output_invalid_utf8: true as const }

@@ -1466,6 +1466,8 @@ export class RizinDebugSessionManager {
     const previouslyConfirmedDetach = session.confirmedDetachedInferiorIdentity;
     if (session.exited)
       throw new Error("Rizin exited before inferior detach could be verified.");
+    if (session.protocolError !== undefined)
+      await this.#synchronizeCleanup(session);
     if (session.completedDetachCommand !== undefined)
       return this.#verifyCompletedDetachCommand(
         session,
@@ -1476,8 +1478,6 @@ export class RizinDebugSessionManager {
         session,
         session.confirmedDetachedInferiorIdentity,
       );
-    if (session.protocolError !== undefined)
-      await this.#synchronizeCleanup(session);
     session.inferiorInventoryComplete = false;
     const inferior = await this.#readInferiorInventory(session);
     if (inferior.length === 0) {
@@ -2372,26 +2372,6 @@ export const assertRizinProcessStartTimeStable = (
     throw new Error(
       "The inferior PID disappeared or was reused during detach verification.",
     );
-};
-
-/** Reject an empty ptrace inventory while a retained inferior identity is still present. */
-export const assertRizinEmptyInferiorInventory = async (
-  identities: Iterable<OwnedInferiorIdentity>,
-  readStartTime: (
-    pid: string,
-  ) => Promise<string | null> = readLinuxProcessStartTime,
-): Promise<void> => {
-  for (const identity of identities) {
-    const observed = await readStartTime(identity.pid);
-    if (observed === null) continue;
-    if (observed === identity.startTime)
-      throw new Error(
-        `Rizin reported no inferior while identified PID ${identity.pid} is still active.`,
-      );
-    // A different start time proves the original process ended and the PID
-    // now belongs to another process. Do not apply the old target's descriptor
-    // requirements to that new identity.
-  }
 };
 
 const hasUnclaimedRizinFrames = (session: RizinDebugSession): boolean =>

@@ -18,6 +18,7 @@ import {
 import { observed } from "../../tests/fixtures/analysisExecution.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import { err, ok } from "../domain/result.js";
+import { retainSavedAnalysisSnapshot } from "../domain/savedAnalysisSnapshot.js";
 import type { LifecycleToolRegistration } from "./registerSessionTools.js";
 import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
 
@@ -42,7 +43,11 @@ const register = (overrides: {
       },
       delivery: { toCallToolResult: (result: unknown) => result },
     },
-    session: overrides.session ?? { close: overrides.closeSession },
+    session:
+      overrides.session ?? {
+        close: overrides.closeSession,
+        closeWithSnapshot: overrides.closeSession,
+      },
     logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
     closeContract: toolContract("close_binary"),
     closeProcessResources:
@@ -106,6 +111,37 @@ describe("close lifecycle reverse cleanup ordering", () => {
     expect(result.error.cleanupPrimary).toBe(reverse);
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.diagnostics).toHaveProperty("cleanup_error");
+  });
+
+  it("preserves the saved snapshot receipt on the combined error when both session close and reverse cleanup fail", async () => {
+    const reverse = new AnalysisOutputError("rizin", "descendant still live", {
+      cleanup: { reason: "still live", resources: ["rizin-owner"] },
+    });
+    const sessionFailure = new AnalysisOutputError("close_binary", "session cleanup failed", {
+      cleanup: { reason: "client still live", resources: ["client-owner"] },
+    });
+    const receipt = {
+      path: "/tmp/saved.json",
+      bytes: 100,
+      primitive_entries: 1,
+      workflow_entries: 0,
+      evidence_records: 1,
+    };
+    retainSavedAnalysisSnapshot(sessionFailure, receipt);
+    const { handler } = register({
+      closeSession: async () => err(sessionFailure),
+      retry: async () => err(reverse),
+    });
+
+    const result = (await handler({ snapshot_path: "/tmp/saved.json" })) as {
+      ok: boolean;
+      error: AnalysisOutputError;
+    };
+
+    expect(result.ok).toBe(false);
+    expect(result.error.partialObservation).toMatchObject({
+      saved_snapshot: receipt,
+    });
   });
 });
 

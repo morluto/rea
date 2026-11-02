@@ -118,6 +118,23 @@ export const registerCloseLifecycleTool = ({
         next,
       ).bindCleanupDependencies([combined, next]);
     }
+    const savedReceipt = closed.ok
+      ? savedSnapshot?.(closed.value)
+      : (
+          closed.error.partialObservation as
+            | { readonly saved_snapshot?: SavedAnalysisSnapshot }
+            | undefined
+        )?.saved_snapshot;
+    if (
+      savedReceipt !== undefined &&
+      (
+        combined.partialObservation as
+          | { readonly saved_snapshot?: SavedAnalysisSnapshot }
+          | undefined
+      )?.saved_snapshot === undefined
+    ) {
+      retainSavedAnalysisSnapshot(combined, savedReceipt);
+    }
     if (!closed.ok) {
       return err(
         closed.error.cleanupRetry === undefined
@@ -126,11 +143,7 @@ export const registerCloseLifecycleTool = ({
       );
     }
     const retained = retainedProcessCleanup(combined);
-    return err(
-      savedSnapshot === undefined
-        ? retained
-        : retainSavedAnalysisSnapshot(retained, savedSnapshot(closed.value)),
-    );
+    return err(retained);
   };
   server.registerTool(
     closeContract.name,

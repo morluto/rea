@@ -376,6 +376,25 @@ it("lets target disposition enter while open waits for a debugger owner", async 
   await session.close();
 });
 
+it("cancels an open superseded by a later close while waiting for a debugger owner", async () => {
+  const [target, replacement] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  expect((await session.open(target)).ok).toBe(true);
+  const externalCompletion = createDeferred<void>();
+  session.retainExternalMutationOwner(externalCompletion.promise);
+
+  const opening = session.open(replacement);
+  const closing = session.close();
+
+  externalCompletion.resolve();
+  expect(await closing).toEqual(resultOk(null));
+  expect(await opening).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  expect(session.activeTarget()).toBeUndefined();
+});
+
 it.each([false, true])(
   "close retains an external writer until its owner settles (active: %s)",
   async (active) => {

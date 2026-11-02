@@ -194,6 +194,7 @@ export class BinarySession
   #transition: Promise<void> = Promise.resolve();
   #transitionGeneration = 0;
   #transitionPending = 0;
+  #closeEpoch = 0;
   /** Process shutdown has begun; later target acquisition must not outlive it. */
   #shutdownStarted = false;
   readonly #calls = new Map<Promise<unknown>, number>();
@@ -531,9 +532,12 @@ export class BinarySession
     ) => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
     options: BinarySessionOpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
+    const queuedAtCloseEpoch = this.#closeEpoch;
     return (async () => {
       for (;;) {
         const opened = await this.#serialize(async (admittedThrough) => {
+          if (this.#closeEpoch !== queuedAtCloseEpoch)
+            return err(new AnalysisCancelledError("open_binary"));
           if (isAborted(options.signal))
             return err(
               new AnalysisCancelledError("open_binary", {
@@ -969,6 +973,7 @@ export class BinarySession
     options: BinarySessionCloseOptions = {},
   ): Promise<Result<null, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
+      this.#closeEpoch++;
       if (this.#externalMutationOwnerPending)
         return err(this.#externalMutationStillActive("close_binary"));
       await this.#drainCalls(admittedThrough);
@@ -991,6 +996,7 @@ export class BinarySession
     options: BinarySessionCloseOptions = {},
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
+      this.#closeEpoch++;
       if (this.#externalMutationOwnerPending)
         return err(this.#externalMutationStillActive("close_binary"));
       await this.#drainCalls(admittedThrough);
@@ -1040,6 +1046,7 @@ export class BinarySession
   ): Promise<Result<null, AnalysisError>> {
     this.beginShutdown();
     return this.#serialize(async (admittedThrough) => {
+      this.#closeEpoch++;
       await this.#drainCalls(admittedThrough);
       const closed = await this.#closeActive(options);
       if (closed.ok) {
