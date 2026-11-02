@@ -17,25 +17,54 @@ import {
   isUnmodifiedGlobalReference,
 } from "./javascriptSemanticAmbientWrites.js";
 
-const fetchReaders = new WeakMap<
+const networkReaders = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  ReturnType<typeof createGlobalReferenceReader>
+  Map<string, ReturnType<typeof createGlobalReferenceReader>>
 >();
 
-export const fetchReferenceStatus = (
+const networkReferenceStatus = (
   callee: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
+  path: readonly [string, ...string[]],
 ): ReturnType<ReturnType<typeof createGlobalReferenceReader>>["status"] => {
-  let reader = fetchReaders.get(bindings);
+  let readers = networkReaders.get(bindings);
+  if (readers === undefined) {
+    readers = new Map();
+    networkReaders.set(bindings, readers);
+  }
+  const key = path.join(".");
+  let reader = readers.get(key);
   if (reader === undefined) {
-    reader = createGlobalReferenceReader(bindings, ["fetch"]);
-    fetchReaders.set(bindings, reader);
+    reader = createGlobalReferenceReader(bindings, path);
+    readers.set(key, reader);
   }
   const status = reader(callee).status;
   return status === "unmodified" &&
     semanticOpaqueGlobalMayHaveChanged(callee, bindings)
     ? "unknown"
     : status;
+};
+
+export const fetchReferenceStatus = (
+  callee: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): ReturnType<ReturnType<typeof createGlobalReferenceReader>>["status"] =>
+  networkReferenceStatus(callee, bindings, ["fetch"]);
+
+export const browserNetworkReferenceStatus = (
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  bindings: JavaScriptSemanticAnalysisState,
+): ReturnType<ReturnType<typeof createGlobalReferenceReader>>["status"] => {
+  const paths: readonly (readonly [string, ...string[]])[] = t.isNewExpression(
+    node,
+  )
+    ? [["WebSocket"], ["EventSource"]]
+    : [["fetch"], ["navigator", "sendBeacon"]];
+  for (const path of paths) {
+    const status = networkReferenceStatus(node.callee, bindings, path);
+    if (status !== "unrelated") return status;
+  }
+  return "unrelated";
 };
 
 export const isFetchCall = (
@@ -49,16 +78,7 @@ export const isFetchCall = (
 export const isBrowserNetworkRequest = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   bindings: JavaScriptSemanticAnalysisState,
-): boolean =>
-  isFetchCall(node, bindings) ||
-  (t.isNewExpression(node) &&
-    (isUnmodifiedGlobalReference(node.callee, bindings, "WebSocket") ||
-      isUnmodifiedGlobalReference(node.callee, bindings, "EventSource"))) ||
-  ((t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-    isUnmodifiedGlobalReference(node.callee, bindings, [
-      "navigator",
-      "sendBeacon",
-    ]));
+): boolean => browserNetworkReferenceStatus(node, bindings) === "unmodified";
 
 const isXhrOpenRequest = (
   node: t.Node,
