@@ -3,6 +3,8 @@ import { domainToASCII, fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
 
+import { pathBelowSyntheticUrlRoot } from "./javascriptSyntheticUrlRoot.js";
+
 /** Map-scoped source declaration and its path interpretation for matching. */
 export const javascriptSourceMapReferenceSchema = z.strictObject({
   source_name: z.string(),
@@ -81,9 +83,12 @@ const resolveJavaScriptSourceMapPath = (
   const portable = source.replaceAll("\\", "/");
   const windowsPath = /^[a-z]:\//iu.test(portable) || source.startsWith("\\\\");
   // Preserve parent traversal rather than letting URL resolution clamp at '/'.
-  const anchor = `/${"source/".repeat(portable.split("/").length + 1)}`;
-  const directory = posix.join(anchor, posix.dirname(mapPath));
-  const base = pathToFileURL(`${directory}/`, { windows: false });
+  const depth = portable.split("/").length + 1;
+  const mapDirectoryBelow = (root: string): URL =>
+    pathToFileURL(`${posix.join(root, posix.dirname(mapPath))}/`, {
+      windows: false,
+    });
+  const base = mapDirectoryBelow(`/${"source/".repeat(depth)}`);
   const absolute = windowsPath ? windowsFileUrl(source) : URL.parse(source);
   const resolved = windowsPath ? absolute : URL.parse(source, base);
   if (resolved === null)
@@ -123,8 +128,17 @@ const resolveJavaScriptSourceMapPath = (
         "Source reference has malformed URL encoding or an invalid file URL.",
     };
   const value = relative
-    ? posix.relative(anchor, path)
+    ? pathBelowSyntheticUrlRoot(depth, (root) => {
+        const below = URL.parse(source, mapDirectoryBelow(root));
+        return below === null ? null : decodedUrlPath(below);
+      })
     : path.replace(/^\/+/, "");
+  if (value === null)
+    return {
+      kind: "unresolved",
+      reason:
+        "Source reference has malformed URL encoding or an invalid file URL.",
+    };
   if (value === "" || value === ".." || value.startsWith("../"))
     return {
       kind: "unresolved",
