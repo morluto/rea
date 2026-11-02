@@ -907,6 +907,46 @@ describe("doctor scoped readiness", () => {
     expect(staleSelected.healthy).toBe(false);
   });
 
+  it("reports project-scoped client registrations in doctor identity and check details", async () => {
+    const registrations: ClientRegistrationStatus[] = [
+      {
+        client: "pi",
+        config_path: "/project/.pi/mcp.json",
+        scope: "project",
+        command: ["/current/rea", "mcp"],
+        state: "aligned",
+        remediation: null,
+      },
+    ];
+    const report = await runDoctor(
+      undefined,
+      host({ clientRegistrations: () => Promise.resolve(registrations) }),
+      { clients: ["pi"] },
+    );
+    expect(report).toMatchObject({
+      healthy: true,
+      identity: {
+        registrations: [
+          expect.objectContaining({
+            client: "pi",
+            scope: "project",
+            config_path: "/project/.pi/mcp.json",
+            state: "aligned",
+          }),
+        ],
+      },
+    });
+    expect(report.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "registration:pi",
+        ok: true,
+        classification: "healthy",
+        detail: "/project/.pi/mcp.json",
+        details: { scope: "project" },
+      }),
+    );
+  });
+
   it("keeps a caller-selected short timeout healthy and reports its advisory as informational", async () => {
     const result = await runDoctor(
       undefined,

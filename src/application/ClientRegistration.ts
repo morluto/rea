@@ -34,17 +34,37 @@ const launcherSchema = z
     args: z.array(z.string()).default([]),
   })
   .passthrough();
-const opencodeLauncherSchema = z
+const opencodeStrictLauncherSchema = z
   .object({
     type: z.literal("local"),
     command: z.array(z.string()).min(1),
   })
   .passthrough();
-const normalizeOpencodeLauncher = (
-  entry: z.output<typeof opencodeLauncherSchema>,
+const normalizeStrictOpencodeLauncher = (
+  entry: z.output<typeof opencodeStrictLauncherSchema>,
 ): z.output<typeof launcherSchema> => {
   const [command = "", ...args] = entry.command;
   return { ...entry, command, args };
+};
+const opencodeOwnershipLauncherSchema = z
+  .object({
+    type: z.literal("local").optional(),
+    command: z.union([z.array(z.string()).min(1), z.string().min(1)]),
+    args: z.array(z.string()).optional(),
+  })
+  .passthrough();
+const normalizeOwnershipOpencodeLauncher = (
+  entry: z.output<typeof opencodeOwnershipLauncherSchema>,
+): z.output<typeof launcherSchema> => {
+  if (Array.isArray(entry.command)) {
+    const [command = "", ...args] = entry.command;
+    return {
+      ...entry,
+      command,
+      args,
+    };
+  }
+  return { ...entry, command: entry.command, args: entry.args ?? [] };
 };
 
 const registrationSchema = launcherSchema.extend({
@@ -104,8 +124,8 @@ export const parseClientRegistrationLauncher = (
 ): Result<{ command: string; args: string[] }, ConfigurationError> => {
   const parsed =
     client.format === "opencode"
-      ? opencodeLauncherSchema
-          .transform(normalizeOpencodeLauncher)
+      ? opencodeOwnershipLauncherSchema
+          .transform(normalizeOwnershipOpencodeLauncher)
           .safeParse(value)
       : launcherSchema.safeParse(value);
   return parsed.success
@@ -167,11 +187,11 @@ export const parseClientRegistration = (
       : err(registrationError(parsed.error));
   }
   if (client.format === "opencode") {
-    const entry = opencodeLauncherSchema
+    const entry = opencodeStrictLauncherSchema
       .extend({
         environment: jsonRecordSchema(z.string()).optional(),
       })
-      .transform(normalizeOpencodeLauncher)
+      .transform(normalizeStrictOpencodeLauncher)
       .safeParse(value);
     if (!entry.success) return err(registrationError(entry.error));
     value = entry.data;
