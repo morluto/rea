@@ -7,6 +7,9 @@ export const pcapCaptureHostSupported = (platform: string): boolean =>
   platform === "linux" || platform === "win32";
 export const PCAP_CAPTURE_UNSUPPORTED_HOST_REASON =
   "Packet summaries require an enforceable native memory bound: Linux with util-linux prlimit, or Windows with owned Job Objects. This host's capture boundary remains unsupported.";
+/** Repair for an unsupported capture host; no setting on this host changes it. */
+export const PCAP_CAPTURE_HOST_REMEDIATION =
+  "Run packet-capture summaries on Linux with util-linux prlimit, or on Windows with owned Job Objects.";
 
 /**
  * Caller intent for packet-capture analysis through caller-supplied tshark

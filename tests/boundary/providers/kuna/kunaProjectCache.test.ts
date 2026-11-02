@@ -705,6 +705,28 @@ it("shares one Kuna run between concurrent requests for one export", async () =>
   expect(await callsOf(kuna, "decompile-project")).toHaveLength(1);
 });
 
+it("preserves a pre-aborted caller reason without launching an export", async () => {
+  const { kuna, installation, cache, target } = await fixture(
+    "rea-kuna-preabort-reason-",
+  );
+  const input = await target("program");
+  const controller = new AbortController();
+  const reason = { caller: "before admission" };
+  controller.abort(reason);
+  const callsBefore = await fakeKunaCalls(kuna);
+  const result = await cache.build({
+    installation,
+    ...input,
+    signal: controller.signal,
+  });
+  if (result.ok)
+    throw new Error("Expected pre-aborted cache request to cancel");
+  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(reason);
+  expect(await fakeKunaCalls(kuna)).toEqual(callsBefore);
+  expect(await cache.close()).toEqual({ ok: true, value: null });
+});
+
 it("stops the run only when every waiting request is cancelled", async () => {
   const { kuna, installation, cacheRoot, cache, target } = await fixture(
     "rea-kuna-cancel-",
@@ -727,23 +749,31 @@ it("stops the run only when every waiting request is cancelled", async () => {
   await expect.poll(() => callsOf(kuna, "decompile-project")).toHaveLength(1);
   const pid = (await callsOf(kuna, "decompile-project"))[0]?.pid ?? 0;
 
-  firstCaller.abort();
-  expect(await first).toMatchObject({
+  const firstReason = { caller: "first waiter" };
+  firstCaller.abort(firstReason);
+  const firstResult = await first;
+  expect(firstResult).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisCancelledError" },
   });
+  if (firstResult.ok) throw new Error("Expected first waiter cancellation");
   // The other request still owns the run.
   expect(processGone(pid)).toBe(false);
 
-  secondCaller.abort();
-  expect(await second).toMatchObject({
+  const secondReason = { caller: "last waiter" };
+  secondCaller.abort(secondReason);
+  const secondResult = await second;
+  expect(secondResult).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisCancelledError" },
   });
+  if (secondResult.ok) throw new Error("Expected last waiter cancellation");
   expect(await cache.close()).toEqual({ ok: true, value: null });
   expect(processGone(pid)).toBe(true);
   expect(await entries(cacheRoot, "staging")).toEqual([]);
   expect(await entries(cacheRoot, "projects")).toEqual([]);
+  expect(firstResult.error.cause).toBe(firstReason);
+  expect(secondResult.error.cause).toBe(secondReason);
 });
 
 it("applies one deadline to the inventory and the export together", async () => {

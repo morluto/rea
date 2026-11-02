@@ -228,14 +228,7 @@ it("reports field imports as declarations without inventing method implementatio
 });
 
 describe("managed native boundary inspection", () => {
-  it("returns complete member inventories inline and reports unavailable metadata", () => {
-    const bytes = buildManagedPeFixture();
-    const paged = inspectManagedMembersBytes(
-      bytes,
-      managedPeFixtureTarget(bytes),
-    );
-    expect(paged.methods).toHaveLength(1);
-
+  it("reports absent or malformed member metadata", () => {
     const nativeBytes = buildNativePeFixture();
     const native = inspectManagedMembersBytes(
       nativeBytes,

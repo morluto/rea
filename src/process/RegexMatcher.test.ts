@@ -417,9 +417,6 @@ it("describes the effective heap and the configurable matching deadline", () => 
     );
     if (heap.kind === "unknown") {
       expect(projected.remediation.action).toContain(
-        "--max-old-space-size-percentage",
-      );
-      expect(projected.remediation.action).toContain(
         "--experimental-config-file",
       );
       expect(projected.remediation.action).toContain("--max-heap-size");

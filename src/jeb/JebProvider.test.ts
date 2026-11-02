@@ -248,8 +248,13 @@ describe("JebProvider observations and failures", () => {
     );
     const availability = await provider.inspectAvailability();
     expect(availability.status).toBe("unavailable");
-    expect(availability.reason).toContain("Start a JEB client serving MCP");
-    expect(availability.reason).toContain("REA_JEB_MCP_URL");
+    if (availability.status !== "unavailable")
+      throw new Error("An unreachable endpoint must be unavailable");
+    expect(availability.reason).toContain("ECONNREFUSED");
+    expect(availability.remediation).toContain(
+      "Start a JEB client serving MCP",
+    );
+    expect(availability.remediation).toContain("REA_JEB_MCP_URL");
     const result = await provider.execute({
       operation: "list_jeb_units",
       input: { count: 10, index: 0 },
