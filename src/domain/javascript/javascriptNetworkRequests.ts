@@ -31,7 +31,11 @@ export const fetchReferenceStatus = (
     reader = createGlobalReferenceReader(bindings, ["fetch"]);
     fetchReaders.set(bindings, reader);
   }
-  return reader(callee).status;
+  const status = reader(callee).status;
+  return status === "unmodified" &&
+    semanticOpaqueGlobalMayHaveChanged(callee, bindings)
+    ? "unknown"
+    : status;
 };
 
 export const isFetchCall = (

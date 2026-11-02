@@ -30,6 +30,7 @@ describe("ambient fetch identity at the call site", () => {
     for (const source of [
       "if (flag) fetch = custom; fetch('/conditional');",
       "function f() { fetch('/nested'); } fetch = custom;",
+      "eval('fetch = custom'); fetch('/after-eval');",
     ]) {
       const result = analyzeJavaScriptStaticSource(source);
       expect(result.endpoints).toEqual([]);
