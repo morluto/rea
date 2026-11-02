@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
@@ -28,6 +28,7 @@ import {
 } from "../process/ProviderProcess.js";
 import { WebBundleAnalysisWorker } from "./WebBundleAnalysisWorker.js";
 import { WEB_BUNDLE_WORKER_LIMITS } from "./WebBundleAnalysisWorkerProtocol.js";
+import { webBundleScriptAnalysisSchema } from "../domain/webBundleScriptAnalysis.js";
 
 const makeScript = (text: string): IncludedScript => ({
   script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
@@ -840,6 +841,76 @@ it("kills a hung owned child at the deadline and starts a fresh worker for the n
     await worker.close();
   }
 });
+
+it.each(["decode", "validate"])(
+  "rejects facts whose %s crosses the absolute script deadline",
+  async (phase) => {
+    const children: ProviderProcessHandle[] = [];
+    const worker = new WebBundleAnalysisWorker(
+      WEB_BUNDLE_WORKER_LIMITS.heapMb,
+      launcherFor(
+        { kind: "source" },
+        { onSpawn: ({ process: child }) => children.push(child) },
+      ),
+    );
+    const delayed = makeScript("fetch('/over-deadline');");
+    const budget = 750;
+    let stalled = false;
+    const stall = (value: unknown): void => {
+      if (
+        stalled ||
+        value === null ||
+        typeof value !== "object" ||
+        !("script_key" in value) ||
+        value.script_key !== delayed.script_key
+      )
+        return;
+      stalled = true;
+      Atomics.wait(
+        new Int32Array(new SharedArrayBuffer(4)),
+        0,
+        0,
+        budget + 250,
+      );
+    };
+    const originalDecode = JSON.parse;
+    const decode = vi.spyOn(JSON, "parse").mockImplementation((...args) => {
+      const value: unknown = originalDecode(...args);
+      if (phase === "decode") stall(value);
+      return value;
+    });
+    const originalValidate = webBundleScriptAnalysisSchema.parse;
+    const validate = vi
+      .spyOn(webBundleScriptAnalysisSchema, "parse")
+      .mockImplementation((...args) => {
+        const value = originalValidate(...args);
+        if (phase === "validate") stall(value);
+        return value;
+      });
+    try {
+      // Warm the real worker so the controlled stall targets result acceptance.
+      expect(
+        (await worker.analyze(makeScript("fetch('/before');"), 10_000)).ok,
+      ).toBe(true);
+      const timedOut = await worker.analyze(delayed, budget);
+      expect(stalled).toBe(true);
+      expect(failureOf(timedOut)).toBeInstanceOf(AnalysisTimeoutError);
+      if (timedOut.ok) throw new Error("Expected result acceptance timeout");
+      expect(timedOut.error.completed).toBeNull();
+      await waitForExit(children[0]!);
+      const recovered = await worker.analyze(
+        makeScript("fetch('/after');"),
+        10_000,
+      );
+      expect(recovered.ok).toBe(true);
+      expect(children).toHaveLength(2);
+    } finally {
+      decode.mockRestore();
+      validate.mockRestore();
+      await worker.close();
+    }
+  },
+);
 
 it("contains child heap exhaustion and reuses the host for a later script", async () => {
   const children: ProviderProcessHandle[] = [];
