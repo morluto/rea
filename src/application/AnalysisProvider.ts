@@ -39,6 +39,11 @@ export interface ExecutionOptions {
    * supplied it.
    */
   readonly selectorOrigin?: "provider";
+  /**
+   * Whether the caller's catalog advertises an operation; refusal recovery
+   * names only advertised operations. Absent means every operation is.
+   */
+  readonly isOperationAdvertised?: (operation: AnalysisOperation) => boolean;
 }
 
 /** Closed operations accepted by provider-backed analysis sessions. */
