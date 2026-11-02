@@ -128,6 +128,7 @@ export const readLinuxProcessStartTime: ProcessStartTimeReader = async (
   const parsed = parseLinuxProcessStat(stat);
   if (parsed === undefined || parsed.pid !== Number(pid))
     throw new Error(`Inferior PID ${pid} has an unreadable process identity.`);
+  if (parsed.lifecycle === "zombie" || parsed.lifecycle === "dead") return null;
   return parsed.startTime;
 };
 
