@@ -107,3 +107,17 @@ export const providerRegistrationEnvironment = (
       )
       .sort(([left], [right]) => compareUnicodeCodePoints(left, right)),
   );
+
+/** Spell selected settings as setup records them: an explicit selection wins. */
+export const registrationSpelledSettings = (
+  settings: Readonly<Record<string, string>>,
+  environment: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string>> => {
+  const explicit = explicitSetupRegistrationEnvironment(environment);
+  return Object.fromEntries(
+    Object.entries(settings).map(([key, value]) => [
+      key,
+      explicit[key] ?? value,
+    ]),
+  );
+};

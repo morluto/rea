@@ -346,6 +346,7 @@ it.each([
   "tests/support/reverseEngineeringService.ts",
   "tests/support/ownedRizinCommandEvidenceTests.ts",
   "tests/support/reverseDebuggerMcpTestHelpers.ts",
+  "tests/boundary/cli/debuggerOneShotExit.test.ts",
   "tests/boundary/cli/gdbStartupCleanupCli.test.ts",
   "vitest.reverse-tools.config.ts",
   "vitest.reverse-tools-semantics.config.ts",

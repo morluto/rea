@@ -1389,6 +1389,7 @@ it.skipIf(!onDarwin)(
         zombieLifecycleIsSeparateFromIdentity: true,
         effectiveUidComesFromNativeIdentity: true,
         nativeRelationIsSeparateFromIdentity: true,
+        nativeNameIsSeparateFromIdentity: true,
       });
     } finally {
       await rm(root, { recursive: true, force: true });

@@ -2,6 +2,7 @@ import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
 import { investigationStatisticsSchema } from "../domain/investigationLifecycle.js";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
+import { analysisCleanupRetrySchema } from "../domain/analysisErrorRecovery.js";
 
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
@@ -544,6 +545,7 @@ export const sessionProviderFacts = z
   .object({
     investigation: investigationStatisticsSchema,
     cleanup_pending: z.boolean(),
+    cleanup_retry: analysisCleanupRetrySchema.optional(),
     capabilities: z.array(providerCapabilitySet),
     analysis_run: analysisRun,
     analysis_activity: analysisActivity,

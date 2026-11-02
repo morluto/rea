@@ -184,6 +184,7 @@ export class BinarySession
   #externalMutationCleanupFailure: AnalysisError | undefined;
   #externalMutationOwner: Promise<void> | undefined;
   #externalMutationOwnerPending = false;
+  #lastCloseCleanupFailure: AnalysisError | undefined;
   #pendingCleanup:
     | {
         readonly run: SessionRun;
@@ -1138,14 +1139,29 @@ export class BinarySession
     closed: Result<null, AnalysisError>,
     retry: AnalysisCleanupRetry | undefined,
   ): Result<null, AnalysisError> {
+    this.#lastCloseCleanupFailure = undefined;
     if (
       !closed.ok &&
       retry !== undefined &&
       closed.error.cleanupIncomplete &&
       this.#retainsCloseCleanup()
-    )
+    ) {
       closed.error.bindCleanupRetry(retry);
+      this.#lastCloseCleanupFailure = closed.error;
+    }
     return closed;
+  }
+
+  /** Only a retired target's known close owner can offer this status retry. */
+  #statusCleanupRetry(): AnalysisCleanupRetry | undefined {
+    if (
+      this.#active !== undefined ||
+      this.#activeBundleResources !== undefined ||
+      this.#externalMutationCleanupFailure?.cleanupIncomplete === true ||
+      !this.#retainsCloseCleanup()
+    )
+      return undefined;
+    return this.#lastCloseCleanupFailure?.cleanupRetry;
   }
 
   /** Owners the next close retries; external mutation owners retry elsewhere. */
@@ -1367,6 +1383,7 @@ export class BinarySession
       this.#pendingBundleResourceCleanup[0] ??
       this.#pendingCleanup?.run;
     const client = run?.client;
+    const cleanupRetry = this.#statusCleanupRetry();
     return binarySessionStatus({
       ...options,
       investigation: this.investigationStatistics(),
@@ -1384,6 +1401,7 @@ export class BinarySession
       runtimeLineageSnapshots: client?.runtimeLineageSnapshots?.() ?? [],
       requestActivitySnapshots: client?.requestActivitySnapshots?.() ?? [],
       providerOperationHealth: client?.operationHealthSnapshot?.() ?? null,
+      ...(cleanupRetry === undefined ? {} : { cleanupRetry }),
       cleanupPending:
         this.#externalMutationCleanupFailure?.cleanupIncomplete === true ||
         this.#retainsCloseCleanup(),
