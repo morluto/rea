@@ -2432,7 +2432,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // Retain legacy bare-hex address input only when no symbol matches.
         Address address = explicitAddress ? parseReaAddress(value) : tryParseAddress(value);
         if (address == null)
-            throw new RequestFailure("not_found", "Unknown Ghidra procedure name or address: " + value);
+            throw new RequestFailure("not_found", "Unknown Ghidra procedure name or address: " + value +
+                "; use search_procedures to find the exact symbol or select its entry address");
         Function function = functionAtOrContaining(address);
         if (function == null)
             // Other procedure operations retain their analysis-address semantics.

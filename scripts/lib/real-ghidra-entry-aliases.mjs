@@ -112,6 +112,10 @@ export async function verifyGhidraEntryAliases({
       JSON.stringify(failure.details.issues),
       /Unknown Ghidra procedure name or address/u,
     );
+    assert.match(
+      JSON.stringify(failure.details.issues),
+      /use search_procedures to find the exact symbol or select its entry address/u,
+    );
     assert.equal(
       await call("procedure_address", { procedure: interior.address }),
       alias.address,
