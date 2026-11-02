@@ -155,6 +155,7 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
   expect(await session.status()).toMatchObject({
     open: true,
     session_kind: "bundle_resources",
+    analysis_provider_candidates_observed: "not_applicable",
     resource_root: { canonical_path: opened.value.canonicalPath },
   });
   const snapshot = session.exportAnalysisSnapshot();

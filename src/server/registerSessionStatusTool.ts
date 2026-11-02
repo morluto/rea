@@ -103,6 +103,7 @@ export const registerSessionStatusTool = (
         status = await session.status({
           signal: context.mcpReq.signal,
           detail: input.detail,
+          refreshCandidates: input.refresh_candidates,
         });
       } catch (cause) {
         if (!(cause instanceof AnalysisError)) throw cause;

@@ -45,6 +45,7 @@ interface BinarySessionStatusInput {
   readonly cleanupPending?: boolean;
   readonly detail?: BinarySessionDetail;
   readonly signal?: AbortSignal;
+  readonly refreshCandidates?: boolean;
 }
 
 /** Project internal provider routing state into the caller-visible session status. */
@@ -63,6 +64,7 @@ export const binarySessionStatus = async ({
   cleanupPending = false,
   detail = "complete",
   signal,
+  refreshCandidates = false,
 }: BinarySessionStatusInput): Promise<JsonValue> => {
   const routeCapabilities = (
     bundleResourceRoot === undefined
@@ -109,7 +111,13 @@ export const binarySessionStatus = async ({
   const analysisProviderCandidates =
     bundleResourceRoot !== undefined
       ? []
-      : (await router.candidateStatuses(route, signal)).map((candidate) =>
+      : (
+          await router.candidateStatuses(route, {
+            ...(signal === undefined ? {} : { signal }),
+            ...(target === undefined ? {} : { target }),
+            refresh: refreshCandidates,
+          })
+        ).map((candidate) =>
           detail === "summary"
             ? {
                 provider: providerSummary(candidate.provider),
@@ -140,6 +148,12 @@ export const binarySessionStatus = async ({
     capabilities,
     analysis_provider_binding: analysisProviderBinding,
     analysis_provider_candidates: analysisProviderCandidates,
+    analysis_provider_candidates_observed:
+      bundleResourceRoot !== undefined
+        ? "not_applicable"
+        : route.selection === undefined || refreshCandidates
+          ? "status_request"
+          : "target_selection",
     analysis_run:
       runId === undefined
         ? null

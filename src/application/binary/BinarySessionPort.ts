@@ -116,6 +116,7 @@ export interface BinarySessionPort
   status(options?: {
     readonly signal?: AbortSignal;
     readonly detail?: BinarySessionDetail;
+    readonly refreshCandidates?: boolean;
   }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
   /** Read a snapshot with failed descriptors retained for session cleanup retry. */
