@@ -541,6 +541,14 @@ the same artifact. Inline option syntax keeps its observed Evidence. This
 does not execute code or establish runtime configuration; popup overrides from
 `setWindowOpenHandler` are not covered by this constant-options resolution.
 
+A hoisted function does not establish initialization timing by declaration order.
+For classic scripts, the shared index also accounts for matching literal global
+property accesses through `globalThis`, `window`, `self`, and `this`, including
+optional and computed literal access. An early read or an indirect activation
+keeps captured options unknown even when a later bare call exists. ES module
+function declarations are not inferred to be global properties. This remains a
+bounded source-order check, not a proof that runtime activation succeeds.
+
 Recognized literal module-table bootstraps also support bounded lexical
 substitution through module exports, import helper bodies, local wrapper calls,
 returned closures, object spreads, and callback parameters. Recovered Electron
