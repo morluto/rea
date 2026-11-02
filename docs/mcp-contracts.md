@@ -320,6 +320,8 @@ Oversized native inventories likewise include a ready-to-call first
 `native-inventory` page. Reduce its limit or select fields when a row is large.
 An oversized `trace_application_feature` result includes a first `feature-trace`
 page of its retained terminal `paths`; page `nodes` or `edges` from there.
+An oversized `batch_decompile` result includes a first body-free
+`batch-decompile` page of its retained `items`; read bodies from there.
 
 A broad follow-up or `get_evidence_bundle` can also exceed the response budget; exporting
 preserves the complete session without sending it through a single MCP frame.
@@ -622,13 +624,14 @@ reachability. The CLI keeps complete trace JSON; save it and use
 
 ### Selected batch decompile results
 
-`batch_decompile` returns every pseudocode body. `inspect_analysis_view` selects
-from that completed record, retained in the session, saved as an Evidence file or
-imported from a portable bundle, and never repeats decompilation.
-`view: {"kind":"summary"}` reports the producer counts, `source_provider` (the
-composing workflow), `source_analysis_profile_digest`, `decompiling_provider`,
-procedure identity counts, total and largest `pseudocode` size, and
-`limitation_count`.
+`batch_decompile` returns every pseudocode body by default. `detail: "summary"`
+retains the complete batch in the session first and returns its producer counts,
+`source_provider` (the composing workflow), `source_analysis_profile_digest`,
+`decompiling_provider`, procedure identity counts, total and largest
+`pseudocode` size, and `limitation_count`. A server that retains no Evidence
+refuses the summary before analysis. Further views use the returned
+`parent_evidence_id` through `inspect_analysis_view`, or a saved Evidence file or
+portable bundle, and never repeat decompilation.
 
 A `batch-decompile` view selects one `collection` and repeats the batch counts
 and provider identities:
@@ -649,7 +652,11 @@ and provider identities:
 Page `coverage` counts the selection only: exhausting it establishes nothing
 about functions outside the batch. Evidence `limitations` aggregate every item's
 provider observations and are not attributed to one successful item; only error
-items keep their own. The CLI has no batch command; save the Evidence and use
+items keep their own. A page over the response budget offers a smaller selection
+from the same `source`: fewer rows, or one body's `pseudocode` pages when a single
+row does not fit. An inline source offers none, because the record cannot be
+repeated in that reply; resend it with a smaller selection.
+`export_evidence_bundle` remains the complete alternative. The CLI has no batch command; save the Evidence and use
 `inspect-analysis-view` with an `evidence-file` source or `--evidence-bundle`.
 
 Completed `inspect_artifact` and atomic `inventory_artifact` Evidence also
