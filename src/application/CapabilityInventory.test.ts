@@ -8,6 +8,7 @@ import {
   compactToolAvailability,
 } from "./CapabilityInventory.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { cleanupRetryRemediation } from "../domain/analysisErrorRecovery.js";
 import {
   expandToolAvailability,
   toolAvailabilityInventory,
@@ -51,6 +52,29 @@ const enabledPolicy: Parameters<typeof buildCapabilityInventory>[1] = {
   electronObservationEnabled: true,
   v8InspectorObservationEnabled: true,
 };
+
+it("adds the retaining close owner's prerequisite without guessing from a pending flag", () => {
+  const retry = { operation: "close_binary" } as const;
+  const input = { open: false, capabilities: [], cleanup_pending: true };
+  const unavailable = buildCapabilityInventory(
+    { ...input, cleanup_retry: retry },
+    enabledPolicy,
+  ).find(({ name }) => name === "procedure_assembly");
+  expect(unavailable).toMatchObject({
+    available: false,
+    reason: "target_required",
+    remediation: expect.stringContaining(cleanupRetryRemediation(retry)),
+  });
+  const unknownOwner = buildCapabilityInventory(input, enabledPolicy).find(
+    ({ name }) => name === "procedure_assembly",
+  );
+  const original = buildCapabilityInventory(
+    { open: false, capabilities: [] },
+    enabledPolicy,
+  ).find(({ name }) => name === "procedure_assembly");
+  expect(unknownOwner).toEqual(original);
+  expect(unknownOwner?.reason).toBe("target_required");
+});
 
 const status = (
   options: {
