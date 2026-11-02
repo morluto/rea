@@ -80,3 +80,37 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     );
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "does not invent XHR URL slots after spreads through $0",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-xhr-spread-");
+    await writeFixtureFiles(root, {
+      "main.js": `
+        new XMLHttpRequest().open(...args, '/not-a-url');
+        const x = new XMLHttpRequest();
+        x.open(...args, '/also-not-a-url');
+        function later() { x.open('GET', '/nested'); }
+        x.open = custom;
+      `,
+    });
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const observations = graph.nodes
+      .filter(({ kind }) => kind === "endpoint")
+      .flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties),
+      );
+    expect(
+      observations.some(
+        ({ value }) => value === "/not-a-url" || value === "/also-not-a-url",
+      ),
+    ).toBe(false);
+    expect(observations).toContainEqual(
+      expect.objectContaining({
+        value: "/nested",
+        interpretation: "candidate",
+      }),
+    );
+    expect(graph.coverage.status).toBe("partial");
+  },
+);

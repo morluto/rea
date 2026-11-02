@@ -122,13 +122,23 @@ const isXhrOpenRequest = (
       semanticOpaqueGlobalMayHaveChanged(callee, bindings)
     )
       return "unknown";
+    if (initializer === undefined || initializer.projection.length !== 0)
+      return false;
     if (
-      initializer === undefined ||
-      initializer.projection.length !== 0 ||
       !semanticBindingAtRead(binding, receiver, bindings.parentsByNode)
         .hasDefiniteInitializer
-    )
+    ) {
+      // Nested activation may occur before or after initialization or mutation.
+      // Preserve uncertainty only when the retained initializer identifies XHR.
+      if (
+        t.isNewExpression(initializer.node) &&
+        globalReferenceNamespace(initializer.node.callee, bindings, [
+          "XMLHttpRequest",
+        ]) !== undefined
+      )
+        return "unknown";
       return false;
+    }
     receiver = unwrapJavaScriptExpression(initializer.node).node;
   }
   if (!t.isNewExpression(receiver)) return false;

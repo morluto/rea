@@ -1255,6 +1255,28 @@ it("resolves stable request aliases and reports dynamic targets without inventin
   );
 });
 
+it("resolves a direct Request passed to fetch while preserving constructor identity", () => {
+  const direct = analyzeWebBundleFixture(
+    inspection("fetch(new Request('/direct'));"),
+  );
+  expect(direct.observations.endpoints).toContainEqual(
+    expect.objectContaining({ value: "/direct" }),
+  );
+  expect(direct.completeness.status).toBe("complete");
+  for (const source of [
+    "function f(Request) { fetch(new Request('/shadowed')); }",
+    "Request=custom; fetch(new Request('/replaced'));",
+    "eval('Request=custom'); fetch(new Request('/opaque'));",
+  ]) {
+    const report = analyzeWebBundleFixture(inspection(source));
+    expect(report.observations.endpoints).toEqual([]);
+    expect(report.completeness.status).toBe("partial");
+    expect(report.unknowns).toContainEqual(
+      expect.objectContaining({ dimension: "network_target" }),
+    );
+  }
+});
+
 it("does not promote mutated, conditional or shadowed request targets", () => {
   for (const source of [
     `let target = '/old'; target = '/new'; fetch(target);`,

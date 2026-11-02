@@ -41,7 +41,7 @@ it("preserves request target coverage through MCP worker and retained summary", 
       method === "Debugger.getScriptSource"
         ? {
             scriptSource:
-              "const endpoint='/known';fetch(endpoint);fetch(dynamicTarget);",
+              "const endpoint='/known';fetch(endpoint);fetch(new Request('/direct'));fetch(dynamicTarget);",
           }
         : undefined,
   });
@@ -61,6 +61,9 @@ it("preserves request target coverage through MCP worker and retained summary", 
     expect(report.completeness.status).toBe("partial");
     expect(report.observations.endpoints).toContainEqual(
       expect.objectContaining({ value: "/known" }),
+    );
+    expect(report.observations.endpoints).toContainEqual(
+      expect.objectContaining({ value: "/direct" }),
     );
     expect(report.unknowns).toContainEqual(
       expect.objectContaining({ dimension: "network_target" }),

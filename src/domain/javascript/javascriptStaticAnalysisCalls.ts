@@ -57,6 +57,7 @@ import {
   evaluateSemanticExpressionProvenance,
 } from "./javascriptSemanticValues.js";
 import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutationInitializers.js";
+import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import {
   semanticFactoryLoaderMemberAt,
   semanticRequireCallAt,
@@ -524,6 +525,7 @@ const requestConstructorUrl = (
   const target = unwrapJavaScriptExpression(node).node;
   if (
     t.isNewExpression(target) &&
+    !semanticOpaqueGlobalMayHaveChanged(target.callee, bindings) &&
     isUnmodifiedGlobalReference(target.callee, bindings, "Request")
   )
     return stringValue(target.arguments[0]);
@@ -610,6 +612,17 @@ const inspectLiteralEndpointCall = (
   name: string,
   context: FindingContext,
 ): void => {
+  // A spread can occupy any number of argument slots. A literal after it
+  // cannot be identified as the URL argument of an XHR open call.
+  if (
+    (name === "open" || name.endsWith(".open")) &&
+    node.arguments.slice(0, 2).some((argument) => t.isSpreadElement(argument))
+  ) {
+    const xhr = context.xhrOpenRequest?.(node);
+    if (xhr === true || xhr === "unknown")
+      context.accumulator.unknownFindings++;
+    return;
+  }
   const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
   const endpoint = endpointArgumentHelper(
     name,
@@ -733,6 +746,13 @@ export const resolvedRequestTarget = (
   bindings: JavaScriptSemanticAnalysisState,
   index: JavaScriptBindingIndex,
 ): string | undefined => {
+  const direct = unwrapJavaScriptExpression(node).node;
+  if (
+    t.isNewExpression(direct) &&
+    direct.arguments.length === 1 &&
+    isFetchCall(site, bindings)
+  )
+    return requestConstructorUrl(direct, bindings);
   const reference = requestReferenceNode(node);
   // A toString result is selected before the enclosing request invocation.
   const expression = unwrapJavaScriptExpression(node).node;

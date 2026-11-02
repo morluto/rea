@@ -170,3 +170,41 @@ it("recovers inline XHR destinations and keeps compromised identities uncertain"
   );
   expect(result.parse_status).toBe("partial");
 });
+
+it("does not assign an XHR URL position after an earlier spread", () => {
+  for (const source of [
+    "new XMLHttpRequest().open(...args, '/not-a-known-url');",
+    "const x = new XMLHttpRequest(); x.open(...args, '/not-a-known-url');",
+    "const x = new XMLHttpRequest(); x.open('GET', ...args, '/not-a-known-url');",
+  ]) {
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(
+      result.endpoints.some(({ value }) => value === "/not-a-known-url"),
+    ).toBe(false);
+    expect(
+      result.analysis_coverage!.semantics.unknown_findings,
+    ).toBeGreaterThan(0);
+    expect(result.parse_status).toBe("partial");
+  }
+});
+
+it("does not infer URL slots or XHR uncertainty for unrelated spread calls", () => {
+  const result = analyzeJavaScriptStaticSource(
+    "client.open(...args, '/not-a-known-url');",
+  );
+  expect(result.endpoints).toEqual([]);
+  expect(result.analysis_coverage!.semantics.unknown_findings).toBe(0);
+});
+
+it("reports uncertain XHR identity across nested activation and instance replacement", () => {
+  const result = analyzeJavaScriptStaticSource(
+    "const x = new XMLHttpRequest(); function f() { x.open('GET', '/nested'); } x.open = custom;",
+  );
+  expect(result.endpoints).toContainEqual(
+    expect.objectContaining({ value: "/nested", interpretation: "candidate" }),
+  );
+  expect(result.analysis_coverage!.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
+  expect(result.parse_status).toBe("partial");
+});
