@@ -172,6 +172,10 @@ export class ReverseEngineeringService {
     } catch (cause) {
       if (!(cause instanceof DigestFileCleanupFailure)) throw cause;
       const original = cause.cause;
+      const cancellationCause =
+        original instanceof AnalysisCancelledError
+          ? original.cause
+          : (arguments_[1]?.reason ?? original);
       const options = {
         cause: original,
         cleanup: {
@@ -194,7 +198,10 @@ export class ReverseEngineeringService {
               },
             )
           : original instanceof AnalysisCancelledError || arguments_[1]?.aborted
-            ? new AnalysisCancelledError(operation, options)
+            ? new AnalysisCancelledError(operation, {
+                ...options,
+                cause: cancellationCause,
+              })
             : new AnalysisOutputError(
                 operation,
                 "Artifact descriptor cleanup remains incomplete.",
@@ -203,6 +210,7 @@ export class ReverseEngineeringService {
       this.#pendingCleanup.set(cause.owner, {
         observation: options.cleanup,
         failures: new Set([failure]),
+        operation,
       });
       throw failure;
     }
@@ -508,6 +516,25 @@ export class ReverseEngineeringService {
           this.#open,
         );
     } catch (cause) {
+      if (
+        cause instanceof AnalysisCancelledError &&
+        cause.operation !== operation
+      )
+        return err(
+          new AnalysisCancelledError(operation, {
+            cause: cause.cause,
+            ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
+            ...(cause.cleanupPrimary === undefined
+              ? {}
+              : { cleanupPrimary: cause.cleanupPrimary }),
+            ...(cause.diagnostics === undefined
+              ? {}
+              : { diagnostics: cause.diagnostics }),
+            ...(cause.capturedOutput === undefined
+              ? {}
+              : { capturedOutput: cause.capturedOutput }),
+          }),
+        );
       if (cause instanceof AnalysisError) return err(cause);
       const code = commandFailureCode(cause);
       if (preflightCancelled(signal, cause, code))

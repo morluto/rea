@@ -533,11 +533,12 @@ export class BinarySession
     ) => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
     options: BinarySessionOpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
-    const queuedAtCloseEpoch = this.#closeEpoch;
     return (async () => {
+      let deferred = false;
+      let closeEpochAtDeferral = 0;
       for (;;) {
         const opened = await this.#serialize(async (admittedThrough) => {
-          if (this.#closeEpoch !== queuedAtCloseEpoch)
+          if (deferred && this.#closeEpoch !== closeEpochAtDeferral)
             return err(new AnalysisCancelledError("open_binary"));
           if (isAborted(options.signal))
             return err(
@@ -550,7 +551,11 @@ export class BinarySession
           // Do not hold the lifecycle queue while an external writer is still
           // active. Its owner may need this queue to interrupt or dispose the
           // target before the open can continue.
-          if (this.#externalMutationOwnerPending) return undefined;
+          if (this.#externalMutationOwnerPending) {
+            deferred = true;
+            closeEpochAtDeferral = this.#closeEpoch;
+            return undefined;
+          }
           const admitted = await this.#withLoadedSnapshot(options);
           if (!admitted.ok) return admitted;
           return this.#openWithinTransition(
@@ -1403,6 +1408,7 @@ export class BinarySession
       providerOperationHealth: client?.operationHealthSnapshot?.() ?? null,
       ...(cleanupRetry === undefined ? {} : { cleanupRetry }),
       cleanupPending:
+        this.#externalMutationOwnerPending ||
         this.#externalMutationCleanupFailure?.cleanupIncomplete === true ||
         this.#retainsCloseCleanup(),
     });

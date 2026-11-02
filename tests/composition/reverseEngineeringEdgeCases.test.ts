@@ -12,10 +12,14 @@ import {
 
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
 import {
+  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
 } from "../../src/domain/analysisErrorCore.js";
-import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
+import {
+  DigestFileCleanupFailure,
+  ReverseEngineeringService as CoreReverseEngineeringService,
+} from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { objdumpCommand } from "../../src/objdump/ObjdumpCommand.js";
 import {
@@ -681,6 +685,75 @@ it("cancels after operation admission and before starting the artifact digest", 
     });
     expect(reads).toBeGreaterThanOrEqual(2);
     expect(digestStarted).toBe(false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("preserves outer operation name and caller cause when artifact digest is cancelled", async () => {
+  const { directory, path } = await createArtifact();
+  const callerReason = new Error("aborted by caller");
+  const service = new ReverseEngineeringService({
+    digest: async () => {
+      throw new AnalysisCancelledError("artifact_digest", {
+        cause: callerReason,
+      });
+    },
+  });
+
+  try {
+    const result = await service.inspectWithObjdump({
+      path,
+      operation: "file_headers",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.error instanceof AnalysisCancelledError) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.operation).toBe("inspect_with_objdump");
+      expect(result.error.cause).toBe(callerReason);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("preserves original cancellation cause and outer operation when digest descriptor cleanup fails", async () => {
+  const { directory, path } = await createArtifact();
+  const callerReason = new Error("aborted by caller");
+  const fakeOwner = {
+    resource: "artifact-descriptor:test",
+    stop: async () => ({
+      status: "incomplete" as const,
+      reason: "descriptor close pending",
+    }),
+  };
+  const service = new ReverseEngineeringService({
+    digest: async () => {
+      throw new DigestFileCleanupFailure(
+        new AnalysisCancelledError("artifact_digest", { cause: callerReason }),
+        fakeOwner as any,
+      );
+    },
+  });
+
+  try {
+    const result = await service.inspectWithObjdump({
+      path,
+      operation: "file_headers",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.error instanceof AnalysisCancelledError) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.operation).toBe("inspect_with_objdump");
+      expect(result.error.cause).toBe(callerReason);
+      expect(result.error.cleanupIncomplete).toBe(true);
+    }
+
+    const retried = await service.retryCleanup("unrelated_operation");
+    expect(retried.ok).toBe(false);
+    if (!retried.ok && "operation" in retried.error) {
+      expect(retried.error.operation).toBe("inspect_with_objdump");
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

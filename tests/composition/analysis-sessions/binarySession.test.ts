@@ -395,6 +395,34 @@ it("cancels an open superseded by a later close while waiting for a debugger own
   expect(session.activeTarget()).toBeUndefined();
 });
 
+it("opens a target queued after an earlier close without external mutation", async () => {
+  const [target, replacement] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  expect((await session.open(target)).ok).toBe(true);
+
+  const closing = session.close();
+  const opening = session.open(replacement);
+
+  expect(await closing).toEqual(resultOk(null));
+  expect(await opening).toMatchObject({ ok: true });
+  expect(session.activeTarget()?.path).toBe(replacement);
+  await session.close();
+});
+
+it("reports cleanup_pending while an external mutation owner is pending", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  expect((await session.open(target)).ok).toBe(true);
+  const externalCompletion = createDeferred<void>();
+  session.retainExternalMutationOwner(externalCompletion.promise);
+
+  expect(await session.status()).toMatchObject({ cleanup_pending: true });
+  externalCompletion.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(await session.status()).toMatchObject({ cleanup_pending: false });
+  await session.close();
+});
+
 it.each([false, true])(
   "close retains an external writer until its owner settles (active: %s)",
   async (active) => {
