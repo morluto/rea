@@ -10,7 +10,10 @@ import {
 } from "../../contracts/native/functionMatchingContracts.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { readFunctionInventory } from "../../domain/native/functionInventory.js";
-import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatching.js";
+import {
+  nativeFunctionMatchingSchema,
+  nativeFunctionByteSourceGuidance,
+} from "../../domain/native/functionMatching.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -92,6 +95,38 @@ const matchWithAdmission = async (
     rightFunctions,
     { identicalBytesComparable: compatible, checkpoint },
   );
+  const byteSources: {
+    side: "left" | "right";
+    evidence_id: string;
+    limitations: string[];
+  }[] = [];
+  for (const [side, functions, observations] of [
+    ["left", leftFunctions, leftObservations],
+    ["right", rightFunctions, rightObservations],
+  ] as const) {
+    const used = new Set<string>();
+    for (const item of functions)
+      for (const id of item.member.evidence_links) {
+        if (!used.has(id)) await checkpoint(128 + id.length * 4);
+        used.add(id);
+      }
+    for (const observation of observations) {
+      if (
+        observation.operation !== "read_bytes" ||
+        !used.has(observation.evidence_id)
+      )
+        continue;
+      used.delete(observation.evidence_id);
+      await checkpoint(512 + observation.evidence_id.length * 8);
+      for (const limitation of observation.limitations)
+        await checkpoint(128 + limitation.length * 8);
+      byteSources.push({
+        side,
+        evidence_id: observation.evidence_id,
+        limitations: [...observation.limitations],
+      });
+    }
+  }
   const limitations = [
     ...new Set([
       ...left.limitations.map((x) => `Left: ${x}`),
@@ -99,6 +134,7 @@ const matchWithAdmission = async (
       "Coverage is restricted to the supplied provider-observed inventories; missing/truncated inventory facts never prove absence from either binary.",
       "Only unique exact symbols and bytes are paired. Compatible observed CFG/call/string fingerprints propose unresolved candidates, never identity or equivalence. Missing structural coverage stays unknown.",
       "Name or byte correspondence is not behavioral equivalence; use analyze_function for selected pairs, then compare_functions. Existing dossier pairs include directly usable retained-reference inputs.",
+      ...(byteSources.length === 0 ? [] : [nativeFunctionByteSourceGuidance]),
       ...(!compatible
         ? [
             "Identical-byte matching unavailable: input architectures are missing or differ.",
@@ -139,6 +175,8 @@ const matchWithAdmission = async (
       ).length,
     },
     summary,
+    byte_sources_count: byteSources.length,
+    byte_sources: byteSources,
     matches,
     limitations,
   });
