@@ -16,8 +16,9 @@ import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { parseEnvironmentName } from "../config/environmentName.js";
 import {
+  mcpHttpHostSchema,
+  mcpHttpPortSchema,
   parseMcpHttpEndpoint,
-  mcpHttpListenerPortSchema,
   type McpHttpEndpoint,
 } from "../config/mcpHttpEndpoint.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -678,12 +679,11 @@ export const registerEnvironmentCommands = (
         .describe(
           "Serve pure replay: derive no state, serve every manifest tool from its retained records and answer every /agentenv method as not found",
         ),
-      host: z
-        .string()
-        .min(1)
+      // Flags use the MCP_HOST and MCP_PORT owners shared with rea mcp --http.
+      host: mcpHttpHostSchema
         .optional()
         .describe("Listener address; default MCP_HOST, else 127.0.0.1"),
-      port: mcpHttpListenerPortSchema
+      port: mcpHttpPortSchema
         .optional()
         .describe(
           "Listener port; default MCP_PORT, else 0 for an ephemeral port",
