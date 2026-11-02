@@ -424,8 +424,10 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
   without an export directory is a complete empty inventory.
 - ELF rows list defined `.dynsym` symbols with global, weak or GNU-unique
   binding and default or protected visibility. Each row keeps `value`
-  (`st_value` as stored; bit 0 marks Thumb code on 32-bit ARM), `size`, `type`
-  and `binding`. ELF string tables do not declare a text encoding. Names that
+  (`st_value` as stored; bit 0 marks Thumb code on 32-bit ARM), `size`, `type`,
+  `binding` and `visibility` (`"default"` or `"protected"`; `"unknown"` in older
+  historical Evidence where visibility was not recorded). ELF string tables do
+  not declare a text encoding. Names that
   contain non-ASCII bytes are decoded as UTF-8 when those bytes form valid
   UTF-8; `name_utf8_decodable` records whether the non-ASCII name bytes are
   valid UTF-8 and `name_bytes_base64` retains those exact bytes (`null` for

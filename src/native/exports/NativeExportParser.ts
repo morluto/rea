@@ -280,6 +280,10 @@ const ELF_BINDINGS: Readonly<Record<number, ElfExport["binding"]>> = {
   2: "weak",
   10: "unique",
 };
+const ELF_VISIBILITIES: Readonly<Record<number, ElfExport["visibility"]>> = {
+  0: "default",
+  3: "protected",
+};
 
 const versionSectionData = (
   reader: BinaryReader,
@@ -670,12 +674,12 @@ function* parseElfExports(
       );
     const symbol = parsedSymbol.value;
     const binding = ELF_BINDINGS[symbol.binding];
-    const visibility = symbol.other & 3;
+    const visibility = ELF_VISIBILITIES[symbol.other & 3];
     // Undefined, local and hidden/internal symbols are not exports.
     if (
       binding === undefined ||
       symbol.section_index === 0 ||
-      (visibility !== 0 && visibility !== 3)
+      visibility === undefined
     )
       continue;
     let version: ElfExport["version"] = null;
@@ -742,6 +746,7 @@ function* parseElfExports(
       size: symbol.size.toString(),
       type: ELF_TYPES[symbol.type] ?? "other",
       binding,
+      visibility,
       version,
     });
   }
