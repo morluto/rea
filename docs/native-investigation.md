@@ -383,6 +383,11 @@ sites remain distinct. A static route does not establish runtime reachability.
 Swift/closure dispatch requires resolved static references; unavailable ABI
 forms remain unknown.
 
+Encoded Objective-C method records retain their own locations in dispatch
+Evidence. A handler node uses the implementation address with an unknown file
+offset unless that function already has an independently located graph node;
+the method-record offset does not locate the handler's code.
+
 Incomplete reference kinds do not discard known typed calls or partial
 provider call references. A `provider_call` with `observed` resolution retains
 the provider-reported call site and endpoint without claiming generic direct,
