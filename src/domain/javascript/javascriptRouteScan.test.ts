@@ -412,6 +412,51 @@ it("resolves History API identity at the call site", () => {
   }
 });
 
+it("preserves ambient Navigation API identity across replacements and opaque effects", () => {
+  const early = analyze(
+    "navigation.navigate('/early'); navigation.navigate=custom; navigation.navigate('/late');",
+  );
+  expect(early.candidates.map(({ path }) => path)).toEqual(["/early"]);
+  expect(
+    analyze("navigation.navigate=custom; navigation.navigate('/after');")
+      .candidates,
+  ).toEqual([]);
+  expect(analyze("window.navigation.navigate('/window');").candidates).toEqual(
+    expect.arrayContaining([expect.objectContaining({ path: "/window" })]),
+  );
+  for (const source of [
+    "if (flag) navigation.navigate=custom; navigation.navigate('/conditional');",
+    "eval('navigation.navigate=custom'); navigation.navigate('/opaque');",
+    "function f(){navigation.navigate('/nested');} navigation.navigate=custom;",
+    "navigation.navigate(target);",
+    "navigation.navigate('../relative');",
+    "navigation.navigate(...targets);",
+  ]) {
+    const result = analyze(source);
+    expect(result.candidates).toEqual([]);
+    expect(result.unresolved.length).toBeGreaterThan(0);
+  }
+  expect(
+    analyze("navigation.navigate('https://elsewhere.example/path');")
+      .candidates,
+  ).toEqual([]);
+  expect(
+    analyze("function f(router){router.navigate('/local');}").candidates,
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/local", confidence: "low" }),
+    ]),
+  );
+  expect(
+    analyze("function f(navigation){navigation.navigate('/local');}")
+      .candidates,
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/local", confidence: "low" }),
+    ]),
+  );
+});
+
 it("recovers direct browser location assignment destinations", () => {
   const facts = analyze(
     `window.location.href = '/checkout?step=1'; location.href = '/account#top';`,

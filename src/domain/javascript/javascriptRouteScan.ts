@@ -307,6 +307,7 @@ export class JavaScriptRouteScan {
   readonly #historyReplaceReader: ReturnType<
     typeof createGlobalReferenceReader
   >;
+  readonly #navigationReader: ReturnType<typeof createGlobalReferenceReader>;
 
   private constructor(
     private readonly index: JavaScriptBindingIndex,
@@ -323,6 +324,10 @@ export class JavaScriptRouteScan {
     this.#historyReplaceReader = createGlobalReferenceReader(index.bindings, [
       "history",
       "replaceState",
+    ]);
+    this.#navigationReader = createGlobalReferenceReader(index.bindings, [
+      "navigation",
+      "navigate",
     ]);
     this.#factBytes = jsonValueByteLength({
       candidates: [],
@@ -802,13 +807,16 @@ export class JavaScriptRouteScan {
     }
     if (this.#result.capacity !== null || t.isNewExpression(node)) return;
     if (
-      ["pushState", "replaceState", "assign", "replace"].includes(name) &&
+      ["pushState", "replaceState", "assign", "replace", "navigate"].includes(
+        name,
+      ) &&
       [
         ["history", "pushState"],
         ["history", "replaceState"],
         ["location", "assign"],
         ["location", "replace"],
         ["document", "location", "assign"],
+        ["navigation", "navigate"],
       ].some(
         (path) =>
           globalReferenceNamespace(
@@ -842,6 +850,45 @@ export class JavaScriptRouteScan {
         "The History API identity may have been replaced before this call.",
       );
       return;
+    }
+    if (name === "navigate") {
+      const status = this.#navigationReader(node.callee).status;
+      if (status === "unknown") {
+        if (
+          first !== undefined &&
+          !t.isSpreadElement(first) &&
+          !t.isArgumentPlaceholder(first)
+        )
+          this.#ownDynamicValue(first, true, true, true);
+        this.#unknown(
+          "navigation-target",
+          node,
+          "The Navigation API identity may have been replaced before this call.",
+        );
+        return;
+      }
+      if (status !== "unrelated" && status !== "unmodified") {
+        if (
+          first !== undefined &&
+          !t.isSpreadElement(first) &&
+          !t.isArgumentPlaceholder(first)
+        )
+          this.#ownDynamicValue(first, true, true, true);
+        return;
+      }
+      if (
+        status === "unmodified" &&
+        (first === undefined ||
+          t.isSpreadElement(first) ||
+          t.isArgumentPlaceholder(first))
+      ) {
+        this.#unknown(
+          "navigation-target",
+          node,
+          "The Navigation API destination is unavailable or supplied through a spread argument.",
+        );
+        return;
+      }
     }
     if (historyStatus === "unmodified") {
       // The state and title are data, not navigation destinations.

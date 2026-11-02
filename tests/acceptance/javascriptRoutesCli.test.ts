@@ -23,6 +23,63 @@ const expectAccountRoutes = (items: unknown[]) => {
   );
 };
 
+it("keeps Navigation API routes before a later replacement through MCP", async () => {
+  const path = await createTestTempDirectory("rea-navigation-api-");
+  await writeFile(
+    join(path, "app.js"),
+    "navigation.navigate('/early'); navigation.navigate=custom; navigation.navigate('/late');",
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  expect(routeViewFromEvidence(response.structuredContent).items).toEqual([
+    expect.objectContaining({ path: "/early" }),
+  ]);
+});
+
+cliTest(
+  "keeps Navigation API routes before replacement through CLI",
+  async ({ cli }) => {
+    const path = await createTestTempDirectory("rea-navigation-api-cli-");
+    const home = await createTestTempDirectory("rea-navigation-api-home-");
+    const output = join(
+      await createTestTempDirectory("rea-navigation-evidence-"),
+      "evidence.json",
+    );
+    await writeFile(
+      join(path, "app.js"),
+      "navigation.navigate('/early'); navigation.navigate=custom; navigation.navigate('/late');",
+    );
+    const response = await cli.run({
+      environment: { HOME: home },
+      arguments: [
+        "analyze-javascript-application",
+        path,
+        "--detail",
+        "summary",
+        "--view",
+        JSON.stringify({
+          kind: "javascript-routes",
+          collection: "routes",
+          fields: ["path"],
+        }),
+        "--evidence_output",
+        output,
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const view = routeViewFromEvidence(
+      (response.json as { summary: unknown }).summary,
+    );
+    expect(view.items).toEqual([expect.objectContaining({ path: "/early" })]);
+  },
+);
+
 it("reports opaque global navigation as uncertain through MCP", async () => {
   const path = await createTestTempDirectory("rea-opaque-navigation-");
   await writeFile(
