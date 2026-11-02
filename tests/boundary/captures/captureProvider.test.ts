@@ -16,6 +16,7 @@ import { Cli } from "incur";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
 import { silentLogger } from "../../../src/logger.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 
 // A command-boundary simulator: real process ownership/filesystem, not real TShark coverage.
 const fixture = async (mode = "ok", failCleanup = false) => {
@@ -205,9 +206,12 @@ it("returns canonical alias output through the public packet-capture CLI", async
     ],
     { stdout: (text) => (stdout += text), exit: () => {} },
   );
-  const result: unknown = JSON.parse(stdout);
-  expect(JSON.stringify(result)).toContain('"bootp.type"');
-  expect(JSON.stringify(result)).toContain('"dhcp.type":["1"]');
+  const evidence = parseEvidence(JSON.parse(stdout));
+  const report = packetCaptureSchema.parse(evidence.normalized_result);
+  expect(report.selection.fields).toEqual(["bootp.type"]);
+  expect(report.packets).toEqual([
+    { "frame.number": ["1"], "dhcp.type": ["1"] },
+  ]);
 });
 
 it("bounds admission without queuing additional snapshots or delaying cancellation", async () => {
@@ -634,8 +638,14 @@ it("discovers installed protocols and field definitions without a capture", asyn
       {
         records: [
           {
+            kind: "field",
+            name: "Other Vendor",
             abbreviation: "usb.idVendor",
             field_type: "FT_UINT32",
+            parent_protocol: "usb",
+            display_base: "BASE_HEX",
+            bitmask: "0x0",
+            description: "Second registration",
             source_line: 3,
           },
         ],

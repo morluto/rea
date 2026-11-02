@@ -372,6 +372,7 @@ const runSetupWorkflow = async (
           remediation:
             combineRemediation(hopperFailure.remediation, result.remediation) ??
             hopperFailure.remediation,
+          ...hopperDownload(hopperFailure),
         };
   if (clientFailure !== undefined)
     return withHopperFailure(await fail(clientFailure));
@@ -407,9 +408,16 @@ const runSetupWorkflow = async (
     doctor,
     clientStates,
     ...(remediation === undefined ? {} : { remediation }),
-    ...(hopperFailure === undefined ? {} : { code: hopperFailure.code }),
+    ...(hopperFailure === undefined
+      ? {}
+      : { code: hopperFailure.code, ...hopperDownload(hopperFailure) }),
   };
 };
+
+const hopperDownload = (
+  failure: SetupHopperInstallFailure,
+): Pick<SetupResult, "download"> =>
+  failure.download === undefined ? {} : { download: failure.download };
 
 const installHopperAction = async (input: {
   readonly host: SetupHost;

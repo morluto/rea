@@ -31,7 +31,11 @@ export const registerCompareApplicationVersionsTool = (
             compareContract.name,
             () =>
               Promise.resolve(
-                compareApplicationVersionsEvidence(input, options.evidenceById),
+                compareApplicationVersionsEvidence(
+                  input,
+                  options.evidenceById,
+                  { signal: context.mcpReq.signal },
+                ),
               ),
           );
           if (!result.ok)

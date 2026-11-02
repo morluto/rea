@@ -4,6 +4,10 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../../scripts/lib/verifier-cleanup.mjs";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { toolOutputSchemaWithMetadata } from "../../../src/contracts/toolSchemaMetadata.js";
 
@@ -24,6 +28,16 @@ const connect = async (server: McpServer, client: Client): Promise<void> => {
   await client.connect(clientTransport);
 };
 
+const expectState = async (
+  client: Client,
+  name: string,
+  state: string,
+): Promise<void> => {
+  const result = await client.callTool({ name });
+  expect(result.isError).not.toBe(true);
+  expect(result.structuredContent).toEqual({ state });
+};
+
 it("validates changed schemas after catalog refreshes and availability changes", async () => {
   const client = new Client({ name: "output-reuse-test", version: "1" });
   const server = new McpServer({ name: "output-reuse-fixture", version: "1" });
@@ -39,27 +53,19 @@ it("validates changed schemas after catalog refreshes and availability changes",
     { inputSchema: z.strictObject({}), outputSchema: schema },
     () => ({ content: [], structuredContent: { state: "ready" } }),
   );
-  try {
+  await withVerifierCleanup(async () => {
     await connect(server, client);
     await client.listTools();
-    expect(
-      (await client.callTool({ name: "selected" })).structuredContent,
-    ).toEqual({
-      state: "ready",
-    });
+    await expectState(client, "selected", "ready");
     await client.listTools();
-    await client.callTool({ name: "equivalent" });
+    await expectState(client, "equivalent", "ready");
 
     selected.update({
       outputSchema: advertised(z.strictObject({ state: z.literal("updated") })),
     });
     state = "updated";
     await client.listTools();
-    expect(
-      (await client.callTool({ name: "selected" })).structuredContent,
-    ).toEqual({
-      state: "updated",
-    });
+    await expectState(client, "selected", "updated");
     selected.disable();
     const unavailable = await client.listTools();
     expect(unavailable.tools.some((tool) => tool.name === "selected")).toBe(
@@ -68,19 +74,17 @@ it("validates changed schemas after catalog refreshes and availability changes",
     await expect(client.callTool({ name: "selected" })).rejects.toThrow(
       /not found|disabled/iu,
     );
-    await client.callTool({ name: "equivalent" });
+    await expectState(client, "equivalent", "ready");
     selected.enable();
     await client.listTools();
-    await client.callTool({ name: "selected" });
-  } finally {
-    await Promise.allSettled([client.close(), server.close()]);
-  }
+    await expectState(client, "selected", "updated");
+  }, [() => client.close(), () => server.close()]);
 });
 
 it("uses the new server's schema after reconnecting the client", async () => {
   const client = new Client({ name: "output-reconnect-test", version: "1" });
   const servers: McpServer[] = [];
-  try {
+  await withVerifierCleanup(async () => {
     for (const state of ["first", "second"]) {
       const server = new McpServer({ name: `fixture-${state}`, version: "1" });
       servers.push(server);
@@ -94,18 +98,14 @@ it("uses the new server's schema after reconnecting the client", async () => {
       );
       await connect(server, client);
       await client.listTools();
-      expect(
-        (await client.callTool({ name: "selected" })).structuredContent,
-      ).toEqual({ state });
+      await expectState(client, "selected", state);
       await client.close();
       await server.close();
     }
-  } finally {
-    await Promise.allSettled([
-      client.close(),
-      ...servers.map((server) => server.close()),
-    ]);
-  }
+  }, [
+    () => client.close(),
+    () => closeVerifierResources(servers.map((server) => () => server.close())),
+  ]);
 });
 
 it("advertises stable output identity without interpreting example data as references", async () => {
@@ -130,7 +130,7 @@ it("advertises stable output identity without interpreting example data as refer
     },
     () => ({ content: [], structuredContent: value }),
   );
-  try {
+  await withVerifierCleanup(async () => {
     await connect(server, client);
     const first = await client.listTools();
     const second = await client.listTools();
@@ -150,7 +150,5 @@ it("advertises stable output identity without interpreting example data as refer
     );
     expect(validate({ payload: 7 }).valid).toBe(false);
     expect(validate({ ...value, unexpected: true }).valid).toBe(false);
-  } finally {
-    await Promise.allSettled([client.close(), server.close()]);
-  }
+  }, [() => client.close(), () => server.close()]);
 });

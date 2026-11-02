@@ -31,7 +31,7 @@ import {
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import type { ArtifactResourceOwner } from "../artifacts/ArtifactResourceScope.js";
 
-import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacOSProviderMetadata.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacosProviderIdentity.js";
 
 type SignatureOwner = Extract<
   ArtifactResourceOwner,

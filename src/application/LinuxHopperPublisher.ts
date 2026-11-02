@@ -125,11 +125,11 @@ export class LinuxHopperPublisher {
           timeoutMs: RELEASE_METADATA_TIMEOUT_MS,
         });
         if (!response.ok)
-          throw new HopperReleaseError(
-            "release_metadata",
-            "The official Hopper release feed is unavailable.",
-          );
-        const decoded = parseHopperReleaseJson(response.bytes);
+          throw HopperReleaseError.fromDownload("release_metadata", {
+            request: "release_feed",
+            ...response.error,
+          });
+        const decoded = parseHopperReleaseJson(response.value);
         if (!decoded.ok) throw decoded.cause;
         this.#feed = parseLinuxHopperReleases(decoded.value);
       }
@@ -189,11 +189,11 @@ export class LinuxHopperPublisher {
           timeoutMs: RELEASE_METADATA_TIMEOUT_MS,
         });
         if (!response.ok)
-          throw new HopperReleaseError(
-            "verification_unavailable",
-            "The official Hopper public key is unavailable.",
-          );
-        publicKey = decodeUtf8(response.bytes);
+          throw HopperReleaseError.fromDownload("verification_unavailable", {
+            request: "public_key",
+            ...response.error,
+          });
+        publicKey = decodeUtf8(response.value);
       }
       const packageSha256 = createHash("sha256").update(bytes).digest("hex");
       // Every read still validates file identity, byte bounds and selected metadata.
@@ -533,12 +533,12 @@ export class LinuxHopperPublisher {
             signal === undefined ? {} : { signal },
           );
           if (!response.ok)
-            throw new HopperReleaseError(
-              "download",
-              "The official Hopper package is unavailable for publisher verification.",
-            );
+            throw HopperReleaseError.fromDownload("download", {
+              request: "package",
+              ...response.error,
+            });
           const archive = join(root, "archive");
-          await writeFile(archive, response.bytes, { flag: "wx", mode: 0o600 });
+          await writeFile(archive, response.value, { flag: "wx", mode: 0o600 });
           const verified = await this.#verifyArchive(
             family,
             selected.value,

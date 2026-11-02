@@ -10,6 +10,7 @@ import {
 import { projectManagedMemberView } from "./managedMemberView.js";
 
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"a".repeat(64)}`,
   operation: "inspect_managed_members",
   normalizedResult,

@@ -91,15 +91,20 @@ it("collects the latest attempt for recent completed CI and Release runs into a 
       headBranch: null,
     },
   ]);
-  expect(manifest.runs).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        status: "collected",
-        rawPath: expect.any(String),
-        reportPath: expect.any(String),
-      }),
-    ]),
-  );
+  for (const { id, runAttempt, status, rawPath, reportPath } of manifest.runs) {
+    const directory = join(
+      fixture.outputDirectory,
+      "runs",
+      `${id}-${runAttempt}`,
+    );
+    expect({ status, rawPath, reportPath }).toEqual({
+      status: "collected",
+      rawPath: join(directory, "jobs.json"),
+      reportPath: join(directory, "report.json"),
+    });
+    await expect(readFile(rawPath, "utf8")).resolves.toBeTruthy();
+    await expect(readFile(reportPath, "utf8")).resolves.toBeTruthy();
+  }
   expect(calls).toContainEqual([
     "api",
     "--paginate",

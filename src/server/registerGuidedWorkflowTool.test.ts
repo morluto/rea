@@ -1,7 +1,11 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterEach, expect, it, vi } from "vitest";
+import { InMemoryTransport } from "@modelcontextprotocol/client";
+import { expect, vi } from "vitest";
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import { parseMcpToolError } from "../../tests/fixtures/mcpToolError.js";
+import {
+  mcpTest as it,
+  type TestMcp,
+} from "../../tests/support/mcp/mcpFixture.js";
 import { PROMPT_CONTRACTS } from "../contracts/promptContracts.js";
 import { createCatalogDigests } from "../catalogIdentity.js";
 import { TOOL_CONTRACTS, toolContract } from "../contracts/toolContracts.js";
@@ -10,20 +14,7 @@ import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
 import { registerGuidedPrompts } from "./registerPrompts.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 
-const resources: Array<{
-  readonly client: Client;
-  readonly server: EvidenceMcpServer;
-}> = [];
-
-afterEach(async () => {
-  await Promise.all(
-    resources
-      .splice(0)
-      .flatMap(({ client, server }) => [client.close(), server.close()]),
-  );
-});
-
-const fixture = async (families?: ReadonlySet<string>) => {
+const fixture = async (mcp: TestMcp, families?: ReadonlySet<string>) => {
   const info = { name: "guided-workflow-fixture", version: "1" };
   const server = new EvidenceMcpServer(
     info,
@@ -49,14 +40,28 @@ const fixture = async (families?: ReadonlySet<string>) => {
     execute,
   } as unknown as AnalysisOperationPort);
   registerGuidedWorkflowTool(server);
-  const client = new Client({ name: "guided-workflow-client", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  resources.push({ client, server });
+  const client = await mcp.connect(server, {
+    name: "guided-workflow-client",
+    version: "1",
+  });
   return { client, server, execute };
 };
+
+it("closes the server when client transport startup fails", async ({ mcp }) => {
+  const pair = InMemoryTransport.createLinkedPair();
+  const failure = new Error("client transport startup failed");
+  vi.spyOn(InMemoryTransport, "createLinkedPair").mockReturnValueOnce(pair);
+  vi.spyOn(pair[0], "start").mockRejectedValueOnce(failure);
+  try {
+    await expect(fixture(mcp)).rejects.toBe(failure);
+    await expect(
+      pair[1].send({ jsonrpc: "2.0", method: "probe" }),
+    ).rejects.toThrow();
+  } finally {
+    await Promise.all(pair.map((transport) => transport.close()));
+    vi.restoreAllMocks();
+  }
+});
 
 const textOf = (result: {
   readonly content: readonly {
@@ -65,8 +70,10 @@ const textOf = (result: {
   }[];
 }) => result.content.find(({ type }) => type === "text")?.text ?? "";
 
-it("lists workflows and renders text equivalent to the native MCP prompt", async () => {
-  const { client, execute } = await fixture();
+it("lists workflows and renders text equivalent to the native MCP prompt", async ({
+  mcp,
+}) => {
+  const { client, execute } = await fixture(mcp);
   expect(toolContract("guided_workflows").kind).toBe("application");
   const listedTools = await client.listTools();
   expect(listedTools.tools.map(({ name }) => name)).toContain(
@@ -125,8 +132,10 @@ it("lists workflows and renders text equivalent to the native MCP prompt", async
   expect(execute).not.toHaveBeenCalled();
 });
 
-it("returns actionable errors and leaves native completion available", async () => {
-  const { client, execute } = await fixture();
+it("returns actionable errors and leaves native completion available", async ({
+  mcp,
+}) => {
+  const { client, execute } = await fixture(mcp);
   await expect(
     client.getPrompt({ name: "investigate_feature", arguments: {} }),
   ).rejects.toThrow();
@@ -152,8 +161,8 @@ it("returns actionable errors and leaves native completion available", async () 
   expect(execute).toHaveBeenCalledTimes(1);
 });
 
-it("rejects unexpected top-level tool arguments", async () => {
-  const { client, execute } = await fixture();
+it("rejects unexpected top-level tool arguments", async ({ mcp }) => {
+  const { client, execute } = await fixture(mcp);
   const unexpected = await client.callTool({
     name: "guided_workflows",
     arguments: { action: "list", extra: true },
@@ -175,8 +184,10 @@ it("preserves prompt identity while catalog identity includes the added tool", (
   );
 });
 
-it("retains numeric nested argument paths through the MCP application boundary", async () => {
-  const { client } = await fixture();
+it("retains numeric nested argument paths through the MCP application boundary", async ({
+  mcp,
+}) => {
+  const { client } = await fixture(mcp);
   const result = await client.callTool({
     name: "guided_workflows",
     arguments: {
@@ -196,8 +207,8 @@ it("retains numeric nested argument paths through the MCP application boundary",
   );
 });
 
-it("reports every forbidden list field in one MCP failure", async () => {
-  const { client } = await fixture();
+it("reports every forbidden list field in one MCP failure", async ({ mcp }) => {
+  const { client } = await fixture(mcp);
   const result = await client.callTool({
     name: "guided_workflows",
     arguments: {
@@ -215,8 +226,10 @@ it("reports every forbidden list field in one MCP failure", async () => {
   );
 });
 
-it("refuses misspelled context fields rather than losing the caller's selection", async () => {
-  const { client } = await fixture();
+it("refuses misspelled context fields rather than losing the caller's selection", async ({
+  mcp,
+}) => {
+  const { client } = await fixture(mcp);
   const result = await client.callTool({
     name: "guided_workflows",
     arguments: {
@@ -242,8 +255,10 @@ it("refuses misspelled context fields rather than losing the caller's selection"
   ).rejects.toThrow();
 });
 
-it("lists the same workflows as scoped native prompts and refuses unavailable workflows", async () => {
-  const { client } = await fixture(new Set(["application"]));
+it("lists the same workflows as scoped native prompts and refuses unavailable workflows", async ({
+  mcp,
+}) => {
+  const { client } = await fixture(mcp, new Set(["application"]));
   const native = await client.listPrompts();
   const listed = await client.callTool({
     name: "guided_workflows",

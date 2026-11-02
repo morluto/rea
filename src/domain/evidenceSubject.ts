@@ -24,6 +24,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "hsp",
   "app-pack",
   "asar",
+  "ines",
   "godot-pck",
   "unityfs",
   "uimage",
@@ -45,6 +46,9 @@ export const evidenceSubjectFormatSchema = z.enum([
   "intel-hex",
   "srec",
   "esp-image",
+  "uf2",
+  "dfuse",
+  "esp-flash-image",
   "fit",
 ]);
 

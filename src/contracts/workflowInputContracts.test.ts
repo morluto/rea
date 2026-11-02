@@ -11,7 +11,7 @@ import {
   MANAGED_MEMBER_COMPARISON_EXAMPLE,
   MANAGED_NATIVE_VERIFICATION_EXAMPLE,
 } from "./managed/managedWorkflowExamples.js";
-import { managedApplicationGraphReferenceInputSchema } from "./managed/managedWorkflowToolContracts.js";
+import { managedApplicationGraphReferenceInputSchema } from "../domain/managed/managedApplicationGraph.js";
 
 describe("workflow input contracts", () => {
   it("rejects application Evidence ID references and duplicate inline records", () => {

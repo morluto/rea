@@ -473,9 +473,9 @@ describe("JavaScript semantic analysis: mapped arguments writes", () => {
       .returnSites[0]?.value;
     if (value?.status !== "object")
       throw new Error("Expected an object return value");
-    expect(
-      value.properties.find(({ name }) => name === "value")?.value.status,
-    ).not.toBe("literal");
+    const property = value.properties.find(({ name }) => name === "value");
+    expect(property).toBeDefined();
+    expect(property?.value.status).not.toBe("literal");
   });
 });
 

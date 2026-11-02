@@ -67,6 +67,8 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "trace_call_path",
   "open_binary",
   "close_binary",
+  // Investigation reset acts on the long-lived MCP server's retained history.
+  "reset_investigation",
   "binary_session",
   "export_evidence_bundle",
   "import_evidence_bundle",

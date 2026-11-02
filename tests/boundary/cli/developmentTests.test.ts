@@ -6,7 +6,9 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { describe, expect, it } from "vitest";
 
@@ -52,8 +54,11 @@ const fixture = async () => {
   for (const path of [
     "scripts/run-development-tests.mjs",
     "scripts/run-exact-tests.mjs",
+    "scripts/run-exclusive.mjs",
+    "scripts/run-exclusive-command.mjs",
     "scripts/lib/development-tests.mjs",
     "scripts/lib/test-projects.mjs",
+    "scripts/lib/windows-owned-command.mjs",
   ])
     await copyFile(join(process.cwd(), path), join(root, path));
   await symlink(
@@ -267,11 +272,18 @@ describe("development test runner exact selection", () => {
   it("preserves all configured projects for an exact file", async () => {
     const root = await fixture();
     await writeFile(
-      join(root, "vitest.config.mjs"),
-      'export default { test: { projects: ["domain", "evaluation"].map(name => ({ test: { name, include: ["src/value.test.ts"] } })) } };\n',
+      join(root, "src/value.test.ts"),
+      'import { it } from "vitest"; import { writeFileSync } from "node:fs"; it("records the project", () => writeFileSync(`selected-${process.env.REA_TEST_PROJECT}.txt`, "ran"));\n',
     );
-    const result = await testCommand(root, "focused", "src/value.test.ts");
-    expect(result.stdout).toMatch(/Test Files\s+2 passed/u);
+    await writeFile(
+      join(root, "vitest.config.mjs"),
+      'export default { test: { projects: ["domain", "evaluation"].map(name => ({ test: { name, env: { REA_TEST_PROJECT: name }, include: ["src/value.test.ts"] } })) } };\n',
+    );
+    await testCommand(root, "focused", "src/value.test.ts");
+    for (const name of ["domain", "evaluation"])
+      expect(await readFile(join(root, `selected-${name}.txt`), "utf8")).toBe(
+        "ran",
+      );
   });
 
   it("fails an exact file with no tests even when another selected file passes", async () => {
@@ -285,6 +297,77 @@ describe("development test runner exact selection", () => {
     });
     expect(await readFile(join(root, "selected.txt"), "utf8")).toBe("1");
   });
+});
+
+describe("development test runner cancellation", () => {
+  it.runIf(process.platform !== "win32")(
+    "waits for the owned test process group on cancellation",
+    async () => {
+      const root = await fixture();
+      const ready = join(root, "descendant-ready");
+      const activity = join(root, "descendant-activity");
+      const release = join(root, "descendant-release");
+      await writeFile(
+        join(root, "descendant.cjs"),
+        `
+        const fs = require("node:fs");
+        process.on("SIGTERM", () => {});
+        fs.writeFileSync("descendant-activity", "active\\n");
+        fs.writeFileSync("descendant-ready", "ready");
+        const timer = setInterval(() => {
+          if (fs.existsSync("descendant-release")) { clearInterval(timer); clearTimeout(deadline); return; }
+          fs.appendFileSync("descendant-activity", "active\\n");
+        }, 20);
+        const deadline = setTimeout(() => clearInterval(timer), 10000);
+      `,
+      );
+      await writeFile(
+        join(root, "src/value.test.ts"),
+        'import { it } from "vitest"; import { spawn } from "node:child_process"; it("waits", async () => { spawn(process.execPath, ["descendant.cjs"], { stdio: "ignore" }); await new Promise(() => {}); }, 30000);',
+      );
+      const runner = spawn(
+        process.execPath,
+        ["scripts/run-development-tests.mjs", "local", "src/value.test.ts"],
+        { cwd: root, stdio: "ignore" },
+      );
+      const closed = new Promise<{
+        code: number | null;
+        signal: string | null;
+      }>((resolve) =>
+        runner.once("exit", (code, signal) => resolve({ code, signal })),
+      );
+      try {
+        let started = false;
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          try {
+            await readFile(ready);
+            started = true;
+            break;
+          } catch (cause) {
+            if (
+              !(cause instanceof Error) ||
+              !("code" in cause) ||
+              cause.code !== "ENOENT"
+            )
+              throw cause;
+            await delay(50);
+          }
+        }
+        expect(started).toBe(true);
+        runner.kill("SIGTERM");
+        expect(await closed).toEqual({ code: 143, signal: null });
+        const stopped = await readFile(activity, "utf8");
+        await delay(100);
+        expect(await readFile(activity, "utf8")).toBe(stopped);
+      } finally {
+        await writeFile(release, "stop");
+        if (runner.exitCode === null && runner.signalCode === null)
+          runner.kill("SIGTERM");
+        await closed;
+      }
+    },
+    20_000,
+  );
 });
 
 describe("development test runner public CLI", () => {

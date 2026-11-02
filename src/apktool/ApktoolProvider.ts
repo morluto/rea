@@ -1,3 +1,4 @@
+import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -69,13 +70,6 @@ import {
   parseApktoolYml,
   parseManifestPackage,
 } from "./ApktoolDecodeOutput.js";
-
-/** Stable identity for the Apktool resource-decoding provider. */
-export const APKTOOL_PROVIDER_IDENTITY = {
-  id: "apktool",
-  name: "Apktool",
-  version: null,
-} as const;
 
 const DECODE_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MANIFEST_MAX_BYTES = 512 * 1024;

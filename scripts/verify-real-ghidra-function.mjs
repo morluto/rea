@@ -415,7 +415,7 @@ async function verifyRequestCancellationAndTimeout(client, entry) {
 }
 
 async function verifyConcurrentRequests(client, entry, leaf) {
-  const concurrent = await Promise.all([
+  await Promise.all([
     functionCall(client, "procedure_info", {
       document: null,
       procedure: entry.address,
@@ -425,9 +425,7 @@ async function verifyConcurrentRequests(client, entry, leaf) {
       address: leaf.address,
     }),
   ]);
-  if (concurrent.length !== 2)
-    throw new Error("Ghidra serial request queue lost a concurrent result");
-  return "serialized-two-results";
+  return "two-concurrent-requests-completed";
 }
 
 /** Prove dense jump-table completeness on the optimized jump-table fixture. */

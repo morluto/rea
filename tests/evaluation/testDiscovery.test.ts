@@ -15,7 +15,23 @@ describe("test discovery migration guard", () => {
         [{ file: resolve(root, first), projectName: "domain" }],
         root,
       ),
-    ).toEqual({ missing: [], unexpected: [], duplicates: [], discovered: 1 });
+    ).toEqual({
+      missing: [],
+      unexpected: [],
+      duplicates: [],
+      wrongProjects: [],
+      discovered: 1,
+    });
+  });
+
+  it("reports a discovered test in the wrong project", () => {
+    expect(
+      compareTestDiscovery(
+        [first],
+        [{ file: first, projectName: "cli-boundary" }],
+        root,
+      ).wrongProjects,
+    ).toEqual([{ file: first, expected: "domain", actual: "cli-boundary" }]);
   });
 
   it("reports a new provider test omitted by the current project globs", () => {

@@ -11,6 +11,7 @@ const report = createUnityAddressablesFixture();
 const parent = (normalizedResult: unknown = report, sealedResult = false) => ({
   evidenceId: `ev_${"d".repeat(64)}`,
   operation: "inspect_unity_addressables",
+  predicateType: "rea.analysis",
   normalizedResult,
   sealedResult,
   limitations: [],

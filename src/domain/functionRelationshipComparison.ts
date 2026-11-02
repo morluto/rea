@@ -1,6 +1,8 @@
-import { functionCoordinateContextsEqual } from "./native/functionCoordinateContext.js";
 import { canonicalJson } from "./comparisonSemantics.js";
-import type { FunctionSnapshot } from "./functionDossierEvidence.js";
+import type {
+  FunctionSnapshotCoordinateContext,
+  FunctionSnapshot,
+} from "./functionDossierEvidence.js";
 import { sorted } from "./functionComparisonNormalization.js";
 import {
   hasStableNativeSymbol,
@@ -225,24 +227,11 @@ const constraints = (
 export const compareFunctionRelationships = (
   left: FunctionSnapshot,
   right: FunctionSnapshot,
+  coordinateContext: FunctionSnapshotCoordinateContext,
 ): {
   readonly calls: FunctionRelationshipComparison;
   readonly references: FunctionRelationshipComparison;
 } => {
-  // Provider coordinate commitments own loader/slice semantics. Missing context is not equality.
-  const sameArtifact =
-    left.subject.digest.sha256 === right.subject.digest.sha256;
-  const coordinateContext = !sameArtifact
-    ? "cross-artifact"
-    : left.subject.format === right.subject.format &&
-        left.subject.architecture !== null &&
-        left.subject.architecture === right.subject.architecture &&
-        functionCoordinateContextsEqual(
-          left.evidence.analysis_profile,
-          right.evidence.analysis_profile,
-        )
-      ? "common"
-      : "unknown";
   const ambiguousNames = ambiguousProcedureNames([left, right]);
   const compare = (dimension: "calls" | "references") =>
     compareRelationshipFacts(

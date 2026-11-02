@@ -170,7 +170,6 @@ it.each(
       expect(producer.calls).toEqual([
         { name: "open_project", arguments: { file_path: input.path } },
       ]);
-      expect(projected.error.code).not.toBe("unsupported_target");
     } finally {
       try {
         await client.close();

@@ -64,6 +64,7 @@ const summary = {
   resolved_utility_entrypoints: 0,
   native_addon_bindings: 0,
   resolved_native_addon_bindings: 0,
+  protocol_registrations: 0,
 };
 const statistics = {
   relevant_files: 1,

@@ -1,7 +1,11 @@
 import { z } from "zod";
 
 import {
+  DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+  HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
   isHopperStartupFailureCode,
+  MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+  MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   type HopperStartupDiagnostic,
 } from "../domain/hopperStartupFailure.js";
 import { safeParseJson } from "../domain/safeJson.js";
@@ -32,6 +36,17 @@ const diagnosticContextSchema = z.object({
   xvfb_stderr_bytes: z.int().nonnegative().safe(),
 });
 
+const dialogTimeoutSchema = z
+  .object({
+    setting: z.literal(HOPPER_DEMO_DIALOG_TIMEOUT_SETTING),
+    value: z.string().max(128),
+    source: z.literal("setting"),
+    minimum_ms: z.literal(MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS),
+    maximum_ms: z.literal(MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS),
+    default_ms: z.literal(DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS),
+  })
+  .strict();
+
 const failureCodeSchema = z.string().transform((value, context) => {
   if (isHopperStartupFailureCode(value)) return value;
   context.addIssue({
@@ -46,7 +61,11 @@ const diagnosticSchema = z.discriminatedUnion("status", [
     .extend({ status: z.literal("ready"), failure_code: z.null() })
     .strict(),
   diagnosticContextSchema
-    .extend({ status: z.literal("error"), failure_code: failureCodeSchema })
+    .extend({
+      status: z.literal("error"),
+      failure_code: failureCodeSchema,
+      dialog_timeout: dialogTimeoutSchema.optional(),
+    })
     .strict(),
 ]);
 
@@ -77,5 +96,10 @@ export const parseLinuxPrivateDisplayDiagnostic = (
   if (!decoded.ok) return { ok: false, reason: "diagnostic_malformed" };
   const parsed = diagnosticSchema.safeParse(decoded.value);
   if (!parsed.success) return { ok: false, reason: "diagnostic_malformed" };
-  return { ok: true, value: parsed.data };
+  const value = parsed.data;
+  if (value.status === "error" && value.dialog_timeout === undefined) {
+    const { dialog_timeout: _omitted, ...diagnostic } = value;
+    return { ok: true, value: diagnostic };
+  }
+  return { ok: true, value };
 };

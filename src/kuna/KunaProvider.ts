@@ -40,10 +40,8 @@ import {
   inspectKunaInstallation,
 } from "./KunaInstallation.js";
 import { KunaProjectCache } from "./KunaProjectCache.js";
-import {
-  KUNA_PROVIDER_IDENTITY,
-  kunaCapabilities,
-} from "./KunaProviderCapabilities.js";
+import { kunaCapabilities } from "./KunaProviderCapabilities.js";
+import { KUNA_PROVIDER_IDENTITY } from "./KunaProviderMetadata.js";
 import { KUNA_COMMAND_REMEDIATION, KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import { KunaRunSlots } from "./KunaRunSlots.js";
 import { KunaSessionClient } from "./KunaSessionClient.js";
@@ -110,15 +108,8 @@ export class KunaProvider implements AnalysisProviderCandidate {
   }
 
   capabilities() {
-    const availability = this.inspectAvailability();
     return kunaCapabilities(
-      availability.status === "available"
-        ? { available: true }
-        : {
-            available: false,
-            reason: availability.reason,
-            code: availability.code,
-          },
+      this.inspectAvailability(),
       this.#deadline,
       this.#heapRequest,
     );
@@ -134,6 +125,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
         status: "unavailable",
         code: configuration.error.code,
         reason: configuration.error.reason,
+        remediation: configuration.error.remediation,
         diagnostics: {
           configured: configuration.error.code !== "not_configured",
           version_probed: false,
@@ -149,6 +141,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
         status: "unavailable",
         code: "executable_missing",
         reason: `Cannot execute REA_KUNA_COMMAND ${command}: ${cause instanceof Error ? cause.message : String(cause)}. ${KUNA_COMMAND_REMEDIATION}`,
+        remediation: KUNA_COMMAND_REMEDIATION,
         diagnostics: { configured: true, command, version_probed: false },
       };
     }

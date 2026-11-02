@@ -56,6 +56,10 @@ describe("Evidence completion ledger", () => {
     ]);
 
     expect(left).toEqual(right);
+    expect(left.records).toEqual([
+      record("scenario.a", "unknown", [evidenceId("3")]),
+      record("scenario.z", "pass", [evidenceId("1"), evidenceId("2")]),
+    ]);
     expect(left.ledger_id).toMatch(/^ecl_[a-f0-9]{64}$/u);
   });
 
@@ -67,9 +71,13 @@ describe("Evidence completion ledger", () => {
 
     expect(
       createEvidenceCompletionLedger([
-        record("scenario.many-evidence-items", "pass", evidenceIds),
+        record(
+          "scenario.many-evidence-items",
+          "pass",
+          [...evidenceIds].reverse(),
+        ),
       ]).records[0]?.evidence_ids,
-    ).toHaveLength(evidenceIds.length);
+    ).toEqual(evidenceIds);
   });
 
   it("rejects missing, malformed, and duplicate Evidence IDs", () => {

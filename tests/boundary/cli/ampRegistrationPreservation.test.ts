@@ -58,6 +58,7 @@ cliTest(
     expect(await readFile(registrationBackupPath, "utf8")).toBe(original);
     expect(refreshed.stderr).toContain(registrationBackupPath);
     expect(after.theme).toBe("dark");
+    expect(after["amp.mcpServers"].other).toEqual({ command: "other" });
 
     // The equals form --agent=amp is parsed as a spaced form before Incur sees
     // it, so the Amp registration lands and keeps the environment map.
@@ -69,6 +70,7 @@ cliTest(
       command: expect.any(String),
       env: { KEEP_ME: "1" },
     });
+    expect(afterEquals["amp.mcpServers"].other).toEqual({ command: "other" });
     expect(await readFile(registrationBackupPath, "utf8")).toBe(original);
     const recoveryBackupPath = equals.stderr.match(
       /Amp MCP registration backup retained at (.+)/,

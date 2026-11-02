@@ -1,42 +1,35 @@
-import { execFile, spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect } from "vitest";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { processTest } from "../../support/process/processFixture.js";
 
-it("returns a nonzero exit for a streamed JSON analysis failure", async () => {
-  const root = await createTestTempDirectory("rea-cli-js-missing-");
-  const result = await new Promise<{ code: number | string; stdout: string }>(
-    (resolve, reject) => {
-      execFile(
-        process.execPath,
-        [
-          "scripts/rea.mjs",
-          "analyze-javascript-application",
-          join(root, "missing"),
-          "--json",
-        ],
-        (error, stdout) => {
-          if (error !== null && error.code === undefined) {
-            reject(error);
-            return;
-          }
-          resolve({ code: error?.code ?? 0, stdout });
-        },
-      );
-    },
-  );
-  expect(result.code).toBe(1);
-  expect(JSON.parse(result.stdout)).toMatchObject({
-    code: "invalid_request",
-    details: { issues: [{ path: ["input_path"], reason: "invalid_value" }] },
-  });
-});
+processTest(
+  "returns a nonzero exit for a streamed JSON analysis failure",
+  async ({ processes }) => {
+    const root = await createTestTempDirectory("rea-cli-js-missing-");
+    const result = await processes.run(
+      process.execPath,
+      [
+        "scripts/rea.mjs",
+        "analyze-javascript-application",
+        join(root, "missing"),
+        "--json",
+      ],
+      { timeoutMs: 20_000 },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["input_path"], reason: "invalid_value" }] },
+    });
+  },
+);
 
 // `analyze` routes a JavaScript directory to the same workflow and must keep
 // its typed cancellation contract.
-it.skipIf(process.platform === "win32").each([
+processTest.skipIf(process.platform === "win32").for([
   {
     command: "analyze-javascript-application",
     phase: "analyze_javascript_application",
@@ -59,7 +52,7 @@ it.skipIf(process.platform === "win32").each([
   },
 ])(
   "returns typed cancellation and exit 130 through $command during $phase",
-  async ({ command, phase, parsedFiles }) => {
+  async ({ command, phase, parsedFiles }, { processes }) => {
     const root = await createTestTempDirectory("rea-cli-js-cancellation-");
     await writeFile(join(root, "main.js"), "export const observed = 1;\n");
     const nodeArguments: string[] = [];
@@ -88,17 +81,14 @@ it.skipIf(process.platform === "win32").each([
       );
       nodeArguments.push("--import", preload);
     }
-    const child = spawn(
-      process.execPath,
-      [...nodeArguments, "scripts/rea.mjs", command, root, "--json"],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    onTestFinished(() => {
-      if (child.exitCode === null && child.signalCode === null)
-        child.kill("SIGTERM");
-    });
+    const child = processes.spawn(process.execPath, [
+      ...nodeArguments,
+      "scripts/rea.mjs",
+      command,
+      root,
+      "--json",
+    ]);
+    child.stdin.end();
     let stdout = "",
       partial = "",
       requested = false;

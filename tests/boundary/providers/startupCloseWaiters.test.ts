@@ -3,11 +3,13 @@ import { readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
 
 import { expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
 import { HopperClient } from "../../../src/hopper/HopperClient.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   GhidraFixtureLauncher,
   ghidraFixturePath,
@@ -72,16 +74,20 @@ it.each(providers)(
         await originalClose.call(this);
       });
     let closing: ReturnType<typeof client.close> | undefined;
-    try {
+    let retry: ReturnType<typeof client.start> | undefined;
+    const controller = new AbortController();
+    await withVerifierCleanup(async () => {
       await expect(client.start()).resolves.toMatchObject({ ok: true });
       closing = client.close();
-      await entered.promise;
-      const controller = new AbortController();
-      const retry = client.start(controller.signal);
+      await awaitAcknowledgement(entered.promise, closing, "provider close");
+      retry = client.start(controller.signal);
       let settled: Awaited<typeof retry> | undefined;
-      void retry.then((result) => {
-        settled = result;
-      });
+      void retry.then(
+        (result) => {
+          settled = result;
+        },
+        () => undefined,
+      );
       controller.abort();
       await vi.waitFor(() =>
         expect(settled).toMatchObject({ ok: false, error: cancelled }),
@@ -96,11 +102,19 @@ it.each(providers)(
       });
       await expect(client.start()).resolves.toMatchObject({ ok: true });
       expect(children).toHaveLength(2);
-    } finally {
-      gate.resolve();
-      await closing;
-      await client.close();
-      close.mockRestore();
-    }
+    }, [
+      () => gate.resolve(),
+      () => controller.abort(),
+      async () => {
+        await retry;
+      },
+      async () => {
+        await closing;
+      },
+      async () => {
+        await expect(client.close()).resolves.toMatchObject({ ok: true });
+      },
+      () => close.mockRestore(),
+    ]);
   },
 );

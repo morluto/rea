@@ -1,3 +1,4 @@
+import { SIGROK_PROVIDER_IDENTITY } from "./SigrokProviderIdentity.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import {
@@ -68,11 +69,7 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "decode_signal_recording";
-export const SIGROK_PROVIDER_IDENTITY = {
-  id: "sigrok-recording",
-  name: "REA sigrok recording adapter",
-  version: "sigrok-cli@0.7.2",
-} as const;
+
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
 /** Signal decoding runs only on Linux; discovery and execution share this check. */

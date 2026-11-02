@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { emptyArraySchema } from "../emptyArraySchema.js";
 import { evidenceSchema } from "../evidence.js";
+import { evidenceInputSchema } from "../evidenceReference.js";
 import {
   cliMetadataGuidSchema,
   managedNativeImportSchema,
@@ -95,36 +96,57 @@ export const pinvokeVerificationSchema = z.union([
 
 export type PinvokeVerification = z.infer<typeof pinvokeVerificationSchema>;
 
-/** Authenticated managed boundary Evidence plus native observations. */
+const nativeVerificationShape = <Source extends z.ZodType>(source: Source) => ({
+  managed_boundaries: source,
+  native_observations: z
+    .array(source)
+    .min(1)
+    .describe("Native function or export Evidence records"),
+});
+
+const distinctNativeSources = (
+  input: {
+    readonly managed_boundaries: { readonly evidence_id: string };
+    readonly native_observations: readonly { readonly evidence_id: string }[];
+  },
+  context: z.RefinementCtx,
+): void => {
+  // Borrowing frames defer malformed carriers to the semantic source owner.
+  if (
+    typeof input.managed_boundaries?.evidence_id !== "string" ||
+    input.native_observations.some(
+      (evidence) => typeof evidence?.evidence_id !== "string",
+    )
+  )
+    return;
+  const ids = new Set<string>();
+  for (const [index, evidence] of input.native_observations.entries()) {
+    if (evidence.evidence_id === input.managed_boundaries.evidence_id)
+      context.addIssue({
+        code: "custom",
+        path: ["native_observations", index],
+        message:
+          "Native observation Evidence must be distinct from managed boundary Evidence",
+      });
+    if (ids.has(evidence.evidence_id))
+      context.addIssue({
+        code: "custom",
+        path: ["native_observations", index],
+        message: "Native observation Evidence IDs must be unique",
+      });
+    ids.add(evidence.evidence_id);
+  }
+};
+
+/** Complete record inputs used by the managed semantic owner and fixture builders. */
 export const managedNativeVerificationInputSchema = z
-  .strictObject({
-    managed_boundaries: evidenceSchema,
-    native_observations: z
-      .array(evidenceSchema)
-      .min(1)
-      .describe("Native function or export Evidence records"),
-  })
-  .superRefine((input, context) => {
-    const ids = new Set<string>();
-    for (const [index, evidence] of input.native_observations.entries()) {
-      if (evidence.evidence_id === input.managed_boundaries.evidence_id) {
-        context.addIssue({
-          code: "custom",
-          path: ["native_observations", index],
-          message:
-            "Native observation Evidence must be distinct from managed boundary Evidence",
-        });
-      }
-      if (ids.has(evidence.evidence_id)) {
-        context.addIssue({
-          code: "custom",
-          path: ["native_observations", index],
-          message: "Native observation Evidence IDs must be unique",
-        });
-      }
-      ids.add(evidence.evidence_id);
-    }
-  });
+  .strictObject(nativeVerificationShape(evidenceSchema))
+  .superRefine(distinctNativeSources);
+
+/** Public workflow sources may be inline records or exact retained identities. */
+export const managedNativeVerificationRequestSchema = z
+  .strictObject(nativeVerificationShape(evidenceInputSchema))
+  .superRefine(distinctNativeSources);
 
 const verificationCoverageSchema = z.strictObject({
   status: z.enum(["complete-within-inputs", "partial"]),

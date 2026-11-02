@@ -7,6 +7,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import type { GhidraDiagnosticsScope } from "./GhidraDiagnostics.js";
+import { ghidraFileOffsetOutcome } from "./GhidraFileOffsetFailure.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GhidraLaunchSupportError } from "./GhidraJavaLaunch.js";
 import {
@@ -214,7 +215,8 @@ export const bindGhidraSessionFailure =
         ...diagnostics(
           kind === "remote" &&
             (isGhidraInputFailureCode(options.remoteCode) ||
-              options.remoteCode === "invalid_function_name")
+              options.remoteCode === "invalid_function_name" ||
+              ghidraFileOffsetOutcome(options.remoteCode) !== undefined)
             ? "request"
             : "session",
         ),

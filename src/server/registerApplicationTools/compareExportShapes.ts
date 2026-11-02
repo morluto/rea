@@ -34,6 +34,7 @@ export const registerCompareJavaScriptExportShapesTool = (
                 compareJavaScriptExportShapesEvidence(
                   input,
                   options.evidenceById,
+                  { signal: context.mcpReq.signal },
                 ),
               ),
           );

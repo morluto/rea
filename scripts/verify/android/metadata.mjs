@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { verifyAndroidMethodBodies } from "./method-bodies.mjs";
 import { verifyAndroidDirectInvokes } from "./direct-invokes.mjs";
+import { verifyAndroidExternalReferences } from "./external-invokes.mjs";
 
 /** Prove cold metadata stays unmaterialized and overload identities survive code generation. */
 export const verifyAndroidMetadata = async ({
@@ -47,6 +48,10 @@ export const verifyAndroidMetadata = async ({
         resolve(
           repository,
           "tests/conformance/android/ReaJadxMetadataRegression.java",
+        ),
+        resolve(
+          repository,
+          "tests/conformance/android/ReaJadxExternalReferencesRegression.java",
         ),
       ],
       { timeout: 30_000 },
@@ -164,6 +169,16 @@ export const verifyAndroidMetadata = async ({
       entrypoint,
       environment,
       execute,
+    });
+    await verifyAndroidExternalReferences({
+      java,
+      jar,
+      classes,
+      repository,
+      execute,
+      entrypoint,
+      environment,
+      jvmArguments,
     });
   } finally {
     await rm(classes, { recursive: true, force: true });

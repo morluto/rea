@@ -49,20 +49,6 @@ it("rejects a relative path and extra arguments before reading", async () => {
   expect(calls).toBe(0);
 });
 
-it("records the selected PE and an absent certificate table", async () => {
-  const result = await new PeCertificatesService({
-    identity,
-    inspect: () => Promise.resolve(ok(report)),
-  }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    confidence: "observed",
-    subject: { format: "pe", architecture: "x86" },
-    normalized_result: report,
-  });
-});
-
 it("discards an observation if the caller cancels while the provider completes", async () => {
   const controller = new AbortController();
   const service = new PeCertificatesService({

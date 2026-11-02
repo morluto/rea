@@ -1,3 +1,8 @@
+import {
+  resolveEvidenceRequest,
+  type EvidenceLookup,
+} from "./EvidenceInputResolver.js";
+import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -8,7 +13,10 @@ import {
 } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ParsedInventorySet } from "../domain/artifactInventoryEvidence.js";
-import { readApplicationInventoryProjection } from "../domain/mobileApplicationGraphProjection.js";
+import {
+  applicationInventoryProjectionInputSchema,
+  readApplicationInventoryProjection,
+} from "../domain/mobileApplicationGraphProjection.js";
 import { ok, type Result } from "../domain/result.js";
 
 interface InventoryProjectionResult {
@@ -26,6 +34,8 @@ interface InventoryProjectionOptions<
   Output extends InventoryProjectionResult & JsonValue,
 > {
   readonly rawInput: unknown;
+  readonly lookup?: EvidenceLookup;
+  readonly execution?: Pick<ExecutionOptions, "signal">;
   readonly project: (
     input: ParsedInventorySet,
   ) => Result<Output, AnalysisInputError>;
@@ -41,8 +51,16 @@ export const projectInventoryEvidence = <
 >(
   options: InventoryProjectionOptions<Output>,
 ): Result<InventoryProjectionEvidenceResult, AnalysisError> => {
-  const source = readApplicationInventoryProjection(
+  const request = resolveEvidenceRequest(
+    options.operation,
     options.rawInput,
+    applicationInventoryProjectionInputSchema,
+    options.lookup,
+    options.execution,
+  );
+  if (!request.ok) return request;
+  const source = readApplicationInventoryProjection(
+    request.value.input,
     options.operation,
   );
   if (!source.ok) return source;

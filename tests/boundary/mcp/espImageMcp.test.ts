@@ -14,6 +14,7 @@ import {
 import { ESP8266_REFUSAL } from "../../../src/domain/firmware/espImage.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 
 // The compiled stdio fixture checks advertised schemas against their dialect and
 // validates actual tool responses, avoiding a second source server module graph.
@@ -62,14 +63,31 @@ it.each(["full", "compact"] as const)(
           kind: "inventory",
           collection: "occurrences",
           logical_paths: ["segment-03.bin", "signature-block-0.bin"],
-          fields: ["format_metadata", "source_location"],
+          fields: ["logical_path", "format_metadata", "source_location"],
         },
       });
       expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-      const rows = JSON.stringify(retained.structuredContent);
-      expect(rows).toContain('"classification":"mapped"');
-      expect(rows).toContain('"scheme":"ecdsa"');
-      expect(rows).toContain('"signature_status":"unverified"');
+      const view = analysisViewResultSchema.parse(
+        parseEvidence(retained.structuredContent).normalized_result,
+      );
+      expect(view).toMatchObject({
+        kind: "inventory",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            logical_path: "segment-03.bin",
+            format_metadata: expect.objectContaining({
+              classification: "mapped",
+            }),
+          }),
+          expect.objectContaining({
+            logical_path: "signature-block-0.bin",
+            format_metadata: expect.objectContaining({
+              scheme: "ecdsa",
+              signature_status: "unverified",
+            }),
+          }),
+        ]),
+      });
       const extracted = await call("extract_artifact", {});
       expect(extracted.isError, JSON.stringify(extracted)).not.toBe(true);
       const result = artifactExtractionResultSchema.parse(

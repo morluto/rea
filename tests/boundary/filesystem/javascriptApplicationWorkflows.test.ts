@@ -461,7 +461,10 @@ describe("Application graph Evidence envelopes", () => {
               MANAGED_APPLICATION_GRAPH_EXAMPLE,
             );
       if (!sourceResult.ok) throw sourceResult.error;
-      const source = sourceResult.value;
+      const source =
+        "evidence" in sourceResult.value
+          ? sourceResult.value.evidence
+          : sourceResult.value;
       const result =
         sourceKind === "runtime reconciliation"
           ? javascriptRuntimeReconciliationResultSchema.parse(
@@ -707,7 +710,7 @@ describe("JavaScript runtime reconciliation local paths", () => {
       });
       if (!reconciled.ok) throw reconciled.error;
       const result = javascriptRuntimeReconciliationResultSchema.parse(
-        reconciled.value.normalized_result,
+        reconciled.value.evidence.normalized_result,
       );
       expect(
         result.reconciliations.find(
@@ -760,14 +763,14 @@ describe("JavaScript runtime reconciliation local paths", () => {
     expect(relativeResult.ok).toBe(true);
     expect(absoluteResult.ok).toBe(true);
     if (!relativeResult.ok || !absoluteResult.ok) return;
-    expect(relativeResult.value.evidence_id).toBe(
-      absoluteResult.value.evidence_id,
+    expect(relativeResult.value.evidence.evidence_id).toBe(
+      absoluteResult.value.evidence.evidence_id,
     );
-    expect(relativeResult.value.normalized_result).toEqual(
-      absoluteResult.value.normalized_result,
+    expect(relativeResult.value.evidence.normalized_result).toEqual(
+      absoluteResult.value.evidence.normalized_result,
     );
     const result = javascriptRuntimeReconciliationResultSchema.parse(
-      relativeResult.value.normalized_result,
+      relativeResult.value.evidence.normalized_result,
     );
     expect(result.static_layers[0]?.runtime_mappings[0]).toMatchObject({
       kind: "file-root",
@@ -792,7 +795,7 @@ describe("JavaScript runtime reconciliation local paths", () => {
 
     if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.normalized_result,
+      reconciled.value.evidence.normalized_result,
     );
     expect(result.static_layers[0]?.runtime_mappings[0]).toMatchObject({
       kind: "file-root",

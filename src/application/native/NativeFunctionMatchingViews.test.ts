@@ -119,6 +119,7 @@ it("rebuilds native row selection when a caller's sealed flag covers only a shal
   );
   Object.freeze(report);
   const parent = {
+    predicateType: matched.value.evidence.predicate_type,
     evidenceId: matched.value.evidence.evidence_id,
     operation: matched.value.evidence.operation,
     normalizedResult: report,
