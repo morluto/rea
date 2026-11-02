@@ -112,7 +112,11 @@ export const knownArgumentMistakeRemediation = (
     const key = issue.path[0];
     if (typeof key !== "string") continue;
     const guidance = knownArgumentMistakeGuidance(operation, key);
-    if (guidance !== undefined && !seen.has(guidance.remediation)) {
+    if (
+      guidance !== undefined &&
+      issue.expected === guidance.expected &&
+      !seen.has(guidance.remediation)
+    ) {
       seen.add(guidance.remediation);
       hints.push(guidance.remediation);
     }

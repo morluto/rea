@@ -13,6 +13,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
+import { toolContract } from "../contracts/toolContracts.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { forgetPendingMcpRequest } from "./EvidenceMcpServerCore.js";
 import { createToolResultDelivery } from "./toolResult.js";
@@ -402,7 +403,7 @@ describe("SDK argument name guidance", () => {
   it("guides procedure_pseudo_code caller from address to procedure without duplicating diagnostic", async () => {
     const session = await createGuidanceClientServer(
       "procedure_pseudo_code",
-      z.strictObject({ procedure: z.string() }),
+      toolContract("procedure_pseudo_code").inputSchema,
     );
     try {
       const result = await session.client.callTool({
@@ -432,7 +433,7 @@ describe("SDK argument name guidance", () => {
   it("guides search_strings caller from query to pattern", async () => {
     const session = await createGuidanceClientServer(
       "search_strings",
-      z.strictObject({ pattern: z.string() }),
+      toolContract("search_strings").inputSchema,
     );
     try {
       const result = await session.client.callTool({
@@ -461,7 +462,7 @@ describe("SDK argument name guidance", () => {
   it("rejects address with procedure guidance and retains unexplained key count in diagnostics", async () => {
     const session = await createGuidanceClientServer(
       "read_function_instructions",
-      z.strictObject({ procedure: z.string() }),
+      toolContract("read_function_instructions").inputSchema,
     );
     try {
       const result = await session.client.callTool({

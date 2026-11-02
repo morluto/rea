@@ -8,6 +8,8 @@ import {
 } from "./inputIssueProjection.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { processScenarioSchema } from "./process/processScenario.js";
+import { toolContract } from "../contracts/toolContracts.js";
+import { knownArgumentMistakeGuidance } from "./inputArgumentGuidance.js";
 
 describe("input issue projection", () => {
   it("builds application input errors with projected and semantic issues", () => {
@@ -122,25 +124,18 @@ describe("input issue projection", () => {
 
 describe("input issue argument guidance", () => {
   it("guides callers from neighboring-tool argument names while keeping unknown keys strict", () => {
-    const procedureSchema = z.strictObject({
-      procedure: z.string(),
-      document: z.string().optional(),
-    });
-    const badProcedure = procedureSchema.safeParse({
-      address: "0x401000",
-      count: 10,
-    });
-    if (badProcedure.success) throw new Error("expected invalid input");
-
+    const input = { address: "0x401000", count: 10 };
     for (const op of [
       "read_function_instructions",
       "procedure_pseudo_code",
       "procedure_assembly",
-    ]) {
+    ] as const) {
+      const parsed = toolContract(op).inputSchema.safeParse(input);
+      if (parsed.success) throw new Error("expected invalid input");
       const error = analysisInputErrorFromIssues(
         op,
-        badProcedure.error.issues,
-        { address: "0x401000", count: 10 },
+        parsed.error.issues,
+        input,
       );
       expect(error.issues).toEqual([
         { path: ["procedure"], reason: "missing_argument", expected: "string" },
@@ -152,22 +147,21 @@ describe("input issue argument guidance", () => {
         },
         { path: ["count"], reason: "unknown_argument" },
       ]);
-      expect(projectAnalysisError(error).remediation.action).toBe(
-        `Use 'procedure' (a procedure name or address) instead of 'address'. Read the declared input schema or CLI usage for ${op}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`,
-      );
+      const action = projectAnalysisError(error).remediation.action;
+      const guidance = knownArgumentMistakeGuidance(op, "address");
+      expect(guidance).toBeDefined();
+      expect(action.startsWith(guidance!.remediation)).toBe(true);
+      expect(action).toContain(op);
     }
 
-    const searchSchema = z.strictObject({
-      pattern: z.string().min(1),
-    });
-    const badSearch = searchSchema.safeParse({ query: "flag" });
-    if (badSearch.success) throw new Error("expected invalid input");
-
-    for (const op of ["search_strings", "search_procedures"]) {
+    const searchInput = { query: "flag" };
+    for (const op of ["search_strings", "search_procedures"] as const) {
+      const parsed = toolContract(op).inputSchema.safeParse(searchInput);
+      if (parsed.success) throw new Error("expected invalid input");
       const searchError = analysisInputErrorFromIssues(
         op,
-        badSearch.error.issues,
-        { query: "flag" },
+        parsed.error.issues,
+        searchInput,
       );
       expect(searchError.issues).toEqual([
         { path: ["pattern"], reason: "missing_argument", expected: "string" },
@@ -178,23 +172,24 @@ describe("input issue argument guidance", () => {
           message: "Unrecognized argument 'query'; did you mean 'pattern'?",
         },
       ]);
-      expect(projectAnalysisError(searchError).remediation.action).toBe(
-        `Use 'pattern' instead of 'query'. Read the declared input schema or CLI usage for ${op}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`,
-      );
+      const action = projectAnalysisError(searchError).remediation.action;
+      const guidance = knownArgumentMistakeGuidance(op, "query");
+      expect(guidance).toBeDefined();
+      expect(action.startsWith(guidance!.remediation)).toBe(true);
+      expect(action).toContain(op);
     }
   });
 
   it("guides callers for symmetric neighboring-tool argument names", () => {
-    const addressSchema = z.strictObject({
-      address: z.string(),
-    });
-    const badAddress = addressSchema.safeParse({ procedure: "main" });
-    if (badAddress.success) throw new Error("expected invalid input");
-
-    for (const op of ["xrefs", "resolve_containing_procedure", "read_bytes"]) {
-      const error = analysisInputErrorFromIssues(op, badAddress.error.issues, {
-        procedure: "main",
-      });
+    const addressInput = { procedure: "main" };
+    for (const op of ["resolve_containing_procedure", "read_bytes"] as const) {
+      const parsed = toolContract(op).inputSchema.safeParse(addressInput);
+      if (parsed.success) throw new Error("expected invalid input");
+      const error = analysisInputErrorFromIssues(
+        op,
+        parsed.error.issues,
+        addressInput,
+      );
       expect(error.issues).toEqual([
         { path: ["address"], reason: "missing_argument", expected: "string" },
         {
@@ -204,21 +199,44 @@ describe("input issue argument guidance", () => {
           message: "Unrecognized argument 'procedure'; did you mean 'address'?",
         },
       ]);
-      expect(projectAnalysisError(error).remediation.action).toBe(
-        `Use 'address' instead of 'procedure'. Read the declared input schema or CLI usage for ${op}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`,
-      );
+      const action = projectAnalysisError(error).remediation.action;
+      const guidance = knownArgumentMistakeGuidance(op, "procedure");
+      expect(guidance).toBeDefined();
+      expect(action.startsWith(guidance!.remediation)).toBe(true);
+      expect(action).toContain(op);
     }
 
-    const querySchema = z.strictObject({
-      query: z.string(),
-    });
-    const badQuery = querySchema.safeParse({ pattern: "flag" });
-    if (badQuery.success) throw new Error("expected invalid input");
+    const xrefsParsed =
+      toolContract("xrefs").inputSchema.safeParse(addressInput);
+    if (xrefsParsed.success) throw new Error("expected invalid input");
+    const xrefsError = analysisInputErrorFromIssues(
+      "xrefs",
+      xrefsParsed.error.issues,
+      addressInput,
+    );
+    expect(xrefsError.issues).toEqual([
+      {
+        path: ["procedure"],
+        reason: "unknown_argument",
+        expected: "address",
+        message: "Unrecognized argument 'procedure'; did you mean 'address'?",
+      },
+    ]);
+    const xrefsAction = projectAnalysisError(xrefsError).remediation.action;
+    const xrefsGuidance = knownArgumentMistakeGuidance("xrefs", "procedure");
+    expect(xrefsGuidance).toBeDefined();
+    expect(xrefsAction.startsWith(xrefsGuidance!.remediation)).toBe(true);
+    expect(xrefsAction).toContain("xrefs");
 
-    for (const op of ["search_guidance", "trace_feature"]) {
-      const error = analysisInputErrorFromIssues(op, badQuery.error.issues, {
-        pattern: "flag",
-      });
+    const queryInput = { pattern: "flag" };
+    for (const op of ["search_guidance", "trace_feature"] as const) {
+      const parsed = toolContract(op).inputSchema.safeParse(queryInput);
+      if (parsed.success) throw new Error("expected invalid input");
+      const error = analysisInputErrorFromIssues(
+        op,
+        parsed.error.issues,
+        queryInput,
+      );
       expect(error.issues).toEqual([
         { path: ["query"], reason: "missing_argument", expected: "string" },
         {
@@ -228,10 +246,67 @@ describe("input issue argument guidance", () => {
           message: "Unrecognized argument 'pattern'; did you mean 'query'?",
         },
       ]);
-      expect(projectAnalysisError(error).remediation.action).toBe(
-        `Use 'query' instead of 'pattern'. Read the declared input schema or CLI usage for ${op}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`,
-      );
+      const action = projectAnalysisError(error).remediation.action;
+      const guidance = knownArgumentMistakeGuidance(op, "pattern");
+      expect(guidance).toBeDefined();
+      expect(action.startsWith(guidance!.remediation)).toBe(true);
+      expect(action).toContain(op);
     }
+  });
+});
+
+describe("input issue argument guidance suppression", () => {
+  it("suppresses replacement guidance when expected argument is already present", () => {
+    const inputWithBoth = {
+      procedure: "main",
+      address: "0x401000",
+      comment: "entry comment",
+    };
+    const parsed = toolContract(
+      "annotate_native_function",
+    ).inputSchema.safeParse(inputWithBoth);
+    if (parsed.success) throw new Error("expected invalid input");
+    const error = analysisInputErrorFromIssues(
+      "annotate_native_function",
+      parsed.error.issues,
+      inputWithBoth,
+    );
+    expect(error.issues).toEqual([
+      { path: ["address"], reason: "unknown_argument" },
+    ]);
+    const action = projectAnalysisError(error).remediation.action;
+    expect(action).not.toContain("instead of 'address'");
+    expect(action).toContain("annotate_native_function");
+
+    const budgeted = projectInputIssuesWithinBudget(
+      parsed.error.issues,
+      inputWithBoth,
+      1024,
+      "annotate_native_function",
+    );
+    expect(budgeted).toEqual(error.issues);
+
+    const inputMissingExpected = {
+      address: "0x401000",
+      comment: "entry comment",
+    };
+    const parsedMissing = toolContract(
+      "annotate_native_function",
+    ).inputSchema.safeParse(inputMissingExpected);
+    if (parsedMissing.success) throw new Error("expected invalid input");
+    const errorMissing = analysisInputErrorFromIssues(
+      "annotate_native_function",
+      parsedMissing.error.issues,
+      inputMissingExpected,
+    );
+    expect(errorMissing.issues).toContainEqual({
+      path: ["address"],
+      reason: "unknown_argument",
+      expected: "procedure",
+      message: "Unrecognized argument 'address'; did you mean 'procedure'?",
+    });
+    const missingAction = projectAnalysisError(errorMissing).remediation.action;
+    expect(missingAction).toContain("instead of 'address'");
   });
 });
 

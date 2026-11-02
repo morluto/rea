@@ -100,6 +100,7 @@ const chargeProjection = (
   issue: z.core.$ZodIssue,
   budget: { remaining: number },
   operation?: string,
+  input?: unknown,
 ): void => {
   // Six bytes per UTF-16 code unit covers JSON escaping. The fixed allowance
   // covers the projected object, property names, scalar values and delimiters.
@@ -127,7 +128,10 @@ const chargeProjection = (
       charge(256 + pathCost + 6 * key.length);
       if (isRootArgument(issue.path)) {
         const guidance = knownArgumentMistakeGuidance(operation, key);
-        if (guidance !== undefined)
+        const expectedAlreadyPresent =
+          guidance !== undefined &&
+          valueAtPath(input, [...issue.path, guidance.expected]) !== undefined;
+        if (guidance !== undefined && !expectedAlreadyPresent)
           charge(
             6 * guidance.expected.length + 6 * guidance.message.length + 32,
           );
@@ -152,13 +156,39 @@ const nestedIssue = (
   return { ...child, path: [...parent.path, ...child.path] };
 };
 
+const projectUnrecognizedKeyIssues = (
+  keys: readonly string[],
+  path: readonly (string | number)[],
+  input: unknown,
+  operation?: string,
+): readonly AnalysisInputIssue[] =>
+  keys.map((key) => {
+    const guidance = isRootArgument(path)
+      ? knownArgumentMistakeGuidance(operation, key)
+      : undefined;
+    const expectedAlreadyPresent =
+      guidance !== undefined &&
+      valueAtPath(input, [...path, guidance.expected]) !== undefined;
+    const effectiveGuidance = expectedAlreadyPresent ? undefined : guidance;
+    return {
+      path: [...path, key],
+      reason: "unknown_argument" as const,
+      ...(effectiveGuidance === undefined
+        ? {}
+        : {
+            expected: effectiveGuidance.expected,
+            message: effectiveGuidance.message,
+          }),
+    };
+  });
+
 const projectIssue = (
   issue: z.core.$ZodIssue,
   input: unknown,
   budget?: { remaining: number },
   operation?: string,
 ): readonly AnalysisInputIssue[] => {
-  if (budget !== undefined) chargeProjection(issue, budget, operation);
+  if (budget !== undefined) chargeProjection(issue, budget, operation, input);
   const path = issue.path.flatMap((part) =>
     typeof part === "string" || typeof part === "number" ? [part] : [],
   );
@@ -203,21 +233,7 @@ const projectIssue = (
       ),
     );
   if (issue.code === "unrecognized_keys")
-    return issue.keys.map((key) => {
-      const guidance = isRootArgument(path)
-        ? knownArgumentMistakeGuidance(operation, key)
-        : undefined;
-      return {
-        path: [...path, key],
-        reason: "unknown_argument" as const,
-        ...(guidance === undefined
-          ? {}
-          : {
-              expected: guidance.expected,
-              message: guidance.message,
-            }),
-      };
-    });
+    return projectUnrecognizedKeyIssues(issue.keys, path, input, operation);
   if (issue.code === "invalid_type")
     return [
       {
@@ -267,10 +283,7 @@ const uniqueIssues = (
   ...new Map(issues.map((issue) => [JSON.stringify(issue), issue])).values(),
 ];
 
-const valueAtPath = (
-  input: unknown,
-  path: readonly (string | number)[],
-): unknown => {
+const valueAtPath = (input: unknown, path: readonly PropertyKey[]): unknown => {
   let current = input;
   for (const part of path) {
     if (typeof current !== "object" || current === null) return undefined;
