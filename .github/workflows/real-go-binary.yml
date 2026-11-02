@@ -15,6 +15,8 @@ on:
       - "src/server/registerGoTools.ts"
       - "scripts/verify-go-binary.mjs"
       - "scripts/lib/mcp-verifier-results.mjs"
+      - "scripts/lib/verifier-cleanup.mjs"
+      - "scripts/lib/verifier-stdio-transport.mjs"
 
 permissions:
   contents: read
