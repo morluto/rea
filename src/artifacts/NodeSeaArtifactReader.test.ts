@@ -36,6 +36,7 @@ import { elfNoteFixture } from "../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../native/pe/PeResources.fixture.js";
 import { locateNodeSea } from "./nodeSea/NodeSeaLocation.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
@@ -616,6 +617,42 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
   } finally {
     await reader.close();
     await reader.close();
+  }
+});
+
+it("reports a member that ends after the carrier recheck as an integrity failure", async () => {
+  const path = await writeCarrier("ended", nodeSeaElf());
+  const descriptor = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new NodeSeaArtifactReader(path, descriptor);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("Missing main script");
+    // open() rechecks the carrier's identity; the file then ends mid-member.
+    const read = descriptor.handle.read.bind(descriptor.handle);
+    let calls = 0;
+    const truncated = vi
+      .spyOn(descriptor.handle, "read")
+      .mockImplementation((...args: unknown[]) => {
+        calls += 1;
+        if (calls > 1)
+          return Promise.resolve({ bytesRead: 0, buffer: args[0] });
+        args[2] = 3;
+        return Reflect.apply(read, descriptor.handle, args);
+      });
+    try {
+      await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
+        reason: "integrity",
+        message: "Node SEA entry ended early: sea.js",
+      });
+      expect(calls).toBe(2);
+    } finally {
+      truncated.mockRestore();
+    }
+  } finally {
+    await reader.close();
+    await descriptor.handle.close();
   }
 });
 

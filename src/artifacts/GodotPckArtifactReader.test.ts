@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { text } from "node:stream/consumers";
 import { once } from "node:events";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { renameOpenParent } from "../../tests/fixtures/renameOpenParent.js";
@@ -418,6 +418,44 @@ describe("GodotPckArtifactReader member streams", () => {
       }
     },
   );
+});
+
+describe("GodotPckArtifactReader carrier truncation", () => {
+  it("reports a member that ends after the carrier recheck as an integrity failure", async () => {
+    const path = await writePck(
+      buildGodotPck(4, [{ path: "member.bin", data: "member bytes" }]),
+    );
+    const descriptor = await openRegularFile(path, { symlinks: "reject" });
+    const reader = new GodotPckArtifactReader(path, descriptor);
+    try {
+      const [entry] = await list(reader);
+      if (entry === undefined) throw new Error("expected one entry");
+      // open() rechecks the carrier's identity; the file then ends mid-member.
+      const read = descriptor.handle.read.bind(descriptor.handle);
+      let calls = 0;
+      const truncated = vi
+        .spyOn(descriptor.handle, "read")
+        .mockImplementation((...args: unknown[]) => {
+          calls += 1;
+          if (calls > 1)
+            return Promise.resolve({ bytesRead: 0, buffer: args[0] });
+          args[2] = 3;
+          return Reflect.apply(read, descriptor.handle, args);
+        });
+      try {
+        await expect(text(await reader.open(entry))).rejects.toMatchObject({
+          reason: "integrity",
+          message: "Godot PCK entry ended early: member.bin",
+        });
+        expect(calls).toBe(2);
+      } finally {
+        truncated.mockRestore();
+      }
+    } finally {
+      await reader.close();
+      await descriptor.handle.close();
+    }
+  });
 });
 
 describe("Godot PCK logical-byte admission", () => {
