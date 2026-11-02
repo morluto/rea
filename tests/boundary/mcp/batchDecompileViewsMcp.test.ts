@@ -1,9 +1,10 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../../../src/contracts/analysisViewToolContracts.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -16,6 +17,7 @@ import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { batchDecompileResultSchema } from "../../../src/domain/native/batchDecompile.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
+import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -89,6 +91,12 @@ const provider = (calls: { count: number }, bodies: typeof BODIES) =>
     }
     return Promise.resolve(ok(ghidraFixtureResult(operation, input)));
   }) satisfies NonNullable<Parameters<typeof connectGhidraMcp>[1]>;
+
+const [inspectAnalysisViewContract] = ANALYSIS_VIEW_TOOL_CONTRACTS.filter(
+  ({ name }) => name === "inspect_analysis_view",
+);
+if (inspectAnalysisViewContract === undefined)
+  throw new Error("Missing inspect_analysis_view contract");
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
@@ -453,7 +461,7 @@ it("recovers oversized batches and pages through smaller selections of the paren
     return z
       .object({
         name: z.literal("inspect_analysis_view"),
-        arguments: toolContract("inspect_analysis_view").inputSchema,
+        arguments: inspectAnalysisViewContract.inputSchema,
       })
       .parse(limits.continuation);
   };
@@ -643,6 +651,60 @@ it("keeps the caller's own source when a page cannot fit, without retaining its 
   const overflowed = await inspect(inline, withBodies);
   expect(parseMcpToolError(overflowed).error.code).toBe("resource_constraint");
   expect(continuationOf(overflowed)).toBeUndefined();
+
+  // A server that retains nothing still reads the file, and can name it again.
+  const unretained = createServer(
+    {
+      kind: "fixed",
+      analysis: {
+        execute: () => {
+          throw new Error("Retained batch views must not call a provider");
+        },
+      },
+    },
+    { delivery: createToolResultDelivery(budget) },
+  );
+  const fixedClient = new Client({
+    name: "batch-unretained",
+    version: "1.0.0",
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  onTestFinished(async () => {
+    await fixedClient.close();
+    await unretained.close();
+  });
+  await unretained.connect(serverTransport);
+  await fixedClient.connect(clientTransport);
+  const noRecorder = continuationOf(
+    await fixedClient.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: file,
+        view: { kind: "batch-decompile", ...withBodies },
+      },
+    }),
+  );
+  expect(noRecorder).toMatchObject({
+    arguments: { source: file, view: { limit: 1 } },
+  });
+  const followedUnretained = await fixedClient.callTool(
+    z
+      .object({ name: z.string(), arguments: jsonObjectSchema })
+      .parse(
+        continuationOf(
+          await fixedClient.callTool(
+            z
+              .object({ name: z.string(), arguments: jsonObjectSchema })
+              .parse(noRecorder),
+          ),
+        ),
+      ),
+  );
+  expect(
+    followedUnretained.isError,
+    JSON.stringify(followedUnretained),
+  ).not.toBe(true);
 });
 
 it("delivers no summary without retention, on a ledger failure or after cancellation", async () => {

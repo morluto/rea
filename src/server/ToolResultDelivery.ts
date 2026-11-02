@@ -140,8 +140,11 @@ export class ToolResultDelivery {
                   kind: "retained-evidence",
                   evidence_id: evidence.evidence_id,
                 },
-                ...this.nativeContinuation(evidence, undefined, viewSource),
               }),
+          // A view names its caller's source, which needs no session to read again.
+          ...(recorded === undefined && viewSource === undefined
+            ? {}
+            : this.nativeContinuation(evidence, undefined, viewSource)),
         });
   }
 
