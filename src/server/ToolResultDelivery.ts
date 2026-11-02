@@ -102,6 +102,7 @@ export class ToolResultDelivery {
     private readonly nativeContinuation: (
       evidence: Evidence,
       selected?: JsonValue,
+      viewSource?: JsonValue,
     ) => Readonly<Record<string, JsonValue>> = () => ({}),
   ) {
     this.maximumResponseBytes = maximumResponseBytes;
@@ -129,6 +130,7 @@ export class ToolResultDelivery {
     evidence: Evidence,
     contract: ToolContract,
     recorded: Result<unknown, AnalysisError> | undefined,
+    viewSource?: JsonValue,
   ): CallToolResult {
     return recorded !== undefined && !recorded.ok
       ? this.toErrorToolResult(recorded.error, contract.returnsTargetContent)
@@ -141,8 +143,11 @@ export class ToolResultDelivery {
                   kind: "retained-evidence",
                   evidence_id: evidence.evidence_id,
                 },
-                ...this.nativeContinuation(evidence),
               }),
+          // A view names its caller's source, which needs no session to read again.
+          ...(recorded === undefined && viewSource === undefined
+            ? {}
+            : this.nativeContinuation(evidence, undefined, viewSource)),
         });
   }
 

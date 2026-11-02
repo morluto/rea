@@ -10,6 +10,7 @@ import {
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  batchDecompileSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   artifactInventorySummaryViewResultSchema,
   interfaceBuilderSummaryViewResultSchema,
@@ -325,7 +326,10 @@ export const enhancedOutputSchemas = {
   get_objc_classes: objcClassDiscoveryOutput,
   get_objc_protocols: symbolDiscoveryOutput("protocols"),
   decompile_all: evidenceResultOf(decompileDirectoryManifestSchema),
-  batch_decompile: evidenceResultOf(batchDecompileResultSchema),
+  batch_decompile: analysisDetailOutputSchemaOf(
+    batchDecompileResultSchema,
+    batchDecompileSummaryViewResultSchema,
+  ),
   get_call_graph: analysisDetailOutputSchemaOf(
     nativeObservationSourceSchemas.get_call_graph,
     nativeObservationSummaryViewResultSchemas.get_call_graph,
