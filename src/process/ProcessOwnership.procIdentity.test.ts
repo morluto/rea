@@ -1,11 +1,15 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { performance } from "node:perf_hooks";
 
 import { expect, it, vi } from "vitest";
 
+import { waitForProviderProcessReady } from "../../tests/fixtures/providerProcess.js";
+
 const filesystem = vi.hoisted(() => ({
   readFile: vi.fn(),
   // Host procfs ownership must never leak into fixture PIDs.
-  stat: vi.fn(async () => {
+  stat: vi.fn<typeof import("node:fs/promises").stat>(async () => {
     throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
   }),
 }));
@@ -54,6 +58,18 @@ const procStat = (
   while (fields.length < 19) fields.push("0");
   fields.push(String(startTime));
   return `${String(pid)} (fixture) ${fields.join(" ")}`;
+};
+
+const failCredentialRead = (
+  stage: "status" | "closing stat",
+  code: string,
+): void => {
+  filesystem.readFile.mockResolvedValueOnce(procStat(100));
+  if (stage === "closing stat")
+    filesystem.readFile.mockResolvedValueOnce(
+      "Uid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\n",
+    );
+  filesystem.readFile.mockRejectedValueOnce(filesystemError(code));
 };
 
 /**
@@ -160,33 +176,106 @@ it.each([
   },
 );
 
-it("keeps native identity when status UID is unavailable", async () => {
-  const host = createSystemProcessOwnershipHost("linux", {});
-  filesystem.readFile
-    .mockResolvedValueOnce(procStat(100))
-    .mockRejectedValueOnce(filesystemError("EACCES"));
+it.each(["status", "closing stat"] as const)(
+  "keeps native identity without credential claims when %s is denied",
+  async (stage) => {
+    const host = createSystemProcessOwnershipHost("linux", {});
+    const signalProbe = vi.spyOn(process, "kill");
+    try {
+      for (const code of ["EACCES", "EPERM"]) {
+        failCredentialRead(stage, code);
+        await expect(
+          host.processIdentities?.([entry], undefined, new Set([entry.pid])),
+        ).resolves.toEqual(
+          new Map([
+            [
+              42,
+              {
+                state: "readable",
+                identity: "linux-starttime:100",
+                lifecycle: { state: "observed", lifecycle: "non-zombie" },
+                relation: {
+                  state: "observed",
+                  parentPid: 1,
+                  processGroupId: 42,
+                },
+              },
+            ],
+          ]),
+        );
+      }
+      expect(signalProbe).not.toHaveBeenCalled();
+    } finally {
+      signalProbe.mockRestore();
+    }
+  },
+);
 
-  await expect(
-    host.processIdentities?.([entry], undefined, new Set([entry.pid])),
-  ).resolves.toEqual(
-    new Map([
-      [
-        42,
-        {
-          state: "readable",
-          identity: "linux-starttime:100",
-          lifecycle: { state: "observed", lifecycle: "non-zombie" },
-          relation: {
-            state: "observed",
-            parentPid: 1,
-            processGroupId: 42,
-          },
-        },
-      ],
-    ]),
-  );
-  expect(filesystem.readFile).toHaveBeenCalledTimes(2);
-});
+it.each([
+  ["status", "ENOENT"],
+  ["status", "ESRCH"],
+  ["closing stat", "ENOENT"],
+  ["closing stat", "ESRCH"],
+] as const)(
+  "settles Linux exit when credential %s returns %s and signal-zero confirms absence",
+  async (stage, code) => {
+    const host = createSystemProcessOwnershipHost("linux", {});
+    failCredentialRead(stage, code);
+    const signalProbe = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw filesystemError("ESRCH");
+    });
+    try {
+      await expect(
+        host.processIdentities?.([entry], undefined, new Set([entry.pid])),
+      ).resolves.toEqual(
+        new Map([
+          [
+            42,
+            {
+              state: "absent",
+              reason: "not-found-in-caller-pid-namespace",
+            },
+          ],
+        ]),
+      );
+      expect(signalProbe).toHaveBeenCalledExactlyOnceWith(42, 0);
+    } finally {
+      signalProbe.mockRestore();
+    }
+  },
+);
+
+it.each(["status", "closing stat"] as const)(
+  "keeps a missing credential %s read unresolved without signal-zero absence",
+  async (stage) => {
+    const host = createSystemProcessOwnershipHost("linux", {});
+    const signalProbe = vi.spyOn(process, "kill");
+    try {
+      for (const present of [true, false, "EPERM"] as const) {
+        failCredentialRead(stage, "ENOENT");
+        signalProbe.mockImplementationOnce(() => {
+          if (present === "EPERM") throw filesystemError("EPERM");
+          // Exercise a nonstandard false response despite Node's true-only type.
+          return present as ReturnType<typeof process.kill>;
+        });
+        const observations = await host.processIdentities?.(
+          [entry],
+          undefined,
+          new Set([entry.pid]),
+        );
+        expect(observations?.get(42)).toMatchObject({ state: "unavailable" });
+      }
+      expect(signalProbe).toHaveBeenCalledTimes(3);
+      expect(
+        signalProbe.mock.calls.every(
+          ([pid, signal]) => pid === 42 && signal === 0,
+        ),
+      ).toBe(true);
+    } finally {
+      signalProbe.mockRestore();
+    }
+  },
+);
 
 it("does not attach a UID when the process generation changes around status", async () => {
   const host = createSystemProcessOwnershipHost("linux", {});
@@ -330,7 +419,7 @@ it("keeps hidden or permission-denied live PIDs unavailable", async () => {
           42,
           {
             state: "unavailable",
-            reason: "proc_stat_missing_but_process_signal_probe_succeeded",
+            reason: "procfs_lookup_missing_but_process_signal_probe_succeeded",
           },
         ],
       ]),
@@ -429,3 +518,78 @@ it("preserves cancellation before and after the signal-zero probe", async () => 
     probeAbort.mockRestore();
   }
 });
+
+it
+  .skipIf(process.platform !== "linux")
+  .each(["status", "closing stat"] as const)(
+  "observes actual Linux child exit during the credential %s read",
+  async (stage) => {
+    const realFilesystem =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        "process.stdin.resume(); process.stdin.once('end', () => process.exit(0)); process.stdout.write('ready\\n');",
+      ],
+      { detached: true, stdio: ["pipe", "pipe", "pipe"] },
+    );
+    const closed = new Promise<void>((resolve) => {
+      child.once("close", () => resolve());
+    });
+    child.stderr.resume();
+    const signalProbe = vi.spyOn(process, "kill");
+    try {
+      await once(child, "spawn");
+      await waitForProviderProcessReady(child);
+      const pid = child.pid;
+      if (pid === undefined)
+        throw new Error("Expected a source-owned child PID");
+      let statReads = 0;
+      let exitRequested = false;
+      filesystem.stat.mockImplementation(realFilesystem.stat);
+      filesystem.readFile.mockImplementation(
+        async (...args: Parameters<typeof realFilesystem.readFile>) => {
+          const path = String(args[0]);
+          if (path === `/proc/${String(pid)}/stat`) statReads += 1;
+          const due =
+            stage === "status"
+              ? path === `/proc/${String(pid)}/status`
+              : path === `/proc/${String(pid)}/stat` && statReads === 2;
+          if (due && !exitRequested) {
+            // Control the interleaving, but retain the actual procfs error and
+            // the kernel's signal-zero absence observation after child reap.
+            exitRequested = true;
+            child.stdin.end();
+            await closed;
+          }
+          return realFilesystem.readFile(...args);
+        },
+      );
+      const native = createSystemProcessOwnershipHost("linux", process.env);
+      const observations = await native.processIdentities?.(
+        [{ ...entry, pid, parentPid: process.pid, processGroupId: pid }],
+        undefined,
+        new Set([pid]),
+      );
+
+      expect(exitRequested).toBe(true);
+      expect(child.exitCode).toBe(0);
+      expect(child.signalCode).toBeNull();
+      expect(observations?.get(pid)).toEqual({
+        state: "absent",
+        reason: "not-found-in-caller-pid-namespace",
+      });
+      expect(signalProbe).toHaveBeenCalledExactlyOnceWith(pid, 0);
+    } finally {
+      if (!child.stdin.destroyed) child.stdin.end();
+      await closed;
+      signalProbe.mockRestore();
+      filesystem.readFile.mockReset();
+      filesystem.stat.mockReset();
+      filesystem.stat.mockRejectedValue(filesystemError("ENOENT"));
+    }
+  },
+);
