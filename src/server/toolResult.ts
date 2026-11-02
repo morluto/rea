@@ -4,6 +4,7 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../domain/analysisView/analysisViewErrors.js";
 import { inspectAnalysisViewInputSchema } from "../domain/analysisView/analysisView.js";
+import { smallerBatchDecompileSelection } from "../domain/analysisView/batchDecompileView.js";
 import type { Evidence } from "../domain/evidence.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 
@@ -36,17 +37,13 @@ const smallerPage = (
     : null;
 };
 
-/** Offer a named, schema-validated page for retained analysis whose owner supports paging. */
-const retainedEvidenceContinuation = (
-  evidence: Evidence,
-  selected?: JsonValue,
+/** A named, schema-validated call reading one view of a retained parent. */
+const continuationOf = (
+  parentEvidenceId: string,
+  view: unknown,
 ): Readonly<Record<string, JsonValue>> => {
-  const smaller = smallerPage(selected);
-  if (smaller === null) return {};
-  const view = smaller ?? ownerFirstPage(evidence);
-  if (view === undefined) return {};
   const input = inspectAnalysisViewInputSchema.safeParse({
-    source: { kind: "retained-evidence", evidence_id: evidence.evidence_id },
+    source: { kind: "retained-evidence", evidence_id: parentEvidenceId },
     view,
   });
   if (!input.success) return {};
@@ -58,14 +55,33 @@ const retainedEvidenceContinuation = (
   };
 };
 
+/** Offer a next page for retained analysis whose owner supports paging. */
+const retainedEvidenceContinuation = (
+  evidence: Evidence,
+  selected?: JsonValue,
+): Readonly<Record<string, JsonValue>> => {
+  if (evidence.operation === INSPECT_ANALYSIS_VIEW_OPERATION) {
+    const next = smallerBatchDecompileSelection(evidence.normalized_result);
+    return next === undefined
+      ? {}
+      : continuationOf(next.parentEvidenceId, next.view);
+  }
+  const smaller = smallerPage(selected);
+  if (smaller === null) return {};
+  const view = smaller ?? ownerFirstPage(evidence);
+  return view === undefined ? {} : continuationOf(evidence.evidence_id, view);
+};
+
 /** The first page an owner offers when its complete retained result does not fit. */
 const ownerFirstPage = (evidence: Evidence): JsonValue | undefined =>
   evidence.operation === "analyze_function"
     ? { kind: "native", facet: "pseudocode", offset: 0 }
     : evidence.operation === "trace_application_feature"
       ? { kind: "feature-trace", collection: "paths", offset: 0, limit: 64 }
-      : isNativeInventoryOperation(evidence.operation)
-        ? { kind: "native-inventory", offset: 0, limit: 64 }
-        : isNativeObservationOperation(evidence.operation)
-          ? { kind: "native-observation", offset: 0, limit: 64 }
-          : undefined;
+      : evidence.operation === "batch_decompile"
+        ? { kind: "batch-decompile", collection: "items", offset: 0, limit: 64 }
+        : isNativeInventoryOperation(evidence.operation)
+          ? { kind: "native-inventory", offset: 0, limit: 64 }
+          : isNativeObservationOperation(evidence.operation)
+            ? { kind: "native-observation", offset: 0, limit: 64 }
+            : undefined;

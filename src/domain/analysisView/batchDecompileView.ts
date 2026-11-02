@@ -388,3 +388,53 @@ export const projectBatchDecompileView = (
     coverage: page.value.coverage,
   });
 };
+
+const deliveredPageSchema = z.looseObject({
+  kind: z.literal("batch-decompile"),
+  parent_evidence_id: z.string(),
+  view: batchDecompileViewRequestSchema,
+  items: z
+    .array(z.looseObject({ index: z.int(), status: z.string() }))
+    .optional(),
+});
+
+/**
+ * The next selection from the retained parent when a delivered page did not
+ * fit: fewer rows, then one body's text pages, which need no export. A view
+ * record is not a parent, so the selection names the one this page came from.
+ */
+export const smallerBatchDecompileSelection = (
+  delivered: unknown,
+):
+  | {
+      readonly parentEvidenceId: string;
+      readonly view: z.input<typeof batchDecompileViewRequestSchema>;
+    }
+  | undefined => {
+  const page = deliveredPageSchema.safeParse(delivered);
+  if (!page.success) return undefined;
+  const { parent_evidence_id: parentEvidenceId, view, items = [] } = page.data;
+  if (view.collection === "pseudocode")
+    return view.limit > 1
+      ? {
+          parentEvidenceId,
+          view: { ...view, limit: Math.floor(view.limit / 2) },
+        }
+      : undefined;
+  if (items.length > 1)
+    return {
+      parentEvidenceId,
+      view: { ...view, limit: Math.floor(items.length / 2) },
+    };
+  const [row] = items;
+  return row?.status === "ok" && view.include_pseudocode
+    ? {
+        parentEvidenceId,
+        view: {
+          kind: view.kind,
+          collection: "pseudocode",
+          index: row.index,
+        },
+      }
+    : undefined;
+};

@@ -993,7 +993,7 @@ export const featureTraceViewResultSchema = z
   );
 
 /** Counts and identities of a retained batch without any pseudocode body. */
-const batchDecompileSummaryViewResultSchema = z.strictObject({
+export const batchDecompileSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   artifact: artifactSchema.nullable(),
   parent_operation: z.literal("batch_decompile"),
