@@ -47,6 +47,12 @@ import { parseJebMcpEndpoint } from "./jebMcpEndpoint.js";
 const environmentSchema = z.object({
   ...debuggerSessionLimitEnvironmentShape,
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
+  REA_EVIDENCE_STORE: z.enum(["off", "project"]).default("off"),
+  REA_EVIDENCE_STORE_DIR: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "REA_EVIDENCE_STORE_DIR must be absolute")
+    .optional(),
   REA_BRIDGE_MAX_REQUEST_BYTES: bridgeMaxRequestBytesSchema.optional(),
   REA_MCP_MAX_RESPONSE_BYTES: mcpResponseBudgetSchema.optional(),
   REA_MCP_MAX_INPUT_ELEMENTS: mcpInputBudgetSchema.optional(),

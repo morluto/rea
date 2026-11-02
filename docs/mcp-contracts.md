@@ -57,6 +57,25 @@ Evidence. `build_call_path.functions` also accepts retained references to the
 complete dossiers. Request `detail: "complete"` only when the record must travel
 inline.
 
+### Project Evidence store
+
+Set `REA_EVIDENCE_STORE=project` in the server environment to persist
+authenticated Evidence under `.rea/evidence` in the server process's current
+working directory. Set `REA_EVIDENCE_STORE_DIR` to an absolute store root,
+normally `<project>/.rea/evidence`, when the client launches the server
+elsewhere. The store is content-addressed by `evidence_id`, writes each record
+through a temporary file that is synced before its rename, and re-authenticates
+every record before a later session can use it. A tampered, malformed,
+oversized, or non-regular file at an expected record name is treated as
+missing, so a pipe or a directory cannot stall a lookup. Writes are flushed
+when the session closes, and a failed flush is reported as a cleanup failure
+rather than a durable record; a record whose write failed stays queued, so a
+later close retries it once the storage problem is fixed. Reads retained for
+one session are released when that session closes. Unknowns are not persisted
+by this first store slice, and an exported session bundle still contains only
+that session's records. The store is a lookup source for later sessions, not an
+implicit bundle import.
+
 Saved records from the pre-6.6 identity projection that omitted
 `relationship_coverage: null` from its digest remain incompatible, even when
 the serialized field is present. REA recognizes that exact previous commitment

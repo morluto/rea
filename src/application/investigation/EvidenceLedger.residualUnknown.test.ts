@@ -160,6 +160,7 @@ describe("residual unknown registry reads and identity", () => {
         unknownsAdded: 0,
         changed: true,
         replacements: [],
+        committed: [addition],
       },
     });
     expect(store.export().unknowns).toEqual(originalUnknowns);
@@ -170,6 +171,7 @@ describe("residual unknown registry reads and identity", () => {
         unknownsAdded: 0,
         changed: false,
         replacements: [],
+        committed: [],
       },
     });
   });
@@ -209,6 +211,7 @@ describe("residual unknown dependency histories", () => {
         unknownsAdded: 10_000,
         changed: true,
         replacements: [],
+        committed: bundle.records,
       },
     });
     expect(store.export()).toEqual(bundle);

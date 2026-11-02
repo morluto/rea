@@ -54,6 +54,8 @@ export interface EvidenceImportDelta {
   readonly unknownsAdded: number;
   readonly changed: boolean;
   readonly replacements: readonly EvidenceMetadataReplacement[];
+  /** Records this import committed, newest metadata included, in bundle order. */
+  readonly committed: readonly Evidence[];
 }
 
 type ImportResult = Result<EvidenceImportDelta, AnalysisError>;
@@ -178,6 +180,7 @@ export class EvidenceLedger {
         unknownsAdded: 0,
         changed: recordChanges.size > 0,
         replacements,
+        committed: [...recordChanges.values()],
       });
     }
     const unknownChanges = new Map<string, ResidualUnknown>();
@@ -239,6 +242,7 @@ export class EvidenceLedger {
       unknownsAdded,
       changed: recordChanges.size > 0 || unknownsAdded > 0,
       replacements,
+      committed: [...recordChanges.values()],
     });
   }
 

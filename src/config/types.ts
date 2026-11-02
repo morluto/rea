@@ -13,6 +13,8 @@ import type { RegexWorkerHeapRequest } from "./regexWorkerHeapRequest.js";
 import type { HopperCallerScanBudget } from "./hopperCallerScanBudget.js";
 
 export interface AppConfig {
+  /** Absolute project Evidence store root; absent keeps persistence disabled. */
+  readonly evidenceStoreRoot?: string;
   readonly mcpToolFamilies?: readonly McpToolFamilies[number][];
   readonly mcpMaxResponseBytes?: number;
   readonly mcpMaxInputElements?: number;

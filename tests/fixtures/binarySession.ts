@@ -18,6 +18,7 @@ import type {
 import { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { SessionProviderRouter } from "../../src/application/binary/SessionProviderRouter.js";
 import { AnalysisProviderRegistry } from "../../src/application/binary/AnalysisProviderRegistry.js";
+import type { ProjectEvidenceStore } from "../../src/application/investigation/ProjectEvidenceStore.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../src/contracts/officialToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../../src/contracts/enhancedToolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "../../src/contracts/native/nativeToolContracts.js";
@@ -30,6 +31,7 @@ import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 type TestBinarySessionOptions = {
   readonly auxiliaryProviders?: readonly AnalysisProvider[];
+  readonly evidenceStore?: ProjectEvidenceStore;
   readonly resolveAnalysisProfile?: (
     target: BinaryTarget,
     options?: AnalysisProfileResolutionOptions,
@@ -120,7 +122,12 @@ export const createTestBinarySession = (
   provider: AnalysisProvider | FixtureClientFactory,
   options: TestBinarySessionOptions = {},
 ): BinarySession =>
-  new BinarySession(createTestProviderRouter(provider, options));
+  new BinarySession(
+    createTestProviderRouter(provider, options),
+    undefined,
+    undefined,
+    options.evidenceStore,
+  );
 
 /** Materialize two distinct targets for session lifecycle tests. */
 export const createBinarySessionTargets = async (): Promise<
