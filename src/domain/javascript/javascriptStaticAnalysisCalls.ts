@@ -727,7 +727,7 @@ const addPartialNetworkEndpoint = (
     resolution: "partial",
   });
 
-const resolvedRequestTarget = (
+export const resolvedRequestTarget = (
   node: t.Node,
   site: t.Node,
   bindings: JavaScriptSemanticAnalysisState,

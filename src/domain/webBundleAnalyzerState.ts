@@ -25,6 +25,8 @@ export interface AnalysisAccumulator {
   readonly widenedScripts: string[];
   readonly uncertainXhrScripts: string[];
   readonly uncertainNetworkScripts: string[];
+  readonly unresolvedNetworkTargetScripts: string[];
+  readonly uncollectedNetworkTargetScripts: string[];
   readonly uncollectedNetworkScripts: string[];
   readonly uncollectedXhrScripts: string[];
 }
@@ -43,6 +45,8 @@ export const createWebBundleAnalysisAccumulator = (): AnalysisAccumulator => ({
   widenedScripts: [],
   uncertainXhrScripts: [],
   uncertainNetworkScripts: [],
+  unresolvedNetworkTargetScripts: [],
+  uncollectedNetworkTargetScripts: [],
   uncollectedNetworkScripts: [],
   uncollectedXhrScripts: [],
 });

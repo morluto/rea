@@ -99,6 +99,8 @@ export const buildCapturedWebBundleAnalysis = (
     accumulator.widenedScripts.length > 0 ||
     accumulator.uncertainXhrScripts.length > 0 ||
     accumulator.uncertainNetworkScripts.length > 0 ||
+    accumulator.unresolvedNetworkTargetScripts.length > 0 ||
+    accumulator.uncollectedNetworkTargetScripts.length > 0 ||
     accumulator.uncollectedNetworkScripts.length > 0 ||
     accumulator.uncollectedXhrScripts.length > 0 ||
     unavailable.length > 0 ||
@@ -191,6 +193,10 @@ export const buildCapturedWebBundleAnalysis = (
       widenedScripts: accumulator.widenedScripts,
       uncertainXhrScripts: accumulator.uncertainXhrScripts,
       uncertainNetworkScripts: accumulator.uncertainNetworkScripts,
+      unresolvedNetworkTargetScripts:
+        accumulator.unresolvedNetworkTargetScripts,
+      uncollectedNetworkTargetScripts:
+        accumulator.uncollectedNetworkTargetScripts,
       uncollectedNetworkScripts: accumulator.uncollectedNetworkScripts,
       uncollectedXhrScripts: accumulator.uncollectedXhrScripts,
       unavailableAnalyses,
@@ -231,6 +237,10 @@ const mergeScriptResults = (
       accumulator.uncertainNetworkScripts.push(result.script_key);
     else if (result.uncertain_network_identity === undefined)
       accumulator.uncollectedNetworkScripts.push(result.script_key);
+    if (result.unresolved_network_target === true)
+      accumulator.unresolvedNetworkTargetScripts.push(result.script_key);
+    else if (result.unresolved_network_target === undefined)
+      accumulator.uncollectedNetworkTargetScripts.push(result.script_key);
     if (result.uncertain_xhr_identity === true)
       accumulator.uncertainXhrScripts.push(result.script_key);
     else if (result.uncertain_xhr_identity === undefined)
@@ -286,6 +296,8 @@ interface UnknownsInput {
   readonly widenedScripts: readonly string[];
   readonly uncertainXhrScripts: readonly string[];
   readonly uncertainNetworkScripts: readonly string[];
+  readonly unresolvedNetworkTargetScripts: readonly string[];
+  readonly uncollectedNetworkTargetScripts: readonly string[];
   readonly uncollectedNetworkScripts: readonly string[];
   readonly uncollectedXhrScripts: readonly string[];
   readonly unavailableAnalyses: readonly Extract<
@@ -299,6 +311,26 @@ interface UnknownsInput {
 }
 
 const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
+  ...(input.unresolvedNetworkTargetScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "network_target",
+          reason:
+            "A recognized network request target could not be resolved statically",
+          affected_script_keys: [...input.unresolvedNetworkTargetScripts],
+        },
+      ]),
+  ...(input.uncollectedNetworkTargetScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "network_target",
+          reason:
+            "Network request target coverage was not collected by the script analyzer",
+          affected_script_keys: [...input.uncollectedNetworkTargetScripts],
+        },
+      ]),
   ...(input.uncollectedNetworkScripts.length === 0
     ? []
     : [

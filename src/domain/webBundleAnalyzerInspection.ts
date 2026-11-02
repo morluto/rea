@@ -43,6 +43,7 @@ import {
   isUrlLikeModuleSpecifier,
 } from "./webBundleAnalyzerAst.js";
 import { createJavaScriptRpcScan } from "./javascript/javascriptRpcEndpoints.js";
+import { resolvedRequestTarget } from "./javascript/javascriptStaticAnalysisCalls.js";
 import { semanticStaticModuleSource } from "./javascript/javascriptModuleDeclaration.js";
 import { parseJavaScriptSource } from "./javascript/javascriptSourceParser.js";
 
@@ -95,6 +96,16 @@ export const analyzeScript = (
     return isIntrinsicMapLookup(node, index.bindings, index) === true;
   };
   const isXhrRequest = createXhrOpenRequestQuery(index);
+  const resolveNetworkTarget = (
+    target: t.Expression,
+    node: t.Node,
+  ): string | undefined => {
+    if (!mutationFactsIndexed) {
+      completeSemanticSteps(index.indexMemberMutationFactsSteps());
+      mutationFactsIndexed = true;
+    }
+    return resolvedRequestTarget(target, node, index.bindings, index);
+  };
   const rpc = createJavaScriptRpcScan(
     script.source.artifact.text,
     receivers.rpcClientRoots,
@@ -112,6 +123,7 @@ export const analyzeScript = (
         isMapLookup,
         index.bindings,
         isXhrRequest,
+        resolveNetworkTarget,
       );
       const endpoint = rpc.inspect(node);
       if (endpoint !== undefined)
@@ -150,6 +162,10 @@ const inspectNode = (
   ) => boolean,
   bindings: JavaScriptSemanticAnalysisState,
   isXhrRequest: (node: t.Node) => boolean | "unknown",
+  resolveNetworkTarget: (
+    target: t.Expression,
+    node: t.Node,
+  ) => string | undefined,
 ): void => {
   const moduleSource = semanticStaticModuleSource(node);
   if (moduleSource !== null)
@@ -184,6 +200,7 @@ const inspectNode = (
       isMapLookup,
       bindings,
       isXhrRequest,
+      resolveNetworkTarget,
     );
 };
 
@@ -197,6 +214,10 @@ const inspectCall = (
   ) => boolean,
   bindings: JavaScriptSemanticAnalysisState,
   isXhrRequest: (node: t.Node) => boolean | "unknown",
+  resolveNetworkTarget: (
+    target: t.Expression,
+    node: t.Node,
+  ) => string | undefined,
 ): void => {
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
@@ -246,6 +267,48 @@ const inspectCall = (
   )
     accumulator.uncertainNetworkScripts.push(script.script_key);
   const knownRequest = networkStatus === "unmodified" || xhr === true;
+  const targetIndex = xhr !== false ? 1 : 0;
+  const spreadTarget = node.arguments
+    .slice(0, targetIndex + 1)
+    .some((argument) => t.isSpreadElement(argument));
+  if (
+    (knownRequest || networkStatus === "unknown" || xhr === "unknown") &&
+    !mapLookup
+  ) {
+    const target = node.arguments[targetIndex];
+    if (
+      !spreadTarget &&
+      target !== undefined &&
+      t.isExpression(target) &&
+      stringValue(target) === undefined
+    ) {
+      const value = resolveNetworkTarget(target, node);
+      if (value === undefined) {
+        if (
+          !accumulator.unresolvedNetworkTargetScripts.includes(
+            script.script_key,
+          )
+        )
+          accumulator.unresolvedNetworkTargetScripts.push(script.script_key);
+      } else if (knownRequest) {
+        addFinding({
+          collection: accumulator.endpoints,
+          script,
+          rawValue: value,
+          mechanism: `call:${name}`,
+          node,
+          accumulator,
+        });
+      } else {
+        addEndpointCandidate(script, node, name, value, accumulator);
+      }
+    } else if (
+      (spreadTarget ||
+        (target !== undefined && t.isArgumentPlaceholder(target))) &&
+      !accumulator.unresolvedNetworkTargetScripts.includes(script.script_key)
+    )
+      accumulator.unresolvedNetworkTargetScripts.push(script.script_key);
+  }
   const intrinsicEndpoint =
     (networkStatus === "unmodified" || networkStatus === "unknown") &&
     first !== undefined
@@ -254,6 +317,7 @@ const inspectCall = (
   const resolvedEndpoint = endpoint ?? intrinsicEndpoint;
   const networkEndpoint =
     resolvedEndpoint !== undefined &&
+    !spreadTarget &&
     !mapLookup &&
     networkStatus !== "replacement"
       ? {
@@ -261,6 +325,7 @@ const inspectCall = (
           kind: knownRequest ? "endpoint" : resolvedEndpoint.kind,
         }
       : resolvedEndpoint === undefined &&
+          !spreadTarget &&
           xhr !== false &&
           !mapLookup &&
           stringValue(node.arguments[1]) !== undefined
