@@ -39,6 +39,17 @@ pass an absolute path. REA reads and authenticates the file, then projects it
 like retained Evidence, so a large file is bounded by the file reader rather
 than charged as inline input.
 
+An argument that accepts inline JSON or a JSON file path also accepts `-`, which
+reads the request from standard input, so a generated request needs no
+temporary file:
+
+```bash
+jq -nc '{source: {kind: "evidence-file", path: "app-evidence.json"}, view: {kind: "summary"}}' | rea inspect-analysis-view -
+```
+
+Standard input is read once as a single UTF-8 JSON document without a
+byte-order mark, and it is limited to 8 MiB. Put a larger request in a file.
+
 Local file inspection commands reject empty paths and NUL bytes before resolving
 relative inputs, auxiliary files or output destinations. An empty string never
 selects the working directory; use an explicit `.` when selecting that directory
