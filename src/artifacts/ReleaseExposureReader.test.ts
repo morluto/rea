@@ -2860,6 +2860,105 @@ describe("ReleaseExposureReader inline map reads", () => {
   });
 });
 
+describe("ReleaseExposureReader Node shebang scripts", () => {
+  const dataUrl = `data:application/json;base64,${Buffer.from(
+    JSON.stringify({
+      version: 3,
+      sources: ["src/app.ts"],
+      sourcesContent: ["export {};"],
+      mappings: "",
+    }),
+  ).toString("base64")}`;
+
+  const script = (shebang: string): string =>
+    `${shebang}\nrun();\n//# sourceMappingURL=${dataUrl}\n`;
+
+  const shebangRoot = async (): Promise<string> =>
+    createTestTempDirectory("rea-release-exposure-shebang-");
+
+  it.each([
+    ["#!/usr/bin/env node"],
+    ["#!/usr/bin/env node\r"],
+    ["#!/usr/bin/env -S node --no-warnings"],
+    ["#!/usr/local/bin/node --no-warnings"],
+    ["#! /usr/bin/nodejs"],
+  ])("reads the map of %j in a directory", async (shebang) => {
+    const root = await shebangRoot();
+    await writeFile(join(root, "runner"), script(shebang));
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
+  it("reads the map of a selected file", async () => {
+    const path = join(await shebangRoot(), "runner");
+    await writeFile(path, script("#!/usr/bin/env node"));
+    expect(sourceMapSourcesStatus(await inspect(path))).toBe("exposed");
+  });
+
+  it("reads the map of an ASAR member", async () => {
+    const path = join(await shebangRoot(), "app.asar");
+    await writeFile(
+      path,
+      asarArchive([
+        {
+          name: "runner",
+          bytes: Buffer.from(script("#!/usr/bin/env node")),
+        },
+      ]),
+    );
+    expect(sourceMapSourcesStatus(await inspect(path))).toBe("exposed");
+  });
+
+  it("keeps coverage unknown for a script past the text allowance", async () => {
+    const root = await shebangRoot();
+    await writeFile(
+      join(root, "runner"),
+      `${script("#!/usr/bin/env node")}${" ".repeat(
+        MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES,
+      )}`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
+
+  it("keeps coverage unknown for a script that does not decode", async () => {
+    const root = await shebangRoot();
+    await writeFile(
+      join(root, "runner"),
+      Buffer.concat([
+        Buffer.from("#!/usr/bin/env node\n"),
+        Buffer.from(script("").repeat(2), "utf16le"),
+      ]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
+
+  it("does not count a shebang script an HTML file loads later as unread", async () => {
+    const root = await shebangRoot();
+    await writeFile(join(root, "app"), script("#!/usr/bin/env node"));
+    await writeFile(join(root, "index.html"), '<script src="app"></script>');
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
+  it.each([
+    ["#!/bin/sh"],
+    ["#!/usr/bin/env python3"],
+    ["#!/usr/bin/env nodemon"],
+    ["#!/opt/node/bin/python3 node"],
+  ])("does not read %j as JavaScript", async (shebang) => {
+    const root = await shebangRoot();
+    await writeFile(join(root, "runner"), script(shebang));
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 0 });
+  });
+});
+
 describe("ReleaseExposureReader resource admission", () => {
   it("holds one scope admission for a whole audit", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-scope-");

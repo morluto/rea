@@ -1199,6 +1199,21 @@ const examineTextMember = async (
 };
 
 /**
+ * A shebang that runs Node makes a file a script whatever it is called. The
+ * path classifier cannot see this, so the first bytes read establish it.
+ */
+const hasNodeShebang = (prefix: Buffer): boolean => {
+  if (prefix.toString("latin1", 0, 2) !== "#!") return false;
+  const [line = ""] = prefix.toString("latin1", 2).split("\n", 1);
+  const [interpreter = "", ...args] = line.trim().split(/[ \t]+/u);
+  const program =
+    basename(interpreter) === "env"
+      ? args.find((arg) => !arg.startsWith("-") && !arg.includes("="))
+      : interpreter;
+  return program !== undefined && /^node(?:js)?$/u.test(basename(program));
+};
+
+/**
  * Recognize text from bounded content. A name such as `.env.production`,
  * `server.key`, or `credentials` is not a complete statement of what a file is.
  * Content that could not be probed leaves text coverage undecided.
@@ -1215,7 +1230,10 @@ const examineProbedText = async (
         ? probe.prefix
         : null;
   if (prefix === null) state.skippedText += 1;
-  else if (
+  else if (hasNodeShebang(prefix)) {
+    state.examinedScripts.add(memberLocationKey(member.location));
+    await examineTextMember(state, { ...member, kind: "javascript" });
+  } else if (
     prefix.length > 0 &&
     (!prefix.includes(0) || declaresTextEncoding(prefix))
   )
