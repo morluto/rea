@@ -5,7 +5,7 @@
 ## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-02)
 
 
-###   BREAKING CHANGES
+### âš  BREAKING CHANGES
 
 * Strict clients that cached the previous full inspect_address_context output schema must refresh tools/list and accept the typed error field on unavailable facets.
 * **evidence:** validate native view parent predicates ([#8451](https://github.com/morluto/rea/issues/8451))
@@ -229,6 +229,7 @@
 * **ci:** enforce architecture guards before dependency setup ([#8027](https://github.com/morluto/rea/issues/8027)) ([cac6e06](https://github.com/morluto/rea/commit/cac6e0613e314238999ce4cc0249107ae936e8d3))
 * **ci:** include hidden VitePress configuration in CodeQL ([#8486](https://github.com/morluto/rea/issues/8486)) ([e5e0dc5](https://github.com/morluto/rea/commit/e5e0dc5542f6a63b790881ac906dc9fcd6d46659))
 * **ci:** preserve lint diagnostics without source locations ([b45a833](https://github.com/morluto/rea/commit/b45a83368c11d02b9ed2acfeb04a19cac747b611))
+* **ci:** preserve release proposal overflow notes ([2cb2969](https://github.com/morluto/rea/commit/2cb29693c3d574c4898832047fe309ac1ad00e9d))
 * **ci:** preserve the package verifier HTTP boundary ([#8483](https://github.com/morluto/rea/issues/8483)) ([7174635](https://github.com/morluto/rea/commit/71746351d322c847cb6b8bc8e1b21e80491a878e))
 * **ci:** remove unused exports that fail deep static checks ([#8095](https://github.com/morluto/rea/issues/8095)) ([6b68fb6](https://github.com/morluto/rea/commit/6b68fb642a62f42e4e5359717e7f2f80b7938c63))
 * **ci:** repair native fixture and unused export ([429355c](https://github.com/morluto/rea/commit/429355ca4d1078579fca7d286de85c512bed0a96))
@@ -533,6 +534,7 @@
 * **native:** retain lipo field declarations ([06c8e14](https://github.com/morluto/rea/commit/06c8e14b347dd64bd4c2485baf6f80e890ce4344))
 * **native:** retain selected Mach-O slice identity ([#7940](https://github.com/morluto/rea/issues/7940)) ([2129c17](https://github.com/morluto/rea/commit/2129c17925d14e4f4de5fc6a54b705470ac7c0e8))
 * **native:** reuse PE header layout evidence ([1dc33c0](https://github.com/morluto/rea/commit/1dc33c05435bcb1627d6d01680f4e9c3c1af1867))
+* **native:** select off-screen windows so the UI lane can complete ([#8654](https://github.com/morluto/rea/issues/8654)) ([26c3e9e](https://github.com/morluto/rea/commit/26c3e9e4134971c79e822bbcb16fb42bb7dd8e8d))
 * **native:** separate value-trace page omission from traversal truncation ([#8309](https://github.com/morluto/rea/issues/8309)) ([73ff6ca](https://github.com/morluto/rea/commit/73ff6ca0c8634aca1371f33219b94161d5bcf70c)), closes [#8283](https://github.com/morluto/rea/issues/8283)
 * **native:** share otool build tool parsing ([8aa6df2](https://github.com/morluto/rea/commit/8aa6df2d86fe3deb295227a4d482da1bc819e53e))
 * **native:** share Swift symbol recognition ([dcfb618](https://github.com/morluto/rea/commit/dcfb61826d8169aa2426df984c59c7a36b982c9b))
@@ -903,7 +905,7 @@
 
 * **apk:** clarify rotated signer agreement ([#7936](https://github.com/morluto/rea/issues/7936)) ([6fa48f2](https://github.com/morluto/rea/commit/6fa48f201f932c6c12b540ee9799895a0a436d00))
 * archive historical verification and release inventories ([#7519](https://github.com/morluto/rea/issues/7519)) ([269630f](https://github.com/morluto/rea/commit/269630f4e1c93e45e5d133fde370736133865a3c))
-* celebrate 400,000 GitHub stars <‰ ([#7801](https://github.com/morluto/rea/issues/7801)) ([7b6d872](https://github.com/morluto/rea/commit/7b6d872a25f84772a49bcdc7ea392028b7328857))
+* celebrate 400,000 GitHub stars ðŸŽ‰ ([#7801](https://github.com/morluto/rea/issues/7801)) ([7b6d872](https://github.com/morluto/rea/commit/7b6d872a25f84772a49bcdc7ea392028b7328857))
 * **changelog:** repair historical release heading links ([#7707](https://github.com/morluto/rea/issues/7707)) ([b69d8c5](https://github.com/morluto/rea/commit/b69d8c54678f2c6f9217c1609a5e9d64880e5392))
 * clarify recovery for valid lookup failures ([60c0cf9](https://github.com/morluto/rea/commit/60c0cf977a34c99afa7942466625aeba74969bdf))
 * clarify test audits and organize verification lanes ([0354145](https://github.com/morluto/rea/commit/0354145a2ad9844f87b602bd457ae3df9982e0d3))
