@@ -1163,6 +1163,8 @@ See [Apktool resource decoding](testing-lanes.md#apktool-resource-decoding).
 
 ## Flutter build identification
 
+See [Flutter build identification](testing-lanes.md#flutter-build-identification).
+
 ## ADB device acquisition
 
 See [ADB device acquisition](testing-lanes.md#adb-device-acquisition).
