@@ -384,6 +384,7 @@ export const createServer = (
                 operation,
                 rebindFailure,
               ),
+        source.kind !== "fixed",
         evidenceById,
       );
       registerCutterTools(
@@ -785,6 +786,8 @@ export const createServer = (
           ? {}
           : { availabilityPolicy: availability.policy }),
         ...capabilities.probes,
+        retryReverseEngineeringCleanup: (operation) =>
+          reverseEngineering.retryCleanup(operation),
         startedAt,
       });
     },

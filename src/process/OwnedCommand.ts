@@ -211,6 +211,9 @@ export const runOwnedCommand = async (
   }
 };
 
+/** Bounded wait for output pipes to close after the child has been stopped. */
+const OUTPUT_SETTLE_MS = 250;
+
 const collectOwnedCommand = async (
   spawn: OwnedProviderProcessSpawnOptions,
   limits: OwnedCommandLimits,
@@ -449,9 +452,12 @@ const collectOwnedCommand = async (
             { cause },
           );
   }
+  // Node may report the child's exit before its final stdout/stderr bytes are
+  // delivered; the supervisor gives inherited pipes a bounded chance to settle
+  // before detaching its listeners so late diagnostics are not lost.
   // A finished sink ignores this; an unfinished one is destroyed.
   abandoned.abort();
-  const stopped = await supervisor.stop();
+  const stopped = await supervisor.stop({ outputSettleMs: OUTPUT_SETTLE_MS });
   const snapshot = supervisor.snapshot();
   // An input error can arrive after finish while process cleanup is still pending.
   if (failure === undefined && inputFailure !== undefined)

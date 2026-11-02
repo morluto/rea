@@ -196,6 +196,24 @@ describe("JavaScript semantic analysis: calls 1", () => {
   });
 });
 
+describe("JavaScript semantic analysis: exported calls", () => {
+  it("resolves calls through exported TypeScript const initializers", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      function render<T>() { return "ready"; }
+      export const specialized = render<string> satisfies () => string;
+      specialized();
+    `);
+    const render = onlyCallable(ir, "render");
+
+    expect(ir.callSites).toContainEqual(
+      expect.objectContaining({
+        resolution: "exact",
+        calleeCallableIds: [render.callableId],
+      }),
+    );
+  });
+});
+
 describe("JavaScript semantic analysis: computed method keys", () => {
   it("evaluates computed method keys in the enclosing callable", () => {
     const ir = analyzeJavaScriptSemantics(`

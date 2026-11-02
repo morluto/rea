@@ -5,6 +5,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { OptionalProviderLoadResult } from "../../../src/application/OptionalObservationProviders.js";
 import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
@@ -43,6 +44,58 @@ import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.j
 import type { JavaScriptRuntimeObservationPort } from "../../../src/application/javascript/JavaScriptRuntimeObservationPort.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
+
+it("closes created servers and optional providers when MCP startup fails", async () => {
+  let serverCloseCalls = 0;
+  let optionalProviderCloseCalls = 0;
+  const session = createManagedBinarySession();
+  const logger = pino({ enabled: false });
+  const optionalProviders: OptionalProviderLoadResult = {
+    browserScenarioCapture: {
+      close: async () => {
+        optionalProviderCloseCalls += 1;
+      },
+      identity: () => ({ id: "test", name: "test", version: null }),
+      captureScenario: async () => {
+        throw new Error("Scenario capture is not used in this test");
+      },
+    },
+  };
+  const started = await startMcpTransport(
+    {
+      env: {},
+      serve: (factory) => {
+        void factory({ era: "modern" });
+        throw new Error("MCP startup failed after server creation");
+      },
+      createServer: (source, options) => {
+        const server = createServer(source, options);
+        const closeServer = server.close.bind(server);
+        server.close = async () => {
+          serverCloseCalls += 1;
+          await closeServer();
+        };
+        return server;
+      },
+      writeStderr: () => undefined,
+      setExitCode: () => undefined,
+      registerShutdown: () => () => undefined,
+    },
+    session,
+    {
+      environment: {},
+      delivery: createToolResultDelivery(undefined),
+      logger,
+      serverLogger: logger,
+      loadOptionalProviders: async () => optionalProviders,
+    },
+  );
+
+  expect(started).toEqual({ ok: false });
+  expect(serverCloseCalls).toBe(1);
+  expect(optionalProviderCloseCalls).toBe(1);
+  await session.close();
+});
 
 it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   "drains an admitted SQLite inspection before changing the session binding",

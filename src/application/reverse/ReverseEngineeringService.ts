@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { stat as statPath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, stat as statPath } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import type { Stats } from "node:fs";
+import type { Readable } from "node:stream";
 
 import {
   requireAnalysisViewRetention,
@@ -46,6 +48,9 @@ import {
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 
@@ -64,13 +69,18 @@ export interface ReverseEngineeringServiceOptions {
   readonly runOwned?: typeof runOwnedCommand;
   readonly digest?: typeof digestFile;
   readonly stat?: (path: string) => Promise<Stats>;
+  readonly open?: (path: string, flags: number) => Promise<FileHandle>;
 }
 
 interface ReverseEngineeringCommandRunner {
   (
     command: string,
     arguments_: readonly string[],
-    options?: Parameters<typeof execFileOutput>[2],
+    options?: NonNullable<Parameters<typeof execFileOutput>[2]> & {
+      readonly onDispatch?: () => void;
+    },
+    /** Operation that launches this provider process, recorded with its owner. */
+    operation?: ReverseEngineeringOperation,
   ): Promise<{
     readonly stdout: string;
     readonly stderr: string;
@@ -111,12 +121,15 @@ export class ReverseEngineeringService {
   readonly #run: ReverseEngineeringCommandRunner;
   readonly #digest: typeof digestFile;
   readonly #stat: (path: string) => Promise<Stats>;
+  readonly #open: (path: string, flags: number) => Promise<FileHandle>;
   readonly #pendingCleanup = new Map<
-    ProviderProcessSupervisor,
+    Pick<ProviderProcessSupervisor, "stop">,
     {
       readonly observation: AnalysisCleanupObservation;
       readonly failures: Set<AnalysisError>;
       readonly retryFailure?: AnalysisError;
+      /** Operation that launched the process this owner still retains. */
+      readonly operation?: ReverseEngineeringOperation;
     }
   >();
   readonly #activeOperations = new Map<
@@ -133,14 +146,66 @@ export class ReverseEngineeringService {
       options.run ??
       runOwnedCommandOutput(
         options.runOwned ?? runOwnedCommand,
-        (owner, cleanup) =>
+        (owner, cleanup, operation) => {
+          const retained = this.#pendingCleanup.get(owner);
+          const retainedOperation = retained?.operation ?? operation;
           this.#pendingCleanup.set(owner, {
             observation: cleanup,
-            failures: this.#pendingCleanup.get(owner)?.failures ?? new Set(),
-          }),
+            failures: retained?.failures ?? new Set(),
+            ...(retainedOperation === undefined
+              ? {}
+              : { operation: retainedOperation }),
+          });
+        },
       );
     this.#digest = options.digest ?? digestFile;
     this.#stat = options.stat ?? statPath;
+    this.#open = options.open ?? open;
+  }
+
+  async #digestArtifact(
+    operation: ReverseEngineeringOperation,
+    ...arguments_: Parameters<typeof digestFile>
+  ): Promise<string> {
+    try {
+      return await this.#digest(...arguments_);
+    } catch (cause) {
+      if (!(cause instanceof DigestFileCleanupFailure)) throw cause;
+      const original = cause.cause;
+      const options = {
+        cause: original,
+        cleanup: {
+          reason: "Artifact descriptor close is not confirmed.",
+          resources: [cause.owner.resource],
+        },
+      };
+      const failure =
+        original instanceof Error &&
+        "code" in original &&
+        original.code === "ETIMEDOUT"
+          ? new AnalysisTimeoutError(
+              operation,
+              arguments_[3] ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+              {
+                ...options,
+                ...reverseCommandTimeoutGuidance(
+                  arguments_[3] ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+                ),
+              },
+            )
+          : original instanceof AnalysisCancelledError || arguments_[1]?.aborted
+            ? new AnalysisCancelledError(operation, options)
+            : new AnalysisOutputError(
+                operation,
+                "Artifact descriptor cleanup remains incomplete.",
+                options,
+              );
+      this.#pendingCleanup.set(cause.owner, {
+        observation: options.cleanup,
+        failures: new Set([failure]),
+      });
+      throw failure;
+    }
   }
 
   /** Ask retained process owners to settle cleanup before admitting more work. */
@@ -165,8 +230,10 @@ export class ReverseEngineeringService {
         };
         let retryFailure = retained.retryFailure;
         if (retryFailure === undefined) {
+          // The refusal names the operation whose process is still retained, not
+          // the operation that happened to observe the outstanding cleanup.
           retryFailure = new AnalysisOutputError(
-            operation,
+            retained.operation ?? operation,
             "A previous provider process still requires cleanup.",
             { cleanup: observation },
           );
@@ -176,6 +243,9 @@ export class ReverseEngineeringService {
           observation,
           failures: retained.failures,
           retryFailure,
+          ...(retained.operation === undefined
+            ? {}
+            : { operation: retained.operation }),
         });
         if (failure === undefined) failure = retryFailure;
       } else {
@@ -233,7 +303,12 @@ export class ReverseEngineeringService {
       );
       if (!ready.ok) return ready;
     }
-    const command = this.#commands.objdump(input);
+    // Capture the absolute artifact path once: argv and Evidence must name the
+    // same target even if the process directory changes while command setup waits.
+    const bound =
+      input.operation === "architectures"
+        ? input
+        : { ...input, path: absoluteCallerPath(input.path) };
     let parameters: Readonly<Record<string, JsonValue>>;
     if (input.operation === "disassemble") {
       const { symbol, ...base } = input;
@@ -243,10 +318,12 @@ export class ReverseEngineeringService {
       parameters = { ...parameters, command_timeout_ms: commandTimeoutMs };
     const observed = await this.#observe(
       "inspect_with_objdump",
-      command,
-      input.operation === "architectures" ? undefined : input.path,
+      (signal) =>
+        this.#commands.objdump(bound, signal === undefined ? {} : { signal }),
+      bound.operation === "architectures" ? undefined : bound.path,
       parameters,
       options.signal,
+      undefined,
       commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
     );
     return observed.ok && detail === "summary"
@@ -256,7 +333,10 @@ export class ReverseEngineeringService {
 
   executeRizinCommand(
     rawInput: unknown,
-    options: { readonly signal?: AbortSignal } = {},
+    options: {
+      readonly signal?: AbortSignal;
+      readonly onDispatch?: () => void;
+    } = {},
   ): Promise<Result<Evidence, AnalysisError>> {
     const parsed = resolveRizinCommandRequest(rawInput);
     return parsed.ok
@@ -267,27 +347,37 @@ export class ReverseEngineeringService {
   /** Execute owner-validated input after the adapter has admitted its target. */
   executeRizinCommandValidated(
     request: RizinInput,
-    options: { readonly signal?: AbortSignal } = {},
+    options: {
+      readonly signal?: AbortSignal;
+      readonly onDispatch?: () => void;
+    } = {},
   ): Promise<Result<Evidence, AnalysisError>> {
     const { command_timeout_ms: commandTimeoutMs, ...input } = request;
-    const command = this.#commands.rizin(input);
+    const command = (signal?: AbortSignal) =>
+      this.#commands.rizin(input, signal === undefined ? {} : { signal });
     return this.#observe(
       "execute_rizin_command",
       command,
       input.path,
       commandTimeoutMs === undefined ? input : request,
       options.signal,
+      options.onDispatch,
       commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
     );
   }
 
   #observe(
     operation: ReverseEngineeringOperation,
-    profile: ReverseEngineeringProviderCommand,
+    prepare: (
+      signal?: AbortSignal,
+    ) =>
+      | ReverseEngineeringProviderCommand
+      | Promise<ReverseEngineeringProviderCommand>,
     path: string | undefined,
     parameters: Readonly<Record<string, JsonValue>>,
-    signal: AbortSignal | undefined,
-    timeoutMs: number,
+    signal?: AbortSignal,
+    onDispatch?: () => void,
+    timeoutMs = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (signal?.aborted)
       return Promise.resolve(
@@ -311,14 +401,11 @@ export class ReverseEngineeringService {
           new AnalysisResourceConstraintError(
             operation,
             "transport",
-            `Concurrent reverse-engineering operation capacity reached (${String(MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS)} operations). This release has no runtime override.`,
+            "Concurrent reverse-engineering operation capacity reached.",
             {
               max_concurrent_operations:
                 MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS,
               active_operations: this.#activeOperations.size,
-            },
-            {
-              remediationAction: `Wait for an active objdump or rizin command to finish, then retry. This capacity of ${String(MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS)} operations has no runtime override, and command_timeout_ms does not raise it.`,
             },
           ),
         ),
@@ -335,10 +422,11 @@ export class ReverseEngineeringService {
         : signal;
     const running = this.#observeProvider(
       operation,
-      profile,
+      prepare,
       path,
       parameters,
       operationSignal,
+      onDispatch,
       timeoutMs,
     );
     const tracked = running.finally(() => {
@@ -351,31 +439,76 @@ export class ReverseEngineeringService {
 
   async #observeProvider(
     operation: ReverseEngineeringOperation,
-    profile: ReverseEngineeringProviderCommand,
+    prepare: (
+      signal?: AbortSignal,
+    ) =>
+      | ReverseEngineeringProviderCommand
+      | Promise<ReverseEngineeringProviderCommand>,
     path: string | undefined,
     parameters: Readonly<Record<string, JsonValue>>,
-    signal: AbortSignal | undefined,
-    timeoutMs: number,
+    signal?: AbortSignal,
+    onDispatch?: () => void,
+    timeoutMs = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const { executable: command, arguments: args } = profile;
     if (signal?.aborted)
       return err(
         new AnalysisCancelledError(operation, { cause: signal.reason }),
       );
     const cleanup = await this.retryCleanup(operation);
     if (!cleanup.ok) return cleanup;
+    let profile: ReverseEngineeringProviderCommand;
+    try {
+      profile = await prepare(signal);
+    } catch (cause) {
+      if (signal?.aborted)
+        return err(new AnalysisCancelledError(operation, { cause }));
+      if (
+        cause instanceof Error &&
+        Reflect.get(cause, "code") === "ETIMEDOUT"
+      ) {
+        const lookupTimeoutMs = providerPathLookupTimeoutMs(cause);
+        return err(
+          lookupTimeoutMs === undefined
+            ? new AnalysisTimeoutError(operation, timeoutMs, {
+                cause,
+                ...reverseCommandTimeoutGuidance(timeoutMs),
+              })
+            : new AnalysisTimeoutError(operation, lookupTimeoutMs, {
+                cause,
+                userMessage: `The Windows provider PATH lookup reached its ${String(lookupTimeoutMs)} ms deadline. This is separate from command_timeout_ms.`,
+                remediationAction:
+                  "Set an absolute REA_OBJDUMP_COMMAND or REA_RIZIN_COMMAND path to avoid scanning PATH entries. command_timeout_ms does not change the PATH lookup deadline.",
+              }),
+        );
+      }
+      return err(
+        new AnalysisOutputError(
+          operation,
+          "Provider command resolution failed.",
+          { cause },
+        ),
+      );
+    }
+    if (signal?.aborted)
+      return err(
+        new AnalysisCancelledError(operation, { cause: signal.reason }),
+      );
+    const { executable: command, arguments: args } = profile;
     const absolutePath =
       path === undefined ? undefined : absoluteCallerPath(path);
     let digest: string | undefined;
     try {
       if (absolutePath !== undefined)
-        digest = await this.#digest(
+        digest = await this.#digestArtifact(
+          operation,
           absolutePath,
           signal,
           this.#stat,
           timeoutMs,
+          this.#open,
         );
     } catch (cause) {
+      if (cause instanceof AnalysisError) return err(cause);
       const code = commandFailureCode(cause);
       if (preflightCancelled(signal, cause, code))
         return err(
@@ -456,17 +589,27 @@ export class ReverseEngineeringService {
     let failure: AnalysisError | undefined;
     let cleanupOwner: ProviderProcessSupervisor | undefined;
     let earlyFailure: AnalysisError | undefined;
+    if (signal?.aborted)
+      return err(
+        new AnalysisCancelledError(operation, { cause: signal.reason }),
+      );
     try {
-      const output = await this.#run(command, args, {
-        env: {
-          ...this.#environment,
-          ...profile.environmentOverrides,
+      const output = await this.#run(
+        command,
+        args,
+        {
+          env: {
+            ...this.#environment,
+            ...profile.environmentOverrides,
+          },
+          signal,
+          timeout: timeoutMs,
+          stopSignal: "SIGTERM",
+          maxBuffer: MAX_COMBINED_OUTPUT_BYTES,
+          ...(onDispatch === undefined ? {} : { onDispatch }),
         },
-        signal,
-        timeout: timeoutMs,
-        stopSignal: "SIGTERM",
-        maxBuffer: MAX_COMBINED_OUTPUT_BYTES,
-      });
+        operation,
+      );
       stdout = output.stdout;
       stderr = output.stderr;
       stdoutBytes = output.stdoutBytes ?? Buffer.byteLength(stdout);
@@ -475,6 +618,10 @@ export class ReverseEngineeringService {
       stderrInvalidUtf8 = output.stderrInvalidUtf8 === true;
       outputTruncated = output.outputTruncated === true;
     } catch (cause) {
+      // Ownership preparation may reject directly before an owned command exists.
+      // Preserve its semantic owner and remediation instead of calling the provider unavailable.
+      if (cause instanceof AnalysisCapabilityUnavailableError)
+        earlyFailure = cause;
       cleanupOwner =
         cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;
       if (
@@ -538,8 +685,8 @@ export class ReverseEngineeringService {
         else if (code === "ETIMEDOUT")
           earlyFailure = new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
-            ...ownedCleanupOptions(cause),
             ...reverseCommandTimeoutGuidance(timeoutMs),
+            ...ownedCleanupOptions(cause),
           });
         else {
           const provider =
@@ -551,7 +698,10 @@ export class ReverseEngineeringService {
           earlyFailure = new AnalysisCapabilityUnavailableError(
             provider,
             operation,
-            `Unable to run configured command (${String(code ?? "unknown error")})`,
+            code === "ERR_PROCESS_OWNERSHIP_UNAVAILABLE" &&
+              cause instanceof Error
+              ? cause.message
+              : `Unable to run configured command (${String(code ?? "unknown error")})`,
             {
               cause,
               userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${String(code ?? "unknown error")}).`,
@@ -600,8 +750,8 @@ export class ReverseEngineeringService {
           failure = new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
             capturedOutput,
-            ...ownedCleanupOptions(cause),
             ...reverseCommandTimeoutGuidance(timeoutMs),
+            ...ownedCleanupOptions(cause),
           });
         if (
           cause instanceof OwnedOutputFailure &&
@@ -663,13 +813,27 @@ export class ReverseEngineeringService {
       if (!cleanupOnlyFailure) completionStatus = "unknown";
     } else {
       try {
-        digestAfter = await this.#digest(
+        digestAfter = await this.#digestArtifact(
+          operation,
           absolutePath,
           signal,
           this.#stat,
           timeoutMs,
+          this.#open,
         );
-      } catch {
+      } catch (cause) {
+        if (cause instanceof AnalysisError && cause.cleanupIncomplete) {
+          failure =
+            failure === undefined
+              ? cause
+              : analysisErrorWithCleanupFailure(
+                  failure,
+                  cause,
+                  operation,
+                ).bindCleanupDependencies([failure, cause]);
+          cleanupIncomplete = true;
+          completionStatus = "unknown";
+        }
         // Preserve the provider's collected observations if the artifact vanished or became unreadable.
       }
     }
@@ -789,14 +953,7 @@ export class ReverseEngineeringService {
         predicateType: "rea.reverse-engineering.command-observation",
         operation,
         parameters: {
-          ...(absolutePath === undefined
-            ? {
-                operation: "architectures",
-                ...(typeof parameters.command_timeout_ms === "number"
-                  ? { command_timeout_ms: parameters.command_timeout_ms }
-                  : {}),
-              }
-            : parameters),
+          ...parameters,
           provider_executable: command,
           command_arguments: [...args],
         },
@@ -888,9 +1045,10 @@ const runOwnedCommandOutput =
     onCleanupOwner: (
       owner: ProviderProcessSupervisor,
       cleanup: AnalysisCleanupObservation,
+      operation: ReverseEngineeringOperation | undefined,
     ) => void,
   ): ReverseEngineeringCommandRunner =>
-  async (command, args, options = {}) => {
+  async (command, args, options = {}, operation) => {
     const spawnEnv = { ...options.env };
     try {
       const snapshot = await runOwned(
@@ -902,6 +1060,9 @@ const runOwnedCommandOutput =
           env: spawnEnv,
           hostEnvironment: {},
           sweepTokenOwnedProcesses: true,
+          ...(options.onDispatch === undefined
+            ? {}
+            : { onDispatch: options.onDispatch }),
         },
         {
           timeoutMs: options.timeout ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
@@ -946,10 +1107,14 @@ const runOwnedCommandOutput =
     } catch (cause) {
       if (!(cause instanceof OwnedCommandFailure)) throw cause;
       if (cause.cleanupOwner !== undefined && cause.cleanupFailure !== null)
-        onCleanupOwner(cause.cleanupOwner, {
-          reason: cause.cleanupFailure,
-          resources: cause.resources,
-        });
+        onCleanupOwner(
+          cause.cleanupOwner,
+          {
+            reason: cause.cleanupFailure,
+            resources: cause.resources,
+          },
+          operation,
+        );
       const snapshot = cause.snapshot;
       const launchErrorCode =
         cause.cause instanceof Error
@@ -1007,25 +1172,73 @@ const ownedCleanupOptions = (
     ? { cleanup: cause.cleanup }
     : {};
 
-const reverseCommandTimeoutGuidance = (
-  timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
-  userMessage: `This objdump or rizin command reached its ${String(timeoutMs)} ms server/provider deadline (command_timeout_ms) during target preflight or the one-shot command (deadlineExpired). This is not a Ghidra or Hopper startup deadline and not a debugger session deadline.`,
-  remediationAction: `${
-    timeoutMs < MAX_REVERSE_COMMAND_TIMEOUT_MS
-      ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)}; omitted means ${String(DEFAULT_REVERSE_COMMAND_TIMEOUT_MS)}), or use --command-timeout-ms on the CLI.`
-      : `command_timeout_ms is already at the maximum ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)} ms; no higher deadline is supported.`
-  } The new value applies on the next call; no restart is required. The ${String(MAX_COMBINED_OUTPUT_BYTES)} byte (16 MiB) combined output cap has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
-});
+/** Retain the same close promise across bounded retries, including a late open. */
+class DigestFileCleanupOwner {
+  readonly resource = `artifact-descriptor:${randomUUID()}`;
+  readonly #owner: Promise<OwnedFileHandle | undefined>;
+  #attempt: Promise<void> | undefined;
+  constructor(opened: Promise<FileHandle>) {
+    this.#owner = opened.then(
+      (handle) => new OwnedFileHandle(handle),
+      () => undefined,
+    );
+    this.#startClose();
+  }
+  #startClose(): Promise<void> {
+    if (this.#attempt !== undefined) return this.#attempt;
+    const attempt = this.#owner.then((owner) => owner?.close());
+    this.#attempt = attempt;
+    attempt.catch(() => {
+      if (this.#attempt === attempt) this.#attempt = undefined;
+    });
+    return attempt;
+  }
+  async stop(): Promise<
+    Awaited<ReturnType<ProviderProcessSupervisor["stop"]>>
+  > {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.#startClose().then(() => ({ status: "not-owned" as const })),
+        new Promise<{ status: "incomplete"; reason: string }>((resolve) => {
+          timer = setTimeout(
+            () =>
+              resolve({
+                status: "incomplete",
+                reason: "Artifact descriptor close is still pending.",
+              }),
+            250,
+          );
+        }),
+      ]);
+    } catch (cause) {
+      return {
+        status: "incomplete",
+        reason: `Artifact descriptor close failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+}
+
+export class DigestFileCleanupFailure extends Error {
+  constructor(
+    override readonly cause: unknown,
+    readonly owner: DigestFileCleanupOwner,
+  ) {
+    super("Artifact digest failed with unconfirmed descriptor cleanup", {
+      cause,
+    });
+  }
+}
 
 export const digestFile = async (
   path: string,
   signal?: AbortSignal,
   stat: (path: string) => Promise<Stats> = statPath,
   timeoutMs: number = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
-  open: (
-    path: string,
-  ) => ReturnType<typeof createReadStream> = createReadStream,
+  openArtifact: (path: string, flags: number) => Promise<FileHandle> = open,
 ): Promise<string> => {
   const startedAt = performance.now();
   const info = await statWithDeadline(path, signal, stat, timeoutMs);
@@ -1033,6 +1246,21 @@ export const digestFile = async (
     throw Object.assign(new Error("Artifact digest requires a regular file"), {
       code: "EINVAL",
     });
+  let stream: Readable | undefined;
+  let interruption: Error | undefined;
+  let rejectInterrupted: (cause: Error) => void = () => undefined;
+  // Settles on cancellation or deadline so a stalled open or stat cannot
+  // outlive them; the late filesystem result is closed or ignored below.
+  const interrupted = new Promise<never>((_, reject) => {
+    rejectInterrupted = reject;
+  });
+  interrupted.catch(() => undefined);
+  const interrupt = (cause: Error): void => {
+    interruption ??= cause;
+    stream?.destroy(cause);
+    rejectInterrupted(cause);
+  };
+  // Armed before the open so the deadline also covers it.
   const remainingMs = Math.max(
     0,
     Math.ceil(timeoutMs - (performance.now() - startedAt)),
@@ -1041,50 +1269,87 @@ export const digestFile = async (
     throw Object.assign(new Error("Artifact digest timed out"), {
       code: "ETIMEDOUT",
     });
-  return new Promise<string>((resolveDigest, rejectDigest) => {
-    const hash = createHash("sha256");
-    const stream = open(path);
-    const timer = setTimeout(
-      () =>
-        stream.destroy(
-          Object.assign(new Error("Artifact digest timed out"), {
-            code: "ETIMEDOUT",
-          }),
-        ),
-      remainingMs,
+  const timer = setTimeout(
+    () =>
+      interrupt(
+        Object.assign(new Error("Artifact digest timed out"), {
+          code: "ETIMEDOUT",
+        }),
+      ),
+    remainingMs,
+  );
+  const abort = (): void =>
+    interrupt(
+      new AnalysisCancelledError("artifact_digest", {
+        cause: signal?.reason,
+      }),
     );
-    const abort = (): void => {
-      stream.destroy(
-        new AnalysisCancelledError("artifact_digest", {
-          cause: signal?.reason,
-        }),
-      );
-    };
-    const cleanup = (): void => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
-    };
-    if (signal?.aborted) {
-      cleanup();
-      stream.destroy();
-      rejectDigest(
-        new AnalysisCancelledError("artifact_digest", {
-          cause: signal.reason,
-        }),
-      );
-      return;
-    }
-    signal?.addEventListener("abort", abort, { once: true });
-    stream.on("data", (chunk: Buffer | string) => hash.update(chunk));
-    stream.once("error", (cause: Error) => {
-      cleanup();
-      rejectDigest(cause);
+  const cleanup = (): void => {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  };
+  if (signal?.aborted) {
+    cleanup();
+    throw new AnalysisCancelledError("artifact_digest", {
+      cause: signal.reason,
     });
-    stream.once("end", () => {
-      cleanup();
-      resolveDigest(hash.digest("hex"));
-    });
-  });
+  }
+  signal?.addEventListener("abort", abort, { once: true });
+  let handle: FileHandle | undefined;
+  const opening = openArtifact(
+    path,
+    constants.O_RDONLY | (constants.O_NONBLOCK ?? 0),
+  );
+  try {
+    // The path may be replaced between the stat above and this open; a FIFO
+    // would block a worker. Open non-blocking and classify the opened handle.
+    handle = await Promise.race([opening, interrupted]);
+    if (interruption !== undefined) throw interruption;
+    if (!(await Promise.race([handle.stat(), interrupted])).isFile())
+      throw Object.assign(
+        new Error("Artifact digest requires a regular file"),
+        { code: "EINVAL" },
+      );
+    if (interruption !== undefined) throw interruption;
+  } catch (cause) {
+    cleanup();
+    if (handle === undefined && interruption === undefined) throw cause;
+    const owner = new DigestFileCleanupOwner(opening);
+    if (handle === undefined || (await owner.stop()).status === "incomplete")
+      throw new DigestFileCleanupFailure(cause, owner);
+    throw cause;
+  }
+  const opened = handle;
+  const outcome = await Promise.race([
+    new Promise<string>((resolveDigest, rejectDigest) => {
+      const hash = createHash("sha256");
+      stream = readFileHandleChunks(opened);
+      stream.on("data", (chunk: Buffer | string) => hash.update(chunk));
+      stream.once("error", (cause: Error) => {
+        cleanup();
+        rejectDigest(cause);
+      });
+      stream.once("end", () => {
+        cleanup();
+        resolveDigest(hash.digest("hex"));
+      });
+    }),
+    interrupted,
+  ]).then(ok, (cause: unknown) => err(cause));
+  cleanup();
+  stream?.destroy();
+  const owner = new DigestFileCleanupOwner(opening);
+  if ((await owner.stop()).status === "incomplete")
+    throw new DigestFileCleanupFailure(
+      outcome.ok
+        ? new Error(
+            "Artifact digest completed but its descriptor close is unconfirmed",
+          )
+        : outcome.error,
+      owner,
+    );
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value;
 };
 
 const PHYSICAL_FAILURE_CODES = new Set([
@@ -1136,6 +1401,27 @@ const commandFailureCode = (cause: unknown): string | number | undefined => {
     ? code
     : undefined;
 };
+
+const providerPathLookupTimeoutMs = (cause: Error): number | undefined => {
+  if (Reflect.get(cause, "providerStage") !== "path_lookup") return undefined;
+  const timeoutMs = Reflect.get(cause, "timeoutMs");
+  return typeof timeoutMs === "number" &&
+    Number.isSafeInteger(timeoutMs) &&
+    timeoutMs > 0
+    ? timeoutMs
+    : undefined;
+};
+
+const reverseCommandTimeoutGuidance = (
+  timeoutMs: number,
+): { readonly userMessage: string; readonly remediationAction: string } => ({
+  userMessage: `This objdump or rizin command reached its ${String(timeoutMs)} ms server/provider deadline (command_timeout_ms) during target preflight or the one-shot command (deadlineExpired). This is not a Ghidra or Hopper startup deadline and not a debugger session deadline.`,
+  remediationAction: `${
+    timeoutMs < MAX_REVERSE_COMMAND_TIMEOUT_MS
+      ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)}; omitted means ${String(DEFAULT_REVERSE_COMMAND_TIMEOUT_MS)}), or use --command-timeout-ms on the CLI.`
+      : `command_timeout_ms is already at the maximum ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)} ms; no higher deadline is supported.`
+  } The new value applies on the next call; no restart is required. The ${String(MAX_COMBINED_OUTPUT_BYTES)} byte (16 MiB) combined output cap has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+});
 
 const statWithDeadline = (
   path: string,

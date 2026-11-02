@@ -768,6 +768,32 @@ it("unreferences process and stream handles when stop reports incomplete cleanup
   }
 });
 
+it("collects output that closes after exit before stop detaches capture listeners", async () => {
+  const producer = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null,
+    signalCode: null,
+    kill: () => false,
+  });
+  const supervisor = new ProviderProcessSupervisor({
+    process: producer,
+    ownsProcessLifetime: false,
+  });
+  producer.emit("exit", 1, null);
+  const stopped = supervisor.stop({ outputSettleMs: 1_000 });
+  setTimeout(() => {
+    producer.stderr.end("late diagnostic");
+    producer.emit("close", 1, null);
+  }, 20);
+
+  await expect(stopped).resolves.toMatchObject({ status: "not-owned" });
+  expect(supervisor.snapshot()).toMatchObject({
+    stderr: { text: "late diagnostic" },
+    exitCode: 1,
+  });
+});
+
 it.each([
   { outcome: "close", timeoutMs: undefined },
   { outcome: "abort", timeoutMs: undefined },

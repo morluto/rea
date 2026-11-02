@@ -49,6 +49,11 @@ export interface BinarySessionOpenOptions {
    */
   readonly loadSnapshot?: AnalysisSnapshotLoader;
   readonly providerId?: AnalysisProviderSelector;
+  /**
+   * Runs inside the serialized open transition, before the target is resolved,
+   * so a queued close cannot overtake it while cleanup is awaited.
+   */
+  readonly beforeOpen?: () => Promise<Result<null, AnalysisError>>;
 }
 
 interface CurrentOpenBinding {

@@ -100,6 +100,7 @@ const matches = (node, selector, source) => {
     case "constructor":
       return ts.isConstructorDeclaration(node);
     case "guard":
+    case "guards":
       return (
         ts.isIfStatement(node) &&
         compact(node.expression.getText(source)) === compact(selector.condition)
@@ -136,13 +137,13 @@ const matches = (node, selector, source) => {
   }
 };
 
-/** Parse a source once and resolve one owned region for every requested selector. */
+/** Resolve owned regions; plural guards explicitly cover every matching checkpoint. */
 export const mutationRanges = (path, selectors) => {
   if (!Array.isArray(selectors) || selectors.length === 0)
     throw new Error(`Mutation selectors must be nonempty: ${path}`);
   for (const selector of selectors)
     if (
-      ["method", "constructor", "guard", "call", "try"].includes(
+      ["method", "constructor", "guard", "guards", "call", "try"].includes(
         selector.kind,
       ) &&
       typeof selector.owner !== "string"
@@ -167,16 +168,18 @@ export const mutationRanges = (path, selectors) => {
     ts.forEachChild(node, visit);
   };
   visit(source);
-  return selectors.map((selector, index) => {
+  return selectors.flatMap((selector, index) => {
     const candidates = found[index];
-    if (candidates.length !== 1)
+    const plural = selector.kind === "guards";
+    if (candidates.length === 0 || (!plural && candidates.length !== 1))
       throw new Error(
-        `Expected one mutation target in ${path}: ${JSON.stringify(selector)}; found ${candidates.length}`,
+        `Expected ${plural ? "one or more mutation targets" : "one mutation target"} in ${path}: ${JSON.stringify(selector)}; found ${candidates.length}`,
       );
-    const node = candidates[0];
-    const first =
-      source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
-    const last = source.getLineAndCharacterOfPosition(node.getEnd()).line + 1;
-    return `${path}:${first}-${last}`;
+    return candidates.map((node) => {
+      const first =
+        source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+      const last = source.getLineAndCharacterOfPosition(node.getEnd()).line + 1;
+      return `${path}:${first}-${last}`;
+    });
   });
 };

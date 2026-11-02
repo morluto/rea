@@ -170,7 +170,94 @@ describe("MCP external command snapshot retirement", () => {
   );
 });
 
-describe("MCP composed workflow target admission", () => {
+describe("MCP composed workflow target admission: reverse engineering", () => {
+  it.skipIf(process.platform === "win32")(
+    "drains a reverse-engineering call and keeps its Evidence exportable when close_binary refuses the snapshot",
+    async () => {
+      const { targetPaths, snapshotPath } = await createWorkflowFiles(
+        "rea-mcp-admitted-reverse-",
+        ["target.hop"],
+      );
+      const targetPath = targetPaths[0];
+      if (targetPath === undefined)
+        throw new Error("Expected one workflow target");
+      const fixtureDirectory = dirname(snapshotPath);
+      const startedPath = join(fixtureDirectory, "rizin-started");
+      const releasePath = join(fixtureDirectory, "rizin-release");
+      const providerPath = join(fixtureDirectory, "rizin-fixture.mjs");
+      await writeFile(
+        providerPath,
+        `#!${process.execPath}\nimport { existsSync, writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(startedPath)}, "started");\nwhile (!existsSync(${JSON.stringify(releasePath)})) await new Promise((resolve) => setTimeout(resolve, 5));\nprocess.stdout.write("Rizin fixture output\\n");\n`,
+      );
+      await chmod(providerPath, 0o755);
+      const session = createWorkflowSession(makeProvider([], []));
+      const { mcp } = await connectWorkflowMcp(
+        session,
+        "admitted-reverse-engineering",
+        { REA_RIZIN_COMMAND: providerPath },
+      );
+      await openWorkflowTarget(mcp, targetPath);
+
+      const analysisRequest = mcp.callTool({
+        name: "execute_rizin_command",
+        arguments: { path: targetPath, command: "iI" },
+      });
+      const readyDeadline = Date.now() + 5_000;
+      while (Date.now() < readyDeadline) {
+        try {
+          await access(startedPath);
+          break;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      await expect(access(startedPath)).resolves.toBeUndefined();
+
+      let closeSettled = false;
+      const closeRequest = mcp
+        .callTool({
+          name: "close_binary",
+          arguments: { snapshot_path: snapshotPath },
+        })
+        .finally(() => {
+          closeSettled = true;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(closeSettled).toBe(false);
+      await expect(access(snapshotPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+
+      await writeFile(releasePath, "release");
+      const analyzed = await analysisRequest;
+      expect(analyzed.isError, JSON.stringify(analyzed.content)).not.toBe(true);
+      const evidence = toolContract("execute_rizin_command").outputSchema.parse(
+        analyzed.structuredContent,
+      );
+      const closed = await closeRequest;
+      // An unrestricted provider command may have changed the artifact, so the
+      // snapshot is refused rather than written; the Evidence stays exportable.
+      expect(closed.isError).toBe(true);
+      expect(JSON.stringify(closed.content)).toContain(
+        "evidence_integrity_mismatch",
+      );
+      await expect(access(snapshotPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const bundlePath = join(fixtureDirectory, "evidence-bundle.json");
+      const exported = await mcp.callTool({
+        name: "export_evidence_bundle",
+        arguments: { path: bundlePath },
+      });
+      expect(exported.isError, JSON.stringify(exported.content)).not.toBe(true);
+      expect(await readFile(bundlePath, "utf8")).toContain(
+        evidence.evidence_id,
+      );
+    },
+  );
+});
+
+describe("MCP composed workflow target admission: lifecycle queues", () => {
   it("keeps a composed result and snapshot on its admitted target across queued close and open", async () => {
     const { targetPaths, snapshotPath } = await createWorkflowFiles(
       "rea-mcp-admitted-workflow-",

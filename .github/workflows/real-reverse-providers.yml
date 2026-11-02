@@ -1,0 +1,67 @@
+name: Real reverse-engineering providers
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      build_cache_artifact:
+        description: Portable build cache artifact from the calling CI run.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  NODE_OPTIONS: --max-old-space-size=768
+  HUSKY: "0"
+
+jobs:
+  real-reverse-providers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
+      - run: npm ci
+      - uses: ./.github/actions/portable-build-cache
+        with:
+          build_cache_artifact: ${{ inputs.build_cache_artifact }}
+      # REA never installs or updates its providers for users; this disposable
+      # runner installs the engine binaries the lane drives through REA.
+      - name: Install the caller-supplied providers on the disposable runner
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends gdb binutils
+          if apt-cache policy rizin | grep -Eq 'Candidate: [0-9]'; then
+            sudo apt-get install --yes --no-install-recommends rizin
+          fi
+          command -v gdb
+          command -v objdump
+          command -v python3
+          command -v rizin || echo "rizin is unavailable in this distribution; the lane records it as unknown"
+      - name: Verify the installed providers through public CLI and MCP
+        shell: bash
+        run: |
+          providers=(objdump gdb)
+          skipped=()
+          if command -v rizin >/dev/null; then
+            providers+=(rizin)
+          else
+            skipped+=(--skipped="rizin:absent from the runner distribution")
+          fi
+          npm run verify:reverse-providers -- "${providers[@]}" "${skipped[@]}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: reverse-providers-real
+          path: reverse-providers-real.json
+          if-no-files-found: ignore
+          retention-days: 30

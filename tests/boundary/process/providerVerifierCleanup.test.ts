@@ -57,6 +57,7 @@ const verifierFixture = async (provider: Provider) => {
 
   if (provider === "frida") {
     await mkdir(join(root, "dist", "frida"));
+    await mkdir(join(root, "dist", "domain"));
     await mkdir(join(root, "dist", "contracts"));
     await writeFile(
       join(root, "dist", "frida", "FridaInstrumentationManager.js"),
@@ -87,6 +88,10 @@ export class FridaInstrumentationManager {
   }
 }
 `,
+    );
+    await writeFile(
+      join(root, "dist", "domain", "fridaRemoteAddress.js"),
+      "export const isValidFridaRemoteAddress = () => false;\n",
     );
     await writeFile(
       join(root, "dist", "contracts", "fridaRemoteAddress.js"),

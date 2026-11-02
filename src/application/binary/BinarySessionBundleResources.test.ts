@@ -174,6 +174,50 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
   expect(closed).toBe(true);
 });
 
+it("does not install resource-only access while a debugger owns the target", async () => {
+  const rootPath = await mkdtemp(join(tmpdir(), "rea-resource-owner-"));
+  temporaryDirectories.push(rootPath);
+  await writeFile(
+    join(rootPath, "Info.plist"),
+    '<?xml version="1.0"?><plist><dict/></plist>',
+  );
+  let finishOwner!: () => void;
+  let factoryCalls = 0;
+  const session = new BinarySession(
+    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), []),
+    new InvestigationRecords(),
+    {
+      createClient: () => {
+        factoryCalls += 1;
+        return {
+          client: {
+            execute: async () => ({
+              ok: true,
+              value: createAnalysisExecution(null, identity),
+            }),
+            close: async () => ({ ok: true, value: null }),
+          },
+          capabilities: [],
+        };
+      },
+    },
+  );
+  session.retainExternalMutationOwner(
+    new Promise<void>((resolve) => {
+      finishOwner = resolve;
+    }),
+  );
+
+  const blocked = await session.openBundleResources(rootPath);
+  expect(blocked.ok).toBe(false);
+  expect(factoryCalls).toBe(0);
+
+  finishOwner();
+  const opened = await session.openBundleResources(rootPath);
+  expect(opened.ok).toBe(true);
+  expect(factoryCalls).toBe(1);
+});
+
 it("keeps the exact caller reason for cancellation before resource-root resolution", async () => {
   const rootPath = await mkdtemp(join(tmpdir(), "rea-resource-pre-cancel-"));
   temporaryDirectories.push(rootPath);

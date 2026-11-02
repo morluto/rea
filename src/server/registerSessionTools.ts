@@ -159,6 +159,9 @@ export interface LifecycleToolRegistration extends CapabilityAvailabilityProbes 
   readonly availabilityPolicy: () => AvailabilityPolicy;
   readonly artifactResources: ArtifactResourceScope;
   readonly closeProcessResources: () => Promise<Result<null, AnalysisError>>;
+  readonly retryReverseEngineeringCleanup?: (
+    operation: string,
+  ) => Promise<Result<null, AnalysisError>>;
 }
 
 const registerLifecycleTools = (
@@ -178,6 +181,7 @@ const registerOpenLifecycleTool = ({
   session,
   logger,
   openContract,
+  retryReverseEngineeringCleanup,
 }: LifecycleToolRegistration): void => {
   server.registerTool(
     openContract.name,
@@ -187,6 +191,14 @@ const registerOpenLifecycleTool = ({
       const opened = await logToolExecution(logger, openContract.name, () =>
         session.open(input.path, {
           signal: context.mcpReq.signal,
+          // Retained reverse-engineering owners are settled inside the open
+          // transition, so a later close cannot overtake this open.
+          ...(retryReverseEngineeringCleanup === undefined
+            ? {}
+            : {
+                beforeOpen: () =>
+                  retryReverseEngineeringCleanup(openContract.name),
+              }),
           ...(input.format === undefined ? {} : { formatHint: input.format }),
           ...(input.architecture === undefined
             ? {}
@@ -245,6 +257,9 @@ const registerOpenLifecycleTool = ({
 /** Register MCP-only target lifecycle operations on a long-lived session. */
 export interface SessionToolOptions extends Partial<CapabilityAvailabilityProbes> {
   readonly artifactResources: ArtifactResourceScope;
+  readonly retryReverseEngineeringCleanup?: (
+    operation: string,
+  ) => Promise<Result<null, AnalysisError>>;
   /** Server environment snapshot that process capture resolves and inherits. */
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly startedAt?: string;

@@ -74,6 +74,7 @@ jobs:
       workflows: ${{ steps.plan.outputs.workflows }}
       browser: ${{ steps.plan.outputs.browser }}
       binary_layout: ${{ steps.plan.outputs.binary_layout }}
+      reverse_providers: ${{ steps.plan.outputs.reverse_providers }}
       evm: ${{ steps.plan.outputs.evm }}
       apk_signature: ${{ steps.plan.outputs.apk_signature }}
       javascript_recovery: ${{ steps.plan.outputs.javascript_recovery }}
@@ -411,6 +412,7 @@ jobs:
       needs.changes.outputs.code == 'true' ||
       needs.changes.outputs.browser == 'true' ||
       needs.changes.outputs.binary_layout == 'true' ||
+      needs.changes.outputs.reverse_providers == 'true' ||
       needs.changes.outputs.evm == 'true' ||
       needs.changes.outputs.apk_signature == 'true' ||
       needs.changes.outputs.javascript_recovery == 'true' ||
@@ -1118,6 +1120,12 @@ jobs:
       build_cache_artifact: rea-build-cache
       remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
+  reverse_providers:
+    needs: [changes, static, build]
+    if: needs.changes.outputs.reverse_providers == 'true'
+    uses: ./.github/workflows/real-reverse-providers.yml
+    with:
+      build_cache_artifact: rea-build-cache
   agentenv:
     needs: [changes, static, build]
     if: needs.changes.outputs.agentenv == 'true'
@@ -1190,6 +1198,7 @@ jobs:
         docs,
         browser,
         binary_layout,
+        reverse_providers,
         evm,
         apk_signature,
         javascript_recovery,

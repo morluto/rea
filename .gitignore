@@ -39,6 +39,7 @@ reports/mutation/
 .vitest-reports/
 test-results.xml
 test-timings.json
+/reverse-providers-real.json
 .turbo/
 .cache/
 docs/.vitepress/cache/

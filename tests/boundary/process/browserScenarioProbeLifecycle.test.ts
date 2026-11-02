@@ -10,6 +10,44 @@ import type { RuntimeDependencies } from "../../../src/main/types.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
+it("closes the shared optional provider when SDK server startup throws", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Unexpected deep provider");
+  });
+  const close = vi.fn(async () => undefined);
+  const browserScenarioCapture: BrowserScenarioCapturePort = {
+    identity: () => ({
+      id: "fake-browser",
+      name: "Fake browser",
+      version: "1",
+    }),
+    captureScenario: async () => {
+      throw new Error("Unexpected scenario capture");
+    },
+    close,
+  };
+  const runtime: RuntimeDependencies = {
+    env: {},
+    serve: () => {
+      throw new Error("MCP startup failed");
+    },
+    writeStderr: () => undefined,
+    setExitCode: () => undefined,
+    registerShutdown: () => () => undefined,
+  };
+
+  const result = await startMcpTransport(runtime, session, {
+    logger: silentLogger,
+    serverLogger: silentLogger,
+    environment: runtime.env,
+    delivery: createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    loadOptionalProviders: async () => ({ browserScenarioCapture }),
+  });
+
+  expect(result).toEqual({ ok: false });
+  expect(close).toHaveBeenCalledTimes(1);
+});
+
 it("keeps the shared browser scenario provider open when the SDK discards its discovery probe", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("Unexpected deep provider");

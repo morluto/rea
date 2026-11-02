@@ -7,6 +7,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { evidenceSchema, type Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -22,7 +23,10 @@ import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { ReverseEngineeringService } from "../application/reverse/ReverseEngineeringService.js";
-import { gdbOneShotCommandMayInvalidateDetachProof } from "../gdb/GdbSessionManager.js";
+import {
+  GdbSessionManager,
+  gdbOneShotCommandMayInvalidateDetachProof,
+} from "../gdb/GdbSessionManager.js";
 import {
   createGdbSessionManager,
   createRizinDebugSessionManager,
@@ -38,20 +42,20 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
 const executeWithCleanup = async (
-  service: ReverseEngineeringService,
-  signal: AbortSignal,
   execute: () => Promise<Result<Evidence, AnalysisError>>,
+  close: () => Promise<void>,
+  signal: AbortSignal,
 ): Promise<Result<Evidence, AnalysisError>> => {
   let result: Result<Evidence, AnalysisError>;
   try {
     result = await execute();
   } catch (cause) {
-    await service.close().catch(() => undefined);
+    await close().catch(() => undefined);
     throw cause;
   }
   const hadIncompleteCleanup = !result.ok && result.error.cleanupIncomplete;
   try {
-    await service.close();
+    await close();
   } catch (cause) {
     if (result.ok) return err(asCleanupError(cause));
     const cleanup = cause instanceof AnalysisError ? cause.cleanup : undefined;
@@ -174,7 +178,88 @@ export const registerReverseEngineeringCommands = (
   ) => ReturnType<typeof createGdbSessionManager> = createGdbSessionManager,
   createService: typeof createReverseEngineeringService = createReverseEngineeringService,
 ): void => {
-  const service = createService(environment);
+  // Closed services cannot run again, but failed cleanup must outlive a run.
+  // This registration owns every service until its own close confirms release.
+  let retainedService: ReverseEngineeringService | undefined;
+  let running = false;
+  const closeRetained = async (
+    service: ReverseEngineeringService,
+  ): Promise<void> => {
+    await service.close();
+    retainedService = undefined;
+  };
+  const runWithService = async (
+    signal: AbortSignal,
+    execute: (
+      service: ReverseEngineeringService,
+    ) => Promise<Result<Evidence, AnalysisError>>,
+  ): Promise<Result<Evidence, AnalysisError>> => {
+    if (running)
+      return err(
+        new AnalysisResourceConstraintError(
+          "reverse_engineering_cleanup",
+          "capacity",
+          "A CLI provider command is already running.",
+          { max_concurrent_operations: 1 },
+        ),
+      );
+    running = true;
+    try {
+      if (retainedService !== undefined) {
+        try {
+          await closeRetained(retainedService);
+        } catch (cause) {
+          return err(asCleanupError(cause));
+        }
+      }
+      const service = createService(environment);
+      retainedService = service;
+      return await executeWithCleanup(
+        () => execute(service),
+        () => closeRetained(service),
+        signal,
+      );
+    } finally {
+      running = false;
+    }
+  };
+  const retainedGdbManagers = new Set<GdbSessionManager>();
+  let gdbCleanupRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  let gdbCleanupRetryDelayMs = 250;
+  const retryRetainedGdbCleanup = (): void => {
+    if (gdbCleanupRetryTimer !== undefined) return;
+    gdbCleanupRetryTimer = setTimeout(() => {
+      gdbCleanupRetryTimer = undefined;
+      for (const manager of retainedGdbManagers) {
+        void manager
+          .closeAll()
+          .then(() => {
+            retainedGdbManagers.delete(manager);
+            gdbCleanupRetryDelayMs = 250;
+          })
+          .catch((cause: unknown) => {
+            gdbCleanupRetryDelayMs = Math.min(
+              8_000,
+              gdbCleanupRetryDelayMs * 2,
+            );
+            logger.error(
+              {
+                command: CLI_COMMANDS.debugWithGdb,
+                cleanup:
+                  cause instanceof Error
+                    ? cause.message
+                    : "Unknown cleanup failure",
+              },
+              "Retrying retained GDB cleanup",
+            );
+          })
+          .finally(() => {
+            if (retainedGdbManagers.size > 0) retryRetainedGdbCleanup();
+          });
+      }
+    }, gdbCleanupRetryDelayMs);
+    gdbCleanupRetryTimer.unref();
+  };
   cli.command(CLI_COMMANDS.inspectWithObjdump, {
     description:
       "Inspect a local artifact with GNU objdump and retain its raw output as Evidence",
@@ -189,6 +274,7 @@ export const registerReverseEngineeringCommands = (
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
+      commandTimeoutMs: reverseCommandTimeoutSchema,
       symbol: z
         .string()
         .optional()
@@ -201,7 +287,6 @@ export const registerReverseEngineeringCommands = (
         .describe(
           "Follow local DWARF debug links. External debug-file identity is not bound to Evidence.",
         ),
-      commandTimeoutMs: reverseCommandTimeoutSchema,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -215,7 +300,7 @@ export const registerReverseEngineeringCommands = (
           };
           const inputError = cliEvidenceDeliveryInputError(delivery);
           if (inputError !== undefined) return projectAnalysisError(inputError);
-          const result = await executeWithCleanup(service, signal, () =>
+          const result = await runWithService(signal, (service) =>
             service.inspectWithObjdump(
               {
                 ...args,
@@ -262,7 +347,7 @@ export const registerReverseEngineeringCommands = (
             const inputError = cliEvidenceDeliveryInputError(delivery);
             if (inputError !== undefined)
               return projectAnalysisError(inputError);
-            const result = await executeWithCleanup(service, signal, () =>
+            const result = await runWithService(signal, (service) =>
               service.inspectWithObjdump(
                 {
                   operation: "architectures",
@@ -298,7 +383,7 @@ export const registerReverseEngineeringCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.executeRizinCommand, async () => {
-          const result = await executeWithCleanup(service, signal, () =>
+          const result = await runWithService(signal, (service) =>
             service.executeRizinCommand(
               {
                 ...args,
@@ -315,7 +400,7 @@ export const registerReverseEngineeringCommands = (
   });
   cli.command(CLI_COMMANDS.debugWithGdb, {
     description:
-      "Run one unrestricted GDB console command in an ephemeral MI session; provide an inferior TTY so a live target can be safely detached",
+      "Run one unrestricted GDB console command in an ephemeral MI session; provide an inferior TTY so a live target can be safely detached. If inferior stdin uses this TTY, the target may consume terminal input.",
     args: z.object({
       command: z
         .string()
@@ -327,7 +412,7 @@ export const registerReverseEngineeringCommands = (
         .string()
         .min(1)
         .describe(
-          "Caller-selected durable TTY for output from a live GDB inferior.",
+          "Caller-selected durable TTY for output from a live GDB inferior. The inferior may also read terminal input from it.",
         ),
       ...analysisEvidenceDeliveryOptions,
     }),
@@ -374,18 +459,25 @@ export const registerReverseEngineeringCommands = (
                 : err(executed.error);
             },
             service: {
-              close: () =>
-                closeDebuggerCommandSession(
-                  manager,
-                  sessionId,
-                  "gdb",
-                  "gdb_console",
-                  (cleanup) =>
-                    logger.error(
-                      { command: CLI_COMMANDS.debugWithGdb, cleanup },
-                      "GDB cleanup failed after collecting command output",
-                    ),
-                ),
+              close: async () => {
+                try {
+                  await closeDebuggerCommandSession(
+                    manager,
+                    sessionId,
+                    "gdb",
+                    "gdb_console",
+                    (cleanup) =>
+                      logger.error(
+                        { command: CLI_COMMANDS.debugWithGdb, cleanup },
+                        "GDB cleanup failed after collecting command output",
+                      ),
+                  );
+                } catch (cause) {
+                  retainedGdbManagers.add(manager);
+                  retryRetainedGdbCleanup();
+                  throw cause;
+                }
+              },
             },
           });
         }),
@@ -406,7 +498,9 @@ export const registerReverseEngineeringCommands = (
       inferiorTty: z
         .string()
         .min(1)
-        .describe("Caller-selected Linux TTY for inferior stdout and stderr."),
+        .describe(
+          "Caller-selected Linux TTY for inferior stdin, stdout and stderr; the inferior may consume terminal input.",
+        ),
       backend: z
         .string()
         .min(1)

@@ -12,7 +12,8 @@ import { err, type Result } from "../domain/result.js";
 export type ExternalMutationAdmission = Pick<
   BinarySessionPort,
   "withAdmittedExternalMutation"
->;
+> &
+  Partial<Pick<BinarySessionPort, "retainExternalMutationOwner">>;
 
 /** Retain the completed command outcome while reporting a later cancellation. */
 export const retainExternalMutationCancellation = <Value>(
@@ -41,6 +42,8 @@ export const runWithExternalMutationAdmission = async <Value>(
     failure: AnalysisError | undefined,
   ) => Promise<Result<null, AnalysisError>>,
   retainedDetails?: (value: Value) => Readonly<Record<string, string>>,
+  /** Explicit cleanup/disposition of the currently retained external owner. */
+  ownerCleanup = false,
 ): Promise<Result<Value, AnalysisError>> => {
   if (session === undefined) {
     const recovered = await cleanupRecovery?.(undefined);
@@ -83,6 +86,8 @@ export const runWithExternalMutationAdmission = async <Value>(
     },
     operationName,
     cleanupRecovery,
+    "admission",
+    ownerCleanup,
   );
   return admitted.ok ? admitted.value : err(admitted.error);
 };
@@ -117,6 +122,8 @@ export const runOwnedCleanupWithExternalMutationAdmission = async <Value>(
       const recovered = await cleanupOnce();
       return recovered.ok ? { ok: true, value: null } : recovered;
     },
+    undefined,
+    true,
   );
   return admitted;
 };

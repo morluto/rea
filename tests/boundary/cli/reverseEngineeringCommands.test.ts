@@ -17,7 +17,10 @@ import {
 import { err, ok } from "../../../src/domain/result.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import { closeOwnedDebuggerSessions } from "../../../src/process/ownedDebuggerSession.js";
-import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../../src/application/reverse/ReverseEngineeringService.js";
+import {
+  DigestFileCleanupFailure,
+  ReverseEngineeringService as CoreReverseEngineeringService,
+} from "../../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../../src/composition/reverseEngineering.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
@@ -43,29 +46,20 @@ const observation = (completionStatus: "complete" | "unknown") =>
       operation: "inspect_with_objdump",
       parameters: { operation: "file_headers" },
       result: { completion_status: completionStatus },
-      rawResult: { completion_status: completionStatus },
     },
   );
 
 const runObjdump = async (
   service: Partial<ReverseEngineeringService>,
   path = "/tmp/sample",
-  selection: {
-    operation?: string;
-    symbol?: string;
-    commandTimeoutMs?: number;
-  } = {},
+  selection: { operation?: string; symbol?: string } = {},
 ) => {
   const commands = new Map<
     string,
     {
       run(input: {
         args: { path: string; operation: string };
-        options: {
-          followDebugLinks: boolean;
-          symbol?: string;
-          commandTimeoutMs?: number;
-        };
+        options: { followDebugLinks: boolean; symbol?: string };
       }): Promise<unknown>;
     }
   >();
@@ -75,11 +69,7 @@ const runObjdump = async (
       definition: {
         run(input: {
           args: { path: string; operation: string };
-          options: {
-            followDebugLinks: boolean;
-            symbol?: string;
-            commandTimeoutMs?: number;
-          };
+          options: { followDebugLinks: boolean; symbol?: string };
         }): Promise<unknown>;
       },
     ) => {
@@ -102,9 +92,6 @@ const runObjdump = async (
     options: {
       followDebugLinks: false,
       ...(selection.symbol === undefined ? {} : { symbol: selection.symbol }),
-      ...(selection.commandTimeoutMs === undefined
-        ? {}
-        : { commandTimeoutMs: selection.commandTimeoutMs }),
     },
   });
 };
@@ -123,26 +110,6 @@ it("forwards the selected native symbol to the shared workflow", async () => {
     operation: "disassemble",
     follow_debug_links: false,
     symbol: "_Z3foov@@VERSION_1",
-  });
-});
-
-it("forwards a selected objdump command deadline and omits the field otherwise", async () => {
-  const inspectWithObjdump = vi.fn(async (_input: unknown) =>
-    ok(observation("complete")),
-  );
-  const service = { inspectWithObjdump, close: async () => undefined };
-  await runObjdump(service, "/tmp/sample", { commandTimeoutMs: 5_000 });
-  expect(inspectWithObjdump.mock.calls[0]?.[0]).toEqual({
-    path: "/tmp/sample",
-    operation: "file_headers",
-    follow_debug_links: false,
-    command_timeout_ms: 5_000,
-  });
-  await runObjdump(service, "/tmp/sample");
-  expect(inspectWithObjdump.mock.calls[1]?.[0]).toEqual({
-    path: "/tmp/sample",
-    operation: "file_headers",
-    follow_debug_links: false,
   });
 });
 
@@ -351,6 +318,55 @@ it("preserves an independent timeout after cleanup succeeds", async () => {
   );
 });
 
+it("keeps a digest timeout primary when cancellation arrives during descriptor cleanup", async () => {
+  const { directory, path } = await createArtifact();
+  const controller = new AbortController();
+  let ownerClosed = false;
+  const owner = {
+    resource: "artifact-descriptor:test",
+    stop: vi.fn(async () =>
+      ownerClosed
+        ? { status: "not-owned" as const }
+        : {
+            status: "incomplete" as const,
+            reason: "descriptor close remains pending",
+          },
+    ),
+  };
+  const timeout = Object.assign(new Error("digest timed out"), {
+    code: "ETIMEDOUT",
+  });
+  let digestCalls = 0;
+  const service = new CoreReverseEngineeringService({
+    commands: createReverseEngineeringCommandPort({}),
+    runOwned: vi.fn(async () => providerSnapshot()),
+    digest: async () => {
+      digestCalls += 1;
+      if (digestCalls === 1) return "a".repeat(64);
+      controller.abort(new Error("later caller cancellation"));
+      throw new DigestFileCleanupFailure(timeout, owner as never);
+    },
+  });
+
+  try {
+    const result = await service.inspectWithObjdump(
+      { path, operation: "file_headers" },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected the digest timeout");
+    expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanup?.resources).toEqual([
+      "artifact-descriptor:test",
+    ]);
+  } finally {
+    ownerClosed = true;
+    await service.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it("does not project cancellation cleanup as incomplete after a successful retry", async () => {
   const error = new AnalysisCancelledError("inspect_with_objdump", {
     cleanup: { reason: "first stop incomplete", resources: ["owned-run"] },
@@ -388,6 +404,137 @@ it("returns cancellation with the completed observation when the caller interrup
     details: { partial_observation: evidence },
   });
   expect(process.exitCode).toBe(130);
+});
+
+it("runs an independent service for each command so cleanup cannot close later runs", async () => {
+  const { directory, path } = await createArtifact();
+  const commands = new Map<
+    string,
+    {
+      run(input: {
+        args: { path: string; operation: string };
+        options: { followDebugLinks: boolean };
+      }): Promise<unknown>;
+    }
+  >();
+  const cli = {
+    command: (
+      name: string,
+      definition: {
+        run(input: {
+          args: { path: string; operation: string };
+          options: { followDebugLinks: boolean };
+        }): Promise<unknown>;
+      },
+    ) => {
+      commands.set(name, definition);
+      return cli;
+    },
+  } as unknown as CliInstance;
+  const created: ReverseEngineeringService[] = [];
+  registerReverseEngineeringCommands(
+    cli,
+    pino({ enabled: false }),
+    {},
+    undefined,
+    (environment = process.env) => {
+      const service = new CoreReverseEngineeringService({
+        environment,
+        commands: createReverseEngineeringCommandPort(environment),
+        runOwned: vi.fn(async () => providerSnapshot()),
+      });
+      created.push(service);
+      return service;
+    },
+  );
+  const command = commands.get(CLI_COMMANDS.inspectWithObjdump);
+  if (command === undefined)
+    throw new Error("objdump CLI command was not registered");
+  const invoke = () =>
+    command.run({
+      args: { path, operation: "file_headers" },
+      options: { followDebugLinks: false },
+    });
+
+  try {
+    // The first run closes its own service; a repeated command must still run
+    // instead of reporting that the service has been closed.
+    expect(await invoke()).toMatchObject({ provider: { id: "gnu.objdump" } });
+    expect(await invoke()).toMatchObject({ provider: { id: "gnu.objdump" } });
+    expect(created).toHaveLength(2);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("retains failed run services and settles their owners before another CLI launch", async () => {
+  const { directory, path } = await createArtifact();
+  const commands = new Map<string, { run(input: unknown): Promise<unknown> }>();
+  const cli = {
+    command: (
+      name: string,
+      definition: { run(input: unknown): Promise<unknown> },
+    ) => {
+      commands.set(name, definition);
+      return cli;
+    },
+  } as unknown as CliInstance;
+  let mayStop = false;
+  const owner = {
+    stop: vi.fn(async () =>
+      mayStop
+        ? { status: "verified-cleanup" as const }
+        : { status: "incomplete" as const, reason: "writer still live" },
+    ),
+  } as unknown as ProviderProcessSupervisor;
+  const createService = vi.fn(
+    (environment = process.env) =>
+      new CoreReverseEngineeringService({
+        environment,
+        commands: createReverseEngineeringCommandPort(environment),
+        runOwned: async () => {
+          throw new OwnedCommandFailure(
+            "process",
+            "cleanup incomplete",
+            providerSnapshot(),
+            "writer still live",
+            undefined,
+            ["owned-run"],
+            owner,
+          );
+        },
+      }),
+  );
+  registerReverseEngineeringCommands(
+    cli,
+    pino({ enabled: false }),
+    {},
+    undefined,
+    createService,
+  );
+  const invoke = () =>
+    commands.get(CLI_COMMANDS.inspectWithObjdump)!.run({
+      args: { path, operation: "file_headers" },
+      options: { followDebugLinks: false },
+    });
+  try {
+    expect(await invoke()).toMatchObject({ code: "cleanup_incomplete" });
+    expect(
+      await commands
+        .get(CLI_COMMANDS.executeRizinCommand)!
+        .run({ args: { path, command: "iI" } }),
+    ).toMatchObject({ code: "cleanup_incomplete" });
+    expect(createService).toHaveBeenCalledTimes(1);
+    mayStop = true;
+    expect(await invoke()).toMatchObject({ provider: { id: "gnu.objdump" } });
+    expect(createService).toHaveBeenCalledTimes(2);
+    expect(owner.stop).toHaveBeenCalledTimes(4);
+  } finally {
+    mayStop = true;
+    for (const result of createService.mock.results)
+      if (result.type === "return") await result.value.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 it.each([false, true])(
@@ -657,3 +804,71 @@ it.each(["incomplete", "interrupt", "control"] as const)(
     }
   },
 );
+
+it("reports concurrent CLI admission as retryable capacity and admits work after release", async () => {
+  const { directory, path } = await createArtifact();
+  const commands = new Map<string, { run(input: unknown): Promise<unknown> }>();
+  const cli = {
+    command: (
+      name: string,
+      definition: { run(input: unknown): Promise<unknown> },
+    ) => {
+      commands.set(name, definition);
+      return cli;
+    },
+  } as unknown as CliInstance;
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const createService = vi.fn(
+    (environment = process.env) =>
+      new CoreReverseEngineeringService({
+        environment,
+        commands: createReverseEngineeringCommandPort(environment),
+        runOwned: async () => {
+          entered();
+          await gate;
+          return providerSnapshot();
+        },
+      }),
+  );
+  registerReverseEngineeringCommands(
+    cli,
+    pino({ enabled: false }),
+    {},
+    undefined,
+    createService,
+  );
+  const invoke = () =>
+    commands.get(CLI_COMMANDS.inspectWithObjdump)!.run({
+      args: { path, operation: "file_headers" },
+      options: { followDebugLinks: false },
+    });
+  const running = invoke();
+  try {
+    await started;
+    expect(await invoke()).toMatchObject({
+      code: "resource_constraint",
+      retryable: true,
+      remediation: {
+        action:
+          "Wait for an active analysis to complete, then retry within the reported admission limits.",
+      },
+      details: { resource: "capacity" },
+    });
+    expect(createService).toHaveBeenCalledTimes(1);
+    release();
+    expect(await running).toMatchObject({ provider: { id: "gnu.objdump" } });
+    expect(await invoke()).toMatchObject({ provider: { id: "gnu.objdump" } });
+    expect(createService).toHaveBeenCalledTimes(2);
+  } finally {
+    release();
+    await running;
+    await rm(directory, { recursive: true, force: true });
+  }
+});

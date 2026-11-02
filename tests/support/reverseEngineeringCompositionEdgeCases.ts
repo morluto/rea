@@ -1,4 +1,5 @@
-import { rm, truncate, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { rm, stat, truncate, writeFile } from "node:fs/promises";
 
 import { expect, it, vi } from "vitest";
 
@@ -170,7 +171,7 @@ const registerSharedReverseEngineeringEdgeCasesPart2 = (): void => {
           cleanupIncomplete: true,
           cleanup: { reason: "still running", resources: ["run-id", "pid:42"] },
           partialObservation: {
-            raw_result: {
+            normalized_result: {
               stdout: "captured owned output",
               output_truncated: true,
               completion_status: "unknown",
@@ -204,6 +205,63 @@ const registerSharedReverseEngineeringEdgeCasesPart2 = (): void => {
       expect(stop).toHaveBeenCalledTimes(3);
       await service.close();
       expect(stop).toHaveBeenCalledTimes(4);
+      if (result.ok || blocked.ok) throw new Error("Expected retained cleanup");
+      // Only the retained owner's confirmed stop clears live cleanup status, so
+      // the original failure and the refusal recorded while it was outstanding
+      // both report completed cleanup.
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(blocked.error.cleanupIncomplete).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("names the operation that retained a process in its cleanup refusal", async () => {
+    const { directory, path } = await createArtifact();
+    const stop = vi
+      .fn()
+      .mockResolvedValue({ status: "incomplete", reason: "still running" });
+    const cleanupOwner = { stop } as unknown as ProviderProcessSupervisor;
+    const runOwned = vi.fn<typeof runOwnedCommand>(async () => {
+      throw new OwnedCommandFailure(
+        "output-limit",
+        "output limit",
+        providerSnapshot({ diagnosticTruncated: true }),
+        "still running",
+        undefined,
+        ["run-id", "pid:42"],
+        cleanupOwner,
+      );
+    });
+    const service = new ReverseEngineeringService({ runOwned });
+
+    try {
+      const retained = await service.inspectWithObjdump({
+        path,
+        operation: "file_headers",
+      });
+      expect(retained).toMatchObject({
+        ok: false,
+        error: { operation: "inspect_with_objdump", cleanupIncomplete: true },
+      });
+      // The later Rizin attempt observes the outstanding cleanup, but the
+      // refusal belongs to the objdump operation that kept the process.
+      const blocked = await service.executeRizinCommand({
+        path,
+        command: "iI",
+      });
+      expect(blocked).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          operation: "inspect_with_objdump",
+          message: expect.stringContaining(
+            "A previous provider process still requires cleanup.",
+          ),
+        },
+      });
+      expect(runOwned).toHaveBeenCalledTimes(1);
+      await service.close().catch(() => undefined);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -271,6 +329,34 @@ const registerSharedReverseEngineeringEdgeCasesPart3 = (): void => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a path replaced by a FIFO between the stat and the digest open",
+    async () => {
+      const { directory, path } = await createArtifact();
+      const regular = await stat(path);
+      await rm(path);
+      execFileSync("mkfifo", [path]);
+      // The stat observed a regular file; the open must classify the handle.
+      const service = new ReverseEngineeringService({
+        stat: async () => regular,
+        run: async () => ({ stdout: "", stderr: "" }),
+      });
+
+      try {
+        const result = await Promise.race([
+          service.inspectWithObjdump({ path, operation: "file_headers" }),
+          new Promise<"hung">((resolve) =>
+            setTimeout(() => resolve("hung"), 5_000),
+          ),
+        ]);
+        expect(result).not.toBe("hung");
+        expect(result).toMatchObject({ ok: false });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("maps the artifact digest deadline to a timeout error", async () => {
     const { directory, path } = await createArtifact();
@@ -374,7 +460,7 @@ const registerSharedReverseEngineeringEdgeCasesPart4 = (): void => {
       expect(changedResult).toMatchObject({
         ok: true,
         value: {
-          raw_result: { artifact_changed: true },
+          normalized_result: { artifact_changed: true },
           limitations: expect.arrayContaining([
             expect.stringContaining("may have changed"),
           ]),
@@ -389,7 +475,10 @@ const registerSharedReverseEngineeringEdgeCasesPart4 = (): void => {
       expect(removedResult).toMatchObject({
         ok: true,
         value: {
-          raw_result: { artifact_sha256_after: null, artifact_changed: null },
+          normalized_result: {
+            artifact_sha256_after: null,
+            artifact_changed: null,
+          },
           limitations: expect.arrayContaining([
             expect.stringContaining("post-run artifact digest"),
           ]),
@@ -477,7 +566,10 @@ const registerSharedReverseEngineeringEdgeCasesPart5 = (): void => {
         error: {
           _tag: "AnalysisCancelledError",
           partialObservation: {
-            raw_result: { exit_code: null, completion_status: "unknown" },
+            normalized_result: {
+              exit_code: null,
+              completion_status: "unknown",
+            },
           },
         },
       });
@@ -681,7 +773,7 @@ const registerSharedReverseEngineeringEdgeCasesPart8 = (): void => {
       expect(result).toMatchObject({
         ok: true,
         value: {
-          raw_result: {
+          normalized_result: {
             stdout: "completed output",
             completion_status: "complete",
           },
@@ -741,7 +833,7 @@ const registerSharedReverseEngineeringEdgeCasesPart8 = (): void => {
       expect(result).toMatchObject({
         ok: true,
         value: {
-          raw_result: {
+          normalized_result: {
             stdout: "captured owned output",
             exit_code: null,
             completion_status: "unknown",
@@ -777,7 +869,7 @@ const registerSharedReverseEngineeringEdgeCasesPart9 = (): void => {
         error: {
           _tag: "AnalysisOutputError",
           partialObservation: {
-            raw_result: {
+            normalized_result: {
               stdout: "captured owned output",
               stderr: "diagnostic",
               exit_code: null,
