@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rewriteRelativeImportExtensions": true,
+    "outDir": "build"
+  },
+  "include": ["*.ts"],
+  "exclude": ["node_modules", "build"]
+}
