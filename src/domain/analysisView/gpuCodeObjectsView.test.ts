@@ -32,6 +32,7 @@ const report = () =>
   });
 
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"b".repeat(64)}`,
   operation: "inspect_gpu_code_objects",
   normalizedResult,

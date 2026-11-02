@@ -2,6 +2,14 @@ import { readFile } from "node:fs/promises";
 
 const result = (state, description) => ({ state, description });
 
+// GitHub account IDs remain stable when a login changes.
+const EXEMPT_AUTHOR_IDS = new Set([
+  76467478, // morluto
+  208281322, // kaoru0822-kitauji
+  161784452, // N0zoM1z0
+  342580529, // gensokyo-dev
+]);
+
 const OPEN_HEADS_QUERY = `query ReadinessOpenHeads($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
     pullRequests(first: 100, after: $after, states: OPEN, orderBy: {field: CREATED_AT, direction: ASC}) {
@@ -60,11 +68,11 @@ function readinessLines(markdown) {
   let comment = false;
   for (const source of lines) {
     if (fence) {
+      const closing = /^ {0,3}(`+|~+)\s*$/u.exec(source);
       if (
-        new RegExp(
-          `^ {0,3}${fence.character}{${fence.length},}\\s*$`,
-          "u",
-        ).test(source)
+        closing !== null &&
+        closing[1][0] === fence.character &&
+        closing[1].length >= fence.length
       )
         fence = undefined;
       continue;
@@ -104,6 +112,11 @@ export function evaluateReadiness(pull, template) {
     return result(
       "pending",
       "Draft PR: complete Author readiness before requesting review.",
+    );
+  if (EXEMPT_AUTHOR_IDS.has(pull.user?.id))
+    return result(
+      "success",
+      "PR author is exempt from the readiness declaration.",
     );
   const expected = readinessLines(template).flatMap((line) => {
     const match = /^- \[ \] (.+)$/u.exec(line);
@@ -210,6 +223,7 @@ export async function runReadinessCheck({ github, context, core }) {
     latest.head.sha !== pull.head.sha ||
     latest.body !== pull.body ||
     latest.draft !== pull.draft ||
+    latest.user?.id !== pull.user?.id ||
     latest.base.ref !== pull.base.ref
   )
     verdict = result(

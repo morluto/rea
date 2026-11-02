@@ -93,7 +93,8 @@ Before requesting maintainer review, the human owner must:
   passing. Follow the [verification requirements](#development-feedback-and-pr-verification)
   for required checks and real-provider coverage.
 - Complete the **Author readiness** declaration in the PR template, explicitly
-  stating that the PR is ready for initial review.
+  stating that the PR is ready for initial review, unless the PR author is
+  exempt from the declaration as listed below.
 
 Keep the PR description concise and current. Explain the problem, observable
 outcome, approach, and useful evidence; link long logs or put them in optional
@@ -114,9 +115,12 @@ validation current as work changes. AI agents must leave human declarations to
 the human owner and must not attest to a human review on their behalf.
 
 The `PR readiness` check reports pending for drafts and requires a named human
-owner and all three template declarations for non-drafts. It checks that the
-declaration is filled, not whether the code or evidence is correct. Existing PRs
-can copy the **Author readiness** section from the current template.
+owner and all three template declarations for non-drafts. PRs authored by
+@morluto, @kaoru0822-kitauji, @N0zoM1z0, or @gensokyo-dev are exempt from
+the declaration; their human ownership, review, and evidence responsibilities
+above still apply. The check identifies authors by GitHub account ID. It checks
+that the declaration is filled, not whether the code or evidence is correct.
+Existing PRs can copy the **Author readiness** section from the current template.
 Open PRs must have distinct head commits because GitHub shares commit statuses.
 
 Maintainers enable merge enforcement after the workflow is merged: run

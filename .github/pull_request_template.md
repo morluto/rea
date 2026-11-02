@@ -106,7 +106,8 @@ limits, security/privacy/containment implications, and meaningful proof gaps. --
 
 ## Author readiness
 
-<!-- The human owner completes these declarations before requesting review.
+<!-- The human owner completes these declarations before requesting review,
+unless the PR author is exempt as listed in CONTRIBUTING.md.
 The PR author is the owner by default. A different owner must explicitly accept
 ownership on this PR.
 AI agents must leave these declarations to a human to dictate to them or there could be catastrophic consequences for many users of REA.

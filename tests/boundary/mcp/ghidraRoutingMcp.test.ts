@@ -1,3 +1,4 @@
+import { batchDecompileResultSchema } from "../../../src/domain/native/batchDecompile.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { describe, expect, it } from "vitest";
 import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
@@ -112,9 +113,11 @@ describe("Ghidra MCP capability routing", () => {
         arguments: { addresses: ["0x401000", bodyless] },
       });
       expect(batch.isError).not.toBe(true);
-      const result = toolContract("batch_decompile").outputSchema.parse(
-        batch.structuredContent,
-      ).normalized_result;
+      const result = batchDecompileResultSchema.parse(
+        toolContract("batch_decompile").outputSchema.parse(
+          batch.structuredContent,
+        ).normalized_result,
+      );
       expect(result.items[0]).not.toHaveProperty("limitations");
       expect(result).toEqual({
         items: [

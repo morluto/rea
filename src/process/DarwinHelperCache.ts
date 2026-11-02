@@ -461,5 +461,3 @@ export const createDarwinHelperCache = (options: {
 
   return { lookup, publish, close };
 };
-
-export type DarwinHelperCache = ReturnType<typeof createDarwinHelperCache>;

@@ -23,7 +23,7 @@ import {
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
 import { constants, type Stats } from "node:fs";
 import { createHash } from "node:crypto";
 import { access, realpath, stat, type FileHandle } from "node:fs/promises";
@@ -607,14 +607,12 @@ const targetFileCleanupError = (
             : String(failure.cleanupCause),
         resources: [failure.path],
       },
-      diagnostics: {
-        ...(primary === undefined
+      ...childFailureDiagnostics(
+        primary === undefined ? {} : { primary_error: { error: primary } },
+        completedTarget === undefined
           ? {}
-          : { primary_error: projectAnalysisError(primary) }),
-        ...(completedTarget === undefined
-          ? {}
-          : { completed_target: completedTarget }),
-      },
+          : { completed_target: completedTarget },
+      ),
     },
   );
   bindRegularFileCleanup(failure, error);

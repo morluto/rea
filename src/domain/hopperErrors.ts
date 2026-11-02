@@ -36,6 +36,14 @@ export type HopperLauncherOutcome = {
   readonly diagnostic_truncated: boolean;
 };
 
+/** Startup-timeout recovery that holds after the calling invocation has ended. */
+export const HOPPER_STARTUP_TIMEOUT_REMEDIATION =
+  "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, set REA_HOPPER_STARTUP_TIMEOUT_MS higher in the environment of a new REA invocation, then rerun the command; that invocation starts Hopper again. Resolve retained cleanup before rerunning.";
+
+/** Startup-timeout recovery for a caller whose REA runtime keeps running. */
+export const HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION =
+  "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, use update_analysis_settings with setting hopper.startup_timeout_ms and action set for the next startup attempt without restarting REA, or increase REA_HOPPER_STARTUP_TIMEOUT_MS for future REA processes. Allow at least that long in the MCP client. Resolve retained cleanup before reopening.";
+
 /** Hopper did not respond within the configured operation deadline. */
 export class HopperTimeoutError extends HopperError {
   readonly _tag = "HopperTimeoutError";
@@ -53,7 +61,14 @@ export class HopperTimeoutError extends HopperError {
   ) {
     super(
       `Hopper ${operation === undefined ? "startup" : operation} timed out after ${String(timeoutMs)}ms`,
-      options,
+      operation === undefined
+        ? {
+            ...options,
+            continuingCallerGuidance: {
+              remediationAction: HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION,
+            },
+          }
+        : options,
     );
   }
 }

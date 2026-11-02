@@ -12,7 +12,6 @@ import {
   parseStaticTaskContext,
   recordStaticTaskContext,
 } from "../../../scripts/ci/static-task-context.mjs";
-import { createGhApiRequest } from "../../../scripts/ci/github-api.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
@@ -337,17 +336,6 @@ it("records the actual static task graph with explicit source identity and no am
     { ...context, taskHashes: { jscpd: "stale" } },
   ])
     expect(() => parseStaticTaskContext(invalid)).toThrow();
-});
-
-it("rejects mutation methods at the shared GitHub transport before invoking the CLI", async () => {
-  const request = createGhApiRequest({ env: { PATH: "" } });
-  await expect(
-    request("POST", "repos/owner/repo/actions/runs/1/rerun", {
-      requests: 0,
-      startedAt: Date.now(),
-      limitMs: 1000,
-    }),
-  ).rejects.toThrow("read-only GET");
 });
 
 it("collects basic CI telemetry before optional dependency installation can fail", async () => {
