@@ -1793,6 +1793,71 @@ it.each(["arm64", "x64"] as const)(
 );
 
 it.each([
+  ["arm64", "/opt/homebrew", "/usr/local"],
+  ["x64", "/usr/local", "/opt/homebrew"],
+] as const)(
+  "orders installed Homebrew Java candidates on macOS %s",
+  async (architecture, preferred, other) => {
+    const suffix = "/libexec/openjdk.jdk/Contents/Home/bin/java";
+    const candidates = [
+      `${preferred}/opt/openjdk${suffix}`,
+      `${preferred}/opt/openjdk@21${suffix}`,
+      `${preferred}/opt/openjdk@25${suffix}`,
+      `${other}/opt/openjdk${suffix}`,
+      `${other}/opt/openjdk@21${suffix}`,
+      `${other}/opt/openjdk@25${suffix}`,
+    ];
+    for (const selected of [0, 1, 2, undefined]) {
+      const commands: string[] = [];
+      const inspection = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: { PATH: "/usr/bin" },
+          installDir: INSTALL,
+          platform: "darwin",
+          architecture,
+        },
+        host({
+          readText: () =>
+            "application.version=12.1.4\napplication.java.min=21\napplication.java.max=25\n",
+          directoryEntries: () => ["openjdk@25", "openjdk@21"],
+          executable: (candidate) =>
+            candidate === "/usr/bin/java" ||
+            candidates.includes(candidate) ||
+            candidate.endsWith("/mac_x86_64/decompile") ||
+            host().executable(candidate),
+          probeJava: (command) => {
+            commands.push(command);
+            return selected !== undefined && command === candidates[selected]
+              ? javaProbeOk({
+                  ...JAVA,
+                  home: command.slice(0, -9),
+                  major: selected === 2 ? 25 : 21,
+                  version: selected === 2 ? "25.0.1" : JAVA.version,
+                  osName: "Mac OS X",
+                  osArch: architecture === "arm64" ? "aarch64" : "x86_64",
+                })
+              : missingJavaProbe;
+          },
+        }),
+      );
+      expect(commands).toEqual([
+        "/usr/bin/java",
+        ...candidates.slice(
+          0,
+          selected === undefined ? undefined : selected + 1,
+        ),
+      ]);
+      expect(inspection.status).toBe(
+        selected === undefined ? "unavailable" : "available",
+      );
+      if (selected !== undefined)
+        expect(inspection.javaCommand).toBe(candidates[selected]);
+    }
+  },
+);
+
+it.each([
   "explicit",
   "path",
   "missing",
