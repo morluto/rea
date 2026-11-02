@@ -21,6 +21,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.lang.Language;
 import ghidra.program.model.lang.LanguageID;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Program;
@@ -219,6 +220,22 @@ public class ReaIndirectBranchEvidenceProbe extends GhidraScript {
                 comment(site, "/* WARNING: Could not recover"), comment(site.add(4), "jumptable at 0x100c */"));
             control("incomplete_comment", bridge, ordinary, result,
                 comment(site, "/* WARNING: Could not recover jumptable at 0x100c"));
+            // An authored warning at the branch address is not Ghidra warning evidence,
+            // even if the saved comment wraps onto a second line.
+            String authoredWarning = "WARNING: Could not recover jumptable at 0x0000100c. Too many branches\nextra note";
+            program.getListing().setComment(site, CommentType.PRE, authoredWarning);
+            try {
+                ClangCommentToken caller = comment(site, "/* " + authoredWarning.replace('\n', ' ') + " */");
+                control("caller_multiline_same_source", bridge, ordinary, result, caller);
+                ClangTokenGroup withDecompilerWarning = new ClangTokenGroup(null);
+                withDecompilerWarning.AddTokenGroup(caller);
+                withDecompilerWarning.AddTokenGroup(comment(site, warning));
+                outcome("genuine_warning_with_multiline_caller",
+                    branch(boundary(bridge, ordinary, markup(ordinary, result, withDecompilerWarning)), "0x100c"),
+                    "jump_table_recovery_failed");
+            } finally {
+                program.getListing().setComment(site, CommentType.PRE, null);
+            }
         } finally {
             close(bridge);
             program.endTransaction(transaction, false);
