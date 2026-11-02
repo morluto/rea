@@ -1122,7 +1122,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 currentProgram.getListing().getInstructions(function.getBody(), true)
             ));
             observation.add("relationship_coverage", callRelationshipCoverage(null,
-                unrepresentedIncomingCalls(function, observed)));
+                incomingCallerObservation(function, observed)));
             monitor.checkCancelled();
             return observation;
         }
@@ -1723,12 +1723,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("limitations", limitations);
         monitor.checkCancelled();
         int missingCallers = 0;
+        int incomingJumps = 0;
         for (Reference reference : bodyIncoming) {
             monitor.checkCancelled();
             if (unrepresentedCaller(reference, callerFunctions)) missingCallers++;
+            if (unrepresentedIncomingJump(function, reference, callerFunctions)) incomingJumps++;
         }
         return new FunctionAnalysisObservation(result, calls.limitations(),
-            callRelationshipCoverage(calls, missingCallers), decompilerFailure != null);
+            callRelationshipCoverage(calls, new IncomingCallerObservation(missingCallers, incomingJumps)), decompilerFailure != null);
     }
 
     private JsonObject nativeValueFlow(DecompileResults decompilation) throws Exception {
@@ -3639,11 +3641,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static JsonObject callRelationshipCoverage(
-            CallBoundaryObservation calls, Integer missingCallers) {
+            CallBoundaryObservation calls, IncomingCallerObservation incoming) {
+        Integer missingCallers = incoming == null ? null : incoming.missingCalls();
+        int incomingJumps = incoming == null ? 0 : incoming.unrepresentedJumps();
         JsonObject coverage = completeResolvedCallCoverage();
         Integer omitted = calls == null ? null : calls.unrepresentedCalleeCalls();
         JsonArray directions = new JsonArray();
-        if (missingCallers != null && missingCallers > 0) directions.add("callers");
+        if ((missingCallers != null && missingCallers > 0) || incomingJumps > 0) directions.add("callers");
         String callerLimitation = missingCallers != null && missingCallers > 0
             ? "Ghidra's caller inventory omits sources of " + missingCallers +
                 " call reference(s) into this function's body." : null;
@@ -3659,6 +3663,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         JsonArray limitations = new JsonArray();
         if (callerLimitation != null) limitations.add(callerLimitation);
+        if (incomingJumps > 0) {
+            limitations.add("Ghidra observed " + incomingJumps +
+                " incoming jump(s) from outside this function not represented by its caller inventory; whether they are tail calls remains unknown.");
+        }
         if (omitted != null && omitted > 0) {
             limitations.add("Ghidra's callee inventory omits targets of " + omitted +
                 " call reference(s) or decoded call(s) without destinations.");
@@ -3709,13 +3717,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return caller == null || !callers.contains(caller);
     }
 
-    private int unrepresentedIncomingCalls(Function function, Set<Function> callers)
+    private record IncomingCallerObservation(int missingCalls, int unrepresentedJumps) {}
+
+    private boolean unrepresentedIncomingJump(Function function, Reference reference, Set<Function> callers) {
+        if (!reference.getReferenceType().isJump() ||
+                function.getBody().contains(reference.getFromAddress())) return false;
+        Function source = functionAtOrContaining(reference.getFromAddress());
+        return source == null || !callers.contains(source);
+    }
+
+    private IncomingCallerObservation incomingCallerObservation(Function function, Set<Function> callers)
             throws Exception {
-        int[] omitted = { 0 };
+        int[] counts = { 0, 0 };
         visitReferences(function, "incoming", reference -> {
-            if (unrepresentedCaller(reference, callers)) omitted[0]++;
+            if (unrepresentedCaller(reference, callers)) counts[0]++;
+            if (unrepresentedIncomingJump(function, reference, callers)) counts[1]++;
         });
-        return omitted[0];
+        return new IncomingCallerObservation(counts[0], counts[1]);
     }
 
     private List<String> functionBoundaryLimitations(

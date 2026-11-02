@@ -58,6 +58,28 @@ export async function verifyGhidraTailBoundaries({
         /unconditional jump\(s\) outside this function/u,
       );
     }
+    const leafDossier = await evidence("analyze_function", {
+      procedure: leaf,
+      detail: "complete",
+    });
+    const incomingJump = leafDossier.normalized_result.incoming_references.find(
+      ({ source_procedure, kind }) =>
+        source_procedure?.address === entry("rea_tail_direct") && kind.jump === true,
+    );
+    if (process.platform === "darwin" && process.arch === "arm64") {
+      assert.ok(incomingJump, "Fixture must expose the incoming tail jump");
+    }
+    if (incomingJump && !leafDossier.normalized_result.callers.some(
+      ({ address }) => address === entry("rea_tail_direct"),
+    )) {
+      assert.equal(leafDossier.relationship_coverage.status, "partial");
+      assert.ok(leafDossier.relationship_coverage.limited_directions.includes("callers"));
+      assert.match(leafDossier.relationship_coverage.limitations.join("\n"), /incoming jump\(s\)/u);
+      const callers = await evidence("procedure_callers", { procedure: leaf });
+      assert.equal(callers.relationship_coverage.status, "partial");
+      assert.ok(callers.relationship_coverage.limited_directions.includes("callers"));
+      assert.match(callers.relationship_coverage.limitations.join("\n"), /incoming jump\(s\)/u);
+    }
     const indirect = await evidence("analyze_function", {
       procedure: entry("rea_tail_indirect"),
       detail: "complete",
