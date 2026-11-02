@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { cdpResourceColumnSchema } from "../CdpScriptContextFacts.js";
+import { cdpResourceColumnSchema } from "../../domain/cdpObservationSchemas.js";
 
 const integer = z.int().min(0);
 const range = z.object({

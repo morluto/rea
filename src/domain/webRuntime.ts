@@ -9,6 +9,7 @@ import {
   webRuntimeCommandTimeoutSchema,
 } from "./browserDeadline.js";
 import { jsonObjectSchema } from "./jsonValue.js";
+import { cdpResourceColumnSchema } from "./cdpObservationSchemas.js";
 
 // CDP positions are zero-based and relative to the resource named by url.
 // With a script ID that is the script's enclosing resource: the script file,
@@ -54,7 +55,7 @@ export const webRuntimeSourceSchema = z.object({
   resource_start: z
     .object({
       line_number: z.int().min(0).describe(START_LINE),
-      column_number: z.int().describe(START_COLUMN),
+      column_number: cdpResourceColumnSchema.describe(START_COLUMN),
     })
     .nullable(),
   source: z.discriminatedUnion("state", [
@@ -78,7 +79,7 @@ export const webRuntimeLocationSchema = z.object({
   script_id: z.string().describe(SCRIPT_ID),
   url: z.string().nullable(),
   line_number: z.int().min(0).describe(RESOURCE_LINE),
-  column_number: z.int().nullable().describe(RESOURCE_COLUMN),
+  column_number: cdpResourceColumnSchema.nullable().describe(RESOURCE_COLUMN),
   function_name: z.string().nullable(),
   source_association: z.enum(["script_id", "unknown"]),
 });

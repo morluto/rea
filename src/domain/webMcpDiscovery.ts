@@ -7,6 +7,7 @@ import {
   browserObservationEndpointSchema,
 } from "./browserObservation.js";
 import { browserVersionSchema } from "./browserObservationSchemas.js";
+import { cdpResourceColumnSchema } from "./cdpObservationSchemas.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 
@@ -44,7 +45,7 @@ const webMcpToolSchema = z.object({
     .object({
       url: z.string(),
       line: z.int().min(0).nullable(),
-      column: z.int().min(0).nullable(),
+      column: cdpResourceColumnSchema.nullable(),
     })
     .nullable(),
   trust: z.literal("page-declared-untrusted"),

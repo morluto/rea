@@ -4,15 +4,9 @@ import {
   numberValue,
   recordValue,
 } from "./CdpCaptureValues.js";
+import { cdpResourceColumnSchema } from "../domain/cdpObservationSchemas.js";
 
 const integer = z.int().min(0);
-/**
- * CDP declares resource columns as plain integers. Chrome reports a negative
- * start column for some inline scripts, and positions on a script's first line
- * include its start column, so the reported column is kept rather than
- * refusing the whole observation.
- */
-export const cdpResourceColumnSchema = z.int();
 const contextAuxDataSchema = z
   .object({
     frameId: z.string().optional(),

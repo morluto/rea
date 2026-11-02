@@ -11,7 +11,7 @@ import {
   recordValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
-import { cdpResourceColumnSchema } from "./CdpScriptContextFacts.js";
+import { cdpResourceColumnSchema } from "../domain/cdpObservationSchemas.js";
 
 const integer = z.int().min(0);
 /** Active runtime admission remains stricter than passive request observations. */
