@@ -138,7 +138,7 @@ def run(device: str | int | None, midi_port: str | None, sample_rate: int, block
 
     output = mido.open_output(midi_port) if midi_port else mido.open_output()
     tracker = MidiNoteTracker()
-    analysis_window = math.ceil(3 * sample_rate / 65.0)
+    analysis_window = math.ceil(3 * sample_rate / 65.0) + block_size
     history: list[float] = []
 
     def callback(indata: Any, frames: int, time_info: Any, status: Any) -> None:
