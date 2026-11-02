@@ -23,7 +23,16 @@ export async function connectRecordedCrash({ entrypoint, environment }) {
   try {
     await client.connect(transport);
   } catch (cause) {
-    await transport.close();
+    // A refused transport close must not replace the connection failure.
+    try {
+      await transport.close();
+    } catch (closeFailure) {
+      throw new AggregateError(
+        [cause, closeFailure],
+        "Recorded crash MCP connection failed and its transport close was refused",
+        { cause },
+      );
+    }
     throw cause;
   }
   return {
