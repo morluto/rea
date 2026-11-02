@@ -14,9 +14,14 @@ import { collectJavaScriptSemanticPromises } from "./javascriptSemanticPromises.
 import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js";
 import { collectJavaScriptSemanticResources } from "./javascriptSemanticResources.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import { semanticBranchMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
-import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
+import {
+  traverseJavaScriptAstSteps,
+  traverseJavaScriptValueAstSteps,
+} from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   readExactJavaScriptLiteral,
@@ -313,9 +318,19 @@ function* collectAssignmentFlowsSteps(
   const stack = createSemanticCallableIdStack(
     new Set(callables.map((item) => item.callableId)),
   );
+  // A node inside any branch position that evaluation may skip (if bodies,
+  // destructuring defaults, logical right sides, optional-chain arguments)
+  // makes every assignment below it ordering-uncertain.
+  let conditionalDepth = 0;
   yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       stack.enter(node, parent);
+      if (
+        parent !== null &&
+        parent !== undefined &&
+        semanticBranchMayBeSkipped(parent, node)
+      )
+        conditionalDepth += 1;
       if (!t.isAssignmentExpression(node)) return;
       const target = unwrapJavaScriptExpression(node.left).node;
       // Destructuring has its own property-selection owner.
@@ -328,9 +343,71 @@ function* collectAssignmentFlowsSteps(
           t.isIdentifier(source) || t.isMemberExpression(source),
         operator: node.operator,
         ownerCallableId: stack.callables.at(-1) ?? null,
+        ...assignedContainerValue(node.operator, target, source, {
+          conditional: conditionalDepth > 0,
+          ownerCallableId: stack.callables.at(-1) ?? null,
+          state,
+        }),
       });
     },
-    exit: (node) => stack.exit(node),
+    exit: (node, parent) => {
+      if (
+        parent !== null &&
+        parent !== undefined &&
+        semanticBranchMayBeSkipped(parent, node)
+      )
+        conditionalDepth -= 1;
+      stack.exit(node);
+    },
   });
   return flows;
 }
+
+/**
+ * The static value an unconditional top-level `X.p = {…}` stores, so the
+ * graph can model later property assignments like initializers. Only a
+ * direct literal container is captured; conditional placement, compound
+ * operators, computed keys and destructuring keep the value unknown.
+ */
+
+const assignedContainerValue = (
+  operator: string,
+  target: t.Node,
+  source: t.Node,
+  options: {
+    readonly conditional: boolean;
+    readonly ownerCallableId: string | null;
+    readonly state: JavaScriptSemanticAnalysisState;
+  },
+): Pick<JavaScriptSemanticIr["assignmentFlows"][number], "assignedValue"> => {
+  // Compound and logical operators write conditionally or compute a new
+  // value; only a plain `=` stores the literal container itself.
+  if (operator !== "=") return {};
+  if (options.conditional || options.ownerCallableId !== null) return {};
+  if (!t.isMemberExpression(target) || target.computed) return {};
+  const propertyPath = staticPropertyPath(target);
+  if (propertyPath === null) return {};
+  if (!t.isObjectExpression(source) && !t.isArrayExpression(source)) return {};
+  return {
+    assignedValue: {
+      receiverName: propertyPath.receiverName,
+      propertyPath: propertyPath.path,
+      value: evaluateSemanticExpression(source, options.state),
+    },
+  };
+};
+
+/** Splits `X.a.b` into the receiver binding name and the static path. */
+const staticPropertyPath = (
+  member: t.MemberExpression,
+): { receiverName: string; path: readonly string[] } | null => {
+  const path: string[] = [];
+  let node: t.Node = member;
+  while (t.isMemberExpression(node)) {
+    if (node.computed || !t.isIdentifier(node.property)) return null;
+    path.unshift(node.property.name);
+    node = unwrapJavaScriptExpression(node.object).node;
+  }
+  if (!t.isIdentifier(node)) return null;
+  return { receiverName: node.name, path };
+};
