@@ -54,7 +54,7 @@ A member of a package that inventory did not expand is reported as the host file
 
 A package member skipped by a read allowance still counts as readable for `packaging.extractable_payload`, because the format stores it unencrypted. An encrypted member or one that failed to read counts as unreadable.
 
-A `.map` too large to parse is a linker map when its header cannot begin a JSON object. A larger `.map` that begins as JSON, or that has a JavaScript name such as `app.js.map`, is counted as skipped. `native.debug_companions` identifies a companion from its name or from a `.map` body that is not a source map, so its `exposed` result has `inferred` confidence.
+A map read counts against the source-map allowance when it starts, so an oversized or unreadable `.map` uses a read as a parsed one does. A `.map` too large to parse is a linker map when its header cannot begin a JSON object. A larger `.map` that begins as JSON, or that has a JavaScript name such as `app.js.map`, is counted as skipped. `native.debug_companions` identifies a companion from its name or from a `.map` body that is not a source map, so its `exposed` result has `inferred` confidence.
 
 ## Status
 

@@ -925,6 +925,9 @@ const examineMap = async (
     state.skippedMaps += 1;
     return null;
   }
+  // The read is what the count bounds, so it is charged before the member is
+  // opened. An oversized or unreadable map spends its slot like a parsed one.
+  if (hasSlot) state.mapsRead += 1;
   const loaded = await map.read(
     hasSlot
       ? MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES
@@ -1008,7 +1011,6 @@ const readSourceMap = (
   map: Pick<MemberView, "logical" | "location">,
   bytes: Buffer,
 ): void => {
-  state.mapsRead += 1;
   try {
     const inspected = inspectSourceMap(bytes.toString("utf8"));
     const embedded = inspected.declarations.some(
@@ -1173,6 +1175,7 @@ const examineInlineMaps = (
         state.skippedMaps += 1;
         continue;
       }
+      state.mapsRead += 1;
       // An inline declaration is a JavaScript map even if its JSON is invalid.
       readSourceMap(
         state,

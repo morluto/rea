@@ -33,6 +33,7 @@ import {
   MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
   MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES,
   MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES,
+  MAX_RELEASE_EXPOSURE_SOURCE_MAPS,
   MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES,
   PACKAGED_NATIVE_IMAGES,
   type ReleaseExposureScan,
@@ -1252,6 +1253,97 @@ describe("ReleaseExposureReader member allowances", () => {
     expect(scanned.source_maps.embedded).toBe(32);
     expect(scanned.source_maps.skipped).toBe(1);
     expect(scanned.text_members.skipped).toBe(1);
+  });
+});
+
+describe("ReleaseExposureReader source-map count", () => {
+  it.each([
+    [
+      "dotnet-bundle",
+      (bytes: Buffer, paths: readonly string[]): Buffer =>
+        dotnetBundleFixture(
+          paths.map((path) => ({ path, bytes, compressed: true })),
+        ).bytes,
+    ],
+    [
+      "pyinstaller-carchive",
+      (bytes: Buffer, paths: readonly string[]): Buffer =>
+        cArchiveExecutable({
+          carrier: "pe",
+          layout: "2.1",
+          pythonVersion: 310,
+          members: paths.map((name) => ({
+            name,
+            typeCode: "x",
+            compress: true,
+            payload: bytes,
+          })),
+        }),
+    ],
+  ])(
+    "charges an oversized %s map to the map count before opening it",
+    async (_format, archive) => {
+      const root = await createTestTempDirectory("rea-release-exposure-over-");
+      const count = MAX_RELEASE_EXPOSURE_SOURCE_MAPS + 8;
+      const oversized = Buffer.alloc(
+        MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES + 1,
+        0x20,
+      );
+      const paths = Array.from(
+        { length: count },
+        (_, index) => `m${String(index)}.js.map`,
+      );
+      const target = join(root, "app.dll");
+      await writeFile(target, archive(oversized, paths));
+      let opened = 0;
+      createdReaders.wrap = (reader, path) => {
+        if (path !== target) return reader;
+        const open = reader.open.bind(reader);
+        reader.open = (entry, signal) => {
+          if (entry.path.endsWith(".js.map")) opened += 1;
+          return open(entry, signal);
+        };
+        return reader;
+      };
+      try {
+        const scanned = await inspect(root);
+        expect(opened).toBe(MAX_RELEASE_EXPOSURE_SOURCE_MAPS);
+        expect(scanned.source_maps).toMatchObject({
+          embedded: 0,
+          skipped: count,
+        });
+        expect(scanned.text_members.skipped).toBe(count);
+      } finally {
+        createdReaders.wrap = undefined;
+      }
+    },
+  );
+
+  it("keeps a linker map's outcome past the count once oversized maps use it", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-spent-");
+    const oversized = Buffer.alloc(
+      MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES + 1,
+      0x20,
+    );
+    oversized.write("Archive member included to satisfy reference\n");
+    await writeFile(
+      join(root, "app.dll"),
+      dotnetBundleFixture(
+        Array.from(
+          { length: MAX_RELEASE_EXPOSURE_SOURCE_MAPS + 1 },
+          (_, index) => ({
+            path: `m${String(index)}.map`,
+            bytes: oversized,
+            compressed: true,
+          }),
+        ),
+      ).bytes,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.debug_companions.paths).toHaveLength(
+      MAX_RELEASE_EXPOSURE_SOURCE_MAPS + 1,
+    );
+    expect(scanned.source_maps.skipped).toBe(0);
   });
 });
 
