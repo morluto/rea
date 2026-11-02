@@ -420,11 +420,17 @@ try {
         const sourceBase = 0x08000000n;
         const analysisBase = 0x08800000n;
         const names = ["rea_psp_entry", "rea_psp_leaf", "rea_psp_probe"];
-        const legacy = names.map((name) => {
-          const relocated = BigInt(independent.symbols[name]) - analysisBase + sourceBase;
-          assert.ok(relocated >= 0n && relocated <= 0xffffffffn);
-          return relocated.toString(16).padStart(8, "0") + " " + name + ",0010";
-        }).join("\n") + "\n";
+        const legacy =
+          names
+            .map((name) => {
+              const relocated =
+                BigInt(independent.symbols[name]) - analysisBase + sourceBase;
+              assert.ok(relocated >= 0n && relocated <= 0xffffffffn);
+              return (
+                relocated.toString(16).padStart(8, "0") + " " + name + ",0010"
+              );
+            })
+            .join("\n") + "\n";
         const agreement = correlatePspSymbols(legacy, procedures, {
           format: "sym",
           sourceBase: "0x08000000",
@@ -442,7 +448,11 @@ try {
           analysisBase: "0x08810000",
           targetSha256: fixture.sha256,
         });
-        assert.ok(wrongBase.records.every(({ outcome }) => outcome !== "address_and_label_agree"));
+        assert.ok(
+          wrongBase.records.every(
+            ({ outcome }) => outcome !== "address_and_label_agree",
+          ),
+        );
         symbolCorrelation = {
           format: agreement.format,
           source_sha256: agreement.source_sha256,
@@ -450,7 +460,8 @@ try {
           selected_bases: agreement.selected_bases,
           verified_address_and_label_observations: agreement.records.length,
           negative_rebase_control: "did_not_agree",
-          source: "source-owned legacy export-shaped rows derived from PSP GNU readelf; not PPSSPP runtime symbols",
+          source:
+            "source-owned legacy export-shaped rows derived from PSP GNU readelf; not PPSSPP runtime symbols",
         };
       }
       const probe = independent.symbols[`${prefix}_probe`];
@@ -728,7 +739,9 @@ try {
         effective_compiler_spec: image.observations.compiler_spec_id,
         checks: [
           "independent ELF/ABI and symbols",
-          ...(psp ? ["explicit-base PPSSPP-style symbol / Ghidra inventory agreement"] : []),
+          ...(psp
+            ? ["explicit-base PPSSPP-style symbol / Ghidra inventory agreement"]
+            : []),
           "loaded Ghidra identity",
           "fixed instruction bytes and immediate",
           psp
@@ -740,7 +753,9 @@ try {
             ? ["soft-float o32 parameter/return storage and caller constants"]
             : []),
         ],
-        ...(symbolCorrelation === undefined ? {} : { psp_symbol_correlation: symbolCorrelation }),
+        ...(symbolCorrelation === undefined
+          ? {}
+          : { psp_symbol_correlation: symbolCorrelation }),
         ...(softFloat === undefined ? {} : { soft_float: softFloat }),
         procedures: procedures.length,
         carved: carved ?? {
