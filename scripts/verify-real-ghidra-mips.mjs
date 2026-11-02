@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { correlatePspSymbols } from "./psp-symbol-correlation.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import {
   inspectMipsReadelf,
@@ -412,6 +413,57 @@ try {
         BigInt(leaf.address),
         BigInt(independent.symbols[`${prefix}_leaf`]),
       );
+      let symbolCorrelation;
+      if (psp) {
+        // Model the legacy exported .sym address space explicitly. This is an
+        // independent readelf-derived input, not a PPSSPP runtime capture.
+        const sourceBase = 0x08000000n;
+        const analysisBase = 0x08800000n;
+        const names = ["rea_psp_entry", "rea_psp_leaf", "rea_psp_probe"];
+        const legacy =
+          names
+            .map((name) => {
+              const relocated =
+                BigInt(independent.symbols[name]) - analysisBase + sourceBase;
+              assert.ok(relocated >= 0n && relocated <= 0xffffffffn);
+              return (
+                relocated.toString(16).padStart(8, "0") + " " + name + ",0010"
+              );
+            })
+            .join("\n") + "\n";
+        const agreement = correlatePspSymbols(legacy, procedures, {
+          format: "sym",
+          sourceBase: "0x08000000",
+          analysisBase: "0x08800000",
+          targetSha256: fixture.sha256,
+        });
+        assert.deepEqual(
+          agreement.records.map(({ outcome }) => outcome),
+          names.map(() => "address_and_label_agree"),
+          "Selected legacy PPSSPP-style names disagree with real Ghidra's inventory",
+        );
+        const wrongBase = correlatePspSymbols(legacy, procedures, {
+          format: "sym",
+          sourceBase: "0x08000000",
+          analysisBase: "0x08810000",
+          targetSha256: fixture.sha256,
+        });
+        assert.ok(
+          wrongBase.records.every(
+            ({ outcome }) => outcome !== "address_and_label_agree",
+          ),
+        );
+        symbolCorrelation = {
+          format: agreement.format,
+          source_sha256: agreement.source_sha256,
+          target_sha256: agreement.target_sha256,
+          selected_bases: agreement.selected_bases,
+          verified_address_and_label_observations: agreement.records.length,
+          negative_rebase_control: "did_not_agree",
+          source:
+            "source-owned legacy export-shaped rows derived from PSP GNU readelf; not PPSSPP runtime symbols",
+        };
+      }
       const probe = independent.symbols[`${prefix}_probe`];
       assert.ok(
         procedures.some(
@@ -687,6 +739,9 @@ try {
         effective_compiler_spec: image.observations.compiler_spec_id,
         checks: [
           "independent ELF/ABI and symbols",
+          ...(psp
+            ? ["explicit-base PPSSPP-style symbol / Ghidra inventory agreement"]
+            : []),
           "loaded Ghidra identity",
           "fixed instruction bytes and immediate",
           psp
@@ -698,6 +753,9 @@ try {
             ? ["soft-float o32 parameter/return storage and caller constants"]
             : []),
         ],
+        ...(symbolCorrelation === undefined
+          ? {}
+          : { psp_symbol_correlation: symbolCorrelation }),
         ...(softFloat === undefined ? {} : { soft_float: softFloat }),
         procedures: procedures.length,
         carved: carved ?? {
