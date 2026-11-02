@@ -275,7 +275,9 @@ export const readClientRegistrationInspections = async (
               parsed,
               {},
               "effective",
-              options.resolveProviderRequestBudget,
+              client.name === "kimi" || client.name === "codex"
+                ? options.resolveProviderRequestBudget
+                : undefined,
               options.platform,
             )
           : undefined;

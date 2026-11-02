@@ -318,8 +318,9 @@ or a write. The entry carries `command`, `args`, and `env`, and setup keeps
 every other server. Local models often have small context windows, so setup
 selects `REA_MCP_INPUT_SCHEMA_PROFILE=compact` unless the stored entry or the
 setup environment selects a profile explicitly. Doctor reports an entry with no
-explicit profile as stale, as for Kimi Code. Loading this registration in
-LM Studio and real REA tool calls through it remain unverified.
+explicit profile as stale, as for Kimi Code. LM Studio 0.4.26 on macOS loaded
+this registration, and a local model called an REA tool through it. Linux and
+Windows remain unverified.
 
 ## Pi
 
