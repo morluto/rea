@@ -360,7 +360,9 @@ the file. Discovery performs another static pass, while semantic projection
 runs once and existing heap, deadline, cancellation, and cleanup controls remain.
 A source that exceeds its worker limits during discovery contributes no
 declarations, and any other discovery failure ends discovery; source analysis
-then records that failure and retains partial Evidence as usual.
+then records that failure and retains partial Evidence as usual. Either gap is
+also listed in the Evidence limitations, because source analysis may still read
+that source after a declared preload has kept its package scope.
 
 Selected bounded text is then parsed as inert data to recover:
 

@@ -81,6 +81,8 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   signal?: AbortSignal,
   onPhase?: (file: JavaScriptArtifactFile, phase: string) => Promise<void>,
   preloadPaths: ReadonlySet<string> = new Set(),
+  /** Discovery gaps that may leave a declared preload in its package scope. */
+  preloadLimitations: readonly string[] = [],
 ): Promise<{
   readonly analysis: JavaScriptArtifactAnalysis;
   readonly interruption: AnalysisError | null;
@@ -306,11 +308,15 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
       );
     }
   }
-  return { analysis: finalizeArtifactAnalysis(state), interruption };
+  return {
+    analysis: finalizeArtifactAnalysis(state, preloadLimitations),
+    interruption,
+  };
 };
 
 const finalizeArtifactAnalysis = (
   state: MutableArtifactAnalysis,
+  preloadLimitations: readonly string[],
 ): JavaScriptArtifactAnalysis => {
   return {
     jsonDocuments: state.jsonDocuments,
@@ -340,6 +346,7 @@ const finalizeArtifactAnalysis = (
             (failure) => (failure === undefined ? [] : [failure.reason]),
           ),
       ),
+      ...preloadLimitations,
     ],
   };
 };

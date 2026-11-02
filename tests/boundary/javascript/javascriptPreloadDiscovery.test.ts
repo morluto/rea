@@ -83,7 +83,10 @@ it("resolves an exact preload before its declaring source regardless of inventor
     limits,
     new ArtifactResourceScope(),
   );
-  expect([...result]).toEqual(["a".repeat(64) + ":preload.js"]);
+  expect(result).toEqual({
+    paths: new Set(["a".repeat(64) + ":preload.js"]),
+    limitations: [],
+  });
   expect(close).toHaveBeenCalledOnce();
   expect(analyze.mock.calls.every((call) => call[2] === undefined)).toBe(true);
 });
@@ -111,7 +114,15 @@ it("keeps discovering after one source exceeds its worker limit", async () => {
     limits,
     new ArtifactResourceScope(),
   );
-  expect([...result]).toEqual(["a".repeat(64) + ":preload.js"]);
+  // The gap stays reported even if source analysis later reads big.js.
+  expect(result).toEqual({
+    paths: new Set(["a".repeat(64) + ":preload.js"]),
+    limitations: [
+      expect.stringMatching(
+        /^Preload discovery could not read big\.js \(.*big\.js exhausted the worker heap/u,
+      ),
+    ],
+  });
   expect(limited.mock.calls.map(([source]) => source.path)).toEqual([
     "big.js",
     "preload.js",
@@ -125,28 +136,32 @@ it("does not turn an invalid ESM require declaration into a preload identity", a
     'const { BrowserWindow } = require("electron"); new BrowserWindow({webPreferences:{preload:"preload.js"}});',
   );
   expect(
-    await discoverJavaScriptPreloadPaths(
-      { ...files, files: [...files.files.slice(0, 2), source] },
-      limits,
-      new ArtifactResourceScope(),
-    ),
+    (
+      await discoverJavaScriptPreloadPaths(
+        { ...files, files: [...files.files.slice(0, 2), source] },
+        limits,
+        new ArtifactResourceScope(),
+      )
+    ).paths,
   ).toEqual(new Set());
 });
 it("does not transfer preload identity across containers", async () => {
   const files = fixture();
   expect(
-    await discoverJavaScriptPreloadPaths(
-      {
-        ...files,
-        files: files.files.map((source) =>
-          source.path === "preload.js"
-            ? { ...source, container_sha256: "c".repeat(64) }
-            : source,
-        ),
-      },
-      limits,
-      new ArtifactResourceScope(),
-    ),
+    (
+      await discoverJavaScriptPreloadPaths(
+        {
+          ...files,
+          files: files.files.map((source) =>
+            source.path === "preload.js"
+              ? { ...source, container_sha256: "c".repeat(64) }
+              : source,
+          ),
+        },
+        limits,
+        new ArtifactResourceScope(),
+      )
+    ).paths,
   ).toEqual(new Set());
 });
 it("skips discovery when package scope cannot change a .js loader", async () => {

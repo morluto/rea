@@ -286,8 +286,10 @@ cliTest(
         details: z.object({ partial_observation: z.unknown() }),
       })
       .parse(result.json);
-    expect(parseEvidence(failure.details.partial_observation).operation).toBe(
-      "analyze_javascript_application",
+    const partial = parseEvidence(failure.details.partial_observation);
+    expect(partial.operation).toBe("analyze_javascript_application");
+    expect(partial.limitations).toContainEqual(
+      expect.stringMatching(/^Preload discovery could not read a\.js \(/u),
     );
   },
 );

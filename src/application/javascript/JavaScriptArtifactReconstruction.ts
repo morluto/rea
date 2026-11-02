@@ -191,7 +191,7 @@ export const reconstructJavaScriptArtifact = async (
           overrides?.["javascript.analysis_timeout_ms"] ??
           JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
       };
-      const preloadPaths = await discoverJavaScriptPreloadPaths(
+      const preloads = await discoverJavaScriptPreloadPaths(
         files,
         sourceLimits,
         scope,
@@ -237,7 +237,8 @@ export const reconstructJavaScriptArtifact = async (
             });
             abortIfNeeded(signal);
           },
-          preloadPaths,
+          preloads.paths,
+          preloads.limitations,
         );
       } finally {
         try {

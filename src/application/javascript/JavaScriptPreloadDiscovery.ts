@@ -13,6 +13,12 @@ import { createJavaScriptPackageTypeLookup } from "./JavaScriptArtifactAnalysis.
 import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
+/** Declared preload identities, with the discovery gaps that may hide others. */
+export interface JavaScriptPreloadDiscovery {
+  readonly paths: ReadonlySet<string>;
+  readonly limitations: readonly string[];
+}
+
 /** Resolve declared preload identities before choosing any .js file's loader.
  * Discovery uses the same bounded worker and path owner as normal analysis.
  * It never infers a loader from renderer API text in the selected file.
@@ -22,8 +28,9 @@ export const discoverJavaScriptPreloadPaths = async (
   limits: JavaScriptSourceAnalysisLimits,
   scope: ArtifactResourceScope,
   signal?: AbortSignal,
-): Promise<ReadonlySet<string>> => {
+): Promise<JavaScriptPreloadDiscovery> => {
   const paths = new Set<string>();
+  const limitations: string[] = [];
   const jsonDocuments = new JavaScriptJsonDocuments();
   const packageTypeFor = createJavaScriptPackageTypeLookup(
     fileSet,
@@ -38,7 +45,7 @@ export const discoverJavaScriptPreloadPaths = async (
         packageTypeFor(file) === "module",
     )
   )
-    return paths;
+    return { paths, limitations };
   const sources = fileSet.files.filter(
     (file) => file.kind === "javascript" && file.text.included,
   );
@@ -50,7 +57,7 @@ export const discoverJavaScriptPreloadPaths = async (
     kind: "completed",
   };
   try {
-    for (const file of sources) {
+    for (const [index, file] of sources.entries()) {
       const result = await worker.analyze(
         file,
         { nodes: 0, unknowns: 0 },
@@ -65,12 +72,18 @@ export const discoverJavaScriptPreloadPaths = async (
           throw error;
         // Normal analysis meets the same source and owns its failure and the
         // partial Evidence. A per-source limit only loses this source's
-        // declarations; any other failure would stop that pass here too.
-        if (
+        // declarations; any other failure would stop that pass here too. The
+        // gap stays reported even if normal analysis then reads the source.
+        const skipped =
           error instanceof AnalysisResourceConstraintError &&
-          error.reportedLimits?.parent_result_budget_exhausted !== true
-        )
-          continue;
+          error.reportedLimits?.parent_result_budget_exhausted !== true;
+        const later = sources.length - index - 1;
+        limitations.push(
+          skipped || later === 0
+            ? `Preload discovery could not read ${file.path} (${error.message}); a .js preload declared only there keeps its package scope.`
+            : `Preload discovery stopped at ${file.path} (${error.message}); a .js preload declared only there or in ${String(later)} later sources keeps its package scope.`,
+        );
+        if (skipped) continue;
         break;
       }
       for (const window of result.value.javascript.electron.browser_windows) {
@@ -118,5 +131,5 @@ export const discoverJavaScriptPreloadPaths = async (
       throw scope.cleanupFailure(outcome, [cleanup]);
     }
   }
-  return paths;
+  return { paths, limitations };
 };
