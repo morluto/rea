@@ -65,7 +65,10 @@ func observe(_ request: Request) async throws -> [String: Any] {
   guard SHA256.hash(data: executableBytes).map({ String(format: "%02x", $0) }).joined() == request.sha256 else {
     try fail("target-mismatch", "Running executable bytes differ from the active target digest")
   }
-  guard let windows = CGWindowListCopyWindowInfo([.optionIncludingWindow], request.window_id) as? [[String: Any]],
+  // .optionIncludingWindow omits a selected window while it is off screen, which
+  // is not absence: select from every window, and let capture report what it can.
+  guard let windows = (CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]])?
+    .filter({ ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == request.window_id }),
     windows.count == 1, let window = windows.first,
     (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == request.pid,
     (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
