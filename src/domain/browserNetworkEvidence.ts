@@ -75,6 +75,16 @@ export const browserNetworkBodySchema = z.union([
       sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       media_type: z.string().nullable(),
       redacted: z.boolean(),
+      /** Present when a charset-less text body was recovered from Playwright's windows-1252 fallback decode; keeps the inference and the pre-recovery digest visible. */
+      text_decoding: z
+        .strictObject({
+          declared_charset: z.null(),
+          decoded_as: z.literal("utf-8"),
+          method: z.literal("reversed-windows-1252-decode"),
+          observed_bytes: z.int().min(0),
+          observed_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+        })
+        .optional(),
     })
     .superRefine((artifact, context) => {
       const bytes = Buffer.from(artifact.content, "base64");
