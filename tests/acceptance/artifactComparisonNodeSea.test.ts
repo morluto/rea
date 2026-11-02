@@ -7,19 +7,14 @@ import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
 } from "../../src/domain/artifactGraph.js";
-import { artifactComparisonResultSchema } from "../../src/domain/artifactComparison.js";
-import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
+import { FORMAT_DECLARATION_UNKNOWN_LIMITATION } from "../../src/domain/artifactComparison.js";
 import {
   artifactGraphDigest,
   artifactManifestId,
 } from "../../src/domain/artifactIdentity.js";
 import { parseArtifactInventoryEvidence } from "../../src/domain/artifactInventoryEvidence.js";
-import {
-  createEvidence,
-  parseEvidence,
-  type Evidence,
-} from "../../src/domain/evidence.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { createEvidence, type Evidence } from "../../src/domain/evidence.js";
+import { connectArtifactComparisonMcp } from "../fixtures/artifactComparisonMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const withoutEntryMetadata = (source: Evidence): Evidence => {
@@ -72,32 +67,15 @@ it("compares raw SEA asset keys without interpreting serialization order as meta
   const nfc = "caf\u00e9.txt";
   const nfd = "cafe\u0301.txt";
   const body = "identical asset bytes";
-  const { call } = await connectLocalToolsMcp();
+  const { inspect: inspectFile, compare } =
+    await connectArtifactComparisonMcp();
   const inspect = async (
     name: string,
     assets: readonly { name: string; body: string }[],
   ): Promise<Evidence> => {
     const path = join(root, name);
     await writeFile(path, nodeSeaPe({ fuse: "set", assets }));
-    const opened = await call("open_binary", { path });
-    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const response = await call("inspect_artifact", {});
-    expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    const inspection = artifactInspectionResultSchema.parse(
-      parseEvidence(response.structuredContent).normalized_result,
-    );
-    const inventory = inspection.substeps.find(
-      ({ operation }) => operation === "inventory_artifact",
-    )?.evidence;
-    if (inventory === undefined) throw new Error("Missing inventory Evidence");
-    return parseEvidence(inventory);
-  };
-  const compare = async (left: Evidence, right: Evidence) => {
-    const response = await call("compare_artifacts", { left, right });
-    expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    return artifactComparisonResultSchema.parse(
-      parseEvidence(response.structuredContent).normalized_result,
-    );
+    return inspectFile(path);
   };
   const child = (evidence: Evidence) => {
     const occurrence = artifactInventoryResultSchema
@@ -175,6 +153,7 @@ it("compares raw SEA asset keys without interpreting serialization order as meta
     dimensions: ["availability"],
     evidence_links: [historical.evidence_id, right.evidence_id],
   });
+  expect(unknown.limitations).toContain(FORMAT_DECLARATION_UNKNOWN_LIMITATION);
   const reversed = await compare(right, historical);
   expect(
     reversed.changes.find(({ logical_path }) => logical_path === nfc),

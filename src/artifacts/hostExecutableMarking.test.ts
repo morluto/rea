@@ -2,8 +2,21 @@ import { describe, expect, it } from "vitest";
 
 import { hostExecutableMarking } from "./hostExecutableMarking.js";
 
-const file = (mode: number) => ({ mode, isFile: () => true });
-const directory = (mode: number) => ({ mode, isFile: () => false });
+const file = (mode: number) => ({
+  mode,
+  isFile: () => true,
+  isSymbolicLink: () => false,
+});
+const directory = (mode: number) => ({
+  mode,
+  isFile: () => false,
+  isSymbolicLink: () => false,
+});
+const symlink = (mode: number) => ({
+  mode,
+  isFile: () => false,
+  isSymbolicLink: () => true,
+});
 
 describe("hostExecutableMarking", () => {
   it("marks Windows launchable files by extension because NTFS has no execute bit", () => {
@@ -47,5 +60,16 @@ describe("hostExecutableMarking", () => {
     expect(
       hostExecutableMarking("/scratch/whoami.exe", file(0o644), "darwin"),
     ).toBe(false);
+  });
+
+  it("never marks a symlink, whose target decides what runs", () => {
+    for (const [path, platform] of [
+      ["/scratch/current", "linux"],
+      ["/scratch/current", "darwin"],
+      ["C:\\scratch\\tool.exe", "win32"],
+    ] as const)
+      expect(hostExecutableMarking(path, symlink(0o120777), platform)).toBe(
+        false,
+      );
   });
 });

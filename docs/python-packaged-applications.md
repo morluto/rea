@@ -77,14 +77,17 @@ table index; original names remain available in the supplied artifact.
 Path failures use bounded escaped previews and report the original length;
 accepted paths and retained source names are not shortened.
 
-`compare_artifacts` compares these node-less records as declarations using the
-container, container name, source name and type code. Equal option or dependency
-declarations can therefore compare unchanged without implying that an external
-dependency's bytes were found. For materialized PyInstaller members, the same
-fields participate in the metadata delta independently of content identity;
-archive offsets and table positions remain location facts, not declaration
-identity. Missing declaration facts and unavailable non-metadata content remain
-unknown.
+`compare_artifacts` compares node-less records, namely runtime options,
+dependencies and namespace packages, as declarations using the container,
+container name, source name and type code, and whether the record is
+encrypted; their limitations are not compared. Equal declarations can
+therefore compare unchanged without implying that an external dependency's
+bytes were found or that unread legacy namespace payloads match. For
+materialized PyInstaller members, the same fields participate in the metadata
+delta independently of content identity, including when the member's bytes
+are unavailable; archive offsets and table positions remain location facts,
+not declaration identity. Missing declaration facts remain unknown, as does
+unavailable non-metadata content whose declaration is unchanged.
 
 Request `detail: "summary"` for a compact inspection, then query retained
 Evidence with `inspect_analysis_view`. An inventory view can select
