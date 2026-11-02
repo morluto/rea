@@ -43,11 +43,33 @@ export const UNITY_SERIALIZED_FILE_MAX_OBJECTS = 1_048_576;
 /** Same policy for the retained type and external tables; real files hold hundreds. */
 export const UNITY_SERIALIZED_FILE_MAX_TABLE_ENTRIES = 65_536;
 
+/** Resource policy for one metadata string; real paths and names are short. */
+export const UNITY_SERIALIZED_FILE_MAX_STRING_BYTES = 65_536;
+
+const limit = (
+  name: string,
+  maximum: number,
+  unit: "entry" | "byte",
+  detail: string,
+) =>
+  new UnityAssetsFormatFailure(
+    "limit",
+    `SerializedFile ${detail}, above the ${String(maximum)}-${unit} ${name}`,
+    undefined,
+    {
+      name: `The SerializedFile ${name}`,
+      maximum,
+      kind: unit === "entry" ? "count" : "bytes",
+    },
+  );
+
 const admitRetained = (count: number, maximum: number, table: string) => {
   if (count > maximum)
-    throw new UnityAssetsFormatFailure(
-      "limit",
-      `SerializedFile declares ${String(count)} ${table}, above the ${String(maximum)}-entry inventory allowance`,
+    throw limit(
+      `${table} table allowance`,
+      maximum,
+      "entry",
+      `declares ${String(count)} ${table}`,
     );
   return count;
 };
@@ -109,9 +131,20 @@ class MetadataReader {
   }
 
   cstring(field: string): string {
-    const stop = this.bytes.indexOf(0, this.cursor);
-    if (stop < 0 || stop >= this.end)
-      throw malformed(`${field} is not NUL-terminated`);
+    // Scan at most the allowance plus its terminator before decoding.
+    const scanEnd = Math.min(
+      this.end,
+      this.cursor + UNITY_SERIALIZED_FILE_MAX_STRING_BYTES + 1,
+    );
+    const stop = this.bytes.subarray(0, scanEnd).indexOf(0, this.cursor);
+    if (stop < 0 && scanEnd < this.end)
+      throw limit(
+        "metadata string allowance",
+        UNITY_SERIALIZED_FILE_MAX_STRING_BYTES,
+        "byte",
+        `${field} is longer than ${String(UNITY_SERIALIZED_FILE_MAX_STRING_BYTES)} bytes`,
+      );
+    if (stop < 0) throw malformed(`${field} is not NUL-terminated`);
     const at = this.#take(stop - this.cursor + 1, field);
     try {
       return UTF8.decode(this.bytes.subarray(at, stop));

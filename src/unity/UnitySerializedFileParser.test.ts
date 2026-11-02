@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseUnitySerializedFile,
+  UNITY_SERIALIZED_FILE_MAX_STRING_BYTES,
   UNITY_SERIALIZED_FILE_MAX_TABLE_ENTRIES,
 } from "./UnitySerializedFileParser.js";
 import { UnityAssetsFormatFailure } from "./UnityAssets.errors.js";
@@ -225,7 +226,29 @@ it("refuses an external table above the retained allowance", () => {
     ),
   });
   expect(() => parse(bytes)).toThrow(
-    expect.objectContaining({ kind: "limit" }),
+    expect.objectContaining({
+      kind: "limit",
+      allowance: {
+        name: "The SerializedFile externals table allowance",
+        maximum: UNITY_SERIALIZED_FILE_MAX_TABLE_ENTRIES,
+        kind: "count",
+      },
+    }),
+  );
+});
+
+it("refuses a metadata string above the byte allowance", () => {
+  const bytes = buildSerializedFile({
+    objects: [],
+    externals: [
+      { path: "a".repeat(UNITY_SERIALIZED_FILE_MAX_STRING_BYTES + 1) },
+    ],
+  });
+  expect(() => parse(bytes)).toThrow(
+    expect.objectContaining({
+      kind: "limit",
+      allowance: expect.objectContaining({ kind: "bytes" }),
+    }),
   );
 });
 

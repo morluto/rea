@@ -182,6 +182,8 @@ export const decodeMesh = (
   for (let index = 0; index < submeshes; index += 1) {
     reader.skip(4);
     indexCount += reader.u32();
+    if (!Number.isSafeInteger(indexCount))
+      throw new UnityObjectDecodeFailure("index count exceeds safe integers");
     reader.skip(baseVertex ? 8 : 4);
     const firstVertex = reader.u32();
     extent = Math.max(extent, firstVertex + reader.u32());
