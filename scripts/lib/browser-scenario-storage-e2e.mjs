@@ -171,11 +171,12 @@ export const startStorageSite = async () => {
       response.end(storagePage(kind, port));
     },
   );
-  server.listen(0, "::");
+  server.listen(0, "127.0.0.1");
   await once(server, "listening");
   port = server.address().port;
   return {
     origin: `http://127.0.0.1:${port}`,
+    listenerAddress: server.address().address,
     close: async () => {
       server.close();
       // Chrome can leave speculative TCP connections without an HTTP request;
