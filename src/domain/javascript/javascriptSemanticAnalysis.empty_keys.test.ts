@@ -72,6 +72,13 @@ it("retains exact empty method names and environment keys", () => {
   ]);
 });
 
+it("treats dynamic process keys as wildcard paths when validating writes", () => {
+  const ir = analyzeJavaScriptSemantics(
+    `const proc=require('process'); proc.env.MODE='local'; const value=proc.env[name];`,
+  );
+  expect(ir.configurationOperations).toEqual([]);
+});
+
 it("retains exact empty require paths and dependencies without dynamic-key bindings", () => {
   const ir = analyzeJavaScriptSemantics(`
     const { '': fromPattern } = require("./table.js");
