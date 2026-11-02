@@ -124,12 +124,13 @@ export const admitHarCaptureParent = (
   viewKind: "api-surface" | "environment-manifest" | "environment-state",
   accumulator: WebNetworkProjectionAccumulator,
 ): Result<WebNetworkCapture, AnalysisError> => {
-  const unsupported = (reason: string) =>
+  const unsupported = (reason: string, remediationAction?: string) =>
     err(
       new AnalysisUnsupportedTargetError(
         "inspect_analysis_view",
         parent.evidenceId,
         reason,
+        remediationAction === undefined ? undefined : { remediationAction },
       ),
     );
   if (parent.operation !== "inspect_web_network_capture")
@@ -171,6 +172,9 @@ export const admitHarCaptureParent = (
     .object({ sensitive_value_count: z.number().int().nonnegative() })
     .safeParse(parent.parameters);
   if (!declarations.success || declarations.data.sensitive_value_count > 0)
-    return unsupported("sensitive_values_unretained");
+    return unsupported(
+      "sensitive_values_unretained",
+      "This view cannot safely project this capture because sensitivity declarations are not retained. Use a compatible capture or summary view to inspect retained observations. Do not remove sensitivity declarations to bypass this restriction.",
+    );
   return ok(parsed.data);
 };
