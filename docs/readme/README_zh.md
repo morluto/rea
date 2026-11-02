@@ -154,21 +154,21 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | Go 二进制文件         | 内嵌编译器版本、模块、替换项和构建设置                                       | 内置静态 ELF/PE/thin Mach-O 检查；无需安装 Go                                                                      |
 | WASM 工件             | 验证、节、精确的导入/导出 WAT 形式及解码后的 WAT                             | 调用方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                  |
 | EVM 字节码            | 分派选择器、字节偏移、推断的参数和状态可变性                                 | Linux x64 上的本地原始字节/十六进制输入载体；[离线 EVM 指南](../evm-bytecode.md)                                   |
-| Rust binaries         | Embedded cargo-auditable dependency list                                     | [Rust binaries](../rust-binaries.md)                                                                               |
-| Erlang BEAM           | IFF chunks, atoms, exports, and tables                                       | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                  |
-| PE certificates       | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                            |
-| PE imports            | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash   | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                      |
-| ELF notes             | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields              | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                       |
-| Apple IPS crashes     | .ips metadata, threads, images, registers and crash classes                  | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                      |
-| Linux kernel modules  | .modinfo keys, __versions CRCs, this_module presence, and signature trailer  | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                             |
+| Rust 二进制文件       | 内嵌的 cargo-auditable crate 名称、版本、来源和依赖边                        | 内置静态 ELF/PE/thin Mach-O 检查；[Rust 二进制文件](../rust-binaries.md)                                           |
+| Erlang BEAM           | IFF 块、原子、导出、导入、lambda 和 Code 头                                  | 内置静态 BEAM 检查；[Erlang BEAM](../erlang-beam.md)                                                               |
+| PE 证书               | Authenticode WIN_CERTIFICATE 条目和 PKCS#7 签名者/X.509 身份字段             | 内置静态 PE 检查；[PE 证书](../pe-certificates.md)                                                                 |
+| PE 导入               | 导入与延迟加载的 DLL 名称、序号、IAT RVA 和 pefile 导入哈希                  | 内置静态 PE 检查；[PE 导入](../pe-imports.md)                                                                      |
+| ELF note              | PT_NOTE/SHT_NOTE 所有者、类型、GNU build-id 和 ABI-tag 字段                  | 内置静态 ELF 检查；[ELF note](../elf-notes.md)                                                                     |
+| Apple IPS 崩溃        | .ips 元数据、线程、映像、寄存器和文档记载的崩溃类别                          | 内置静态 JSON 检查；[Apple IPS](../apple-ips.md)                                                                   |
+| Linux 内核模块        | .modinfo 键、__versions CRCs、this_module 是否存在，以及签名尾部             | 内置静态 ELF 检查；[内核模块](../kernel-modules.md)                                                                |
 | 已记录的 Linux 崩溃   | 原始 note 记录、每个已记录线程的寄存器/信号及可选的映射候选项                | Linux x64 上由调用方提供的 pwntools；可选的 GDB/pwndbg；[已记录崩溃](../recorded-crashes.md)                       |
 | 桌面安装目录          | 运行时候选、支持文件、组件标记和后续操作                                     | 有界的目录与文件头检查；[桌面应用](../desktop-applications.md)                                                     |
-| JavaScript / Electron | 模块、导入、source map、路由、IPC 和原生扩展关系                             | Node.js 和 npm；[应用分析](../javascript-application-workflows.md); Linux: procps `ps`                             |
+| JavaScript / Electron | 模块、导入、source map、路由、IPC 和原生扩展关系                             | Node.js 和 npm；Linux：procps 兼容的 `ps`；[应用分析](../javascript-application-workflows.md)                      |
 | 网站                  | 页面结构、脚本、网络观察结果和按请求获取的截图                               | Chrome 系浏览器；[浏览器分析](../browser-observation.md)                                                           |
-| 已保存的网络捕获      | 请求、响应、可访问的载荷和来源位置                                           | HAR / Fiddler Everywhere SAZ；原生 mitmproxy 捕获需要 Linux 上的 mitmdump；[捕获指南](../web-network-captures.md)  |
-| 数据包捕获            | 端点、DNS、TLS SNI、协议分布和 HTTP 请求                                     | 调用方提供的 tshark 和 capinfos；[pcap 指南](../pcap-analysis.md)                                                  |
-| .NET 程序集           | 元数据、CIL 指令、声明的原生依赖和构建对比                                   | 静态检查；[托管代码指南](../managed-code-analysis.md)                                                              |
-| PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                              |
+| 已保存的网络捕获      | 请求、响应、可访问的载荷和来源位置                                           | HAR 或 Fiddler Everywhere SAZ；原生 mitmproxy 需要 Linux 上的 mitmdump；[捕获指南](../web-network-captures.md)     |
+| 数据包捕获            | 端点、DNS、TLS SNI、协议分布和 HTTP 请求                                     | 调用方提供的 tshark 和 capinfos（已在 Linux 上验证）；[pcap 指南](../pcap-analysis.md)                             |
+| .NET 程序集           | 元数据、CIL 指令、声明的原生依赖和构建对比                                   | 无（仅静态检查）；[托管代码指南](../managed-code-analysis.md)                                                      |
+| PyInstaller 可执行文件| CArchive 成员、Python 版本、入口脚本和提取的字节码                           | 无（仅静态检查）；[Python 打包应用](../python-packaged-applications.md)                                            |
 | Android APK           | 清单声明、类、反编译的方法和引用                                             | Linux/macOS/Windows x64 上的无界面 JADX 和完整 JDK；[Android 指南](../android-analysis.md)                         |
 | Android 设备          | 设备、软件包、进程、日志、转储、屏幕截图以及 APK/文件传输                    | 调用方提供的 adb（模拟器或实体设备）；[ADB 指南](../adb-device-analysis.md)                                        |
 | JEB 项目              | 引擎支持的项目单元、工件摘要和类型/方法的伪代码                              | 由调用方启动、提供 MCP 的 JEB 客户端，通过 REA_JEB_MCP_URL 选择；[JEB 指南](../jeb-analysis.md)                    |
@@ -187,6 +187,8 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | APK 签名              | v1/v2/v3/v3.1 签名者、证书指纹、密钥轮换和摘要自洽性                         | 内置静态检查; `inspect_apk_signature`                                                                              |
 
 静态 JavaScript 和 .NET 检查读取提供的文件，不运行应用。运行时捕获会以你的用户权限运行目标或与之交互；各运行时指南说明了具体影响。
+
+对于离线原生二进制文件检查，REA 还支持由调用方提供的 GNU objdump 和 Rizin。提供方设置、CLI 命令和 Evidence 限制见[逆向工程工具指南](../reverse-engineering-tools.md)。REA 不会安装或更新这两个提供方。
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -287,7 +289,7 @@ REA 导出可直接运行的环境，并附带基本测试，检查环境能否�
 <details>
 <summary><strong>需要先启动 Hopper 吗？</strong></summary>
 
-REA 会在操作需要时启动 Hopper。在 macOS 上，首次运行时可能会出现对话框，让你选择演示模式或激活许可证。见 [Hopper 启动与故障排查](../installation.md#launcher-paths-and-troubleshooting)。
+REA 会在操作需要时启动 Hopper。在 macOS 上，首次运行时可能会出现对话框，让你选择演示模式或激活许可证。请在同一用户会话中完成该提示，再进行首次 CLI/MCP 操作或无人值守任务。如有需要，请手动打开 Hopper。见 [Hopper 启动与故障排查](../installation.md#launcher-paths-and-troubleshooting)。
 
 </details>
 
@@ -317,7 +319,7 @@ REA 在本机分析目标。智能体会接收工具结果，其模型提供商�
 
 先更新；最近的版本可能已经修复了问题。
 
-通过 npm 安装的 CLI 使用：
+通过 `npm install --global` 或 `bun add --global` 安装的 CLI 使用：
 
 ```bash
 rea update
