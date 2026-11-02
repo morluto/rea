@@ -113,6 +113,7 @@ it.each([
       });
       expect((await session.close()).ok).toBe(true);
       expect(restorationCloseCalls).toBe(cleanupFails ? 2 : 1);
+      expect(result.targetAtCompletion).toBeNull();
       expect(await session.status()).toMatchObject({
         open: false,
         cleanup_pending: false,
