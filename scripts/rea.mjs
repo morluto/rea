@@ -126,12 +126,26 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     },
     process.stdout.isTTY === true,
   );
-  const configurationError = cliConfigurationError(process.env);
+  const { environmentWithUserConfig } =
+    await import("../dist/cli-runtime/cli.js");
+  const userConfig = await environmentWithUserConfig(process.env);
+  const configurationError = userConfig.ok
+    ? cliConfigurationError(process.env)
+    : userConfig.error;
   let dispatchFailure;
   let closeCliResources;
   // Incur can exit from the callback below before this function returns.
   // That callback owns the status, including a closed-pipe exit of 141.
   let exiting = false;
+  // Doctor still runs on a broken config file; surface the file error beside
+  // its report so readiness is not silently evaluated against a fallback.
+  if (
+    !userConfig.ok &&
+    !isShellCompletion &&
+    builtinArguments.splitIncurBuiltinArguments(cliArgs).command[0] === "doctor"
+  ) {
+    process.stderr.write(`${configurationError}\n`);
+  }
   try {
     // Doctor is the readiness report for this failure. Other commands still stop
     // here so they do not run with an unusable log level.
@@ -156,8 +170,14 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
         await import("../dist/cli-runtime/cliResultOutput.js");
       let wroteOutput = false;
       const resultOutput = createCliResultOutput(outputOptions, process.stdout);
+      // Doctor keeps running on a broken config file so it can report the
+      // problem; it then falls back to the raw environment, like the
+      // configuration gate above.
+      const cliEnvironment = userConfig.ok
+        ? userConfig.environment
+        : process.env;
       try {
-        await createCli(process.env, resultOutput).serve(cliArgs, {
+        await createCli(cliEnvironment, resultOutput).serve(cliArgs, {
           stdout: (output) => {
             if (resultOutput?.handled) {
               if (resultOutput.failed && !stdoutClosed)

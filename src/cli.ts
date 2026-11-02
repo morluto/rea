@@ -10,6 +10,12 @@ import { registerSignalCommands } from "./cli/signalCommands.js";
 import { registerWasmCommands } from "./cli/wasmCommands.js";
 import { registerApkSignatureCommands } from "./cli/apkSignatureCommands.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
+import {
+  mergeUserConfig,
+  readUserConfig,
+  userConfigFilePath,
+} from "./config/userConfig.js";
+import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import { createDirectAnalysis } from "./composition/directAnalysis.js";
 import { registerEvmCommands } from "./cli/evmCommands.js";
 import { registerDesktopApplicationCommands } from "./cli/desktopApplicationCommands.js";
@@ -99,6 +105,44 @@ export const closeCliResources = async (): Promise<void> => {
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1)
     throw new AggregateError(failures, "CLI resource cleanup failed");
+};
+
+/**
+ * Overlay the user config file onto a raw environment before the CLI is
+ * created. The production dispatcher (scripts/rea.mjs) calls this so env
+ * vars keep winning (`env > config file > auto-detect`) while tests can
+ * keep injecting a plain environment dictionary.
+ */
+export const environmentWithUserConfig = async (
+  selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
+): Promise<
+  | { ok: true; environment: Readonly<NodeJS.ProcessEnv> }
+  | { ok: false; error: string }
+> => {
+  let contents: string | undefined;
+  try {
+    contents = await readUserConfig(selectedEnvironment);
+  } catch (cause: unknown) {
+    // An unreadable file (permissions, a directory at the path) must gate the
+    // CLI like a malformed one, not escape as a raw filesystem error.
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    return {
+      ok: false,
+      error:
+        `REA user config file ${userConfigFilePath(selectedEnvironment, process.platform)} could not be read (${detail}); ` +
+        "fix its permissions or remove it",
+    };
+  }
+  const merged = mergeUserConfig(
+    snapshotEnvironment(selectedEnvironment),
+    contents,
+  );
+  if (!merged.ok)
+    return {
+      ok: false,
+      error: projectAnalysisError(merged.error).message,
+    };
+  return { ok: true, environment: merged.value };
 };
 
 /**
