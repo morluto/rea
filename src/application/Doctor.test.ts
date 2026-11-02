@@ -549,7 +549,7 @@ describe("doctor", () => {
       ),
     ).toEqual({
       node: `Install ${SUPPORTED_NODE_VERSION_PROSE}.`,
-      host: "REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup on Linux additionally requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy.",
+      host: "REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary, and Windows arm64 with its bundled native controls; automated Hopper setup on Linux additionally requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy.",
       hopper: "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH.",
       target: "Supply a readable local app or program path.",
     });
@@ -569,35 +569,29 @@ describe("doctor", () => {
     );
   });
 
-  it("admits only the experimental Windows x64 host boundary", async () => {
-    const windows = await runDoctor(
-      undefined,
-      host({
-        platform: "win32",
-        architecture: "x64",
-        macosVersion: () => Promise.resolve(undefined),
-        executable: () => Promise.resolve(false),
-      }),
-    );
-    const arm = await runDoctor(
-      undefined,
-      host({
-        platform: "win32",
-        architecture: "arm64",
-        macosVersion: () => Promise.resolve(undefined),
-        executable: () => Promise.resolve(false),
-      }),
-    );
+  it.each([
+    ["x64", true],
+    ["arm64", true],
+    ["ia32", false],
+  ] as const)(
+    "reports Windows %s host support as %s",
+    async (architecture, ok) => {
+      const result = await runDoctor(
+        undefined,
+        host({
+          platform: "win32",
+          architecture,
+          macosVersion: () => Promise.resolve(undefined),
+          executable: () => Promise.resolve(false),
+        }),
+      );
 
-    expect(windows.checks.find(({ name }) => name === "host")).toMatchObject({
-      ok: true,
-      detail: "win32 x64",
-    });
-    expect(arm.checks.find(({ name }) => name === "host")).toMatchObject({
-      ok: false,
-      detail: "win32 arm64",
-    });
-  });
+      expect(result.checks.find(({ name }) => name === "host")).toMatchObject({
+        ok,
+        detail: `win32 ${architecture}`,
+      });
+    },
+  );
   it("detects a manual configured Hopper before Homebrew", async () => {
     let brewProbes = 0;
     const result = await runDoctor(

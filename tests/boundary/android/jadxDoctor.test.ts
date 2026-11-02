@@ -365,7 +365,7 @@ it("guides Windows native package correction when process ownership is unavailab
 
     expect(inspection.checks[0]?.code).toBe("runtime_missing");
     expect(inspection.checks[0]?.remediation).toContain(
-      "Windows x64 REA package",
+      "match this Windows host's architecture",
     );
     expect(inspection.checks[0]?.remediation).not.toContain("JAVA_HOME");
   } finally {
