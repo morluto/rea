@@ -1473,7 +1473,7 @@ describe("Ghidra procedure lookup projection", () => {
           "completeness is unknown",
         );
         expect(projected.remediation.action).toContain(
-          "will not include the selected project's annotations",
+          "will not include the selected project's annotations or other edits",
         );
       } finally {
         await client.close();

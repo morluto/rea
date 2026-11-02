@@ -1156,7 +1156,7 @@ const projectPrimarySessionError = (
         recovery =
           "Use list_procedures or search_procedures (CLI: `rea search <path> <pattern> --kind procedures --provider ghidra --json`) to inspect the current Ghidra inventory and choose an observed name or address. An absent entry does not prove the function is absent from the artifact." +
           (limits.ghidraExistingProject !== undefined
-            ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME; that analysis will not include the selected project's annotations."
+            ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME; that analysis will not include the selected project's annotations or other edits."
             : "");
     }
     return new AnalysisInputError(
