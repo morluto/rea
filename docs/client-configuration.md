@@ -704,6 +704,103 @@ Harness integration, with live DeepSeek API compatibility remaining unverified.
 See the [Harness MCP guide](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/mcp/mcp-client/README.md)
 for its native configuration contract.
 
+<a id="llamacpp"></a>
+
+## llama.cpp
+
+Use REA from llama.cpp's local Web UI through `llama-server`'s native stdio
+MCP support. REA supplies the analysis tools; llama.cpp runs your chosen model.
+It is not a replacement for a native analysis provider such as Ghidra or Hopper.
+
+Install REA in a persistent location so the configuration below can use a stable
+entrypoint. For a project-local installation, run this in your chosen directory:
+
+```bash
+npm install --save-exact rea-agents
+```
+
+Or install it globally:
+
+```bash
+npm install --global rea-agents
+```
+
+See [package runners and global installation](installation.md#package-runners-and-global-installation)
+for runtime requirements and installation options. Running `npx rea-agents setup`
+alone does not create either installation; do not use its temporary package-cache path.
+Use a llama.cpp build whose `llama-server --help` lists
+`--mcp-servers-config`; older builds without that option cannot use this route.
+The configuration below uses an already installed REA package, so tool discovery
+does not depend on downloading an npm package during server startup.
+
+Save a JSON file, for example `rea-mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "rea": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/rea-agents/scripts/rea.mjs", "mcp"],
+      "timeout_ms": 450000
+    }
+  }
+}
+```
+
+Replace both paths with your installation's actual paths. For a project-local npm
+installation, run `npm root` in that project; the script is under
+`$(npm root)/rea-agents/scripts/rea.mjs`. For a global installation, use
+`$(npm root -g)/rea-agents/scripts/rea.mjs` instead. Write the resulting absolute
+paths as JSON strings; llama-server does not expand shell expressions there.
+On Windows, use forward slashes, such as `"C:/Program Files/nodejs/node.exe"`,
+or double each backslash, as in `"C:\\Program Files\\nodejs\\node.exe"`.
+Apply this to both `command` and the script path in `args`. Single backslashes
+can make the JSON invalid or change the path through escape sequences.
+`node -p "JSON.stringify(process.execPath)"` prints your current Node.js executable
+as a quoted, escaped JSON string that can be used as the `command` value.
+Use the version supported by REA. Preserve any other
+servers if you are adding REA to an existing configuration. `timeout_ms` is
+llama.cpp's per-tool-call timeout, including cold engine startup. The example
+allows REA's default 330-second Ghidra startup budget plus 120 seconds for the
+operation. Increase it if you configure a longer provider allowance or need more
+operation time; see [provider deadlines](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery).
+
+Start the server with your own tool-capable GGUF model:
+
+```bash
+llama-server -m /absolute/path/to/model.gguf \
+  --host 127.0.0.1 --port 8080 --parallel 1 --ctx-size 16384 \
+  --mcp-servers-config /absolute/path/to/rea-mcp.json
+```
+
+Open `http://127.0.0.1:8080`. REA tools appear with a `rea_` prefix, such as
+`rea_analyze_javascript_application`. Select only the tools needed for the
+conversation in the Web UI's tool settings: discovery of REA's complete catalog
+does not mean that its schemas and results fit the selected model's context.
+Choose a context size your model and machine support. For a first check, enable
+`rea_analyze_javascript_application` and ask it to inspect a small JavaScript
+directory you own. This task needs no native analysis engine. Inspect the
+returned Evidence and limitations rather than relying only on the model's summary.
+
+If the model prints a proposed call as ordinary text, REA has not been called.
+Check the selected model and its chat template against llama.cpp's function-calling
+guidance. A working MCP connection does not establish reliable tool selection by
+every model.
+
+`--tools all` is not needed; it enables llama.cpp's separate built-in tools.
+`--ui-mcp-proxy` is also not needed for this server-side stdio connection.
+REA's setup wizard does not register llama.cpp automatically; pass the JSON
+file to llama-server explicitly and restart it after changes.
+
+The MCP child runs with llama-server's permissions. Loopback binding does not
+sandbox it or make every REA operation read-only. Enable only trusted commands,
+keep the server local, and select targets and operations you are authorized to use.
+
+See llama.cpp's [MCP server configuration](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#mcp-servers)
+and [function-calling guidance](https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md).
+The [verification record](client-verification.md#llamacpp) distinguishes connection
+checks from model behavior and lists the tested versions.
+
 ## Other client settings
 
 For OpenCode, setup writes the V1 `mcp.rea` entry, which OpenCode V1 and V2
