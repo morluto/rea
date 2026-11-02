@@ -28,7 +28,14 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  KUNA_XREF_MISSING_NAME_REMEDIATION,
+  missingKunaXrefNameMessage,
+} from "../dist/kuna/KunaSelectorGuidance.js";
+import {
+  requireMcpOperationResult,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import { verifyKunaReferences } from "./lib/kuna-reference-verifier.mjs";
 import {
   nativeKunaStrings,
@@ -229,6 +236,13 @@ const openServer = async (provider) => {
       structured: result.structuredContent,
     };
   };
+  const callError = async (name, arguments_ = {}) =>
+    requireMcpToolError(
+      await client.callTool(
+        { name, arguments: arguments_ },
+        { timeout: 3_600_000 },
+      ),
+    );
   const close = async (priorFailure) => {
     clearInterval(timer);
     await sample();
@@ -270,7 +284,7 @@ const openServer = async (provider) => {
     // A rejected connection/target still owns its transport and workspace.
     await close(cause);
   }
-  return { call, close };
+  return { call, callError, close };
 };
 
 /** Count structuring and diagnostic markers in provider pseudocode. */
@@ -346,6 +360,44 @@ const verifyKuna = async (
       }),
     });
     const listed = await cold.call("list_procedures");
+    if (verifyNamedTrace) {
+      const missing = await cold.callError("xrefs", {
+        address: "rea_missing_xref_inventory_name",
+      });
+      assert.equal(missing.code, "invalid_request");
+      assert.equal(
+        missing.message,
+        missingKunaXrefNameMessage("rea_missing_xref_inventory_name"),
+      );
+      assert.equal(
+        missing.remediation.action,
+        KUNA_XREF_MISSING_NAME_REMEDIATION,
+      );
+      assert.ok(missing.message.includes("rea_missing_xref_inventory_name"));
+      assert.equal(missing.recovery, undefined);
+      const procedure = await cold.callError("procedure_address", {
+        procedure: "rea_missing_procedure_name",
+      });
+      assert.equal(procedure.code, "invalid_request");
+      assert.equal(procedure.recovery, undefined);
+      assert.match(procedure.remediation.action, /search_procedures/u);
+      assert.ok(
+        procedure.details.issues.some(
+          (issue) => issue.observed?.procedure === "rea_missing_procedure_name",
+        ),
+      );
+      const missingAddress = await cold.callError("procedure_address", {
+        procedure: "0x00000001",
+      });
+      assert.equal(missingAddress.code, "invalid_request");
+      assert.equal(missingAddress.recovery, undefined);
+      assert.match(missingAddress.remediation.action, /list_procedures/u);
+      assert.ok(
+        missingAddress.details.issues.some(
+          (issue) => issue.observed?.procedure === "0x00000001",
+        ),
+      );
+    }
     for (const [name, address] of functions) {
       assert.ok(
         listed.value.some((entry) => entry.address === address),

@@ -95,6 +95,15 @@ import { KunaReferenceQueries } from "./KunaReferenceQueries.js";
 import { KunaQueryWork } from "./KunaQueryWork.js";
 import { KunaStringQueries } from "./KunaStringQueries.js";
 import { normalizeKunaAddress } from "./KunaAddress.js";
+import {
+  ambiguousKunaNameMessage,
+  KUNA_PROCEDURE_AMBIGUOUS_NAME_REMEDIATION,
+  KUNA_PROCEDURE_MISSING_ADDRESS_REMEDIATION,
+  KUNA_PROCEDURE_MISSING_NAME_REMEDIATION,
+  KUNA_XREF_AMBIGUOUS_NAME_REMEDIATION,
+  KUNA_XREF_MISSING_NAME_REMEDIATION,
+  missingKunaXrefNameMessage,
+} from "./KunaSelectorGuidance.js";
 import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
@@ -1060,9 +1069,23 @@ export class KunaSessionClient implements AnalysisClient {
       const entry = index.byAddress.get(address);
       if (entry === undefined)
         return err(
-          new AnalysisInputError(operation, {
-            userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
-          }),
+          new AnalysisInputError(
+            operation,
+            {
+              userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
+              remediationAction: KUNA_PROCEDURE_MISSING_ADDRESS_REMEDIATION,
+              conformsToInputContract: true,
+            },
+            [
+              {
+                path: [field],
+                reason: "invalid_value",
+                message:
+                  "The address was not found in Kuna's procedure inventory.",
+                observed: { [field]: selector },
+              },
+            ],
+          ),
         );
       return refused(entry) ? dataRefusal(entry) : selected(entry);
     }
@@ -1072,15 +1095,50 @@ export class KunaSessionClient implements AnalysisClient {
       return selected(matches[0]);
     if (matches.length === 0 && named.length === 1 && named[0] !== undefined)
       return dataRefusal(named[0]);
+    const missing = named.length === 0;
+    const ambiguous = matches.length > 1;
+    const procedureLookupFailure =
+      field === "procedure" && (missing || ambiguous);
+    const message = missing
+      ? field === "address"
+        ? missingKunaXrefNameMessage(selector)
+        : `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
+      : matches.length === 0
+        ? `${selector} names ${String(named.length)} Kuna entries that lie in Mach-O data regions (${named.map(({ address }) => address).join(", ")}); they are data, not procedures.`
+        : ambiguousKunaNameMessage(
+            selector,
+            matches.map(({ address }) => address),
+          );
+    const remediationAction =
+      field === "address"
+        ? missing
+          ? KUNA_XREF_MISSING_NAME_REMEDIATION
+          : KUNA_XREF_AMBIGUOUS_NAME_REMEDIATION
+        : procedureLookupFailure
+          ? missing
+            ? KUNA_PROCEDURE_MISSING_NAME_REMEDIATION
+            : KUNA_PROCEDURE_AMBIGUOUS_NAME_REMEDIATION
+          : undefined;
     return err(
-      new AnalysisInputError(operation, {
-        userMessage:
-          matches.length === 0 && named.length === 0
-            ? `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
-            : matches.length === 0
-              ? `${selector} names ${String(named.length)} Kuna entries that lie in Mach-O data regions (${named.map(({ address }) => address).join(", ")}); they are data, not procedures.`
-              : `${selector} names ${String(matches.length)} Kuna entries (${matches.map(({ address }) => address).join(", ")}); select one by address.`,
-      }),
+      new AnalysisInputError(
+        operation,
+        {
+          userMessage: message,
+          ...(remediationAction === undefined
+            ? {}
+            : { remediationAction, conformsToInputContract: true }),
+        },
+        procedureLookupFailure
+          ? [
+              {
+                path: [field],
+                reason: "invalid_value",
+                message: "The selector did not identify one procedure entry.",
+                observed: { procedure: selector },
+              },
+            ]
+          : undefined,
+      ),
     );
   }
 
