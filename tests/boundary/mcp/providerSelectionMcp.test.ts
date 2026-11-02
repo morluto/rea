@@ -216,6 +216,9 @@ describe("provider selection over MCP", () => {
       /availability, target support, and capabilities/u,
     );
     expect(remediation).toMatch(/If a suitable candidate is available/u);
+    expect(remediation).toMatch(
+      /rea providers.*target support remains unknown/u,
+    );
     expect(starts).toEqual(["beta"]);
 
     const status = structured(
