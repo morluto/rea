@@ -13,6 +13,9 @@ export const workflowAnalysisProfile = (
   createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
     upstream_analysis_profile: upstream,
     source_limitations: "provider-operation-caveats-v1",
+    ...(operation === "trace_native_values"
+      ? { value_flow_limitations: "provider-attributed-v1" }
+      : {}),
     ...(operation === "binary_overview"
       ? { workflow_revision: 5 }
       : operation === "batch_decompile"
@@ -21,7 +24,5 @@ export const workflowAnalysisProfile = (
           ? { workflow_revision: 4 }
           : operation === "get_call_graph"
             ? { workflow_revision: 3 }
-            : operation === "trace_native_values"
-              ? { workflow_revision: 2 }
-              : { workflow_revision: 1 }),
+            : { workflow_revision: 1 }),
   });

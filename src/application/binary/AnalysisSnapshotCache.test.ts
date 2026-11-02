@@ -1235,6 +1235,30 @@ it("declines source-bearing snapshot entries while replaying omitted and empty s
   expect(cache.entries()).toHaveLength(2);
 });
 
+it("distinguishes value-flow caveat propagation from source-ownership revisions", () => {
+  const upstream = ANALYSIS_SNAPSHOT_PROFILE;
+  const scoped = workflowAnalysisProfile(upstream, "trace_native_values");
+  const ownership = createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
+    ...workflowAnalysisProfile(upstream).parameters,
+    workflow_revision: 2,
+  });
+  const combined = createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
+    ...scoped.parameters,
+    workflow_revision: 2,
+  });
+  expect(scoped.parameters.value_flow_limitations).toBe(
+    "provider-attributed-v1",
+  );
+  expect(
+    new Set([
+      workflowAnalysisProfile(upstream).digest,
+      scoped.digest,
+      ownership.digest,
+      combined.digest,
+    ]).size,
+  ).toBe(4);
+});
+
 describe("executions that report truncated references", () => {
   const record = (referencesTruncated: boolean | undefined) => {
     const cache = new AnalysisSnapshotCache();
