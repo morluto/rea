@@ -78,6 +78,7 @@ import {
   MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES,
   MAX_RELEASE_EXPOSURE_PACKAGED_PE_READS,
   MAX_RELEASE_EXPOSURE_SAMPLES,
+  MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES,
   MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES,
   MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES,
   MAX_RELEASE_EXPOSURE_SOURCE_MAPS,
@@ -753,6 +754,7 @@ interface ScanState {
   scriptTargets: Set<string>;
   /** Bytes of resolved path offered to `scriptTargets`, kept or refused. */
   scriptTargetBytes: number;
+  mapTargetBytes: number;
   /** Members already examined as a script. */
   examinedScripts: Set<string>;
   visitText: ReleaseExposureTextVisitor;
@@ -795,6 +797,7 @@ const createState = (visitText: ReleaseExposureTextVisitor): ScanState => ({
   examinedMaps: new Set(),
   scriptTargets: new Set(),
   scriptTargetBytes: 0,
+  mapTargetBytes: 0,
   examinedScripts: new Set(),
   visitText,
 });
@@ -1362,10 +1365,21 @@ const noteLocalMapReference = (
   noteMapTarget(state, resolve(dirname(member.location), decoded));
 };
 
+/**
+ * A short URL is expanded by the declaring member's directory, so declared
+ * paths can outgrow their text many times over. A target past the allowance
+ * stays unassessed.
+ */
 const noteMapTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(location);
-  if (state.examinedMaps.has(target)) return;
-  if (state.examinedLocations.has(target)) state.skippedMaps += 1;
+  if (state.examinedMaps.has(target) || state.mapTargets.has(target)) return;
+  if (state.examinedLocations.has(target)) {
+    state.skippedMaps += 1;
+    return;
+  }
+  state.mapTargetBytes += Buffer.byteLength(target);
+  if (state.mapTargetBytes > MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES)
+    state.skippedMaps += 1;
   else state.mapTargets.add(target);
 };
 

@@ -34,6 +34,7 @@ import {
   MAX_RELEASE_EXPOSURE_INVENTORY_ENTRIES,
   MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
   MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES,
+  MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES,
   MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES,
   MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES,
   MAX_RELEASE_EXPOSURE_SOURCE_MAPS,
@@ -2730,6 +2731,37 @@ describe("ReleaseExposureReader inline map reads", () => {
       }),
     );
     expect((await inspect(root)).source_maps.embedded).toBe(1);
+  });
+});
+
+describe("ReleaseExposureReader map target allowance", () => {
+  it("keeps a map past the target allowance unassessed", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-maps-");
+    const folder = join(
+      root,
+      ...Array.from({ length: 4 }, () => "d".repeat(200)),
+    );
+    await mkdir(folder, { recursive: true });
+    const declarations = Array.from(
+      { length: Math.ceil(MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES / 800) + 1 },
+      (_, index) => `//# sourceMappingURL=m${String(index)}`,
+    );
+    await writeFile(
+      join(folder, "a.js"),
+      `${declarations.join("\n")}\n//# sourceMappingURL=z\n`,
+    );
+    await writeFile(
+      join(folder, "z"),
+      JSON.stringify({
+        version: 3,
+        sources: ["s.ts"],
+        sourcesContent: ["x"],
+        mappings: "",
+      }),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps.embedded).toBe(0);
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
   });
 });
 
