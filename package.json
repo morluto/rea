@@ -352,7 +352,6 @@
     "@babel/types": "8.0.4",
     "@bufbuild/protobuf": "2.16.0",
     "@clack/prompts": "1.7.0",
-    "@electron/asar": "4.2.0",
     "@jridgewell/trace-mapping": "0.3.31",
     "@lydell/node-pty": "1.1.0",
     "@modelcontextprotocol/client": "2.3.1",
@@ -400,6 +399,7 @@
     }
   },
   "devDependencies": {
+    "@electron/asar": "4.2.0",
     "@fast-check/vitest": "0.5.0",
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/typescript-checker": "10.0.0",
