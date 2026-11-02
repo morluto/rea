@@ -304,7 +304,15 @@ it.skipIf(process.platform === "win32")(
     const executable = join(directory, "segv-xcrun");
     await writeFile(
       executable,
-      '#!/usr/bin/env node\nprocess.stderr.write("fatal: segmentation fault during type checking\\n");\nprocess.kill(process.pid, "SIGSEGV");\n',
+      // RLIMIT_CORE=1 keeps systemd-coredump from recording the deliberate crash.
+      [
+        "#!/bin/sh",
+        `script='process.stderr.write("fatal: segmentation fault during type checking\\n"); process.kill(process.pid, "SIGSEGV")'`,
+        // prlimit cannot raise an inherited hard limit of 0; cores are already off then.
+        'command -v prlimit >/dev/null && [ "$(ulimit -Hc)" != 0 ] && exec prlimit --core=1:1 node -e "$script"',
+        'exec node -e "$script"',
+        "",
+      ].join("\n"),
     );
     await chmod(executable, 0o755);
     const reader = createDarwinProcessRunTokenReader({

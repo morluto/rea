@@ -121,10 +121,12 @@ it.skipIf(process.platform !== "linux")(
     await writeFile(
       command,
       `#!/usr/bin/python3
-import signal, sys
+import ctypes, signal, sys
 if '--version' in sys.argv:
     print('TShark (Wireshark) 4.6.9 (resource fixture)')
 else:
+    # PR_SET_DUMPABLE=0: the intended SIGXFSZ death must not reach systemd-coredump.
+    ctypes.CDLL(None).prctl(4, 0, 0, 0, 0)
     signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
     print('before file limit', file=sys.stderr, flush=True)
     with open('overflow', 'wb', buffering=0) as output:
