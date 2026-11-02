@@ -242,20 +242,40 @@ it("keeps a retired run and its lineage visible over MCP until cleanup succeeds"
         (await client.callTool({ name: "close_binary", arguments: {} }))
           .isError,
       ).toBe(true);
-      expect(await readStatus()).toMatchObject({
+      const pendingStatus = await readStatus();
+      expect(pendingStatus).toMatchObject({
         open: false,
         cleanup_pending: true,
+        close_cleanup_pending: true,
         analysis_run: before.analysis_run,
+      });
+      const pendingTool = expandToolAvailability(
+        pendingStatus.tool_availability,
+      ).find((tool) => tool.name === "address_name");
+      expect(pendingTool).toMatchObject({
+        available: false,
+        reason: "target_required",
+        remediation: expect.stringMatching(/close_binary.*snapshot_path/u),
       });
     }
     allowed = true;
     expect(
       (await client.callTool({ name: "close_binary", arguments: {} })).isError,
     ).not.toBe(true);
-    expect(await readStatus()).toMatchObject({
+    const restoredStatus = await readStatus();
+    expect(restoredStatus).toMatchObject({
       open: false,
       cleanup_pending: false,
       analysis_run: null,
+    });
+    expect(restoredStatus.close_cleanup_pending).not.toBe(true);
+    const restoredTool = expandToolAvailability(
+      restoredStatus.tool_availability,
+    ).find((tool) => tool.name === "address_name");
+    expect(restoredTool).toMatchObject({
+      available: false,
+      reason: "target_required",
+      remediation: expect.stringContaining("open_binary"),
     });
   } finally {
     allowed = true;

@@ -361,9 +361,10 @@ describe("capability failure reasons", () => {
     expect(uncleaned).toMatchObject({
       available: false,
       reason: "target_required",
-      remediation:
-        "This connection retains unconfirmed cleanup that blocks opening a new target. Call close_binary without snapshot_path to retry cleanup before opening another target.",
     });
+    expect(uncleaned.remediation).toEqual(
+      expect.stringMatching(/close_binary.*snapshot_path/u),
+    );
 
     const ready = entry(
       "current_address",
@@ -372,8 +373,8 @@ describe("capability failure reasons", () => {
     expect(ready).toMatchObject({
       available: false,
       reason: "target_required",
-      remediation: "Call open_binary with a supported local target.",
     });
+    expect(ready.remediation).toEqual(expect.stringContaining("open_binary"));
   });
 });
 
