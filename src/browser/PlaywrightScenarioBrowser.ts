@@ -348,7 +348,9 @@ const allowedBrowserEnvironment = (
     "LANG",
     "LD_LIBRARY_PATH",
     "PATH",
-    "SystemRoot",
+    // Snapshot environments uppercase names on win32; match that spelling so
+    // the launched browser receives the Windows system root it needs.
+    "SYSTEMROOT",
     "TEMP",
     "TMP",
     "TMPDIR",
