@@ -368,3 +368,131 @@ describe("SDK validation error delivery", () => {
     },
   );
 });
+
+const createGuidanceClientServer = async (
+  toolName: string,
+  inputSchema: z.ZodTypeAny,
+) => {
+  const delivery = createToolResultDelivery(4096);
+  const records = new InvestigationRecords();
+  const server = new EvidenceMcpServer(
+    { name: "sdk-argument-guidance-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => records.recordEvidence(evidence),
+    delivery,
+  );
+  server.registerTool(toolName, { inputSchema }, async () => ({
+    content: [{ type: "text", text: "valid call" }],
+  }));
+  const client = new Client(
+    { name: "sdk-argument-guidance-client", version: "1" },
+    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  await client.connect(clientTransport);
+  return {
+    client,
+    close: () => Promise.all([client.close(), serving.close()]),
+  };
+};
+
+describe("SDK argument name guidance", () => {
+  it("guides procedure_pseudo_code caller from address to procedure without duplicating diagnostic", async () => {
+    const session = await createGuidanceClientServer(
+      "procedure_pseudo_code",
+      z.strictObject({ procedure: z.string() }),
+    );
+    try {
+      const result = await session.client.callTool({
+        name: "procedure_pseudo_code",
+        arguments: { address: "0x401000" },
+      });
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(firstText(result) ?? "null");
+      expect(payload.error.code).toBe("invalid_request");
+      expect(payload.error.details.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["address"],
+          reason: "unknown_argument",
+          expected: "procedure",
+          message: "Unrecognized argument 'address'; did you mean 'procedure'?",
+        }),
+      );
+      expect(payload.error.remediation.action).toMatch(
+        /^Use 'procedure' \(a procedure name or address\) instead of 'address'\./,
+      );
+      expect(payload.error.message).not.toContain("address");
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("guides search_strings caller from query to pattern", async () => {
+    const session = await createGuidanceClientServer(
+      "search_strings",
+      z.strictObject({ pattern: z.string() }),
+    );
+    try {
+      const result = await session.client.callTool({
+        name: "search_strings",
+        arguments: { query: "admin" },
+      });
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(firstText(result) ?? "null");
+      expect(payload.error.code).toBe("invalid_request");
+      expect(payload.error.details.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["query"],
+          reason: "unknown_argument",
+          expected: "pattern",
+          message: "Unrecognized argument 'query'; did you mean 'pattern'?",
+        }),
+      );
+      expect(payload.error.remediation.action).toMatch(
+        /^Use 'pattern' instead of 'query'\./,
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("rejects address with procedure guidance and retains unexplained key count in diagnostics", async () => {
+    const session = await createGuidanceClientServer(
+      "read_function_instructions",
+      z.strictObject({ procedure: z.string() }),
+    );
+    try {
+      const result = await session.client.callTool({
+        name: "read_function_instructions",
+        arguments: { address: "0x401000", count: 10 },
+      });
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(firstText(result) ?? "null");
+      expect(payload.error.code).toBe("invalid_request");
+      expect(payload.error.details.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["address"],
+          reason: "unknown_argument",
+          expected: "procedure",
+          message: "Unrecognized argument 'address'; did you mean 'procedure'?",
+        }),
+      );
+      expect(payload.error.details.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["count"],
+          reason: "unknown_argument",
+        }),
+      );
+      const countIssue = payload.error.details.issues.find(
+        (issue: { path: string[] }) => issue.path?.[0] === "count",
+      );
+      expect(countIssue?.expected).toBeUndefined();
+      expect(countIssue?.message).toBeUndefined();
+      expect(payload.error.message).toContain("count");
+    } finally {
+      await session.close();
+    }
+  });
+});
