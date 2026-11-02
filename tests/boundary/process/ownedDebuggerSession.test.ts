@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn as spawnPty } from "@lydell/node-pty";
 
-import { expect, it, onTestFinished, vi } from "vitest";
+import { beforeAll, expect, it, onTestFinished, vi } from "vitest";
 
 import {
   closeOwnedDebuggerSessions,
@@ -16,6 +16,20 @@ import {
 } from "../../../src/process/ownedDebuggerSession.js";
 import { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import {
+  prepareProcessOwnershipInspection,
+  systemProcessOwnershipHost,
+} from "../../../src/process/ProcessOwnershipObservation.js";
+import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
+import { liveProcesses } from "../../../src/process/ProcessOwnershipProcessTree.js";
+import { readProcessRunTokens } from "../../../src/process/ProcessRunTokenObservations.js";
+
+// Teardown scans tokens even after every fixture child exits. Prepare the native
+// reader before launching fixtures, outside the ordinary cleanup hook deadline.
+beforeAll(
+  () => prepareProcessOwnershipInspection(),
+  resolveSwiftcCompileTimeoutMs() + 10_000,
+);
 
 const triggerDescendantOutput = (port: number): void => {
   const socket = connect(port, "127.0.0.1");
@@ -94,28 +108,106 @@ const waitForProbeLine = (
     });
   });
 
+/** Fixture family coordinates reported by the inferior's ready line. */
+interface InferiorCoordinates {
+  readonly port: number;
+  readonly pid: number;
+}
+
+const FIXTURE_SETTLE_TIMEOUT_MS = 5_000;
+const FIXTURE_SETTLE_POLL_MS = 50;
+
+/** Whether the real process table still lists this PID as live. */
+const isLiveProcess = async (pid: number): Promise<boolean> =>
+  liveProcesses(await systemProcessOwnershipHost.listProcesses()).some(
+    (entry) => entry.pid === pid,
+  );
+
+/** Poll the real process table until this fixture PID is no longer live. */
+const waitForFixtureProcessExit = async (pid: number): Promise<void> => {
+  const deadline = Date.now() + FIXTURE_SETTLE_TIMEOUT_MS;
+  while (await isLiveProcess(pid)) {
+    if (Date.now() >= deadline)
+      throw new Error(`Fixture inferior PID ${String(pid)} survived teardown`);
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, FIXTURE_SETTLE_POLL_MS),
+    );
+  }
+};
+
+/**
+ * Every live PID still exposing this fixture's run token.
+ *
+ * The token is generated per launch and inherited by the inferior, so a
+ * readable match establishes membership; a PID alone cannot.
+ */
+const tokenOwnedFixturePids = async (
+  runId: string,
+): Promise<readonly number[]> => {
+  const owned: number[] = [];
+  for await (const { process: candidate, observation } of readProcessRunTokens(
+    systemProcessOwnershipHost,
+    await systemProcessOwnershipHost.listProcesses(),
+  ))
+    if (observation.state === "readable" && observation.runId === runId)
+      owned.push(candidate.pid);
+  return owned;
+};
+
+/**
+ * Spawn a debugger with the inferior it hands its output streams to.
+ *
+ * The debugger leads a detached process group and carries a unique run token
+ * that the inferior inherits. Teardown can therefore terminate exactly this
+ * family even after the leader exits, and prove the inferior ended instead of
+ * treating the leader's exit as the fixture's end.
+ */
 const startDebuggerWithInferior = (inferiorSource: string) => {
+  const runId = randomUUID();
   const debuggerSource = [
     'const { spawn } = require("node:child_process");',
     `spawn(process.execPath, ["-e", ${JSON.stringify(inferiorSource)}], { stdio: "inherit" });`,
     "process.exit(0);",
   ].join("\n");
   const child = spawn(process.execPath, ["-e", debuggerSource], {
+    detached: process.platform !== "win32",
+    env: { ...process.env, REA_PROCESS_RUN_ID: runId },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const leaderPid = child.pid;
+  if (leaderPid === undefined)
+    throw new Error("Fixture debugger did not spawn");
   const supervisor = new ProviderProcessSupervisor({
     process: child,
     ownsProcessLifetime: true,
   });
   let readyOutput = "";
-  const inferiorPort = new Promise<number>((resolvePort) => {
+  let inferiorPid: number | undefined;
+  const inferior = new Promise<InferiorCoordinates>((resolveInferior) => {
     child.stdout?.on("data", (chunk: Buffer | string) => {
       readyOutput += chunk.toString();
-      const match = /^ready:(\d+)$/mu.exec(readyOutput);
-      if (match !== null) resolvePort(Number(match[1]));
+      const match = /^ready:(\d+):(\d+)$/mu.exec(readyOutput);
+      if (match === null) return;
+      inferiorPid = Number(match[2]);
+      resolveInferior({ port: Number(match[1]), pid: inferiorPid });
     });
   });
-  return { child, supervisor, inferiorPort };
+  onTestFinished(async () => {
+    // The leader has usually exited by now. The inferior kept the debugger's
+    // process group, so one token-verified group signal reaches it too.
+    const cleanup = await cleanupOwnedProcessGroup({
+      runId,
+      leaderPid,
+      processGroupId: leaderPid,
+    });
+    expect(cleanup.cleaned, JSON.stringify(cleanup)).toBe(true);
+    if (inferiorPid !== undefined) await waitForFixtureProcessExit(inferiorPid);
+    expect(
+      await tokenOwnedFixturePids(runId),
+      "fixture process family survived teardown",
+    ).toEqual([]);
+  });
+  return { child, supervisor, inferior };
 };
 
 it("preserves the session receiver when invoking the provider detach callback", async () => {
@@ -229,9 +321,14 @@ it("retains process supervision after an incomplete stop and disposes after a re
       () => Promise<{
         readonly status: "detached";
         readonly outputSink: "durable";
+        readonly inputSink: "durable";
       }>
     >()
-    .mockResolvedValueOnce({ status: "detached", outputSink: "durable" })
+    .mockResolvedValueOnce({
+      status: "detached",
+      outputSink: "durable",
+      inputSink: "durable",
+    })
     .mockRejectedValue(
       new Error("debugger transport closed during termination"),
     );
@@ -677,7 +774,7 @@ it("fails closed when detach lacks durable output sink confirmation", async () =
   expect(result).toEqual({
     status: "incomplete",
     reason:
-      "Owned GDB provider did not confirm no inferior or detachment with a durable output sink.",
+      "Owned GDB provider did not confirm no inferior, or detachment with both a durable output sink and a durable or non-inherited input sink.",
   });
   expect(signals).toEqual([]);
 });
@@ -689,6 +786,7 @@ it("retains an owned debugger when inferior detach does not settle", async () =>
   let resolveDetach!: (value: {
     readonly status: "detached";
     readonly outputSink: "durable";
+    readonly inputSink: "durable";
   }) => void;
   let disposals = 0;
   try {
@@ -705,6 +803,7 @@ it("retains an owned debugger when inferior detach does not settle", async () =>
         return new Promise<{
           readonly status: "detached";
           readonly outputSink: "durable";
+          readonly inputSink: "durable";
         }>((resolve) => {
           resolveDetach = resolve;
         });
@@ -742,7 +841,11 @@ it("retains an owned debugger when inferior detach does not settle", async () =>
     expect(signals).toEqual([]);
     expect(disposals).toBe(0);
 
-    resolveDetach({ status: "detached", outputSink: "durable" });
+    resolveDetach({
+      status: "detached",
+      outputSink: "durable",
+      inputSink: "durable",
+    });
     await vi.advanceTimersByTimeAsync(0);
     expect(
       await stopOwnedDebuggerProcess(session, "GDB", { platform: "linux" }),
@@ -956,15 +1059,17 @@ it.skipIf(process.platform === "win32")(
       "  socket.end();",
       "  setImmediate(() => process.exit(0));",
       "});",
-      'server.listen(0, "127.0.0.1", () => process.stdout.write(`ready:${server.address().port}\\n`));',
+      'server.listen(0, "127.0.0.1", () => process.stdout.write(`ready:${server.address().port}:${process.pid}\\n`));',
+      // Bound the fixture even if the trigger below never arrives.
+      "setTimeout(() => process.exit(0), 5000);",
     ].join("\n");
-    const { child, supervisor, inferiorPort } =
+    const { child, supervisor, inferior } =
       startDebuggerWithInferior(inferiorSource);
     let port: number | undefined;
 
     try {
       await once(child, "exit");
-      const readyPort = await inferiorPort;
+      const readyPort = (await inferior).port;
       port = readyPort;
       const limitAdditionalOutputBytes =
         supervisor.limitAdditionalOutputBytes.bind(supervisor);
@@ -1015,9 +1120,11 @@ it.skipIf(process.platform === "win32")(
       "  socket.end();",
       "  if (outputCount === 2) void output.then(() => process.exit(0));",
       "});",
-      'server.listen(0, "127.0.0.1", () => process.stdout.write(`ready:${server.address().port}\\n`));',
+      'server.listen(0, "127.0.0.1", () => process.stdout.write(`ready:${server.address().port}:${process.pid}\\n`));',
+      // Bound the fixture even if the retries below never arrive.
+      "setTimeout(() => process.exit(0), 5000);",
     ].join("\n");
-    const { child, supervisor, inferiorPort } =
+    const { child, supervisor, inferior } =
       startDebuggerWithInferior(inferiorSource);
     let port: number | undefined;
     const session = {
@@ -1029,7 +1136,7 @@ it.skipIf(process.platform === "win32")(
 
     try {
       await once(child, "exit");
-      const readyPort = await inferiorPort;
+      const readyPort = (await inferior).port;
       port = readyPort;
       const initialStdoutBytes = supervisor.snapshot().stdout.observedBytes;
       const limitAdditionalOutputBytes =
@@ -1094,6 +1201,7 @@ it("does not escalate when the debugger exits after SIGTERM", async () => {
         ({
           status: "detached",
           outputSink: "durable",
+          inputSink: "durable",
         }) as const,
       supervisor: {
         waitForExit: async () => true,
@@ -1137,6 +1245,7 @@ it("disposes supervision when the debugger exits after SIGKILL", async () => {
         ({
           status: "detached",
           outputSink: "durable",
+          inputSink: "durable",
         }) as const,
       supervisor: {
         waitForExit: async () => {
@@ -1301,7 +1410,7 @@ it.skipIf(process.platform === "win32")(
       'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "pipe", "pipe"] });',
       "process.stdout.write(`debugger-pid=${child.pid}\\n`);",
       "const supervisor = new ProviderProcessSupervisor({ process: child, ownsProcessLifetime: true });",
-      "const session = { id: 'debugger-with-selected-pty-inferior', get exited() { return child.exitCode !== null || child.signalCode !== null; }, launched: { process: child }, supervisor, detachInferior: async () => ({ status: 'detached', outputSink: 'durable' }) };",
+      "const session = { id: 'debugger-with-selected-pty-inferior', get exited() { return child.exitCode !== null || child.signalCode !== null; }, launched: { process: child }, supervisor, detachInferior: async () => ({ status: 'detached', outputSink: 'durable', inputSink: 'durable' }) };",
       "const result = await stopOwnedDebuggerProcess(session, 'GDB', { platform: 'linux' });",
       "process.stdout.write(`probe-result=${JSON.stringify(result)}\\n`);",
     ].join("\n");
@@ -1379,7 +1488,11 @@ it("removes stopped sessions and retains incomplete sessions when closing all", 
       "GDB",
     ),
   ).rejects.toMatchObject({
-    errors: [expect.objectContaining({ message: "process remains alive" })],
+    errors: [
+      expect.objectContaining({
+        message: expect.stringContaining("process remains alive"),
+      }),
+    ],
   });
   expect([...sessions.keys()]).toEqual(["incomplete"]);
 });
@@ -1442,9 +1555,15 @@ it("settles every stop and retains rejected sessions while removing successful o
   ).rejects.toMatchObject({
     message: "One or more owned GDB processes did not stop cleanly",
     errors: [
-      expect.objectContaining({ message: "signal failed" }),
-      expect.objectContaining({ message: "string rejection" }),
-      expect.objectContaining({ message: "still alive" }),
+      expect.objectContaining({
+        message: expect.stringContaining("signal failed"),
+      }),
+      expect.objectContaining({
+        message: expect.stringContaining("string rejection"),
+      }),
+      expect.objectContaining({
+        message: expect.stringContaining("still alive"),
+      }),
     ],
   });
 
@@ -1454,4 +1573,102 @@ it("settles every stop and retains rejected sessions while removing successful o
     "string-rejected",
     "incomplete",
   ]);
+});
+
+it("caps output before returning an incomplete result for a live debugger", async () => {
+  const limitAdditionalOutputBytes = vi.fn();
+  const result = await stopOwnedDebuggerProcess(
+    {
+      id: "live-without-detach",
+      exited: false,
+      launched: { process: { kill: vi.fn(() => true) } },
+      supervisor: {
+        waitForExit: async () => false,
+        limitAdditionalOutputBytes,
+        waitForOutputClose: async () => false,
+        dispose: vi.fn(),
+        unrefOutputStreams: vi.fn(),
+      },
+    },
+    "GDB",
+    { platform: "linux" },
+  );
+
+  expect(result.status).toBe("incomplete");
+  expect(limitAdditionalOutputBytes).toHaveBeenCalledWith(64 * 1024);
+});
+
+it("does not terminate a detached inferior without an independent input path", async () => {
+  const kill = vi.fn(() => true);
+  const result = await stopOwnedDebuggerProcess(
+    {
+      id: "detached-with-piped-stdin",
+      exited: false,
+      launched: { process: { kill } },
+      detachInferior: async () =>
+        ({
+          status: "detached",
+          outputSink: "durable",
+          inputSink: "unknown",
+        }) as never,
+      supervisor: {
+        waitForExit: async () => true,
+        limitAdditionalOutputBytes: vi.fn(),
+        waitForOutputClose: async () => true,
+        dispose: vi.fn(),
+        unrefOutputStreams: vi.fn(),
+      },
+    },
+    "GDB",
+    { platform: "linux" },
+  );
+
+  expect(result).toMatchObject({ status: "incomplete" });
+  expect(kill).not.toHaveBeenCalled();
+});
+
+it("shares the entire in-flight stop across concurrent callers", async () => {
+  const finishWaitForExit: ((exited: boolean) => void)[] = [];
+  const waitForExit = vi.fn(
+    () =>
+      new Promise<boolean>((resolve) => {
+        finishWaitForExit.push(resolve);
+      }),
+  );
+  const detachInferior = vi.fn(
+    async () => ({ status: "no-inferior" }) as const,
+  );
+  const kill = vi.fn(() => true);
+  const session = {
+    id: "concurrent-full-stop",
+    exited: false,
+    launched: { process: { kill } },
+    detachInferior,
+    supervisor: {
+      waitForExit,
+      limitAdditionalOutputBytes: vi.fn(),
+      waitForOutputClose: async () => true,
+      dispose: vi.fn(),
+      unrefOutputStreams: vi.fn(),
+    },
+  };
+
+  const first = stopOwnedDebuggerProcess(session, "GDB", {
+    platform: "linux",
+  });
+  await vi.waitFor(() => expect(waitForExit).toHaveBeenCalledTimes(1));
+  const second = stopOwnedDebuggerProcess(session, "GDB", {
+    platform: "linux",
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  for (const finish of finishWaitForExit) finish(true);
+  expect(detachInferior).toHaveBeenCalledTimes(1);
+  expect(kill).toHaveBeenCalledTimes(1);
+
+  await expect(Promise.all([first, second])).resolves.toEqual([
+    { status: "stopped" },
+    { status: "stopped" },
+  ]);
+  expect(detachInferior).toHaveBeenCalledTimes(1);
+  expect(kill).toHaveBeenCalledTimes(1);
 });

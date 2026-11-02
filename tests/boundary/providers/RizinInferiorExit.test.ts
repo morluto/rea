@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
+  type ProviderProcessHandle,
 } from "../../../src/process/ProviderProcess.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
@@ -17,6 +18,90 @@ import {
 
 const targets = new Set<ProviderProcessSupervisor>();
 const directories = new Set<string>();
+
+async function assertStaleRetry(
+  manager: ReturnType<typeof createRizinTestManager>,
+  sessionId: string,
+  staleInventory: { value: boolean },
+  inferior: ProviderProcessSupervisor,
+  process: ProviderProcessHandle,
+): Promise<void> {
+  const liveRetry = await manager.retryCleanupFailures();
+  expect(liveRetry.ok).toBe(false);
+  expect(manager.status(sessionId)).toBeDefined();
+  staleInventory.value = true;
+  process.kill("SIGUSR1");
+  expect(await inferior.waitForExit(1_000)).toBe(true);
+  const endedRetry = await manager.retryCleanupFailures();
+  expect(endedRetry.ok).toBe(false);
+  expect(manager.status(sessionId)).toBeDefined();
+  const finalRetry = await manager.retryCleanupFailures();
+  expect(finalRetry.ok).toBe(true);
+  expect(manager.status(sessionId)).toBeUndefined();
+}
+
+function createStopProcess(
+  mode: string,
+  attempts: { value: number },
+):
+  | typeof stopOwnedDebuggerProcess
+  | ((
+      ...args: Parameters<typeof stopOwnedDebuggerProcess>
+    ) => ReturnType<typeof stopOwnedDebuggerProcess>) {
+  return async (session, name, options) => {
+    if (mode === "stale-retry" && attempts.value++ < 3) {
+      await session.detachInferior?.();
+      return {
+        status: "incomplete",
+        reason: "injected debugger stop uncertainty",
+      };
+    }
+    return stopOwnedDebuggerProcess(session, name, options);
+  };
+}
+
+async function assertClosedState(
+  mode: string,
+  closed: Awaited<
+    ReturnType<ReturnType<typeof createRizinTestManager>["close"]>
+  >,
+  manager: ReturnType<typeof createRizinTestManager>,
+  sessionId: string,
+  debuggerExit: ReturnType<typeof vi.spyOn>,
+  supervisor: ProviderProcessSupervisor,
+  staleInventory: { value: boolean },
+  inferiorProcess: ProviderProcessHandle,
+): Promise<void> {
+  if (mode === "exit") {
+    expect(closed.ok).toBe(true);
+    expect(manager.status(sessionId)).toBeUndefined();
+    expect(supervisor.observedExit()?.code).toBe(0);
+    return;
+  }
+  expect(closed.ok).toBe(false);
+  expect(manager.status(sessionId)).toBeDefined();
+  expect(debuggerExit).not.toHaveBeenCalled();
+  if (mode === "redirect" || mode === "stale-retry")
+    expect(supervisor.observedExit()).toBeUndefined();
+  else expect(supervisor.observedExit()?.code).toBe(0);
+  if (!closed.ok)
+    expect(closed.error.message).toContain(
+      mode === "redirect"
+        ? "not routed to the selected TTY"
+        : mode === "stale-retry"
+          ? "injected debugger stop uncertainty"
+          : "dbg.exitkills readback did not confirm false",
+    );
+  if (mode === "stale-retry")
+    await assertStaleRetry(
+      manager,
+      sessionId,
+      staleInventory,
+      supervisor,
+      inferiorProcess,
+    );
+}
+
 afterEach(async () => {
   const failures: Error[] = [];
   for (const supervisor of targets) {
@@ -35,7 +120,7 @@ afterEach(async () => {
 
 it
   .skipIf(process.platform !== "linux")
-  .each(["exit", "redirect", "ambiguous-policy"] as const)(
+  .each(["exit", "redirect", "ambiguous-policy", "stale-retry"] as const)(
   "verifies the original inferior after %s during detach",
   async (mode) => {
     const directory = await mkdtemp(join(tmpdir(), "rea-rizin-exit-"));
@@ -48,7 +133,7 @@ it
       arguments: [
         "-e",
         `const fs = require("node:fs");
-const [tty, ready, redirected] = process.argv.slice(1);
+const [tty, ready, redirected, mode] = process.argv.slice(1);
 function route(destination) {
   for (const fd of [1, 2]) {
     fs.closeSync(fd);
@@ -58,18 +143,20 @@ function route(destination) {
 }
 route(tty);
 fs.writeFileSync(ready, "ready");
-process.stdin.once("data", (command) => {
-  if (command.toString().trim() === "exit") process.exit(0);
+process.on("SIGUSR1", () => {
+  if (mode === "exit" || mode === "ambiguous-policy" || mode === "stale-retry")
+    process.exit(0);
   route("/dev/null");
   fs.writeFileSync(redirected, "redirected");
 });
-process.stdin.resume();`,
+setInterval(() => {}, 1000);
+`,
         tty,
         ready,
         redirected,
+        mode,
       ],
       runId: randomUUID(),
-      stdin: "pipe",
     });
     const supervisor = new ProviderProcessSupervisor(
       { ...launched, ownsProcessLifetime: true },
@@ -77,6 +164,9 @@ process.stdin.resume();`,
     );
     targets.add(supervisor);
     let descriptorOpen = true;
+    let ambiguousPolicyReadbackSent = false;
+    const staleInventory = { value: false };
+    const stopAttempts = { value: 0 };
     let commandTail = Promise.resolve();
     let protocolFailure: unknown;
     const injected = createInjectedProcess({
@@ -87,7 +177,7 @@ process.stdin.resume();`,
               if (line === "olj")
                 control.output(
                   JSON.stringify(
-                    descriptorOpen
+                    descriptorOpen || staleInventory.value
                       ? [
                           {
                             raised: true,
@@ -100,11 +190,11 @@ process.stdin.resume();`,
                 );
               else if (line === "o- 3") {
                 descriptorOpen = false;
-                if (mode !== "ambiguous-policy") {
-                  launched.process.stdin!.write(`${mode}\n`);
-                  if (mode === "exit")
+                if (mode !== "ambiguous-policy" && mode !== "stale-retry") {
+                  launched.process.kill("SIGUSR1");
+                  if (mode === "exit") {
                     expect(await supervisor.waitForExit(1_000)).toBe(true);
-                  else
+                  } else
                     await expect
                       .poll(() => readFile(redirected, "utf8"), {
                         timeout: 1_000,
@@ -112,9 +202,14 @@ process.stdin.resume();`,
                       .toBe("redirected");
                 }
               } else if (line === "e dbg.exitkills") {
-                if (mode === "ambiguous-policy" && !descriptorOpen) {
+                if (
+                  mode === "ambiguous-policy" &&
+                  !descriptorOpen &&
+                  !ambiguousPolicyReadbackSent
+                ) {
+                  ambiguousPolicyReadbackSent = true;
                   // End the identified process only during the final policy query.
-                  launched.process.stdin!.write("exit\n");
+                  launched.process.kill("SIGUSR1");
                   expect(await supervisor.waitForExit(1_000)).toBe(true);
                   control.output("ambiguous\0");
                 } else control.output("false\0");
@@ -133,7 +228,8 @@ process.stdin.resume();`,
       {},
       {
         spawnProcess: injected.spawnProcess,
-        stopProcess: stopOwnedDebuggerProcess,
+        stopProcess: createStopProcess(mode, stopAttempts),
+        readProcessTracerPid: async () => process.pid,
       },
     );
     try {
@@ -150,24 +246,16 @@ process.stdin.resume();`,
       const closed = await manager.close(started.value.session_id);
       await commandTail;
       if (protocolFailure !== undefined) throw protocolFailure;
-      if (mode === "exit") {
-        expect(closed.ok).toBe(true);
-        expect(manager.status(started.value.session_id)).toBeUndefined();
-        expect(supervisor.observedExit()?.code).toBe(0);
-      } else {
-        expect(closed.ok).toBe(false);
-        expect(manager.status(started.value.session_id)).toBeDefined();
-        expect(debuggerExit).not.toHaveBeenCalled();
-        if (mode === "redirect")
-          expect(supervisor.observedExit()).toBeUndefined();
-        else expect(supervisor.observedExit()?.code).toBe(0);
-        if (!closed.ok)
-          expect(closed.error.message).toContain(
-            mode === "redirect"
-              ? "not routed to the selected TTY"
-              : "dbg.exitkills readback did not confirm false",
-          );
-      }
+      await assertClosedState(
+        mode,
+        closed,
+        manager,
+        started.value.session_id,
+        debuggerExit,
+        supervisor,
+        staleInventory,
+        launched.process,
+      );
     } finally {
       const stopped = await supervisor.stop();
       try {

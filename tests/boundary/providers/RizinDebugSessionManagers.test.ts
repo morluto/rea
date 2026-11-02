@@ -59,6 +59,7 @@ process.stdin.on("data", (chunk) => {
       await chmod(provider, 0o700);
       const manager = createRizinTestManager({
         REA_RIZIN_COMMAND: provider,
+        REA_PROCESS_RUN_ID: undefined,
       });
       managers.push(manager);
 
@@ -77,9 +78,13 @@ process.stdin.on("data", (chunk) => {
         "-0",
         "-d",
         "-R",
+        `stdin=${await rizinTestInferiorTty()}`,
+        "-R",
         `stdout=${await rizinTestInferiorTty()}`,
         "-R",
         `stderr=${await rizinTestInferiorTty()}`,
+        "-R",
+        "unsetenv=REA_PROCESS_RUN_ID",
         "-e",
         "dbg.exitkills=false",
         "-D",
