@@ -1,30 +1,26 @@
 import { execFileSync, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import {
-  chmod,
-  mkdtemp,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { spawn } from "@lydell/node-pty";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import pino from "pino";
-import { afterEach, expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
+import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import type { Result } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import { registerRizinDebugTools } from "../../../src/server/registerRizinDebugTools.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { rizinTestTtyPathPattern } from "./RizinTestInferiorTty.js";
 
 // Real Rizin is not exercised here. These launchers apply `-R` keys the way the
@@ -46,11 +42,9 @@ interface Terminal {
   readonly path: string;
   readonly output: () => string;
   readonly write: (text: string) => void;
-  readonly close: () => Promise<void>;
 }
 
 interface Fixture {
-  readonly directory: string;
   readonly launcher: string;
   readonly terminal: Terminal;
   readonly targetPid: () => Promise<number>;
@@ -69,8 +63,16 @@ const openTerminal = async (): Promise<Terminal> => {
   pty.onData((chunk) => {
     output += chunk;
   });
+  let exited = false;
   const ended = new Promise<void>((resolve) => {
-    pty.onExit(() => resolve());
+    pty.onExit(() => {
+      exited = true;
+      resolve();
+    });
+  });
+  onTestFinished(async () => {
+    if (!exited) pty.kill();
+    await ended;
   });
   await expect
     .poll(() => rizinTestTtyPathPattern.test(output), { timeout: 2_000 })
@@ -79,10 +81,6 @@ const openTerminal = async (): Promise<Terminal> => {
     path: rizinTestTtyPathPattern.exec(output)![0],
     output: () => output,
     write: (text) => pty.write(text),
-    close: async () => {
-      pty.kill();
-      await ended;
-    },
   };
 };
 
@@ -130,11 +128,16 @@ const answer = (line) => {
     process.stdout.write(JSON.stringify(attached ? [{ raised: true, fd: 3, uri: "ptrace://" + target.pid }] : []) + "\\0");
   else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
   else if (line === "dr") process.stdout.write("rax=0x1\\0");
-  else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+  else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\n\\0");
   else if (line === "resume-target" || line === "o- 3") {
     attached = false;
     resume();
+    process.stdout.write("\\0");
     return true;
+  } else {
+    // The marker that follows must not complete a command this model cannot describe.
+    fs.writeFileSync(config.unmodeledPath, line);
+    process.exit(70);
   }
   return false;
 };
@@ -163,8 +166,16 @@ readCommands();
 /** Close reads target descriptors from Linux /proc. */
 const linuxIt = it.skipIf(process.platform !== "linux");
 
-let fixture: Fixture | undefined;
-const managers: RizinDebugSessionManager[] = [];
+/** Close inventories the target, detaches it, then reads the result back. */
+const DETACH_COMMANDS = [
+  "olj",
+  "e dbg.exitkills",
+  "o- 3",
+  "olj",
+  "e dbg.exitkills",
+];
+/** A refused close stops after the inventory and exit policy, before `o-`. */
+const REFUSED_CLOSE_COMMANDS = ["olj", "e dbg.exitkills"];
 
 /** A negative PID also covers the gate reader a detached target may be waiting on. */
 const killIfRunning = (pid: number): void => {
@@ -175,32 +186,48 @@ const killIfRunning = (pid: number): void => {
   }
 };
 
+const successValue = <Value>(result: Result<Value, AnalysisError>): Value => {
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+
+/** Finish hooks run in reverse order: manager, processes, terminal, directory. */
 const createFixture = async (options: LauncherOptions): Promise<Fixture> => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-rizin-stdin-"));
+  const directory = await createTestTempDirectory("rea-rizin-stdin-");
   const paths = {
     readyPath: join(directory, "target.ready"),
     gatePath: join(directory, "target.gate"),
     targetPidPath: join(directory, "target.pid"),
     launcherPidPath: join(directory, "launcher.pid"),
     commandLogPath: join(directory, "commands.log"),
+    unmodeledPath: join(directory, "unmodeled.txt"),
   };
+  const terminal = await openTerminal();
+  const readPid = async (path: string): Promise<number> =>
+    Number(await readFile(path, "utf8"));
+  onTestFinished(async () => {
+    const targetPid = await readPid(paths.targetPidPath).catch(() => 0);
+    const launcherPid = await readPid(paths.launcherPidPath).catch(() => 0);
+    if (targetPid > 0) killIfRunning(-targetPid);
+    if (launcherPid > 0) killIfRunning(launcherPid);
+    expect(await readFile(paths.unmodeledPath, "utf8").catch(() => "")).toBe(
+      "",
+    );
+  });
   execFileSync("mkfifo", [paths.gatePath]);
   const launcher = join(directory, "fake-rizin.cjs");
   await writeFile(launcher, launcherSource({ ...options, ...paths }));
   await chmod(launcher, 0o700);
-  fixture = {
-    directory,
+  return {
     launcher,
-    terminal: await openTerminal(),
-    targetPid: async () => Number(await readFile(paths.targetPidPath, "utf8")),
-    launcherPid: async () =>
-      Number(await readFile(paths.launcherPidPath, "utf8")),
+    terminal,
+    targetPid: () => readPid(paths.targetPidPath),
+    launcherPid: () => readPid(paths.launcherPidPath),
     commands: async () =>
       (await readFile(paths.commandLogPath, "utf8").catch(() => ""))
         .split("\n")
-        .filter((line) => line.length > 0),
+        .filter((line) => line.length > 0 && !line.startsWith("!echo ")),
   };
-  return fixture;
 };
 
 const createManager = (
@@ -213,7 +240,7 @@ const createManager = (
     { ...process.env, REA_RIZIN_COMMAND: launcher },
     options,
   );
-  managers.push(manager);
+  onTestFinished(() => manager.closeAll().catch(() => undefined));
   return manager;
 };
 
@@ -225,8 +252,20 @@ const startSession = async (
     path: "/usr/bin/cat",
     inferior_tty: terminal.path,
   });
-  if (!started.ok) throw started.error;
-  return started.value.session_id;
+  return successValue(started).session_id;
+};
+
+const expectRefusedClose = async (
+  manager: RizinDebugSessionManager,
+  sessionId: string,
+): Promise<void> => {
+  const closed = await manager.close(sessionId);
+  if (closed.ok)
+    throw new Error("Close must refuse a target holding the command stream.");
+  expect(closed.error.message).toContain("Rizin command stream");
+  expect(closed.error.cleanupIncomplete).toBe(true);
+  expect(closed.error.cleanupResources).toEqual([sessionId]);
+  expect(manager.status(sessionId)?.state).toBe("closed");
 };
 
 const expectRunningOnTerminal = async (
@@ -264,21 +303,6 @@ const registerCliCommand = (launcher: string) => {
   return commands.get(CLI_COMMANDS.debugWithRizin)!;
 };
 
-afterEach(async () => {
-  await Promise.all(
-    managers.splice(0).map((manager) => manager.closeAll().catch(() => {})),
-  );
-  const current = fixture;
-  fixture = undefined;
-  if (current === undefined) return;
-  const targetPid = await current.targetPid().catch(() => 0);
-  const launcherPid = await current.launcherPid().catch(() => 0);
-  if (targetPid > 0) killIfRunning(-targetPid);
-  if (launcherPid > 0) killIfRunning(launcherPid);
-  await current.terminal.close();
-  await rm(current.directory, { recursive: true, force: true });
-});
-
 it.skipIf(process.platform === "win32")(
   "keeps debugger commands away from a running target that reads stdin",
   async () => {
@@ -293,16 +317,13 @@ it.skipIf(process.platform === "win32")(
     });
     const sessionId = await startSession(manager, current);
 
-    expect((await manager.execute(sessionId, "resume-target")).ok).toBe(true);
-    const answered = await manager.execute(sessionId, "dr");
+    successValue(await manager.execute(sessionId, "resume-target"));
+    const answered = successValue(await manager.execute(sessionId, "dr"));
 
-    expect(answered.ok, answered.ok ? "" : answered.error.message).toBe(true);
-    if (answered.ok)
-      expect(answered.value.result).toMatchObject({
-        output: "rax=0x1",
-        completion_status: "complete",
-      });
-    expect(await current.commands()).toContain("dr");
+    expect(answered.result).toMatchObject({
+      output: "rax=0x1",
+      completion_status: "complete",
+    });
     expect(current.terminal.output()).not.toContain("__REA_");
 
     // Line-discipline echo shows the input once. A second copy needs `cat` to
@@ -314,7 +335,8 @@ it.skipIf(process.platform === "win32")(
         { timeout: 2_000 },
       )
       .toBe(2);
-    expect((await manager.close(sessionId)).ok).toBe(true);
+    successValue(await manager.close(sessionId));
+    expect(await current.commands()).toEqual(["resume-target", "dr", "olj"]);
   },
 );
 
@@ -348,9 +370,9 @@ linuxIt.each([
         },
       });
       expect(started.isError, JSON.stringify(started)).not.toBe(true);
-      const { session_id: sessionId } = started.structuredContent as {
-        session_id: string;
-      };
+      const { session_id: sessionId } = toolContract(
+        "start_rizin_debug_session",
+      ).outputSchema.parse(started.structuredContent);
 
       const closed = await client.callTool({
         name: "close_rizin_debug_session",
@@ -360,6 +382,7 @@ linuxIt.each([
       expect(closed.isError, JSON.stringify(closed)).not.toBe(true);
       expect(closed.structuredContent).toEqual({ target_state: "unknown" });
       expect(manager.status(sessionId)).toBeUndefined();
+      expect(await current.commands()).toEqual(DETACH_COMMANDS);
       expect(current.terminal.output()).not.toContain("__REA_");
       if (staysRunning)
         await expectRunningOnTerminal(
@@ -387,10 +410,9 @@ linuxIt.each([
     const manager = createManager(current);
     const sessionId = await startSession(manager, current);
 
-    const closed = await manager.close(sessionId);
+    successValue(await manager.close(sessionId));
 
-    expect(closed.ok, closed.ok ? "" : closed.error.message).toBe(true);
-    expect(await current.commands()).toContain("o- 3");
+    expect(await current.commands()).toEqual(DETACH_COMMANDS);
   },
 );
 
@@ -415,6 +437,7 @@ linuxIt("completes the one-shot CLI on a target that reads stdin", async () => {
       },
     });
     expect(process.exitCode).toBe(0);
+    expect(await current.commands()).toEqual(["dr", ...DETACH_COMMANDS]);
     expect(current.terminal.output()).not.toContain("__REA_");
     await expectRunningOnTerminal(await current.targetPid(), current.terminal);
   } finally {
@@ -440,16 +463,12 @@ linuxIt(
     });
     const sessionId = await startSession(manager, current);
 
-    for (const attempt of [1, 2]) {
-      const closed = await manager.close(sessionId);
-      expect(closed.ok, `close attempt ${String(attempt)}`).toBe(false);
-      if (closed.ok) return;
-      expect(closed.error.message).toContain("Rizin command stream");
-      expect(closed.error.cleanupIncomplete).toBe(true);
-      expect(closed.error.cleanupResources).toEqual([sessionId]);
-      expect(manager.status(sessionId)?.state).toBe("closed");
-    }
-    expect(await current.commands()).not.toContain("o- 3");
+    await expectRefusedClose(manager, sessionId);
+    await expectRefusedClose(manager, sessionId);
+    expect(await current.commands()).toEqual([
+      ...REFUSED_CLOSE_COMMANDS,
+      ...REFUSED_CLOSE_COMMANDS,
+    ]);
     expect(current.terminal.output()).not.toContain("__REA_");
     await expect(manager.closeAll()).rejects.toThrow("did not stop cleanly");
     expect(manager.status(sessionId)).toBeDefined();
@@ -497,7 +516,11 @@ linuxIt(
       });
       expect(JSON.stringify(result)).toContain("Rizin command stream");
       expect(process.exitCode).toBe(1);
-      expect(await current.commands()).not.toContain("o- 3");
+      expect(await current.commands()).toEqual([
+        "dr",
+        ...REFUSED_CLOSE_COMMANDS,
+        ...REFUSED_CLOSE_COMMANDS,
+      ]);
     } finally {
       process.exitCode = previousExitCode;
     }
