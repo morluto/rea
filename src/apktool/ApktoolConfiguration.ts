@@ -511,7 +511,9 @@ const versionProbeFailure = (
   if (
     cause instanceof Error &&
     "code" in cause &&
-    (cause.code === "ENOENT" || cause.code === "EACCES" || cause.code === "EPERM")
+    (cause.code === "ENOENT" ||
+      cause.code === "EACCES" ||
+      cause.code === "EPERM")
   ) {
     const execDenied = cause.code === "EACCES" || cause.code === "EPERM";
     return new ApktoolConfigurationFailure(
