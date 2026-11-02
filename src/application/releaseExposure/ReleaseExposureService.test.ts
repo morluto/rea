@@ -1910,3 +1910,27 @@ describe("ReleaseExposureService undecoded metadata", () => {
     expect(await statuses(false)).toEqual(["not_applicable", "not_applicable"]);
   });
 });
+
+describe("ReleaseExposureService unnamed Electron hosts", () => {
+  const nodeStatus = async (sentinels: number[]) => {
+    const paths = sentinels.map(
+      (_, index) => `/work/app/image${String(index)}.exe`,
+    );
+    const { service, desktop, electronFuses } = owners(directoryScan(paths));
+    desktop.inspect.mockResolvedValue(ok(evidence(electronDesktopReport())));
+    for (const count of sentinels)
+      electronFuses.inspect.mockResolvedValueOnce(
+        ok(evidence(fuseReport([slice(0, { sentinels: count })]))),
+      );
+    return (await runAsNode(service))?.status;
+  };
+
+  it("keeps safe fuses unknown when a possible host holds no fuses", async () => {
+    expect(await nodeStatus([0, 1])).toBe("unknown");
+    expect(await nodeStatus([1, 0])).toBe("unknown");
+  });
+
+  it("settles safe fuses when every possible host reports them", async () => {
+    expect(await nodeStatus([1, 1])).toBe("not_observed");
+  });
+});

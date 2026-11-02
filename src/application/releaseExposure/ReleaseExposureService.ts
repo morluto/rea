@@ -724,13 +724,15 @@ const limitNativeSample = (
     (scan.coverage !== "unknown" &&
       preferred.length > 0 &&
       preferred.length <= MAX_RELEASE_EXPOSURE_NATIVE_IMAGES);
+  const named = kept.filter(
+    (image) => (ranked.get(image.path) ?? ANY_SIBLING_RANK) < ANY_SIBLING_RANK,
+  );
+  // With no named host, any sampled sibling could be it, so none settles alone.
+  const hosts =
+    named.length > 0 ? named : kept.filter((image) => ranked.has(image.path));
   return {
     electronExecutableIncluded,
-    electronHostPaths: kept.flatMap((image) =>
-      (ranked.get(image.path) ?? ANY_SIBLING_RANK) < ANY_SIBLING_RANK
-        ? [image.path]
-        : [],
-    ),
+    electronHostPaths: hosts.map((image) => image.path),
     scan: {
       ...scan,
       native_images: kept,
