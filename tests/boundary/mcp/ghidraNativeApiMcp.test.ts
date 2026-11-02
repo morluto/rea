@@ -239,6 +239,41 @@ describe("Ghidra MCP native API evidence", () => {
     }
   }, 30_000);
 
+  it.each([
+    { name: "f_var (long f_var(int n, ...))", varargs: true },
+    { name: "fixed-arity function", varargs: false },
+    { name: "stripped binary without DWARF", varargs: null },
+  ])(
+    "preserves boundary varargs through MCP: $name",
+    async ({ varargs }) => {
+      const harness = await connectGhidraMcp(
+        "ghidra-native-api-varargs",
+        async () => {
+          const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+          if (!dossier.native_api?.available)
+            throw new Error("Expected boundary");
+          dossier.native_api.varargs = varargs;
+          return ok(jsonValueSchema.parse({ value: dossier, limitations: [] }));
+        },
+      );
+      try {
+        const reply = await harness.mcp.callTool({
+          name: "inspect_native_api",
+          arguments: { procedure: "fixture_main" },
+        });
+        expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
+        const { normalized_result } = sessionEvidence(
+          harness.session,
+          reply.structuredContent,
+        );
+        expect(normalized_result).toMatchObject({ boundary: { varargs } });
+      } finally {
+        await harness.close();
+      }
+    },
+    30_000,
+  );
+
   it("returns complete native API boundaries without output-cap unknowns", async () => {
     const harness = await connectGhidraMcp("ghidra-native-api");
     const { mcp, session } = harness;
