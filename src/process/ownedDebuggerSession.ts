@@ -263,7 +263,10 @@ const finishExitedDebuggerSession = async (
 export const stopOwnedDebuggerProcess = async (
   session: OwnedDebuggerProcess,
   debuggerName: string,
-  options: { readonly platform?: NodeJS.Platform } = {},
+  options: {
+    readonly platform?: NodeJS.Platform;
+    readonly force?: boolean;
+  } = {},
 ): Promise<OwnedDebuggerStopResult> => {
   const platform = options.platform ?? process.platform;
   if (session.exited) {
@@ -307,7 +310,7 @@ export const stopOwnedDebuggerProcess = async (
   // owned completion fact, even when terminating the debugger later fails.
   // Retrying the command transport can no longer improve that fact and may
   // block termination if shutdown already made the transport unavailable.
-  if (detachOutcomes.get(session) !== "confirmed") {
+  if (!options.force && detachOutcomes.get(session) !== "confirmed") {
     try {
       if (session.detachInferior === undefined) {
         detachOutcomes.set(session, "unconfirmed");
