@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
 import { pe } from "../domain/binaryTarget.fixture.js";
+import { nodeSeaElf } from "./nodeSea/NodeSea.fixture.js";
 import { dotnetBundleFixture } from "./dotnet/DotnetBundle.fixture.js";
 import { cArchiveExecutable } from "./pyinstaller/CArchive.fixture.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
@@ -2200,3 +2201,38 @@ const inspect = async (path: string) => {
     await reader.close();
   }
 };
+
+describe("ReleaseExposureReader inline map reads", () => {
+  const map = Buffer.from(
+    JSON.stringify({
+      version: 3,
+      sources: ["src/app.ts"],
+      sourcesContent: ["export {};"],
+      mappings: "",
+    }),
+  ).toString("base64");
+
+  it("reads a percent-escaped base64 inline map", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-map-");
+    const escaped = `%${map.charCodeAt(0).toString(16)}${map.slice(1)}`;
+    await writeFile(
+      join(root, "app.js"),
+      `//# sourceMappingURL=data:application/json;base64,${escaped}\n`,
+    );
+    const { source_maps: maps } = await inspect(root);
+    expect(maps.embedded).toBe(1);
+    expect(maps.unparsed).toBe(0);
+  });
+
+  it("reads the inline map of an extensionless SEA entry in a directory", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-map-");
+    await writeFile(
+      join(root, "app"),
+      nodeSeaElf({
+        codePath: "entry",
+        main: `//# sourceMappingURL=data:application/json;base64,${map}\n`,
+      }),
+    );
+    expect((await inspect(root)).source_maps.embedded).toBe(1);
+  });
+});

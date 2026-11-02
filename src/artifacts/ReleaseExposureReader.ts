@@ -1119,7 +1119,7 @@ const examineInlineMaps = (
       const metadata = url.slice(0, comma);
       const payload = url.slice(comma + 1);
       const decoded = /;base64$/iu.test(metadata)
-        ? Buffer.from(payload, "base64")
+        ? Buffer.from(decodeURIComponent(payload), "base64")
         : Buffer.from(decodeURIComponent(payload), "utf8");
       if (decoded.length > MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES) {
         state.skippedMaps += 1;
@@ -1602,10 +1602,14 @@ const scanUnexpandedContainer = async (
     const location = `${filePath}/${entry.path}`;
     if (hasCompanionName(entry.path)) state.companionPaths.add(location);
     if (entry.kind !== "file") continue;
+    // A SEA entry's code path need not name a script, so its role says what it is.
+    const seaMainScript =
+      entry.formatMetadata?.kind === "node-sea-entry" &&
+      entry.formatMetadata.role === "main-script";
     await examineMember(state, {
       logical: entry.path,
-      format: "file",
-      kind: "file",
+      format: seaMainScript ? "javascript-bundle" : "file",
+      kind: seaMainScript ? "javascript" : "file",
       encrypted: entry.encrypted,
       location,
       packageFormat: format,
