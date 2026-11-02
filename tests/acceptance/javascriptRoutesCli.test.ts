@@ -188,6 +188,26 @@ it("recovers pathname and document location routes through MCP", async () => {
   );
 });
 
+it("recovers document location and reports compound pathname uncertainty through MCP", async () => {
+  const path = await createTestTempDirectory("rea-document-location-");
+  await writeFile(
+    join(path, "app.js"),
+    `document.location = '/document'; window.location.pathname += '/suffix';`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toContainEqual(
+    expect.objectContaining({ path: "/document" }),
+  );
+  expect(view.source_coverage.candidate_enumeration).toBe("partial");
+});
+
 it("recovers direct global location assignment through MCP", async () => {
   const path = await createTestTempDirectory("rea-location-direct-");
   await writeFile(join(path, "app.js"), `window.location = '/direct';`);

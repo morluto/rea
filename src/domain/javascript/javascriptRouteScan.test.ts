@@ -543,6 +543,8 @@ it("recovers direct global location assignment while preserving uncertainty", ()
   for (const source of [
     `window.location = '/direct';`,
     `location = '/direct';`,
+    `document.location = '/direct';`,
+    `window.document.location = '/direct';`,
   ]) {
     expect(analyze(source).candidates).toContainEqual(
       expect.objectContaining({
@@ -558,6 +560,13 @@ it("recovers direct global location assignment while preserving uncertainty", ()
     `window = other; window.location = '/later';`,
     `if (condition) window.location = custom; window.location = '/later';`,
     `location.href += '/suffix';`,
+    `window.location.pathname += '/suffix';`,
+    `document.location.href += '/suffix';`,
+    `document.location.pathname += '/suffix';`,
+    `document.location = custom; document.location = '/later';`,
+    `document = other; document.location = '/later';`,
+    `document.location = (document = other, '/later');`,
+    `document.location = (eval('document=other'), '/later');`,
   ])
     expect(analyze(source).unresolved).toContainEqual(
       expect.objectContaining({ mechanism: "navigation-target" }),
@@ -566,12 +575,23 @@ it("recovers direct global location assignment while preserving uncertainty", ()
     `window.location = custom; window.location = '/later';`,
     `window = other; window.location = '/later';`,
     `if (condition) window.location = custom; window.location = '/later';`,
+    `document.location = custom; document.location = '/later';`,
+    `document = other; document.location = '/later';`,
+    `document.location = (document = other, '/later');`,
+    `document.location = (eval('document=other'), '/later');`,
   ])
     expect(
       analyze(source).candidates.some(({ path }) => path === "/later"),
     ).toBe(false);
   expect(
     analyze(`function f(window){window.location='/local'}`).candidates,
+  ).toEqual([]);
+  expect(
+    analyze(`function f(document){document.location='/local'}`).candidates,
+  ).toEqual([]);
+  expect(
+    analyze(`function f(document){document.location.pathname += '/local'}`)
+      .unresolved,
   ).toEqual([]);
 });
 

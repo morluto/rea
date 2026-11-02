@@ -303,6 +303,9 @@ export class JavaScriptRouteScan {
   #factBytes: number;
   #workBytes = 0;
   readonly #locationReader: ReturnType<typeof createGlobalReferenceReader>;
+  readonly #documentLocationReader: ReturnType<
+    typeof createGlobalReferenceReader
+  >;
   readonly #historyPushReader: ReturnType<typeof createGlobalReferenceReader>;
   readonly #historyReplaceReader: ReturnType<
     typeof createGlobalReferenceReader
@@ -315,6 +318,10 @@ export class JavaScriptRouteScan {
     readonly factByteBudget = JAVASCRIPT_STATIC_FACT_BYTES,
   ) {
     this.#locationReader = createGlobalReferenceReader(index.bindings, [
+      "location",
+    ]);
+    this.#documentLocationReader = createGlobalReferenceReader(index.bindings, [
+      "document",
       "location",
     ]);
     this.#historyPushReader = createGlobalReferenceReader(index.bindings, [
@@ -598,6 +605,10 @@ export class JavaScriptRouteScan {
       (globalReferenceNamespace(node.left, this.index.bindings, [
         "location",
       ]) !== undefined ||
+        globalReferenceNamespace(node.left, this.index.bindings, [
+          "document",
+          "location",
+        ]) !== undefined ||
         (t.isMemberExpression(node.left) &&
           ["href", "pathname"].includes(
             semanticStaticPropertyName(
@@ -647,26 +658,42 @@ export class JavaScriptRouteScan {
       t.isAssignmentExpression(node) &&
       node.operator !== "=" &&
       t.isMemberExpression(node.left) &&
-      semanticStaticPropertyName(node.left.property, node.left.computed) ===
-        "href" &&
-      globalReferenceNamespace(node.left.object, this.index.bindings, [
+      ["href", "pathname"].includes(
+        semanticStaticPropertyName(node.left.property, node.left.computed) ??
+          "",
+      ) &&
+      (globalReferenceNamespace(node.left.object, this.index.bindings, [
         "location",
-      ]) !== undefined
+      ]) !== undefined ||
+        globalReferenceNamespace(node.left.object, this.index.bindings, [
+          "document",
+          "location",
+        ]) !== undefined)
     ) {
       this.#ownDynamicValue(node.right, true, true, true);
       this.#unknown(
         "navigation-target",
         node,
-        "Compound location.href assignment depends on the current destination.",
+        "Compound location property assignment depends on the current destination.",
       );
       return;
     }
     if (
       t.isAssignmentExpression(node, { operator: "=" }) &&
-      globalReferenceNamespace(node.left, this.index.bindings, ["location"]) !==
-        undefined
+      (globalReferenceNamespace(node.left, this.index.bindings, [
+        "location",
+      ]) !== undefined ||
+        globalReferenceNamespace(node.left, this.index.bindings, [
+          "document",
+          "location",
+        ]) !== undefined)
     ) {
-      const identity = this.#locationReader(node.left, node);
+      const identity =
+        globalReferenceNamespace(node.left, this.index.bindings, [
+          "location",
+        ]) !== undefined
+          ? this.#locationReader(node.left, node)
+          : this.#documentLocationReader(node.left, node);
       if (identity.status === "unmodified") this.#navigation(node.right);
       else {
         this.#ownDynamicValue(node.right, true, true, true);
