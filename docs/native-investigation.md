@@ -201,6 +201,10 @@ remains valid. This tool
 has no dedicated CLI command; the existing `decompile` command remains the
 single-procedure CLI operation.
 
+`inspect_analysis_view` reads a summary, rows or one body from the retained
+record, an Evidence file or a portable bundle without repeating decompilation:
+see [selected batch results](mcp-contracts.md#selected-batch-decompile-results).
+
 Each batch schedules one provider read at a time, but has no shared input-count
 or aggregate retained-output allowance. It retains every requested row and full
 pseudocode body through Evidence construction. The MCP response budget checks
