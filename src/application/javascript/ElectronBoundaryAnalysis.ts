@@ -176,6 +176,9 @@ export const summarizeElectronBoundaries = (
         ({ finding }) => finding.channel === null,
       ).length,
       renderer_transmissions: ipc.filter(isRendererTransmission).length,
+      main_transmissions: ipc.filter(
+        ({ finding }) => finding.side === "main" && finding.mode === "send",
+      ).length,
       renderer_listeners: ipc.filter(
         ({ finding }) =>
           finding.side === "renderer" && finding.mode === "listen",

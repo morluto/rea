@@ -57,6 +57,15 @@ const inspect = (source: string) => {
 
 it.each([
   [
+    "ordinary send method",
+    `const socket = new Socket(); socket.send("message");`,
+  ],
+  [
+    "unsupported BrowserWindow send path",
+    `const {BrowserWindow} = require("electron");
+    const window = new BrowserWindow(); window.webContents.ipc.send("message");`,
+  ],
+  [
     "ordinary EventEmitter",
     `import {EventEmitter} from "node:events";
     const emitter = new EventEmitter(); emitter.on("event", listener);`,

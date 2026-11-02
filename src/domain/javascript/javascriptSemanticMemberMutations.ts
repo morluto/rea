@@ -6,6 +6,13 @@ import {
 } from "./javascriptSemanticAmbientWrites.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
 import {
+  resolveElectronBrowserWindowAllocation,
+  hasElectronBrowserWindowIdentity,
+  electronBrowserWindowReceiverMayHaveChanged,
+  type ElectronBrowserWindowAllocation,
+  type ElectronBrowserWindowIdentity,
+} from "./javascriptSemanticElectronReceiver.js";
+import {
   isIntrinsicTypedArrayConstruction,
   isTypedArrayNumericIndex,
 } from "./javascriptSemanticTypedArrays.js";
@@ -357,10 +364,15 @@ export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
   referenceMayHaveChangedAt: JavaScriptBindingIndex["referenceMayHaveChangedAt"],
+  electronIdentitySteps: (
+    allocations: Iterable<ElectronBrowserWindowAllocation | undefined>,
+  ) => Generator<void, ElectronBrowserWindowIdentity | undefined>,
 ): Generator<void, void> {
-  const deferredMapReceivers = new Set<
-    t.CallExpression | t.OptionalCallExpression
+  const deferredReceiverInvocations = new Map<
+    t.CallExpression | t.OptionalCallExpression,
+    ElectronBrowserWindowAllocation | undefined
   >();
+  let needsElectronIdentity = false;
   // The binding pass already retained callable nodes. Ordinary data-only code
   // must not pay an alias walk for every member read or assignment.
   const accessorKeys = {
@@ -1693,7 +1705,28 @@ export function* collectSemanticMemberMutationsSteps(
         // Constructing a member does not pass its container as `this`.
         if (!t.isNewExpression(node)) {
           const mapLookup = isIntrinsicMapLookup(node, state);
-          if (mapLookup === undefined) deferredMapReceivers.add(node);
+          const callee = unwrapJavaScriptExpression(node.callee).node;
+          const method =
+            t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
+              ? semanticStaticPropertyKey(callee.property, callee.computed)
+              : null;
+          const electronAllocation =
+            mapLookup === false &&
+            (method === "send" ||
+              method === "postMessage" ||
+              method === "loadFile" ||
+              method === "loadURL") &&
+            (t.isMemberExpression(callee) ||
+              t.isOptionalMemberExpression(callee))
+              ? resolveElectronBrowserWindowAllocation(
+                  callee.object,
+                  [method],
+                  state,
+                )
+              : undefined;
+          if (electronAllocation !== undefined) needsElectronIdentity = true;
+          if (mapLookup === undefined || electronAllocation !== undefined)
+            deferredReceiverInvocations.set(node, electronAllocation);
           else if (!mapLookup) markReceiver(node.callee, node);
         }
       } else if (t.isTaggedTemplateExpression(node)) {
@@ -1705,12 +1738,17 @@ export function* collectSemanticMemberMutationsSteps(
       }
     },
   });
+  // Shape admission uses only the shared allocation owner. Ordinary methods
+  // never request Electron identity work; all admitted calls share one query.
+  const electronIdentity = needsElectronIdentity
+    ? yield* electronIdentitySteps(deferredReceiverInvocations.values())
+    : undefined;
   // A later effect can make a previously defined destructuring source uncertain.
   // Reconsider defaults and iterable origins until their effects are stable.
   while (
     pendingReferences.length > 0 ||
     iterableReferences.length > 0 ||
-    deferredMapReceivers.size > 0
+    deferredReceiverInvocations.size > 0
   ) {
     const effectsBefore = recordedEffectCount;
     const iterablesBefore = iterableReferences.length;
@@ -1813,18 +1851,26 @@ export function* collectSemanticMemberMutationsSteps(
         reference,
       );
     }
-    // Native Map lookup methods do not expose their receiver to user code.
+    // Proven native operations do not expose their receiver to user code.
     // Settle genuine effects first, then replay every unproven receiver escape.
     // Keep proven sites until convergence: later propagated effects can revoke them.
     let receiverIndex = 0;
-    for (const node of deferredMapReceivers) {
+    for (const [node, allocation] of deferredReceiverInvocations) {
       if (receiverIndex++ % 64 === 0) yield;
       if (
         isIntrinsicMapLookup(node, state, { referenceMayHaveChangedAt }) ===
-        true
+          true ||
+        (allocation !== undefined &&
+          electronIdentity !== undefined &&
+          hasElectronBrowserWindowIdentity(allocation, electronIdentity) &&
+          !electronBrowserWindowReceiverMayHaveChanged(
+            allocation,
+            node,
+            referenceMayHaveChangedAt,
+          ))
       )
         continue;
-      deferredMapReceivers.delete(node);
+      deferredReceiverInvocations.delete(node);
       markReceiver(node.callee, node);
     }
     if (

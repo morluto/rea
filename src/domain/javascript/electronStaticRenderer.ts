@@ -5,11 +5,12 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import type { JavaScriptBindingIndex } from "./javascriptSemanticState.js";
 import {
-  semanticStableInitializer,
-  type JavaScriptBindingIndex,
-} from "./javascriptSemanticState.js";
+  resolveElectronBrowserWindowAllocation,
+  hasElectronBrowserWindowIdentity,
+  electronBrowserWindowReceiverMayHaveChanged,
+} from "./javascriptSemanticElectronReceiver.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
@@ -49,74 +50,27 @@ export const resolveElectronBrowserWindowReceiver = (
 ):
   | { readonly owner: t.NewExpression; readonly path: readonly string[] }
   | undefined => {
-  let receiver = unwrapJavaScriptExpression(node).node;
-  const path = [...suffix];
-  const seen = new Set<string>();
-  const aliases: { receiver: t.Identifier; path: readonly string[] }[] = [];
-  for (;;) {
-    if (
-      t.isMemberExpression(receiver) ||
-      t.isOptionalMemberExpression(receiver)
-    ) {
-      const member = semanticStaticPropertyKey(
-        receiver.property,
-        receiver.computed,
-      );
-      if (member === null) return undefined;
-      path.unshift(member);
-      receiver = unwrapJavaScriptExpression(receiver.object).node;
-      continue;
-    }
-    if (!t.isIdentifier(receiver)) break;
-    const binding = index.bindingForReferenceAt(receiver);
-    if (binding === undefined || seen.has(binding.bindingId)) return undefined;
-    seen.add(binding.bindingId);
-    const initializer = semanticStableInitializer(binding, index.bindings);
-    if (
-      initializer === undefined ||
-      initializer.projection.length !== 0 ||
-      !semanticBindingAtRead(binding, receiver, index.bindings.parentsByNode)
-        .hasDefiniteInitializer
-    )
-      return undefined;
-    aliases.push({ receiver, path: [...path] });
-    receiver = unwrapJavaScriptExpression(initializer.node).node;
-  }
-  if (!t.isNewExpression(receiver)) return undefined;
-  const constructor = electronCalleePath(receiver.callee, context);
+  const allocation = resolveElectronBrowserWindowAllocation(
+    node,
+    suffix,
+    index.bindings,
+  );
   if (
-    constructor?.length !== 1 ||
-    constructor[0] !== "BrowserWindow" ||
-    !supportedReceiverPath(path)
-  )
-    return undefined;
-  if (
-    context.electronExportIntact?.([
-      "electron",
-      "BrowserWindow",
-      "prototype",
-      ...path,
-    ]) !== true
+    allocation === undefined ||
+    !hasElectronBrowserWindowIdentity(allocation, {
+      constructorPath: (callee) => electronCalleePath(callee, context),
+      intactExport: (path) => context.electronExportIntact?.(path) === true,
+    })
   )
     return undefined;
   // Only source-proven supported receivers justify the whole-file mutation pass.
   // Keep every alias's consumed path and check at the original invocation site.
   completeSemanticSteps(index.indexMemberMutationFactsSteps());
-  for (const alias of aliases)
-    if (index.referenceMayHaveChangedAt(site, alias.receiver, alias.path))
-      return undefined;
-  return { owner: receiver, path };
-};
-
-const supportedReceiverPath = (path: readonly string[]): boolean => {
-  const operation = path.at(-1);
-  if (operation === "loadFile" || operation === "loadURL")
-    return (
-      path.length === 1 || (path.length === 2 && path[0] === "webContents")
-    );
-  return (
-    path[0] === "webContents" &&
-    ((path.length === 3 && path[1] === "ipc") ||
-      (path.length === 4 && path[1] === "mainFrame" && path[2] === "ipc"))
-  );
+  return electronBrowserWindowReceiverMayHaveChanged(
+    allocation,
+    site,
+    index.referenceMayHaveChangedAt,
+  )
+    ? undefined
+    : { owner: allocation.owner, path: allocation.path };
 };

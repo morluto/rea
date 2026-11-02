@@ -22,7 +22,6 @@ import type {
   ElectronCallPath,
   ElectronCallPathStep,
   ElectronContextBridgeFinding,
-  ElectronIpcDescriptor,
   ElectronIpcFinding,
   ElectronStaticValue,
 } from "./electronStaticAnalysisTypes.js";
@@ -926,7 +925,7 @@ export function* collectElectronWrappedCallPathsSteps(
   };
   const ipc = (
     node: t.CallExpression | t.OptionalCallExpression,
-    descriptor: ElectronIpcDescriptor,
+    descriptor: NonNullable<ReturnType<typeof ipcDescriptor>>,
     args: readonly SymbolicValue[],
     context: PathContext,
     endpoint: string,

@@ -79,7 +79,6 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
   z.union([
     z.strictObject({
       ...findingContext,
-      receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
@@ -88,7 +87,6 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
     }),
     z.strictObject({
       ...findingContext,
-      receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
       invocation_channels: z.literal("literal").exactOptional(),
@@ -101,37 +99,50 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
 const ipc = z
   .union([
     ipcChannel({
+      side: z.literal("main"),
+      operation: z.enum(["send", "post-message"]),
+      mode: z.literal("send"),
+      receiver: ipcReceiver.unwrap(),
+      ...nullHandler,
+    }),
+    ipcChannel({
       side: z.literal("renderer"),
+      receiver: ipcReceiver,
       operation: z.enum(["send", "send-sync", "post-message", "send-to-host"]),
       mode: z.literal("send"),
       ...nullHandler,
     }),
     ipcChannel({
       side: z.literal("renderer"),
+      receiver: ipcReceiver,
       operation: z.literal("invoke"),
       mode: z.literal("invoke"),
       ...nullHandler,
     }),
     ipcChannel({
       side: z.enum(["renderer", "main"]),
+      receiver: ipcReceiver,
       operation: z.enum(["on", "once"]),
       mode: z.literal("listen"),
       ...missingHandler,
     }),
     ipcChannel({
       side: z.enum(["renderer", "main"]),
+      receiver: ipcReceiver,
       operation: z.enum(["on", "once"]),
       mode: z.literal("listen"),
       ...locatedHandler,
     }),
     ipcChannel({
       side: z.literal("main"),
+      receiver: ipcReceiver,
       operation: z.enum(["handle", "handle-once"]),
       mode: z.literal("handle"),
       ...missingHandler,
     }),
     ipcChannel({
       side: z.literal("main"),
+      receiver: ipcReceiver,
       operation: z.enum(["handle", "handle-once"]),
       mode: z.literal("handle"),
       ...locatedHandler,
