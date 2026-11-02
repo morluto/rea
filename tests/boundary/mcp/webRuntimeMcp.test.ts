@@ -11,8 +11,10 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import {
+  negativeColumnScript,
   runtimeSourceA,
   runtimeSourceB,
+  startNegativeColumnBrowser,
   startRuntimeBrowser,
 } from "../../fixtures/webRuntime.js";
 
@@ -175,6 +177,94 @@ cliTest(
         },
       });
     }
+  },
+  20_000,
+);
+
+cliTest(
+  "delivers negative columns Chrome reports through MCP and the compiled CLI",
+  async ({ cli }) => {
+    const browser = await startNegativeColumnBrowser();
+    const provider = new CdpWebRuntimeProvider();
+    const session = createTestBinarySession(() => {
+      throw new Error("Binary provider must not start");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      { webRuntime: new WebRuntimeService(provider) },
+    );
+    const client = new Client({
+      name: "runtime-negative-columns",
+      version: "1",
+    });
+    onTestFinished(async () => {
+      await client.close();
+      await server.close();
+      await provider.close();
+      await session.close();
+      await browser.close();
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const advertised = (await client.listTools()).tools.find(
+      ({ name }) => name === "inspect_web_event_listeners",
+    )?.outputSchema;
+    if (advertised === undefined)
+      throw new Error("Missing advertised listener output schema");
+    const outputSchema: Record<string, unknown> = advertised;
+    const response = await client.callTool({
+      name: "inspect_web_event_listeners",
+      arguments: {
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        allowed_origins: [browser.allowedOrigin],
+        selector: "#selected",
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    expect(
+      ajv.validate(outputSchema, response.structuredContent),
+      JSON.stringify(ajv.errors),
+    ).toBe(true);
+    const cliResult = await cli.run({
+      arguments: [
+        "inspect-web-event-listeners",
+        browser.endpoint,
+        "allowed-page",
+        "#selected",
+        "--allowed-origins",
+        browser.allowedOrigin,
+        "--json",
+      ],
+      environment: process.env,
+    });
+    expect(cliResult.exitCode).toBe(0);
+    for (const evidence of [
+      toolContract("inspect_web_event_listeners").outputSchema.parse(
+        response.structuredContent,
+      ),
+      cliResult.json,
+    ])
+      expect(parseEvidence(evidence).normalized_result).toMatchObject({
+        listeners: [
+          {
+            location: {
+              script_id: negativeColumnScript.scriptId,
+              line_number: 21,
+              column_number: -50,
+            },
+          },
+        ],
+        sources: [
+          {
+            script_id: negativeColumnScript.scriptId,
+            resource_start: { line_number: 21, column_number: -60 },
+          },
+        ],
+      });
   },
   20_000,
 );

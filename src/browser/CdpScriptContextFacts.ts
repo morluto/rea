@@ -6,6 +6,13 @@ import {
 } from "./CdpCaptureValues.js";
 
 const integer = z.int().min(0);
+/**
+ * CDP declares resource columns as plain integers. Chrome reports a negative
+ * start column for some inline scripts, and positions on a script's first line
+ * include its start column, so the reported column is kept rather than
+ * refusing the whole observation.
+ */
+export const cdpResourceColumnSchema = z.int();
 const contextAuxDataSchema = z
   .object({
     frameId: z.string().optional(),
@@ -31,9 +38,9 @@ export const runtimeScriptParsedSchema = scriptDeclaration.extend({
   scriptId: z.string().min(1),
   executionContextId: integer,
   startLine: integer,
-  startColumn: integer,
+  startColumn: cdpResourceColumnSchema,
   endLine: integer,
-  endColumn: integer,
+  endColumn: cdpResourceColumnSchema,
   hash: z.string().optional(),
   sourceMapURL: z.string().optional(),
   hasSourceURL: z.boolean().optional(),
