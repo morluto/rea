@@ -10,11 +10,13 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { RequestError } from "@octokit/request-error";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import {
   applyReleasePleasePatch,
+  describeReleaseProposalError,
   releaseProposalSearchDepth,
 } from "../../../scripts/lib/release-proposal.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -33,12 +35,104 @@ const silent = {
   trace() {},
 };
 
+it("reports an HTTP status when a release proposal error has no message", () => {
+  const failure = Object.assign(new Error(""), {
+    name: "HttpError",
+    status: 504,
+    request: { headers: { authorization: "secret" } },
+  });
+  expect(describeReleaseProposalError(failure)).toBe("HttpError (HTTP 504)");
+  expect(describeReleaseProposalError(new Error("broken"))).toBe("broken");
+});
+
 beforeAll(async () => {
   upstream = await import("release-please");
   githubRuntime = require("release-please/build/src/github.js");
 });
 
 afterEach(() => vi.restoreAllMocks());
+
+it("preserves the existing overflow notes if their replacement fails", async () => {
+  const write = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("upload failed"))
+    .mockResolvedValueOnce({
+      data: { content: { html_url: "https://example.test/notes" } },
+    });
+  const getContent = vi.fn().mockResolvedValue({
+    data: { type: "file", sha: "existing-blob" },
+  });
+  const createNewBranch = vi.fn();
+  const forkBranch = vi.fn();
+  const github = {
+    repository: { owner: "fixture", repo: "rea" },
+    getBranchSha: vi.fn().mockResolvedValue("existing-branch"),
+    createNewBranch,
+    forkBranch,
+    octokit: { repos: { getContent, createOrUpdateFileContents: write } },
+  } as unknown as Awaited<ReturnType<typeof upstream.GitHub.create>>;
+  const update = () =>
+    upstream.GitHub.prototype.createFileOnNewBranch.call(
+      github,
+      "release-notes.md",
+      "Notes: café",
+      "notes",
+      "main",
+    );
+  await expect(update()).rejects.toThrow("upload failed");
+  expect(forkBranch).not.toHaveBeenCalled();
+  expect(createNewBranch).not.toHaveBeenCalled();
+  await expect(update()).resolves.toBe("https://example.test/notes");
+  expect(write).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      branch: "notes",
+      sha: "existing-blob",
+      content: Buffer.from("Notes: café", "utf8").toString("base64"),
+    }),
+  );
+});
+
+it("creates overflow notes on a new branch without requiring an existing file", async () => {
+  const write = vi.fn().mockResolvedValue({
+    data: { content: { html_url: "https://example.test/notes" } },
+  });
+  const createNewBranch = vi.fn();
+  const github = {
+    repository: { owner: "fixture", repo: "rea" },
+    getBranchSha: vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce("base-sha"),
+    createNewBranch,
+    octokit: {
+      repos: {
+        getContent: vi.fn().mockRejectedValue(
+          new RequestError("missing", 404, {
+            request: {
+              method: "GET",
+              url: "https://example.test/notes",
+              headers: {},
+            },
+          }),
+        ),
+        createOrUpdateFileContents: write,
+      },
+    },
+  } as unknown as Awaited<ReturnType<typeof upstream.GitHub.create>>;
+  await expect(
+    upstream.GitHub.prototype.createFileOnNewBranch.call(
+      github,
+      "release-notes.md",
+      "Notes",
+      "notes",
+      "main",
+    ),
+  ).resolves.toBe("https://example.test/notes");
+  expect(createNewBranch).toHaveBeenCalledWith("notes", "base-sha");
+  expect(write).toHaveBeenCalledWith(
+    expect.not.objectContaining({ sha: expect.anything() }),
+  );
+});
 
 function respond(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
