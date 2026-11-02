@@ -349,6 +349,10 @@ describe("Classic-script global function activation", () => {
     "this.createWindow();",
     "const root = globalThis; root.createWindow();",
     "const root = window; const alias = root; alias.createWindow();",
+    "const root = globalThis.window; root.createWindow();",
+    "const { root } = { root: globalThis }; root.createWindow();",
+    "const key = 'createWindow'; globalThis[key]();",
+    "with ({}) { createWindow(); }",
   ])("keeps early global access unresolved: %s", (activation) => {
     const body = (early: boolean) => `
       const { BrowserWindow } = require("electron");
@@ -387,6 +391,38 @@ describe("Classic-script global function activation", () => {
         { name: "nodeIntegration", value: { status: "literal", value: true } },
       ],
     });
+  });
+
+  it("keeps callbacks in hoisted default parameters uncertain", () => {
+    const source = `
+      const { BrowserWindow } = require("electron");
+      createWindow();
+      const webPreferences = { nodeIntegration: true };
+      function createWindow(make = () => new BrowserWindow({ webPreferences })) { return make(); }
+    `;
+    expect(() =>
+      runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) }),
+    ).toThrow(/before initialization/);
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({ web_preferences_status: "dynamic", web_preferences: [] });
+  });
+
+  it("keeps a long flat global alias chain stack safe", () => {
+    const aliases = ["const root0 = globalThis;"];
+    for (let index = 1; index < 6000; index++)
+      aliases.push("const root" + index + " = root" + (index - 1) + ";");
+    const source = `
+      const { BrowserWindow } = require("electron");
+      ${aliases.join("\n")}
+      root5999.createWindow();
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();
+    `;
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({ web_preferences_status: "dynamic", web_preferences: [] });
   });
 
   it("does not confuse an unrelated parameter with the module function", () => {

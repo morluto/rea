@@ -870,24 +870,62 @@ const moduleFunctionFirstRead = (
       firstStatement === undefined ? undefined : parents.get(firstStatement);
     const classicScript =
       t.isProgram(program) && program.sourceType === "script";
-    const globalReceiver = (
-      input: t.Node,
-      seen = new Set<string>(),
-    ): boolean => {
-      const node = unwrapJavaScriptExpression(input).node;
-      if (t.isThisExpression(node)) return true;
-      if (!t.isIdentifier(node)) return false;
-      const binding =
-        state === undefined
-          ? undefined
-          : resolveSemanticBindingState(state, node, node.name);
-      if (binding === undefined)
-        return ["globalThis", "window", "self"].includes(node.name);
-      if (seen.has(binding.bindingId)) return false;
-      seen.add(binding.bindingId);
-      return binding.initializers.some(({ node: value }) =>
-        globalReceiver(value, seen),
-      );
+    const globalReceivers = new WeakMap<t.Node, boolean | null>();
+    const globalReceiver = (input: t.Node): boolean | null => {
+      if (globalReceivers.has(input)) return globalReceivers.get(input) ?? null;
+      const pending = [input];
+      const seen = new Set<t.Node>();
+      let unknown = false;
+      let global = false;
+      while (pending.length > 0) {
+        const current = pending.pop();
+        if (current === undefined) continue;
+        if (seen.has(current)) {
+          unknown = true;
+          continue;
+        }
+        seen.add(current);
+        if (globalReceivers.has(current)) {
+          const cached = globalReceivers.get(current);
+          if (cached === true) global = true;
+          if (cached === null) unknown = true;
+          continue;
+        }
+        const node = unwrapJavaScriptExpression(current).node;
+        if (t.isThisExpression(node)) global = true;
+        else if (t.isIdentifier(node)) {
+          const binding =
+            state === undefined
+              ? undefined
+              : resolveSemanticBindingState(state, node, node.name);
+          if (binding === undefined) {
+            if (["globalThis", "window", "self"].includes(node.name))
+              global = true;
+            else unknown = true;
+          } else {
+            if (
+              binding.initializers.length === 0 ||
+              binding.referenceInitializers.length > 0
+            )
+              unknown = true;
+            for (const initializer of binding.initializers) {
+              if (initializer.projection.length > 0) unknown = true;
+              else pending.push(initializer.node);
+            }
+          }
+        } else if (
+          !t.isObjectExpression(node) &&
+          !t.isArrayExpression(node) &&
+          !t.isLiteral(node) &&
+          !t.isFunction(node)
+        )
+          unknown = true;
+      }
+      const result = global ? true : unknown ? null : false;
+      globalReceivers.set(input, result);
+      // These are conservative may-alias facts, shared within this source scan.
+      for (const node of seen) globalReceivers.set(node, result);
+      return result;
     };
     const active = new Set<t.Function>();
     for (let index = 0; index < body.length; index++) {
@@ -908,6 +946,19 @@ const moduleFunctionFirstRead = (
                 ? undefined
                 : resolveSemanticBindingState(state, node, node.name);
             if (
+              candidate != null &&
+              state !== undefined &&
+              semanticResolutionBlocked(state, node, node.name)
+            ) {
+              const current = indexedReads.get(candidate);
+              if (current !== null && current !== undefined)
+                indexedReads.set(
+                  candidate,
+                  active.size > 0 ? null : Math.min(current, index),
+                );
+              return;
+            }
+            if (
               state === undefined ||
               (candidate != null &&
                 binding?.initializers.some(
@@ -922,8 +973,21 @@ const moduleFunctionFirstRead = (
             const receiver = unwrapJavaScriptExpression(node.object).node;
             // Classic scripts expose hoisted functions through the global object.
             // Property names are not referenced identifiers; keep their read timing too.
-            if (globalReceiver(receiver))
+            if (globalReceiver(receiver) !== false) {
               name = semanticStaticPropertyKey(node.property, node.computed);
+              if (name === null) {
+                for (const fn of functions.values()) {
+                  if (fn == null) continue;
+                  const current = indexedReads.get(fn);
+                  if (current !== null && current !== undefined)
+                    indexedReads.set(
+                      fn,
+                      active.size > 0 ? null : Math.min(current, index),
+                    );
+                }
+                return;
+              }
+            }
           }
           if (name === null) return;
           const fn = functions.get(name);
@@ -1068,8 +1132,10 @@ export const semanticBindingAtRead = (
       let owner = parents.get(enclosingFunction);
       owner !== undefined;
       owner = parents.get(owner)
-    )
+    ) {
+      if (t.isFunction(owner)) return null;
       if (t.isStatement(owner)) return statementPosition(owner, parents);
+    }
     return null;
   };
   const functionPosition = moduleConstBinding
