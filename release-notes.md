@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **kuna:** separate verification policy from analysis identity ([#8699](https://github.com/morluto/rea/issues/8699))
 * Strict clients that cached the previous full inspect_address_context output schema must refresh tools/list and accept the typed error field on unavailable facets.
 * **evidence:** validate native view parent predicates ([#8451](https://github.com/morluto/rea/issues/8451))
 * preserve feature traces when owner lookup is unavailable ([#8368](https://github.com/morluto/rea/issues/8368))
@@ -478,6 +479,7 @@
 * **kuna:** bind cached export reads to verified file state ([bf876ef](https://github.com/morluto/rea/commit/bf876efbaa48a0e6edb515c65b0682175cb9441d))
 * **kuna:** omit Mach-O data symbols from the procedure inventory ([#8335](https://github.com/morluto/rea/issues/8335)) ([a36c9dd](https://github.com/morluto/rea/commit/a36c9dd9c8d2ff1a1a3d1d16ad30753b84b7946d))
 * **kuna:** report document failures as typed codes ([#8064](https://github.com/morluto/rea/issues/8064)) ([3b64713](https://github.com/morluto/rea/commit/3b647132c6221f644cac620016b7cf0a2b548549))
+* **kuna:** separate verification policy from analysis identity ([#8699](https://github.com/morluto/rea/issues/8699)) ([75c3cab](https://github.com/morluto/rea/commit/75c3cab5401dd48b831c1405ff4589af84f30614))
 * **ledger:** honor every selected fixture proof ([#7931](https://github.com/morluto/rea/issues/7931)) ([e0719cf](https://github.com/morluto/rea/commit/e0719cffa411a39af4c88868c4db653a8e5e28e7))
 * **ledger:** withhold readiness for unresolved evidence ([#7928](https://github.com/morluto/rea/issues/7928)) ([6349164](https://github.com/morluto/rea/commit/63491645fd007e3b71a63c05c5dd0ea937b2ee9b))
 * **lifecycle:** preserve source failures and native workspace diagnostics ([4a82054](https://github.com/morluto/rea/commit/4a8205456c8eb14199e9a50ddbdb2ab51f2453a8))
