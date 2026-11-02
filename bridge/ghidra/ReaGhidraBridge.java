@@ -2609,11 +2609,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * thunk heuristic). Neither outcome separates a dispatch from an indirect
      * tail call, so targets stay unknown either way.
      *
-     * Warnings are read only from the decompiler's comment tokens, so string
-     * literals cannot supply one, and a comment that a caller stored in the
-     * listing is not mistaken for a decompiler warning. Each warning address is
-     * parsed by the program's AddressFactory, so segmented and space-qualified
-     * spellings resolve to the address Ghidra means. The inventory keeps at
+     * Warning provenance uses the decompiler comment token's typed source
+     * Address, not a parsed printed coordinate. Matching caller-authored
+     * comment occurrences at the same source are discounted. The inventory keeps at
      * most MAX_UNRESOLVED_INDIRECT_BRANCHES sites and
      * MAX_INDIRECT_BRANCH_LISTING_TARGETS listing targets per site, and
      * reports how many it omitted.
@@ -2693,14 +2691,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
-    /**
-     * Decompiler-authored "Could not recover jumptable" warnings by address.
-     * Ghidra emits each comment word as its own comment token, with spaces as
-     * whitespace syntax tokens and wrapped lines as breaks. The markup is
-     * rebuilt as text with every character marked by its token kind, and a
-     * warning is accepted only when its whole span is comment text or
-     * whitespace, so code tokens such as string literals never contribute.
-     */
     /**
      * Match complete decompiler comment tokens and retain their typed source
      * coordinates. Printed warning addresses lose overlay and address-unit identity.
@@ -2799,7 +2789,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 String comment = listing.getComment(type, address);
                 if (comment == null) continue;
                 java.util.regex.Matcher matcher = DECOMPILER_JUMP_TABLE_FAILURE.matcher(
-                    comment.replace("\r", "").replace('\t', ' ')
+                    comment.replaceAll("\\s+", " ")
                 );
                 while (matcher.find()) {
                     authored.computeIfAbsent(address, ignored -> new ArrayList<>())
