@@ -79,7 +79,6 @@ class NativeUiFixtureOwner {
   #launching;
   #launcher;
   #ownership;
-  #familyReleased = false;
   #released = false;
   #closing;
 
@@ -176,7 +175,9 @@ class NativeUiFixtureOwner {
     // Join acquisition: a launcher created before the abort stays owned here.
     await this.#launching?.catch(() => undefined);
     try {
-      // Attempt each: a stuck launcher must not spare a token-proven fixture.
+      // Attempt each: a stuck launcher must not spare a token-proven fixture. A clean
+      // sweep proves nothing while a launch can still start, so every attempt sweeps
+      // again and only an attempt whose steps all succeeded removes the root.
       await closeVerifierResources([
         () => this.#stopLauncher(),
         () => this.#retireApplication(),
@@ -218,13 +219,12 @@ class NativeUiFixtureOwner {
   }
 
   async #sweepFixture() {
-    if (this.#ownership === undefined || this.#familyReleased) return;
+    if (this.#ownership === undefined) return;
     const result = await cleanupOwnedProcessGroup(this.#ownership);
     if (!result.cleaned)
       throw new Error(`Native UI fixture processes: ${result.reason}`, {
         cause: result,
       });
-    this.#familyReleased = true;
   }
 }
 

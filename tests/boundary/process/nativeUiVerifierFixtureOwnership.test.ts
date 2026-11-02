@@ -37,7 +37,10 @@ if (config.launcher === "ignores-term") process.on("SIGTERM", () => undefined);
 const environment = { ...process.env };
 // A launch service holds no run token; only the app it starts receives one.
 const inFlight = config.launcher === "in-flight";
-if (inFlight) delete environment.REA_PROCESS_RUN_ID;
+if (inFlight) {
+  environment.PENDING_RUN_TOKEN = environment.REA_PROCESS_RUN_ID;
+  delete environment.REA_PROCESS_RUN_ID;
+}
 const entry = new URL(inFlight ? "./launch-service.mjs" : "./fixture.mjs", import.meta.url).pathname;
 const coordinates = args[args.indexOf("--stdout") + 1];
 spawn(process.execPath, [entry, args.at(-1), coordinates], {
@@ -77,16 +80,27 @@ const report = await runNativeUiFixtureLane(async (fixture) => {
 process.stdout.write(JSON.stringify(report) + "\\n");
 `;
 
-// Stands in for the launch service that keeps working after the launcher dies.
+// Stands in for the launch service that keeps working after the launcher dies. The
+// launch can start only while its application path exists, once the gate opens.
 const launchServiceSource = `
+import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
-const [application] = process.argv.slice(2);
+const [application, coordinates] = process.argv.slice(2);
 appendFileSync(config.events, JSON.stringify({ kind: "launch-service", pid: process.pid }) + "\\n");
 setTimeout(() => process.exit(0), 60000);
 setInterval(() => {
-  if (existsSync(application)) return;
-  appendFileSync(config.events, JSON.stringify({ kind: "launch-refused" }) + "\\n");
+  if (!existsSync(application)) {
+    appendFileSync(config.events, JSON.stringify({ kind: "launch-refused" }) + "\\n");
+    process.exit(0);
+  }
+  if (!existsSync(config.launchGate)) return;
+  const { PENDING_RUN_TOKEN, ...environment } = process.env;
+  spawn(process.execPath, [new URL("./fixture.mjs", import.meta.url).pathname, application, coordinates], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...environment, REA_PROCESS_RUN_ID: PENDING_RUN_TOKEN },
+  }).unref();
   process.exit(0);
 }, 2);
 `;
@@ -254,6 +268,7 @@ const createScenario = async (config: ScenarioConfig = {}) => {
     readyGate: join(workspace, "ready-gate"),
     releaseGate: join(workspace, "release-gate"),
     removalGate: join(workspace, "removal-gate"),
+    launchGate: join(workspace, "launch-gate"),
     launcherEntry: join(workspace, "launcher.mjs"),
   };
   await writeFile(paths.events, "");
@@ -581,6 +596,42 @@ posixIt(
       async () => !(await isLive(fixture.member ?? -1)),
       "the unproven member to exit",
     );
+    await expectReleased(owner, scenario, fixture.pid);
+  },
+);
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "kills a fixture that starts after a refused retirement before retrying root removal",
+  { timeout: 30_000 },
+  async () => {
+    const scenario = await createScenario({ launcher: "in-flight" });
+    const { owner, launch } = await launchedOwner(scenario, 300);
+    await expect(launch).rejects.toThrow("failed to expose one window");
+    await waitUntil(
+      async () =>
+        (await scenario.events()).some(({ kind }) => kind === "launch-service"),
+      "the launch to be admitted",
+    );
+    // A read-only root is an actual refusal of the rename that retires the path.
+    await chmod(owner.root, 0o500);
+    onTestFinished(async () => {
+      await chmod(owner.root, 0o700).catch(() => undefined);
+    });
+    const refusal = await owner.close().then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(refusal).toBeInstanceOf(NativeUiFixtureCleanupFailure);
+    expect((refusal as Error).message).toContain("EACCES");
+    expect(existsSync(owner.root)).toBe(true);
+
+    // The sweep in that attempt found nothing; only now does the launch start.
+    await writeFile(scenario.paths.launchGate, "");
+    const fixture = await scenario.started();
+    expect(await isLive(fixture.pid)).toBe(true);
+    expect(existsSync(owner.root)).toBe(true);
+
+    await chmod(owner.root, 0o700);
     await expectReleased(owner, scenario, fixture.pid);
   },
 );
