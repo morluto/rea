@@ -14,6 +14,7 @@ const EXTERNAL = 'e=>{"use strict";e.exports=require("electron")}';
 const CONSUMER =
   'const s=n(45840);new s.BrowserWindow({webPreferences:{preload:"./preload.js",contextIsolation:!1}});' +
   's.ipcMain.handle("get-connections",async()=>[]);';
+const GETTER_CONSUMER = "const s=n.n(n(45840));new (s().BrowserWindow)({});";
 
 const electronOf = (source: string) =>
   analyzeJavaScriptStaticSource(source).electron;
@@ -75,7 +76,6 @@ describe("Electron identity through Webpack externals", () => {
     expect(electronOf(source).browser_windows).toEqual([]);
   });
 
-  const GETTER_CONSUMER = "const s=n.n(n(45840));new (s().BrowserWindow)({});";
   it.each([
     ["Reflect.set", 'Reflect.set(n,"n",e=>()=>({BrowserWindow:class{}}));'],
     [
@@ -178,6 +178,57 @@ describe("Electron identity through Webpack externals", () => {
     ],
   ])("keeps %s unresolved", (_name, source) => {
     expectUnresolved(source);
+  });
+});
+
+describe("Webpack interop alias ownership bounds", () => {
+  it("keeps Electron identity when many unrelated alias chains exceed the old per-write walk bound", () => {
+    // A long empty-projection alias chain ending at a plain object used to make
+    // loaderMayOwnReference hit SEMANTIC_ALIAS_SELECTION_LIMIT (512) and treat
+    // the write as a loader mutation, withholding BrowserWindow facts.
+    const chain: string[] = ["var o0={}"];
+    for (let index = 1; index <= 600; index += 1)
+      chain.push(`,o${String(index)}=o${String(index - 1)}`);
+    chain.push(`;o600.p=1;`);
+    const source = bootstrap(EXTERNAL, CONSUMER, `${chain.join("")}n(100);`);
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.electron.browser_windows).toHaveLength(1);
+    expect(analysis.electron.ipc).toMatchObject([
+      { channel: "get-connections", side: "main" },
+    ]);
+    expect(
+      analysis.analysis_coverage?.examination.semantic_resource_limits ?? [],
+    ).not.toContain("alias-selections");
+  });
+
+  it("keeps Electron after a reassigned loader alias mutates a fresh object", () => {
+    // copy was once an alias of n; after copy={}, copy.n=1 must not count as a
+    // second loader-getter write or n.n consumers lose Electron facts.
+    const source = bootstrap(
+      EXTERNAL,
+      GETTER_CONSUMER,
+      "var copy=n;copy={};copy.n=1;n(100);",
+    );
+    expect(electronOf(source).browser_windows).toHaveLength(1);
+  });
+
+  it("keeps Electron when many unused shallow loader aliases exceed the old ownership expansion bound", () => {
+    // Fan-out of unused var aN=n declarations must not invalidate the getter
+    // proof via alias-selections; ownership expansion is not a write walk.
+    const aliases = Array.from(
+      { length: 513 },
+      (_, index) => `a${String(index)}=n`,
+    ).join(",");
+    const source = bootstrap(
+      EXTERNAL,
+      GETTER_CONSUMER,
+      `var ${aliases};n(100);`,
+    );
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.electron.browser_windows).toHaveLength(1);
+    expect(
+      analysis.analysis_coverage?.examination.semantic_resource_limits ?? [],
+    ).not.toContain("alias-selections");
   });
 });
 
