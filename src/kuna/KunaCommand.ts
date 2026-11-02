@@ -341,6 +341,28 @@ export const copyAndHash = async (
   };
 };
 
+/**
+ * The same run takes as long again, so only a longer deadline helps. Only a
+ * session that outlives this request can also read the later project export.
+ */
+export const kunaTimeoutRecovery = (
+  setting: string,
+  subcommand: string,
+): {
+  readonly remediationAction: string;
+  readonly continuingCallerGuidance?: { readonly remediationAction: string };
+} => {
+  const remediationAction = `Raise ${setting} in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.`;
+  return subcommand === "decompile"
+    ? {
+        remediationAction,
+        continuingCallerGuidance: {
+          remediationAction: `${remediationAction} Within a session, pseudocode is also read from the project export once it finishes.`,
+        },
+      }
+    : { remediationAction };
+};
+
 /** Map an owned-command failure to its typed error, keeping unproven cleanup owned. */
 const commandFailure = (
   cause: unknown,
@@ -391,12 +413,7 @@ const commandFailure = (
     primary = new AnalysisTimeoutError(operation, ms, {
       ...details,
       userMessage: `kuna ${subcommand} did not finish within ${setting} (${String(ms)} ms).`,
-      // The same run takes as long again, so only a longer deadline helps.
-      remediationAction: `Raise ${setting} in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.${
-        subcommand === "decompile"
-          ? " Within a session, pseudocode is also read from the project export once it finishes."
-          : ""
-      }`,
+      ...kunaTimeoutRecovery(setting, subcommand),
     });
   }
   // The same input overflows the same fixed buffer; waiting cannot help.

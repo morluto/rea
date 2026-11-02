@@ -387,7 +387,7 @@ cliTest(
 );
 
 cliTest(
-  "rejects repeated-range expansion before hashing members or creating extraction output",
+  "rejects repeated-range expansion without creating extraction output",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pck-expansion-");
     const source = join(root, "aliased.pck");

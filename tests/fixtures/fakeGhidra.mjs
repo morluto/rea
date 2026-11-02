@@ -13,6 +13,7 @@ const {
   targetSha256,
   transport,
   mode = "success",
+  handshakeReports = {},
 } = configuration ?? {};
 
 if (
@@ -264,6 +265,24 @@ const handleRequest = (socket, server, request, state) => {
       return;
     }
   }
+  // The bridge's per-procedure deadline: only this request fails.
+  if (
+    state.mode === "decompile_timed_out" &&
+    request.method === "procedure_pseudo_code"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "decompile_timed_out",
+          message:
+            "Ghidra decompilation of 0x1000 exceeded the 1-second configured decompilation limit (ghidra.decompile_timeout_seconds; launch seed REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)",
+        },
+      })}\n`,
+    );
+    return;
+  }
   if (request.method === "address_to_file_offset") {
     socket.write(
       `${JSON.stringify({ id: request.id, ...fileOffsetReply(request.params.address) })}\n`,
@@ -368,14 +387,17 @@ const handlePing = (socket, request, state) => {
     return;
   }
   if (state.mode === "hang_after_start" && state.pings.value > 1) return;
-  const result = sessionInfo({
-    runId: state.runId,
-    providerVersion:
-      state.mode === "wrong_identity" ? "0.0.0" : state.providerVersion,
-    profileDigest: state.profileDigest,
-    targetSha256: state.targetSha256,
-    timedOut: state.mode === "analysis_timeout",
-  });
+  const result = {
+    ...sessionInfo({
+      runId: state.runId,
+      providerVersion:
+        state.mode === "wrong_identity" ? "0.0.0" : state.providerVersion,
+      profileDigest: state.profileDigest,
+      targetSha256: state.targetSha256,
+      timedOut: state.mode === "analysis_timeout",
+    }),
+    ...handshakeReports,
+  };
   const response = `${JSON.stringify({ id: request.id, ok: true, result })}\n`;
   if (state.mode === "fragmented") {
     const split = Math.floor(response.length / 2);

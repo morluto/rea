@@ -180,7 +180,8 @@ describe("public provider availability", () => {
     const unavailable: ProviderAvailability = {
       status: "unavailable",
       code: "unsupported_version",
-      reason: "Use Apktool 2.7.0 or newer.",
+      reason: "Apktool 2.6.3 is older than the supported minimum 2.7.0.",
+      remediation: "Use Apktool 2.7.0 or newer.",
       diagnostics: { minimum_version: "2.7.0" },
     };
     const adbDeviceAnalysis: AdbDeviceAnalysisPort = {
@@ -222,7 +223,11 @@ describe("public provider availability", () => {
       availability.groups.find(({ names }) =>
         names.includes("inspect_apktool_client"),
       ),
-    ).toMatchObject({ available: false, reason: "provider_unavailable" });
+    ).toMatchObject({
+      available: false,
+      reason: "provider_unavailable",
+      remediation: "Use Apktool 2.7.0 or newer.",
+    });
   });
 });
 
@@ -284,8 +289,10 @@ describe("owned-process prerequisite during status discovery", () => {
         available: false,
         reason: "provider_unavailable",
       });
-      expect(apktool?.remediation).toContain("procps-compatible ps");
-      expect(apktool?.remediation).toContain("spawn ps ENOENT");
+      // Discovery carries the prerequisite owner's repair, not its failure text.
+      expect(apktool?.remediation).toBe(
+        "Install your distribution's procps or procps-ng package, or put a procps-compatible ps on REA's PATH, then retry.",
+      );
       expect(
         availability.groups.find(({ names }) =>
           names.includes("inspect_adb_client"),

@@ -6,12 +6,13 @@ import { silentLogger } from "../logger.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 
-// Digests commit to the current shared policy, including the instruction status
-// revision that prevents reuse of snapshots with the previous ambiguous result.
+// Digests commit to the current shared policy, including the instruction
+// status, load-image relocation-symbol and procedure search revisions that
+// prevent reuse of snapshots with earlier results.
 const RAW_DIGESTS = {
-  "6502": "bf79f425a94feb3d4150b6fe31f446dfb299af974c123cf3d4eaebdfe02319d6",
+  "6502": "7850ec8d885a9b5e1e6791637b57dfcea2d4359d55754ceeaf858fc43b22293d",
   "x86-disabled-analyzer":
-    "a89f116ac233a91a8a7fae5e7a24cc72126ee1c33219c79bb20e95cc440b2fae",
+    "55fb2b19e10d32bea95a88a097029ab2ad705b4b81dc74844662191799dbb161",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {

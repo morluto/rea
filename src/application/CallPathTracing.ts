@@ -1,17 +1,22 @@
 import type { CallRelationshipDirection } from "../contracts/enhancedInputs.js";
-import { CALL_RELATIONSHIP_TRAVERSALS } from "./CallRelationshipTraversal.js";
+import {
+  cleanupStoppedTraversal,
+  readCallRelationships,
+  type CallRelationshipObserver,
+} from "./CallRelationshipTraversal.js";
 import type {
-  AnalysisExecution,
   AnalysisOperation,
   ExecutionOptions,
 } from "./AnalysisProvider.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { parseRelatedAddresses } from "../domain/native/nativeObservation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { EnhancedResult } from "./EnhancedToolTypes.js";
+import {
+  failedWithPartialResult,
+  type EnhancedResult,
+} from "./EnhancedToolTypes.js";
 import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 
@@ -21,13 +26,6 @@ type AnalysisCall = (
   signal?: AbortSignal,
   selectorOrigin?: ExecutionOptions["selectorOrigin"],
 ) => Promise<Result<JsonValue, AnalysisError>>;
-
-type RelationshipCall = (
-  name: AnalysisOperation,
-  arguments_: Readonly<Record<string, JsonValue>>,
-  signal?: AbortSignal,
-  selectorOrigin?: ExecutionOptions["selectorOrigin"],
-) => Promise<Result<AnalysisExecution, AnalysisError>>;
 
 export interface CallPathTraceInput {
   readonly start: string;
@@ -80,7 +78,7 @@ interface DiscoveredEdge {
 /** Trace direct caller/callee relationships until the graph is exhausted or the goal is reached. */
 export const traceCallPath = async (
   call: AnalysisCall,
-  callRelationship: RelationshipCall,
+  callRelationship: CallRelationshipObserver,
   input: CallPathTraceInput,
   signal?: AbortSignal,
 ): EnhancedResult => {
@@ -123,7 +121,16 @@ export const traceCallPath = async (
       current,
       ...(signal === undefined ? {} : { signal }),
     });
-    if (!expanded.ok) return expanded;
+    if (!expanded.ok) {
+      if (!expanded.error.cleanupIncomplete) return expanded;
+      state.residual.add(
+        cleanupStoppedTraversal(address, state.queue.length - state.queueIndex),
+      );
+      return failedWithPartialResult(
+        expanded.error,
+        projectTrace(resolvedInput, state),
+      );
+    }
     if (expanded.value) break;
   }
   if (isAborted(signal))
@@ -148,44 +155,40 @@ const createTraceState = (input: CallPathTraceInput): TraceState => ({
 });
 
 const expandAddress = async (
-  call: RelationshipCall,
+  call: CallRelationshipObserver,
   expansion: AddressExpansion,
 ): Promise<Result<boolean, AnalysisError>> => {
   const { input, state, address, current, signal } = expansion;
-  const { relation, operation: tool } =
-    CALL_RELATIONSHIP_TRAVERSALS[input.direction];
-  const result = await call(tool, { procedure: address }, signal, "provider");
-  if (!result.ok) {
-    if (
-      result.error._tag === "AnalysisCancelledError" ||
-      signal?.aborted === true
-    )
-      return result;
-  }
+  const read = await readCallRelationships(
+    call,
+    input.direction,
+    address,
+    signal,
+  );
+  // A provider failure delivered with cancellation remains the selected outcome.
+  if (
+    read.status === "stopped" ||
+    (read.status === "unavailable" && isAborted(signal))
+  )
+    return err(read.error);
   if (isAborted(signal))
     return err(
       new AnalysisCancelledError("trace_call_path", { cause: signal?.reason }),
     );
-  if (!result.ok) {
+  if (read.status !== "observed") {
     state.failures.push({
       address,
-      error: projectAnalysisError(result.error),
+      error: projectAnalysisError(read.error),
     });
-    state.residual.add(`Call relationships were unavailable for ${address}.`);
+    state.residual.add(
+      `Call relationships were ${read.status} for ${address}.`,
+    );
     return ok(false);
   }
-  const related = parseRelatedAddresses(result.value.result, relation, tool);
-  if (!related.ok) {
-    state.failures.push({
-      address,
-      error: projectAnalysisError(related.error),
-    });
-    state.residual.add(`Call relationships were unreadable for ${address}.`);
-    return ok(false);
-  }
-  for (const limitation of result.value.limitations)
+  const { execution, related } = read;
+  for (const limitation of execution.limitations)
     state.limitations.add(limitation);
-  const coverage = result.value.relationshipCoverage ?? {
+  const coverage = execution.relationshipCoverage ?? {
     status: "unknown",
     reason: "Provider did not report relationship coverage.",
   };
@@ -204,7 +207,7 @@ const expandAddress = async (
     state.residual.add(
       `Call relationship coverage is unknown for ${address}: ${coverage.reason}`,
     );
-  for (const relatedAddress of sortedUniqueAddresses(related.value)) {
+  for (const relatedAddress of sortedUniqueAddresses(related)) {
     recordEdge(input, state, {
       address,
       relatedAddress,
