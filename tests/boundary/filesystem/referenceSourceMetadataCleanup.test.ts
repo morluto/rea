@@ -1,4 +1,10 @@
-import { mkdir, open as fsOpen, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  open as fsOpen,
+  truncate,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
@@ -7,7 +13,9 @@ import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceSc
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
 import { readReferenceSourceVcs } from "../../../src/application/ReferenceSourceVcsAdapter.js";
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
+import { REFERENCE_SOURCE_METADATA_MAX_BYTES } from "../../../src/reference/ReferenceSourceLimits.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -86,6 +94,25 @@ const createPackedRefRepository = async () => {
   await writeFile(looseRef, `${head}\n`);
   return { root, looseRef, packedRefs };
 };
+
+it("returns a limit error for oversized packed Git metadata", async () => {
+  const { root, looseRef, packedRefs } = await createPackedRefRepository();
+  await unlink(looseRef);
+  await truncate(packedRefs, REFERENCE_SOURCE_METADATA_MAX_BYTES + 1);
+
+  const result = await withArtifactResourceScope((resources) =>
+    readReferenceSourceVcs(root, resources),
+  );
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      tag: "reference-source-reader",
+      code: "limit",
+      message: expect.stringContaining("read budget"),
+    },
+  });
+});
 
 it.each([".", "nested"])(
   "retains failed %s/.gitignore cleanup under the caller's scope",

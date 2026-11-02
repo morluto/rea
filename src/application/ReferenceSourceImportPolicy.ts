@@ -21,6 +21,10 @@ import {
 } from "./ReferenceSourceImportTypes.js";
 import { rootFilesystemFailure } from "../reference/ReferenceSourceReaderErrors.js";
 import {
+  REFERENCE_SOURCE_METADATA_MAX_BYTES,
+  ReferenceSourceMetadataLimitError,
+} from "../reference/ReferenceSourceLimits.js";
+import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
@@ -145,6 +149,10 @@ const readPolicyFile = async (
           signal,
           cancellationFailure: (reason) =>
             new IgnorePolicyReadCancelled(reason),
+          admit: (state) => {
+            if (state.size > REFERENCE_SOURCE_METADATA_MAX_BYTES)
+              throw new ReferenceSourceMetadataLimitError(policyPath);
+          },
         });
       } catch (cause: unknown) {
         if (cause instanceof IgnorePolicyReadCancelled) throw cause;
@@ -165,7 +173,9 @@ const readPolicyFile = async (
               isIgnorePolicyCancellation(primary) ||
                 operationCancellation !== undefined
                 ? "cancelled"
-                : "io",
+                : primaryCause instanceof ReferenceSourceMetadataLimitError
+                  ? "limit"
+                  : "io",
               `Reference source ignore policy could not be read at ${policyPath}: ${errorMessage(primaryCause)}`,
             ),
             cleanup: retry.cleanup,
@@ -186,7 +196,11 @@ const readPolicyFile = async (
     const causeValue = ignorePolicyCause(cause);
     return err({
       ...failure(
-        isIgnorePolicyCancellation(cause) ? "cancelled" : "io",
+        isIgnorePolicyCancellation(cause)
+          ? "cancelled"
+          : causeValue instanceof ReferenceSourceMetadataLimitError
+            ? "limit"
+            : "io",
         `Reference source policy could not be read at ${policyPath}: ${errorMessage(causeValue)}`,
       ),
       cause: causeValue,
@@ -319,7 +333,12 @@ const buildIgnored = async (
         : err({
             ...loaded.error,
             tag: "reference-source-reader",
-            code: loaded.error.code === "cancelled" ? "cancelled" : "io",
+            code:
+              loaded.error.code === "cancelled"
+                ? "cancelled"
+                : loaded.error.code === "limit"
+                  ? "limit"
+                  : "io",
           });
     },
   });
@@ -353,7 +372,11 @@ export const prepareReferenceSourceImport = async (
         const causeValue = ignorePolicyCause(cause);
         return err({
           ...failure(
-            isIgnorePolicyCancellation(cause) ? "cancelled" : "io",
+            isIgnorePolicyCancellation(cause)
+              ? "cancelled"
+              : causeValue instanceof ReferenceSourceMetadataLimitError
+                ? "limit"
+                : "io",
             `Reference source ignore policy could not be read at ${join(root.value, ".gitignore")}: ${errorMessage(causeValue)}`,
           ),
           cause: causeValue,
