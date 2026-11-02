@@ -7,7 +7,10 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
@@ -150,6 +153,9 @@ const report = {
   cyclonedxCli: null,
 };
 
+const goService = createGoBinaryService();
+const rustService = createRustBinaryService();
+
 await withVerifierCleanup(async () => {
   const loaded = [];
   for (const file of SCHEMA_FILES) {
@@ -279,7 +285,6 @@ await withVerifierCleanup(async () => {
     ["build", "-trimpath", "-buildvcs=false", "-o", goBinary, "."],
     { cwd: goDir, env: goEnvironment, timeout: 120_000 },
   );
-  const goService = createGoBinaryService();
   await withVerifierCleanup(async () => {
     const inspected = await goService.inspect({ path: goBinary });
     if (!inspected.ok) throw inspected.error;
@@ -449,7 +454,6 @@ await withVerifierCleanup(async () => {
       "debug",
       process.platform === "win32" ? "app.exe" : "app",
     );
-    const rustService = createRustBinaryService();
     await withVerifierCleanup(async () => {
       const inspected = await rustService.inspect({ path: rustBinary });
       if (!inspected.ok) throw inspected.error;
@@ -509,9 +513,13 @@ await withVerifierCleanup(async () => {
     cli === null ? { status: "absent" } : { status: "present", version: cli };
   report.ajv = { version: "8.20.0", formats: "3.0.1", strict: false };
 }, [
-  // A failed process stop retains its owner and leaves the root in place.
+  // A failed reader or process stop retains its owner and leaves the root in place.
   async () => {
-    await commands.close();
+    await closeVerifierResources([
+      () => goService.close(),
+      () => rustService.close(),
+      () => commands.close(),
+    ]);
     await root.close();
   },
 ]);
