@@ -21,6 +21,7 @@ import { verifyGhidraEntryAliases } from "./real-ghidra-entry-aliases.mjs";
 import { verifyGhidraNamespaceAnnotations } from "./real-ghidra-namespace-annotations.mjs";
 import { verifyGhidraBatchIdentity } from "./real-ghidra-batch-identity.mjs";
 import { verifyGhidraInstructionFlow } from "./real-ghidra-instruction-flow.mjs";
+import { verifyGhidraTailBoundaries } from "./real-ghidra-tail-boundaries.mjs";
 
 /** Probe real Ghidra location, annotation and error contracts through public adapters. */
 export async function verifyGhidraBoundaries(
@@ -778,6 +779,7 @@ export async function verifyGhidraBoundaries(
     entrypoint,
     env,
   });
+  await verifyGhidraTailBoundaries({ call, evidence, target, env });
   await verifyGhidraLargeResults({
     call,
     reject: invalid,
