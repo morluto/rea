@@ -39,6 +39,8 @@ const ENTRIES: Readonly<Record<string, string>> = {
   "0x401005": "0x401000",
   emoji: "0x402000",
   bodyless: "0x403000",
+  unlabeled: "0x404000",
+  "label-failure": "0x405000",
 };
 const LABELS: Readonly<Record<string, string>> = {
   "0x401000": "main",
@@ -70,7 +72,11 @@ const provider = (calls: { count: number }, bodies: typeof BODIES) =>
       );
     }
     if (operation === "address_name")
-      return Promise.resolve(ok(LABELS[String(input.address)] ?? null));
+      return Promise.resolve(
+        input.address === "0x405000"
+          ? err(new GhidraSessionError("remote", "label lookup failed"))
+          : ok(LABELS[String(input.address)] ?? null),
+      );
     if (operation === "procedure_pseudo_code") {
       const body = bodies[String(input.procedure)];
       return Promise.resolve(
@@ -360,6 +366,39 @@ it.each(["full", "compact"] as const)(
     expect(harness.session.evidenceById(parentId)).toEqual(parent);
   },
 );
+
+it("counts both forms of an unavailable entry label", async () => {
+  const harness = await connect("full");
+  const parent = (
+    await harness.call("batch_decompile", {
+      addresses: ["main", "unlabeled", "label-failure"],
+    })
+  ).evidence.evidence_id;
+  const summary = viewOf(
+    (
+      await harness.call("inspect_analysis_view", {
+        source: retained(parent),
+        view: { kind: "summary" },
+      })
+    ).evidence,
+  );
+  expect(summary.summary).toMatchObject({
+    procedures: {
+      distinct_resolved: 3,
+      unknown_identity: 0,
+      label_unavailable: 2,
+    },
+  });
+  const { items } = await view(harness, parent, { collection: "items" });
+  expect(items).toMatchObject([
+    { procedure: { name: "main" } },
+    { procedure: { name: null } },
+    { procedure: { name: null, name_error: { code: expect.any(String) } } },
+  ]);
+  expect(JSON.stringify(z.array(z.unknown()).parse(items)[1])).not.toContain(
+    "name_error",
+  );
+});
 
 it("pages one body exactly without splitting a Unicode character", async () => {
   const harness = await connect("full");

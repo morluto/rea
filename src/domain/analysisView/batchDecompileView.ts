@@ -148,7 +148,12 @@ export const batchDecompileSummarySchema =
     procedures: z.strictObject({
       distinct_resolved: z.int().nonnegative(),
       unknown_identity: z.int().nonnegative(),
-      label_unavailable: z.int().nonnegative(),
+      label_unavailable: z
+        .int()
+        .nonnegative()
+        .describe(
+          "Resolved items whose entry label is null, whether the provider had none or its lookup failed.",
+        ),
     }),
     pseudocode: z.strictObject({
       code_units: z.int().nonnegative(),
@@ -214,7 +219,8 @@ const summarizeBatch = (items: readonly BatchDecompileItem[]) => {
     if (item.procedure.status === "unknown") unknownIdentity++;
     else {
       resolved.add(item.procedure.address);
-      if (item.procedure.name_error !== undefined) labelUnavailable++;
+      // Null covers an answer without a label and a failed label lookup alike.
+      if (item.procedure.name === null) labelUnavailable++;
     }
     if (item.status !== "ok") continue;
     codeUnits += item.pseudocode.length;
