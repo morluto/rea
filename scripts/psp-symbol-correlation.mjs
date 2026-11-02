@@ -152,7 +152,14 @@ async function main(args) {
     targetSha256: flags.get("--target-sha256"),
     expectedCrc: flags.get("--expected-crc") ?? null,
   });
-  process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+  process.stdout.write(JSON.stringify({
+    ...report,
+    input_paths: {
+      symbols: flags.get("--symbols"),
+      inventory: flags.get("--inventory"),
+    },
+    inventory_target_claim: claimedHash ?? null,
+  }, null, 2) + "\n");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
