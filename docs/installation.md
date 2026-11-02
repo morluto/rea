@@ -675,6 +675,20 @@ an existing Hopper launcher is selected through `HOPPER_LAUNCHER_PATH`. Ghidra
 and IDA have their own provider-specific host requirements; Windows Ghidra uses
 the [experimental P0 boundary](windows-ghidra-p0.md).
 
+Bazzite uses RPM packages, but REA does not install Hopper automatically on it.
+Setup skips the Hopper offer because Bazzite is outside the supported host list,
+regardless of whether Xvfb is installed. Bazzite documents
+[containers for installing Linux packages](https://docs.bazzite.gg/Installing_and_Managing_Software/Containers/).
+If using a container, check its distribution and architecture against the list
+above. Install REA and Hopper in that container, give it access to the files you
+want to analyze, and configure your agent to launch REA there. Verify installation
+and analysis before relying on that workflow.
+
+`rea doctor` checks health; it does not offer to install Hopper. Run `rea setup`
+for installation. Setup cannot prompt when its output is redirected or during a
+container image build. To approve Hopper installation without prompts, run
+`rea setup --yes --install-hopper`.
+
 If the Linux package download receives an HTTP failure, setup includes the
 observed HTTP status in its `download_failed` diagnostic. The status does not
 establish the underlying cause or guarantee that retrying will succeed.
@@ -728,6 +742,12 @@ Rotating signing subkeys remain bound to that primary identity.
 The feed row itself is not PGP-signed; doctor labels its display version as
 `reported_release_version`, separately from the authenticated launcher identity.
 
+Even a correctly signed package can contain a launcher whose hash disagrees with
+the feed. REA stops before installing that package. When reporting this error,
+include the release version, package format and both hashes from the diagnostic.
+Each format needs its own check: a matching Ubuntu DEB does not establish that
+the Fedora RPM matches.
+
 The approval plan includes the caller-selected cache location. Approved setup
 retains the signed archive, public key and release metadata under
 `${XDG_CACHE_HOME:-$HOME/.cache}/rea/hopper-releases/<launcher-sha256>`.
@@ -760,6 +780,16 @@ mount namespace with a private mode-1777 tmpfs over that directory only. The
 host mount and the rest of `/tmp` remain unchanged; this fallback never invokes
 `sudo`. `rea doctor --provider hopper --json` reports the selected
 strategy and both host and effective mount facts.
+
+You do not need to start a separate `Xvfb :99` server. REA starts and manages its
+own display. After installation, run `rea doctor --provider hopper --json` and
+check `hopper-demo-runtime` for display and Python problems. Setup also runs these
+health checks: installing the package is only one step toward a working provider.
+
+If an image build ends with `exit status 1`, read the setup output immediately
+before that summary to find the failing step. On minimal Ubuntu images, run
+`apt-get update` before setup if an earlier layer deleted the package indexes.
+REA's package installation commands do not refresh those indexes.
 
 Hopper also embeds Python; the Python executable and standard library alone
 are insufficient on Ubuntu. Approved setup checks the system interpreter

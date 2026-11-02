@@ -31,6 +31,7 @@ import {
 } from "./configurationErrors.js";
 import { BrowserObservationError } from "./browserObservationError.js";
 import {
+  AnalysisSnapshotMismatchError,
   EvidenceFileError,
   EvidenceIntegrityError,
   EvidenceReferenceError,
@@ -396,6 +397,13 @@ const requestErrorDetails = (
         : { reference_scope: error.referenceScope }),
       expected: error.expected,
       actual: error.actual,
+    };
+  if (error instanceof AnalysisSnapshotMismatchError)
+    return {
+      reason: error.message,
+      ...(error.bindingMismatch === undefined
+        ? {}
+        : { binding_mismatch: jsonValueSchema.parse(error.bindingMismatch) }),
     };
   if (error instanceof EvidenceIntegrityError) return { reason: error.message };
   return undefined;
