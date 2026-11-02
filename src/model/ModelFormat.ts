@@ -39,11 +39,12 @@ export function rejectModel(message: string): never {
 export function rejectPickle(): never {
   throw new ModelFormatFailure(
     "unsupported",
-    "PyTorch pickle/ZIP model deserialization is unsupported; supply GGUF or safetensors instead",
+    "PyTorch pickle/ZIP model deserialization is unsupported; supply GGUF, safetensors or ORT instead",
   );
 }
 
-// Shared header ceiling for GGUF and Safetensors. Safetensors counts declared
+// Shared declaration ceiling. ORT counts the entire interleaved FlatBuffer.
+// Safetensors counts declared
 // JSON bytes after the eight-byte length prefix; GGUF counts the complete
 // header. Retained rows and the serialized report have separate allowances.
 export const MODEL_HEADER_BYTES = 100_000_000;

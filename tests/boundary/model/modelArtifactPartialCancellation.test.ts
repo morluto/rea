@@ -6,6 +6,7 @@ import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ggufFixture, safetensorsFixture } from "../../fixtures/model/model.js";
+import { ortFixture } from "../../fixtures/model/ort.js";
 
 const cancelledArrayFixture = (alignment?: number) => {
   const seed = ggufFixture();
@@ -34,6 +35,82 @@ const cancelledArrayFixture = (alignment?: number) => {
     arrayStart: fixture.header.length - count,
   };
 };
+
+it("retains validated ORT header facts and declared initializer count on an early collection cancellation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-ort-header-cancel-"));
+  const path = join(root, "model.ort");
+  const { bytes } = ortFixture();
+  await writeFile(path, bytes);
+  const sample = await open(path, "r");
+  const prototype = Object.getPrototypeOf(sample) as {
+    read: (
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => Promise<{ bytesRead: number }>;
+  };
+  await sample.close();
+  const originalRead = prototype.read;
+  const controller = new AbortController();
+  const reason = { marker: "cancel-before-first-ort-collection-row" };
+  const readSpy = vi
+    .spyOn(prototype, "read")
+    .mockImplementation(async function (
+      this: unknown,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) {
+      const result = await originalRead.call(
+        this,
+        buffer,
+        offset,
+        length,
+        position,
+      );
+      if (position === 8 && result.bytesRead > 0) controller.abort(reason);
+      return result;
+    });
+  const provider = new ModelArtifactProvider();
+  try {
+    const result = await provider.inspect(
+      { path, hash: "header" },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected ORT parser cancellation");
+    expect(result.error.cause).toBe(reason);
+    const evidence = parseEvidence(result.error.partialObservation);
+    expect(evidence.subject).toBeNull();
+    expect(evidence.normalized_result).toMatchObject({
+      kind: "model-artifact-partial",
+      format: "ort",
+      ort_version: "6",
+      file_identifier: "ORTM",
+      byte_order: "little",
+      declared_metadata_count: 0,
+      declared_tensor_count: 1,
+      metadata: [],
+      tensors: [],
+      inputs: [],
+      outputs: [],
+      operators: [],
+      coverage: {
+        header: "partial",
+        metadata: "complete",
+        tensors: "partial",
+        inputs: "partial",
+        outputs: "partial",
+        operators: "partial",
+      },
+    });
+  } finally {
+    readSpy.mockRestore();
+    await provider.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 it.each([undefined, 64])(
   "retains completed GGUF facts when cancellation interrupts a later value (alignment=%s)",

@@ -34,14 +34,42 @@ export const modelMetadataSchema = z.strictObject({
   ...location,
 });
 
+/** A symbolic dimension is distinct from an integer or an unresolved value. */
+export const modelDimensionSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("value"), value: decimal }),
+  z.strictObject({ kind: z.literal("symbol"), symbol: z.string() }),
+  z.strictObject({ kind: z.literal("unknown") }),
+]);
+
+export const modelGraphValueSchema = z.strictObject({
+  index: count,
+  name: z.string(),
+  type: z.string().nullable(),
+  type_id: count.nullable(),
+  type_kind: z.enum(["tensor", "sequence", "map", "unknown"]),
+  // Null is unknown rank; an empty array is a declared scalar.
+  shape: z.array(modelDimensionSchema).nullable(),
+  ...location,
+});
+
+export const modelOperatorSchema = z.strictObject({
+  index: count,
+  name: z.string().nullable(),
+  op_type: z.string().nullable(),
+  domain: z.string().nullable(),
+  since_version: count.nullable(),
+  ...location,
+});
+
 export const modelTensorSchema = z.strictObject({
   index: count,
   name: z.string(),
   type: z.string(),
   type_id: count.nullable(),
   shape: z.array(decimal),
-  data_offset: count,
-  file_offset: count,
+  data_offset: count.nullable(),
+  file_offset: count.nullable(),
+  external_data_offset: decimal.nullable().optional(),
   byte_length: count.nullable(),
   parameter_count: decimal,
   byte_length_state: z.enum(["derived", "declared", "unknown"]),
@@ -51,13 +79,18 @@ export const modelTensorSchema = z.strictObject({
 
 export const modelArtifactObjectSchema = z.strictObject({
   artifact: modelSourceSchema,
-  format: z.enum(["gguf", "safetensors"]),
+  format: z.enum(["gguf", "safetensors", "ort"]),
   version: count.nullable(),
+  ort_version: z.string().nullable().optional(),
+  file_identifier: z.literal("ORTM").optional(),
   byte_order: z.enum(["little", "big"]),
   alignment: count.nullable(),
-  tensor_data_offset: count,
+  tensor_data_offset: count.nullable(),
   metadata: z.array(modelMetadataSchema),
   tensors: z.array(modelTensorSchema),
+  inputs: z.array(modelGraphValueSchema).optional(),
+  outputs: z.array(modelGraphValueSchema).optional(),
+  operators: z.array(modelOperatorSchema).optional(),
   totals: z.strictObject({
     confidence: z.literal("derived"),
     parameter_count: decimal,
@@ -72,11 +105,15 @@ export const modelArtifactObjectSchema = z.strictObject({
     ),
   }),
   coverage: z.strictObject({
-    header: z.literal("complete"),
+    header: z.enum(["complete", "partial"]),
     tensor_data: z.literal("not-interpreted"),
     array_values: z.enum(["complete", "preview"]),
     tensor_ranges: z.enum(["complete", "partial"]),
     storage_sizes: z.enum(["complete", "partial"]),
+    inputs: z.enum(["complete", "partial"]).optional(),
+    outputs: z.enum(["complete", "partial"]).optional(),
+    operators: z.enum(["complete", "partial"]).optional(),
+    initializers: z.enum(["complete", "partial"]).optional(),
   }),
   limitations: z.array(z.string()),
 });
@@ -88,7 +125,7 @@ export const modelArtifactPartialTensorSchema = z.strictObject({
   type: z.string(),
   type_id: count.nullable(),
   shape: z.array(decimal),
-  data_offset: count,
+  data_offset: count.nullable(),
   file_offset: count.nullable(),
   byte_length: count.nullable(),
   parameter_count: decimal,
@@ -106,8 +143,10 @@ export const modelArtifactPartialSchema = z.strictObject({
     sha256: z.null(),
     file_identity: z.literal("unverified"),
   }),
-  format: z.enum(["gguf", "safetensors"]),
+  format: z.enum(["gguf", "safetensors", "ort"]),
   version: count.nullable(),
+  ort_version: z.string().nullable().optional(),
+  file_identifier: z.literal("ORTM").optional(),
   byte_order: z.enum(["little", "big"]).nullable(),
   alignment: count.nullable(),
   declared_metadata_count: count.nullable(),
@@ -115,10 +154,16 @@ export const modelArtifactPartialSchema = z.strictObject({
   metadata: z.array(modelMetadataSchema),
   tensor_declarations: z.array(modelArtifactPartialTensorSchema),
   tensors: z.array(modelTensorSchema),
+  inputs: z.array(modelGraphValueSchema).optional(),
+  outputs: z.array(modelGraphValueSchema).optional(),
+  operators: z.array(modelOperatorSchema).optional(),
   coverage: z.strictObject({
     header: z.enum(["partial", "complete"]),
     metadata: z.enum(["not-started", "partial", "complete"]),
     tensors: z.enum(["not-started", "partial", "complete"]),
+    inputs: z.enum(["not-started", "partial", "complete"]).optional(),
+    outputs: z.enum(["not-started", "partial", "complete"]).optional(),
+    operators: z.enum(["not-started", "partial", "complete"]).optional(),
   }),
   limitations: z.array(z.string()),
 });
@@ -161,12 +206,42 @@ export const modelArtifactSchema = modelArtifactObjectSchema.superRefine(
         seen.add(value);
       }
     }
+    // Operators can legitimately repeat names or identities; their positions
+    // identify the retained observations. Graph I/O names must remain unique.
+    for (const name of ["inputs", "outputs", "operators"] as const) {
+      const rows = report[name] ?? [];
+      const names = new Set<string>();
+      for (const [index, row] of rows.entries()) {
+        if (row.index !== index) {
+          context.addIssue({
+            code: "custom",
+            path: [name, index, "index"],
+            message: "Model row index must equal its source position",
+          });
+          return;
+        }
+        if (name !== "operators" && row.name !== null) {
+          if (names.has(row.name)) {
+            context.addIssue({
+              code: "custom",
+              path: [name, index, "name"],
+              message: "Model collection identities must be unique",
+            });
+            return;
+          }
+          names.add(row.name);
+        }
+      }
+    }
   },
 );
 
 export type ModelArtifact = z.infer<typeof modelArtifactSchema>;
 export type ModelTensor = z.infer<typeof modelTensorSchema>;
 export type ModelMetadata = z.infer<typeof modelMetadataSchema>;
+export type ModelDimension = z.infer<typeof modelDimensionSchema>;
+export type ModelGraphValue = z.infer<typeof modelGraphValueSchema>;
+export type ModelOperator = z.infer<typeof modelOperatorSchema>;
 export type ModelArtifactPartial = z.infer<typeof modelArtifactPartialSchema>;
 export type ModelArtifactPartialTensor = z.infer<
   typeof modelArtifactPartialTensorSchema

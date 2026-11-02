@@ -1,9 +1,10 @@
 # Model file declarations
 
 Use `inspect_model_artifact` (CLI: `inspect-model-artifact`) to inspect a local
-GGUF v2/v3 or safetensors file. Detection uses content, including GGUF byte
-order, rather than its extension. REA does not load a model, interpret weights,
-run inference, import Python, open external-data references or use the network.
+GGUF v2/v3, safetensors or ONNX Runtime `.ort` file. Detection uses content,
+including GGUF byte order, rather than its extension. REA does not load a model,
+interpret weights, run inference, import Python, open external-data references
+or use the network.
 
 Unsupported GGUF versions remain refused. Their diagnostic preserves the four
 version bytes and both UINT32 interpretations with byte order unknown, rather
@@ -25,7 +26,8 @@ rea inspect-model-artifact /absolute/path/model.gguf \
 
 ## Identity and reads
 
-The default `hash: "header"` reads only the metadata and tensor directory. The
+For GGUF and safetensors, the default `hash: "header"` reads only the metadata
+and tensor directory. The
 result records the exact selected path, file size, header length, header SHA-256,
 bytes read and read scope. GGUF alignment padding is outside this prefix.
 `artifact.sha256` and the Evidence subject are null: a header digest is not a
@@ -36,21 +38,53 @@ directory, it is the directory end; no tensor payload is implied. A partial
 alignment gap is rejected. `header_length` still ends at the directory, before
 any padding.
 
+ORT FlatBuffers interleave declarations and tensor data. ORT inspection reads
+the whole container in both hash modes, subject to the 100,000,000-byte allowance,
+without interpreting tensor payloads. Its `header_length` equals file size,
+`header_sha256` covers that complete container, and `read_scope` is `full-file`.
+Only an explicit `hash: "full"` populates `sha256` and the Evidence subject.
+
 `hash: "full"` additionally streams the remaining file bytes through SHA-256.
 It returns a full-file digest and Evidence subject, while retaining the same
 header digest. It uses bounded buffers and does not interpret tensor data, but
-it does read the whole file. Cost therefore grows with file size. Both modes
+it does read the whole file. For ORT, those bytes have already been read and
+are not read a second time. Cost therefore grows with file size. Both modes
 check descriptor and selected-path identity and metadata before completion;
 this detects observed replacement or modification, not adversarial modification
 that defeats filesystem metadata checks.
 
-If full-file hashing fails or is cancelled after either format's header has
-been validated, partial Evidence retains the parsed metadata and tensor directory.
-Header coverage is complete; digests and final file identity remain unknown.
-Safetensors header parsing is atomic, so interruption before validation does not
-expose unvalidated JSON rows.
+If full-file hashing fails or is cancelled after a format's declarations have
+been validated, partial Evidence retains parsed facts. Digests and final file
+identity remain unknown. Safetensors header parsing is atomic, so interruption
+before validation does not expose unvalidated JSON rows. ORT cancellation retains
+only individually validated graph rows and marks unfinished collections partial.
 
 ## Facts and selected queries
+
+ORT is recognized by its `ORTM` file identifier, independently of the filename.
+The report preserves `ort_version` as its declared string; this is a format
+version, not an inference-runtime compatibility claim. `inputs` and `outputs`
+resolve graph names against value declarations. Their shape dimensions are
+tagged as `value` (exact decimal string), `symbol` (original name), or `unknown`.
+An empty shape is a scalar; a null shape means unknown rank. Unknown element
+types retain their numeric IDs and a null textual type.
+
+`operators` records each main-graph node's name, operator type, domain and
+since-version, including contrib domains such as `com.microsoft`. Dense
+initializers appear in `tensors`, with declared raw byte-vector extents. External
+references are never opened, and unresolved or noncontiguous storage does not
+receive an invented file extent. Unreadable tables retain successful peer facts
+and partial coverage. Totals describe retained dense initializers; coverage and
+limitations identify missing declarations, sparse initializers and subgraphs.
+
+The retained `model-artifact` view also supports `inputs`, `outputs` and
+`operators` collections, selected fields and paging. For example:
+
+```bash
+rea inspect-model-artifact /absolute/path/model.ort --detail summary \
+  --view '{"collection":"inputs","fields":["name","type","shape"]}' \
+  --evidence_output /absolute/path/model-evidence.json --json
+```
 
 GGUF reports version, byte order, alignment, typed metadata, and each tensor's
 name, original type ID, dimensions, relative data offset, file offset and derived
@@ -252,7 +286,8 @@ type identities; malformed reports return a typed input error before indexing.
 
 The reader admits one active inspection per provider. It enforces a 100,000,000
 byte header ceiling (safetensors counts its declared JSON bytes separately from
-the fixed eight-byte length prefix; GGUF counts the complete header) and a separate 32 MiB
+the fixed eight-byte length prefix; GGUF counts the complete header; ORT counts
+the complete FlatBuffer) and a separate 32 MiB
 retained representation budget before retaining rows or expanding strings.
 Numeric products use exact integer arithmetic. GGUF follows its four-dimensional
 tensor layout and limits metadata array nesting to 32 frames. Resource refusals
@@ -260,9 +295,11 @@ are typed, rather than returned as complete empty inventories. Cancellation
 joins descriptor finalization; failed cleanup remains owned for retry.
 
 PyTorch pickle and ZIP model deserialization are unsupported; convert using a
-trusted external workflow and supply GGUF or safetensors. ONNX, TFLite, Core ML,
-model execution and conversion are outside this operation.
+trusted external workflow and supply GGUF, safetensors or plain ORT. Protobuf
+`.onnx`, TFLite, Core ML, model execution, conversion and vendor-container
+deobfuscation are outside this operation.
 
 Format references: [GGUF specification](https://github.com/ggml-org/ggml/blob/da8e2a54b919557b816b1c2beb432ccb766f7ce0/docs/gguf.md),
 [ggml tensor layouts](https://github.com/ggml-org/ggml/blob/da8e2a54b919557b816b1c2beb432ccb766f7ce0/src/ggml-common.h),
-[safetensors format](https://github.com/huggingface/safetensors/tree/e246a2560645b7525f5775669ed816eb57c5bcc8#format).
+[safetensors format](https://github.com/huggingface/safetensors/tree/e246a2560645b7525f5775669ed816eb57c5bcc8#format),
+[ORT FlatBuffers schema](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/flatbuffers/schema/ort.fbs).

@@ -58,11 +58,14 @@ export class ModelArtifactService {
     const inspected = await this.provider.inspect(parameters, options);
     if (!inspected.ok) return inspected;
     const checked = modelArtifactSchema.safeParse(inspected.value);
+    const expectedReadScope =
+      parameters.hash === "full" || inspected.value.format === "ort"
+        ? "full-file"
+        : "header";
     if (
       !checked.success ||
       checked.data.artifact.path !== parameters.path ||
-      checked.data.artifact.read_scope !==
-        (parameters.hash === "full" ? "full-file" : "header") ||
+      checked.data.artifact.read_scope !== expectedReadScope ||
       (parameters.hash === "header"
         ? checked.data.artifact.sha256 !== null
         : checked.data.artifact.sha256 === null)

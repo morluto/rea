@@ -206,12 +206,15 @@ explicit path or endpoint and do not need it.
   [Go binary guide](https://github.com/morluto/rea/blob/main/docs/go-binaries.md).
 - Embedded CUDA/HIP code objects: `inspect_gpu_code_objects`; inventory targets
   first, then decode selected payloads and query retained GPU Evidence.
-- Bundled GGUF or safetensors model declarations: `inspect_model_artifact`
+- Bundled GGUF, safetensors or ONNX Runtime ORT model declarations: `inspect_model_artifact`
   with the explicit local file. Default header hashing leaves full-file identity
-  unknown; `hash: "full"` additionally reads all weights for SHA-256. MCP returns
-  retained summaries; optional `view` selects one page in the initial call. Use
-  `inspect_analysis_view` kind `model-artifact` for
-  batched metadata keys, tensor names or type totals, selected fields and pages.
+  unknown for GGUF and safetensors; `hash: "full"` additionally reads all weights
+  for SHA-256. ORT reads the entire bounded container because declarations and
+  payloads are interleaved, while only `hash: "full"` publishes full-file identity.
+  MCP returns retained summaries; optional `view` selects one page in the initial
+  call. Use `inspect_analysis_view` kind `model-artifact` for batched metadata keys,
+  tensor names, type totals or ORT inputs/outputs/operators, selected fields and
+  pages. Symbolic dimensions and unknown types remain explicit.
   Preserve header-scoped indices and array preview omissions; do not infer model
   behavior from declared architecture or tensor types. See the
   [model file guide](https://github.com/morluto/rea/blob/main/docs/model-artifacts.md).
