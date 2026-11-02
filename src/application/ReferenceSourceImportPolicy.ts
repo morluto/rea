@@ -104,7 +104,13 @@ const resolveRoot = async (
       "Reference source root could not be resolved",
     );
     if (rootFailure === undefined) throw cause;
-    return err({ ...failure(rootFailure.code, rootFailure.message), cause });
+    return err({
+      ...failure(rootFailure.code, rootFailure.message),
+      ...(rootFailure.remediationAction === undefined
+        ? {}
+        : { remediationAction: rootFailure.remediationAction }),
+      cause,
+    });
   }
 };
 

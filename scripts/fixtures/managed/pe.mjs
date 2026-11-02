@@ -81,8 +81,8 @@ const typeDefRow = (name, namespace, fieldList, methodList) =>
     u16(methodList),
   ]);
 
-const fieldRow = (name, signature) =>
-  Buffer.concat([u16(0x0001), u16(name), u16(signature)]);
+const fieldRow = (name, signature, flags = 0x0001) =>
+  Buffer.concat([u16(flags), u16(name), u16(signature)]);
 
 const methodDefRow = ({
   flags = 0x0016,
@@ -253,7 +253,8 @@ const buildManagedMetadata = (options, methods) => {
   const constructorName = strings.add(".ctor");
   const typeName = strings.add(options.typeName ?? "Program");
   const typeNamespace = strings.add(options.typeNamespace ?? "Fixture");
-  const fieldName = strings.add(options.fieldName ?? "counter");
+  const fields = options.fields ?? [{ name: options.fieldName ?? "counter" }];
+  const fieldNames = fields.map((field) => strings.add(field.name));
   const pinvokeModuleName =
     options.pinvoke === undefined
       ? null
@@ -268,7 +269,20 @@ const buildManagedMetadata = (options, methods) => {
     strings.add(name),
   );
   const tokenBlob = blobs.add(Buffer.from("b77a5c561934e089", "hex"));
-  const fieldSignature = blobs.add(Buffer.from([0x06, 0x08]));
+  const fieldRows = fields.map((field, index) =>
+    fieldRow(
+      fieldNames[index],
+      blobs.add(field.signature ?? Buffer.from([0x06, 0x08])),
+      field.flags,
+    ),
+  );
+  const constantRows = (options.constants ?? []).map((constant) =>
+    Buffer.concat([
+      Buffer.from([constant.typeCode, constant.padding ?? 0]),
+      u16(constant.parentRaw ?? 4),
+      u16(blobs.add(constant.value)),
+    ]),
+  );
   const methodSignature = blobs.add(Buffer.from([0x00, 0x00, 0x01]));
   const constructorSignature = blobs.add(Buffer.from([0x20, 0x01, 0x01, 0x0e]));
   const attributeBlob = blobs.add(
@@ -289,9 +303,10 @@ const buildManagedMetadata = (options, methods) => {
     [0, [moduleRow(moduleName)]],
     [1, [typeRefRow(attributeName, attributeNamespace)]],
     [2, [typeDefRow(typeName, typeNamespace, 1, 1)]],
-    [4, [fieldRow(fieldName, fieldSignature)]],
+    [4, fieldRows],
     [6, methodRows],
     [10, [memberRefRow(constructorName, constructorSignature)]],
+    ...(constantRows.length === 0 ? [] : [[11, constantRows]]),
     [12, [customAttributeRow(attributeBlob)]],
     ...(pinvokeModuleName === null
       ? []

@@ -308,6 +308,11 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
+      parameter: "instruction_status",
+      current: "unlisted-address-without-decode-v1",
+      legacy: undefined,
+    },
+    {
       parameter: "function_boundary_observations",
       current: "ghidra-function-boundary-limitations-v4",
       legacy: "ghidra-function-boundary-limitations-v3",

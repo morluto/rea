@@ -134,6 +134,11 @@ export const startMcpTransport = async (
             serverContext.analysisSettings?.read,
           );
           androidProviders.add(android);
+          const closeAndroidProvider = android.close.bind(android);
+          android.close = async () => {
+            await closeAndroidProvider();
+            androidProviders.delete(android);
+          };
           const server = (dependencies.createServer ?? createServer)(
             { kind: "session", session },
             {

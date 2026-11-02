@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { open, readFile, writeFile } from "node:fs/promises";
+import { open, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import {
+  assertMipsCarvedTargetRefusal,
+  carveMipsElfBeforeSectionTable,
+} from "../../conformance/ghidra/mips-checks.mjs";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { expectBinaryTargetError } from "../../fixtures/binaryTargetAdmission.js";
@@ -305,6 +310,29 @@ it("refuses uncaptured section declarations while retaining unknown ABI evidence
   assert.equal(resolved.mips.limitations, undefined);
   assert.equal(ghidraMipsUnsupportedReason(resolved), null);
 });
+for (const little of [true, false]) {
+  it(`matches the real MIPS lane's carved-copy refusal (${little ? "LE" : "BE"})`, async () => {
+    // Linker layout puts the section table last, so the lane's carve keeps
+    // every program header and payload while dropping the whole table.
+    const original = fixture(little);
+    const linked = Buffer.concat([original, original.subarray(128, 208)]);
+    if (little) linked.writeUInt32LE(original.length, 32);
+    else linked.writeUInt32BE(original.length, 32);
+    const carve = carveMipsElfBeforeSectionTable(
+      linked,
+      little ? "little" : "big",
+    );
+    const path = await writeFixture(carve.bytes);
+    const error = expectBinaryTargetError(await parseBinaryTarget(path));
+    // The real lane applies the same check to MCP and CLI error projections.
+    assertMipsCarvedTargetRefusal(
+      projectAnalysisError(error),
+      await realpath(path),
+      carve.reason,
+    );
+    assert.deepEqual(await readFile(path), carve.bytes);
+  });
+}
 for (const failure of ["conflicting", "outside", "duplicate"]) {
   it(`retains ${failure} ABI errors in a partly captured section table`, async () => {
     const original = fixture();

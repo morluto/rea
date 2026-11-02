@@ -374,6 +374,38 @@ it("follows relative symlinks only while they stay inside the root", async () =>
 });
 
 it.skipIf(process.platform === "win32")(
+  "does not resolve a non-UTF-8 link target as a replacement-character path",
+  async () => {
+    const { trace } = await traceBesideOutside(
+      [dylibCommand(LC.LOAD_DYLIB, "@loader_path/raw-link")],
+      async (analyzed) => {
+        await symlink(
+          Buffer.from([0x6c, 0x69, 0x62, 0xff]),
+          join(analyzed, "raw-link"),
+        );
+        await writeFile(
+          join(analyzed, "lib\ufffd"),
+          machoImage({
+            fileType: FILE_TYPE.dylib,
+            commands: [buildVersionCommand(1)],
+          }),
+        );
+      },
+    );
+    expect(trace.edges[0]?.resolution).toEqual({
+      status: "undetermined",
+      image: null,
+    });
+    expect(trace.coverage.status).toBe("partial");
+    expect(trace.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('"raw-link":"6c6962ff"'),
+      ]),
+    );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "resolves a POSIX file name that contains backslashes",
   async () => {
     const { trace } = await traceBesideOutside(

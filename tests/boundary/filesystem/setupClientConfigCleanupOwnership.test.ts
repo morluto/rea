@@ -36,6 +36,8 @@ import {
   runUninstall,
 } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -832,14 +834,14 @@ describe("setup client configuration cleanup ownership", () => {
     });
 
     let hostCloseFinished = false;
-    let alignment: Promise<boolean> | undefined;
-    try {
-      alignment = host.clientNeedsConfigure(client, {}, ["rea", "mcp"]);
-      await readStarted;
+    const alignment = host.clientNeedsConfigure(client, {}, ["rea", "mcp"]);
+    let closeResult: ReturnType<NonNullable<typeof host.close>> | undefined;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(readStarted, alignment, "configuration read");
 
       const close = host.close;
       if (close === undefined) throw new Error("Setup host close is missing");
-      const closeResult = close().then((result) => {
+      closeResult = close().then((result) => {
         hostCloseFinished = true;
         return result;
       });
@@ -860,11 +862,18 @@ describe("setup client configuration cleanup ownership", () => {
       await expect(alignment).resolves.toBe(true);
       expect(await closeResult).toBeUndefined();
       expect(hostCloseFinished).toBe(true);
-    } finally {
-      unblockRead();
-      await alignment?.catch(() => undefined);
-      await host.close?.();
-    }
+    }, [
+      unblockRead,
+      async () => {
+        await alignment;
+      },
+      async () => {
+        await closeResult;
+      },
+      async () => {
+        await host.close?.();
+      },
+    ]);
   });
 });
 

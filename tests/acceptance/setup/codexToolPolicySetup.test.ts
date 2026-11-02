@@ -1,5 +1,12 @@
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { expect } from "vitest";
@@ -24,6 +31,11 @@ cliTest(
     );
     await mkdir(dirname(config), { recursive: true });
     await writeFile(config, original);
+    if (process.platform !== "win32") await chmod(config, 0o640);
+    const assertMode = async (path: string) => {
+      if (process.platform !== "win32")
+        expect((await lstat(path)).mode & 0o777).toBe(0o640);
+    };
     const run = (arguments_: readonly string[]) =>
       cli.run({
         arguments: arguments_,
@@ -89,6 +101,8 @@ cliTest(
       },
     });
     expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+    await assertMode(config);
+    await assertMode(`${config}.rea.backup`);
     assertAligned((await run(doctorArguments)).json);
     const repeated = await run([...setupArguments, "--yes"]);
     expect(repeated.exitCode, repeated.stdout).toBe(0);
@@ -98,6 +112,8 @@ cliTest(
     });
     expect(await readFile(config, "utf8")).toBe(configured);
     expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+    await assertMode(config);
+    await assertMode(`${config}.rea.backup`);
 
     const removed = await run(["uninstall", "--json"]);
     expect(removed.exitCode, removed.stdout).toBe(0);

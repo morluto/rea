@@ -65,8 +65,9 @@ confidence and basis, and does not prove a backend endpoint or reachability.
 Pages obey the shared 1 MiB projection budget; MCP transport applies its own
 wire-size guard. A byte-limited page returns a continuation; an indivisible
 oversized record or metadata returns a typed resource error. Select fewer
-fields or retrieve the complete retained parent through `get_evidence_bundle`,
-`export_evidence_bundle`, or the CLI's exported bundle. Full Evidence is never
+fields or retrieve the complete retained parent through `get_evidence_bundle`
+(`detail: "records"` with its `evidence_id`), `export_evidence_bundle`, or the
+CLI's exported bundle. Full Evidence is never
 silently truncated.
 
 Collections are `summary`, `routes`, `occurrences`, `sources`, and `unknowns`.

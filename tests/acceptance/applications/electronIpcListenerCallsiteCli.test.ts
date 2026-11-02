@@ -7,6 +7,7 @@ import { z } from "zod";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import {
@@ -48,7 +49,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     ]);
 
     const mcp =
-      surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+      surface === "stdio MCP"
+        ? await connectLocalToolsMcp(INLINE_EVIDENCE_MCP_ENVIRONMENT)
+        : undefined;
     let applicationEvidence: unknown;
     if (surface === "CLI") {
       const response = await cli.run({

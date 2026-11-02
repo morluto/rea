@@ -1,7 +1,7 @@
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -319,7 +319,6 @@ describe("ZCode fallback uninstall", () => {
     );
     const original = await writeFallback(home, {
       rea: owned,
-      other: { command: "other-server" },
     });
 
     const result = await runUninstall(false, systemUninstallHost(home));
@@ -333,11 +332,70 @@ describe("ZCode fallback uninstall", () => {
     const fallback = JSON.parse(await readFile(fallbackPath(home), "utf8"));
     expect(fallback).toEqual({
       ui: { keep: true },
-      mcpServers: { other: { command: "other-server" } },
+      mcpServers: {},
     });
     expect(await readFile(`${fallbackPath(home)}.rea.backup`, "utf8")).toBe(
       original,
     );
+  });
+
+  it.each([
+    { rea: { command: "/usr/bin/false" } },
+    { rea: owned, other: { command: "other-server" } },
+  ])("refuses to activate retained fallback servers: %j", async (servers) => {
+    const { home, client } = await zcodeClient();
+    const native = JSON.stringify({ mcp: { servers: { rea: owned } } });
+    await writeFile(client.configPath, native);
+    const fallback = await writeFallback(home, servers);
+    const cursor = supportedClients(home).find(({ name }) => name === "cursor");
+    if (cursor === undefined) throw new Error("missing Cursor client");
+    await mkdir(dirname(cursor.configPath), { recursive: true });
+    const otherClient = JSON.stringify({ mcpServers: { rea: owned } });
+    await writeFile(cursor.configPath, otherClient);
+    const result = await runUninstall(false, systemUninstallHost(home));
+    expect(result.status).toBe("failed");
+    expect(await readFile(client.configPath, "utf8")).toBe(native);
+    expect(await readFile(fallbackPath(home), "utf8")).toBe(fallback);
+    expect(await readFile(cursor.configPath, "utf8")).toBe(otherClient);
+    await expect(
+      readFile(`${client.configPath}.rea.backup`),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(`${cursor.configPath}.rea.backup`),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses last-native removal when the fallback cannot be interpreted", async () => {
+    const { home, client } = await zcodeClient();
+    const native = JSON.stringify({ mcp: { servers: { rea: owned } } });
+    await writeFile(client.configPath, native);
+    await mkdir(join(home, ".agents"), { recursive: true });
+    await writeFile(fallbackPath(home), "{invalid");
+    const result = await runUninstall(false, systemUninstallHost(home));
+    expect(result.status).toBe("failed");
+    expect(await readFile(client.configPath, "utf8")).toBe(native);
+    expect(await readFile(fallbackPath(home), "utf8")).toBe("{invalid");
+  });
+
+  it("removes the owned server when another native server keeps the fallback inactive", async () => {
+    const { home, client } = await zcodeClient();
+    await writeFile(
+      client.configPath,
+      JSON.stringify({
+        mcp: { servers: { rea: owned, other: { command: "other-server" } } },
+      }),
+    );
+    const fallback = await writeFallback(home, {
+      rea: { command: "/usr/bin/false" },
+    });
+    const result = await runUninstall(false, systemUninstallHost(home));
+    expect(result.status).toBe("complete");
+    expect(
+      JSON.parse(await readFile(client.configPath, "utf8")).mcp.servers,
+    ).toEqual({
+      other: { command: "other-server" },
+    });
+    expect(await readFile(fallbackPath(home), "utf8")).toBe(fallback);
   });
 
   it("removes a fallback-only REA entry and keeps a foreign rea entry", async () => {

@@ -1,3 +1,8 @@
+import {
+  espFlashAddressSchema,
+  parseEspFlashAddress,
+} from "../domain/firmware/espFlashSelection.js";
+import type { ArtifactTargetSelection } from "../application/DirectAnalysis.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import {
   analysisEvidenceDeliveryOptions,
@@ -12,6 +17,7 @@ import { z } from "incur";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
+import { registerArtifactComparisonCommand } from "./artifactComparisonCommand.js";
 import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { Logger } from "pino";
@@ -29,6 +35,7 @@ export const registerArtifactCommands = (
 ): void => {
   registerInspectionCommand(cli, logger, runProviderAnalysis);
   registerExtractionCommand(cli, logger, runProviderAnalysis);
+  registerArtifactComparisonCommand(cli, logger);
   registerInterfaceBuilderCommand(cli, logger, runProviderAnalysis);
   registerAssetCatalogCommand(cli, logger, runProviderAnalysis);
   registerDylibResolutionCommand(cli, logger, runProviderAnalysis);
@@ -196,6 +203,51 @@ const registerInterfaceBuilderCommand = (
   });
 };
 
+/** Options that read a dump as an ESP flash image with caller inputs. */
+const espFlashSelectionOptions = {
+  targetFormat: z
+    .enum(["esp-flash-image"])
+    .optional()
+    .describe(
+      "Read the target as an ESP flash dump; required with --flash-offset or --partition-table-offset",
+    ),
+  flashOffset: espFlashAddressSchema
+    .optional()
+    .describe("Flash address (0xhex) of the dump's first byte"),
+  partitionTableOffset: espFlashAddressSchema
+    .optional()
+    .describe(
+      "Flash address (0xhex, a multiple of 0x1000) of the partition table; disables the table scan",
+    ),
+};
+
+const espFlashTargetSelection = (options: {
+  readonly targetFormat?: "esp-flash-image" | undefined;
+  readonly flashOffset?: string | undefined;
+  readonly partitionTableOffset?: string | undefined;
+}): ArtifactTargetSelection => ({
+  ...(options.targetFormat === undefined
+    ? {}
+    : { formatHint: options.targetFormat }),
+  ...(options.flashOffset === undefined &&
+  options.partitionTableOffset === undefined
+    ? {}
+    : {
+        espFlash: {
+          ...(options.flashOffset === undefined
+            ? {}
+            : { flashOffset: parseEspFlashAddress(options.flashOffset) }),
+          ...(options.partitionTableOffset === undefined
+            ? {}
+            : {
+                partitionTableOffset: parseEspFlashAddress(
+                  options.partitionTableOffset,
+                ),
+              }),
+        },
+      }),
+});
+
 const registerExtractionCommand = (
   cli: CliInstance,
   logger: Logger,
@@ -212,6 +264,7 @@ const registerExtractionCommand = (
         .enum(["fail", "record-and-continue"])
         .default("fail")
         .describe("Behavior when declared artifact integrity does not match"),
+      ...espFlashSelectionOptions,
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "extract-artifact", () =>
@@ -223,6 +276,9 @@ const registerExtractionCommand = (
             output_root: createArtifactExtractionDestination(),
           },
           logger,
+          undefined,
+          undefined,
+          espFlashTargetSelection(options),
         ).then(projectCliAnalysisResult),
       ),
   });
@@ -245,6 +301,7 @@ const registerInspectionCommand = (
         .enum(["fail", "record-and-continue"])
         .default("fail")
         .describe("Behavior when declared artifact integrity does not match"),
+      ...espFlashSelectionOptions,
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-artifact", () =>
@@ -264,6 +321,8 @@ const registerInspectionCommand = (
             { integrity_policy: options.integrityPolicy },
             logger,
             signal,
+            undefined,
+            espFlashTargetSelection(options),
           );
           return publishCliAnalysisEvidence(complete, delivery);
         }),

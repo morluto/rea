@@ -9,6 +9,8 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { observed } from "../../fixtures/analysisExecution.js";
 
 import {
   MCP_DOCTOR_SESSION_SCOPE_DETAIL,
@@ -22,6 +24,9 @@ import {
   createCatalogIdentity,
 } from "../../../src/catalogIdentity.js";
 import { compactPresentationForMcpInputSchemaProfile } from "../../../src/config/mcpInputSchemaProfile.js";
+import { parseConfig } from "../../../src/config/parseConfig.js";
+import { runSessionStatus } from "../../../src/application/DirectAnalysisStatus.js";
+import { ok } from "../../../src/domain/result.js";
 import {
   resolveMcpStartupBudgets,
   MCP_PHASE_BUDGET_FLOOR_MS,
@@ -66,9 +71,31 @@ const assertCliCatalogIdentity = async (
   }
 };
 
+// The CLI commands share this workflow. Exercise each profile here, while
+// retaining representative compiled CLI checks for each public command.
+const assertStatusCatalogIdentity = async (
+  environment: NodeJS.ProcessEnv,
+  identity: ReturnType<typeof createCatalogIdentity>,
+) => {
+  const session = createTestBinarySession(() => ({
+    close: async () => ok(null),
+    execute: async () => observed(null),
+  }));
+  const status = await runSessionStatus({
+    readConfiguration: () => parseConfig(environment),
+    createBinarySession: () => session,
+  });
+  expect(status).toMatchObject({
+    server_identity: {
+      catalog: { counts: identity.counts, digests: identity.digests },
+    },
+  });
+};
+
 const catalogProfiles = [
   {
     name: "default compact input",
+    cliParity: false,
     environment: {
       REA_MCP_INPUT_SCHEMA_PROFILE: undefined,
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
@@ -80,6 +107,7 @@ const catalogProfiles = [
   },
   {
     name: "full",
+    cliParity: true,
     environment: {
       REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
@@ -88,6 +116,7 @@ const catalogProfiles = [
   },
   {
     name: "compact",
+    cliParity: false,
     environment: {
       REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
@@ -99,6 +128,7 @@ const catalogProfiles = [
   },
   {
     name: "output schemas off",
+    cliParity: false,
     environment: {
       REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
@@ -107,6 +137,7 @@ const catalogProfiles = [
   },
   {
     name: "output schemas compact",
+    cliParity: false,
     environment: {
       REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
@@ -115,6 +146,7 @@ const catalogProfiles = [
   },
   {
     name: "compact input and output schemas off",
+    cliParity: true,
     environment: {
       REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
@@ -189,8 +221,8 @@ describe("production MCP doctor", () => {
   });
 
   it.each(catalogProfiles)(
-    "verifies the $name catalog through production stdio and both CLI inventories",
-    async ({ environment, identity }) => {
+    "verifies the $name catalog through production stdio and status",
+    async ({ environment, identity, cliParity }) => {
       const result = await runProductionMcpDoctor({
         command: process.execPath,
         args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -223,10 +255,10 @@ describe("production MCP doctor", () => {
       expect(result.identity?.observed_catalog_digest).toBe(
         identity.digests.combined_sha256,
       );
-      await assertCliCatalogIdentity(
-        { ...process.env, ...environment },
-        identity,
-      );
+      const selectedEnvironment = { ...process.env, ...environment };
+      await assertStatusCatalogIdentity(selectedEnvironment, identity);
+      if (cliParity)
+        await assertCliCatalogIdentity(selectedEnvironment, identity);
     },
     30_000,
   );
@@ -234,20 +266,22 @@ describe("production MCP doctor", () => {
 
 describe("production MCP doctor family scopes", () => {
   it.each([
-    { families: "session", output: "full" },
-    { families: "session,application", output: "compact" },
+    { families: "session", output: "full", cliParity: false },
+    { families: "session,application", output: "compact", cliParity: true },
   ] as const)(
     "reports a selected family scope healthy with its own inventory and digest ($output)",
-    async ({ families, output }) => {
+    async ({ families, output, cliParity }) => {
+      const environment = {
+        ...process.env,
+        REA_MCP_TOOL_FAMILIES: families,
+        REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: output,
+      };
       const result = await runProductionMcpDoctor({
         command: process.execPath,
         args: [resolve("scripts/rea.mjs"), "mcp"],
         cwd: process.cwd(),
-        environment: {
-          ...process.env,
-          REA_MCP_TOOL_FAMILIES: families,
-          REA_MCP_OUTPUT_SCHEMA_PROFILE: output,
-        },
+        environment,
       });
 
       const expected = contractsForToolFamilies(new Set(families.split(",")));
@@ -264,22 +298,19 @@ describe("production MCP doctor family scopes", () => {
         },
         request_flow: { tool: "binary_session", ok: true },
       });
-      await assertCliCatalogIdentity(
-        {
-          ...process.env,
-          REA_MCP_TOOL_FAMILIES: families,
-          REA_MCP_OUTPUT_SCHEMA_PROFILE: output,
-        },
-        catalogIdentityForToolFamilies(
-          compactPresentationForMcpInputSchemaProfile(
-            process.env.REA_MCP_INPUT_SCHEMA_PROFILE === "full"
-              ? "full"
-              : "compact",
-          ),
-          output,
-          new Set(families.split(",")),
-        ),
+      const identity = catalogIdentityForToolFamilies(
+        compactPresentationForMcpInputSchemaProfile("compact"),
+        output,
+        new Set(families.split(",")),
       );
+      expect(result.identity?.expected_catalog_digest).toBe(
+        identity.digests.combined_sha256,
+      );
+      expect(result.identity?.observed_catalog_digest).toBe(
+        identity.digests.combined_sha256,
+      );
+      await assertStatusCatalogIdentity(environment, identity);
+      if (cliParity) await assertCliCatalogIdentity(environment, identity);
     },
     30_000,
   );

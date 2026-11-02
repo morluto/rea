@@ -1,6 +1,6 @@
 import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { Help, z } from "incur";
+import { Help } from "incur";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -30,24 +30,10 @@ import {
   MCP_STARTUP_POLICY,
   mcpDoctorDeadlineRecovery,
 } from "./mcpStartupPolicy.js";
+import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
 
 const OUTPUT_FORMATS = CLI_DOCUMENT_OUTPUT_FORMATS;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];
-
-/**
- * Canonical `rea mcp doctor` options. This schema is the single source of
- * truth: the argument parser accepts exactly these options (plus the `-h`
- * alias below) and the help renderer lists them. Keep them in sync by
- * changing this schema, not either consumer.
- */
-const MCP_DOCTOR_OPTIONS = z.object({
-  format: z.enum(OUTPUT_FORMATS).optional().describe("Output format"),
-  json: z.boolean().optional().describe("Emit the report as JSON"),
-  fullOutput: z.boolean().optional().describe("Show the full output envelope"),
-  help: z.boolean().optional().describe("Show help"),
-});
-
-const MCP_DOCTOR_ALIAS = { help: "h" } as const;
 
 const MCP_DOCTOR_COMMAND = "rea mcp doctor";
 const MCP_DOCTOR_DESCRIPTION = "Validate MCP adapter startup and tool listing";

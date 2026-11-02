@@ -9,14 +9,18 @@ The same domain header/table facts and artifact reader serve CLI and MCP.
 The root is an archive with unknown executable architecture. The header's CPU,
 OS, type, compression, load address and entry address are declarations, not proof of
 compatible or executable payloads. Raw numeric identifiers remain available
-alongside names; unrecognized identifiers have the name `unknown`.
+alongside names. Type names cover every image type in the pinned
+`include/image.h`, using U-Boot's `mkimage -T` names; `IH_TYPE_LOADABLE` (22)
+has none and is named `loadable`. Unrecognized identifiers have the name
+`unknown`.
 
 The header's CRC32 and the declared payload's CRC32 must verify before a
 successful inventory. `payload.bin` contains the complete stored payload.
 Multi-file images also expose `image-0.bin`, `image-1.bin`, and so on. These
 component names are generated from table order. Components follow the zero-terminated big-endian size table, with four-byte
-padding after every nonfinal component. Their physical source ranges and
-content hashes retain precise provenance. Extraction writes the complete
+padding after every nonfinal component. Script images (`boot.scr`) carry the
+same table, so their script text is `image-0.bin`. Component physical source
+ranges and content hashes retain precise provenance. Extraction writes the complete
 payload and every component, so multi-file output can approach twice the input
 size. Compressed payloads remain compressed.
 

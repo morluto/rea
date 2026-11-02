@@ -17,6 +17,18 @@ interface FlowEdge {
   remaining: number;
 }
 
+/** Residual-network invariant. The code is the stable identity. */
+class ReferenceFlowError extends Error {
+  readonly _tag = "ReferenceFlowError";
+
+  constructor(
+    readonly code: "endpoint_unallocated" | "reverse_edge_unallocated",
+  ) {
+    super(code);
+    this.name = "ReferenceFlowError";
+  }
+}
+
 /** A local residual network: no recursive walk or pairwise adjacency matrix. */
 class ReferenceFlow {
   private readonly edges: FlowEdge[][] = [];
@@ -30,7 +42,7 @@ class ReferenceFlow {
     const forward = this.edges[from];
     const reverse = this.edges[to];
     if (forward === undefined || reverse === undefined)
-      throw new Error("Reference flow endpoint was not allocated.");
+      throw new ReferenceFlowError("endpoint_unallocated");
     forward.push({ to, reverse: reverse.length, remaining: capacity });
     reverse.push({ to: from, reverse: forward.length - 1, remaining: 0 });
   }
@@ -87,7 +99,7 @@ class ReferenceFlow {
           edge.remaining -= amount;
           const reverse = this.edges[edge.to]?.[edge.reverse];
           if (reverse === undefined)
-            throw new Error("Reference flow reverse edge was not allocated.");
+            throw new ReferenceFlowError("reverse_edge_unallocated");
           reverse.remaining += amount;
         }
         return amount;

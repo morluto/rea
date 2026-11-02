@@ -62,3 +62,36 @@ jobs:
             > "${probe_root}/output.log" 2>&1 || { cat "${probe_root}/output.log"; exit 1; }
           cat "${probe_root}/output.log"
           grep -F 'REA_ARM_CONTEXT_OK arm=0 thumb=1 unavailable=null (injected provider value)' "${probe_root}/output.log"
+      # Each probe imports source-owned bytes at 0x1000, away from the Cortex-M
+      # vector symbols that ARMCortex.pspec defines at 0, and decodes them from
+      # the language's default context, so M-profile Thumb state must hold at
+      # the first byte. The bytes are never executed.
+      - name: Decode M-profile ARM and Xtensa bytes in their default context
+        shell: bash
+        run: |
+          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          export JAVA_HOME="${!java_home_variable}"
+          probe_root="${RUNNER_TEMP}/rea-decode"
+          mkdir -p "${probe_root}"
+          # mrs r0, msp; bx lr
+          printf '\357\363\010\200\160\107' > "${probe_root}/cortex.bin"
+          # mrs r0, msplim (ARMv8-M only); bx lr
+          printf '\357\363\012\200\160\107' > "${probe_root}/v8m.bin"
+          # entry a1, 32; retw.n
+          printf '\066\101\000\035\360' > "${probe_root}/xtensa.bin"
+          decode() {
+            local name="$1" language="$2"
+            shift 2
+            mkdir -p "${probe_root}/${name}-project"
+            timeout 180s "${GHIDRA_INSTALL_DIR}/support/analyzeHeadless" "${probe_root}/${name}-project" Decode \
+              -import "${probe_root}/${name}.bin" -loader BinaryLoader -loader-baseAddr 0x1000 \
+              -processor "${language}" -noanalysis -readOnly -deleteProject \
+              -scriptPath "${GITHUB_WORKSPACE}/tests/conformance/ghidra" \
+              -postScript ReaDecodeProbe.java "${language}" "$@" \
+              > "${probe_root}/${name}.log" 2>&1 || { cat "${probe_root}/${name}.log"; exit 1; }
+            cat "${probe_root}/${name}.log"
+            grep -F "REA_DECODE_OK ${language} $*" "${probe_root}/${name}.log"
+          }
+          decode cortex ARM:LE:32:Cortex mrs/4/msp bx/2/lr
+          decode v8m ARM:LE:32:v8-m mrs/4/msplim bx/2/lr
+          decode xtensa Xtensa:LE:32:default entry/3/a1 retw.n/2

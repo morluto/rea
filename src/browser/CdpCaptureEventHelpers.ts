@@ -3,7 +3,6 @@ import { mediaTypeEssence } from "../domain/analysisView/recordedMediaType.js";
 import {
   admitRecords,
   isHttpUrl,
-  numberValue,
   recordValue,
   cdpStringValue,
   type UnknownRecord,
@@ -58,9 +57,19 @@ export const exclusionReasonForUrl = (
       ? "disallowed_origin"
       : "unsupported_url";
 
-export const integerOrNull = (value: unknown): number | null => {
-  const number = numberValue(value);
-  return number === undefined ? null : Math.max(0, Math.trunc(number));
+/** Preserve omitted and invalid protocol offsets as unknown, never invented coordinates. */
+export const cdpSourceCoordinates = (frame: UnknownRecord | undefined) => {
+  const valid = (value: unknown): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  const line = frame?.lineNumber;
+  const column = frame?.columnNumber;
+  return {
+    line: valid(line) ? line : null,
+    column: valid(column) ? column : null,
+    invalid:
+      (line !== undefined && !valid(line)) ||
+      (column !== undefined && !valid(column)),
+  };
 };
 
 export const isJsonContentType = (

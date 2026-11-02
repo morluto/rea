@@ -14,6 +14,8 @@ export const processScenarioOutputBudgetProjectionSchema = z
  * before row objects, serialization strings, and retained frame copies.
  */
 export const PROCESS_TERMINAL_CELL_BUDGET = 1_000_000;
+/** The pinned xterm renderer cannot represent a one-column terminal. */
+export const PROCESS_TERMINAL_MIN_COLUMNS = 2;
 const timedEventBase = { at_ms: z.int().safe().nonnegative() };
 const reservedRunIdEnvironmentName = "REA_PROCESS_RUN_ID";
 const ENVIRONMENT_NAME_CHARACTER = "[^=\\x00]";
@@ -160,7 +162,7 @@ export const processComparisonContract = (
     ? { pid_normalization_version: "sampled-identifiers-v2" }
     : {}),
   ...(scenario.normalization.paths
-    ? { path_normalization_version: "path-component-boundaries-v2" }
+    ? { path_normalization_version: "path-component-boundaries-v3" }
     : {}),
   ...(scenario.normalization.ports
     ? { port_normalization_version: "contextual-endpoints-v3" }
@@ -186,12 +188,16 @@ export const processScenarioSchema = z
       .default([]),
     terminal: z
       .strictObject({
-        columns: z.int().min(1).max(65_535).default(80),
+        columns: z
+          .int()
+          .min(PROCESS_TERMINAL_MIN_COLUMNS)
+          .max(65_535)
+          .default(80),
         rows: z.int().min(1).max(65_535).default(24),
         scrollback: z.int().safe().nonnegative().default(1_000),
       })
       .describe(
-        "The visible terminal and scrollback together must use at most 1,000,000 xterm renderer cells: columns × (rows + scrollback). Resize events use the same scrollback and limit. This release has no runtime override.",
+        "The renderer requires at least 2 columns. The visible terminal and scrollback together must use at most 1,000,000 xterm renderer cells: columns × (rows + scrollback). Resize events use the same minimum width, scrollback and limit. This release has no runtime override.",
       )
       .default({ columns: 80, rows: 24, scrollback: 1_000 }),
     events: z
@@ -206,7 +212,7 @@ export const processScenarioSchema = z
           z.strictObject({
             ...timedEventBase,
             type: z.literal("resize"),
-            columns: z.int().min(1).max(65_535),
+            columns: z.int().min(PROCESS_TERMINAL_MIN_COLUMNS).max(65_535),
             rows: z.int().min(1).max(65_535),
           }),
           z.strictObject({

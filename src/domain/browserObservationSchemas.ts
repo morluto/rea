@@ -3,7 +3,7 @@ import { utcDateTimeSchema } from "./offsetDateTime.js";
 
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import {
-  cdpDomNodeSchema,
+  cdpDomSnapshotSchema,
   cdpScriptSourceSchema,
   cdpScriptMetadataSchema,
 } from "./cdpObservationSchemas.js";
@@ -273,10 +273,7 @@ export const webPageInspectionSchema = z.object({
   }),
   completeness: browserCompletenessSchema,
   frames: z.array(browserFrameSchema),
-  dom: z.object({
-    total_nodes: z.int().min(0),
-    nodes: z.array(cdpDomNodeSchema),
-  }),
+  dom: cdpDomSnapshotSchema,
   accessibility: z.object({
     total_nodes: z.int().min(0),
     text_capture: z.object({

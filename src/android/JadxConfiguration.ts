@@ -72,10 +72,10 @@ type ConfigurationFailureCode =
   | "open_options_invalid";
 
 /**
- * Failure kinds tagged at the JADX configuration boundary. Consumers (the
- * doctor adapter) project the boundary's remediation and classification for
- * a kind; they must not reinterpret the phase/setting evidence to derive
- * them.
+ * Failure kinds tagged at the JADX configuration boundary. Availability
+ * carries the boundary's remediation for a kind and the doctor adapter
+ * projects its classification; neither reinterprets the phase/setting
+ * evidence to derive them.
  */
 export type JadxFailureKind =
   | "windows_native_artifact"
@@ -101,72 +101,52 @@ export const JADX_FAILURE_KINDS: readonly JadxFailureKind[] = [
   "unsupported_host",
 ];
 
-export interface JadxFailureOutcome {
-  readonly remediation: string;
-  readonly classification: DoctorProviderCheck["classification"];
-}
+/** The boundary-owned repair instruction for one tagged failure kind. */
+const jadxFailureRemediation = (kind: JadxFailureKind): string => {
+  switch (kind) {
+    case "windows_native_artifact":
+    case "windows_native_runtime":
+      return JADX_WINDOWS_NATIVE_REMEDIATION;
+    case "java_runtime":
+    case "java_home":
+      return JADX_JAVA_RUNTIME_REMEDIATION;
+    case "jvm_options":
+      return JADX_JVM_OPTIONS_REMEDIATION;
+    case "operation_timeout":
+      return JADX_OPERATION_TIMEOUT_REMEDIATION;
+    case "jar":
+      return JADX_JAR_CONFIGURATION_REMEDIATION;
+    case "java_probe":
+      return JADX_JAVA_PROBE_REMEDIATION;
+    case "unsupported_host":
+      return JADX_UNSUPPORTED_HOST_REMEDIATION;
+  }
+};
 
 /**
- * Project the boundary-owned remediation and classification for a failure
- * kind. A null kind (missing or corrupt tag) keeps JAR guidance, matching
- * the previous fallthrough for unclassified failures.
+ * Project the doctor classification for a failure kind. A null kind (an
+ * untagged readiness failure) is classified as configuration drift.
  */
-export const projectJadxFailureOutcome = (
+export const jadxFailureClassification = (
   kind: JadxFailureKind | null,
   configured: boolean,
-): JadxFailureOutcome => {
+): DoctorProviderCheck["classification"] => {
   const drift = configured ? "config_drift" : "missing_analysis_engine";
   switch (kind) {
     case "windows_native_artifact":
-      return {
-        remediation: JADX_WINDOWS_NATIVE_REMEDIATION,
-        classification: "missing_dependency",
-      };
-    case "windows_native_runtime":
-      return {
-        remediation: JADX_WINDOWS_NATIVE_REMEDIATION,
-        classification: "runtime_failure",
-      };
     case "java_runtime":
-      return {
-        remediation: JADX_JAVA_RUNTIME_REMEDIATION,
-        classification: "missing_dependency",
-      };
-    case "java_home":
-      return {
-        remediation: JADX_JAVA_RUNTIME_REMEDIATION,
-        classification: drift,
-      };
-    case "jvm_options":
-      return {
-        remediation: JADX_JVM_OPTIONS_REMEDIATION,
-        classification: drift,
-      };
-    case "operation_timeout":
-      return {
-        remediation: JADX_OPERATION_TIMEOUT_REMEDIATION,
-        classification: drift,
-      };
-    case "jar":
-      return {
-        remediation: JADX_JAR_CONFIGURATION_REMEDIATION,
-        classification: drift,
-      };
-    case "java_probe":
-      return {
-        remediation: JADX_JAVA_PROBE_REMEDIATION,
-        classification: drift,
-      };
+      return "missing_dependency";
+    case "windows_native_runtime":
+      return "runtime_failure";
     case "unsupported_host":
-      return {
-        remediation: JADX_UNSUPPORTED_HOST_REMEDIATION,
-        classification: "unsupported_host",
-      };
+      return "unsupported_host";
+    case "java_home":
+    case "jvm_options":
+    case "operation_timeout":
+    case "jar":
+    case "java_probe":
     case null:
-      return {
-        remediation: JADX_JAR_CONFIGURATION_REMEDIATION,
-        classification: drift,
-      };
+      return drift;
   }
 };
 
@@ -227,6 +207,7 @@ export const inspectJadxAvailability = async (
         status: "unavailable",
         code: cause.code,
         reason: cause.message,
+        remediation: jadxFailureRemediation(cause.kind),
         diagnostics: { ...cause.diagnostics, failure_kind: cause.kind },
       };
     const prerequisite = ownedProcessPrerequisiteAvailability(cause);

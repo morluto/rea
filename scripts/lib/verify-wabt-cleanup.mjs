@@ -3,6 +3,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  realpath,
   writeFile,
   readdir,
   rm,
@@ -19,7 +20,8 @@ import { WABT_OPERATION_TIMEOUT_MS } from "./wabt-verifier-timeouts.mjs";
 const execute = promisify(execFile);
 /** Real WABT inspection with authored cleanup denials and same-connection recovery. */
 export async function verifyWabtCleanup(entrypoint, environment, parent) {
-  const root = await mkdtemp(join(parent, "wabt-cleanup-"));
+  // Production canonicalizes the temporary parent before creating its root.
+  const root = await realpath(await mkdtemp(join(parent, "wabt-cleanup-")));
   return withVerifierCleanup(async () => {
     const valid = join(root, "valid.wasm"),
       invalid = join(root, "invalid.wasm");

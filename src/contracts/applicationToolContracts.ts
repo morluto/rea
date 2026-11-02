@@ -1,6 +1,8 @@
 import { applicationInventoryProjectionInputSchema } from "../domain/mobileApplicationGraphProjection.js";
 import { z } from "zod";
 import {
+  featureTraceSummaryViewResultSchema,
+  featureTraceViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
 } from "../domain/analysisView/analysisView.js";
@@ -13,7 +15,7 @@ import {
   compareApplicationVersionsRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
   compareSourceToBundleRequestSchema,
-  traceApplicationFeatureRequestSchema,
+  traceApplicationFeatureToolRequestSchema,
   traceJavaScriptSemanticsRequestSchema,
 } from "./javascript/applicationWorkflowInputContracts.js";
 import { reconstructionCoverageEvaluationInputSchema } from "../domain/reconstructionCoverageInput.js";
@@ -27,6 +29,12 @@ import { appleApplicationProjectionResultSchema } from "../domain/apple/appleApp
 import { harmonyApplicationProjectionResultSchema } from "../domain/harmony/harmonyApplication.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
+import {
+  readGuidanceSectionInputSchema,
+  readGuidanceSectionOutputSchema,
+  searchGuidanceInputSchema,
+  searchGuidanceOutputSchema,
+} from "./guidanceContracts.js";
 import {
   guidedWorkflowsInputSchema,
   guidedWorkflowsOutputSchema,
@@ -45,7 +53,13 @@ import {
   MACOS_APPLICATION_GRAPH_EXAMPLE,
 } from "./mobileApplicationGraphExamples.js";
 
-const traceOutputSchema = evidenceResultOf(applicationFeatureTraceResultSchema);
+const traceOutputSchema = evidenceResultOf(
+  z.union([
+    applicationFeatureTraceResultSchema,
+    featureTraceSummaryViewResultSchema,
+    featureTraceViewResultSchema,
+  ]),
+);
 const semanticTraceOutputSchema = evidenceResultOf(
   javaScriptSemanticTraceResultSchema,
 );
@@ -74,6 +88,21 @@ const retained = (evidence_id: string) => ({
 /** Provider-neutral graph workflow contracts shared by MCP and CLI adapters. */
 export const APPLICATION_TOOL_CONTRACTS = [
   {
+    name: "search_guidance",
+    ...toolContractMetadata("search_guidance"),
+    description:
+      "Search only the installed REA workflow guidance. Every non-generic query word must occur in a section; sections holding every word in their own text rank before parents whose words are spread across subsections. Returns ranked sections, bounded pages, and locators for read_guidance_section. No target or provider is accessed.",
+    kind: "application",
+    inputSchema: searchGuidanceInputSchema,
+    outputSchema: searchGuidanceOutputSchema,
+    examples: [
+      {
+        title: "Find exact JavaScript module guidance",
+        input: { query: "exact JavaScript module" },
+      },
+    ],
+  },
+  {
     name: "guided_workflows",
     ...toolContractMetadata("guided_workflows"),
     description:
@@ -97,12 +126,22 @@ export const APPLICATION_TOOL_CONTRACTS = [
     ],
   },
   {
+    name: "read_guidance_section",
+    ...toolContractMetadata("read_guidance_section"),
+    description:
+      "Retrieve a section selected by search_guidance from the installed REA guidance bundle. Reports stale locators and unavailable bundles explicitly. Returns documentation, not target observations or Evidence.",
+    kind: "application",
+    inputSchema: readGuidanceSectionInputSchema,
+    outputSchema: readGuidanceSectionOutputSchema,
+    examples: [],
+  },
+  {
     name: "trace_application_feature",
     ...toolContractMetadata("trace_application_feature"),
     description:
-      "Trace a typed literal seed through every reachable part of an authenticated JavaScript Application Graph supplied as inline Evidence or exact same-session retained references. Original static, native, passive-runtime, inferred, and unknown authorities remain distinct; native addon handoffs never open a provider or execute the application.",
+      "Trace a typed literal seed through every reachable part of an authenticated JavaScript Application Graph supplied as inline Evidence or exact same-session retained references. Original static, native, passive-runtime, inferred, and unknown authorities remain distinct; native addon handoffs never open a provider or execute the application. An optional view returns selected facts and retains the complete trace.",
     kind: "application",
-    inputSchema: traceApplicationFeatureRequestSchema,
+    inputSchema: traceApplicationFeatureToolRequestSchema,
     outputSchema: traceOutputSchema,
     examples: [
       {

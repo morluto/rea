@@ -223,9 +223,26 @@ first byte that is not erased starts a range to the end of that region. A
 slot that is neither a block nor erased is reported whole. Adjacent ranges
 are merged.
 
-A whole-flash dump of a chip whose bootloader is at offset 0, such as
-ESP32-C3 or ESP32-S3, is recognized as that bootloader image; the partition
-table, apps and data follow as undescribed bytes.
+A whole-flash dump whose partition table REA finds is read as an
+[ESP flash image](esp-flash-image.md). Without one, a dump of a chip whose
+bootloader is at offset 0, such as ESP32-C3 or ESP32-S3, is recognized as that
+bootloader image, and the partition table, apps and data follow as
+undescribed bytes.
+
+A dump read from a later flash address, such as an ESP32 dump read from
+`0x1000` with `read-flash 0x1000 …` or `merge-bin --target-offset 0x1000`,
+opens as its bootloader image. REA says so when the file shows it: the image
+at file offset 0 is not an app, its chip's ROM loads the bootloader from a
+later address (`0x1000` for ESP32 and S2, `0x2000` for C5, H4, P4 and S31),
+and a partition table sits where that origin puts `0x8000` (file offset
+`0x7000` for `0x1000`), after the image ends. Then `flash_dump` records
+`flash_offset` and
+`table_file_offset`, a limitation says to reopen the file with
+`format: "esp-flash-image"` and that `flash_offset`, and `inspect_artifact`
+lists the same `open_binary` call as a next probe. `flash_dump` is null for
+every other image. Evidence that REA recorded before it reported the field
+omits it; REA still reads and compares such Evidence, and the omission says
+nothing about where the file was read from.
 
 ## Limits
 

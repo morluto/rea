@@ -21,6 +21,17 @@ import { withoutPackageRunnerIdentity } from "./ClientRegistrationIdentity.js";
 export const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
 const UPDATE_PROBE_TIMEOUT_MS = 10_000;
 
+/** The runner owns whether the process started; callers need not infer it from text. */
+export interface UpdateCommandFailure {
+  readonly kind: "launch" | "execution";
+  readonly detail: string;
+}
+
+const commandFailure = (
+  detail: string,
+  kind: UpdateCommandFailure["kind"] = "execution",
+) => err({ kind, detail });
+
 /** Own metadata subprocesses through cancellation, final collection and cleanup retry. */
 export class UpdateCommandRunner {
   readonly #resources = new ArtifactResourceScope();
@@ -32,9 +43,9 @@ export class UpdateCommandRunner {
     environment: Readonly<NodeJS.ProcessEnv>,
     output: UpdateOutput = "structured",
     workingDirectory?: string,
-  ): Promise<Result<string, string>> {
+  ): Promise<Result<string, UpdateCommandFailure>> {
     if (this.#controller.signal.aborted)
-      return err("Update command runner is closed.");
+      return commandFailure("Update command runner is closed.");
     const deadline = new ProviderStartupDeadline(
       this.probeTimeoutMs,
       this.#controller.signal,
@@ -53,7 +64,9 @@ export class UpdateCommandRunner {
         ),
       );
     } catch (cause: unknown) {
-      return err(cause instanceof Error ? cause.message : String(cause));
+      return commandFailure(
+        cause instanceof Error ? cause.message : String(cause),
+      );
     } finally {
       deadline.dispose();
     }
@@ -79,6 +92,7 @@ export class UpdateCommandRunner {
           this.#controller.signal,
         ),
       )
+      .then((result) => (result.ok ? result : err(result.error.detail)))
       .catch((cause: unknown) =>
         err(cause instanceof Error ? cause.message : String(cause)),
       );
@@ -99,11 +113,12 @@ const runUpdateProcess = async (
   resources: ArtifactResourceScope,
   lookupSignal: AbortSignal,
   probe?: ProviderStartupDeadline,
-): Promise<Result<string, string>> => {
+): Promise<Result<string, UpdateCommandFailure>> => {
   if (probe?.signal.aborted)
-    return err("Update metadata probe cancelled before launch.");
+    return commandFailure("Update metadata probe cancelled before launch.");
   const [executable, ...args] = command;
-  if (executable === undefined) return err("No executable supplied.");
+  if (executable === undefined)
+    return commandFailure("No executable supplied.", "launch");
   const environment = snapshotEnvironment(
     withoutPackageRunnerIdentity(selectedEnvironment),
   );
@@ -123,7 +138,7 @@ const runUpdateProcess = async (
       });
       if (!found.ok) {
         const failure = found.error;
-        return err(
+        return commandFailure(
           failure.kind === "interrupted"
             ? "Update command PATH lookup interrupted before launch."
             : failure.kind === "inspection"
@@ -131,6 +146,7 @@ const runUpdateProcess = async (
               : failure.kind === "invalid_extension"
                 ? `Invalid Windows PATHEXT extension: ${failure.extension}`
                 : `Update executable was not found on the selected Windows PATH/PATHEXT: ${executable}`,
+          failure.kind === "interrupted" ? "execution" : "launch",
         );
       }
       selectedExecutable = found.value;
@@ -152,18 +168,30 @@ const runUpdateProcess = async (
     }
   }
   if (lookupSignal.aborted)
-    return err("Update command cancelled before launch.");
-  const child = (process.platform === "win32" ? spawnWindows : spawn)(
-    selectedExecutable,
-    selectedArguments,
-    {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: environment,
-      windowsHide: true,
-      windowsVerbatimArguments,
-      ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
-    },
-  );
+    return commandFailure("Update command cancelled before launch.");
+  let child;
+  try {
+    child = (process.platform === "win32" ? spawnWindows : spawn)(
+      selectedExecutable,
+      selectedArguments,
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: environment,
+        windowsHide: true,
+        windowsVerbatimArguments,
+        ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
+      },
+    );
+  } catch (cause: unknown) {
+    return commandFailure(
+      cause instanceof Error ? cause.message : String(cause),
+      "launch",
+    );
+  }
+  let spawned = false;
+  child.once("spawn", () => {
+    spawned = true;
+  });
   let processFailure: string | undefined;
   const supervisor = new ProviderProcessSupervisor(
     { process: child, ownsProcessLifetime: true },
@@ -214,20 +242,21 @@ const runUpdateProcess = async (
     const progressFailure = await progress?.close();
     const snapshot = supervisor.snapshot();
     if (processFailure !== undefined)
-      return err(
+      return commandFailure(
         probeFailureDetail(
           interrupted === undefined
             ? processFailure
             : `${processFailure} ${interrupted}`,
           snapshot,
         ),
+        spawned ? "execution" : "launch",
       );
     if (interrupted !== undefined)
-      return err(probeFailureDetail(interrupted, snapshot));
+      return commandFailure(probeFailureDetail(interrupted, snapshot));
     if (snapshot.outputIncomplete === true)
-      return err("Update command output did not close completely.");
+      return commandFailure("Update command output did not close completely.");
     if (retention === "complete" && snapshot.diagnosticTruncated === true)
-      return err(
+      return commandFailure(
         `Update command output exceeded the ${UPDATE_COMMAND_OUTPUT_BYTES}-byte complete-output retention budget; reply was not accepted.`,
       );
     if (snapshot.exitCode !== 0 || snapshot.signal !== null) {
@@ -239,7 +268,7 @@ const runUpdateProcess = async (
           : typeof snapshot.exitCode === "number"
             ? `Process exited with code ${snapshot.exitCode}.`
             : "Update command failed without a recorded exit status.");
-      return err(
+      return commandFailure(
         snapshot.diagnosticTruncated
           ? `${detail}\n[Update diagnostics truncated at ${UPDATE_COMMAND_OUTPUT_BYTES} bytes; later output omitted.]`
           : detail,
@@ -249,13 +278,15 @@ const runUpdateProcess = async (
       retention === "complete" &&
       (snapshot.stdout.invalidUtf8 || snapshot.stderr.invalidUtf8)
     )
-      return err(
+      return commandFailure(
         "Update command returned invalid UTF-8; complete output is unavailable.",
       );
     if (progressFailure !== undefined)
-      return err(`Update progress output failed: ${progressFailure.message}`);
+      return commandFailure(
+        `Update progress output failed: ${progressFailure.message}`,
+      );
     if (probe?.interruption !== undefined)
-      return err(
+      return commandFailure(
         probeFailureDetail(
           probe.interruption === "timeout"
             ? `Update metadata probe timed out after ${String(probe.timeoutMs)} ms.`

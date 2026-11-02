@@ -16,11 +16,12 @@ import {
 } from "./analysisViewCoverage.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import type { JsonValue } from "../jsonValue.js";
 
 const matchRow = nativeFunctionMatchSchema.extend({
@@ -259,9 +260,13 @@ const selectedItems = (
 /** Query immutable matching facts without copying full alias groups into selected pages. */
 export const projectNativeFunctionMatchingView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "function-matches")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    | SummaryAnalysisView
+    | z.output<typeof nativeFunctionMatchingViewRequestSchema>
+  >(admitted, "summary", "function-matches");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -283,7 +288,7 @@ export const projectNativeFunctionMatchingView = (
   const shared = sharedContext(parent, entry.report);
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: context,
@@ -292,7 +297,7 @@ export const projectNativeFunctionMatchingView = (
   const rows = filterRows(entry, view),
     items = selectedItems(entry, view, rows);
   return ok({
-    kind: "function-matches",
+    kind: "function-matches" as const,
     view,
     ...shared,
     ...context,

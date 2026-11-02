@@ -1,3 +1,4 @@
+import { recordCliEvidencePublication } from "./cliEvidencePublication.js";
 import { analysisEvidenceSources } from "../application/AnalysisEvidenceSources.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js";
 import { z } from "incur";
@@ -21,6 +22,7 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { ZodSafeParseResult } from "zod";
+import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 
 export const analysisEvidenceDeliveryOptions = {
   detail: z
@@ -41,6 +43,8 @@ interface CliEvidenceDelivery {
   readonly signal: AbortSignal;
   readonly detail: "complete" | "summary";
   readonly evidenceOutput: string | undefined;
+  /** Exact one-shot CLI target spelling, when this invocation selects a file. */
+  readonly callerInputPath?: string;
   /** Derived workflows publish their selected source closure with the result. */
   readonly sourceEvidence?: readonly Evidence[];
   /** Invocation exclusions cover final cleanup and publication paths/diagnostics. */
@@ -139,7 +143,9 @@ export const deliverCliAnalysisEvidence = async (
       { redactFailure },
     ).then(projectCliAnalysisResult);
   const complete = await finishAnalysisCommand(
-    run,
+    input.callerInputPath === undefined
+      ? run
+      : bindCliEvidenceCallerPath(input.callerInputPath, run),
     service,
     providerId,
     operation,
@@ -215,19 +221,17 @@ export const publishCliAnalysisEvidence = async (
     signal,
   });
   if (!published.ok) return projectFailure(published.error);
+  const receipt = {
+    ...(input.sensitiveValues?.some(
+      (literal) =>
+        literal !== "" && published.value.evidenceBundle.path.includes(literal),
+    )
+      ? {}
+      : { path: published.value.evidenceBundle.path }),
+    bytes: published.value.evidenceBundle.bytes,
+  };
+  recordCliEvidencePublication(receipt);
   return detail === "summary"
-    ? {
-        summary: published.value.delivered,
-        evidence_bundle: {
-          ...(input.sensitiveValues?.some(
-            (literal) =>
-              literal !== "" &&
-              published.value.evidenceBundle.path.includes(literal),
-          )
-            ? {}
-            : { path: published.value.evidenceBundle.path }),
-          bytes: published.value.evidenceBundle.bytes,
-        },
-      }
+    ? { summary: published.value.delivered, evidence_bundle: receipt }
     : published.value.delivered;
 };

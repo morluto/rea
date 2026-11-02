@@ -3,6 +3,7 @@ import type { Section } from "./AppleMachoSelection.js";
 import type { ObjcDispatchReaders } from "./AppleObjcDispatchFacets.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
 import { issue, type DecodeIssue } from "./AppleDispatchDecodeFacts.js";
+import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 
 const CLASS_SYMBOL = /^_OBJC_(?:META)?CLASS_\$_(.+)$/u;
 
@@ -13,6 +14,22 @@ export const boundClassName = (
 ): string | undefined => {
   const bound = read.bound(field);
   return bound === undefined ? undefined : CLASS_SYMBOL.exec(bound.symbol)?.[1];
+};
+
+/**
+ * Why a category's class reference names no class: it is null, or bound to a
+ * symbol other than `_OBJC_CLASS_$_`, such as the `_$s…CN` metadata symbol
+ * of a Swift class in another module.
+ */
+const unnamedClassReference = (
+  read: Pick<ObjcDispatchReaders, "bound">,
+  field: bigint,
+  category: string,
+): string => {
+  const bound = read.bound(field);
+  return bound === undefined
+    ? `Category ${category} class reference is null`
+    : `Category ${category} class reference is bound to ${bound.symbol}, which is not read as an Objective-C class name`;
 };
 
 /**
@@ -43,7 +60,10 @@ export const decodeObjcCategories = (input: {
     ({ name }) => name === "__objc_catlist",
   )) {
     if (section.size % 8 !== 0)
-      throw new RangeError("Misaligned Objective-C category list");
+      throw new BinaryFormatFailure(
+        "malformed",
+        "Misaligned Objective-C category list",
+      );
     for (let index = 0; index < section.size / 8; index++) {
       if (!input.admit()) break;
       examined++;
@@ -71,6 +91,15 @@ export const decodeObjcCategories = (input: {
               ),
             );
           }
+        else if (external === undefined)
+          input.issues.push(
+            issue(
+              "objc_properties_categories",
+              "category_class_unresolved",
+              unnamedClassReference(read, category + 8n, name),
+              `0x${(category + 8n).toString(16)}`,
+            ),
+          );
         const owner = className ?? `(${name})`;
         let budgetTruncated = false;
         const onTruncated = () => {

@@ -21,6 +21,7 @@ import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
+  hasUImageSizeTable,
   parseMultiImageTable,
   parseUImageHeaderFields,
   UIMAGE_HEADER_SIZE,
@@ -82,7 +83,7 @@ export class UImageArtifactReader implements ArtifactReader {
     options?.onCoverage?.({
       status: "complete",
       limitations:
-        this.#header?.type_name === "multi"
+        this.#header !== undefined && hasUImageSizeTable(this.#header.type)
           ? [
               "Multi-image sub-images are split from the stored size table; the payload entry retains the full stored bytes.",
             ]
@@ -216,7 +217,7 @@ export class UImageArtifactReader implements ArtifactReader {
     let dataCrc32 = 0;
     let read = 0;
     let subImages: readonly UImageSubImage[] = [];
-    if (header.type === 4) {
+    if (hasUImageSizeTable(header.type)) {
       const tablePrefix = await readArtifactFileBytes(
         handle,
         UIMAGE_HEADER_SIZE,

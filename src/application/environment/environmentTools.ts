@@ -2,6 +2,7 @@ import {
   ownMember,
   isObject,
   isQueryPost,
+  isSafeHttpMethod,
   listItems,
   locateList,
   pointerTokens,
@@ -64,27 +65,14 @@ export interface EnvironmentToolDefinition {
   readonly tool: EnvironmentManifestTool;
 }
 
-/** RFC 9110 safe methods: a preflight `OPTIONS` reads, as `GET` does. */
-const SAFE_METHODS: ReadonlySet<string> = new Set([
-  "GET",
-  "HEAD",
-  "OPTIONS",
-  "TRACE",
-]);
-
-const IDEMPOTENT_METHODS: ReadonlySet<string> = new Set([
-  ...SAFE_METHODS,
-  "PUT",
-  "DELETE",
-]);
-
 const environmentToolAnnotations = ({
   method,
   path_template: path,
 }: EnvironmentManifestTool): EnvironmentToolAnnotations => ({
-  readOnlyHint: SAFE_METHODS.has(method) || isQueryPost(method, path),
+  readOnlyHint: isSafeHttpMethod(method) || isQueryPost(method, path),
   ...(method === "DELETE" ? { destructiveHint: true as const } : {}),
-  idempotentHint: IDEMPOTENT_METHODS.has(method),
+  idempotentHint:
+    isSafeHttpMethod(method) || method === "PUT" || method === "DELETE",
   openWorldHint: false,
 });
 

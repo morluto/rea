@@ -38,7 +38,10 @@ export const resolveReconstructionObligationLedgerRequest = (
 ): Result<ResolvedReconstructionObligationRequest, AnalysisError> => {
   const frame = parseAnalysisInput(OPERATION, input, requestSchema);
   if (!frame.ok) return frame;
-  const bundle = readEvidenceBundle(frame.value.evidence_bundle);
+  const bundle = readEvidenceBundle(frame.value.evidence_bundle, {
+    operation: OPERATION,
+    path: ["evidence_bundle"],
+  });
   if (!bundle.ok) return bundle;
   const records = new Map(
     bundle.value.records.map((record) => [record.evidence_id, record]),

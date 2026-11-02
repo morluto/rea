@@ -174,7 +174,7 @@ what to record next; hints never change what is served:
 
 | Reason                | Hint                                                                                                                                                                                                                                             |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `no-state-target`     | The write's path names no collection or item the capture reads. Read the collection or item it changes.                                                                                                                                          |
+| `no-state-target`     | The write could not be linked to a modelled target. Check the path template and recorded views; record missing reads. Some route forms may not be supported.                                                                                     |
 | `no-call`             | No recorded call of this tool was modelled, for example because every call failed. Record a successful call.                                                                                                                                     |
 | `body-unusable`       | The retained request or response cannot be modelled. Record a successful call with a complete supported request and reproducible response.                                                                                                       |
 | `no-observation`      | Nothing showed the entity or document this write changed. Read a created entity back by id right after the write; for an update or delete the state must already hold the entity, so read it before the write or record the create that made it. |
@@ -723,6 +723,8 @@ and `POST` tools the capture shows only reading (a lookup answering as a `GET`
 did, an RPC tunnel naming read operations, a session renewal), stay served and
 answer from their recordings with the reason `query-body`; they are not write
 tools.
+`HEAD`, `OPTIONS` and `TRACE` tools also replay their captured responses; their
+state views report `method-replay` and coverage counts them as recorded reads.
 
 A line establishes whole-collection membership only from the beginning:
 `offset`, `start`, `_start` and `page` must be zero when present. Positive or
@@ -737,14 +739,14 @@ tools are not served, so no call claims a change it does not make; each one's
 plan states why in its `reason`. A served write changes the live state, which
 every MCP session and `data/get` then see:
 
-| Effect                    | Call                                                                                                                                                                                                                                                                                                                 |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`                  | Adds an entity to the collection the path names, built from the observed entity with each ruled field taken from the call or generated, at the plan's `insert` position. A plan tied to its exemplar's collection writes only there.                                                                                 |
-| `update`                  | Sets the sent members on the entity the path names, constants for members accepted only with their recorded value, and the clock, nested clock, increment, slug, stamp, derived, composed, reference, unique and renewed changes the plan models.                                                                    |
-| `update` (action)         | A `POST`, `PUT` or `PATCH` to an item path plus an action segment (`/{type}/{id}/archive`) sets, on the entity before the segment, each scalar the recorded calls showed the action set (`set`), with any sent members; it is served only when a recorded call found those fields already set, so a toggle never is. |
-| `delete`                  | Removes the entity the path names.                                                                                                                                                                                                                                                                                   |
-| bulk `update` or `delete` | A `DELETE`, `PUT` or `PATCH` at a collection, or a `POST` to it plus `delete`, `remove` or `destroy`, applies its effect to every entity the body names, as recorded: an array of ids or of objects carrying the id field, at the root or as the body's one array member (`{"IDs": […], "Read": true}`).             |
-| `document`                | Merges the body into the plan's document object, or replaces it for `PUT`.                                                                                                                                                                                                                                           |
+| Effect                    | Call                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`                  | Adds an entity to the collection the path names, built from the observed entity with each ruled field taken from the call or generated, at the plan's `insert` position. A plan tied to its exemplar's collection writes only there.                                                                                                                                                                |
+| `update`                  | Sets the sent members on the entity the path names, constants for members accepted only with their recorded value, and the clock, nested clock, increment, slug, stamp, derived, composed, reference, unique and renewed changes the plan models.                                                                                                                                                   |
+| `update` (action)         | A `POST`, `PUT` or `PATCH` to an item path plus an action segment (`/{type}/{id}/archive`) sets, on the entity before the segment, each scalar the recorded calls showed the action set (`set`), or flips each boolean they showed it flipping both ways (`toggle`), with any sent members; it is served only when a recorded call found what it sets already set, or flipped back what it toggles. |
+| `delete`                  | Removes the entity the path names.                                                                                                                                                                                                                                                                                                                                                                  |
+| bulk `update` or `delete` | A `DELETE`, `PUT` or `PATCH` at a collection, or a `POST` to it plus `delete`, `remove` or `destroy`, applies its effect to every entity the body names, as recorded: an array of ids or of objects carrying the id field, at the root or as the body's one array member (`{"IDs": […], "Read": true}`).                                                                                            |
+| `document`                | Merges the body into the plan's document object, or replaces it for `PUT`.                                                                                                                                                                                                                                                                                                                          |
 
 An update's unsent changes follow the plan's rules. A `held-clock` is a clock
 the client sends back as it read it and the application stamps anew (Ghost's
@@ -755,7 +757,9 @@ the entity already names under its `created…by` counterpart into a
 `modified…by` or `updated…by` field. A `derived` field takes a value showing
 the one sent member's text that the entity stores nowhere (a field Ghost
 derives from `html`), only with that member's recorded value. An action's
-`set` rule sets a scalar to the value the recorded calls left it at.
+`set` rule sets a scalar to the value the recorded calls left it at, and its
+`toggle` rule flips a boolean, refusing a call on an entity that holds none
+there (Miniflux's `PUT /v1/entries/{id}/bookmark` stars and unstars).
 
 Its answer has the status and content type of the plan's recorded response,
 with the written entity or its identity rendered in, no body, or the recorded

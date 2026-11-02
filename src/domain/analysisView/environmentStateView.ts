@@ -1,13 +1,8 @@
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { jsonRecordSchema } from "../jsonRecord.js";
-import { ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 import { DELETED_FLAGS } from "./environmentStateRules.js";
 import { isClockZone } from "./environmentStateWriteValues.js";
@@ -220,6 +215,7 @@ const viewSchema = z.discriminatedUnion("shape", [
     shape: z.literal("recorded"),
     reason: z.enum([
       "query-body",
+      "method-replay",
       "no-init-recording",
       "body-unusable",
       "no-identity",
@@ -246,6 +242,7 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
     rule: z.literal("sequence"),
     scope: z.enum(["collection", "type"]),
     start: z.number().int().exactOptional(),
+    sent: z.literal(true).exactOptional(),
   }),
   z.strictObject({ ...ruled, rule: z.literal("unique") }),
   z.strictObject({
@@ -321,6 +318,7 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
     member: z.string(),
     type: z.string(),
     fields: z.array(z.string()).min(1),
+    many: z.literal(true).exactOptional(),
   }),
   z.strictObject({ ...ruled, rule: z.literal("increment") }),
   z.strictObject({
@@ -341,6 +339,7 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
     member: z.string(),
   }),
   z.strictObject({ ...ruled, rule: z.literal("set"), value: jsonValueSchema }),
+  z.strictObject({ ...ruled, rule: z.literal("toggle") }),
 ]);
 const insertRuleSchema = z.union([
   z.strictObject({ rule: z.enum(["first", "last"]) }),
@@ -395,7 +394,7 @@ const writePlanSchema = z.strictObject({
         })
         .exactOptional()
         .describe(
-          "A create's later read of the entity: an item read lends fields the response lacks and its clock spellings, a list read only adds fields the response lacks.",
+          "A write's later read of the entity: an item read lends a create fields the response lacks, and its clock spellings; a list read only adds fields the response lacks.",
         ),
     })
     .nullable()
@@ -554,23 +553,17 @@ export const environmentStateFields = {
 };
 
 /** State extraction and coverage share the same budget and template-rule policy. */
-export const createEnvironmentStateAccumulator = (
-  view: Extract<
-    AnalysisViewRequest,
-    { kind: "environment-state" | "environment-coverage" }
-  >,
-): EnvironmentStateAccumulator =>
+export const createEnvironmentStateAccumulator = (view: {
+  readonly template_rules: z.output<typeof templateRulesSchema>;
+}): EnvironmentStateAccumulator =>
   new EnvironmentStateAccumulator(undefined, view.template_rules);
 
 /** Extract the init state a capture's reads observed and each read tool's render plan; types and identity are inferences. */
 export const projectEnvironmentStateView = (
   parent: AnalysisViewParent,
-  view: Extract<AnalysisViewRequest, { kind: "environment-state" }>,
+  view: z.output<typeof environmentStateViewRequestSchema>,
   accumulator = createEnvironmentStateAccumulator(view),
-): Result<
-  Extract<UnsignedAnalysisView, { kind: "environment-state" }>,
-  AnalysisError
-> => {
+) => {
   const grouped = groupCaptureRecords(parent, view.kind, view.template_rules, {
     accumulator,
     noun: "state",
@@ -582,7 +575,7 @@ export const projectEnvironmentStateView = (
   const state = accumulator.finishState();
   if (!state.ok) return state;
   return ok({
-    kind: "environment-state",
+    kind: "environment-state" as const,
     view,
     parent_evidence_id: parent.evidenceId,
     parent_operation: grouped.value.operation,

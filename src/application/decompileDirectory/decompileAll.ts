@@ -426,13 +426,12 @@ const attemptOne = async (
         "The function file already exists and does not match this export.",
     };
     recordFailure(input.state, procedure, reason);
+    const retained = retainedObservation(input.session, procedure.address);
     const appended = await input.session.append(
-      failureRecord(
-        procedure,
-        retainedBody(input.session, procedure.address),
-        reason,
-        { relativePath: input.session.pathFor(procedure.address) },
-      ),
+      failureRecord(procedure, retained.body, reason, {
+        relativePath: input.session.pathFor(procedure.address),
+        ...retained.options,
+      }),
     );
     return { result: appended, bodySupport };
   }
@@ -442,13 +441,12 @@ const attemptOne = async (
       message: "The existing function file could not be read.",
     };
     recordFailure(input.state, procedure, reason);
+    const retained = retainedObservation(input.session, procedure.address);
     const appended = await input.session.append(
-      failureRecord(
-        procedure,
-        retainedBody(input.session, procedure.address),
-        reason,
-        { relativePath: input.session.pathFor(procedure.address) },
-      ),
+      failureRecord(procedure, retained.body, reason, {
+        relativePath: input.session.pathFor(procedure.address),
+        ...retained.options,
+      }),
     );
     return { result: appended, bodySupport };
   }
@@ -941,12 +939,19 @@ const unavailableBody = (reason: string): FunctionBody => ({
   reason: reason.length === 0 ? "unavailable" : reason,
 });
 
-/** Keep the journal's body fact when a conflicting file is left unchanged. */
-const retainedBody = (
+/** Preserve the observations and their caveats when a file cannot be reused. */
+const retainedObservation = (
   session: DecompileExport,
   address: string,
-): FunctionBody => {
-  return session.record(address)?.body ?? unavailableBody("not rewritten");
+): { body: FunctionBody; options: { limitations?: readonly string[] } } => {
+  const record = session.record(address);
+  return {
+    body: record?.body ?? unavailableBody("not rewritten"),
+    options:
+      record?.limitations === undefined
+        ? {}
+        : { limitations: record.limitations },
+  };
 };
 
 const exportLimitations = (

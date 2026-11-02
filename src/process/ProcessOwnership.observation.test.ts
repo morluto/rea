@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   cleanupOwnedProcessGroup,
   type ProcessOwnershipHost,
@@ -287,14 +289,22 @@ describe("multi-group ownership observation cancellation", () => {
       return outcome;
     });
     let settledBeforeRelease = false;
-    try {
-      await secondListStarted;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(
+        secondListStarted,
+        observedOutcome,
+        "liveness recheck",
+      );
       controller.abort(reason);
       await new Promise<void>((resolve) => setImmediate(resolve));
       settledBeforeRelease = settled;
-    } finally {
-      releaseSecondList?.();
-    }
+    }, [
+      () => controller.abort(reason),
+      () => releaseSecondList?.(),
+      async () => {
+        await observedOutcome;
+      },
+    ]);
 
     const outcome = await observedOutcome;
     expect(settledBeforeRelease).toBe(true);

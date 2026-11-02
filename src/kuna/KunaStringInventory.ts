@@ -4,6 +4,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { analysisStringSchema } from "../domain/native/nativeString.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { compareKunaAddresses } from "./KunaAddress.js";
+import { KunaDocumentError } from "./KunaDocumentError.js";
 import { KunaJsonDocumentReader, parseKunaRow } from "./KunaJsonStream.js";
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 
@@ -66,7 +67,7 @@ const validateStringFacts = (entry: z.infer<typeof row>): void => {
       (entry.encoding === "ascii" && point > 0x7f) ||
       (entry.encoding === "utf16" && point > 0xff)
     )
-      throw new Error("string text contradicts its reported encoding");
+      throw new KunaDocumentError("encoding_contradicts_text");
     characters += 1;
   }
   const textBytes =
@@ -85,9 +86,7 @@ const validateStringFacts = (entry: z.infer<typeof row>): void => {
     entry.length !== characters ||
     entry.byte_length !== textBytes + terminatorBytes
   )
-    throw new Error(
-      "string length or termination contradicts its encoded text",
-    );
+    throw new KunaDocumentError("length_contradicts_text");
 };
 
 export type KunaStringItem = z.infer<typeof analysisStringSchema>;
@@ -165,10 +164,10 @@ export class KunaStringInventoryReader extends KunaJsonDocumentReader<KunaString
     const entry = parseKunaRow(row, "string", fields);
     validateStringFacts(entry);
     if (entry.address !== entry.address_hex)
-      throw new Error("string address disagrees with its hex field");
+      throw new KunaDocumentError("address_hex_disagrees");
     const identity = `${entry.address}:${entry.encoding}`;
     if (this.#identities.has(identity))
-      throw new Error("string inventory repeats an identity");
+      throw new KunaDocumentError("repeated_identity");
     this.#identities.add(identity);
     this.#items.push({
       address: entry.address,

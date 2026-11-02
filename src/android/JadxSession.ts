@@ -23,6 +23,7 @@ import {
   type JsonValue,
 } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { OwnedProviderProcessSpawnOptions } from "../process/ProviderProcess.js";
 import { analyzeJadxRequest, type JadxToolPort } from "./JadxAnalysis.js";
 import { readAndroidNativeInventory } from "./AndroidNativeInventory.js";
@@ -287,11 +288,10 @@ export class JadxSession {
             calls: this.#observedCalls.map(({ complete }) => complete),
           },
           subject: target,
-          limitations: [
-            ...(request.operation === "inspect_android_jni_bindings"
+          limitations:
+            request.operation === "inspect_android_jni_bindings"
               ? []
-              : [...JADX_LIMITATIONS, ...androidMappingLimitations(mapping)]),
-          ],
+              : [...JADX_LIMITATIONS, ...androidMappingLimitations(mapping)],
           locations:
             request.operation === "inspect_android_package"
               ? [{ kind: "artifact-path", path: "AndroidManifest.xml" }]
@@ -382,6 +382,17 @@ export class JadxSession {
       if (envelope.isError === true) {
         const failure = parseJadxFailure(text);
         if (failure !== undefined) {
+          if (failure.kind === "reference-output-limit")
+            throw new AnalysisResourceConstraintError(
+              request.operation,
+              "memory",
+              "External DEX reference metadata exceeds the bounded transport representation allowance.",
+              { stage: failure.stage, limit_bytes: failure.limit_bytes },
+              fixedAllowanceOptions(
+                `The external DEX ${failure.stage} representation allowance of ${String(failure.limit_bytes)} bytes`,
+                "report",
+              ),
+            );
           if (name === "load_apk" && failure.kind === "jvm-memory-failure")
             throw new AnalysisResourceConstraintError(
               request.operation,

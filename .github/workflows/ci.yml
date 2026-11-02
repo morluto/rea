@@ -61,6 +61,9 @@ jobs:
       qualification_run_id: ${{ steps.qualification.outputs.run_id }}
       code: ${{ steps.plan.outputs.code }}
       reverse_tools: ${{ steps.plan.outputs.reverse_tools }}
+      python: ${{ steps.plan.outputs.python }}
+      packet_capture: ${{ steps.plan.outputs.packet_capture }}
+      signal_recording: ${{ steps.plan.outputs.signal_recording }}
       sqlite: ${{ steps.plan.outputs.sqlite }}
       runtime: ${{ steps.plan.outputs.runtime }}
       package: ${{ steps.plan.outputs.package }}
@@ -144,6 +147,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
+      - name: Validate source architecture before dependency installation
+        if: needs.changes.outputs.code == 'true'
+        run: node scripts/verify/architecture-guards.mjs
       - name: Cache npm package downloads
         id: npm-cache
         uses: ./.github/actions/npm-cache
@@ -263,6 +269,27 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
+
+  python:
+    name: Python producer tests
+    needs: changes
+    if: needs.changes.outputs.python == 'true' && needs.changes.outputs.tier == 'fast'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
+      - run: npm ci
+      # Analysis-efficiency checks import compiled process modules.
+      - name: Reuse portable build outputs across runs
+        uses: ./.github/actions/portable-build-cache
+      - run: npm run test:prepare
+      - run: npm run test:python
 
   test-source:
     name: Source tests
@@ -391,7 +418,9 @@ jobs:
       needs.changes.outputs.web_network == 'true' ||
       needs.changes.outputs.web_runtime == 'true' ||
       needs.changes.outputs.web_source_map == 'true' ||
-      needs.changes.outputs.agentenv == 'true'
+      needs.changes.outputs.agentenv == 'true' ||
+      needs.changes.outputs.packet_capture == 'true' ||
+      needs.changes.outputs.signal_recording == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -750,6 +779,12 @@ jobs:
           npm run verify:legacy-simulator
           npm run verify:apple-dispatch
           npm run verify:interface-builder
+      - name: Verify portable iNES CLI, MCP and source boundaries
+        run: >-
+          npm run test:focused --
+          tests/acceptance/inesContainer.test.ts
+          tests/boundary/filesystem/inesArtifact.test.ts
+          tests/boundary/filesystem/inesCancellation.test.ts
       - name: Run native Apple and process boundary regressions
         run: >-
           npm run test:focused --
@@ -770,9 +805,11 @@ jobs:
           tests/boundary/cli/nativeDemangleCli.test.ts
           tests/boundary/cli/nativeDispatchPropertyAttributes.test.ts
           tests/boundary/mcp/nativeDemangleMcp.test.ts
+          tests/boundary/mcp/nativeMachoSummaryMcp.test.ts
           tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts
           tests/boundary/cli/nativeSignatureCli.test.ts
           tests/boundary/cli/nativeMachoArm64_32Cli.test.ts
+          tests/boundary/cli/nativeMachoEncryptionCli.test.ts
           tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts
           src/process/capture/FilesystemSnapshot.test.ts
           tests/process-global/filesystemSnapshotFallbackCancellation.test.ts
@@ -1091,6 +1128,26 @@ jobs:
       build_cache_artifact: rea-build-cache
       remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
+  packet_capture:
+    needs: [changes, static, build]
+    if: needs.changes.outputs.packet_capture == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+    uses: ./.github/workflows/real-packet-capture.yml
+    with:
+      build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
+
+  signal_recording:
+    needs: [changes, static, build]
+    if: needs.changes.outputs.signal_recording == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+    uses: ./.github/workflows/real-signal-recording.yml
+    with:
+      build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
+
   nativeaot:
     needs: [changes, static]
     if: needs.changes.outputs.nativeaot == 'true'
@@ -1117,6 +1174,9 @@ jobs:
         static-deep,
         build,
         reverse-tools-quality,
+        python,
+        packet_capture,
+        signal_recording,
         test-shard,
         test-source,
         sqlite-runtime,

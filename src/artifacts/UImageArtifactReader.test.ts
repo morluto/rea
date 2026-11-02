@@ -82,6 +82,20 @@ it("names unknown enum values as unknown instead of failing", () => {
   });
 });
 
+it.each([
+  [14, "kernel_noload"],
+  [22, "loadable"],
+  [45, "tfa-bl31"],
+  [47, "amlimage"],
+  [48, "unknown"],
+])("names image type %i as %s", (type, typeName) => {
+  const bytes = buildUImage({ type });
+  const parsed = parseUImageHeaderFields(bytes.subarray(0, UIMAGE_HEADER_SIZE));
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) return;
+  expect(parsed.value).toMatchObject({ type, typeName });
+});
+
 it("rejects a bad magic and a bad header CRC", () => {
   const good = buildUImage();
   const badMagic = Buffer.from(good);
@@ -266,7 +280,44 @@ it("splits multi images and keeps compressed payloads as stored", async () => {
   }
 });
 
-it("fails closed on corrupt CRCs, truncation, and bad multi tables", async () => {
+it("splits a script image's size table like a multi image", async () => {
+  // mkimage writes the multi-file size table for scripts too, and U-Boot's
+  // `source` skips it: "scripts are just multi-image files with one component".
+  const script = Buffer.from("setenv bootargs console=ttyS0\nbootz\n");
+  const payload = buildMultiPayload([script]);
+  const path = await writeCarrier(
+    "uimage-script",
+    buildUImage({ type: 6, name: "boot script", payload }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  const root = snapshot.occurrences.find((row) => row.logical_path === ".");
+  expect(root?.format_metadata).toMatchObject({
+    type_name: "script",
+    sub_image_count: 1,
+  });
+  expect(snapshot.limitations.join(" ")).toContain("size table");
+  const reader = new UImageArtifactReader(path);
+  try {
+    const entries = [];
+    for await (const item of reader.entries()) entries.push(item);
+    const byPath = new Map(entries.map((item) => [item.path, item]));
+    expect([...byPath.keys()].sort()).toEqual(["image-0.bin", "payload.bin"]);
+    expect(
+      (await collect(await reader.open(byPath.get("image-0.bin")!))).equals(
+        script,
+      ),
+    ).toBe(true);
+    expect(
+      (await collect(await reader.open(byPath.get("payload.bin")!))).equals(
+        payload,
+      ),
+    ).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("fails closed on corrupt CRCs, truncation, and bad size tables", async () => {
   const cases: [string, Buffer, RegExp][] = [
     ["data CRC", buildUImage({ corruptDataCrc: true }), /data CRC32 mismatch/u],
     [
@@ -285,6 +336,11 @@ it("fails closed on corrupt CRCs, truncation, and bad multi tables", async () =>
         type: 4,
         payload: Buffer.from([0, 0, 0, 3, 0x61, 0x62, 0x63]),
       }),
+      /no zero terminator/u,
+    ],
+    [
+      "script without size table",
+      buildUImage({ type: 6, payload: Buffer.from("echo hi\n") }),
       /no zero terminator/u,
     ],
   ];

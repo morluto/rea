@@ -115,23 +115,14 @@ export async function verifyAndroidFailureRecovery({
       {
         label: "missing java",
         env: { ...withoutJavaHome, PATH: empty },
-        observation:
-          process.platform === "win32" ? "Cannot find java.exe" : "ENOENT",
+        observation: `Cannot find an executable ${javaName}`,
         diagnostics: {
           failure_kind: "java_runtime",
           failure_code: "runtime_missing",
-          ...(process.platform === "win32"
-            ? {}
-            : { process_error_code: "ENOENT" }),
+          phase: "path-lookup",
         },
-        message:
-          process.platform === "win32"
-            ? /Cannot find java\.exe/u
-            : /selected Java runtime/u,
-        remediation:
-          process.platform === "win32"
-            ? /JAVA_HOME|PATH/u
-            : /selected launcher/u,
+        message: /Cannot find an executable java/u,
+        remediation: /JAVA_HOME|PATH/u,
       },
       {
         label: "invalid engine archive with a working JDK",
@@ -159,6 +150,8 @@ export async function verifyAndroidFailureRecovery({
             failure_kind: "java_probe",
             failure_code: "runtime_unavailable",
           },
+          availabilityReason: "provider_unavailable",
+          availabilityRemediation: /selected Java runtime/u,
           message: /selected Java runtime/u,
           remediation: /selected launcher/u,
         });
@@ -200,10 +193,13 @@ export async function verifyAndroidFailureRecovery({
         environment: scenario.env,
         repository,
         available: false,
-        remediation: new RegExp(
-          scenario.observation.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"),
-          "u",
-        ),
+        unavailableReason: scenario.availabilityReason ?? "provider_missing",
+        remediation:
+          scenario.availabilityRemediation ??
+          new RegExp(
+            scenario.observation.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"),
+            "u",
+          ),
       });
       console.log(`PASS CLI applicable recovery: ${scenario.label}`);
     }
@@ -297,6 +293,7 @@ const verifyAndroidReadiness = async ({
   repository,
   available,
   remediation,
+  unavailableReason = "provider_missing",
 }) => {
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -343,7 +340,7 @@ const verifyAndroidReadiness = async ({
         assert.equal(item.reason, "available");
         assert.equal(item.remediation, null);
       } else {
-        assert.equal(item.reason, "provider_missing");
+        assert.equal(item.reason, unavailableReason);
         assert.match(item.remediation, remediation);
       }
     }

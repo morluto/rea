@@ -33,6 +33,58 @@ export interface CliDelimitedOutputOptions {
 
 type DelimitedScalar = string | number | boolean | null | undefined;
 
+/** UTF-8 cannot encode a lone UTF-16 surrogate without replacing it. */
+export const hasUnpairedSurrogate = (value: string): boolean =>
+  /[\ud800-\udfff]/u.test(value);
+
+/** Check selected output, including keys, before using a non-JSON text format. */
+export const containsUnpairedSurrogate = (value: unknown): boolean => {
+  return containsText(value, hasUnpairedSurrogate);
+};
+
+/** Markdown renderers replace NUL as well as UTF-8-invalid code units. */
+export const containsUnrepresentableMarkdown = (value: unknown): boolean =>
+  containsText(
+    value,
+    (text) => text.includes("\u0000") || hasUnpairedSurrogate(text),
+  );
+
+const containsText = (
+  value: unknown,
+  predicate: (text: string) => boolean,
+): boolean => {
+  const pending: Iterator<unknown>[] = [[value][Symbol.iterator]()];
+  const seen = new WeakSet<object>();
+  while (pending.length > 0) {
+    const next = pending.at(-1)!.next();
+    if (next.done === true) {
+      pending.pop();
+      continue;
+    }
+    const current: unknown = next.value;
+    if (typeof current === "string") {
+      if (predicate(current)) return true;
+      continue;
+    }
+    if (typeof current !== "object" || current === null || seen.has(current))
+      continue;
+    seen.add(current);
+    pending.push(outputValues(current));
+  }
+  return false;
+};
+
+function* outputValues(value: object): Generator<unknown> {
+  if (Array.isArray(value)) {
+    yield* value;
+    return;
+  }
+  for (const key of Object.keys(value)) {
+    yield key;
+    yield (value as Record<string, unknown>)[key];
+  }
+}
+
 export interface PreparedDelimitedOutput {
   readonly encodedHeaders: readonly string[];
   readonly rows: readonly (readonly DelimitedScalar[])[];
@@ -97,6 +149,14 @@ export const prepareDelimitedOutput = (
 
   const encodedHeaders: string[] = [];
   for (const field of fields) {
+    if (hasUnpairedSurrogate(field))
+      return err(
+        delimitedOutputInputError(
+          ["--columns"],
+          "CSV/TSV cannot preserve unpaired UTF-16 surrogates in UTF-8 output; use JSON.",
+          operation,
+        ),
+      );
     if (isSpreadsheetFormula(field))
       return err(
         delimitedOutputInputError(
@@ -132,6 +192,14 @@ export const prepareDelimitedOutput = (
           delimitedOutputInputError(
             ["--columns", field],
             "CSV/TSV output refuses spreadsheet formula-leading text; JSON retains the exact value.",
+            operation,
+          ),
+        );
+      if (typeof value === "string" && hasUnpairedSurrogate(value))
+        return err(
+          delimitedOutputInputError(
+            ["--columns", field],
+            "CSV/TSV cannot preserve unpaired UTF-16 surrogates in UTF-8 output; use JSON.",
             operation,
           ),
         );
@@ -250,21 +318,41 @@ const escapeInlineSyntax = (
 
 const escapeTableCell = (value: string): string =>
   value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/[\\|`*[\]~]|_+/g, escapeInlineSyntax)
+    .replace(
+      /\u0000|[\ud800-\udfff]/gu,
+      (character) =>
+        `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+    )
+    .replace(/[\\|`*[\]~{}#]|_+/g, escapeInlineSyntax)
+    // Encode renderer-extension introducers at the same boundary as HTML
+    // characters. Generated entities must not themselves be re-escaped.
+    .replace(/[&<>:]|;(?=-?[)(])/g, (character) => {
+      switch (character) {
+        case "&":
+          return "&amp;";
+        case "<":
+          return "&lt;";
+        case ">":
+          return "&gt;";
+        case ":":
+          return "&#58;";
+        default:
+          return "&#59;";
+      }
+    })
+    .replace(/([xXB8]-)\)/g, "$1&#41;")
     .replace(/\r\n|\r|\n/g, "<br>");
+
+const encodeMarkdownWhitespace = (whitespace: string): string =>
+  whitespace.replace(/ /g, "&#32;").replace(/\t/g, "&#9;");
 
 /** Heading and paragraph facts are literal data, including block syntax. */
 const escapeMarkdownText = (value: string): string =>
   escapeTableCell(value)
-    .replace(/#/g, "\\#")
     .replace(/^(\s*)([-+=])/, "$1\\$2")
     .replace(/^(\s*\d{1,9})([.)])(?=\s)/, "$1\\$2")
-    .replace(/^[ \t]+/, (indent) =>
-      indent.replace(/ /g, "&#32;").replace(/\t/g, "&#9;"),
-    );
+    .replace(/^[ \t]+/, encodeMarkdownWhitespace)
+    .replace(/[ \t]+$/u, encodeMarkdownWhitespace);
 
 const markdownHeading = (path: readonly string[]): string =>
   `## ${escapeMarkdownText(path.join("."))}\n\n`;
@@ -275,8 +363,8 @@ const renderTable = (
 ): string => {
   if (headers.length === 0) return "";
   const encodeTableCell = (value: string): string =>
-    escapeTableCell(value).replace(/^ +| +$/g, (spaces) =>
-      "&#32;".repeat(spaces.length),
+    escapeTableCell(value).replace(/^[ \t]+|[ \t]+$/g, (spaces) =>
+      encodeMarkdownWhitespace(spaces),
     );
   const escapedHeaders = headers.map(encodeTableCell);
   const widths = escapedHeaders.map((header) => header.length);

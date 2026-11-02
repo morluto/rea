@@ -5,6 +5,8 @@ import { syncBuiltinESMExports } from "node:module";
 import * as fileSystem from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { thinFuseImage } from "../../tests/fixtures/electron/fuseImage.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -375,8 +377,8 @@ it("awaits an admitted preflight's final close before projecting cancellation", 
       settled = true;
       return result;
     });
-  try {
-    await closeEntered;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(closeEntered, running, "preflight close");
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     releaseClose();
@@ -396,13 +398,17 @@ it("awaits an admitted preflight's final close before projecting cancellation", 
     await provider.close();
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(retry.error.cleanupIncomplete).toBe(false);
-  } finally {
-    releaseClose();
-    denied = false;
-    await running;
-    await provider.close();
-    await fixture.release();
-  }
+  }, [
+    () => {
+      releaseClose();
+      denied = false;
+    },
+    async () => {
+      await running;
+    },
+    () => provider.close(),
+    () => fixture.release(),
+  ]);
 });
 
 it.each(["admission", "close"] as const)(

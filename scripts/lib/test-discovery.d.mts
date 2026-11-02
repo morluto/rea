@@ -10,5 +10,10 @@ export function compareTestDiscovery(
     readonly file: string;
     readonly projects: readonly string[];
   }[];
+  readonly wrongProjects: readonly {
+    readonly file: string;
+    readonly expected: string;
+    readonly actual: string;
+  }[];
   readonly discovered: number;
 };

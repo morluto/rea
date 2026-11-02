@@ -27,6 +27,32 @@ const analyze = async (root: string) => {
   };
 };
 
+const analyzeLoaderSuffixCase = async () => {
+  const root = await createTestTempDirectory("rea-require-suffix-case-");
+  const javascript = 'module.exports = { loadedBy: "javascript" };';
+  // Case-insensitive hosts cannot hold both spellings in one directory.
+  await mkdir(join(root, "lower"));
+  await Promise.all([
+    writeFile(
+      join(root, "main.cjs"),
+      ["./data.JSON", "./addon.NODE", "./lower/data.json", "./lower/addon.node"]
+        .map((specifier) => `require(${JSON.stringify(specifier)});`)
+        .join("\n"),
+    ),
+    writeFile(join(root, "data.JSON"), javascript),
+    writeFile(join(root, "addon.NODE"), javascript),
+    writeFile(join(root, "lower", "data.json"), '{"loadedBy":"json"}'),
+    writeFile(join(root, "lower", "addon.node"), Buffer.from([0, 1, 2, 3])),
+  ]);
+  // Node matches registered loader extensions case-sensitively.
+  const nodeRequire = createRequire(join(root, "main.cjs"));
+  expect(nodeRequire("./data.JSON")).toEqual({ loadedBy: "javascript" });
+  expect(nodeRequire("./addon.NODE")).toEqual({ loadedBy: "javascript" });
+  const { graph } = await analyze(root);
+  return (specifier: string) =>
+    graph.edges.filter((edge) => edge.properties.specifier === specifier);
+};
+
 describe("literal CommonJS paths in application graphs", () => {
   it("agrees with Node for both require projections while preserving ESM suffixes", async () => {
     const root = await createTestTempDirectory("rea-literal-require-");
@@ -75,6 +101,34 @@ describe("literal CommonJS paths in application graphs", () => {
       ]),
     );
     expect(graph.coverage.status).toBe("complete");
+  });
+
+  it("attaches JSON loader status only to Node's exact .json suffix", async () => {
+    const edges = await analyzeLoaderSuffixCase();
+    const relationship = (specifier: string) =>
+      edges(specifier).find(
+        (edge) => edge.properties.module_link_kind === "require",
+      )?.properties;
+    expect(relationship("./data.JSON")).toMatchObject({
+      resolved_path: "data.JSON",
+      target_file_kind: "json",
+      target_json_status: null,
+    });
+    expect(relationship("./lower/data.json")).toMatchObject({
+      resolved_path: "lower/data.json",
+      target_file_kind: "json",
+      target_json_status: "included",
+    });
+  });
+
+  it("emits a native loads edge only for Node's exact .node suffix", async () => {
+    const edges = await analyzeLoaderSuffixCase();
+    const relations = (specifier: string) =>
+      edges(specifier)
+        .filter((edge) => edge.properties.kind === "require")
+        .map((edge) => edge.relation);
+    expect(relations("./addon.NODE")).toEqual(["imports"]);
+    expect(relations("./lower/addon.node")).toEqual(["loads"]);
   });
 
   it.each(["literal", "stripped", "both"] as const)(

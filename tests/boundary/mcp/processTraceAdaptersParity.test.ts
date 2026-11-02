@@ -3,6 +3,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -44,7 +45,10 @@ const comparisonClient = async (
   );
   expect(session.recordEvidence(left).ok).toBe(true);
   expect(session.recordEvidence(right).ok).toBe(true);
-  const server = createServer({ kind: "session", session });
+  const server = createServer(
+    { kind: "session", session },
+    { environment: { ...process.env, ...INLINE_EVIDENCE_MCP_ENVIRONMENT } },
+  );
   const client = new Client({ name: "trace-parity", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

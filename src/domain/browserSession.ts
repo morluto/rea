@@ -21,6 +21,11 @@ export type ObserveWebSessionInput = z.infer<
   typeof observeWebSessionInputSchema
 >;
 
+const destinationScopeSchema = z.enum([
+  "approved",
+  "outside_policy",
+  "unsupported",
+]);
 const timelineEventSchema = z.object({
   sequence: z.int().min(1),
   type: z.enum([
@@ -46,10 +51,18 @@ const timelineEventSchema = z.object({
   loader_id: z.string().nullable(),
   request_id: z.string().nullable(),
   url: z.string().nullable(),
-  destination_scope: z
-    .enum(["approved", "outside_policy", "unsupported"])
-    .nullable(),
+  destination_scope: destinationScopeSchema.nullable(),
   detail: z.string().nullable(),
+  redirect_response: z
+    .object({
+      url: z.string().nullable(),
+      status: z.number().nullable(),
+      scope: destinationScopeSchema.nullable(),
+    })
+    .optional()
+    .describe(
+      "Prior-hop response metadata. URL and status require an approved response origin; null scope is unknown. Omitted in historical Evidence.",
+    ),
 });
 
 /** Navigation-aware session result for external user actions. */

@@ -13,6 +13,7 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 
 /** Expose the same explicit Apktool requests through one-shot CLI commands. */
 export const registerApktoolCommands = (
@@ -24,11 +25,20 @@ export const registerApktoolCommands = (
   ),
 ): void => {
   const service = new ApktoolResourceAnalysisService(provider);
-  const execute = (name: string, operation: ApktoolOperation, input: unknown) =>
+  const execute = (
+    name: string,
+    operation: ApktoolOperation,
+    input: unknown,
+    callerPath?: string,
+  ) =>
     withCommandCancellation((signal) =>
       logCliCommand(logger, name, () =>
         finishAnalysisCommand(
-          () => service.execute(operation, input, { signal }),
+          callerPath === undefined
+            ? () => service.execute(operation, input, { signal })
+            : bindCliEvidenceCallerPath(callerPath, () =>
+                service.execute(operation, input, { signal }),
+              ),
           { close: () => provider.close() },
           "apktool",
           operation,
@@ -76,17 +86,24 @@ export const registerApktoolCommands = (
         ),
     }),
     run: ({ args, options }) =>
-      execute(CLI_COMMANDS.decodeAndroidResources, "decode_android_resources", {
-        path: args.path,
-        include_strings: options.strings,
-        ...(options["string-tables-only"] === undefined
-          ? {}
-          : { string_tables_only: options["string-tables-only"] }),
-        ...(options.locale === undefined ? {} : { locale: options.locale }),
-        ...(options.locales === undefined ? {} : { locales: options.locales }),
-        ...(options.decodeTimeoutMs === undefined
-          ? {}
-          : { decode_timeout_ms: options.decodeTimeoutMs }),
-      }),
+      execute(
+        CLI_COMMANDS.decodeAndroidResources,
+        "decode_android_resources",
+        {
+          path: args.path,
+          include_strings: options.strings,
+          ...(options["string-tables-only"] === undefined
+            ? {}
+            : { string_tables_only: options["string-tables-only"] }),
+          ...(options.locale === undefined ? {} : { locale: options.locale }),
+          ...(options.locales === undefined
+            ? {}
+            : { locales: options.locales }),
+          ...(options.decodeTimeoutMs === undefined
+            ? {}
+            : { decode_timeout_ms: options.decodeTimeoutMs }),
+        },
+        args.path,
+      ),
   });
 };

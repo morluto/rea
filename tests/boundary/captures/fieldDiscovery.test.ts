@@ -4,7 +4,7 @@ import { parseFieldDiscovery } from "../../../src/captures/parseFieldDiscovery.j
 
 it("keeps duplicate registrations and source ordinals instead of overwriting abbreviations", () => {
   const text =
-    "P\tUSB\tusb\r\nF\tVendor\tusb.idVendor\tFT_UINT16\tusb\tBASE_HEX\t0x0\t\r\nF\tVendor\tusb.idVendor\tFT_UINT32\tusb\tBASE_HEX\t0x0\t";
+    "P\tUSB\tusb\r\nF\tVendor\tusb.idVendor\tFT_UINT16\tusb\tBASE_HEX\t0x0\t\r\nF\tOther Vendor\tusb.idVendor\tFT_UINT32\tusb\tBASE_DEC\t0xff00\tSecond registration";
   const result = parseFieldDiscovery(
     text,
     inspectPacketFieldsInputSchema.parse({
@@ -13,12 +13,17 @@ it("keeps duplicate registrations and source ordinals instead of overwriting abb
       offset: 1,
     }),
   );
-  expect(result.records).toMatchObject([
+  expect(result.records).toEqual([
     {
       source_line: 3,
+      kind: "field",
+      name: "Other Vendor",
       abbreviation: "usb.idVendor",
       field_type: "FT_UINT32",
-      description: "",
+      parent_protocol: "usb",
+      display_base: "BASE_DEC",
+      bitmask: "0xff00",
+      description: "Second registration",
     },
   ]);
   expect(result.output_window).toEqual({

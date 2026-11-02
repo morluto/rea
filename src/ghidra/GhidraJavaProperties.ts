@@ -1,9 +1,18 @@
 import type { Result } from "../domain/result.js";
 
+const GHIDRA_JAVA_PROPERTIES_CODES = [
+  "trailing_escape",
+  "malformed_unicode_escape",
+] as const;
+
+/** Stable identity for a Java properties escape that invalidates the file. */
+export type GhidraJavaPropertiesCode =
+  (typeof GHIDRA_JAVA_PROPERTIES_CODES)[number];
+
 /** Parse Java Properties.load(InputStream) syntax from its ISO-8859-1 text. */
 export const parseGhidraJavaProperties = (
   content: string,
-): Result<ReadonlyMap<string, string>, string> => {
+): Result<ReadonlyMap<string, string>, GhidraJavaPropertiesCode> => {
   const values = new Map<string, string>();
   for (const line of logicalPropertyLines(content)) {
     let start = 0;
@@ -88,7 +97,9 @@ function* logicalPropertyLines(content: string): Generator<string> {
   if (continuing) yield logical;
 }
 
-const decodePropertyEscapes = (value: string): Result<string, string> => {
+const decodePropertyEscapes = (
+  value: string,
+): Result<string, GhidraJavaPropertiesCode> => {
   let result = "";
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index];
@@ -97,8 +108,7 @@ const decodePropertyEscapes = (value: string): Result<string, string> => {
       continue;
     }
     const escaped = value[++index];
-    if (escaped === undefined)
-      return { ok: false, error: "Trailing escape in Java properties value" };
+    if (escaped === undefined) return { ok: false, error: "trailing_escape" };
     if (escaped === "t") result += "\t";
     else if (escaped === "n") result += "\n";
     else if (escaped === "r") result += "\r";
@@ -108,7 +118,7 @@ const decodePropertyEscapes = (value: string): Result<string, string> => {
       if (digits.length !== 4 || !/^[0-9a-f]{4}$/iu.test(digits))
         return {
           ok: false,
-          error: "Malformed Unicode escape in Java properties file",
+          error: "malformed_unicode_escape",
         };
       result += String.fromCharCode(Number.parseInt(digits, 16));
       index += 4;

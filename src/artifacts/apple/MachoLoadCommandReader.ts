@@ -36,7 +36,9 @@ import {
   readMachoHeaderPrefixFacts,
   validateFatSlice,
   validateFatSliceIdentity,
+  type FatContainerHeader,
   type FatSliceDeclaration,
+  type FatSliceRangeIssue,
 } from "../../domain/apple/machoContainer.js";
 
 /** Read `length` bytes at `offset`; shorter results mean end of file. */
@@ -100,88 +102,190 @@ class MachoFormatIssue extends Error {
   }
 }
 
+/** A structural defect, and whether it is malformed or merely unsupported. */
+export interface MachoReadIssue {
+  readonly status: "malformed" | "unsupported";
+  readonly reason: string;
+}
+
+/**
+ * File-level identity. FAT range issues stay per slice so a tolerant reader
+ * can still report the slices whose ranges are valid.
+ */
+export type MachoContainer =
+  | { readonly kind: "not-mach-o" }
+  | ({ readonly kind: "issue" } & MachoReadIssue)
+  | { readonly kind: "thin"; readonly size: number }
+  | {
+      readonly kind: "fat";
+      readonly header: ParsedFatContainerHeader;
+      readonly hidden: HiddenFatRow | null;
+    };
+
+/**
+ * Apple's hidden ARM64 row with its own range defect, or why its slot could
+ * not be decoded. It stays outside the raw `nfat_arch` declarations.
+ */
+export type HiddenFatRow =
+  | {
+      readonly status: "declared";
+      readonly declaration: FatSliceDeclaration;
+      readonly rangeIssue: string | null;
+    }
+  | MachoReadIssue;
+
+type ParsedFatContainerHeader = Extract<
+  FatContainerHeader,
+  { readonly state: "parsed" }
+>;
+
+/** Classify a file as thin, FAT or not Mach-O without decoding any slice. */
+export const readMachoContainer = async (
+  readAt: ReadAt,
+  size: number,
+): Promise<MachoContainer> => {
+  const head = await readAt(0, Math.min(size, 8));
+  if (head.byteLength < 8)
+    // A recognized magic with no room for a header is a truncated image.
+    return hasMachoMagic(head)
+      ? {
+          kind: "issue",
+          status: "malformed",
+          reason: "Mach-O header is truncated",
+        }
+      : { kind: "not-mach-o" };
+  const fatPrefix = readFatHeaderPrefix(head);
+  const mayBeJvmClass =
+    fatPrefix.state === "parsed" && !fatPrefix.wide && !fatPrefix.littleEndian;
+  let header: FatContainerHeader;
+  if (mayBeJvmClass && size <= MAX_JVM_CLASS_IDENTITY_BYTES) {
+    const complete = await readAt(0, size);
+    header =
+      complete.byteLength === size
+        ? readFatContainerHeader(complete, size)
+        : readFatContainerHeader(head, size);
+  } else header = readFatContainerHeader(head, size);
+  if (header.state !== "not-fat") {
+    if (header.state === "needs-data") {
+      header = readFatContainerHeader(
+        await readAt(0, header.requiredBytes),
+        size,
+      );
+    }
+    if (header.state === "not-fat") return { kind: "not-mach-o" };
+    if (header.state === "needs-data")
+      return {
+        kind: "issue",
+        status: "malformed",
+        reason: "FAT table is truncated",
+      };
+    if (header.state === "malformed")
+      return { kind: "issue", status: "malformed", reason: header.reason };
+    let identity = classifyFatContainerIdentity(header, () => undefined);
+    if (identity.state === "needs-slice-header") {
+      const sliceHeaders = new Map<number, number | null>();
+      for (const offset of identity.offsets)
+        sliceHeaders.set(offset, await readSliceMagic(readAt, offset));
+      identity = classifyFatContainerIdentity(header, (offset) =>
+        sliceHeaders.get(offset),
+      );
+    }
+    if (
+      identity.state === "not-mach-o" ||
+      identity.state === "needs-slice-header"
+    )
+      return { kind: "not-mach-o" };
+    // A large CAFEBABE input whose bounded prefix resembles an invalid
+    // known-CPU FAT table remains unknown until its JVM identity can be
+    // checked; do not turn the resource limit into a malformed claim. A slice
+    // with a valid range that starts with a Mach-O header settles identity,
+    // and its siblings' range faults then stay their own.
+    if (
+      identity.state === "malformed" &&
+      mayBeJvmClass &&
+      size > MAX_JVM_CLASS_IDENTITY_BYTES &&
+      !(await observesMachoSlice(readAt, header))
+    )
+      return {
+        kind: "issue",
+        status: "unsupported",
+        reason: JVM_CLASS_IDENTITY_LIMIT_REASON,
+      };
+    // Aliased declarations are rejected at the declaration owner before any
+    // slice payload is parsed. A declaration whose own range is already
+    // defective keeps that fault; it does not turn its neighbours into aliases.
+    const overlap = findOverlappingFatSlices(rangeValidSlices(header));
+    if (overlap !== null)
+      return {
+        kind: "issue",
+        status: "malformed",
+        reason: overlapReason(overlap),
+      };
+    // Identity is only malformed through a slice range issue, which the
+    // returned rangeIssues retain.
+    return {
+      kind: "fat",
+      header,
+      hidden: await readAppleHiddenArm64Row(readAt, size, header),
+    };
+  }
+  const thin = readMachoHeaderPrefixFacts(head).format;
+  if (thin?.littleEndian === true) return { kind: "thin", size };
+  if (thin !== null)
+    return {
+      kind: "issue",
+      status: "unsupported",
+      reason: "big-endian Mach-O images are not supported",
+    };
+  return { kind: "not-mach-o" };
+};
+
+/** A slice's first word read big-endian, or null when it is truncated. */
+const readSliceMagic = async (
+  readAt: ReadAt,
+  offset: number,
+): Promise<number | null> => {
+  const bytes = await readAt(offset, 4);
+  return bytes.byteLength < 4 ? null : viewOf(bytes).getUint32(0, false);
+};
+
+const observesMachoSlice = async (
+  readAt: ReadAt,
+  header: ParsedFatContainerHeader,
+): Promise<boolean> => {
+  for (const [index, slice] of header.slices.entries())
+    if (
+      header.rangeIssues[index] === null &&
+      readMachoHeaderPrefixFacts(await readAt(slice.offset, 4)).format !== null
+    )
+      return true;
+  return false;
+};
+
 /** Decode every slice's dylib-loading load commands without reading code. */
 export const readMachoImage = async (
   readAt: ReadAt,
   size: number,
 ): Promise<MachoImageFacts> => {
   try {
-    const head = await readAt(0, Math.min(size, 8));
-    if (head.byteLength < 8)
-      // A recognized magic with no room for a header is a truncated image.
-      return hasMachoMagic(head)
-        ? { status: "malformed", reason: "Mach-O header is truncated" }
-        : { status: "not-mach-o" };
-    const fatPrefix = readFatHeaderPrefix(head);
-    const mayBeJvmClass =
-      fatPrefix.state === "parsed" &&
-      !fatPrefix.wide &&
-      !fatPrefix.littleEndian;
-    let header: ReturnType<typeof readFatContainerHeader>;
-    if (mayBeJvmClass && size <= MAX_JVM_CLASS_IDENTITY_BYTES) {
-      const complete = await readAt(0, size);
-      header =
-        complete.byteLength === size
-          ? readFatContainerHeader(complete, size)
-          : readFatContainerHeader(head, size);
-    } else header = readFatContainerHeader(head, size);
-    if (header.state !== "not-fat") {
-      if (header.state === "needs-data") {
-        header = readFatContainerHeader(
-          await readAt(0, header.requiredBytes),
-          size,
-        );
-      }
-      if (header.state === "not-fat") return { status: "not-mach-o" };
-      if (header.state === "needs-data")
-        throw new MachoFormatIssue("malformed", "FAT table is truncated");
-      if (header.state === "malformed")
-        throw new MachoFormatIssue("malformed", header.reason);
-      let identity = classifyFatContainerIdentity(header, () => undefined);
-      if (identity.state === "needs-slice-header") {
-        const sliceHeaders = new Map<number, number | null>();
-        for (const offset of identity.offsets) {
-          const bytes = await readAt(offset, 4);
-          sliceHeaders.set(
-            offset,
-            bytes.byteLength < 4 ? null : viewOf(bytes).getUint32(0, false),
-          );
-        }
-        identity = classifyFatContainerIdentity(header, (offset) =>
-          sliceHeaders.get(offset),
-        );
-      }
-      if (identity.state === "not-mach-o") return { status: "not-mach-o" };
-      if (identity.state === "malformed") {
-        // A large CAFEBABE input whose bounded prefix resembles an invalid
-        // known-CPU FAT table remains unknown until its JVM identity can be
-        // checked; do not turn the resource limit into a malformed claim.
-        if (mayBeJvmClass && size > MAX_JVM_CLASS_IDENTITY_BYTES)
-          throw new MachoFormatIssue(
-            "unsupported",
-            JVM_CLASS_IDENTITY_LIMIT_REASON,
-          );
-        throw new MachoFormatIssue(identity.category, identity.reason);
-      }
-      if (identity.state === "needs-slice-header")
-        return { status: "not-mach-o" };
-      assertDistinctFatSlices(header.slices);
-      const hiddenSlice = await readAppleHiddenArm64Slice(readAt, size, header);
-      return {
-        status: "parsed",
-        slices: await readFatSlices(readAt, header.slices),
-        ...(hiddenSlice === null ? {} : { hiddenSlices: [hiddenSlice] }),
-      };
-    }
-    const thin = readMachoHeaderPrefixFacts(head).format;
-    if (thin?.littleEndian === true)
+    const container = await readMachoContainer(readAt, size);
+    if (container.kind === "not-mach-o") return { status: "not-mach-o" };
+    if (container.kind === "issue")
+      return { status: container.status, reason: container.reason };
+    if (container.kind === "thin")
       return { status: "parsed", slices: [await readSlice(readAt, 0, size)] };
-    if (thin !== null)
-      throw new MachoFormatIssue(
-        "unsupported",
-        "big-endian Mach-O images are not supported",
-      );
-    return { status: "not-mach-o" };
+    const { header } = container;
+    const rangeIssue = header.rangeIssues.find(
+      (issue): issue is FatSliceRangeIssue => issue !== null,
+    );
+    if (rangeIssue !== undefined)
+      return { status: rangeIssue.category, reason: rangeIssue.reason };
+    const hiddenSlice = await readHiddenSlice(readAt, container.hidden);
+    return {
+      status: "parsed",
+      slices: await readFatSlices(readAt, header.slices),
+      ...(hiddenSlice === null ? {} : { hiddenSlices: [hiddenSlice] }),
+    };
   } catch (cause: unknown) {
     if (cause instanceof MachoFormatIssue)
       return { status: cause.status, reason: cause.message };
@@ -189,53 +293,65 @@ export const readMachoImage = async (
   }
 };
 
-/** Reject aliasing at the declaration owner before parsing any slice payload. */
-const assertDistinctFatSlices = (
-  declarations: readonly FatSliceDeclaration[],
-): void => {
-  const overlap = findOverlappingFatSlices(declarations);
-  if (overlap !== null)
-    throw new MachoFormatIssue(
-      "malformed",
-      `Mach-O slices ${overlap[0].index} and ${overlap[1].index} overlap.`,
-    );
-};
+const rangeValidSlices = (
+  header: ParsedFatContainerHeader,
+): FatSliceDeclaration[] =>
+  header.slices.filter((_, index) => header.rangeIssues[index] === null);
+
+const overlapReason = (
+  overlap: NonNullable<ReturnType<typeof findOverlappingFatSlices>>,
+): string =>
+  `Mach-O slices ${overlap[0].index} and ${overlap[1].index} overlap.`;
 
 /**
  * Apple lipo stores one hidden ARM64 row after the declared 32-bit FAT table.
- * It remains separate from the raw nfat_arch declarations and is only admitted
- * from the single table-to-first-slice slot cctools recognizes.
+ * It is only admitted from the single table-to-first-slice slot cctools
+ * recognizes.
  */
-const readAppleHiddenArm64Slice = async (
+const readAppleHiddenArm64Row = async (
   readAt: ReadAt,
   fileSize: number,
-  header: Extract<
-    ReturnType<typeof readFatContainerHeader>,
-    { state: "parsed" }
-  >,
-): Promise<MachoSlice | null> => {
+  header: ParsedFatContainerHeader,
+): Promise<HiddenFatRow | null> => {
   if (header.wide) return null;
   const firstOffset = Math.min(...header.slices.map(({ offset }) => offset));
   const end = header.tableEnd + 20;
   if (end > fileSize || end > firstOffset) return null;
   const bytes = await readAt(header.tableEnd, 20);
   if (bytes.byteLength < 20)
-    throw new MachoFormatIssue(
-      "malformed",
-      "Hidden ARM64 FAT row is truncated",
-    );
+    return { status: "malformed", reason: "Hidden ARM64 FAT row is truncated" };
   const row = readFatSliceDeclarations(bytes, {
     count: 1,
     wide: false,
     littleEndian: header.littleEndian,
   });
   if (row.status !== "parsed")
-    throw new MachoFormatIssue("malformed", row.reason);
+    return { status: "malformed", reason: row.reason };
   const declaration = { ...row.slices[0]!, index: header.count };
   if (declaration.cpuType !== CPU_TYPE_ARM64) return null;
-  const rangeIssue = validateFatSlice(declaration, fileSize, end);
+  const overlap = findOverlappingFatSlices([
+    ...rangeValidSlices(header),
+    declaration,
+  ]);
+  return {
+    status: "declared",
+    declaration,
+    rangeIssue:
+      overlap === null
+        ? validateFatSlice(declaration, fileSize, end)
+        : overlapReason(overlap),
+  };
+};
+
+const readHiddenSlice = async (
+  readAt: ReadAt,
+  row: HiddenFatRow | null,
+): Promise<MachoSlice | null> => {
+  if (row === null) return null;
+  if (row.status !== "declared")
+    throw new MachoFormatIssue(row.status, row.reason);
+  const { declaration, rangeIssue } = row;
   if (rangeIssue !== null) throw new MachoFormatIssue("malformed", rangeIssue);
-  assertDistinctFatSlices([...header.slices, declaration]);
   const slice = await readSlice(readAt, declaration.offset, declaration.size, {
     fatCpuType: declaration.cpuType,
     fatCpuSubtype: declaration.cpuSubtype,
@@ -288,6 +404,127 @@ const readFatSlices = async (
   return slices;
 };
 
+/** Little-endian `mach_header(_64)` fields that frame one slice's commands. */
+export interface MachoSliceHeader {
+  /** True for `MH_MAGIC_64`; the magic, not the CPU type, sets the width. */
+  readonly wide: boolean;
+  readonly headerSize: number;
+  readonly cpuType: number;
+  readonly cpuSubtype: number;
+  readonly fileType: number;
+  readonly commandCount: number;
+  readonly commandBytes: number;
+}
+
+/** One framed load command; `offset` is relative to the end of the header. */
+export interface MachoLoadCommand {
+  readonly index: number;
+  readonly command: number;
+  readonly offset: number;
+  readonly body: Uint8Array;
+}
+
+/** One slice's header and raw load-command table, or why it was not read. */
+export type MachoSliceCommandTable =
+  | {
+      readonly status: "read";
+      readonly header: MachoSliceHeader;
+      readonly bytes: Uint8Array;
+    }
+  | (MachoReadIssue & { readonly header: MachoSliceHeader | null });
+
+/** Read one slice's header and load-command bytes without framing them. */
+export const readSliceCommandTable = async (
+  readAt: ReadAt,
+  base: number,
+  length: number,
+): Promise<MachoSliceCommandTable> => {
+  const headerBytes = await readAt(base, 28);
+  const parsed = readMachoHeaderDeclarations(headerBytes, length);
+  if (!parsed.ok)
+    return failed("malformed", "Mach-O header is truncated", null);
+  if (parsed.value === null)
+    return failed(
+      "malformed",
+      `slice at offset ${base} has no Mach-O header`,
+      null,
+    );
+  if (!parsed.value.littleEndian)
+    return failed(
+      "unsupported",
+      "big-endian Mach-O slices are not supported",
+      null,
+    );
+  const { wide, headerSize, commandCount, commandBytes, fileType, identity } =
+    parsed.value;
+  const header: MachoSliceHeader = {
+    wide,
+    headerSize,
+    cpuType: identity.cpuType,
+    cpuSubtype: identity.cpuSubtype,
+    fileType,
+    commandCount,
+    commandBytes,
+  };
+  if (header.commandBytes > MAX_LOAD_COMMAND_BYTES)
+    return failed(
+      "unsupported",
+      `load commands occupy ${header.commandBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+      header,
+    );
+  if (header.headerSize + header.commandBytes > length)
+    return failed(
+      "malformed",
+      "load commands extend beyond the Mach-O slice",
+      header,
+    );
+  const bytes = await readAt(base + header.headerSize, header.commandBytes);
+  if (bytes.byteLength < header.commandBytes)
+    return failed("malformed", "load commands is truncated", header);
+  return { status: "read", header, bytes };
+};
+
+const failed = (
+  status: MachoReadIssue["status"],
+  reason: string,
+  header: MachoSliceHeader | null,
+): MachoSliceCommandTable => ({ status, reason, header });
+
+/**
+ * Hand each load command to `visit` in order without retaining it. A framing
+ * failure is returned after every command before the failing one was visited.
+ */
+export const frameLoadCommands = (
+  {
+    header,
+    bytes,
+  }: { readonly header: MachoSliceHeader; readonly bytes: Uint8Array },
+  visit: (command: MachoLoadCommand) => void,
+): { readonly status: "framed" } | MachoReadIssue => {
+  const cursor = new MachoLoadCommandCursor({
+    wide: header.wide,
+    littleEndian: true,
+    commandCount: header.commandCount,
+    commandBytes: bytes.byteLength,
+  });
+  while (cursor.nextOffset !== null) {
+    const frame = cursor.read(
+      bytes.subarray(cursor.nextOffset, cursor.nextOffset + 8),
+    );
+    if (!frame.ok) return { status: "malformed", reason: frame.error };
+    const { index, command, offset, size } = frame.value;
+    visit({
+      index,
+      command,
+      offset,
+      body: bytes.subarray(offset, offset + size),
+    });
+  }
+  const complete = cursor.finish();
+  if (!complete.ok) return { status: "malformed", reason: complete.error };
+  return { status: "framed" };
+};
+
 const readSlice = async (
   readAt: ReadAt,
   base: number,
@@ -298,96 +535,19 @@ const readSlice = async (
     readonly alignmentExponent: number;
   } | null = null,
 ): Promise<MachoSlice> => {
-  const header = await readExact(readAt, base, 28, "Mach-O header");
-  const parsed = readMachoHeaderDeclarations(header, length);
-  if (!parsed.ok)
-    throw new MachoFormatIssue("malformed", "Mach-O header is truncated");
-  if (parsed.value !== null && parsed.value.littleEndian) {
-    const { wide, headerSize, commandCount, commandBytes, fileType, identity } =
-      parsed.value;
-    if (commandBytes > MAX_LOAD_COMMAND_BYTES)
-      throw new MachoFormatIssue(
-        "unsupported",
-        `load commands occupy ${commandBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
-      );
-    if (headerSize + commandBytes > length)
-      throw new MachoFormatIssue(
-        "malformed",
-        "load commands extend beyond the Mach-O slice",
-      );
-    const commands = await readExact(
-      readAt,
-      base + headerSize,
-      commandBytes,
-      "load commands",
-    );
-    const decoded = decodeCommands(commands, {
-      wide,
-      cpuType: identity.cpuType,
-      cpuSubtype: identity.cpuSubtype,
-      fileType,
-      commandCount,
-      sliceOffset: base,
-      sliceSize: length,
-      fatCpuType: fat?.fatCpuType ?? null,
-      fatCpuSubtype: fat?.fatCpuSubtype ?? null,
-      fatAlignmentExponent: fat?.alignmentExponent ?? null,
-    });
-    const slice = decoded.slice;
-    await appendDependencies(
-      slice,
-      decoded.dependencies,
-      readAt,
-      base,
-      length,
-      decoded.maxVmOffset,
-    );
-    const distinctPlatforms = [...new Set(slice.platforms)];
-    slice.platform =
-      distinctPlatforms.length === 1 ? (distinctPlatforms[0] ?? null) : null;
-    return slice;
-  }
-  throw new MachoFormatIssue(
-    parsed.value !== null && !parsed.value.littleEndian
-      ? "unsupported"
-      : "malformed",
-    parsed.value !== null && !parsed.value.littleEndian
-      ? "big-endian Mach-O slices are not supported"
-      : `slice at offset ${base} has no Mach-O header`,
-  );
-};
-
-const decodeCommands = (
-  bytes: Uint8Array,
-  header: {
-    readonly wide: boolean;
-    readonly cpuType: number;
-    readonly cpuSubtype: number;
-    readonly fileType: number;
-    readonly commandCount: number;
-    readonly sliceOffset: number;
-    readonly sliceSize: number;
-    readonly fatCpuType: number | null;
-    readonly fatCpuSubtype: number | null;
-    readonly fatAlignmentExponent: number | null;
-  },
-): {
-  readonly slice: MachoSlice;
-  readonly dependencies: readonly (
-    | { readonly kind: "parsed"; readonly value: MachoDependency }
-    | LazyLoadDylibInfoCommand
-  )[];
-  readonly maxVmOffset: bigint;
-} => {
+  const table = await readSliceCommandTable(readAt, base, length);
+  if (table.status !== "read")
+    throw new MachoFormatIssue(table.status, table.reason);
+  const { header } = table;
   const slice: MachoSlice = {
     architecture: machoArchitectureName(header.cpuType, header.cpuSubtype),
-    slice_offset: header.sliceOffset,
-    slice_size: header.sliceSize,
+    slice_offset: base,
+    slice_size: length,
     cpu_type: header.cpuType,
     cpu_subtype: header.cpuSubtype,
-    fat_cpu_type: header.fatCpuType,
-    fat_cpu_subtype: header.fatCpuSubtype,
-    fat_alignment_exponent: header.fatAlignmentExponent,
+    fat_cpu_type: fat?.fatCpuType ?? null,
+    fat_cpu_subtype: fat?.fatCpuSubtype ?? null,
+    fat_alignment_exponent: fat?.alignmentExponent ?? null,
     file_type: fileTypeName(header.fileType),
     file_type_code: header.fileType,
     platform: null,
@@ -404,20 +564,10 @@ const decodeCommands = (
   > = [];
   const segments: SegmentSpan[] = [];
   let unreadableSegment: number | undefined;
-  let lazyInfo = false;
   let lazyInfoCount = 0;
-  const commands = new MachoLoadCommandCursor({
-    wide: header.wide,
-    littleEndian: true,
-    commandCount: header.commandCount,
-    commandBytes: bytes.byteLength,
-  });
-  while (commands.nextOffset !== null) {
-    const offset = commands.nextOffset;
-    const frame = commands.read(bytes.subarray(offset, offset + 8));
-    if (!frame.ok) throw new MachoFormatIssue("malformed", frame.error);
-    const { index, command, size } = frame.value;
-    const body = bytes.subarray(offset, offset + size);
+  // Each command decodes as it is framed, so a defect in an earlier command
+  // keeps precedence over a later framing defect.
+  const framed = frameLoadCommands(table, ({ command, body, index }) => {
     if (command === LC_SEGMENT || command === LC_SEGMENT_64) {
       const span = readSegmentSpan(body, command === LC_SEGMENT_64);
       if (span === undefined) unreadableSegment ??= index;
@@ -430,19 +580,29 @@ const decodeCommands = (
           "unsupported",
           `LC_LAZY_LOAD_DYLIB_INFO commands exceed the ${MAX_LAZY_INFO_DEPENDENCIES}-dependency limit`,
         );
-      lazyInfo = true;
     }
     const decoded = decodeCommand(command, body, index, slice);
     if (decoded !== undefined) dependencies.push(decoded);
-  }
-  const complete = commands.finish();
-  if (!complete.ok) throw new MachoFormatIssue("malformed", complete.error);
-  if (lazyInfo && unreadableSegment !== undefined)
+  });
+  if (framed.status !== "framed")
+    throw new MachoFormatIssue(framed.status, framed.reason);
+  if (lazyInfoCount > 0 && unreadableSegment !== undefined)
     throw new MachoFormatIssue(
       "malformed",
       `load command ${unreadableSegment} is too short to establish the slice VM range for LC_LAZY_LOAD_DYLIB_INFO`,
     );
-  return { slice, dependencies, maxVmOffset: maximumVmOffset(segments) };
+  await appendDependencies(
+    slice,
+    dependencies,
+    readAt,
+    base,
+    length,
+    maximumVmOffset(segments),
+  );
+  const distinctPlatforms = [...new Set(slice.platforms)];
+  slice.platform =
+    distinctPlatforms.length === 1 ? (distinctPlatforms[0] ?? null) : null;
+  return slice;
 };
 
 interface LazyLoadDylibInfoCommand {
@@ -485,7 +645,8 @@ const readSegmentSpan = (
   const { nameBytes, address: vmaddr, memorySize: vmsize } = parsed.value;
   const end = nameBytes.indexOf(0);
   return {
-    name: new TextDecoder("utf-8", { fatal: false }).decode(
+    // Segment names are fixed-width Mach-O data; a leading BOM is literal name bytes.
+    name: new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(
       end < 0 ? nameBytes : nameBytes.subarray(0, end),
     ),
     vmaddr,

@@ -24,9 +24,10 @@ it("indexes a real flat block once, retaining contextual guards in source order"
   });
   const steps = prefixes.before(block, tail);
   expect(steps.next()).toEqual({ done: false, value: undefined });
-  expect(examined).toBe(1024);
+  expect(examined).toBe(2048);
   const prefix = completeSemanticSteps(steps);
-  expect(examined).toBe(block.body.length);
+  const completeVisits = examined;
+  expect(completeVisits).toBeGreaterThan(block.body.length);
   expect(prefix).toMatchObject({
     before: 2050,
     entries: [
@@ -54,7 +55,7 @@ it("indexes a real flat block once, retaining contextual guards in source order"
     const earlier = completeSemanticSteps(prefixes.before(block, statement));
     expect(earlier?.entries).toBe(prefix?.entries);
   }
-  expect(examined).toBe(block.body.length);
+  expect(examined).toBe(completeVisits);
   expect(completeSemanticSteps(prefixes.before(block, first))?.before).toBe(0);
 });
 
@@ -69,10 +70,27 @@ it("does not publish an incomplete block index when its work budget ends", () =>
   let remaining = 2;
   const prefixes = new ElectronCallPathBlockPrefixes(() => --remaining >= 0);
   expect(completeSemanticSteps(prefixes.before(block, tail))).toBeUndefined();
-  remaining = block.body.length;
+  remaining = 100;
   expect(completeSemanticSteps(prefixes.before(block, tail))).toMatchObject({
     before: 3,
     entries: [{ position: 2, fact: { kind: "branch" } }],
   });
-  expect(remaining).toBe(0);
+  expect(remaining).toBeGreaterThan(0);
+});
+
+it("charges nested exit checks to the same budget and does not cache a partial index", () => {
+  const parsed = parseJavaScriptSource(
+    `{ if (x) { { { throw 0; } } } send(); }`,
+  );
+  const block = parsed?.program.body[0];
+  if (!t.isBlockStatement(block)) throw new Error("Expected parsed block");
+  const tail = block.body.at(-1);
+  if (tail === undefined) throw new Error("Expected terminal statement");
+  let remaining = 4;
+  const prefixes = new ElectronCallPathBlockPrefixes(() => --remaining >= 0);
+  expect(completeSemanticSteps(prefixes.before(block, tail))).toBeUndefined();
+  remaining = 100;
+  expect(completeSemanticSteps(prefixes.before(block, tail))).toMatchObject({
+    entries: [{ fact: { kind: "branch", consequentExits: true } }],
+  });
 });

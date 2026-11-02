@@ -3,6 +3,34 @@ import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 
+/** Path the command received. Diagnostics echo this operand, not the selected subject. */
+export const nativeCommandOperand = (
+  capture: NativeCommandCapture,
+): string | undefined => capture.arguments.at(-1);
+
+/** Recognize vtool's sole settled container-format refusal without hiding other failures. */
+export const isVtoolContainerRefusal = (
+  capture: NativeCommandCapture,
+): boolean => {
+  const operandPath = nativeCommandOperand(capture);
+  if (
+    operandPath === undefined ||
+    capture.tool !== "vtool" ||
+    capture.exitCode !== 1 ||
+    capture.signal !== null ||
+    capture.stdout.trim() !== ""
+  )
+    return false;
+  const diagnostic = capture.stderr.trimEnd();
+  const suffix = ` error: ${operandPath} file is not mach-o`;
+  if (!diagnostic.endsWith(suffix)) return false;
+  const executable = diagnostic.slice(0, -suffix.length);
+  return (
+    !/[\r\n]/u.test(executable) &&
+    (executable === "vtool" || executable.endsWith("/vtool"))
+  );
+};
+
 const MISSING_UUID_DIAGNOSTIC = "missing LC_UUID load command";
 
 const dyldFailureDiagnostics = (

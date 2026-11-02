@@ -12,22 +12,15 @@ import {
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticReferenceSources.js";
+import type {
+  IterationSourceValue,
+  SemanticIterationSource,
+} from "./javascriptSemanticIterationFacts.js";
 
-interface IterationSourceValue {
-  readonly node: t.Node;
-  readonly projection: JavaScriptSemanticPropertyPath;
-  readonly iterationSources?: readonly IterationSourceValue[];
-}
-
-/** An iterator receiver or property reference store, with default guards. */
-export interface SemanticIterationSource extends IterationSourceValue {
-  readonly iterationSources?: readonly IterationSourceValue[];
-  readonly kind: "iteration" | "reference-store";
-  readonly mutation: t.Node;
-  readonly target?: t.MemberExpression;
-  readonly fallbackSources?: readonly IterationSourceValue[];
-  readonly requiredSources?: readonly IterationSourceValue[];
-}
+export type {
+  IterationSourceValue,
+  SemanticIterationSource,
+} from "./javascriptSemanticIterationFacts.js";
 
 /** A property value obtained by destructuring or an own-enumerable copy. */
 export interface SemanticPropertyReadSource

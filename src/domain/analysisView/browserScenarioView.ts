@@ -6,7 +6,7 @@ import {
 } from "../browserScenarioCapture.js";
 import type { BrowserScenarioStep as Step } from "../browserScenarioCaptureValues.js";
 import { compareAsciiStrings } from "../canonicalOrdering.js";
-import { err, ok, type Result } from "../result.js";
+import { err, ok } from "../result.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import {
   completeWithinViewCoverage,
@@ -14,11 +14,12 @@ import {
   type AnalysisViewCoverage,
 } from "./analysisViewCoverage.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   ARTIFACT_SECTIONS,
   stepRowSchema,
@@ -314,10 +315,15 @@ const pageRecords = (
 /** Project retained scenario Evidence without relaunching the browser or replaying actions. */
 export const projectBrowserScenarioView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (view.kind !== "summary" && view.kind !== "browser-scenario")
     return err(unsupportedView());
+  assertOwnedView<SummaryAnalysisView | BrowserScenarioViewRequest>(
+    view,
+    "summary",
+    "browser-scenario",
+  );
   const parsed = readCapture(parent);
   if (!parsed.ok) return parsed;
   const capture = parsed.value;
@@ -339,7 +345,7 @@ export const projectBrowserScenarioView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -371,7 +377,7 @@ export const projectBrowserScenarioView = (
       ]),
     );
   return ok({
-    kind: "browser-scenario",
+    kind: "browser-scenario" as const,
     view,
     ...shared,
     source_completeness: capture.completeness,

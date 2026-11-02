@@ -113,6 +113,7 @@ const capture = async () => {
   return {
     report,
     parent: {
+      predicateType: evidence.predicate_type,
       evidenceId: evidence.evidence_id,
       operation: evidence.operation,
       normalizedResult: report,

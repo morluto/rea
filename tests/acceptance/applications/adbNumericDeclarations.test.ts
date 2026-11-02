@@ -9,7 +9,7 @@ import { adbDisplayPartialObservationSchema } from "../../../src/domain/adb/adbD
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const SERIAL = "numeric-declarations-device";
 const PACKAGE = "com.example.numeric";
@@ -220,10 +220,13 @@ cliTest.skipIf(process.platform === "win32")(
     for (const scenario of displayScenarios) {
       await writeFile(fixture.size, scenario.size);
       await writeFile(fixture.density, scenario.density);
-      const output = await cli.run({
+      const invocation = {
         arguments: ["inspect-adb-display", SERIAL, "--json"],
         environment: fixture.environment,
-      });
+      };
+      const output = await (scenario === displayScenarios[0]
+        ? cli.run(invocation)
+        : runFileCli(cli, invocation));
       expect(output.exitCode, `${scenario.name}: ${output.stderr}`).toBe(0);
       const evidence = contract.outputSchema.parse(output.json);
       expect(evidence.parameters).toEqual({ serial: SERIAL });
@@ -274,10 +277,13 @@ cliTest.skipIf(process.platform === "win32")(
           "",
         ].join("\n"),
       );
-      const output = await cli.run({
+      const invocation = {
         arguments: ["inspect-adb-display", SERIAL, "--json"],
         environment: fixture.environment,
-      });
+      };
+      const output = await (value === null
+        ? cli.run(invocation)
+        : runFileCli(cli, invocation));
       expect(output.exitCode, output.stderr).toBe(1);
       const projected = analysisErrorProjectionSchema.parse(output.json);
       expect(projected.code).toBe("unreadable_output");
@@ -444,10 +450,13 @@ cliTest.skipIf(process.platform === "win32")(
           "",
         ].join("\n"),
       );
-      const output = await cli.run({
+      const invocation = {
         arguments: ["inspect-adb-package", SERIAL, PACKAGE, "--json"],
         environment: fixture.environment,
-      });
+      };
+      const output = await (scenario === packageScenarios[0]
+        ? cli.run(invocation)
+        : runFileCli(cli, invocation));
       expect(output.exitCode, `${scenario.name}: ${output.stderr}`).toBe(0);
       const evidence = contract.outputSchema.parse(output.json);
       expect(evidence.parameters).toEqual({ serial: SERIAL, package: PACKAGE });

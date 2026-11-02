@@ -1,11 +1,6 @@
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import { ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { templateRulesSchema } from "./environmentManifestView.js";
 import type { StateView } from "./environmentStateRules.js";
 import {
@@ -29,7 +24,7 @@ export const environmentCoverageViewRequestSchema = z.strictObject({
 /** What to record next for each reason a write tool is withheld; advice only, it never changes what is served. */
 export const WITHHELD_WRITE_HINTS = {
   "no-state-target":
-    "The write's path names no collection or item the capture reads. Read the collection or item it changes.",
+    "The write could not be linked to a modelled state target. Check its path template and the recorded collection or item views; if the relevant reads are missing, record them. Some route forms may not be supported as mutation targets.",
   "no-call":
     "No recorded call of this tool was modelled, for example because every call failed. Record a successful call.",
   "body-unusable":
@@ -154,18 +149,18 @@ export const summarizeEnvironmentCoverage = (state: {
 /** Project the state an environment would serve and summarize which tools it answers from that state. */
 export const projectEnvironmentCoverageView = (
   parent: AnalysisViewParent,
-  view: Extract<AnalysisViewRequest, { kind: "environment-coverage" }>,
+  view: z.output<typeof environmentCoverageViewRequestSchema>,
   accumulator = createEnvironmentStateAccumulator(view),
-): Result<UnsignedAnalysisView, AnalysisError> => {
+) => {
   const projected = projectEnvironmentStateView(
     parent,
-    { kind: "environment-state", template_rules: view.template_rules },
+    { kind: "environment-state" as const, template_rules: view.template_rules },
     accumulator,
   );
   if (!projected.ok) return projected;
   const state = projected.value;
   return ok({
-    kind: "environment-coverage",
+    kind: "environment-coverage" as const,
     view,
     parent_evidence_id: state.parent_evidence_id,
     parent_operation: state.parent_operation,

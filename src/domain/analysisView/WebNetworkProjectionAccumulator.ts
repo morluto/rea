@@ -14,7 +14,7 @@ import {
 import { admitAnalysisViewData } from "./analysisViewDataAdmission.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { analysisViewResultInputError } from "./analysisViewParent.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ENTRY_BYTES,
   textBytes,

@@ -16,6 +16,7 @@ import { CLI_COMMANDS } from "./cliCommandNames.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { AnalysisError } from "./domain/analysisErrorBase.js";
+import { localPathStringSchema } from "./domain/localPath.js";
 
 /** Register caller-path Evidence commands. */
 export const registerEvidenceCommands = (
@@ -25,7 +26,7 @@ export const registerEvidenceCommands = (
   cli.command(CLI_COMMANDS.evidenceImport, {
     description: "Validate and import a bounded local Evidence bundle",
     args: z.object({
-      path: z.string().describe("Evidence bundle JSON path"),
+      path: localPathStringSchema.describe("Evidence bundle JSON path"),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -38,8 +39,10 @@ export const registerEvidenceCommands = (
   cli.command(CLI_COMMANDS.evidenceExport, {
     description: "Validate and atomically export canonical Evidence JSON",
     args: z.object({
-      source: z.string().describe("Existing evidence bundle JSON path"),
-      output: z.string().describe("Canonical output JSON path"),
+      source: localPathStringSchema.describe(
+        "Existing evidence bundle JSON path",
+      ),
+      output: localPathStringSchema.describe("Canonical output JSON path"),
     }),
     options: z.object({
       overwrite: z.boolean().default(false).describe("Replace output file"),
@@ -58,10 +61,11 @@ export const registerEvidenceCommands = (
       ),
   });
   cli.command(CLI_COMMANDS.compare, {
-    description: "Compare two canonical Evidence bundles",
+    description:
+      "Compare two canonical Evidence bundles by record identity; use compare-artifacts for artifact inventory contents",
     args: z.object({
-      left: z.string().describe("Left Evidence bundle JSON path"),
-      right: z.string().describe("Right Evidence bundle JSON path"),
+      left: localPathStringSchema.describe("Left Evidence bundle JSON path"),
+      right: localPathStringSchema.describe("Right Evidence bundle JSON path"),
     }),
     options: z.object({
       record_pairs: z

@@ -14,7 +14,7 @@ import {
   capturePointer,
   isCaptureCredentialHeader,
 } from "./CaptureRedaction.js";
-import { QLOG_CAPTURE_PROVIDER_IDENTITY } from "./CaptureRelease.js";
+import { QLOG_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 
 const MAX_VARINT = (1n << 62n) - 1n;
 type Projection = Pick<
@@ -228,6 +228,9 @@ const collectTransportFacts = (
   },
 ): void => {
   const { fact, streams, excluded, name } = state;
+  // Unknown event payloads carry no facts under this interpretation profile.
+  // Their omission cannot make the transport-fact inventory incomplete.
+  if (name !== "recovery:packet_lost" && !packetEvent(name)) return;
   if (!object(projection.reported) || !object(projection.reported.data)) {
     fact.incomplete_fact_records.push(ordinal);
     return;
@@ -235,10 +238,7 @@ const collectTransportFacts = (
   const visible = projection.reported;
   // Facts are selected by event name, so a declaration that hides the name
   // of a loss or packet event omits its facts like any other hidden field.
-  if (
-    (name === "recovery:packet_lost" || packetEvent(name)) &&
-    visible.name !== name
-  ) {
+  if (visible.name !== name) {
     fact.incomplete_fact_records.push(ordinal);
     return;
   }

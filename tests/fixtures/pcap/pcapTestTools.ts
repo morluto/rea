@@ -93,6 +93,7 @@ export const TSHARK_DNS_JSON = JSON.stringify([
 export interface PcapStubToolsOptions {
   readonly failCapinfos?: boolean;
   readonly malformedDnsJson?: boolean;
+  readonly dnsJson?: string;
   readonly tsharkJson?: string;
   readonly capinfosText?: string;
   readonly httpAbsoluteUriOnly?: boolean;
@@ -142,7 +143,7 @@ case " $* " in
     case " $* " in *" --no-duplicate-keys "*) ;; *) exit 2 ;; esac
     case " $* " in *" -J frame dns mdns llmnr "*) ;; *) exit 2 ;; esac
     case " $* " in *" -Y dns || mdns || llmnr "*) ;; *) exit 2 ;; esac
-    printf '%s' '${(options.malformedDnsJson ? "{" : TSHARK_DNS_JSON).replace(/'/gu, "'\\''")}'
+    printf '%s' '${(options.malformedDnsJson ? "{" : (options.dnsJson ?? TSHARK_DNS_JSON)).replace(/'/gu, "'\\''")}'
     exit 0
     ;;
   *)

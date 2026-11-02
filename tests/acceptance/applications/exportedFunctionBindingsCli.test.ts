@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -1114,11 +1115,15 @@ const expectRuntimeExports = async (
   expected: (count: number) => unknown,
 ): Promise<void> => {
   // Execute only source-owned fixtures as an independent runtime oracle.
-  for (const [path, exportName, count] of [
+  const entries = [
     [fixture.leftPath, fixture.input.left_export_name, 1],
     [fixture.rightPath, fixture.input.right_export_name, 2],
-  ] as const)
-    expect(await runtimeExport(path, exportName)).toEqual(expected(count));
+  ] as const;
+  const values = await runtimeExports(
+    entries.map(([path, exportName]) => [path, exportName]),
+  );
+  for (const [index, [, , count]] of entries.entries())
+    expect(values[index]).toEqual(expected(count));
 };
 
 const expectExportedCallableBinding = (
@@ -1310,7 +1315,11 @@ const getMcpClient = async (): Promise<Client> => {
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
       cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+      env: {
+        PATH: process.env.PATH ?? "",
+        REA_LOG_LEVEL: "silent",
+        ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+      },
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);
@@ -1328,20 +1337,30 @@ const getMcpClient = async (): Promise<Client> => {
   return mcpConnection.client;
 };
 
-const runtimeExport = async (
-  path: string,
-  exportName: string,
-): Promise<unknown> => {
+const runtimeExports = async (
+  entries: readonly (readonly [path: string, exportName: string])[],
+): Promise<unknown[]> => {
   const { stdout } = await execute(process.execPath, [
     "--input-type=module",
     "-e",
     `import { pathToFileURL } from 'node:url';
-     const module = await import(pathToFileURL(process.argv[1]).href);
-     const value = module[process.argv[2]];
-     console.log(JSON.stringify({ value: typeof value === 'function' ? value() : value }));`,
-    path,
-    exportName,
+     const results = [];
+     for (const [path, exportName] of JSON.parse(process.argv[1])) {
+       const module = await import(pathToFileURL(path).href);
+       const value = module[exportName];
+       results.push({ value: typeof value === 'function' ? value() : value });
+     }
+     console.log(JSON.stringify(results));`,
+    JSON.stringify(entries),
   ]);
-  return z.object({ value: z.unknown().optional() }).parse(JSON.parse(stdout))
-    .value;
+  return z
+    .array(z.object({ value: z.unknown().optional() }))
+    .length(entries.length)
+    .parse(JSON.parse(stdout))
+    .map(({ value }) => value);
 };
+
+const runtimeExport = async (
+  path: string,
+  exportName: string,
+): Promise<unknown> => (await runtimeExports([[path, exportName]]))[0];

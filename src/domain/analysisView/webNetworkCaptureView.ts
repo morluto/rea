@@ -1,4 +1,7 @@
-import { projectProtobufCapturePage } from "./protobufCaptureView.js";
+import {
+  projectProtobufCapturePage,
+  protobufViewRequestSchema,
+} from "./protobufCaptureView.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -17,17 +20,19 @@ import {
   type WebNetworkCaptureRecord,
   type WebNetworkCapture,
 } from "../webNetworkCapture.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import {
   qlogSummarySchema,
+  qlogViewRequestSchema,
   summarizeQlogCapture,
   projectQlogCapturePage,
 } from "./qlogCaptureView.js";
@@ -87,15 +92,32 @@ const object = (
     ? value
     : null;
 
-const HEADLINE_FIELDS = [
-  "method",
-  "url",
-  "httpVersion",
-  "http_version",
-  "status",
-  "statusText",
-  "reason",
-];
+// Field names have different meanings across producers. In particular, HAR
+// entry extensions named `name` or `type` are not qlog or mitmproxy headlines.
+const RECORD_HEADLINES: Readonly<Record<string, readonly string[]>> = {
+  har: ["time", "startedDateTime"],
+  qlog: ["name", "time"],
+  saz: ["session_id", "time"],
+  mitmproxy: ["type"],
+};
+const HTTP_HEADLINES: Readonly<
+  Record<string, Readonly<Record<string, readonly string[]>>>
+> = {
+  har: {
+    request: ["method", "url", "httpVersion"],
+    response: ["httpVersion", "status", "statusText"],
+  },
+  saz: {
+    request: ["method", "url", "http_version"],
+    response: ["http_version", "status", "reason"],
+  },
+  mitmproxy: {
+    request: ["method", "http_version"],
+    response: ["http_version", "reason"],
+  },
+};
+const scalar = (value: JsonValue): boolean =>
+  value === null || typeof value !== "object";
 // Native mitmproxy flows report the request target in parts and the status
 // as status_code. They are previewed only for mitmproxy records and only when
 // each value has its field's well-formed shape, which also bounds the
@@ -334,12 +356,15 @@ const mitmproxyHeadline = (
 const selectHeadlines = (
   fields: Readonly<Record<string, JsonValue>>,
   key: string,
+  format: string,
   facets: FacetIndex | null,
   selectedPointers: Set<string>,
 ): Record<string, JsonValue> => {
   const selected: Record<string, JsonValue> = {};
   const candidates = [
-    ...HEADLINE_FIELDS.map((field) => [field, null] as const),
+    ...(HTTP_HEADLINES[format]?.[key] ?? []).map(
+      (field) => [field, null] as const,
+    ),
     ...(facets === null ? [] : (MITMPROXY_HEADLINE_FIELDS[key] ?? [])).map(
       (field) => [field, facets] as const,
     ),
@@ -349,6 +374,7 @@ const selectHeadlines = (
     if (
       !Object.hasOwn(fields, field) ||
       value === undefined ||
+      !scalar(value) ||
       (index !== null &&
         !mitmproxyHeadline(index, `/${key}/${field}`, field, value))
     )
@@ -371,12 +397,16 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
         : null;
     const mitmproxyFacets =
       index !== null && textualFlowType(index) ? index : null;
-    for (const key of ["session_id", "name", "time", "startedDateTime", "type"])
-      if (Object.hasOwn(source, key) && source[key] !== undefined) {
+    for (const key of RECORD_HEADLINES[format] ?? [])
+      if (
+        Object.hasOwn(source, key) &&
+        source[key] !== undefined &&
+        scalar(source[key])
+      ) {
         reported[key] = source[key];
         selectedPointers.add(`/${key}`);
       }
-    for (const key of ["request", "response"]) {
+    for (const key of Object.keys(HTTP_HEADLINES[format] ?? {})) {
       const value = source[key];
       if (!Object.hasOwn(source, key) || value === undefined) continue;
       const fields = object(value);
@@ -388,6 +418,7 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
       reported[key] = selectHeadlines(
         fields,
         key,
+        format,
         mitmproxyFacets,
         selectedPointers,
       );
@@ -442,8 +473,8 @@ const parseCaptureParent = (
 /** Page immutable retained facts; no capture file, provider or network is consulted. */
 export const projectWebNetworkCaptureView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (
     view.kind !== "summary" &&
     view.kind !== "capture" &&
@@ -460,6 +491,12 @@ export const projectWebNetworkCaptureView = (
         },
       ]),
     );
+  assertOwnedView<
+    | SummaryAnalysisView
+    | z.output<typeof captureViewRequestSchema>
+    | z.output<typeof protobufViewRequestSchema>
+    | z.output<typeof qlogViewRequestSchema>
+  >(view, "summary", "capture", "protobuf", "qlog");
   const parsed = parseCaptureParent(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
@@ -493,7 +530,7 @@ export const projectWebNetworkCaptureView = (
     });
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -532,7 +569,7 @@ export const projectWebNetworkCaptureView = (
     const projected = projectQlogCapturePage(report.qlog, view);
     return projected.ok
       ? ok({
-          kind: "qlog",
+          kind: "qlog" as const,
           view,
           ...shared,
           ...projected.value,
@@ -545,7 +582,7 @@ export const projectWebNetworkCaptureView = (
   }
   const records = report.records.slice(view.offset, view.offset + view.limit);
   return ok({
-    kind: "capture",
+    kind: "capture" as const,
     view,
     ...shared,
     items: captureViewItemsSchema.parse(
