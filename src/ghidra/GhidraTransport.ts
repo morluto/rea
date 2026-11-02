@@ -24,6 +24,16 @@ import {
 /** Local bridge transports used by the current Ghidra session. */
 export type GhidraTransportKind = "unix-socket" | "authenticated-loopback-tcp";
 
+/**
+ * The bridge transport a host supports: Windows has no Unix sockets the Java
+ * bridge can share, so it uses the authenticated loopback TCP endpoint. This is
+ * the single owner of that decision for the provider client and the client.
+ */
+export const defaultGhidraTransport = (
+  platform: NodeJS.Platform,
+): GhidraTransportKind =>
+  platform === "win32" ? "authenticated-loopback-tcp" : "unix-socket";
+
 /** Private runtime coordinate used to discover one bridge listener. */
 export interface GhidraEndpoint {
   readonly transport: GhidraTransportKind;
