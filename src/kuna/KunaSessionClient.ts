@@ -146,7 +146,8 @@ interface ResolvedEntry {
 const EXPORT_READY = Symbol("kuna-export-ready");
 
 type SingleFunctionOutcome =
-  Result<string, AnalysisError> | typeof EXPORT_READY;
+  | Result<string, AnalysisError>
+  | typeof EXPORT_READY;
 
 /** One single-function run that every request for its address shares. */
 interface SingleFunctionRun {
@@ -332,7 +333,8 @@ export class KunaSessionClient implements AnalysisClient {
   readonly #deadline: RegexMatchingDeadline;
   readonly #heapRequest: RegexWorkerHeapRequest;
   #installation:
-    SharedStartupAttempt<Result<KunaInstallation, AnalysisError>> | undefined;
+    | SharedStartupAttempt<Result<KunaInstallation, AnalysisError>>
+    | undefined;
   #inventory:
     | Promise<Result<readonly KunaInventoryFunction[], AnalysisError>>
     | undefined;
@@ -343,7 +345,8 @@ export class KunaSessionClient implements AnalysisClient {
   #starting: Promise<void> | undefined;
   /** The building export's inventory; undefined when it settles without one. */
   #exportInventory:
-    Promise<readonly KunaInventoryFunction[] | undefined> | undefined;
+    | Promise<readonly KunaInventoryFunction[] | undefined>
+    | undefined;
   #reader: KunaProjectReader | undefined;
   #inventoryIndex: InventoryIndex | undefined;
   #status: KunaExportStatus | undefined;
