@@ -204,6 +204,17 @@ export class AnalysisProviderRegistry {
     );
   }
 
+  /** Report retained candidate cleanup failures without counting active in-flight work. */
+  hasRetainedCleanupFailures(): boolean {
+    return (
+      this.#profileResources.hasPending ||
+      [...this.#selectionCleanup].some((error) => error.cleanupIncomplete) ||
+      this.#providers.some(
+        (provider) => provider.hasPendingOwnedResources?.() === true,
+      )
+    );
+  }
+
   /** Close candidate-owned resources even when no target client was opened. */
   closeOwnedResources(): Promise<Result<null, AnalysisError>> {
     this.#closing ??= Promise.resolve()

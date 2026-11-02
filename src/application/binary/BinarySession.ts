@@ -1026,7 +1026,7 @@ export class BinarySession
       this.#pendingCleanup !== undefined ||
       this.#pendingBundleResourceCleanup.length > 0 ||
       this.hasPendingFileResources ||
-      this.#providerRouter.hasPendingOwnedResources()
+      this.#providerRouter.hasRetainedCleanupFailures()
     );
   }
 

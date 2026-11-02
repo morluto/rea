@@ -668,6 +668,7 @@ describe("analysis provider registry: profile and cleanup failures", () => {
       expect(selected).toBe(false);
       expect(closed).toBe(false);
       expect(registry.hasPendingOwnedResources()).toBe(true);
+      expect(registry.hasRetainedCleanupFailures()).toBe(false);
       expect(observedSignal?.aborted).toBe(true);
       expect(observedSignal?.reason).toBe(reason);
       finish?.();
@@ -928,6 +929,7 @@ describe("profile resolution terminal facts", () => {
     expect(result).toEqual(err(primary));
     expect(primary.cause).toBe(reason);
     expect(registry.hasPendingOwnedResources()).toBe(true);
+    expect(registry.hasRetainedCleanupFailures()).toBe(true);
     expect(await registry.select(DATABASE_TARGET, "alpha")).toEqual(
       err(primary),
     );
@@ -936,6 +938,7 @@ describe("profile resolution terminal facts", () => {
     expect(await registry.closeOwnedResources()).toEqual(ok(null));
     expect(primary.cleanupIncomplete).toBe(false);
     expect(registry.hasPendingOwnedResources()).toBe(false);
+    expect(registry.hasRetainedCleanupFailures()).toBe(false);
   });
 });
 

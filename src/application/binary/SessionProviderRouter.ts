@@ -80,6 +80,11 @@ export class SessionProviderRouter {
     return this.registry.hasPendingOwnedResources();
   }
 
+  /** Report retained candidate cleanup failures without counting active in-flight work. */
+  hasRetainedCleanupFailures(): boolean {
+    return this.registry.hasRetainedCleanupFailures();
+  }
+
   /** Resolve target routes before any provider client is created. */
   async resolve(
     target: BinaryTarget,
