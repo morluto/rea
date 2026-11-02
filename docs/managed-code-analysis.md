@@ -26,6 +26,9 @@ current tool set.
 The canonical tool inventory is the
 [build-generated catalog](mcp-contracts.md#generated-catalog).
 
+For a reproducible source-built example, follow the [managed-code static-analysis walkthrough](managed-code-static-walkthrough.md).
+
+
 ## Inspect an assembly
 
 ```bash
