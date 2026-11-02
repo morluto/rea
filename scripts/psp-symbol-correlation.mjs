@@ -82,24 +82,25 @@ export function correlatePspSymbols(source, inventory, options) {
     const relative = entry.address - sourceStart;
     const addr = analysisStart + relative;
     const address = relative < 0n || addr > 0xffffffffn ? null : addressText(addr);
-    return { ...entry, address };
+    return { ...entry, analysisAddress: address };
   });
   const duplicates = new Map();
   for (const entry of mapped) {
-    if (entry.address !== null) duplicates.set(entry.address, (duplicates.get(entry.address) ?? 0) + 1);
+    if (entry.analysisAddress !== null)
+      duplicates.set(entry.analysisAddress, (duplicates.get(entry.analysisAddress) ?? 0) + 1);
   }
-  const records = mapped.map(({ line, address, name, size, ...rest }) => {
-    const names = address === null ? [] : (observed.get(address) ?? []);
+  const records = mapped.map(({ line, address: sourceAddress, analysisAddress, name, size }) => {
+    const names = analysisAddress === null ? [] : (observed.get(analysisAddress) ?? []);
     let outcome;
-    if (address === null) outcome = "outside_selected_mapping";
-    else if ((duplicates.get(address) ?? 0) > 1 || names.length > 1) outcome = "ambiguous";
+    if (analysisAddress === null) outcome = "outside_selected_mapping";
+    else if ((duplicates.get(analysisAddress) ?? 0) > 1 || names.length > 1) outcome = "ambiguous";
     else if (name.startsWith("z_un_")) outcome = "generated_placeholder";
     else if (names.length === 0) outcome = "not_observed";
     else outcome = names[0] === name ? "address_and_label_agree" : "address_only";
     return {
       line,
-      source_address: addressText(rest.address),
-      analysis_address: address,
+      source_address: addressText(sourceAddress),
+      analysis_address: analysisAddress,
       label: name,
       declared_size: addressText(size),
       observed_labels: names,
