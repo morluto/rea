@@ -42,7 +42,10 @@ import {
 } from "../domain/investigationLifecycle.js";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
-import { evidenceBundleSummarySchema } from "../domain/evidenceRecordSummary.js";
+import {
+  evidenceBundleSummarySchema,
+  evidenceRecordSelectionSchema,
+} from "../domain/evidenceRecordSummary.js";
 import { liveBinaryTargetSummaryVariants } from "../domain/liveBinaryTargetSummary.js";
 import { nativeFunctionAnnotationsSchema } from "../domain/native/nativeFunctionAnnotations.js";
 import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
@@ -91,7 +94,10 @@ import { callPathResultSchema } from "../domain/callPathSchemas.js";
 import { staticRuntimeCorrelationResultSchema } from "../domain/staticRuntimeCorrelation.js";
 import { reconstructionVerificationResultSchema } from "../domain/reconstructionVerificationSchemas.js";
 import { decompileDirectoryManifestSchema } from "./decompileDirectory.js";
-import { analysisErrorProjectionSchema } from "./errorSchemas.js";
+import {
+  analysisErrorProjectionSchema,
+  analysisInputErrorProjectionSchema,
+} from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";
@@ -117,6 +123,7 @@ const contextFacetSchema = z.discriminatedUnion("state", [
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
+    error: analysisInputErrorProjectionSchema.optional(),
   }),
 ]);
 const bookmarkFacetSchema = z.discriminatedUnion("state", [
@@ -128,6 +135,7 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
+    error: analysisInputErrorProjectionSchema.optional(),
   }),
 ]);
 
@@ -569,7 +577,11 @@ export const sessionOutputSchemas = {
   ),
   export_evidence_bundle: lifecycleResultOf(evidenceBundleExportReceiptSchema),
   get_evidence_bundle: lifecycleResultOf(
-    z.union([evidenceBundleSchema, evidenceBundleSummarySchema]),
+    z.union([
+      evidenceBundleSchema,
+      evidenceBundleSummarySchema,
+      evidenceRecordSelectionSchema,
+    ]),
   ),
   get_navigation_context: lifecycleResultOf(
     z.object({

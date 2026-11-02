@@ -318,6 +318,8 @@ offered for completed `analyze_function` results only after session recording is
 acknowledged; the complete result and its retention reference remain intact.
 Oversized native inventories likewise include a ready-to-call first
 `native-inventory` page. Reduce its limit or select fields when a row is large.
+An oversized `trace_application_feature` result includes a first `feature-trace`
+page of its retained terminal `paths`; page `nodes` or `edges` from there.
 
 A broad follow-up or `get_evidence_bundle` can also exceed the response budget; exporting
 preserves the complete session without sending it through a single MCP frame.
@@ -331,7 +333,26 @@ a provider. `retention: "complete-record"` describes stored Evidence, while
 `native_dossier.value_flow` independently reports truncation, unavailable or
 unknown metadata. Missing omission counts remain null. Summary output carries
 every matching record; actual transport admission still applies. Omitted
-`detail` preserves complete canonical bundle delivery; filters require summary.
+`detail` preserves complete canonical bundle delivery; filters require summary
+or records.
+
+To read a discovered record without transferring the whole bundle, call
+`get_evidence_bundle` with `detail: "records"` and the same exact `filters`.
+The result (`kind: "evidence-record-selection"`) pages the matching complete
+records in canonical bundle (Evidence ID) order with `offset` (default 0) and
+`limit` (default 8), and reports `matching_records`, `total_retained_records`
+and `next_offset`. Each record is the retained Evidence itself, with an
+unchanged ID, subject digest, provider, profile and readback, so it works for
+any operation, including records that `inspect_analysis_view` does not support
+such as annotations. `missing_evidence_links` lists direct `evidence_links` of
+the returned records that this session or bundle does not retain; links are not
+traversed. A selection is not an Evidence bundle: it omits manifests and
+residual unknowns, cannot be imported, and describes historical observations
+rather than current provider or database state. `offset` and `limit` require
+`detail: "records"`. If one page exceeds the response budget, select fewer
+records or one `evidence_id`; a single record larger than one response still
+needs `export_evidence_bundle`, or `inspect_analysis_view` pages where its parent
+supports views.
 
 Residual-unknown mutations reject missing Evidence or unknown references and
 unproven verified resolutions with nonretryable `invalid_request` diagnostics.
@@ -369,6 +390,7 @@ fit.
 
 For a portable exported bundle, the CLI shares this projection:
 `rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"}}' --format json`.
+`"detail":"records"` with an `evidence_id` filter returns that complete record.
 The CLI validates and materializes that local bundle under its existing memory
 budget; summary delivery does not make arbitrary large files cheap to import.
 
@@ -529,7 +551,11 @@ names, the native API record, and high-pcode facets without starting a provider.
 and limit default to 0 and 64; pseudocode uses UTF-16 code units and never
 splits surrogate pairs, while other pages count rows. Unavailable facts and
 provider limitations remain explicit. Source is
-an exact same-session retained reference or portable inline Evidence. Views are
+an exact same-session retained reference, portable inline Evidence, or an
+Evidence record or bundle file. Native function, inventory, and observation
+views require the `rea.analysis` predicate; function-matching views require
+`rea.native-function-matching`. A mismatched predicate returns an
+`invalid_request` identifying `source.predicate_type`. Views are
 a summary, a layout mitigations or linkage facet, one section/symbol/module, or
 a stable page with a caller-selected positive `limit`. Module pages include
 JavaScript assets, bundled modules, and source modules. Select an exact
@@ -567,6 +593,32 @@ The CLI accepts the same reference-file alternative (relative paths resolve from
 the working directory). Save its complete `--json` Evidence, then use
 `inspect-analysis-view` with an `evidence-file` source and the same view. Neither
 adapter executes the target or repeats analysis for retained queries.
+
+`trace_application_feature` follows the same delivery contract. Omitting `view`
+returns the complete trace. `view: {"kind":"summary"}` or a `feature-trace` page
+retains the complete trace in the session first and returns only the selected
+facts; query further pages with `inspect_analysis_view` and the returned
+`parent_evidence_id`. The summary carries the trace identity (`trace_id`,
+`source_evidence_id`, `source_graph_id`, seed and direction), the producer's
+`summary` counts, `trace_coverage`, the traced subgraph's `graph_coverage`,
+`evidence_links` and any no-match `semantic_discovery`. A `feature-trace` page
+selects one `collection` in retained order and repeats that context:
+
+- `paths`: exact terminal paths; `where.node_ids` selects paths visiting any of
+  those nodes and `where.end_kinds` selects their terminal node kinds.
+- `nodes`: compact rows with identity, `seed`, `observation_count` and distinct
+  authority/state/confidence `basis`; `where.node_ids` and `where.kinds` filter
+  exactly, and `include_observations: true` adds each node's complete retained
+  observations.
+- `edges`: exact relationships; `where.node_ids` matches either endpoint and
+  `where.relations` the relation.
+- `seed_matches` and `native_handoffs`: the producer's exact rows.
+
+Omitted filters select all; empty arrays select none. `offset` and `limit`
+default to 0 and 64. Page `coverage` counts the selected collection only; it
+never upgrades `trace_coverage`, and graph connectivity does not prove runtime
+reachability. The CLI keeps complete trace JSON; save it and use
+`inspect-analysis-view` with an `evidence-file` source.
 
 Completed `inspect_artifact` and atomic `inventory_artifact` Evidence also
 support summary and inventory views. A summary reports the manifest's expected
@@ -738,13 +790,27 @@ requirements. Compare the union of group names with `tools/list` when checking
 that a client received the full catalog. An operation absent from all groups is
 missing from the complete inventory; it is not an implicit unavailable entry.
 
+Availability also reflects the active provider client's dispatched requests. A
+refusal or provider failure observed for an operation keeps that operation
+unavailable until a request for it dispatched later succeeds. A provider adapter
+or process failure also marks that provider's other declared-available
+operations unavailable until any request to that provider dispatched later
+succeeds; their remediation states that the status was inferred rather than
+observed for them. Recovery is not proof that each operation works, and failures
+observed on other operations or providers remain. Outcomes are ordered by
+dispatch to the provider client rather than reply completion, so a late reply
+from an older request does not override a newer outcome. Request deadlines and
+cancellations neither mark nor clear availability. A new provider client starts
+without these outcomes.
+
 `detail` selects the projection and the result echoes it. The default
 `summary` keeps open state, target identity, the binding, current-route
 `capabilities`, run, activity and health status, and each provider candidate's
 identity, selection, and availability and target-support `status`, `code`, and
-`reason`. It lists the fields it leaves out in `omitted_fields`: provider
-`diagnostics`, candidate `capabilities`, and each tool group's static `surface`,
-`effects`, and `annotations`. Omitted fields are not empty or false.
+`reason`. It lists the fields it leaves out in `omitted_fields`: an unavailable
+candidate's `remediation`, provider `diagnostics`, candidate `capabilities`, and
+each tool group's static `surface`, `effects`, and `annotations`. Omitted fields
+are not empty or false.
 `detail: "complete"` returns them inline, groups tools by those flags too, and
 has no `omitted_fields`. The output schema keys each result's candidate,
 tool-group and omission fields by its `detail`. CLI `capabilities` and
@@ -760,6 +826,13 @@ for every selector. A trace whose start and goal resolve to the same address can
 finish without reading relationships, even when neither traversal mode is
 available. Discovery does not block that direct invocation or replace its typed
 partial/error outcomes.
+
+`trace_native_ui_action` reports authored-UI and native-seed modes separately.
+Apple dispatch metadata requires a Mach-O target; another provider may supply
+the symbol-only alternative on other formats. If neither mode is available,
+read each mode's missing operations and remediation: a remedy for an authored
+app-bundle route does not by itself describe the native-seed route. Availability
+does not guarantee that every selector or provider operation will succeed.
 
 With complete detail, the `effects` and `annotations` arrays list the true
 members of their fixed vocabularies. A known member omitted from either array is false. This applies
@@ -790,7 +863,9 @@ set, `shared_limitations` is the ordered common prefix; append a group's ordered
 `effects` arrays use the same true-only closed-vocabulary rule as tool
 availability. Expand every group operation while retaining its provider
 identity, availability, reason, rejection code, effects, and ordered
-limitations.
+limitations. An unavailable group carries `remediation` when its readiness
+owner supplied a repair instruction; `tool_availability` uses that instruction
+rather than the failure description.
 
 `binary_session.analysis_provider_candidates` is authoritative for deep-engine
 discovery. Each candidate's capability sets, returned with complete detail,
@@ -1340,7 +1415,9 @@ cursor outside a procedure is represented as
 procedure resolution returns typed unreadable output; provider errors never
 become absence from their message text. `inspect_address_context` requires an explicit address and
 returns name, procedure, comment, inline-comment, and bookmark facets;
-unsupported facets are local `unavailable` outcomes. Use `current_document`,
+unsupported facets are local `unavailable` outcomes. A facet whose input is
+rejected includes its canonical `error` projection, including any structured
+issues, alongside the other facet outcomes. Use `current_document`,
 `current_address`, and `current_procedure` for direct single-field lookups; use
 the aggregate tools when you need related context together.
 

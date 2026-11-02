@@ -52,7 +52,7 @@ mcpTest.for([
   { retained: false, fullHash: true },
   { retained: true, fullHash: true },
 ])(
-  "projects partial model Evidence through an MCP tool error ($retained, fullHash=$fullHash)",
+  "projects partial model Evidence after a denied read ($retained, fullHash=$fullHash)",
   async ({ retained, fullHash }, { mcp }) => {
     const root = await createTestTempDirectory("rea-model-mcp-partial-");
     const path = join(root, fullHash ? "model.safetensors" : "model.gguf");
@@ -133,6 +133,14 @@ mcpTest.for([
       });
       if (!observedArrayChunk) throw new Error(JSON.stringify(response));
       const projected = parseMcpToolError(response);
+      expect(projected.error).toMatchObject({
+        code: "access_denied",
+        details: {
+          operation: "inspect_model_artifact",
+          path,
+          system_code: "EACCES",
+        },
+      });
       const details = projected.error.details;
       if (details === undefined)
         throw new Error("MCP error omitted its partial observation");

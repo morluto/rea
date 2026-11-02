@@ -18,7 +18,11 @@ import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js"
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
 import { macDeveloperIdRequirement } from "../process/MacCodeSignature.js";
 import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
-import { downloadHopperPackage } from "./HopperDownload.js";
+import {
+  downloadHopperPackage,
+  type HopperDownload,
+  type HopperRequestFailure,
+} from "./HopperDownload.js";
 import {
   HOPPER_RELEASES_URL,
   HOPPER_DOWNLOAD_PREFIX,
@@ -97,14 +101,14 @@ export type MacHopperInstallResult =
       readonly status: "failed";
       readonly reason: MacHopperInstallFailureReason;
       readonly diagnostic?: string;
+      /** The vendor request (feed or package) whose transport failure stopped setup. */
+      readonly download?: HopperRequestFailure;
       readonly cleanupFailure?: string;
     };
 
 /** External effects used by the bounded macOS Hopper installer. */
 export interface MacHopperInstallHost {
-  download(
-    url: string,
-  ): Promise<{ readonly ok: boolean; readonly bytes: Uint8Array }>;
+  download(url: string): Promise<HopperDownload>;
   createTemporaryDirectory(): Promise<string>;
   createMountDirectory(path: string): Promise<void>;
   writePackage(path: string, bytes: Uint8Array): Promise<void>;
@@ -144,17 +148,27 @@ export const installMacHopper = async (
   try {
     result = await (async (): Promise<MacHopperInstallResult> => {
       const metadata = await host.download(HOPPER_RELEASES_URL);
-      if (!metadata.ok) return { status: "failed", reason: "release_metadata" };
-      const decoded = parseHopperReleaseJson(metadata.bytes);
+      if (!metadata.ok)
+        return {
+          status: "failed",
+          reason: "release_metadata",
+          download: { request: "release_feed", ...metadata.error },
+        };
+      const decoded = parseHopperReleaseJson(metadata.value);
       if (!decoded.ok) throw decoded.cause;
       const parsed = parseMacHopperReleases(decoded.value);
       if (!parsed.ok) return { status: "failed", reason: "release_metadata" };
       const release = parsed.value;
       installStage = "download";
       const archive = await host.download(release.filename);
-      if (!archive.ok) return { status: "failed", reason: "download" };
+      if (!archive.ok)
+        return {
+          status: "failed",
+          reason: "download",
+          download: { request: "package", ...archive.error },
+        };
       installStage = "integrity";
-      if (!hopperArchiveIntegrityMatches(archive.bytes, release))
+      if (!hopperArchiveIntegrityMatches(archive.value, release))
         return { status: "failed", reason: "integrity" };
 
       installStage = "destination_inspection";
@@ -167,7 +181,7 @@ export const installMacHopper = async (
       const packagePath = posix.join(temporary, "hopper.dmg");
       const mountPath = posix.join(temporary, "mounted");
       await host.createMountDirectory(mountPath);
-      await host.writePackage(packagePath, archive.bytes);
+      await host.writePackage(packagePath, archive.value);
       if (!(await host.mount(packagePath, mountPath)))
         return { status: "failed", reason: "mount" };
       mounted = true;
