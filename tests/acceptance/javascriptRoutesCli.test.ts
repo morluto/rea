@@ -226,6 +226,23 @@ it("recovers direct global location assignment through MCP", async () => {
   );
 });
 
+it("retains Location routes before a later replacement through MCP", async () => {
+  const path = await createTestTempDirectory("rea-location-timing-");
+  await writeFile(
+    join(path, "app.js"),
+    `window.location.assign('/early'); window.location.assign = custom; window.location.assign('/late');`,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: path,
+    detail: "summary",
+    view: { kind: "javascript-routes", collection: "routes", fields: ["path"] },
+  });
+  expect(response.isError).not.toBe(true);
+  const view = routeViewFromEvidence(response.structuredContent);
+  expect(view.items).toEqual([expect.objectContaining({ path: "/early" })]);
+});
+
 it("recovers Location.assign paths through the public MCP workflow", async () => {
   const path = await createTestTempDirectory("rea-location-routes-");
   await writeFile(

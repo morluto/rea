@@ -157,20 +157,6 @@ const navigationRecognition = (
     ? (name !== "push" && name !== "replace") ||
       navigationReceivers.has(receiver)
     : undefined;
-/** Recognize the ambient browser Location.assign without guessing local methods. */
-const locationAssign = (
-  node: t.CallExpression | t.OptionalCallExpression,
-  index: JavaScriptBindingIndex,
-): boolean =>
-  isUnmodifiedGlobalReference(node.callee, index.bindings, [
-    "location",
-    "assign",
-  ]) ||
-  isUnmodifiedGlobalReference(node.callee, index.bindings, [
-    "document",
-    "location",
-    "assign",
-  ]);
 /** Recognize writes to ambient browser location properties, not local lookalikes. */
 const locationPropertyWrite = (
   node: t.AssignmentExpression,
@@ -311,6 +297,10 @@ export class JavaScriptRouteScan {
     typeof createGlobalReferenceReader
   >;
   readonly #navigationReader: ReturnType<typeof createGlobalReferenceReader>;
+  readonly #locationMethodReaders = new Map<
+    string,
+    ReturnType<typeof createGlobalReferenceReader>
+  >();
 
   private constructor(
     private readonly index: JavaScriptBindingIndex,
@@ -364,6 +354,29 @@ export class JavaScriptRouteScan {
     return "unrelated";
   }
 
+  #locationMethodStatus(node: t.CallExpression | t.OptionalCallExpression) {
+    const name = calleeName(node.callee).split(".").at(-1);
+    if (name !== "assign" && name !== "replace") return "unrelated";
+    for (const path of [
+      ["location", name],
+      ["document", "location", name],
+    ] as const) {
+      if (
+        globalReferenceNamespace(node.callee, this.index.bindings, path) ===
+        undefined
+      )
+        continue;
+      const key = path.join(".");
+      let reader = this.#locationMethodReaders.get(key);
+      if (reader === undefined) {
+        reader = createGlobalReferenceReader(this.index.bindings, path);
+        this.#locationMethodReaders.set(key, reader);
+      }
+      return reader(node.callee).status;
+    }
+    return "unrelated";
+  }
+
   /** Establish navigation data ownership before either adapter interprets syntax. */
   static *createSteps(
     root: t.Node,
@@ -414,7 +427,7 @@ export class JavaScriptRouteScan {
             if (
               navigationRecognition(parts.at(-1)!, parts.at(-2) ?? "") !==
                 true &&
-              !locationAssign(node, this.index)
+              this.#locationMethodStatus(node) !== "unmodified"
             )
               return;
             const first = node.arguments[0];
@@ -968,24 +981,41 @@ export class JavaScriptRouteScan {
         });
       return;
     }
+    const locationStatus = this.#locationMethodStatus(node);
     if (
       first === undefined ||
       t.isSpreadElement(first) ||
       t.isArgumentPlaceholder(first)
-    )
+    ) {
+      if (locationStatus === "unmodified" || locationStatus === "unknown") {
+        if (t.isSpreadElement(first))
+          this.#ownDynamicValue(first.argument, true, true, true);
+        this.#unknown(
+          "navigation-target",
+          node,
+          "The Location API destination is unavailable or supplied through a spread argument.",
+        );
+      }
       return;
+    }
+    if (locationStatus === "unknown") {
+      this.#ownDynamicValue(first, true, true, true);
+      this.#unknown(
+        "navigation-target",
+        node,
+        "The Location API identity may have been replaced before this call.",
+      );
+      return;
+    }
+    if (locationStatus === "replacement") {
+      this.#ownDynamicValue(first, true, true, true);
+      return;
+    }
     const recognized =
       name === "replace" && parts.at(-2) === "location"
-        ? isUnmodifiedGlobalReference(node.callee, this.index.bindings, [
-            "location",
-            "replace",
-          ])
+        ? locationStatus === "unmodified"
         : navigationRecognition(name, parts.at(-2) ?? "");
-    if (
-      recognized === true ||
-      ((t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-        locationAssign(node, this.index))
-    )
+    if (recognized === true || locationStatus === "unmodified")
       this.#navigation(first);
     else if (recognized === false) {
       // Method spelling alone does not make array/string data a destination.

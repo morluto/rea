@@ -621,6 +621,46 @@ it("keeps browser navigation uncertain after opaque global mutation", () => {
   expect(earlier.candidates.some((item) => item.path === "/early")).toBe(true);
 });
 
+it("preserves Location calls before later replacements without trusting modified globals", () => {
+  for (const target of [
+    "location",
+    "window.location",
+    "document.location",
+    "window.document.location",
+  ]) {
+    for (const method of ["assign", "replace"]) {
+      const facts = analyze(
+        `${target}.${method}('/early'); ${target}.${method} = custom; ${target}.${method}('/late');`,
+      );
+      expect(
+        facts.candidates
+          .filter(({ mechanism }) => mechanism === "navigation-target")
+          .map(({ path }) => path),
+      ).toEqual(["/early"]);
+    }
+  }
+  for (const source of [
+    "if (flag) window.location.assign = custom; window.location.assign('/maybe');",
+    "function run(){ document.location.replace('/maybe'); } document.location.replace = custom;",
+    "eval('location.assign=custom'); location.assign('/maybe');",
+  ]) {
+    const facts = analyze(source);
+    expect(
+      facts.candidates.filter(
+        ({ mechanism }) => mechanism === "navigation-target",
+      ),
+    ).toEqual([]);
+    expect(facts.unresolved).toContainEqual(
+      expect.objectContaining({ mechanism: "navigation-target" }),
+    );
+  }
+  const local = analyze(
+    "function f(location) { location.replace('/local'); } router.replace('/router');",
+  );
+  expect(local.candidates.some(({ path }) => path === "/local")).toBe(false);
+  expect(local.candidates.some(({ path }) => path === "/router")).toBe(true);
+});
+
 it("recovers browser location.assign destinations without trusting local lookalikes", () => {
   const facts = analyze(`
     window.location.assign('/checkout?step=1');
