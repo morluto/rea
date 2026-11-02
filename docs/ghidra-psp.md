@@ -70,6 +70,53 @@ nonempty decompiled code is not proof of correct vector behavior. Existing
 session-local metadata editing does not change executable bytes or turn a
 snapshot into a persistent Ghidra project.
 
+## PPSSPP function labels (opt-in, read-only)
+
+An offline source-tree script compares caller-supplied function labels against an
+existing REA `list_procedures` JSON array (or a saved Evidence record's
+`normalized_result`). It does not import labels into Ghidra, rename functions,
+execute PSP code or change public REA CLI/MCP contracts. An Evidence record's
+selected target digest is checked for consistency when present; this standalone
+script does not independently authenticate an Evidence bundle.
+
+The extension's legacy `.sym` exporter emits `address name,size` rows. Modern
+PPSSPP also saves module-relative `.ppsym 1` files with a module CRC; those are
+not the legacy `.sym` syntax, and older PPSSPP `.map` files are **not** accepted
+here. Supply the file format and address bases explicitly:
+
+```bash
+node scripts/psp-symbol-correlation.mjs \
+  --symbols ./labels.sym --format sym \
+  --inventory ./list-procedures.json \
+  --source-base 0x08000000 --analysis-base 0x08800000 \
+  --target-sha256 <selected ELF SHA-256>
+
+node scripts/psp-symbol-correlation.mjs \
+  --symbols ./module.ppsym --format ppsym \
+  --inventory ./list-procedures.json \
+  --analysis-base 0x08804000 \
+  --target-sha256 <selected ELF SHA-256> \
+  --expected-crc <independently known module CRC>
+```
+
+For `.sym`, the selected bases translate the source addresses to Ghidra's
+address space. For `.ppsym`, offsets are already module-relative; the analysis
+base must refer to that same loaded module. CRC checking is reported as unknown
+when either the file or independent expected CRC is unavailable. Returned
+`address_and_label_agree` means agreement only in the supplied inventory,
+not proved program correspondence or equivalent code. Duplicates, differing
+labels, generated placeholders, absent rows and out-of-range addresses retain
+separate outcomes. The report includes the input symbol SHA-256 and selected
+target SHA-256 but cannot prove that a caller's symbol file belongs to that
+binary. Verify module identity, residency, relocation and any CRC independently.
+
+Run the fast source-only controls with
+`node scripts/verify-psp-symbol-correlation.mjs`. The existing `--psp` real
+Ghidra lane additionally correlates export-shaped **source-owned** labels
+created from independent PSP GNU readelf symbols against the observed REA
+inventory, including a wrong-base negative control. That fixture is not a
+PPSSPP runtime capture or a general-game compatibility claim.
+
 ## Verification
 
 Use the existing real MIPS verifier with its PSP option. Required tools are
