@@ -91,7 +91,45 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
 export interface RiscvElfMetadata extends ElfFamilyMetadata {
   /** Undefined until `.riscv.attributes` is inspected. */
   readonly isa?: RiscvIsaDeclaration;
+  /** Undefined until the section table is inspected; read for ET_EXEC only. */
+  readonly sectionOverlap?: ElfSectionOverlap;
 }
+
+/** One allocated section as its header declares it; values are lowercase 0x-hex. */
+export interface ElfSectionExtent {
+  readonly index: number;
+  /** Display only; null when the section-name table was not read. */
+  readonly name: string | null;
+  readonly address: string;
+  readonly size: string;
+}
+
+/** A section that takes part in an overlap of another shape. */
+export interface ElfSectionWitness extends ElfSectionExtent {
+  readonly nobits: boolean;
+  readonly executable: boolean;
+}
+
+/**
+ * Allocated address ranges that an executable section of a fixed-address image
+ * shares with another section. `code-reservation` is the one verified shape: a
+ * NOBITS section that starts with an executable PROGBITS section and covers it,
+ * with no other section overlapping either, as ESP-IDF's `.flash_rodata_dummy`
+ * reserves `.flash.text`.
+ */
+export type ElfSectionOverlap =
+  | { readonly status: "none" }
+  | {
+      readonly status: "code-reservation";
+      readonly code: ElfSectionExtent & { readonly offset: string };
+      readonly reservation: ElfSectionExtent;
+    }
+  /** The two sections whose overlap departs from that shape. */
+  | {
+      readonly status: "unsupported";
+      readonly witnesses: readonly [ElfSectionWitness, ElfSectionWitness];
+    }
+  | { readonly status: "unavailable"; readonly reason: string };
 
 /** The ISA an image declares in `.riscv.attributes`; not proof of every instruction. */
 export type RiscvIsaDeclaration =

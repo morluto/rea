@@ -554,6 +554,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String riscvCallingConvention = currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
             .getString("REA RISC-V calling convention", null);
         if (riscvCallingConvention != null) result.add("riscv_calling_convention", JsonParser.parseString(riscvCallingConvention));
+        // Written by ReaGhidraPrepareElfLoad before auto-analysis; REA requires it
+        // exactly when the committed profile declares a RISC-V load preparation.
+        String loadPreparation = currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
+            .getString("REA ELF load preparation", null);
+        if (loadPreparation != null) result.add("elf_load_preparation", JsonParser.parseString(loadPreparation));
         return result;
     }
 
