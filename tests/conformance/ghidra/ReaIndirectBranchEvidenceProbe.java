@@ -225,10 +225,10 @@ public class ReaIndirectBranchEvidenceProbe extends GhidraScript {
             String authoredWarning = "WARNING: Could not recover jumptable at 0x0000100c. Too many branches\nextra note";
             program.getListing().setComment(site, CommentType.PRE, authoredWarning);
             try {
-                ClangCommentToken caller = comment(site, "/* " + authoredWarning.replace('\n', ' ') + " */");
-                control("caller_multiline_same_source", bridge, ordinary, result, caller);
+                String callerText = "/* " + authoredWarning.replace('\n', ' ') + " */";
+                control("caller_multiline_same_source", bridge, ordinary, result, comment(site, callerText));
                 ClangTokenGroup withDecompilerWarning = new ClangTokenGroup(null);
-                withDecompilerWarning.AddTokenGroup(caller);
+                withDecompilerWarning.AddTokenGroup(comment(site, callerText));
                 withDecompilerWarning.AddTokenGroup(comment(site, warning));
                 outcome("genuine_warning_with_multiline_caller",
                     branch(boundary(bridge, ordinary, markup(ordinary, result, withDecompilerWarning)), "0x100c"),
