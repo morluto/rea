@@ -57,6 +57,7 @@ describe("supported JavaScript runtimes", () => {
       { id: "bun", version: "1.4.2", nodeCompatibilityVersion: "26.12.1" },
       true,
     ],
+    [{ id: "bun", version: "1.4.3", nodeCompatibilityVersion: "26.3.0" }, true],
     [
       { id: "bun", version: "99.0.0", nodeCompatibilityVersion: "24.18.0" },
       false,

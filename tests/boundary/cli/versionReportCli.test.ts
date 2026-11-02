@@ -39,10 +39,18 @@ cliTest(
     // Piped JSON is one compact document.
     expect(json.stdout.trimEnd().split("\n")).toHaveLength(1);
     const report = versionReportSchema.parse(JSON.parse(json.stdout));
+    const expectedRuntime =
+      process.versions.bun !== undefined
+        ? {
+            id: "bun" as const,
+            version: process.versions.bun,
+            node_compatibility_version: process.versions.node,
+          }
+        : { id: "node" as const, version: process.versions.node };
     expect(report).toEqual({
       name,
       version,
-      runtime: { id: "node", version: process.versions.node },
+      runtime: expectedRuntime,
       platform: process.platform,
       architecture: process.arch,
       supported_runtime: {
