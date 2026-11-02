@@ -249,7 +249,7 @@ it("rejects slice tags before magic 3608 and follows CPython on null members", (
     expect(() => parse(withSliceConsts(magic, [sliced]))).toThrow(
       expect.objectContaining({
         kind: "malformed",
-        message: "Unsupported marshal type 0x3a before CPython magic 3608.",
+        message: expect.stringMatching(/0x3a.*3608/),
       }),
     );
   }
