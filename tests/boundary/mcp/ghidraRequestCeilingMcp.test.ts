@@ -79,7 +79,7 @@ it("reports local Ghidra admission through SDK MCP without dispatching or losing
       },
     });
     expect(projected.error.remediation?.action).toContain(
-      "only the REA client applies",
+      "bounds each request line",
     );
     expect(
       projected.error.remediation?.action.includes("Restart Hopper or Cutter"),

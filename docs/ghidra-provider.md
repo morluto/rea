@@ -57,8 +57,10 @@ newline is excluded. An oversized request returns `resource_constraint` with
 the effective setting, its source, and the exact payload byte count.
 
 Set the value in the environment that starts REA, then restart REA to apply it.
-This setting is enforced by the REA client; the Java bridge has no corresponding
-request ceiling.
+The REA client enforces this before writing with the `resource_constraint`
+failure above. The Java bridge bounds each request line it reads to the same
+setting, counting decoded characters, and closes the connection when a line
+exceeds it.
 
 ## Admitted inventory semantics
 
