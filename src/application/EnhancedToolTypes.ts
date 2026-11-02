@@ -10,7 +10,23 @@ import {
   type EnhancedToolName,
 } from "../contracts/enhancedInputs.js";
 
-export type EnhancedResult = Promise<Result<JsonValue, AnalysisError>>;
+/** A failure that stopped a workflow after it admitted part of its result. */
+export interface PartialEnhancedFailure {
+  readonly ok: false;
+  readonly error: AnalysisError;
+  /** The workflow's own result shape, holding only work admitted before the stop. */
+  readonly partialResult: JsonValue;
+}
+export type EnhancedOutcome =
+  | Result<JsonValue, AnalysisError>
+  | PartialEnhancedFailure;
+export type EnhancedResult = Promise<EnhancedOutcome>;
+
+/** Keep the stopping failure primary while retaining the admitted result. */
+export const failedWithPartialResult = (
+  error: AnalysisError,
+  partialResult: JsonValue,
+): PartialEnhancedFailure => ({ ok: false, error, partialResult });
 export type TraceReference = {
   readonly target_address: string;
   readonly source_address: string;

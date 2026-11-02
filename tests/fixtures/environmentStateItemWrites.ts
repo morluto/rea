@@ -55,7 +55,7 @@ const TAGS = [
 ];
 
 /** An item as the application answers it: its parent location and tags spelled out from the ids a call sent. */
-export const inventoryItem = (
+const inventoryItem = (
   id: string,
   name: string,
   parent: Entity | null,

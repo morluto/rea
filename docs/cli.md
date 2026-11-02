@@ -561,6 +561,14 @@ be verified. See [MCP contracts](mcp-contracts.md) for session lifecycle and
 [Ghidra first-query deadlines](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for import, client timeouts and recovery.
 
+A one-shot command releases its provider session and REA runtime before it
+prints a failure, so it omits the same-session reuse and
+`update_analysis_settings` guidance an MCP connection receives. Its
+`details.limit` reports `scope: "rea-invocation"` and
+`applies_at: "next_invocation"`; set the named `environment` (or the per-call
+`parameter`) for a new invocation and rerun. For example, a Ghidra decompile
+deadline names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`.
+
 If one-shot analysis fails and closing its session also fails, the original
 error details remain inline and `details.cleanup_error` describes the later
 close failure. Each diagnostic retains its own reported resources; the later
@@ -1285,6 +1293,18 @@ new file. A publication that has committed can win a later cancellation; the
 `details.diagnostics.evidence_bundle`. If staging cleanup stays incomplete
 after commit, the `cleanup_incomplete` error reports the same file as
 `details.published_path` and `details.bytes`.
+
+When a failure retains a completed observation and no bundle committed,
+`details.source_closure` states what that observation cites. `publication` is
+`not_published`. `records` holds authentic source Evidence this invocation
+captured, within 64 KiB. `omitted` lists up to 64 other identities and
+`omitted_count` the total: `not_captured` means the invocation holds no such
+record, so nothing is shown for it or its ancestors; `not_inlined` means it was
+captured but is not in this response. `complete` is true only when every cited
+record is in `records` or embedded in the observation. If examining the closure
+itself fails, `collection_failure` names the error type and the closure state is
+unknown; the original failure is still returned. Nothing is retained after exit,
+and running the command again is a new observation.
 
 When the reader of piped output closes early, as `rea ... | head` does, the
 CLI stops writing, prints no error and exits `141` (`128 + 13`, the status of a

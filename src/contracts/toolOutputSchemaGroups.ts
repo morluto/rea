@@ -10,6 +10,7 @@ import {
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  batchDecompileSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   artifactInventorySummaryViewResultSchema,
   interfaceBuilderSummaryViewResultSchema,
@@ -22,6 +23,7 @@ import { byteEntropySchema } from "../domain/native/byteEntropy.js";
 import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
 import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
+import { batchDecompileResultSchema } from "../domain/native/batchDecompile.js";
 import {
   functionDossierSchema,
   functionInstructionWindowSchema,
@@ -42,7 +44,10 @@ import {
 } from "../domain/investigationLifecycle.js";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
-import { evidenceBundleSummarySchema } from "../domain/evidenceRecordSummary.js";
+import {
+  evidenceBundleSummarySchema,
+  evidenceRecordSelectionSchema,
+} from "../domain/evidenceRecordSummary.js";
 import { liveBinaryTargetSummaryVariants } from "../domain/liveBinaryTargetSummary.js";
 import { nativeFunctionAnnotationsSchema } from "../domain/native/nativeFunctionAnnotations.js";
 import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
@@ -91,7 +96,10 @@ import { callPathResultSchema } from "../domain/callPathSchemas.js";
 import { staticRuntimeCorrelationResultSchema } from "../domain/staticRuntimeCorrelation.js";
 import { reconstructionVerificationResultSchema } from "../domain/reconstructionVerificationSchemas.js";
 import { decompileDirectoryManifestSchema } from "./decompileDirectory.js";
-import { analysisErrorProjectionSchema } from "./errorSchemas.js";
+import {
+  analysisErrorProjectionSchema,
+  analysisInputErrorProjectionSchema,
+} from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";
@@ -117,6 +125,7 @@ const contextFacetSchema = z.discriminatedUnion("state", [
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
+    error: analysisInputErrorProjectionSchema.optional(),
   }),
 ]);
 const bookmarkFacetSchema = z.discriminatedUnion("state", [
@@ -128,6 +137,7 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
+    error: analysisInputErrorProjectionSchema.optional(),
   }),
 ]);
 
@@ -305,23 +315,6 @@ const callPathTraceOutput = evidenceResultOf(
   }),
 );
 
-/** Identity facts attached to one requested batch selector. */
-const batchProcedureIdentity = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("resolved"),
-    address: z.string().min(1).describe("Observed canonical procedure entry."),
-    name: z
-      .string()
-      .nullable()
-      .describe("Provider's entry label, or null when unavailable."),
-    name_error: analysisErrorProjectionSchema.optional(),
-  }),
-  z.object({
-    status: z.literal("unknown"),
-    error: analysisErrorProjectionSchema,
-  }),
-]);
-
 /** Exact structured-content schemas for composed analysis workflows. */
 export const enhancedOutputSchemas = {
   inspect_native_dispatch_metadata: evidenceResultOf(
@@ -332,38 +325,9 @@ export const enhancedOutputSchemas = {
   get_objc_classes: objcClassDiscoveryOutput,
   get_objc_protocols: symbolDiscoveryOutput("protocols"),
   decompile_all: evidenceResultOf(decompileDirectoryManifestSchema),
-  batch_decompile: evidenceResultOf(
-    z.object({
-      items: z.array(
-        z.discriminatedUnion("status", [
-          z.object({
-            address: z
-              .string()
-              .describe("Original caller-selected symbol or address."),
-            procedure: batchProcedureIdentity,
-            status: z.literal("ok"),
-            pseudocode: z.string().min(1),
-          }),
-          z.object({
-            address: z
-              .string()
-              .describe("Original caller-selected symbol or address."),
-            procedure: batchProcedureIdentity,
-            status: z.literal("error"),
-            error: analysisErrorProjectionSchema,
-            limitations: z
-              .array(z.string())
-              .optional()
-              .describe(
-                "Caveats of this item's own provider observation when it supplied no pseudocode, including any reason the provider reported.",
-              ),
-          }),
-        ]),
-      ),
-      total: z.int().min(0),
-      succeeded: z.int().min(0),
-      failed: z.int().min(0),
-    }),
+  batch_decompile: analysisDetailOutputSchemaOf(
+    batchDecompileResultSchema,
+    batchDecompileSummaryViewResultSchema,
   ),
   get_call_graph: analysisDetailOutputSchemaOf(
     nativeObservationSourceSchemas.get_call_graph,
@@ -569,7 +533,11 @@ export const sessionOutputSchemas = {
   ),
   export_evidence_bundle: lifecycleResultOf(evidenceBundleExportReceiptSchema),
   get_evidence_bundle: lifecycleResultOf(
-    z.union([evidenceBundleSchema, evidenceBundleSummarySchema]),
+    z.union([
+      evidenceBundleSchema,
+      evidenceBundleSummarySchema,
+      evidenceRecordSelectionSchema,
+    ]),
   ),
   get_navigation_context: lifecycleResultOf(
     z.object({
