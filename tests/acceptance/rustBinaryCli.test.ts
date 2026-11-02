@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { RUST_RESOURCE_GUARD_LIMITATION } from "../../src/rust/RustBinaryProvider.js";
 import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   compressRustElfSectionNames,
@@ -465,6 +466,9 @@ cliTest(
     expect(metadata?.uncompressed_bytes).toBeLessThanOrEqual(
       (metadata?.compressed_bytes ?? 0) * 64,
     );
+    // Padding separates the section size from the consumed stream that the
+    // inflate guidance names.
+    expect(evidence.limitations).toContain(RUST_RESOURCE_GUARD_LIMITATION);
     expect(evidence.locations).toContainEqual({
       kind: "file-offset-range",
       start: metadata?.file_offset,
