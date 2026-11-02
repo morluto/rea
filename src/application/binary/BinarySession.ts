@@ -185,6 +185,7 @@ export class BinarySession
         readonly run: SessionRun;
         readonly retainDocument: boolean;
         readonly failures: Set<AnalysisError>;
+        failed: boolean;
       }
     | undefined;
   #transition: Promise<void> = Promise.resolve();
@@ -1025,8 +1026,7 @@ export class BinarySession
   /** Owners the next close retries; external mutation owners retry elsewhere. */
   #retainsCloseCleanup(): boolean {
     return (
-      (this.#pendingCleanup !== undefined &&
-        this.#pendingCleanup.failures.size > 0) ||
+      (this.#pendingCleanup !== undefined && this.#pendingCleanup.failed) ||
       this.#failedBundleResourceCleanup.size > 0 ||
       this.hasPendingFileResources ||
       this.#providerRouter.hasRetainedCleanupFailures()
@@ -1119,7 +1119,10 @@ export class BinarySession
         "bundle-resources",
         {
           ...(progress === undefined ? {} : { progress }),
-          ...(onCleanupFailure === undefined ? {} : { onCleanupFailure }),
+          onCleanupFailure: (cleanupFailure) => {
+            this.#failedBundleResourceCleanup.add(session);
+            onCleanupFailure?.(cleanupFailure);
+          },
         },
       );
       if (!closed.ok) {
@@ -1158,6 +1161,7 @@ export class BinarySession
       run,
       retainDocument: options.retainDocument === true,
       failures: new Set(),
+      failed: false,
     };
     return this.#retryPendingCleanup(
       options.progress,
@@ -1184,6 +1188,7 @@ export class BinarySession
         ...(progress === undefined ? {} : { progress }),
         ...(pending.retainDocument ? { retainDocument: true } : {}),
         onCleanupFailure: (failure) => {
+          pending.failed = true;
           if (failure.cleanupIncomplete) pending.failures.add(failure);
           onCleanupFailure?.(failure);
         },
@@ -1193,8 +1198,11 @@ export class BinarySession
       for (const failure of pending.failures)
         if (!failure.hasCleanupOwner) failure.resolveCleanup();
       this.#pendingCleanup = undefined;
-    } else if (closed.error.cleanupIncomplete) {
-      pending.failures.add(closed.error);
+    } else {
+      pending.failed = true;
+      if (closed.error.cleanupIncomplete) {
+        pending.failures.add(closed.error);
+      }
     }
     return closed;
   }

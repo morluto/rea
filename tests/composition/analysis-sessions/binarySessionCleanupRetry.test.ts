@@ -22,6 +22,7 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 const CLOSE_RETRY = { operation: "close_binary" } as const;
 
@@ -509,15 +510,23 @@ it("does not report close_cleanup_pending while close is in flight before failur
   } = fixture;
   expect((await session.open(target)).ok).toBe(true);
   const closingPromise = session.close();
-  await closing.promise;
-  const inFlightStatus = (await session.status()) as Record<string, unknown>;
-  expect(inFlightStatus).toMatchObject({
-    open: false,
-    cleanup_pending: false,
-  });
-  expect(inFlightStatus.close_cleanup_pending).toBeUndefined();
-  proceed.resolve();
-  expect((await closingPromise).ok).toBe(false);
+  try {
+    await awaitAcknowledgement(
+      closing.promise,
+      closingPromise,
+      "session close",
+    );
+    const inFlightStatus = (await session.status()) as Record<string, unknown>;
+    expect(inFlightStatus).toMatchObject({
+      open: false,
+      cleanup_pending: false,
+    });
+    expect(inFlightStatus.close_cleanup_pending).toBeUndefined();
+  } finally {
+    proceed.resolve();
+    const result = await closingPromise;
+    expect(result.ok).toBe(false);
+  }
   const failedStatus = (await session.status()) as Record<string, unknown>;
   expect(failedStatus).toMatchObject({
     open: false,
