@@ -831,6 +831,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray blocks = new JsonArray();
         JsonArray skipped = new JsonArray();
         JsonArray notLoaded = new JsonArray();
+        JsonArray overlays = new JsonArray();
         long covered = 0;
         String next = null;
         for (MemoryBlock block : ordered) {
@@ -841,9 +842,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (bound != null && !bound.getAddressSpace().equals(low.getAddressSpace())) continue;
             // Without bounds, search loaded memory only. Non-loaded file parts
             // (such as .symtab) and overlays stay reachable through explicit bounds.
-            if (bound == null && (!block.isLoaded() || block.isOverlay())) {
-                notLoaded.add(byteSearchCoverage(block, low, high));
-                continue;
+            if (bound == null) {
+                if (!block.isLoaded()) {
+                    notLoaded.add(byteSearchCoverage(block, low, high));
+                    continue;
+                }
+                if (block.isOverlay()) {
+                    overlays.add(byteSearchCoverage(block, low, high));
+                    continue;
+                }
             }
             if (start != null && low.compareTo(start) < 0) low = start;
             if (end != null && high.compareTo(end) > 0) high = end;
@@ -892,6 +899,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         searched.addProperty("bytes", covered);
         searched.add("skipped_uninitialized", skipped);
         searched.add("skipped_not_loaded", notLoaded);
+        searched.add("skipped_overlays", overlays);
         JsonObject result = new JsonObject();
         result.add("matches", matches);
         result.add("searched", searched);

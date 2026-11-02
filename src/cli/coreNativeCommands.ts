@@ -46,15 +46,26 @@ export const registerCoreNativeCommands = (
 ): void => {
   registerAnnotationCommand(cli, logger, runDirectAnalysis);
   cli.command(CLI_COMMANDS.searchBytes, {
-    description: "Find masked byte patterns in initialized provider memory",
+    description:
+      "Find masked bytes; unbounded searches skip unloaded blocks and overlays",
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
       pattern: bytePatternFields.pattern,
     }),
     options: z.object({
       mask: bytePatternFields.mask,
-      start: z.string().optional().describe("Inclusive start address"),
-      end: z.string().optional().describe("Inclusive end address"),
+      start: z
+        .string()
+        .optional()
+        .describe(
+          "Inclusive start address; use an overlay address space to search it",
+        ),
+      end: z
+        .string()
+        .optional()
+        .describe(
+          "Inclusive end address; use an overlay address space to search it",
+        ),
       cursor: z
         .string()
         .optional()
