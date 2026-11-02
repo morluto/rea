@@ -177,9 +177,17 @@ const collectEvent = (
   if (method === undefined) return;
   const kind = eventKind(method);
   const eventArgument = node.arguments[0];
-  const listenerArgument = EVENT_LISTENER_METHODS.includes(method)
-    ? node.arguments[1]
-    : undefined;
+  const listenerMethod = EVENT_LISTENER_METHODS.includes(method);
+  const listenerArgument = listenerMethod ? node.arguments[1] : undefined;
+  // A listener method called without a listener argument passes `undefined` to
+  // Node's `checkListener`, which throws before it registers or removes
+  // anything. Only a spread argument can still reach that position.
+  if (
+    listenerMethod &&
+    listenerArgument === undefined &&
+    !node.arguments.some((argument) => t.isSpreadElement(argument))
+  )
+    return;
   // A leading spread shifts the runtime argument positions, so argument 1 is not
   // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
   // trailing `1`.

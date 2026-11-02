@@ -68,6 +68,48 @@ it.each([
 });
 
 /**
+ * A listener method called without a listener argument passes `undefined` to
+ * Node's `checkListener`, which throws before anything is registered or
+ * removed. The argument position is empty, so no function can arrive there.
+ *
+ * Measured on Node 22.23.3:
+ *
+ *   emitter.on()                     -> THREW ERR_INVALID_ARG_TYPE
+ *   emitter.on("x")                  -> THREW ERR_INVALID_ARG_TYPE
+ *   emitter.once("x")                -> THREW ERR_INVALID_ARG_TYPE
+ *   emitter.addListener("x")         -> THREW ERR_INVALID_ARG_TYPE
+ *   emitter.prependListener("x")     -> THREW ERR_INVALID_ARG_TYPE
+ *   emitter.prependOnceListener("x") -> THREW ERR_INVALID_ARG_TYPE
+ *   emitter.removeListener("x")      -> THREW ERR_INVALID_ARG_TYPE
+ *   emitter.off("x") / emitter.off() -> THREW ERR_INVALID_ARG_TYPE
+ *
+ * A spread still reaches the position through the call, so it is untouched.
+ */
+it.each([
+  ["a missing listener", `e.on("x")`],
+  ["a missing once listener", `e.once("x")`],
+  ["a missing addListener listener", `e.addListener("x")`],
+  ["a missing prependListener listener", `e.prependListener("x")`],
+  ["a missing prependOnceListener listener", `e.prependOnceListener("x")`],
+  ["a missing removeListener listener", `e.removeListener("x")`],
+  ["a missing off listener", `e.off("x")`],
+  ["no arguments at all", `e.on()`],
+  ["no off arguments at all", `e.off()`],
+] as const)("emits no event operation for %s", (_name, call) => {
+  expect(eventsFor(call)).toEqual([]);
+});
+
+it("keeps the event operation for a spread call with no fixed listener", () => {
+  expect(eventsFor(`e.on(...pairs)`)).toEqual([
+    {
+      kind: expect.any(String) as unknown as string,
+      method: "on",
+      eventName: null,
+    },
+  ]);
+});
+
+/**
  * `emit` passes its remaining arguments to listeners that already exist, so it
  * does not validate them the way a registration does.
  */
