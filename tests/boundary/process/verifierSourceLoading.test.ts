@@ -14,6 +14,41 @@ import {
 const scriptUrl = (path: string) =>
   JSON.stringify(pathToFileURL(resolve("scripts/lib", path)).href);
 
+processTest(
+  "uses the pinned TypeScript compiler when Node rejects transform mode",
+  async ({ processes }) => {
+    const source = `
+import assert from "node:assert/strict";
+import { transformVerifierTypeScript } from ${scriptUrl("verifier-source-loader.mjs")};
+const mock = {
+  ModuleKind: { ESNext: 99, CommonJS: 1 },
+  ScriptTarget: { ES2022: 9 },
+  transpileModule(text, options) {
+    assert.equal(text, "export enum Status { Ready = 1 }");
+    assert.equal(options.compilerOptions.module, 99);
+    return { outputText: "export const Status = { Ready: 1 };" };
+  },
+};
+const result = transformVerifierTypeScript(
+  "export enum Status { Ready = 1 }",
+  "file:///tmp/value.ts",
+  "module",
+  () => { const e = new TypeError("The property options.mode must be one of strip"); e.code = "ERR_INVALID_ARG_VALUE"; throw e; },
+  () => mock,
+);
+assert.equal(result, "export const Status = { Ready: 1 };");
+console.log("ok");
+`;
+    const result = await processes.run(
+      process.execPath,
+      ["--input-type=module", "--eval", source],
+      { timeoutMs: 20_000 },
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("ok");
+  },
+);
+
 for (const missing of ["registerHooks", "stripTypeScriptTypes"]) {
   processTest(
     `explains the development runtime requirement when ${missing} is unavailable`,

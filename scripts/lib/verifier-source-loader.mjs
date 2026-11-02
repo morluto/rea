@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import * as nodeModule from "node:module";
+import { createRequire } from "node:module";
 import { extname, isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -74,6 +75,37 @@ const resolveSource = (specifier, context, nextResolve) => {
   }
 };
 
+const require = createRequire(import.meta.url);
+
+export const transformVerifierTypeScript = (
+  source,
+  url,
+  format,
+  strip = nodeModule.stripTypeScriptTypes,
+  loadTypeScript = () => require("typescript"),
+) => {
+  try {
+    return strip(source, {
+      mode: "transform",
+      sourceMap: true,
+      sourceUrl: url,
+    });
+  } catch (error) {
+    if (error?.code !== "ERR_INVALID_ARG_VALUE" || error?.message?.includes("mode") !== true)
+      throw error;
+    const ts = loadTypeScript();
+    return ts.transpileModule(source, {
+      fileName: fileURLToPath(url),
+      compilerOptions: {
+        module: format === "commonjs" ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
+        target: ts.ScriptTarget.ES2022,
+        inlineSourceMap: true,
+        inlineSources: true,
+      },
+    }).outputText;
+  }
+};
+
 const loadSource = (url, context, nextLoad) => {
   const path = ownedSourcePath(url);
   if (path === undefined || ![".ts", ".mts"].includes(extname(path)))
@@ -95,11 +127,7 @@ const loadSource = (url, context, nextLoad) => {
   return {
     ...loaded,
     format,
-    source: nodeModule.stripTypeScriptTypes(source, {
-      mode: "transform",
-      sourceMap: true,
-      sourceUrl: url,
-    }),
+    source: transformVerifierTypeScript(source, url, format),
   };
 };
 
