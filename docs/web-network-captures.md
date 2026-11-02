@@ -119,6 +119,33 @@ tested upstream source is tag `v12.2.3`, commit
 an explicit unsupported-profile diagnostic. Non-Linux native decoding is not
 supported by this adapter.
 
+## Android interception as a manual composition
+
+REA can inspect an HTTP Toolkit HAR after the caller exports it, but it does
+not control HTTP Toolkit, install a CA, alter Android trust settings, or
+automate SSL-pinning bypass. The supported path is a docs-only composition of
+separately authorized tools:
+
+1. Use the caller's HTTP Toolkit installation to capture a caller-owned or
+   explicitly authorized debug/test app.
+2. Export the capture as HAR 1.2 and preserve the original export.
+3. Inspect the local export with `inspect_web_network_capture` as described
+   above.
+
+ADB acquisition and caller-authored Frida instrumentation are separate REA
+lanes; see [ADB device analysis](./adb-device-analysis.md) and [Frida
+instrumentation](./frida-instrumentation.md). They are not an end-to-end
+interception workflow, and possession of a device, APK, or Frida endpoint
+does not establish authorization. REA does not ship or select a built-in
+unpinning script.
+
+HTTP Toolkit may retain TLS failures such as `cert-rejected` in its
+producer-specific `log._tlsErrors` extension. REA preserves unknown HAR
+extensions as historical container evidence, while HTTP records remain those
+in `log.entries`; it does not infer that a TLS failure was bypassed or that a
+request reached the target. The extension is producer evidence, not a runtime
+attribution or an authorization record.
+
 ## Reading Fiddler captures (`.saz`)
 
 Fiddler Everywhere saves traffic in **Session Archive Zip (`.saz`)** files.
