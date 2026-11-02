@@ -52,6 +52,7 @@ import type {
   ArtifactOccurrence,
 } from "../domain/artifactGraph.js";
 import {
+  classifyFatContainerEvidence,
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
 } from "../domain/apple/machoContainer.js";
@@ -522,6 +523,7 @@ const scanOccurrences = async (
         occurrence.artifact_kind,
       ),
       encrypted: occurrence.encrypted,
+      declaredSize: occurrence.declared_size,
       location,
       packageFormat:
         packaged === undefined ? null : asPackageFormat(formatOf(packaged)),
@@ -755,6 +757,8 @@ interface MemberView {
   readonly format: string;
   readonly kind: string;
   readonly encrypted: boolean;
+  /** Full member size its owner declared, when one did. */
+  readonly declaredSize: number | null;
   /** Reported path. A package member names its host file. */
   readonly location: string;
   readonly packageFormat: PackageFormat | null;
@@ -842,6 +846,7 @@ const examineSelectedFile = async (
     format: rootFormat,
     kind: "file",
     encrypted: false,
+    declaredSize: bytes.length,
     location: input.path,
     packageFormat: null,
     read: (budget) => Promise.resolve(fitAllowance(bytes, budget)),
@@ -1413,7 +1418,12 @@ const examinePackagedBinary = async (
   const header = probe.kind === "bytes" ? probe.bytes : probe.prefix;
   const native =
     asNativeFormat(member.format) ??
-    (header === null ? null : sniffNativeFormat(header));
+    (header === null
+      ? null
+      : sniffNativeFormat(
+          header,
+          probe.kind === "bytes" ? header.length : member.declaredSize,
+        ));
   if (native === null && header?.toString("latin1", 0, 2) === "MZ") {
     const windows = observeMzWindowsHeader(header);
     if (
@@ -1753,6 +1763,7 @@ const scanUnexpandedContainer = async (
         ? "javascript"
         : ownerMemberKind(entry.formatMetadata, "file"),
       encrypted: entry.encrypted,
+      declaredSize: entry.declaredSize,
       location,
       packageFormat: format,
       read: (budget) =>
@@ -2293,8 +2304,29 @@ const hasCompanionName = (logical: string): boolean => {
   );
 };
 
+/**
+ * FAT identity from the container owner. A prefix can only rule a universal
+ * image out against the member's real size: without one, or with slices past
+ * the prefix, the image may be native and stays counted as one.
+ */
+const sniffFatFormat = (
+  bytes: Buffer,
+  size: number | null,
+): "mach-o-universal" | null => {
+  const known = size !== null && size >= bytes.length;
+  const header = readFatContainerHeader(bytes, known ? size : bytes.length);
+  if (header.state !== "parsed") return null;
+  return known &&
+    classifyFatContainerEvidence(header, bytes).state === "not-mach-o"
+    ? null
+    : "mach-o-universal";
+};
+
 /** Header facts from the executable owners. A JVM class is not a FAT Mach-O. */
-const sniffNativeFormat = (bytes: Buffer): NativeFormat | null => {
+const sniffNativeFormat = (
+  bytes: Buffer,
+  size: number | null = bytes.length,
+): NativeFormat | null => {
   if (
     bytes.length >= 4 &&
     bytes[0] === 0x7f &&
@@ -2304,8 +2336,8 @@ const sniffNativeFormat = (bytes: Buffer): NativeFormat | null => {
   )
     return "elf";
   if (readMachoHeaderPrefixFacts(bytes).format !== null) return "mach-o";
-  if (readFatContainerHeader(bytes, bytes.length).state === "parsed")
-    return "mach-o-universal";
+  const universal = sniffFatFormat(bytes, size);
+  if (universal !== null) return universal;
   const windows = observeMzWindowsHeader(bytes);
   if (windows.state === "declared" && windows.signature === "PE") return "pe";
   return null;

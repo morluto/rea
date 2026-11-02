@@ -21,6 +21,7 @@ import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { universalMacho } from "../../tests/fixtures/universalMacho.js";
 import { windowsNativeArtifactFixture } from "../../tests/fixtures/windowsNativeArtifact.js";
 import {
   ArtifactReaderFailure,
@@ -2018,6 +2019,36 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
     } finally {
       createdReaders.wrap = undefined;
     }
+  });
+});
+
+describe("ReleaseExposureReader probed FAT identity", () => {
+  const omittedNative = async (bytes: Buffer): Promise<number | undefined> => {
+    const root = await bundled([{ path: "member.bin", bytes }]);
+    const scanned = await inspect(root);
+    return scanned.omitted.find(
+      (item) => item.subject === PACKAGED_NATIVE_IMAGES,
+    )?.count;
+  };
+
+  it("keeps a JVM class past the probe out of the packaged native images", async () => {
+    const bytes = javaClassFile(MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES);
+    expect(bytes.length).toBeGreaterThan(
+      MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
+    );
+    await expect(omittedNative(bytes)).resolves.toBeUndefined();
+  });
+
+  it("counts a universal image whose slice headers sit past the probe", async () => {
+    const slice = Buffer.alloc(64);
+    slice.writeUInt32BE(0xcffaedfe, 0);
+    const { bytes, slices } = universalMacho([
+      { bytes: slice, cpuType: 0x0100000c, cpuSubtype: 0 },
+    ]);
+    expect(slices[0]?.offset).toBeGreaterThanOrEqual(
+      MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
+    );
+    await expect(omittedNative(bytes)).resolves.toBe(1);
   });
 });
 
