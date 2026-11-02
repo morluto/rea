@@ -823,22 +823,44 @@ const GO_FLAG_PATH =
 const GO_COMPILER_SETTING = /^(?:CGO_[A-Z]+FLAGS|-gccgoflags)$/u;
 const GO_COMPILER_PATH_FLAG =
   /^-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT])=?\s*(.*)$/su;
-/**
- * `go tool link` takes a library directory as `-L dir` or `-L=dir`, never
- * attached, and `go build` may prefix the flags with `pattern=`.
- */
-const GO_LINKER_PATH_FLAG = /^(?:[^\s=-][^\s=]*=)?-{1,2}L(?:=|\s+|$)(.*)$/su;
+/** `go tool link` takes a library directory as `-L dir` or `-L=dir`, never attached. */
+const GO_LINKER_PATH_FLAG = /^-{1,2}L(?:=|\s+|$)(.*)$/su;
+/** The one `pattern=` that `go build` allows before a setting's first flag. */
+const GO_PACKAGE_SELECTOR = /^[^\s=-][^\s=]*=(?=-)/u;
+/** `-X name=value` sets a string, which names no option. */
+const GO_LINKER_STRING_FLAG = /^-{1,2}X(?:[=\s]|$)/u;
 
-const goPathFlag = (key: string): RegExp | null => {
-  if (GO_COMPILER_SETTING.test(key)) return GO_COMPILER_PATH_FLAG;
-  return key === "-ldflags" ? GO_LINKER_PATH_FLAG : null;
-};
-
-/** Flags in one value, with a quoted path kept whole up to the next flag. */
-const goFlags = (value: string): string[] =>
-  [...value.matchAll(GO_FLAG_FIELD)].flatMap(([field]) =>
-    field.replace(/["']/gu, "").split(/\s+(?=-)/u),
+/** Fields in one value, without their quotes. */
+const goFields = (value: string): string[] =>
+  [...value.matchAll(GO_FLAG_FIELD)].map(([field]) =>
+    field.replace(/["']/gu, ""),
   );
+
+/** A field's flags, with a quoted path kept whole up to the next flag. */
+const splitGoField = (field: string): string[] => field.split(/\s+(?=-)/u);
+
+/** Flags in one value. */
+const goFlags = (value: string): string[] =>
+  goFields(value).flatMap(splitGoField);
+
+/** Linker flags in one value, each `-X` kept apart from the string it sets. */
+const goLinkerFlags = (value: string): string[] => {
+  const flags: string[] = [];
+  let setsString = false;
+  for (const [index, field] of goFields(value).entries()) {
+    if (setsString) {
+      setsString = false;
+      continue;
+    }
+    const flag = index === 0 ? field.replace(GO_PACKAGE_SELECTOR, "") : field;
+    if (GO_LINKER_STRING_FLAG.test(flag)) {
+      setsString = /^-{1,2}X$/u.test(flag);
+      continue;
+    }
+    flags.push(...splitGoField(flag));
+  }
+  return flags;
+};
 
 const goFlagPaths = (value: string): string[] =>
   goFlags(value).flatMap((flag) =>
@@ -851,8 +873,8 @@ const goFlagPaths = (value: string): string[] =>
  * A path flag's relative argument, attached or in the next field. A rooted
  * argument belongs to `goFlagPaths`, which keeps its `=` and `,` structure.
  */
-const goRelativeFlagPaths = (value: string, pathFlag: RegExp): string[] =>
-  goFlags(value).flatMap((flag, index, flags) => {
+const goRelativeFlagPaths = (flags: string[], pathFlag: RegExp): string[] =>
+  flags.flatMap((flag, index) => {
     const attached = pathFlag.exec(flag)?.[1]?.trimEnd();
     if (attached === undefined) return [];
     const next = flags[index + 1];
@@ -864,6 +886,15 @@ const goRelativeFlagPaths = (value: string, pathFlag: RegExp): string[] =>
       ? []
       : [argument];
   });
+
+/** Relative paths in the settings that take a path flag. */
+const goSettingRelativePaths = (key: string, value: string): string[] => {
+  if (GO_COMPILER_SETTING.test(key))
+    return goRelativeFlagPaths(goFlags(value), GO_COMPILER_PATH_FLAG);
+  return key === "-ldflags"
+    ? goRelativeFlagPaths(goLinkerFlags(value), GO_LINKER_PATH_FLAG)
+    : [];
+};
 
 const goPaths = (
   module: NonNullable<GoBinary["build_info"]>["module"],
@@ -883,10 +914,8 @@ const goPaths = (
   for (const setting of module.settings) {
     if (!GO_FLAG_SETTING.test(setting.key)) continue;
     for (const path of goFlagPaths(setting.value)) add(path);
-    const pathFlag = goPathFlag(setting.key);
-    if (pathFlag !== null)
-      for (const path of goRelativeFlagPaths(setting.value, pathFlag))
-        paths.add(path);
+    for (const path of goSettingRelativePaths(setting.key, setting.value))
+      paths.add(path);
   }
   return [...paths];
 };

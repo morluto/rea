@@ -1440,7 +1440,7 @@ describe("ReleaseExposureService Go relative flag paths", () => {
     ["-L private-sdk -s -w", "private-sdk"],
     [`"-L private-sdk -s -w"`, "private-sdk"],
     ["-L=private-sdk -s -w", "private-sdk"],
-    ["all=-L private-sdk -s -w", "private-sdk"],
+    ["-X main.version=1 -L private-sdk", "private-sdk"],
   ])("keeps the relative linker directory in %s", async (value, path) => {
     const report = await goReport(
       goModule([{ key: "-ldflags", value: `-B gobuildid ${value}` }]),
@@ -1448,6 +1448,33 @@ describe("ReleaseExposureService Go relative flag paths", () => {
     const check = report.checks.find((item) => item.id === "go.build_paths");
     expect(check?.status).toBe("exposed");
     expect(check?.observation.samples).toEqual([path]);
+  });
+
+  it.each([
+    "all=-L private-sdk -s -w",
+    `"all=-L private-sdk -s -w"`,
+    "all=-s -L private-sdk",
+    "github.com/acme/...=-B gobuildid -L private-sdk",
+  ])("reads the package selector once in %s", async (value) => {
+    const report = await goReport(goModule([{ key: "-ldflags", value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual(["private-sdk"]);
+  });
+
+  it.each([
+    `-X 'main.usage=-L level'`,
+    `-X 'main.usage=see -L level'`,
+    `-X '-L level'`,
+    `-X main.usage=-L level`,
+    `-X='main.usage=see -L level'`,
+    `--X 'main.usage=-L level'`,
+    `all=-X 'main.usage=-L level'`,
+    `"-X main.usage=-L level"`,
+  ])("does not read the string set by %s as a path", async (value) => {
+    const report = await goReport(goModule([{ key: "-ldflags", value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("not_observed");
   });
 
   it.each([
