@@ -38,6 +38,12 @@ const APPLICATION_NODE_POLICIES: Readonly<
     "negative",
     "malformed",
   ]),
+  // Scheme links reach the running application through the OS or a session.
+  "url-scheme": policy("electron", "url-scheme", "packaged-process", [
+    "positive",
+    "negative",
+    "malformed",
+  ]),
   endpoint: policy("protocol", "endpoint", "protocol", [
     "positive",
     "negative",

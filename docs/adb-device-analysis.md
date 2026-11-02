@@ -257,12 +257,12 @@ beyond already-connected devices (`adb connect`) are not exposed yet.
 
 ## Real verification
 
-`npm run verify:adb` exercises every operation against a live device. It
+`npm run verify:adb` exercises observation and transfer operations against a live device. It
 requires `adb` (or `REA_ADB_PATH`) and any attached emulator or phone;
 `--serial` selects one when several are attached, `--pull PACKAGE` pulls a
-real package and verifies the returned digests against the files on disk,
-and `--install-apk PATH` drives a full install → resolve → uninstall
-lifecycle with a lane-owned probe.
+real package and verifies the returned digests against the files on disk.
+The optional `--install-apk` lifecycle is unavailable until the selected APK
+identity and device cleanup ownership can be established safely.
 
 Record: verified against adb 34.0.5 on Linux against an Android 14
 (API 34) x86_64 emulator — all operations above, a 224-package inventory,

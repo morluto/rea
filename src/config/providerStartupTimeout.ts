@@ -1,5 +1,5 @@
 import {
-  MAX_PROVIDER_STARTUP_TIMEOUT_MS,
+  MAX_NODE_TIMER_DELAY_MS,
   MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
 } from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
@@ -20,4 +20,4 @@ export const providerStartupTimeoutSchema = z
   .string()
   .regex(/^[1-9]\d*$/u, "must be a positive decimal integer")
   .transform(Number)
-  .pipe(z.int().min(1).max(MAX_PROVIDER_STARTUP_TIMEOUT_MS));
+  .pipe(z.int().min(1).max(MAX_NODE_TIMER_DELAY_MS));

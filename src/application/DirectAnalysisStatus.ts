@@ -1,4 +1,3 @@
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { createServerIdentity } from "../serverIdentity.js";
 import { silentLogger } from "../logger.js";
@@ -12,6 +11,7 @@ import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
 import { compactPresentationForMcpInputSchemaProfile } from "../config/mcpInputSchemaProfile.js";
 import {
   directAnalysisCleanupFailure,
+  projectInvocationFailure,
   withSessionCleanup,
 } from "./DirectAnalysisCleanup.js";
 import { ok } from "../domain/result.js";
@@ -25,7 +25,7 @@ export const runSessionStatus = async (
   logger: Logger = silentLogger,
 ): Promise<JsonValue> => {
   const config = dependencies.readConfiguration();
-  if (!config.ok) return { error: projectAnalysisError(config.error) };
+  if (!config.ok) return { error: projectInvocationFailure(config.error) };
   const session = await dependencies.createBinarySession(config.value, logger);
   return withSessionCleanup<JsonValue>(
     session,

@@ -11,7 +11,7 @@ import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 
-it("waits for a late owned handshake and does not close its active peer on retry", async () => {
+it("joins a late owned handshake and waits for its active operation", async () => {
   const http = createServer();
   const webSockets = new WebSocketServer({ noServer: true });
   let port = 0;
@@ -61,11 +61,19 @@ it("waits for a late owned handshake and does not close its active peer on retry
   );
   await received;
   const closing = owner.close();
+  let closed = false;
+  void closing.then(() => {
+    closed = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(closed).toBe(false);
   releaseUpgrade?.();
   const connection = await connecting;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(closed).toBe(false);
   await owner.finish(connection);
   await closing;
-  expect(connection).toBeDefined();
+  await vi.waitFor(() => expect(webSockets.clients.size).toBe(0));
 });
 
 it("retries only the failed transport and does not repeat successful child cleanup", async () => {

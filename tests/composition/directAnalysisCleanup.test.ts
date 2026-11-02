@@ -656,7 +656,7 @@ it.each(["complete", "summary"] as const)(
   "retains completed Evidence when cancellation arrives during managed close before %s delivery",
   async (detail) => {
     const [path] = await createBinarySessionTargets();
-    const files = await readdir(dirname(path));
+    const files = (await readdir(dirname(path))).sort();
     const original = parseEvidence(
       await runProviderAnalysis(
         factories().dependencies,
@@ -702,7 +702,7 @@ it.each(["complete", "summary"] as const)(
       ),
     });
     expect(session.activeTarget()).toBeUndefined();
-    expect(await readdir(dirname(path))).toEqual(files);
+    expect((await readdir(dirname(path))).sort()).toEqual(files);
   },
 );
 

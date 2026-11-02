@@ -6,6 +6,11 @@ import { pathToFileURL } from "node:url";
 
 import { expect, it, onTestFinished, vi } from "vitest";
 import { WebSocketServer } from "ws";
+import {
+  withVerifierCleanup,
+  closeVerifierResources,
+} from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { CdpConnection } from "../browser/CdpConnection.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -74,6 +79,8 @@ const inspectorCloseFixture = async () => {
   const firstClose = new Promise<void>((_resolve, reject) => {
     rejectFirstClose = reject;
   });
+  // Cleanup may reject the gate before a transport consumes it.
+  void firstClose.catch(() => undefined);
   const originalClose = CdpConnection.prototype.close;
   const closeSpy = vi
     .spyOn(CdpConnection.prototype, "close")
@@ -89,14 +96,20 @@ const inspectorCloseFixture = async () => {
     });
 
   onTestFinished(async () => {
-    closeSpy.mockRestore();
-    if (closeCalls > 0) rejectFirstClose?.(new Error("fixture finalization"));
-    await new V8InspectorProvider(undefined, admission).close();
-    for (const socket of sockets.clients) socket.terminate();
-    await new Promise<void>((resolve) => sockets.close(() => resolve()));
-    if (server.listening)
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    await rm(root, { recursive: true, force: true });
+    await closeVerifierResources([
+      () => rejectFirstClose?.(new Error("fixture finalization")),
+      () => closeSpy.mockRestore(),
+      () => new V8InspectorProvider(undefined, admission).close(),
+      () => {
+        for (const socket of sockets.clients) socket.terminate();
+      },
+      () => new Promise<void>((resolve) => sockets.close(() => resolve())),
+      async () => {
+        if (server.listening)
+          await new Promise<void>((resolve) => server.close(() => resolve()));
+      },
+      () => rm(root, { recursive: true, force: true }),
+    ]);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -141,17 +154,33 @@ it("retains cancelled final-close ownership and retries the exact transport befo
   const observing = observeJavaScriptRuntime(provider(), input, {
     signal: controller.signal,
   });
-  await closeStarted;
-  controller.abort(cancellationReason);
-  let firstObservationSettled = false;
-  void observing.finally(() => {
-    firstObservationSettled = true;
-  });
-  await Promise.resolve();
-  expect(firstObservationSettled).toBe(false);
-  rejectFirstClose?.(new Error("controlled final socket close failure"));
-
-  const result = await observing;
+  const result = await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(
+      closeStarted,
+      observing,
+      "inspector final close",
+    );
+    controller.abort(cancellationReason);
+    let firstObservationSettled = false;
+    void observing.then(
+      () => {
+        firstObservationSettled = true;
+      },
+      () => {
+        firstObservationSettled = true;
+      },
+    );
+    await Promise.resolve();
+    expect(firstObservationSettled).toBe(false);
+    rejectFirstClose(new Error("controlled final socket close failure"));
+    return await observing;
+  }, [
+    () => controller.abort(new Error("fixture finalization")),
+    () => rejectFirstClose(new Error("fixture finalization")),
+    async () => {
+      await observing;
+    },
+  ]);
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cleanup-incomplete cancellation");
   const error = result.error;
@@ -202,15 +231,26 @@ it("retains cancelled final-close ownership and retries the exact transport befo
   const activeObservation = observeJavaScriptRuntime(provider(), activeInput, {
     signal: activeController.signal,
   });
-  try {
-    await waitForConnections(4);
+  const queuedController = new AbortController();
+  let shutdown: Promise<void> | undefined;
+  let queuedObservation:
+    | ReturnType<typeof observeJavaScriptRuntime>
+    | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(
+      waitForConnections(4),
+      activeObservation,
+      "active inspector connection",
+    );
     let shutdownSettled = false;
-    const shutdown = provider()
+    shutdown = provider()
       .close()
       .then(() => {
         shutdownSettled = true;
       });
-    const queuedObservation = observeJavaScriptRuntime(provider(), input);
+    queuedObservation = observeJavaScriptRuntime(provider(), input, {
+      signal: queuedController.signal,
+    });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(shutdownSettled).toBe(false);
     expect(fixture.acceptedConnections).toBe(4);
@@ -221,12 +261,26 @@ it("retains cancelled final-close ownership and retries the exact transport befo
     expect(activeResult.ok).toBe(false);
     await shutdown;
     expect(shutdownSettled).toBe(true);
-    await waitForConnections(5);
+    await awaitAcknowledgement(
+      waitForConnections(5),
+      queuedObservation,
+      "queued inspector connection",
+    );
     const queuedResult = await queuedObservation;
     expect(queuedResult.ok).toBe(true);
     expect(fixture.acceptedConnections).toBe(5);
     expect(closeSpy).toHaveBeenCalledTimes(8);
-  } finally {
-    activeController.abort(new Error("fixture finalization"));
-  }
+  }, [
+    () => activeController.abort(new Error("fixture finalization")),
+    () => queuedController.abort(new Error("fixture finalization")),
+    async () => {
+      await activeObservation;
+    },
+    async () => {
+      await shutdown;
+    },
+    async () => {
+      await queuedObservation;
+    },
+  ]);
 });

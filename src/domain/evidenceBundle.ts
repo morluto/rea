@@ -55,6 +55,12 @@ export const evidenceBundleSchema = z.strictObject({
 export type EvidenceBundle = z.infer<typeof evidenceBundleSchema>;
 const immutableBundles = new WeakMap<object, EvidenceBundle>();
 
+/** Recognize an authenticated sealed bundle without traversing or copying it. */
+export const isImmutableEvidenceBundle = (
+  input: unknown,
+): input is EvidenceBundle =>
+  typeof input === "object" && input !== null && immutableBundles.has(input);
+
 /** Caller input has valid shape but is not in authenticated canonical form. */
 export class NonCanonicalEvidenceBundleError extends TypeError {
   constructor() {

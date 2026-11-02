@@ -1,8 +1,8 @@
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { expect, it as test, onTestFinished } from "vitest";
+import { expect, it as test } from "vitest";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { z } from "zod";
 import { access } from "node:fs/promises";
 import { ANDROID_TOOL_CONTRACTS } from "../../../src/contracts/android/androidToolContracts.js";
@@ -18,6 +18,7 @@ import type { AndroidAnalysisPort } from "../../../src/application/android/Andro
 import { silentLogger } from "../../../src/logger.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   createJadxProtocolFixture,
@@ -107,9 +108,14 @@ it("keeps a replacement server usable after the SDK discards its discovery probe
       error: { _tag: "AnalysisCapabilityUnavailableError" },
     });
   } finally {
-    await replacement.close();
-    await transport.closeAndroid();
-    await session.close();
+    await closeVerifierResources([
+      () => replacement.close(),
+      () => transport.closeAndroid(),
+      async () => {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   }
 });
 
@@ -118,23 +124,11 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
   const session = createTestBinarySession(() => {
     throw new Error("APK analysis must not acquire a deep binary provider");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { androidAnalysis: provider },
-  );
-  const client = new Client({
-    name: "android-contract-regression",
-    version: "1",
+  const { client, close } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "android-contract-regression", version: "1" },
+    serverOptions: { androidAnalysis: provider },
   });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const advertised = await client.listTools();
   const wireTools = new Map(advertised.tools.map((tool) => [tool.name, tool]));
   for (const contract of ANDROID_TOOL_CONTRACTS) {
@@ -182,8 +176,7 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
     expect(evidence.raw_result).not.toBeNull();
   }
   expect(launches).toHaveLength(1);
-  await client.close();
-  await server.close();
+  await close();
   await verifyJadxFixtureCleanup(launches);
 });
 
@@ -241,23 +234,14 @@ test.each([
     const session = createTestBinarySession(() => {
       throw new Error("Unexpected native provider acquisition");
     });
-    const server = createServer(
-      { kind: "session", session },
-      { androidAnalysis: provider },
-    );
-    const client = new Client({
-      name: "android-partial-observation-regression",
-      version: "1",
+    const { client, close } = await createApplicationMcpHarness({
+      session,
+      clientIdentity: {
+        name: "android-partial-observation-regression",
+        version: "1",
+      },
+      serverOptions: { androidAnalysis: provider },
     });
-    onTestFinished(async () => {
-      await client.close();
-      await server.close();
-      await session.close();
-    });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
 
     const response = await client.callTool({
       name: "inspect_android_package",
@@ -284,8 +268,7 @@ test.each([
     });
     if (!containsAmbientEnvironment)
       expect(JSON.stringify(partial)).not.toContain("JAVA_HOME");
-    await client.close();
-    await server.close();
+    await close();
     await verifyJadxFixtureCleanup(launches);
   },
 );
@@ -323,23 +306,11 @@ it("cleans an active engine when the MCP client disconnects", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("Unexpected native provider acquisition");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { androidAnalysis: provider },
-  );
-  const client = new Client({
-    name: "android-disconnect-regression",
-    version: "1",
+  const { client, close } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "android-disconnect-regression", version: "1" },
+    serverOptions: { androidAnalysis: provider },
   });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const pending = client
     .callTool({ name: "inspect_android_package", arguments: { path: apk } })
     .catch(() => undefined);
@@ -360,5 +331,6 @@ it("cleans an active engine when the MCP client disconnects", async () => {
       }
     })
     .toBe(true);
+  await close();
   await verifyJadxFixtureCleanup(launches);
 });

@@ -292,8 +292,10 @@ const projectWrite = (
 export const inspectEvidenceBundleCommand = async (
   input: {
     readonly path: string;
-    readonly detail: "complete" | "summary";
+    readonly detail: "complete" | "summary" | "records";
     readonly filters?: EvidenceRecordFilters | undefined;
+    readonly offset?: number | undefined;
+    readonly limit?: number | undefined;
   },
   signal?: AbortSignal,
 ) => {

@@ -355,6 +355,7 @@ sliceTest(
       ...thinReport.auditable_metadata,
       file_offset: (thinReport.auditable_metadata?.file_offset ?? 0) + offset,
     });
+    expect(thinReport.rustc_commit?.hashes.length).toBeGreaterThan(0);
     expect(report.rustc_commit?.hashes).toEqual(
       thinReport.rustc_commit?.hashes.map((entry) => ({
         ...entry,

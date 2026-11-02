@@ -84,6 +84,7 @@ const freshInventory = () => {
   return inventory;
 };
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
+  predicateType: carrier.predicate_type,
   evidenceId: carrier.evidence_id,
   operation: "inventory_artifact",
   subject:

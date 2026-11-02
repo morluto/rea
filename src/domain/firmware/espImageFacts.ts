@@ -214,6 +214,8 @@ export const deriveEspImage = (observed: EspImageObservations): EspImage => {
         trailing.blocks.length > 0 ? (observed.sectorOffset ?? null) : null,
       undescribed_trailing: trailing.undescribed,
       descriptor,
+      // The image's bytes alone cannot place it in a dump; the reader can.
+      flash_dump: null,
     },
     segments,
     signatureBlocks: trailing.blocks,

@@ -38,6 +38,7 @@ import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 beforeEach(() => {
@@ -164,19 +165,28 @@ it("shutdown waits for descriptor finalization before retrying retained cleanup"
     await gate;
   };
   const client = new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: root });
-  const reading = client.listDescriptors().catch((cause: unknown) => cause);
-  await closing;
-  let settled = false;
-  const shutdown = client.close().then(() => {
-    settled = true;
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-  expect(settled).toBe(false);
-  fault.blocked.clear();
-  release();
-  await reading;
-  await shutdown;
-  expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
+  const reading = client.listDescriptors();
+  let shutdown: Promise<void> | undefined;
+  try {
+    await awaitAcknowledgement(closing, reading, "descriptor finalization");
+    let settled = false;
+    shutdown = client.close().then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    fault.blocked.clear();
+    release();
+    expect(await reading).toHaveLength(1);
+    await shutdown;
+    expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
+  } finally {
+    release();
+    fault.onClose = undefined;
+    fault.blocked.clear();
+    await Promise.allSettled([reading, ...(shutdown ? [shutdown] : [])]);
+    await client.close();
+  }
 });
 
 it.each([null, "primitive abort", new Error("selected abort")])(
@@ -236,7 +246,11 @@ it("does not assign a peer's later cancellation to a descriptor that already fai
     .listSessions({ signal: controller.signal })
     .catch((cause: unknown) => cause);
   try {
-    await waiting;
+    await awaitAcknowledgement(
+      waiting,
+      reading,
+      "peer descriptor finalization",
+    );
     await new Promise((resolve) => setImmediate(resolve));
     controller.abort(reason);
     release();

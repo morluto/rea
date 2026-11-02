@@ -1,3 +1,4 @@
+import { createOwnedArtifactClient } from "../../../support/artifactClientScope.js";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -10,7 +11,6 @@ import {
   destinationCaseCollision,
   ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION,
 } from "../../../../src/artifacts/ArtifactPaths.js";
-import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { ArtifactOperationError } from "../../../../src/domain/artifactOperationError.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -21,9 +21,10 @@ it("keeps logical names that differ only in case and records the limitation", as
   await writeOrderedZip(path, ["Main.js", "main.js"]);
   const target = await parseBinaryTarget(path);
   if (!target.ok) throw new Error("expected a ZIP target");
-  const result = await new ArtifactProvider(process.env)
-    .createClient(target.value)
-    .execute("inventory_artifact", {});
+  const result = await createOwnedArtifactClient(target.value).execute(
+    "inventory_artifact",
+    {},
+  );
   if (!result.ok) throw result.error;
   const inventory = artifactInventoryResultSchema.parse(result.value.result);
   expect(inventory.occurrences.map(({ logical_path }) => logical_path)).toEqual(
@@ -47,9 +48,10 @@ it("keeps literal backslash ZIP names distinct from slash paths", async () => {
   await writeOrderedZip(path, ["a\\b.js", "a/b.js"]);
   const target = await parseBinaryTarget(path);
   if (!target.ok) throw new Error("expected a ZIP target");
-  const result = await new ArtifactProvider(process.env)
-    .createClient(target.value)
-    .execute("inventory_artifact", {});
+  const result = await createOwnedArtifactClient(target.value).execute(
+    "inventory_artifact",
+    {},
+  );
   if (!result.ok) throw result.error;
   const inventory = artifactInventoryResultSchema.parse(result.value.result);
   const literal = inventory.occurrences.find(
@@ -69,9 +71,10 @@ it("reports an unsafe path as a hostile artifact path", async () => {
   await writeOrderedZip(path, ["../outside.js"]);
   const target = await parseBinaryTarget(path);
   if (!target.ok) throw new Error("expected a ZIP target");
-  const result = await new ArtifactProvider(process.env)
-    .createClient(target.value)
-    .execute("inventory_artifact", {});
+  const result = await createOwnedArtifactClient(target.value).execute(
+    "inventory_artifact",
+    {},
+  );
   if (result.ok) throw new Error("expected the path constraint to fail");
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "artifact_operation_failed",

@@ -5,18 +5,6 @@ import type { Result } from "../../domain/result.js";
 import { recordDerivedEvidence } from "../recordDerivedEvidence.js";
 import { workflowUnknownInput } from "../../application/investigation/WorkflowUnknown.js";
 import type { WorkflowUnknownInput } from "./types.js";
-import { uniqueSorted } from "../../domain/canonicalOrdering.js";
-
-export const isIncomplete = (status: string): boolean =>
-  status === "unknown" || status === "truncated";
-
-export const comparisonClosure = (comparisons: readonly Evidence[]): string[] =>
-  uniqueSorted(
-    comparisons.flatMap((evidence) => [
-      evidence.evidence_id,
-      ...evidence.evidence_links,
-    ]),
-  );
 
 export const recordWorkflowEvidence = (
   ...[session, evidence, unresolved, input]: readonly [

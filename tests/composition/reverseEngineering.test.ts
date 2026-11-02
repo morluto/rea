@@ -15,17 +15,22 @@ import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.j
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 
-describe("reverse engineering command services", () => {
-  it("documents the shared combined capture limit for both command tools", () => {
-    for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-      expect(contract.description).toContain("shared 16 MiB combined limit");
-    expect(REVERSE_ENGINEERING_TOOL_CONTRACTS[0]?.description).toContain(
-      "does not follow local debug links by default",
-    );
-    for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-      expect(contract.description).toContain("command_timeout_ms");
-  });
+it("documents the shared combined capture limit for both command tools", () => {
+  expect(REVERSE_ENGINEERING_TOOL_CONTRACTS.map(({ name }) => name)).toEqual(
+    expect.arrayContaining(["inspect_with_objdump", "execute_rizin_command"]),
+  );
+  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
+    expect(contract.description).toContain("shared 16 MiB combined limit");
+  expect(
+    REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
+      ({ name }) => name === "inspect_with_objdump",
+    )?.description,
+  ).toContain("does not follow local debug links by default");
+  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
+    expect(contract.description).toContain("command_timeout_ms");
+});
 
+describe("reverse engineering command services", () => {
   it("uses compatible local DWARF link flags and disables debuginfod through the environment", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rea-reverse-tools-"));
     const path = join(directory, "fixture.bin");

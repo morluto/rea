@@ -822,13 +822,16 @@ process.stdin.on("data", (chunk) => {
     expect(started.ok).toBe(true);
     if (!started.ok) return;
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 50);
-
-    const result = await manager.execute(
+    const pending = manager.execute(
       started.value.session_id,
       "shell sleep 600",
       controller.signal,
     );
+    await expect
+      .poll(() => manager.status(started.value.session_id)?.recent_mi_records)
+      .toContain("@target before cancellation");
+    controller.abort();
+    const result = await pending;
 
     expect(result.ok).toBe(false);
     if (!result.ok) {

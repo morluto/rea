@@ -55,6 +55,7 @@ const initializeRuntime = async (
 ): Promise<void> => {
   let shutdown: (() => Promise<void>) | undefined;
   let closeSession: (() => Promise<void>) | undefined;
+  let disposeSession: (() => Promise<void>) | undefined;
   let sessionClosed = false;
   server.ownRuntimeCleanup(async () => {
     if (shutdown !== undefined) return shutdown();
@@ -72,6 +73,7 @@ const initializeRuntime = async (
     );
     if (failures.length > 0)
       throw new AggregateError(failures, "MCP startup cleanup failed");
+    await disposeSession?.();
   });
   const [{ runEager }, { createServer }] = await Promise.all([
     import("./eagerRuntime.js"),
@@ -88,13 +90,21 @@ const initializeRuntime = async (
         shutdown = close;
       },
       createServer: (source, options) => {
-        if (source.kind === "session")
+        if (source.kind === "session") {
           closeSession = async () => {
+            source.session.beginShutdown();
             const result = await source.session.close({
               retainProviderDocuments: true,
             });
             if (!result.ok) throw result.error;
           };
+          disposeSession = async () => {
+            const result = await source.session.dispose({
+              retainProviderDocuments: true,
+            });
+            if (!result.ok) throw result.error;
+          };
+        }
         return createServer(source, {
           ...options,
           mcpServer: server,

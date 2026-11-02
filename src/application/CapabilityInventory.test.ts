@@ -184,6 +184,7 @@ describe("ADB and Apktool host availability", () => {
       status: "unavailable" as const,
       code: "not_configured" as const,
       reason: "REA_ADB_PATH is invalid",
+      remediation: "Set REA_ADB_PATH to an absolute adb executable path.",
       diagnostics: {},
     };
     const readyInventory = buildCapabilityInventory(status(), {
@@ -205,6 +206,7 @@ describe("ADB and Apktool host availability", () => {
         status: "unavailable",
         code: "unsupported_version",
         reason: "Apktool 2.6.3 is older than 2.7.0",
+        remediation: "Repair the fixture provider.",
         diagnostics: {},
       },
     });
@@ -227,6 +229,7 @@ describe("capability failure reasons", () => {
         status: "unavailable",
         code: "runtime_unavailable",
         reason: "The JADX native self-test failed.",
+        remediation: "Repair the fixture provider.",
         diagnostics: {},
       },
     });
@@ -725,24 +728,6 @@ describe("binary_overview capability requirements", () => {
     });
   });
 
-  it("admits a provider without optional segment enumeration", () => {
-    const capabilities = [
-      "current_document",
-      "list_procedures",
-      "list_strings",
-    ].map((operation) => ({ operation, available: true, reason: null }));
-    expect(
-      entry(
-        "binary_overview",
-        status({ open: true, kind: "executable", capabilities }),
-      ),
-    ).toMatchObject({
-      available: true,
-      reason: "available",
-      remediation: null,
-    });
-  });
-
   it("keeps binary overview available when a declared segment facet is unavailable", () => {
     const capabilities = [
       {
@@ -793,6 +778,23 @@ describe("trace_feature requirements", () => {
       available: true,
       reason: null,
     }));
+
+  it("remains available when owner lookup is unavailable", () => {
+    expect(
+      entry(
+        "trace_feature",
+        status({
+          open: true,
+          kind: "executable",
+          capabilities: capabilities([
+            "search_strings",
+            "search_procedures",
+            "xrefs",
+          ]),
+        }),
+      ),
+    ).toMatchObject({ available: true, reason: "available" });
+  });
 
   it("needs the search operations the workflow actually calls", () => {
     expect(

@@ -122,6 +122,24 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         }),
       }),
     ]);
+    for (const source of [
+      "ordinary.cjs",
+      "optional.cjs",
+      "arithmetic.cjs",
+      "logical.cjs",
+    ])
+      expect(dependencies).toContainEqual(
+        expect.objectContaining({
+          relation: "loads",
+          properties: expect.objectContaining({ operation: "load" }),
+          evidence: expect.objectContaining({
+            location: expect.objectContaining({
+              available: true,
+              value: expect.objectContaining({ source }),
+            }),
+          }),
+        }),
+      );
     for (const edge of dependencies)
       if (edge.properties.operation === "load")
         expect(edge.relation).toBe("loads");

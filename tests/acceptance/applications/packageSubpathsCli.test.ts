@@ -222,6 +222,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     expect(preloads[0]?.identity).toMatchObject({
       key: "electron-preload:module-specifier:node_modules/exported/parser.cjs",
     });
+    expect(preloads[0]?.observations.length).toBeGreaterThan(0);
     for (const observation of preloads[0]?.observations ?? [])
       expect(observation).toMatchObject({
         properties: {

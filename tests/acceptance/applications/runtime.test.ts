@@ -83,6 +83,8 @@ const callCurrentDocument = async (
     cwd: process.cwd(),
     env: {
       PATH: process.env.PATH ?? "",
+      // The fixture exercises Hopper even when other providers are installed.
+      REA_ANALYSIS_PROVIDER: "hopper",
       HOPPER_LAUNCHER_PATH: process.execPath,
       ...(target === undefined
         ? {}

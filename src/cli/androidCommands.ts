@@ -261,16 +261,20 @@ export const registerAndroidCommands = (
   });
   cli.command(CLI_COMMANDS.traceAndroidReferences, {
     description:
-      "Trace incoming APK using nodes for a class or selected method",
+      "Trace APK using nodes for a defined class/method or an externally invoked DEX method",
     args: z.object({ path, className }),
     options: z.object({
       methodName: z
         .string()
         .optional()
-        .describe("Declared method name; omit for class references"),
+        .describe(
+          "Defined or directly referenced external method; omit for APK class references",
+        ),
       overloadIndex: cliIntegerArgument(0)
         .optional()
-        .describe("Index among same-name methods from inspect-android-class"),
+        .describe(
+          "Index among defined methods or observed external prototypes listed by an ambiguous query",
+        ),
     }),
     run: ({ args, options }) =>
       execute(

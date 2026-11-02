@@ -10,7 +10,6 @@ import {
   AnalysisTimeoutError,
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   createEvidence,
   evidenceSchema,
@@ -347,7 +346,9 @@ it("preserves an independent timeout after cleanup succeeds", async () => {
     },
   });
   expect(error.cleanupIncomplete).toBe(false);
-  expect(projectAnalysisError(error).details).not.toHaveProperty("cleanup");
+  expect((result as { details: unknown }).details).not.toHaveProperty(
+    "cleanup",
+  );
 });
 
 it("does not project cancellation cleanup as incomplete after a successful retry", async () => {
@@ -362,17 +363,19 @@ it("does not project cancellation cleanup as incomplete after a successful retry
     }),
   };
 
-  await runObjdump(service);
+  const result = await runObjdump(service);
 
   expect(error.cleanupIncomplete).toBe(false);
-  expect(projectAnalysisError(error).details).toMatchObject({
-    cleanup: "complete",
+  expect(result).toMatchObject({
+    code: "cancelled",
+    details: { cleanup: "complete" },
   });
 });
 
 it("returns cancellation with the completed observation when the caller interrupts service close", async () => {
+  const evidence = observation("complete");
   const service = {
-    inspectWithObjdump: vi.fn(async () => ok(observation("complete"))),
+    inspectWithObjdump: vi.fn(async () => ok(evidence)),
     close: vi.fn(async () => {
       process.emit("SIGINT");
     }),
@@ -380,7 +383,10 @@ it("returns cancellation with the completed observation when the caller interrup
 
   const result = await runObjdump(service);
 
-  expect(result).toMatchObject({ code: "cancelled" });
+  expect(result).toMatchObject({
+    code: "cancelled",
+    details: { partial_observation: evidence },
+  });
   expect(process.exitCode).toBe(130);
 });
 

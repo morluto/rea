@@ -28,6 +28,8 @@ import {
   systemUninstallHost,
 } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -247,11 +249,12 @@ describe("skill regular-file cleanup ownership", () => {
       return handle;
     });
 
-    try {
-      const reading = readSkillFile(manifest, resources);
-      await readStarted;
+    const reading = readSkillFile(manifest, resources);
+    let closing: Promise<void> | undefined;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(readStarted, reading, "skill read");
       let closed = false;
-      const closing = resources.close().then(() => {
+      closing = resources.close().then(() => {
         closed = true;
       });
       await Promise.resolve();
@@ -260,10 +263,16 @@ describe("skill regular-file cleanup ownership", () => {
       expect(await reading).toBe("stale managed skill\n");
       await closing;
       expect(closed).toBe(true);
-    } finally {
-      unblockRead();
-      await resources.close();
-    }
+    }, [
+      unblockRead,
+      async () => {
+        await reading;
+      },
+      async () => {
+        await closing;
+      },
+      () => resources.close(),
+    ]);
   });
 });
 

@@ -16,7 +16,8 @@ import {
 } from "../application/javascript/ElectronObservationService.js";
 import { analyzeJavaScriptApplicationValidated } from "../application/javascript/JavaScriptApplicationService.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { reconcileJavaScriptRuntimeEvidenceValidated } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
+import { reconcileJavaScriptRuntimeEvidence } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
+import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
@@ -138,8 +139,21 @@ export const registerElectronTools = (
         reconcileContract,
         undefined,
         { input, context },
-        (parsed) =>
-          Promise.resolve(reconcileJavaScriptRuntimeEvidenceValidated(parsed)),
+        async (parsed, { signal }) => {
+          const result = reconcileJavaScriptRuntimeEvidence(
+            parsed,
+            options.evidenceById,
+            { signal },
+          );
+          if (!result.ok) return result;
+          const recorded = recordEvidenceSources(
+            options.recordEvidence,
+            result.value.sources,
+          );
+          return recorded.ok
+            ? { ok: true, value: result.value.evidence }
+            : recorded;
+        },
       ),
   );
   server.registerTool(

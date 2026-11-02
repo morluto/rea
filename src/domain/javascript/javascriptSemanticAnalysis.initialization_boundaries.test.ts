@@ -53,9 +53,9 @@ it.each([
 ])(
   "indexes the legacy block-function write on its outer owner: %s",
   (source) => {
-    expect(
-      onlyCallable(analyze(source), "read").returnSites[0]?.value.status,
-    ).not.toBe("literal");
+    const returnSite = onlyCallable(analyze(source), "read").returnSites[0];
+    expect(returnSite).toBeDefined();
+    expect(returnSite?.value.status).not.toBe("literal");
   },
 );
 
@@ -246,5 +246,6 @@ it("owns a class declaration's self reference separately from its outer variable
 
 it("does not initialize a class self name during computed-key evaluation", () => {
   const ir = analyze(`class Service { [Service()]() {} }`, "fixture.mjs");
+  expect(ir.callSites[0]).toBeDefined();
   expect(ir.callSites[0]?.resolution).not.toBe("exact");
 });

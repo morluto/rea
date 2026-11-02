@@ -161,8 +161,20 @@ private func unavailableIdentity(pid: Int32, reason: String) -> ProcessIdentityO
   )
 }
 
+enum ProcargsMalformedStage: String, CaseIterable {
+  case header
+  case argumentCount = "argument_count"
+  case executablePath = "executable_path"
+  case pointerSize = "pointer_size"
+  case pathPadding = "path_padding"
+  case arguments
+  case terminator
+  case trailingEntries = "trailing_entries"
+}
+
 enum RunTokenReadError: Error {
   case invalidBuffer
+  case invalidBufferAt(ProcargsMalformedStage)
   case duplicateToken
   case invalidTokenEncoding
   case environmentUnavailable
@@ -244,6 +256,8 @@ func processRunTokenObservation(
       return unavailable(pid: pid, reason: "apple_vector_unavailable")
     case .invalidBuffer:
       return unavailable(pid: pid, reason: "malformed_procargs")
+    case .invalidBufferAt(let stage):
+      return unavailable(pid: pid, reason: "malformed_procargs_\(stage.rawValue)")
     }
   }
 }
@@ -302,27 +316,30 @@ func parseProcessEnvironment(
   in bytes: [UInt8],
   pointerSize: Int = MemoryLayout<UnsafeRawPointer>.size
 ) throws -> ParsedRunToken {
-  guard bytes.count >= MemoryLayout<Int32>.size else { throw RunTokenReadError.invalidBuffer }
+  guard bytes.count >= MemoryLayout<Int32>.size else { throw RunTokenReadError.invalidBufferAt(.header) }
   let argc = bytes.withUnsafeBytes { $0.loadUnaligned(as: Int32.self).littleEndian }
-  guard argc >= 0, Int(argc) <= bytes.count else { throw RunTokenReadError.invalidBuffer }
+  guard argc >= 0, Int(argc) <= bytes.count else { throw RunTokenReadError.invalidBufferAt(.argumentCount) }
   var offset = MemoryLayout<Int32>.size
   guard let executablePath = readString(in: bytes, offset: &offset) else {
-    throw RunTokenReadError.invalidBuffer
+    throw RunTokenReadError.invalidBufferAt(.executablePath)
   }
-  guard pointerSize == 4 || pointerSize == 8 else { throw RunTokenReadError.invalidBuffer }
+  guard pointerSize == 4 || pointerSize == 8 else { throw RunTokenReadError.invalidBufferAt(.pointerSize) }
   let pathRecordSize = Array("executable_path=".utf8).count + executablePath.count + 1
   let padding = (pointerSize - pathRecordSize % pointerSize) % pointerSize
   guard offset + padding <= bytes.count,
         bytes[offset..<(offset + padding)].allSatisfy({ $0 == 0 }) else {
-    throw RunTokenReadError.invalidBuffer
+    throw RunTokenReadError.invalidBufferAt(.pathPadding)
   }
   offset += padding
+  let tokenPrefix = Array("REA_PROCESS_RUN_ID=".utf8)
+  var tokenInArgument = false
   for _ in 0..<argc {
-    guard readString(in: bytes, offset: &offset, allowEmpty: true) != nil else {
-      throw RunTokenReadError.invalidBuffer
+    guard let argument = readString(in: bytes, offset: &offset, allowEmpty: true) else {
+      throw RunTokenReadError.invalidBufferAt(.arguments)
     }
+    tokenInArgument = tokenInArgument || argument.starts(with: tokenPrefix)
   }
-  guard bytes.last == 0 else { throw RunTokenReadError.invalidBuffer }
+  guard bytes.last == 0 else { throw RunTokenReadError.invalidBufferAt(.terminator) }
   if offset == bytes.count {
     throw RunTokenReadError.environmentUnavailable
   }
@@ -340,7 +357,7 @@ func parseProcessEnvironment(
       continue
     }
     guard let entry = readString(in: bytes, offset: &offset) else {
-      throw RunTokenReadError.invalidBuffer
+      throw RunTokenReadError.invalidBufferAt(.trailingEntries)
     }
     trailingEntries.append(entry)
   }
@@ -361,21 +378,27 @@ func parseProcessEnvironment(
     throw RunTokenReadError.appleVectorUnavailable
   }
   if trailingEntries[appleVectorStart...].contains(where: {
-    $0.starts(with: Array("REA_PROCESS_RUN_ID=".utf8))
+    $0.starts(with: tokenPrefix)
   }) {
     throw RunTokenReadError.ambiguousEnvironmentBoundary
   }
   let environmentEntries = trailingEntries[..<appleVectorStart]
   var found: String?
   for entry in environmentEntries {
-    if entry.starts(with: Array("REA_PROCESS_RUN_ID=".utf8)) {
+    if entry.starts(with: tokenPrefix) {
       guard found == nil else { throw RunTokenReadError.duplicateToken }
-      let value = entry.dropFirst("REA_PROCESS_RUN_ID=".utf8.count)
+      let value = entry.dropFirst(tokenPrefix.count)
       guard let decoded = String(bytes: value, encoding: .utf8) else {
         throw RunTokenReadError.invalidTokenEncoding
       }
       found = decoded
     }
+  }
+  // A changed process title can overwrite the original argument boundaries,
+  // causing a real environment entry to be consumed as an argument. A real
+  // argument can have this form too, so it proves neither ownership nor absence.
+  if tokenInArgument {
+    throw RunTokenReadError.ambiguousEnvironmentBoundary
   }
   return ParsedRunToken(runId: found, environmentEntryCount: environmentEntries.count)
 }

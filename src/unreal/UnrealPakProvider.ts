@@ -1,3 +1,4 @@
+import { UNREAL_PAK_PROVIDER_IDENTITY } from "./UnrealPakProviderIdentity.js";
 import { setImmediate } from "node:timers/promises";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -42,12 +43,6 @@ import {
   type UnrealPakDecoded,
 } from "./UnrealPakFile.js";
 
-/** Bundled format reader identity; the pak version is a separate observed fact. */
-export const UNREAL_PAK_PROVIDER_IDENTITY = {
-  id: "unreal-pak",
-  name: "REA Unreal Engine pak index reader",
-  version: "1",
-} as const;
 const OPERATION = "inspect_unreal_pak";
 const REGION_BYTES = 256 * 1024 * 1024;
 const ENTRIES = 1_000_000;

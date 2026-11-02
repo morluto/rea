@@ -18,6 +18,7 @@ const artifact = {
   bytes: 2048,
 };
 const parent = (report: unknown): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"b".repeat(64)}`,
   operation: "inspect_native_exports",
   normalizedResult: report,

@@ -7,6 +7,7 @@ import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import { wasmInterfaceComparisonSchema } from "../../src/contracts/wasm/wasmComparisonContracts.js";
 import { composeBinarySession } from "../../src/application/binary/BinarySessionComposition.js";
 import { AnalysisProviderRegistry } from "../../src/application/binary/AnalysisProviderRegistry.js";
+import { parseWabtWat } from "../../src/wasm/WabtWat.js";
 import { createServer } from "../../src/server/createServer.js";
 import { wasmArtifactFixture } from "../fixtures/wasm/artifact.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -150,5 +151,53 @@ cliTest(
       await server.close();
       await session.close();
     }
+  },
+);
+
+cliTest(
+  "does not report colliding debug identifiers as unchanged after a signature change",
+  async ({ cli }) => {
+    const input = (parameter: string) => {
+      const report = wasmArtifactFixture();
+      report.interface = parseWabtWat(
+        `(module (func $same (param i32)) (func $same (param ${parameter})) (export "first" (func $same)) (export "second" (func $same)))`,
+      ).interface;
+      return createEvidence(
+        {
+          path: report.artifact.path,
+          sha256: report.artifact.sha256,
+          format: "file",
+        },
+        { id: "fixture", name: "typed fixture", version: "1" },
+        {
+          operation: "inspect_wasm_artifact",
+          parameters: { path: report.artifact.path },
+          result: report,
+          confidence: "observed",
+        },
+      );
+    };
+    const root = await createTestTempDirectory("rea-wasm-colliding-names-");
+    const path = join(root, "input.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        left: input("i32"),
+        right: input("i64"),
+        scope: "both",
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["compare-wasm-interfaces", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = wasmInterfaceComparisonSchema.parse(
+      parseEvidence(result.json).normalized_result,
+    );
+    expect(report.changes.map(({ state }) => state)).toEqual([
+      "unknown",
+      "unknown",
+    ]);
+    expect(report.summary.unchanged).toBe(0);
   },
 );

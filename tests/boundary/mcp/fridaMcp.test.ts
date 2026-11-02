@@ -2,7 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import type { DeviceManager } from "frida";
-import { expect, it, onTestFinished } from "vitest";
+import { afterAll, expect, it, onTestFinished } from "vitest";
 
 import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -15,6 +15,10 @@ import { fridaSessionStatusSchema } from "../../../src/domain/fridaSessionStatus
 import { evidenceBundleSummarySchema } from "../../../src/domain/evidenceRecordSummary.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 it("retains the remote address, but not authentication, in discovery failures", async () => {
   const session = createTestBinarySession(() => {
@@ -138,7 +142,10 @@ const connectFridaTestClient = async (
   session: ReturnType<typeof createTestBinarySession>,
   name: string,
 ): Promise<Client> => {
-  const client = new Client({ name, version: "1" });
+  const client = new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -555,7 +562,10 @@ it("reports Frida tools as unavailable after the optional binding fails to load"
     { kind: "session", session },
     { fridaInstrumentation: provider },
   );
-  const client = new Client({ name: "frida-optional-binding", version: "1" });
+  const client = new Client(
+    { name: "frida-optional-binding", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -650,7 +660,10 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
     { kind: "session", session },
     { fridaInstrumentation: provider },
   );
-  const client = new Client({ name: "frida-cancellation", version: "1" });
+  const client = new Client(
+    { name: "frida-cancellation", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const controller = new AbortController();
   onTestFinished(async () => {
     finishLoad?.();

@@ -94,5 +94,26 @@ cliTest("fails closed at the callback limit", async ({ cli }) => {
     ],
   });
   expect(result.exitCode).toBe(1);
-  expect(JSON.stringify(result.json)).toContain("Raise max_callbacks above 1");
+  expect(result.json).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: { reported_limits: { limit: "callbacks", maximum: 1 } },
+    remediation: {
+      action: expect.stringContaining("Raise max_callbacks above 1"),
+    },
+  });
+  const retried = await cli.run({
+    arguments: [
+      "inspect-pe-load-config",
+      path,
+      "--max-callbacks",
+      "3",
+      "--json",
+    ],
+  });
+  expect(retried.exitCode, retried.stderr).toBe(0);
+  const report = toolContract("inspect_pe_load_config").outputSchema.parse(
+    retried.json,
+  ).normalized_result;
+  expect(report.tls?.callbacks).toHaveLength(3);
 });

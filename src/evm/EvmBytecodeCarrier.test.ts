@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import {
   decodeEvmBytecodeCarrier,
@@ -22,14 +24,23 @@ it.each(["0x1", "60 00", "0xzz", "\uFEFF6000", "\u00a06000"])(
     );
   },
 );
-it("rejects a long interior separator run in linear time", () => {
-  const text = `60${" ".repeat(200_000)}00`;
-  const started = performance.now();
-  expect(() => decodeEvmBytecodeCarrier(Buffer.from(text), "hex")).toThrow(
-    EvmCarrierFailure,
+it("rejects a long interior separator run without pathological backtracking", async () => {
+  const moduleUrl = new URL("./EvmBytecodeCarrier.ts", import.meta.url).href;
+  const source = `
+    import assert from "node:assert/strict";
+    import { decodeEvmBytecodeCarrier, EvmCarrierFailure } from ${JSON.stringify(moduleUrl)};
+    const text = "60" + " ".repeat(1_000_000) + "00";
+    assert.throws(() => decodeEvmBytecodeCarrier(Buffer.from(text), "hex"), EvmCarrierFailure);
+  `;
+  await promisify(execFile)(
+    process.execPath,
+    ["--input-type=module", "-e", source],
+    {
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    },
   );
-  expect(performance.now() - started).toBeLessThan(1_000);
-});
+}, 20_000);
 it("distinguishes raw bytes, empty code and malformed UTF-8", () => {
   const bytes = Uint8Array.from([0xff, 0x00]);
   const decoded = decodeEvmBytecodeCarrier(bytes, "raw");

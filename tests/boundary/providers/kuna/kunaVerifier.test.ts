@@ -146,6 +146,7 @@ it.each([
   async ({ rejectClose, rejectRead, wrongXrefs, wrongStrings }) => {
     const root = await createTestTempDirectory("rea-kuna-verifier-cleanup-");
     const kuna = await writeFakeKuna(root, {
+      extraXrefSources: [4104],
       stringRows: [
         { address: 12288, text: "REA fixture prompt" },
         {

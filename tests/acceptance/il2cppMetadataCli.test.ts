@@ -751,7 +751,9 @@ cliTest(
     const evidence = saved.value.records[0];
     if (evidence === undefined)
       throw new Error("Missing exported source Evidence");
-    expect(JSON.stringify(overwrite.json)).toContain(evidence.evidence_id);
+    expect(overwrite.json).toMatchObject({
+      details: { partial_observation: { evidence_id: evidence.evidence_id } },
+    });
     expect(
       il2cppMetadataSchema.parse(evidence.normalized_result).methods,
     ).toEqual(FIXTURE_METHODS);

@@ -1,8 +1,13 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
+import type { InesInventory } from "../../domain/inesContainer.js";
 import type { ArtifactEmbeddedFormatProbeFacts } from "../ArtifactEmbeddedFormatProbes.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
+import {
+  InesArtifactReader,
+  type InesRegionScan,
+} from "../InesArtifactReader.js";
 
 import { lstat } from "node:fs/promises";
 import type { Stats } from "node:fs";
@@ -48,6 +53,7 @@ import {
   type PendingIntegrityContradiction,
 } from "./scanReader.js";
 import type { ArtifactInventoryOptions } from "./types.js";
+import type { ArtifactContainerIntegrityPair } from "../../domain/artifactIntegrity.js";
 
 export interface TransferredArtifactInventorySource {
   readonly owner: ArtifactResourceOwner;
@@ -139,8 +145,10 @@ const scanCanonical = async (
       occurrences,
       pendingContradictions,
       caseCollisionLimitation,
+      inesRegionScan,
       unknownParentOccurrences,
       traversal,
+      rootContradiction,
     } = await scanReader(
       reader,
       ownedReaders,
@@ -163,8 +171,10 @@ const scanCanonical = async (
         occurrences,
         pendingContradictions,
         caseCollisionLimitation,
+        inesRegionScan,
         unknownParentOccurrences,
         traversal,
+        rootContradiction,
       }),
     };
   } catch (cause: unknown) {
@@ -194,7 +204,9 @@ const scanCanonical = async (
           occurrences: [],
           pendingContradictions: [],
           caseCollisionLimitation: undefined,
+          inesRegionScan: undefined,
           unknownParentOccurrences: new Set(),
+          rootContradiction: undefined,
           traversal: {
             status: "unknown",
             limitations: [
@@ -250,6 +262,7 @@ const scanCanonical = async (
       outcome.kind === "completed" &&
       rootSource !== undefined &&
       (isZipPackageFormat(rootFormat) ||
+        rootFormat === "ines" ||
         (readerAdmission !== undefined && "kind" in readerAdmission))
         ? "transfer"
         : "release",
@@ -393,8 +406,10 @@ interface SnapshotBuildInput {
   readonly occurrences: MutableOccurrence[];
   readonly pendingContradictions: PendingIntegrityContradiction[];
   readonly caseCollisionLimitation: string | undefined;
+  readonly inesRegionScan: InesRegionScan | undefined;
   readonly unknownParentOccurrences: ReadonlySet<MutableOccurrence>;
   readonly traversal: ArtifactReaderTraversal;
+  readonly rootContradiction: ArtifactContainerIntegrityPair | undefined;
 }
 
 const buildInventorySnapshot = async (
@@ -423,6 +438,18 @@ const buildInventorySnapshot = async (
     )
       occurrence.parent_occurrence_id = rootOccurrence.occurrence_id;
   input.occurrences.unshift(rootOccurrence);
+  if (input.rootContradiction !== undefined) {
+    rootOccurrence.hash_status = "mismatched";
+    rootOccurrence.limitations.push(
+      "Declared integrity metadata contradicts observed bytes.",
+    );
+    input.pendingContradictions.push({
+      occurrence: rootOccurrence,
+      integrity: input.rootContradiction,
+      entryKind: "file",
+      unpacked: false,
+    });
+  }
 
   const occurrenceById = new Map(
     input.occurrences.map((occurrence) => [
@@ -470,6 +497,19 @@ const buildInventorySnapshot = async (
     orderedOccurrences,
     orderedEdges,
   });
+  let ines: InesInventory | undefined;
+  if (reader instanceof InesArtifactReader) {
+    if (rootDigest === null || input.inesRegionScan === undefined)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "Missing iNES reconstruction scan",
+      );
+    ines = await reader.verifyReconstruction(
+      rootDigest.sha256,
+      input.inesRegionScan,
+      signal,
+    );
+  }
   const traversal = inventoryCoverage(rootFormat, reader, input.traversal);
   const coverage =
     edgeResult.limitations.length === 0
@@ -477,6 +517,7 @@ const buildInventorySnapshot = async (
       : { ...traversal.coverage, status: "unknown" as const };
   return {
     manifest,
+    ...(ines === undefined ? {} : { ines }),
     nodes: orderedNodes,
     occurrences: orderedOccurrences,
     edges: orderedEdges,

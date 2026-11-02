@@ -1,4 +1,5 @@
 import {
+  DEBUGGER_CONTROL_REPLY_BYTES,
   DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS,
   DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   DEFAULT_DEBUGGER_MAX_PENDING_COMMANDS,
@@ -235,11 +236,11 @@ export const resolveDebuggerSessionLimits = (
  */
 export const debuggerControlReplyOutput: DebuggerAdmissionLimit = {
   setting: "debugger control-reply budget",
-  value: DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+  value: DEBUGGER_CONTROL_REPLY_BYTES,
   source: "default",
-  defaultValue: DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
-  minimum: DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
-  maximum: DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+  defaultValue: DEBUGGER_CONTROL_REPLY_BYTES,
+  minimum: DEBUGGER_CONTROL_REPLY_BYTES,
+  maximum: DEBUGGER_CONTROL_REPLY_BYTES,
   unit: "bytes",
 };
 

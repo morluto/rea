@@ -21,6 +21,7 @@ const entriesPage = async (options: Parameters<typeof createPakFixture>[0]) => {
     {
       evidenceId: "ev_" + "0".repeat(64),
       operation: "inspect_unreal_pak",
+      predicateType: "rea.analysis",
       normalizedResult: inspected.value,
       subject: null,
       limitations: [],

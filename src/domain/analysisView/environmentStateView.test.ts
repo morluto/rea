@@ -57,6 +57,7 @@ const parentOf = (
     environmentStateCaptureFixture(),
   ),
 ): AnalysisViewParent => ({
+  predicateType: evidence.predicate_type,
   evidenceId: evidence.evidence_id,
   operation: evidence.operation,
   normalizedResult: evidence.normalized_result,

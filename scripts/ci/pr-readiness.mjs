@@ -60,11 +60,11 @@ function readinessLines(markdown) {
   let comment = false;
   for (const source of lines) {
     if (fence) {
+      const closing = /^ {0,3}(`+|~+)\s*$/u.exec(source);
       if (
-        new RegExp(
-          `^ {0,3}${fence.character}{${fence.length},}\\s*$`,
-          "u",
-        ).test(source)
+        closing !== null &&
+        closing[1][0] === fence.character &&
+        closing[1].length >= fence.length
       )
         fence = undefined;
       continue;

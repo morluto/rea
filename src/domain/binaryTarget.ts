@@ -4,6 +4,7 @@ import type {
   HeaderArchitecture,
   MipsElfMetadata,
   PeCodeViewRecord,
+  RiscvElfMetadata,
   UniversalMachOSlice,
   UniversalMachOSliceIdentity,
 } from "./binaryTargetTypes.js";
@@ -47,7 +48,7 @@ export type ExecutableMetadata =
       readonly format: "elf";
       readonly architecture: "riscv";
       readonly availableArchitectures: readonly "riscv"[];
-      readonly riscv: ElfFamilyMetadata;
+      readonly riscv: RiscvElfMetadata;
     }
   | {
       readonly format: "elf";
@@ -396,8 +397,10 @@ const parseElf = (
 ): Result<ExecutableMetadata, string> => {
   const fixedHeader = readElfFixedHeader(bytes, fileSize);
   if (!fixedHeader.ok) return fixedHeader;
-  const { elfClass, byteOrder, architecture, type, flags } = fixedHeader.value;
-  if (architecture === null) return err("unsupported ELF architecture");
+  const { elfClass, byteOrder, architecture, machine, type, flags } =
+    fixedHeader.value;
+  if (architecture === null)
+    return err(`unsupported ELF architecture: e_machine ${String(machine)}`);
   if (
     architecture === "mips" ||
     architecture === "riscv" ||

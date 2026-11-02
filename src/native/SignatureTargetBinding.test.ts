@@ -12,6 +12,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi, onTestFinished } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -246,22 +248,41 @@ it("waits for an in-flight signature binding before provider close", async () =>
   );
   const client = provider.createClient(target);
   const operation = client.execute("inspect_signature", {});
-  await entered;
-
   let closeSettled = false;
-  const closing = client.close().finally(() => {
-    closeSettled = true;
-  });
-  await Promise.resolve();
-  expect(closeSettled).toBe(false);
-  releaseRootFactory();
-  await expect(operation).resolves.toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisArtifactChangedError" },
-  });
-  await expect(closing).resolves.toMatchObject({ ok: true, value: null });
-  expect(closeSettled).toBe(true);
-  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  let closing: ReturnType<typeof client.close> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(
+      entered,
+      operation,
+      "signature root acquisition",
+    );
+    closing = client.close().finally(() => {
+      closeSettled = true;
+    });
+    await Promise.resolve();
+    expect(closeSettled).toBe(false);
+    releaseRootFactory();
+    await expect(operation).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisArtifactChangedError" },
+    });
+    await expect(closing).resolves.toMatchObject({ ok: true, value: null });
+    expect(closeSettled).toBe(true);
+    await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  }, [
+    releaseRootFactory,
+    async () => {
+      await operation;
+    },
+    async () => {
+      const result = await closing;
+      if (result !== undefined && !result.ok) throw result.error;
+    },
+    async () => {
+      const result = await client.close();
+      if (!result.ok) throw result.error;
+    },
+  ]);
 });
 
 it("releases retained descriptors before retrying their containing root", async () => {

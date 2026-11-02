@@ -136,6 +136,7 @@ describe("known-answer packaged artifact digest binding", () => {
         arguments: { input_path: targets.javascript },
       });
       const evidence = resultEvidence(result);
+      expect(evidence.subject?.digest.sha256).toEqual(expect.any(String));
       expect(evidence.subject?.digest.sha256).not.toBe(
         targets.javascriptSha256,
       );

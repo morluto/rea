@@ -256,28 +256,6 @@ describe("readiness closure history", () => {
     },
   );
 
-  it("does not count one obligation twice in a closure observation", () => {
-    const value = input();
-    value.closure_history[0]!.required_open = 2;
-    value.closure_history[1]!.newly_verified_obligation_ids = [
-      "obl.readiness",
-      "obl.readiness",
-    ];
-
-    const report = createReconstructionReadinessReport(value);
-    expect(report.status).toBe("fail");
-    expect(report.summary.passed_required_stages).toBe(8);
-    expect(report.findings).toContainEqual(
-      expect.objectContaining({
-        code: "invalid-obligation-closure-transition",
-        stage_id: "verify-reconstruction-closure",
-        status: "fail",
-        evidence_ids: value.closure_history[1]!.evidence_ids,
-      }),
-    );
-    expect(report.snapshot.closure_history).toEqual(value.closure_history);
-  });
-
   it.each([false, true])(
     "checks distinct obligations across closure observations (repeated: %s)",
     (repeated) => {
@@ -742,12 +720,16 @@ describe("readiness retained observation accounting", () => {
     ];
     const report = createReconstructionReadinessReport(value);
     expect(report.status).toBe("fail");
+    expect(report.summary.passed_required_stages).toBe(8);
     expect(report.findings).toContainEqual(
       expect.objectContaining({
         code: "invalid-obligation-closure-transition",
         stage_id: "verify-reconstruction-closure",
+        status: "fail",
+        evidence_ids: value.closure_history[1]!.evidence_ids,
       }),
     );
+    expect(report.snapshot.closure_history).toEqual(value.closure_history);
     expect(
       report.snapshot.closure_history[1]!.newly_verified_obligation_ids,
     ).toEqual(["obl.readiness", "obl.readiness"]);

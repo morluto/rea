@@ -155,7 +155,21 @@ it("rejects oversized selector expansion through the MCP boundary before invokin
       display_filter: "界".repeat(8192),
     },
   });
-  expect(response.isError).toBe(true);
-  expect(JSON.stringify(response)).toContain("32 KiB");
+  expect(parseMcpToolError(response)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        operation: "inspect_packet_capture",
+        issues: [
+          {
+            path: [],
+            reason: "invalid_value",
+            message: expect.stringContaining("32 KiB encoded argument budget"),
+          },
+        ],
+      },
+    },
+  });
   expect(calls).toBe(0);
 });

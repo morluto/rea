@@ -91,6 +91,7 @@ const parent = (
   normalizedResult: unknown = report(),
   sha256 = target,
 ): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"c".repeat(64)}`,
   operation: "decode_interface_builder",
   normalizedResult,

@@ -10,6 +10,7 @@ import { ownedJsonValueSchema } from "../jsonValue.js";
 export interface AnalysisViewParent {
   readonly evidenceId: string;
   readonly operation: string;
+  readonly predicateType: string;
   readonly normalizedResult: unknown;
   readonly provider?: Evidence["provider"];
   readonly analysisProfile?: Evidence["analysis_profile"];
