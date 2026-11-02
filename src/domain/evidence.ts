@@ -77,6 +77,13 @@ export const evidenceAuthoritySchema = z.enum([
   "analyst-inference",
 ]);
 
+/** Confidence vocabulary owned by Evidence and reused by its consumers. */
+export const evidenceConfidenceSchema = z.enum([
+  "observed",
+  "derived",
+  "inferred",
+]);
+
 const executionEnvironmentSchema = z.strictObject({
   id: z.string().min(1),
   platform: z.string().min(1),
@@ -99,7 +106,7 @@ const evidenceBaseSchema = z
       .describe("Verbatim direct-request path; not part of semantic identity."),
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
-    confidence: z.enum(["observed", "derived", "inferred"]),
+    confidence: evidenceConfidenceSchema,
     authority: evidenceAuthoritySchema,
     environment: executionEnvironmentSchema.nullable(),
     limitations: z.array(z.string()),
