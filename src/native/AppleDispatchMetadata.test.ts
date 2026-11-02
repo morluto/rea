@@ -1294,6 +1294,36 @@ describe("Apple dispatch binary metadata", () => {
     },
   );
 
+  it("maps the ivar WORD_ALIGN sentinel to 8 and keeps other raw values unknown", () => {
+    const bytes = fixture();
+    bytes.writeUInt32LE(3, 0x504);
+    // Second ivar: raw alignment 0xffffffff is objc4's WORD_ALIGN sentinel,
+    // which ivar_t::alignment() maps to 1 << WORD_SHIFT (8 on 64-bit).
+    bytes.writeBigUInt64LE(base + 0x6a0n, 0x528);
+    bytes.writeBigUInt64LE(base + 0x6c0n, 0x530);
+    bytes.writeBigUInt64LE(base + 0x6e0n, 0x538);
+    bytes.writeUInt32LE(0xffffffff, 0x540);
+    bytes.writeUInt32LE(8, 0x544);
+    bytes.writeUInt32LE(16, 0x6a0);
+    bytes.write("sentinel\0", 0x6c0);
+    bytes.write("q\0", 0x6e0);
+    // Third ivar: a non-sentinel out-of-range raw value stays unknown.
+    bytes.writeBigUInt64LE(base + 0x6a8n, 0x548);
+    bytes.writeBigUInt64LE(base + 0x6d0n, 0x550);
+    bytes.writeBigUInt64LE(base + 0x6e8n, 0x558);
+    bytes.writeUInt32LE(0xfffffffe, 0x560);
+    bytes.writeUInt32LE(8, 0x564);
+    bytes.writeUInt32LE(24, 0x6a8);
+    bytes.write("invalid\0", 0x6d0);
+    bytes.write("q\0", 0x6e8);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_ivars).toMatchObject([
+      { name: "state", offset: 8, alignment: 1 },
+      { name: "sentinel", offset: 16, size: 8, alignment: 8 },
+      { name: "invalid", offset: 24, size: 8, alignment: null },
+    ]);
+  });
+
   it.each([
     [0xffffffff, 8],
     [3, 8],
