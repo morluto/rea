@@ -2256,6 +2256,39 @@ describe("ReleaseExposureReader cleanup-bearing read failures", () => {
     }
   });
 
+  it("reports what it found before a member's cleanup failed", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-stop-");
+    await writeFile(
+      join(root, "a.js.map"),
+      JSON.stringify({ version: 3, sources: ["a.ts"], mappings: "" }),
+    );
+    await writeFile(join(root, "z.map"), "{}");
+    const real = stableRead.impl;
+    stableRead.impl = async (...args) => {
+      if (args[0].endsWith("z.map")) throw cleanupFailure("limit", args[0]);
+      return (real as NonNullable<typeof real>)(...args);
+    };
+    const reader = new ReleaseExposureReader();
+    const interrupted: ReleaseExposureScan[] = [];
+    try {
+      const result = await reader.inspect(
+        { path: root },
+        undefined,
+        ignoreText,
+        (scan) => interrupted.push(scan),
+      );
+      if (result.ok) throw new Error("expected cleanup-incomplete failure");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(interrupted).toHaveLength(1);
+      expect(interrupted[0]?.coverage).toBe("unknown");
+      expect(interrupted[0]?.source_maps.without_sources).toBe(1);
+      expect(interrupted[0]?.limitations[0]).toContain("unfinished cleanup");
+    } finally {
+      stableRead.impl = real;
+      await reader.close();
+    }
+  });
+
   it("does not read cleanup-incomplete inventory as unknown coverage", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-inv-");
     const selected = join(root, "app");

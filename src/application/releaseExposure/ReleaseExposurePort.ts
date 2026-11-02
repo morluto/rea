@@ -10,6 +10,12 @@ export type ReleaseExposureTextVisitor = (
   location: string,
 ) => void;
 
+/**
+ * Receives what a scan established before it failed with unfinished cleanup,
+ * so a typed cleanup failure does not erase completed findings.
+ */
+export type ReleaseExposureScanVisitor = (scan: ReleaseExposureScan) => void;
+
 /** Bounded, read-only view of one shipped artifact. */
 export interface ReleaseExposurePort {
   readonly identity: typeof RELEASE_EXPOSURE_PROVIDER;
@@ -17,6 +23,7 @@ export interface ReleaseExposurePort {
     input: { readonly path: string; readonly max_file_bytes?: number },
     options: ExecutionOptions | undefined,
     visitText: ReleaseExposureTextVisitor,
+    visitInterruptedScan?: ReleaseExposureScanVisitor,
   ): Promise<Result<ReleaseExposureScan, AnalysisError>>;
   close(): Promise<void>;
 }

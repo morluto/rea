@@ -99,6 +99,7 @@ export class ReleaseExposureService {
       );
     const markerHits: CredentialMarkerHit[] = [];
     let omittedMarkerHits = 0;
+    const interrupted: { scan?: ReleaseExposureScan } = {};
     const scanned = await this.owners.reader.inspect(
       input.value,
       options,
@@ -107,9 +108,19 @@ export class ReleaseExposureService {
         markerHits.push(...markers.hits);
         omittedMarkerHits += markers.omitted_hits;
       },
+      (scan) => {
+        interrupted.scan = scan;
+      },
     );
-    if (!scanned.ok) return scanned;
-    const owned = await this.#owners(scanned.value, options);
+    if (!scanned.ok && interrupted.scan === undefined) return scanned;
+    const scan = scanned.ok ? scanned.value : interrupted.scan;
+    if (scan === undefined)
+      throw new Error("Release exposure scan produced no result.");
+    const owned = await this.#owners(
+      scan,
+      options,
+      scanned.ok ? undefined : scanned.error,
+    );
     let report;
     try {
       report = assembleReleaseExposureReport(owned.scan, {
@@ -129,13 +140,11 @@ export class ReleaseExposureService {
           ),
       );
     }
-    const format = evidenceSubjectFormatSchema.safeParse(
-      scanned.value.subject.format,
-    );
+    const format = evidenceSubjectFormatSchema.safeParse(scan.subject.format);
     const evidence = createEvidence(
       {
-        path: scanned.value.subject.path,
-        sha256: scanned.value.subject.sha256,
+        path: scan.subject.path,
+        sha256: scan.subject.sha256,
         format: format.success ? format.data : "file",
       },
       RELEASE_EXPOSURE_PROVIDER,
@@ -152,7 +161,7 @@ export class ReleaseExposureService {
         locations: [
           {
             kind: "artifact-path",
-            path: scanned.value.target.selected_path,
+            path: scan.target.selected_path,
           },
         ],
       },
@@ -170,8 +179,10 @@ export class ReleaseExposureService {
   async #owners(
     scan: ReleaseExposureScan,
     options: ExecutionOptions | undefined,
+    interrupted?: AnalysisError,
   ): Promise<OwnerOutcome> {
     const stopped: { error?: AnalysisError } = {};
+    if (interrupted !== undefined) stopped.error = interrupted;
     const settle = async <Fact>(
       read: () => Promise<Result<Fact, AnalysisError>>,
       notRun: Fact,

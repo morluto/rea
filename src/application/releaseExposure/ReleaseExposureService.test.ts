@@ -86,6 +86,7 @@ type OwnerInspect = (
 const owners = (
   scanned: ReleaseExposureScan,
   textMembers: readonly (readonly [string, string])[] = [],
+  interruption?: AnalysisError,
 ) => {
   const desktop = {
     inspect: vi.fn<OwnerInspect>(async () =>
@@ -133,9 +134,11 @@ const owners = (
     reader: {
       identity: RELEASE_EXPOSURE_PROVIDER,
       inspect: vi.fn<ReleaseExposurePort["inspect"]>(
-        async (_input, _options, visitText) => {
+        async (_input, _options, visitText, visitInterruptedScan) => {
           for (const [text, location] of textMembers) visitText(text, location);
-          return ok(scanned);
+          if (interruption === undefined) return ok(scanned);
+          visitInterruptedScan?.(scanned);
+          return err(interruption);
         },
       ),
       close: vi.fn(async () => undefined),
@@ -339,6 +342,38 @@ describe("ReleaseExposureService unfinished owner cleanup", () => {
       (result.error.partialObservation as Evidence).normalized_result,
     );
   };
+
+  it("keeps the findings of a member scan stopped by unfinished cleanup", async () => {
+    const failure = unfinished("inspect_release_exposure");
+    const { service, desktop, goBinaries } = owners(
+      scan({
+        coverage: "unknown",
+        native_images: [{ path: "/work/app", format: "elf" }],
+        source_maps: {
+          embedded: 1,
+          without_sources: 0,
+          unparsed: 0,
+          skipped: 0,
+          samples: ["/work/app.js.map"],
+          embedded_paths: ["/work/app.js.map"],
+          plain_paths: [],
+        },
+      }),
+      [["-----BEGIN PRIVATE KEY-----\n", "/work/app.pem"]],
+      failure,
+    );
+    const result = await service.inspect({ path: "/work/app" });
+    expect(result).toMatchObject({ ok: false, error: failure });
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(desktop.inspect).not.toHaveBeenCalled();
+    expect(goBinaries.inspect).not.toHaveBeenCalled();
+    const report = await audit(result);
+    const status = (id: string) =>
+      report.checks.find((check) => check.id === id)?.status;
+    expect(status("javascript.source_map_sources")).toBe("exposed");
+    expect(status("text.credential_markers")).toBe("exposed");
+    expect(status("go.build_paths")).toBe("unknown");
+  });
 
   it("returns a Go failure with the partial audit and runs no later owner", async () => {
     const { service, goBinaries, rustBinaries } = owners(

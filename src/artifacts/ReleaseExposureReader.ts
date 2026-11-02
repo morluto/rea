@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type {
   ReleaseExposurePort,
+  ReleaseExposureScanVisitor,
   ReleaseExposureTextVisitor,
 } from "../application/releaseExposure/ReleaseExposurePort.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
@@ -132,6 +133,8 @@ const OPEN_CONTAINER_LIMIT = 8;
 const EMBEDDED_PROBE_LIMIT = 8;
 const PDB_READ_LIMIT = 4;
 const LIMITATION_CAP = 8;
+const SCAN_INTERRUPTED =
+  "The member scan stopped on unfinished cleanup. Members it did not reach are unknown.";
 /** Decoded representation bound for one binary plist text member. */
 const RELEASE_EXPOSURE_PLIST_DECODE_BYTES = 16 * 1024 * 1024;
 /** Bytes of a member that decide how its NULs are read. */
@@ -185,6 +188,7 @@ export class ReleaseExposureReader implements ReleaseExposurePort {
     input: { readonly path: string; readonly max_file_bytes?: number },
     options: ExecutionOptions | undefined,
     visitText: ReleaseExposureTextVisitor,
+    visitInterruptedScan?: ReleaseExposureScanVisitor,
   ): Promise<Result<ReleaseExposureScan, AnalysisError>> {
     const maxFileBytes =
       input.max_file_bytes ?? MAX_RELEASE_EXPOSURE_FILE_BYTES;
@@ -193,6 +197,7 @@ export class ReleaseExposureReader implements ReleaseExposurePort {
       resources: this.#resources,
       maxFileBytes,
       visitText,
+      visitInterruptedScan,
       siblingCleanup: [],
     };
     try {
@@ -306,6 +311,7 @@ interface ScanContext {
   readonly resources: ArtifactResourceScope;
   readonly maxFileBytes: number;
   readonly visitText: ReleaseExposureTextVisitor;
+  readonly visitInterruptedScan: ReleaseExposureScanVisitor | undefined;
   readonly siblingCleanup: Extract<
     ArtifactCleanupAttempt,
     { kind: "failed" }
@@ -325,11 +331,12 @@ const consumeInventory = async (
   input: ConsumeInput,
 ): Promise<ReleaseExposureScan> => {
   const containers = new Map<string, OpenContainer>();
+  const progress: ScanProgress = {};
   let result: ReleaseExposureScan | undefined;
   let failure: unknown;
   let failed = false;
   try {
-    result = await scanOccurrences(input, containers);
+    result = await scanOccurrences(input, containers, progress);
   } catch (cause) {
     failure = cause;
     failed = true;
@@ -338,6 +345,8 @@ const consumeInventory = async (
     ...input.siblingCleanup,
     ...(await releaseContainers(containers, input.resources)),
   ];
+  if (firstCleanup !== undefined || (failed && leftCleanupUnfinished(failure)))
+    reportInterruptedScan(input, result ?? progress.assemble?.());
   if (firstCleanup !== undefined) {
     const primary = failed
       ? releaseExposureFailure(failure, input.path, input.maxFileBytes)
@@ -365,6 +374,35 @@ const consumeInventory = async (
   return result;
 };
 
+/** What a failed scan can still assemble once it has somewhere to record facts. */
+interface ScanProgress {
+  assemble?: () => ReleaseExposureScan;
+}
+
+const leftCleanupUnfinished = (cause: unknown): boolean => {
+  const failure = asReadFailure(cause);
+  if (failure instanceof AnalysisError) return failure.cleanupIncomplete;
+  return (
+    failure instanceof ArtifactReaderFailure && failure.cleanup !== undefined
+  );
+};
+
+/** Completed findings survive the failure; what was not reached stays unknown. */
+const reportInterruptedScan = (
+  input: ConsumeInput,
+  scan: ReleaseExposureScan | undefined,
+): void => {
+  if (scan === undefined) return;
+  input.visitInterruptedScan?.({
+    ...scan,
+    coverage: "unknown",
+    limitations: [SCAN_INTERRUPTED, ...scan.limitations].slice(
+      0,
+      LIMITATION_CAP,
+    ),
+  });
+};
+
 /** Hand each package reader to the resource scope so a failed close keeps its path and can be retried. */
 const releaseContainers = async (
   containers: Map<string, OpenContainer>,
@@ -387,6 +425,7 @@ const releaseContainers = async (
 const scanOccurrences = async (
   input: ConsumeInput,
   containers: Map<string, OpenContainer>,
+  progress: ScanProgress,
 ): Promise<ReleaseExposureScan> => {
   const occurrences = input.inventory?.occurrences ?? [];
   const byId = new Map(
@@ -435,6 +474,7 @@ const scanOccurrences = async (
       : sniffNativeFormat(input.snapshot)) ??
     "file";
   const state = createState(input.visitText);
+  progress.assemble = () => assembleScan(input, state, rootFormat);
   if (EXTRACTABLE.has(rootFormat)) state.formats.add(rootFormat);
   if (input.snapshot !== null)
     await examineSelectedFile(state, input, rootFormat, input.snapshot);
@@ -543,6 +583,14 @@ const scanOccurrences = async (
   }
   if (!input.directory) await scanSiblings(input, state);
   noteUnreachedTargets(state);
+  return assembleScan(input, state, rootFormat);
+};
+
+const assembleScan = (
+  input: ConsumeInput,
+  state: ScanState,
+  rootFormat: string,
+): ReleaseExposureScan => {
   const kind = targetKind(input.path, rootFormat, input.directory);
   const nativeImages = [...state.native.entries()].map(([path, format]) => {
     const sha256 = state.nativeDigests.get(path);
