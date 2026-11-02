@@ -30,6 +30,7 @@ import {
   semanticBindingAtRead,
 } from "./javascriptSemanticMutationInitializers.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { rejectsEventListener } from "./javascriptSemanticAsyncEffects.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
@@ -216,7 +217,7 @@ const childInteraction = (
   if (classification === null) return null;
   const { kind, interactionMethod, eventName } = classification;
   const listener = node.arguments[1];
-  if (kind === "listener" && rejectsChildListener(listener, state)) return null;
+  if (kind === "listener" && rejectsEventListener(listener, state)) return null;
   const binding = objectBinding(member.object, state);
   const { candidates: linked, complete } = resolveChildCandidates(
     member.object,
@@ -240,41 +241,6 @@ const childInteraction = (
       kind === "listener" && t.isNode(listener) ? range(listener) : null,
     resolution: complete ? "complete" : "partial",
   };
-};
-
-/**
- * A child-process `on`/`once`/`addListener` call is an `EventEmitter` listener
- * registration, and Node's `checkListener` throws `ERR_INVALID_ARG_TYPE` before
- * anything is registered when argument 1 is omitted or is a value that can
- * never be a function. An identifier, a call result, a class expression or a
- * spread may still supply a callable at runtime and keeps its interaction.
- */
-const rejectsChildListener = (
-  listener: t.Node | undefined,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  if (listener === undefined) return true;
-  if (t.isSpreadElement(listener)) return false;
-  const value = unwrapJavaScriptExpression(listener).node;
-  if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
-    return false;
-  if (t.isClassExpression(value)) return false;
-  // A numeric literal is always a number, including the non-finite value Babel
-  // stores for `1e999`, which the exact-value reader refuses to price.
-  if (t.isNumericLiteral(value)) return true;
-  // Every unary operator yields a primitive, and a primitive is never callable.
-  return (
-    t.isUnaryExpression(value) ||
-    readExactJavaScriptLiteral(value).found ||
-    t.isTemplateLiteral(value) ||
-    t.isBigIntLiteral(value) ||
-    t.isRegExpLiteral(value) ||
-    t.isArrayExpression(value) ||
-    t.isObjectExpression(value) ||
-    isUnshadowedGlobal(value, state, "undefined") ||
-    isUnshadowedGlobal(value, state, "NaN") ||
-    isUnshadowedGlobal(value, state, "Infinity")
-  );
 };
 
 // Only an omitted argument or the unshadowed global undefined selects the

@@ -18,7 +18,10 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  isUnshadowedGlobal,
+  semanticBindingAtRead,
+} from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
@@ -133,14 +136,15 @@ export const collectJavaScriptSemanticAsyncEffects = (
 
 /**
  * A listener must be a function, and Node throws `ERR_INVALID_ARG_TYPE` before
- * anything is registered or removed when it is not. An exactly readable literal
- * that cannot be a function is therefore not an event operation, while an
- * identifier, a call result or a spread may still supply one and keeps its
- * operation.
- *
- * A class expression passes Node's own `typeof` check, so it is kept.
+ * anything is registered or removed when it is omitted or is a value that can
+ * never be a function. An identifier, a call result, a class expression or a
+ * spread may still supply a callable at runtime and keeps its operation.
  */
-const rejectsEventListener = (listener: t.Node): boolean => {
+export const rejectsEventListener = (
+  listener: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (listener === undefined) return true;
   if (t.isSpreadElement(listener)) return false;
   const value = unwrapJavaScriptExpression(listener).node;
   if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
@@ -149,15 +153,21 @@ const rejectsEventListener = (listener: t.Node): boolean => {
   // A numeric literal is always a number, including the non-finite value Babel
   // stores for `1e999`, which the exact-value reader refuses to price.
   if (t.isNumericLiteral(value)) return true;
-  // Every unary operator yields a primitive, and a primitive is never callable.
+  // Every unary, binary or update operator yields a primitive, and a primitive
+  // is never callable.
   return (
     t.isUnaryExpression(value) ||
+    t.isBinaryExpression(value) ||
+    t.isUpdateExpression(value) ||
     readExactJavaScriptLiteral(value).found ||
     t.isTemplateLiteral(value) ||
     t.isBigIntLiteral(value) ||
     t.isRegExpLiteral(value) ||
     t.isArrayExpression(value) ||
-    t.isObjectExpression(value)
+    t.isObjectExpression(value) ||
+    isUnshadowedGlobal(value, state, "undefined") ||
+    isUnshadowedGlobal(value, state, "NaN") ||
+    isUnshadowedGlobal(value, state, "Infinity")
   );
 };
 
@@ -177,16 +187,15 @@ const collectEvent = (
   if (method === undefined) return;
   const kind = eventKind(method);
   const eventArgument = node.arguments[0];
-  const listenerArgument = EVENT_LISTENER_METHODS.includes(method)
-    ? node.arguments[1]
-    : undefined;
+  const listenerMethod = EVENT_LISTENER_METHODS.includes(method);
+  const listenerArgument = listenerMethod ? node.arguments[1] : undefined;
   // A leading spread shifts the runtime argument positions, so argument 1 is not
   // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
   // trailing `1`.
   if (
+    listenerMethod &&
     !t.isSpreadElement(eventArgument) &&
-    listenerArgument !== undefined &&
-    rejectsEventListener(listenerArgument)
+    rejectsEventListener(listenerArgument, state)
   )
     return;
   const emitter = emitterIdentity(member.object, state);

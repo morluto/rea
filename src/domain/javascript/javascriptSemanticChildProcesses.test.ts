@@ -274,6 +274,8 @@ it.each([
   ["a null listener", `child.on("exit", null)`],
   ["a void listener", `child.on("exit", void 0)`],
   ["a unary listener", `child.on("exit", !0)`],
+  ["a binary listener", `child.on("exit", 1 + 1)`],
+  ["an update listener", `child.on("exit", ++count)`],
   ["a BigInt listener", `child.on("exit", 0n)`],
   ["a RegExp listener", `child.on("exit", /re/)`],
   ["an object listener", `child.on("exit", {})`],
@@ -282,8 +284,9 @@ it.each([
   ["an unshadowed NaN listener", `child.once("error", NaN)`],
   ["an unshadowed Infinity listener", `child.addListener("exit", Infinity)`],
 ] as const)("emits no child listener interaction for %s", (_name, call) => {
-  const ir = analyze(`const child = spawn('worker'); ${call};`);
+  const ir = analyze(`let count = 0; const child = spawn('worker'); ${call};`);
   expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
 });
 
 it.each([
