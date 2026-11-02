@@ -31,6 +31,18 @@ export const collectDoctorDiagnostics = async (
   const hopperTimeoutCheck = optionalHopperStartupTimeoutCheck(host);
   if (hopperTimeoutCheck !== undefined) checks.push(hopperTimeoutCheck);
   checks.push(...runtimeConfigurationChecks(host));
+  const goAdmission = host.goBuildInfoAdmission;
+  if (goAdmission !== undefined && !goAdmission.ok)
+    checks.push({
+      name: "go-build-info-admission",
+      ok: false,
+      classification: "config_drift",
+      detail: goAdmission.error.message,
+      remediation:
+        goAdmission.error.remediationAction ??
+        "Correct REA_GO_MAX_BUILD_INFO_BYTES and rerun doctor.",
+      details: { setting: "REA_GO_MAX_BUILD_INFO_BYTES" },
+    });
   const hopperVersionCheck = await optionalHopperVersionCheck(host, hopperPath);
   if (hopperVersionCheck !== undefined) checks.push(hopperVersionCheck);
 

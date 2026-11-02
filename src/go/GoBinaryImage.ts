@@ -13,6 +13,7 @@ import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import type { GoModuleMetadata } from "../domain/go/goBinary.js";
 import { parseGoModuleBytes } from "./GoModuleText.js";
 import { DEFAULT_GO_MAX_BUILD_INFO_BYTES } from "../domain/analysisResourceLimits.js";
+import { GoReportBudget } from "./GoReportBudget.js";
 import {
   goBuildInfoSearch,
   type GoBuildInfoSearchRange,
@@ -213,6 +214,28 @@ export const readGoBinaryImage = (
     moduleBody = module.bytes.subarray(16, -16);
     moduleText = observedText(moduleBody);
   }
+  const reportBudget = new GoReportBudget();
+  reportBudget.replace({
+    header_offset: header,
+    encoding,
+    go_version: goVersion,
+    go_version_bytes_base64: "",
+    module_text: moduleText,
+    module_bytes_base64: "",
+    version_location: { ...version.location },
+    module_location: { ...module.location },
+    module: null,
+  });
+  // Base64 has a known expansion: reserve it before allocating the strings.
+  reportBudget.reserve(
+    4 * Math.ceil(version.bytes.length / 3) +
+      4 * Math.ceil(module.bytes.length / 3),
+  );
+  // Replace the four-byte module:null placeholder with the parsed module.
+  const parsedModule = parseGoModuleBytes(
+    moduleBody,
+    reportBudget.remaining + 4,
+  );
   return {
     format,
     architecture,
@@ -227,7 +250,7 @@ export const readGoBinaryImage = (
       module_bytes_base64: module.bytes.toString("base64"),
       version_location: version.location,
       module_location: module.location,
-      module: parseGoModuleBytes(moduleBody),
+      module: parsedModule,
     },
     ...(sectionNamesLimitation === undefined
       ? {}

@@ -59,7 +59,7 @@ cliTest(
             setting: "go.max_build_info_bytes",
             effective_value: 1048576,
             source: "default",
-            maximum: 16777216,
+            maximum: 2097152,
           },
         },
       },
@@ -82,7 +82,7 @@ cliTest(
     expect(parseMcpToolError(await inspect())).toMatchObject({
       error: { code: "resource_constraint" },
     });
-    expect((await update("set", 16777217)).isError).toBe(true);
+    expect((await update("set", 2097153)).isError).toBe(true);
 
     const result = await runFileCli(cli, {
       arguments: ["inspect-go-binary", path, "--json"],

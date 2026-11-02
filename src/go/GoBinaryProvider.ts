@@ -41,6 +41,10 @@ import {
   type GoBuildInfoAdmission,
 } from "../config/goBuildInfoAdmission.js";
 import { readGoBinaryImage, type GoBinaryImage } from "./GoBinaryImage.js";
+import {
+  GoReportLimitFailure,
+  GO_COMPLETE_REPORT_BYTES,
+} from "./GoReportBudget.js";
 import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
 import {
   BinaryFormatFailure,
@@ -49,7 +53,6 @@ import {
 
 const OPERATION = "inspect_go_binary";
 const INPUT_BYTES = 256 * 1024 * 1024;
-const OUTPUT_BYTES = 8 * 1024 * 1024;
 
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,
@@ -57,6 +60,7 @@ const failureForPrimary = (
   admission: GoBuildInfoAdmission,
 ): AnalysisError => {
   const { cause, origin } = facts;
+  if (cause instanceof GoReportLimitFailure) return outputLimit(path, cause);
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
   if (
@@ -177,13 +181,16 @@ const failureFor = (
   );
 };
 
-const outputLimit = (path: string) =>
+const outputLimit = (path: string, cause?: GoReportLimitFailure) =>
   new AnalysisResourceConstraintError(
     OPERATION,
     "transport",
     `Complete Go metadata for ${path} exceeds the inline output budget; no partial success is returned.`,
-    { maximum_output_bytes: OUTPUT_BYTES },
-    fixedAllowanceOptions("The Go complete-report allowance", "report"),
+    { maximum_output_bytes: GO_COMPLETE_REPORT_BYTES },
+    {
+      ...fixedAllowanceOptions("The Go complete-report allowance", "report"),
+      ...(cause === undefined ? {} : { cause }),
+    },
   );
 
 /** Fixed reader boundaries plus unknowns left by the observed metadata. */
@@ -311,7 +318,10 @@ export class GoBinaryProvider implements GoBinaryPort {
             admission.maximumBytes,
           ),
         };
-        if (Buffer.byteLength(JSON.stringify(report), "utf8") > OUTPUT_BYTES)
+        if (
+          Buffer.byteLength(JSON.stringify(report), "utf8") >
+          GO_COMPLETE_REPORT_BYTES
+        )
           throw outputLimit(input.path);
         const parsed = goBinarySchema.safeParse(report);
         if (!parsed.success)

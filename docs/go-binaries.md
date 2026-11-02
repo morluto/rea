@@ -213,7 +213,7 @@ with `update_analysis_settings`, then retry the same `inspect_go_binary` call:
 }
 ```
 
-The setting accepts integer byte counts from 1 through 16,777,216 (16 MiB).
+The setting accepts integer byte counts from 1 through 2,097,152 (2 MiB).
 It applies to the next accepted operation; in-flight inspections keep their
 original value. Reset restores the launch baseline. For CLI and future REA
 processes, set `REA_GO_MAX_BUILD_INFO_BYTES` to a positive decimal byte count.
@@ -221,11 +221,19 @@ An invalid launch value refuses Go inspection rather than falling back; MCP
 remains available to set a valid runtime override. Reset exposes that invalid
 launch value again. Setup forwards an explicitly selected launch seed.
 
-The 16 MiB ceiling is a REA policy: decoding retains source bytes, text, base64
+The 2 MiB ceiling is a REA policy: decoding retains source bytes, text, base64
 and parsed module records. It is not a Go format limit or a process-memory
 guarantee. The separate 8 MiB complete-report limit still applies and may be
 reached before the admission ceiling, even with summary delivery. File-size,
 header-search, structural and transport guards also remain independently enforced.
+
+The complete plain-text range up to 2 MiB can fit in a report. Escaping or
+dense dependency/settings records can expand further: the reader reserves the
+raw-text/base64 representation, and the module parser charges each decoded
+record against the remaining report budget before retaining it. Exceeding
+that budget returns a typed report refusal, without partial success.
+`rea doctor` warns about invalid Go launch values without making them block
+MCP startup or unrelated provider checks.
 
 Embedded metadata is evidence of file content. It does not authenticate a
 compiler, dependency, commit or supply chain, and it does not establish runtime

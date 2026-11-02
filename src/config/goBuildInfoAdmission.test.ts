@@ -14,7 +14,7 @@ it("shares byte bounds, default and launch provenance across settings and setup"
     ok: true,
     value: { maximumBytes: 1048576, source: "default" },
   });
-  for (const bytes of [1, 2097152, 16777216]) {
+  for (const bytes of [1, 1048577, 2097152]) {
     const environment = { [key]: String(bytes) };
     expect(parseGoBuildInfoAdmission(environment)).toEqual({
       ok: true,
@@ -30,7 +30,7 @@ it("shares byte bounds, default and launch provenance across settings and setup"
   }
 });
 
-it.each(["0", "-1", "01", "1.5", "1e6", "", " 2", "2MiB", "16777217"])(
+it.each(["0", "-1", "01", "1.5", "1e6", "", " 2", "2MiB", "2097153"])(
   "rejects launch value %j without disabling runtime repair",
   (value) => {
     const environment = { [key]: value };
@@ -57,28 +57,28 @@ it.each(["0", "-1", "01", "1.5", "1e6", "", " 2", "2MiB", "16777217"])(
 );
 
 it("keeps accepted snapshots and launch reset independent of later updates", async () => {
-  const environment = { [key]: "2097152" };
+  const environment = { [key]: "1572864" };
   const store = new AnalysisSettings(environment);
   const admission = runtimeGoBuildInfoAdmission(environment, store.read);
   // Composition captures the launch baseline once.
   environment[key] = "0";
   await store.run(async () => {
     expect(
-      store.update({ changes: [{ setting, action: "set", value: 3145728 }] })
+      store.update({ changes: [{ setting, action: "set", value: 2097152 }] })
         .ok,
     ).toBe(true);
     await Promise.resolve();
     expect(admission()).toEqual({
       ok: true,
-      value: { maximumBytes: 2097152, source: "setting" },
+      value: { maximumBytes: 1572864, source: "setting" },
     });
   });
   expect(admission()).toEqual({
     ok: true,
-    value: { maximumBytes: 3145728, source: "runtime" },
+    value: { maximumBytes: 2097152, source: "runtime" },
   });
   const revision = store.read().revision;
-  for (const value of [0, -1, 1.5, 16777217]) {
+  for (const value of [0, -1, 1.5, 2097153]) {
     expect(
       store.update({ changes: [{ setting, action: "set", value }] }).ok,
     ).toBe(false);
@@ -89,6 +89,6 @@ it("keeps accepted snapshots and launch reset independent of later updates", asy
   );
   expect(admission()).toEqual({
     ok: true,
-    value: { maximumBytes: 2097152, source: "setting" },
+    value: { maximumBytes: 1572864, source: "setting" },
   });
 });

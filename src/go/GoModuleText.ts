@@ -1,4 +1,5 @@
 import type { GoModule, GoModuleMetadata } from "../domain/go/goBinary.js";
+import { GoReportBudget, GO_COMPLETE_REPORT_BYTES } from "./GoReportBudget.js";
 
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const escapes = new Map([
@@ -140,7 +141,10 @@ const modulePrefixes = ["mod\t", "dep\t", "=>\t"].map((prefix) =>
 );
 
 /** Decode an unframed Go module body while retaining non-UTF-8 line bytes exactly. */
-export const parseGoModuleBytes = (source: Buffer): GoModuleMetadata => {
+export const parseGoModuleBytes = (
+  source: Buffer,
+  availableBytes = GO_COMPLETE_REPORT_BYTES,
+): GoModuleMetadata => {
   let path: string | null = null;
   let main: GoModule | null = null;
   const dependencies: GoModule[] = [];
@@ -148,8 +152,29 @@ export const parseGoModuleBytes = (source: Buffer): GoModuleMetadata => {
   const unparsed_lines: string[] = [];
   const unparsed_line_bytes_base64: string[] = [];
   let last: GoModule | null = null;
+  const budget = new GoReportBudget(availableBytes);
+  let complete = true;
+  budget.replace({
+    path,
+    main,
+    dependencies,
+    settings,
+    unparsed_lines,
+    unparsed_line_bytes_base64,
+    complete,
+  });
+  const markIncomplete = () => {
+    if (complete) budget.reserve(1); // JSON false is one byte longer than true.
+    complete = false;
+  };
   for (const { line, terminated } of moduleSourceLines(source)) {
     if (typeof line !== "string") {
+      markIncomplete();
+      budget.reserve(
+        4 * Math.ceil(line.length / 3) +
+          2 +
+          (unparsed_line_bytes_base64.length > 0 ? 1 : 0),
+      );
       unparsed_line_bytes_base64.push(line.toString("base64"));
       if (
         modulePrefixes.some((prefix) =>
@@ -161,31 +186,42 @@ export const parseGoModuleBytes = (source: Buffer): GoModuleMetadata => {
     }
     if (line === "") continue;
     if (!terminated) {
+      markIncomplete();
+      budget.append(line, unparsed_lines.length);
       unparsed_lines.push(line);
       continue;
     }
     if (line.startsWith("path\t") && path === null) {
-      path = line.slice(5);
+      const value = line.slice(5);
+      budget.replace(value, 4);
+      path = value;
       continue;
     }
     if (line.startsWith("mod\t") || line.startsWith("dep\t")) {
-      const value = moduleLine(line.slice(4).split("\t"));
+      const value = moduleLine(line.slice(4).split("\t", 4));
       last = null;
       if (value !== null && (!line.startsWith("mod\t") || main === null)) {
-        if (line.startsWith("mod\t")) main = value;
-        else dependencies.push(value);
+        if (line.startsWith("mod\t")) {
+          budget.replace(value, 4);
+          main = value;
+        } else {
+          budget.append(value, dependencies.length);
+          dependencies.push(value);
+        }
         last = value;
         continue;
       }
     } else if (line.startsWith("=>\t")) {
-      const fields = line.slice(3).split("\t");
+      const fields = line.slice(3).split("\t", 4);
       const value = moduleLine(fields);
       if (fields.length === 3 && value !== null && last !== null) {
-        last.replacement = {
+        const replacement = {
           path: value.path,
           version: value.version,
           sum: value.sum,
         };
+        budget.replace(replacement, 4);
+        last.replacement = replacement;
         last = null;
         continue;
       }
@@ -193,10 +229,13 @@ export const parseGoModuleBytes = (source: Buffer): GoModuleMetadata => {
     } else if (line.startsWith("build\t")) {
       const value = setting(line.slice(6));
       if (value !== null) {
+        budget.append(value, settings.length);
         settings.push(value);
         continue;
       }
     }
+    markIncomplete();
+    budget.append(line, unparsed_lines.length);
     unparsed_lines.push(line);
   }
   return {
@@ -206,6 +245,6 @@ export const parseGoModuleBytes = (source: Buffer): GoModuleMetadata => {
     settings,
     unparsed_lines,
     unparsed_line_bytes_base64,
-    complete: unparsed_lines.length + unparsed_line_bytes_base64.length === 0,
+    complete,
   };
 };

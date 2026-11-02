@@ -1172,7 +1172,7 @@ These operations inspect static evidence and do not execute the target.
 ## Editable analysis settings
 
 `go.max_build_info_bytes` controls aggregate Go compiler-version and framed
-module-string bytes: 1 MiB by default, configurable from 1 byte to 16 MiB.
+module-string bytes: 1 MiB by default, configurable from 1 byte to 2 MiB.
 It applies to the next `inspect_go_binary` operation. The launch seed is
 `REA_GO_MAX_BUILD_INFO_BYTES`; invalid seeds can be repaired in the running
 MCP session with a valid override. The independent 8 MiB complete-report

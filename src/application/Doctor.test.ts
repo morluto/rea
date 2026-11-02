@@ -22,6 +22,31 @@ const configurationHost = (
   }),
 });
 
+it("diagnoses invalid Go admission without treating it as an MCP startup blocker", async () => {
+  const selected = configurationHost({ REA_GO_MAX_BUILD_INFO_BYTES: "0" });
+  const report = await runDoctor(undefined, selected, {
+    providers: ["hopper"],
+  });
+  expect(report.informational_checks).toContainEqual(
+    expect.objectContaining({
+      name: "go-build-info-admission",
+      ok: false,
+      classification: "config_drift",
+      remediation: expect.stringContaining("go.max_build_info_bytes"),
+    }),
+  );
+  expect(
+    report.scope_checks.some(({ name }) => name === "go-build-info-admission"),
+  ).toBe(false);
+  const valid = await runDoctor(
+    undefined,
+    configurationHost({ REA_GO_MAX_BUILD_INFO_BYTES: "1048576" }),
+  );
+  expect(
+    valid.checks.some(({ name }) => name === "go-build-info-admission"),
+  ).toBe(false);
+});
+
 describe("doctor Hopper startup timeout", () => {
   const timeoutHost = (
     value: string | undefined,

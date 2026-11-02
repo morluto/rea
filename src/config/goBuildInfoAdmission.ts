@@ -19,7 +19,7 @@ export const DEFAULT_GO_BUILD_INFO_ADMISSION: GoBuildInfoAdmission = {
   source: "default",
 };
 
-const constraint = `${GO_BUILD_INFO_ADMISSION_SETTING} must be a positive decimal integer of at most ${String(MAXIMUM_GO_MAX_BUILD_INFO_BYTES)} bytes (16 MiB); the default is ${String(DEFAULT_GO_MAX_BUILD_INFO_BYTES)} bytes (1 MiB).`;
+const constraint = `${GO_BUILD_INFO_ADMISSION_SETTING} must be a positive decimal integer of at most ${String(MAXIMUM_GO_MAX_BUILD_INFO_BYTES)} bytes (2 MiB); the default is ${String(DEFAULT_GO_MAX_BUILD_INFO_BYTES)} bytes (1 MiB).`;
 const launchSchema = z
   .string()
   .regex(/^[1-9]\d*$/u)
@@ -43,4 +43,4 @@ export const parseGoBuildInfoAdmission = (
 };
 
 export const goBuildInfoAdmissionRecovery = (maximumBytes: number): string =>
-  `The Go build-info string allowance is ${String(maximumBytes)} aggregate bytes. On MCP, call update_analysis_settings with setting go.max_build_info_bytes, action set, and a value in bytes up to ${String(MAXIMUM_GO_MAX_BUILD_INFO_BYTES)} (16 MiB), then retry inspect_go_binary. It applies to the next operation without restarting REA. For CLI or future processes, set ${GO_BUILD_INFO_ADMISSION_SETTING} in the launch environment. The default is ${String(DEFAULT_GO_MAX_BUILD_INFO_BYTES)} bytes (1 MiB). The separate input, header-search, structural and complete-report allowances still apply; raising this allowance does not raise them or bound total process memory. At the ceiling, select an artifact within the allowance; repeating the unchanged request will fail again.`;
+  `The Go build-info string allowance is ${String(maximumBytes)} aggregate bytes. On MCP, call update_analysis_settings with setting go.max_build_info_bytes, action set, and a value in bytes up to ${String(MAXIMUM_GO_MAX_BUILD_INFO_BYTES)} (2 MiB), then retry inspect_go_binary. It applies to the next operation without restarting REA. For CLI or future processes, set ${GO_BUILD_INFO_ADMISSION_SETTING} in the launch environment. The default is ${String(DEFAULT_GO_MAX_BUILD_INFO_BYTES)} bytes (1 MiB). The separate input, header-search, structural and complete-report allowances still apply; raising this allowance does not raise them or bound total process memory. At the ceiling, select an artifact within the allowance; repeating the unchanged request will fail again.`;

@@ -9,24 +9,45 @@ import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { goBuildInfoAdmissionFixture } from "../../fixtures/go/admission.js";
 import { createGoBinaryFixture } from "../../fixtures/go/image.js";
-import { BinaryResourceFailure } from "../../../src/native/metadata/BinaryContainer.js";
+import {
+  BinaryFormatFailure,
+  BinaryResourceFailure,
+} from "../../../src/native/metadata/BinaryContainer.js";
+import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { GoReportLimitFailure } from "../../../src/go/GoReportBudget.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+it("delivers plain text at the full 2 MiB ceiling and refuses dense expansion during parsing", () => {
+  const fixture = goBuildInfoAdmissionFixture(2097152);
+  const report = readGoBinaryImage(fixture.bytes, 2097152);
+  expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThan(8388608);
+  expect(report.build_info?.module_bytes_base64).toBe(
+    fixture.moduleBytes.toString("base64"),
+  );
+  const dense = Buffer.from(
+    "dep\tp\tv\n".repeat(Math.floor((fixture.moduleBytes.length - 33) / 8)),
+  );
+  dense.copy(fixture.bytes, fixture.moduleOffset + 16);
+  expect(() => readGoBinaryImage(fixture.bytes, 2097152)).toThrow(
+    GoReportLimitFailure,
+  );
+});
 
 it.each(["inline", "pointer"] as const)(
   "refuses a declared %s string above the configurable ceiling before decoding its contents",
   (encoding) => {
     const fixture = createGoBinaryFixture({ encoding });
     if (encoding === "inline")
-      fixture.bytes.set([0x81, 0x80, 0x80, 0x08], fixture.headerOffset + 32);
-    else fixture.bytes.writeBigUInt64LE(16777217n, 1544);
+      fixture.bytes.set([0x81, 0x80, 0x80, 0x01], fixture.headerOffset + 32);
+    else fixture.bytes.writeBigUInt64LE(2097153n, 1544);
     try {
-      readGoBinaryImage(fixture.bytes, 16777216);
+      readGoBinaryImage(fixture.bytes, 2097152);
       throw new Error("Oversized string was accepted");
     } catch (cause) {
       expect(cause).toBeInstanceOf(BinaryResourceFailure);
       expect(cause).toMatchObject({
         boundary: "build-info",
-        maximum_bytes: 16777216,
+        maximum_bytes: 2097152,
       });
     }
   },
@@ -52,7 +73,7 @@ it.each(["inline", "pointer"] as const)(
         limit: {
           setting: "go.max_build_info_bytes",
           effective_value: 1048576,
-          maximum: 16777216,
+          maximum: 2097152,
           source: "default",
           unit: "bytes",
           applies_at: "next_operation",
@@ -79,17 +100,44 @@ it.each(["inline", "pointer"] as const)(
     ).toBe(true);
     expect((await inspect()).ok).toBe(false);
     // Neither a higher allowance nor a prior successful read admits truncation.
-    const truncated = fixture.bytes.subarray(0, fixture.bytes.length - 1);
-    expect(() => readGoBinaryImage(truncated, bytes)).toThrow();
+    const truncated = Buffer.from(
+      fixture.bytes.subarray(
+        0,
+        fixture.moduleOffset + fixture.moduleBytes.length - 1,
+      ),
+    );
+    truncated.writeBigUInt64LE(BigInt(truncated.length), 160);
+    truncated.writeBigUInt64LE(BigInt(truncated.length), 168);
+    // Keep the native container valid so this reaches the Go string owner.
+    expect(readBinaryContainer(truncated).format).toBe("elf");
+    try {
+      readGoBinaryImage(truncated, bytes);
+      throw new Error("Truncated Go string was accepted");
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(BinaryFormatFailure);
+      expect(cause).toMatchObject({
+        kind: "malformed",
+        message:
+          encoding === "inline"
+            ? "Go build-info string range is truncated"
+            : "Virtual address or string range is not file mapped",
+      });
+    }
   },
 );
 
 it("reports launch provenance and retains the separate complete-report ceiling", async () => {
   const root = await createTestTempDirectory("rea-go-report-limit-");
   const path = join(root, "large.elf");
-  await writeFile(path, goBuildInfoAdmissionFixture(3 * 1024 * 1024).bytes);
+  const fixture = goBuildInfoAdmissionFixture(2 * 1024 * 1024);
+  fixture.bytes.fill(
+    1,
+    fixture.moduleOffset + 16,
+    fixture.moduleOffset + fixture.moduleBytes.length - 17,
+  );
+  await writeFile(path, fixture.bytes);
   const service = createGoBinaryService({
-    REA_GO_MAX_BUILD_INFO_BYTES: "16777216",
+    REA_GO_MAX_BUILD_INFO_BYTES: "2097152",
   });
   onTestFinished(() => service.close());
   const result = await service.inspect({ path });

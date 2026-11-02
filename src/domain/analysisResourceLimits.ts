@@ -12,10 +12,11 @@ export const DEFAULT_GO_MAX_BUILD_INFO_BYTES = 1024 * 1024;
 /**
  * Opt-in REA policy ceiling, not a Go format or host-memory limit. Decoding
  * retains text, base64 and parsed module records alongside the source bytes.
- * Bound that input to 16 MiB; the independent 8 MiB complete-report allowance
- * still applies and may refuse a report below this admission ceiling.
+ * Bound that input to 2 MiB, keeping the full plain-text range deliverable
+ * within the independent 8 MiB report allowance. Escaping and dense records
+ * can still exhaust that allowance, which is enforced during parsing.
  */
-export const MAXIMUM_GO_MAX_BUILD_INFO_BYTES = 16 * 1024 * 1024;
+export const MAXIMUM_GO_MAX_BUILD_INFO_BYTES = 2 * 1024 * 1024;
 
 /**
  * Largest configurable admission. The header JSON is decoded into one string

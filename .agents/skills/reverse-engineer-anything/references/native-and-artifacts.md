@@ -66,7 +66,7 @@ See [desktop installations](https://github.com/morluto/rea/blob/main/docs/deskto
 
 For a Go embedded-string admission failure, use `details.limit` and raise
 `go.max_build_info_bytes` with `update_analysis_settings` before retrying the
-same request. Default: 1 MiB; policy ceiling: 16 MiB. CLI launch seed:
+same request. Default: 1 MiB; policy ceiling: 2 MiB. CLI launch seed:
 `REA_GO_MAX_BUILD_INFO_BYTES`. The complete-report allowance remains 8 MiB,
 so raising string admission does not guarantee delivery of a larger report.
 
