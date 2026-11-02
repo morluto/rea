@@ -59,7 +59,7 @@ and broken tag nesting. Interaction messages use names such as `{speed}` and
 
 Code blocks, inline code and `translate="no"` spans are copied from the source.
 Commands, filenames, paths, URLs, hashes and observed values must retain their
-meaning. Never translate `npx rea-agents@latest setup` into prose. Preserve product
+meaning. Never translate `npx rea-agents@6.8.0 setup` into prose. Preserve product
 names such as REA, Codex, Claude Code, Ghidra and Homebrew. Explain technical terms
 in the surrounding text when needed.
 
