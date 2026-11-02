@@ -753,6 +753,8 @@ export function* collectSemanticMemberMutationsSteps(
     const exactProjections = new Map<string, Set<string>>();
     let additionalAlternatives = 0;
     let projectionsWidened = false;
+    let widenedJoins = 0;
+    let joinsExhausted = false;
     const enqueue = (candidate: PendingValue): void => {
       // A capture deeper than this projection is no longer applicable. Keep
       // the canonical context before indexing or scheduling alias histories.
@@ -839,6 +841,10 @@ export function* collectSemanticMemberMutationsSteps(
         return;
       }
       if (joined.scheduled) return;
+      if (++widenedJoins > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+        joinsExhausted = true;
+        return;
+      }
       joined.scheduled = true;
       pending.push({
         ...value,
@@ -859,7 +865,7 @@ export function* collectSemanticMemberMutationsSteps(
     });
     // Visit shallower alias traversals first so their exact prefixes suppress
     // longer loop paths before those paths enumerate every assignment order.
-    for (let cursor = 0; cursor < pending.length; cursor++) {
+    for (let cursor = 0; cursor < pending.length && !joinsExhausted; cursor++) {
       const current = pending[cursor];
       if (current === undefined) break;
       if (
@@ -1404,6 +1410,23 @@ export function* collectSemanticMemberMutationsSteps(
         }
       }
     }
+    // Widened joins terminate only over finitely many depths and capture
+    // vectors. A growing alias cycle keeps adding both; escaping the receiver
+    // covers every omitted longer effect.
+    if (joinsExhausted && (effect !== "escape" || path.length > 0))
+      markValue(
+        node,
+        [],
+        new Set(),
+        "escape",
+        mutation,
+        originAt,
+        ownerInitializer,
+        widenedGetterResult,
+        undefined,
+        undefined,
+        selection,
+      );
   };
   const markEscaped = (
     node: t.Node,
