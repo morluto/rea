@@ -24,6 +24,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { windowsNativeArtifactFixture } from "../../tests/fixtures/windowsNativeArtifact.js";
 import {
   ArtifactReaderFailure,
+  type ArtifactEntry,
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import {
@@ -34,6 +35,7 @@ import {
   MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES,
   MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES,
   MAX_RELEASE_EXPOSURE_SOURCE_MAPS,
+  MAX_RELEASE_EXPOSURE_TEXT_BYTES,
   MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES,
   PACKAGED_NATIVE_IMAGES,
   type ReleaseExposureScan,
@@ -2693,5 +2695,109 @@ describe("ReleaseExposureReader HTML script references", () => {
     );
     expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 0 });
     expect(sourceMapSourcesStatus(scanned)).toBe("not_observed");
+  });
+});
+
+describe("ReleaseExposureReader cumulative text allowance", () => {
+  const MEMBERS_PAST_ALLOWANCE = 20;
+  const MEMBERS_IN_ALLOWANCE =
+    MAX_RELEASE_EXPOSURE_TEXT_BYTES / MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES;
+
+  /** Compressed text members, then one small member the allowance decides. */
+  const packageRoot = async (bytes: Buffer): Promise<string> => {
+    const root = await createTestTempDirectory("rea-release-exposure-text-");
+    await writeFile(
+      join(root, "app.dll"),
+      dotnetBundleFixture([
+        ...Array.from({ length: MEMBERS_PAST_ALLOWANCE }, (_, index) => ({
+          path: `m${String(index)}.txt`,
+          bytes,
+          compressed: true,
+        })),
+        { path: "last.txt", bytes: Buffer.from("hello\n") },
+      ]).bytes,
+    );
+    return root;
+  };
+
+  const inspectCountingOpens = async (
+    root: string,
+    open?: (entry: ArtifactEntry) => Readable | undefined,
+  ) => {
+    let opened = 0;
+    createdReaders.wrap = (reader, path) => {
+      if (path !== join(root, "app.dll")) return reader;
+      const openEntry = reader.open.bind(reader);
+      reader.open = (entry, signal) => {
+        if (entry.path.startsWith("m")) opened += 1;
+        const replaced = open?.(entry);
+        return replaced === undefined
+          ? openEntry(entry, signal)
+          : Promise.resolve(replaced);
+      };
+      return reader;
+    };
+    try {
+      return { scanned: await inspect(root), opened: () => opened };
+    } finally {
+      createdReaders.wrap = undefined;
+    }
+  };
+
+  it("charges oversized package text reads to the allowance", async () => {
+    const { scanned, opened } = await inspectCountingOpens(
+      await packageRoot(
+        Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1, 0x20),
+      ),
+    );
+    expect(opened()).toBeLessThanOrEqual(MEMBERS_IN_ALLOWANCE);
+    expect(scanned.textLocations).toEqual([]);
+    expect(scanned.text_members).toEqual({
+      scanned: 0,
+      skipped: MEMBERS_PAST_ALLOWANCE + 1,
+    });
+  });
+
+  it("charges package text that did not decode to the allowance", async () => {
+    const utf32 = Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES);
+    Buffer.from([0xff, 0xfe, 0, 0]).copy(utf32);
+    const { scanned, opened } = await inspectCountingOpens(
+      await packageRoot(utf32),
+    );
+    expect(opened()).toBe(MEMBERS_IN_ALLOWANCE);
+    expect(scanned.textLocations).toEqual([]);
+  });
+
+  it("charges the bytes of a package read that failed partway", async () => {
+    const { scanned, opened } = await inspectCountingOpens(
+      await packageRoot(Buffer.from("unread\n")),
+      (entry) =>
+        entry.path.startsWith("m")
+          ? Readable.from(
+              (function* (): Generator<Buffer> {
+                yield Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES);
+                throw new Error("damaged member");
+              })(),
+            )
+          : undefined,
+    );
+    expect(opened()).toBe(MEMBERS_IN_ALLOWANCE);
+    expect(scanned.textLocations).toEqual([]);
+  });
+
+  it("charges only the probe for an oversized file on disk", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-disk-");
+    for (let index = 0; index < MEMBERS_PAST_ALLOWANCE; index += 1)
+      await writeFile(
+        join(root, `m${String(index)}.txt`),
+        Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1, 0x20),
+      );
+    await writeFile(join(root, "z.txt"), "hello\n");
+    const scanned = await inspect(root);
+    expect(scanned.textLocations).toEqual([join(root, "z.txt")]);
+    expect(scanned.text_members).toEqual({
+      scanned: 1,
+      skipped: MEMBERS_PAST_ALLOWANCE,
+    });
   });
 });

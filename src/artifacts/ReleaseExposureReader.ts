@@ -685,6 +685,8 @@ interface ScanState {
   scannedText: number;
   skippedText: number;
   textBytes: number;
+  /** Bytes member reads produced, kept even when the read then failed. */
+  memberBytesRead: number;
   embeddedProbes: number;
   unprobedImages: number;
   native: Map<string, NativeFormat>;
@@ -729,6 +731,7 @@ const createState = (visitText: ReleaseExposureTextVisitor): ScanState => ({
   scannedText: 0,
   skippedText: 0,
   textBytes: 0,
+  memberBytesRead: 0,
   embeddedProbes: 0,
   unprobedImages: 0,
   native: new Map(),
@@ -1098,6 +1101,7 @@ const examineTextMember = async (
     if (holdsScripts(member)) state.skippedMaps += 1;
     return true;
   }
+  const bytesReadBefore = state.memberBytesRead;
   const loaded = await member.read(
     Math.min(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES, remaining),
   );
@@ -1111,6 +1115,8 @@ const examineTextMember = async (
       else examineHtmlScripts(state, member, text.text);
     }
   } else {
+    // The allowance bounds the read, so a read that yielded no text still spends it.
+    state.textBytes += state.memberBytesRead - bytesReadBefore;
     state.skippedText += 1;
     if (holdsScripts(member)) state.skippedMaps += 1;
   }
@@ -1358,13 +1364,16 @@ const scanText = (
 ): void => {
   if (
     byteLength > MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES ||
-    state.textBytes + byteLength > MAX_RELEASE_EXPOSURE_TEXT_BYTES ||
-    text === null
+    state.textBytes + byteLength > MAX_RELEASE_EXPOSURE_TEXT_BYTES
   ) {
     state.skippedText += 1;
     return;
   }
   state.textBytes += byteLength;
+  if (text === null) {
+    state.skippedText += 1;
+    return;
+  }
   if (text.complete) state.scannedText += 1;
   else state.skippedText += 1;
   state.visitText(text.text, member.location);
@@ -1758,7 +1767,7 @@ const readListedEntry = async (
 ): Promise<MemberRead> => {
   if (container === undefined) return { kind: "unread" };
   try {
-    return await readEntryBytes(container.reader, entry, budget, signal);
+    return await readEntryBytes(container.reader, entry, budget, state, signal);
   } catch (cause) {
     rethrowReadFailure(cause);
     pushLimitation(state, `Could not read ${entry.path} from ${filePath}.`);
@@ -1796,7 +1805,13 @@ const readContainerMember = async (
       ordinals.get(occurrence.occurrence_id) ?? 0
     ];
     if (entry === undefined || entry.kind !== "file") return { kind: "unread" };
-    return await readEntryBytes(container.reader, entry, budget, input.signal);
+    return await readEntryBytes(
+      container.reader,
+      entry,
+      budget,
+      state,
+      input.signal,
+    );
   } catch (cause) {
     rethrowReadFailure(cause);
     pushLimitation(state, `Could not read ${occurrence.logical_path}.`);
@@ -1884,15 +1899,17 @@ const readEntryBytes = async (
   reader: ArtifactReader,
   entry: ArtifactEntry,
   budget: number,
+  state: ScanState,
   signal: AbortSignal | undefined,
 ): Promise<MemberRead> => {
   const stream = await reader.open(entry, signal);
-  return readStreamBounded(stream, budget, signal);
+  return readStreamBounded(stream, budget, state, signal);
 };
 
 const readStreamBounded = async (
   stream: Readable,
   budget: number,
+  state: ScanState,
   signal: AbortSignal | undefined,
 ): Promise<MemberRead> => {
   const chunks: Buffer[] = [];
@@ -1906,6 +1923,7 @@ const readStreamBounded = async (
       const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       chunks.push(piece);
       total += piece.length;
+      state.memberBytesRead += piece.length;
       if (total > budget) {
         overBudget = true;
         break;
@@ -1971,6 +1989,7 @@ const readSpan = async (
             "integrity",
             `Artifact changed during read: ${filePath}`,
           );
+        state.memberBytesRead += bytes.length;
         return Buffer.from(bytes);
       },
     );
