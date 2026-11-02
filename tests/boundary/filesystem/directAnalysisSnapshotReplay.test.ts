@@ -35,6 +35,7 @@ import { workflowAnalysisProfile } from "../../../src/application/WorkflowAnalys
 import {
   analysisQueryId,
   createAnalysisSnapshotWorkflowEntry,
+  parseAnalysisSnapshot,
   type AnalysisSnapshot,
 } from "../../../src/domain/analysisSnapshot.js";
 import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
@@ -100,6 +101,53 @@ const functionDossier = {
   native_api: null,
   native_value_flow: null,
   limitations: [],
+};
+
+const legacyUnavailableNativeApiInspection = {
+  procedure: { address: "0x1000", name: "fixture" },
+  boundary: {
+    available: false,
+    reason:
+      "The selected provider did not expose a structured native API boundary model.",
+    residual_unknowns: [
+      "What are the function's return and parameter boundary types?",
+      "Does this function dispatch through a jump table with recoverable data addresses?",
+    ],
+  },
+  substeps: [
+    {
+      operation: "analyze_function",
+      status: "completed",
+      observations: [
+        "provider function dossier",
+        "provider pseudocode classification",
+        "provider control-flow observations",
+      ],
+    },
+    {
+      operation: "project_native_api_boundary",
+      status: "unsupported",
+      observations: [
+        "The selected provider did not expose a structured native API boundary model.",
+      ],
+    },
+    {
+      operation: "preserve_residual_unknowns",
+      status: "completed",
+      observations: [
+        "What are the function's return and parameter boundary types?",
+        "Does this function dispatch through a jump table with recoverable data addresses?",
+      ],
+    },
+  ],
+  unsupported_branches: [
+    "structured-boundary-types",
+    "jump-table-data-mapping",
+  ],
+  residual_unknowns: [
+    "What are the function's return and parameter boundary types?",
+    "Does this function dispatch through a jump table with recoverable data addresses?",
+  ],
 };
 
 const expectWorkflowQuestionsRetained = (
@@ -587,6 +635,168 @@ const verifyWindowsSnapshotAdmission = async (
     fixture.calls.filter((call) => call === "search_strings"),
   ).toHaveLength(1);
 };
+
+const seedLegacyNativeApiWorkflowSnapshot = async (
+  fixture: Awaited<ReturnType<typeof createSnapshotReplayFixture>>,
+  initial: AnalysisSnapshot,
+) => {
+  const parameters = { procedure: "0x1000" };
+  const previousProfile = workflowAnalysisProfile(
+    initial.binding.analysis_profile,
+  );
+  const subject = {
+    path: fixture.path,
+    sha256: initial.target.sha256,
+    format: initial.target.format,
+    ...(initial.target.architecture === null
+      ? {}
+      : { architecture: initial.target.architecture }),
+  };
+  const historicalEvidence = createEvidence(subject, REA_WORKFLOW_PROVIDER, {
+    operation: "inspect_native_api",
+    parameters,
+    result: legacyUnavailableNativeApiInspection,
+    rawResult: legacyUnavailableNativeApiInspection,
+    analysisProfile: previousProfile,
+    confidence: "derived",
+    limitations: ["Derived by an REA composed workflow."],
+  });
+  const historicalEntry = createAnalysisSnapshotWorkflowEntry({
+    target: initial.target,
+    binding: initial.binding,
+    operation: "inspect_native_api",
+    parameters,
+    execution: {
+      result: legacyUnavailableNativeApiInspection,
+      rawResult: legacyUnavailableNativeApiInspection,
+      provider: REA_WORKFLOW_PROVIDER,
+      analysisProfile: previousProfile,
+      limitations: ["Derived by an REA composed workflow."],
+      locations: [],
+      subject,
+    },
+  });
+  const historicalSnapshot = parseAnalysisSnapshot({
+    ...initial,
+    workflow_entries: [historicalEntry],
+    evidence_bundle: createEvidenceBundle([
+      ...initial.evidence_bundle.records,
+      historicalEvidence,
+    ]),
+  });
+  const written = await withArtifactResourceScope((resources) =>
+    writeAnalysisSnapshot(
+      historicalSnapshot,
+      fixture.snapshotPath,
+      true,
+      resources,
+    ),
+  );
+  if (!written.ok) throw written.error;
+
+  const loaded = await readAnalysisSnapshot(fixture.snapshotPath);
+  if (!loaded.ok) throw loaded.error;
+  const retained = loaded.value.evidence_bundle.records.find(
+    ({ evidence_id }) => evidence_id === historicalEvidence.evidence_id,
+  );
+  if (retained === undefined)
+    throw new Error("Authenticated historical workflow Evidence was lost");
+  expect(parseEvidence(retained)).toEqual(retained);
+  expect(retained.provider).toEqual(REA_WORKFLOW_PROVIDER);
+  expect(retained.subject?.digest.sha256).toBe(loaded.value.target.sha256);
+  expect(retained.parameters).toEqual(parameters);
+  expect(retained.normalized_result).toEqual(
+    legacyUnavailableNativeApiInspection,
+  );
+  expect(retained.analysis_profile?.digest).toBe(previousProfile.digest);
+  return { historicalEvidence, parameters, previousProfile };
+};
+
+const verifyLegacyNativeApiWorkflowSnapshotIsNotReplayed = async () => {
+  const fixture = await createSnapshotReplayFixture(
+    "rea-native-api-workflow-revision-",
+  );
+  const provider = fixture.createProvider({
+    supportedOperations: workflowProviderOperations,
+  });
+  const dependencies = fixture.dependencies(provider);
+  await runDirectAnalysis(
+    dependencies,
+    fixture.path,
+    "binary_overview",
+    {},
+    { snapshotPath: fixture.snapshotPath },
+  );
+  const initial = await readAnalysisSnapshot(fixture.snapshotPath);
+  if (!initial.ok) throw initial.error;
+  const { historicalEvidence, parameters, previousProfile } =
+    await seedLegacyNativeApiWorkflowSnapshot(fixture, initial.value);
+  const currentProfile = workflowAnalysisProfile(
+    initial.value.binding.analysis_profile,
+    "inspect_native_api",
+  );
+  const callsBeforeCurrentAnalysis = [...fixture.calls];
+  const startsBeforeCurrentAnalysis = [...fixture.starts];
+  const current = await runDirectAnalysis(
+    dependencies,
+    fixture.path,
+    "inspect_native_api",
+    parameters,
+    { snapshotPath: fixture.snapshotPath },
+  ).then(projectCliAnalysisResult);
+  const currentEvidence = parseEvidence(current);
+
+  expect(currentEvidence).toMatchObject({
+    operation: "inspect_native_api",
+    normalized_result: {
+      unsupported_branches: expect.arrayContaining([
+        "indirect-branch-inventory",
+      ]),
+      residual_unknowns: expect.arrayContaining([
+        "Which indirect branches does this function contain? The provider did not report an indirect-branch inventory.",
+      ]),
+    },
+  });
+  expect(currentProfile.digest).not.toBe(previousProfile.digest);
+  expect(currentEvidence.evidence_id).not.toBe(historicalEvidence.evidence_id);
+  expect(fixture.starts).toHaveLength(startsBeforeCurrentAnalysis.length + 1);
+  expect(fixture.calls.length).toBeGreaterThan(
+    callsBeforeCurrentAnalysis.length,
+  );
+
+  const refreshed = await readAnalysisSnapshot(fixture.snapshotPath);
+  if (!refreshed.ok) throw refreshed.error;
+  expect(
+    refreshed.value.evidence_bundle.records.some(
+      ({ evidence_id }) => evidence_id === historicalEvidence.evidence_id,
+    ),
+  ).toBe(true);
+  const persistedCurrentEvidence = refreshed.value.evidence_bundle.records.find(
+    ({ evidence_id }) => evidence_id === currentEvidence.evidence_id,
+  );
+  expect(persistedCurrentEvidence?.analysis_profile?.digest).toBe(
+    currentProfile.digest,
+  );
+  const callsAfterCurrentAnalysis = [...fixture.calls];
+  const startsAfterCurrentAnalysis = [...fixture.starts];
+  const replayedCurrent = await runDirectAnalysis(
+    dependencies,
+    fixture.path,
+    "inspect_native_api",
+    parameters,
+    { snapshotPath: fixture.snapshotPath },
+  ).then(projectCliAnalysisResult);
+  expect(replayedCurrent).toEqual(currentEvidence);
+  expect(fixture.calls).toEqual(callsAfterCurrentAnalysis);
+  expect(fixture.starts).toEqual(startsAfterCurrentAnalysis);
+};
+
+describe("legacy native API workflow snapshot revision", () => {
+  it(
+    "does not replay the old persisted result as a current observation",
+    verifyLegacyNativeApiWorkflowSnapshotIsNotReplayed,
+  );
+});
 
 it.each([
   { tool: "binary_overview", arguments: {}, priorRevision: 5 },

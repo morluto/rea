@@ -39,6 +39,12 @@ prove behavior on the verified Ghidra 12.1.4 and JDK 21 build.
 | `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE                                   | Ghidra 12.1.4, full JDK 21, and the matching native artifact                |
 | `npm run verify:ghidra:dol`                | Any supported Ghidra host; source-owned PowerPC GameCube DOL fixture built from a linker script (never executed) | Clang with PowerPC target, LLD, GNU readelf, Ghidra 12.1.4, and full JDK 21 |
 
+The `npm run verify:ghidra:aarch64-jump-table` lane also covers a source-owned AArch64
+computed-indirect-branch fixture. The verifier distinguishes listing-computed
+jumps with unresolved targets from recovered jump tables and ordinary return
+controls. This is static real-provider analysis, not target execution or PSP
+overlay-residency verification.
+
 The optional Swift lane compiles a source-owned fixture and checks modern and
 provider-demangled procedure names through real stdio MCP, with and without the
 dSYM companion. It checks unfiltered, structs, and literal-name filters,

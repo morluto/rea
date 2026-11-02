@@ -622,6 +622,157 @@ export async function verifyNativeTypeLayout(client, typeNames) {
   return { layout, payload, state };
 }
 
+/** A recovered switch is not an unresolved indirect branch. */
+function assertNoUnresolvedIndirectBranches(dossier, procedure) {
+  const branches = dossier.native_api?.unresolved_indirect_branches;
+  if (!Array.isArray(branches) || branches.length !== 0)
+    throw new Error(
+      `${procedure} reported unexpected unresolved indirect branches: ${JSON.stringify(branches)}`,
+    );
+}
+
+/**
+ * Oracle for indirect-branches.S: the computed `br x8` is the fourth
+ * instruction of rea_computed_branch and has no bound or table.
+ */
+const COMPUTED_BRANCH_OFFSET = 12n;
+
+export async function verifyIndirectBranches(client) {
+  const names = await inventoryCall(client, "list_names", {
+    document: null,
+    address: null,
+  });
+  const computed = requireProcedure(names, "rea_computed_branch");
+  const computedDossier = await functionCall(client, "analyze_function", {
+    procedure: computed.address,
+  });
+  const branchAddress = `0x${(
+    BigInt(computed.address) + COMPUTED_BRANCH_OFFSET
+  ).toString(16)}`;
+  const boundary = computedDossier.native_api;
+  if (boundary?.available !== true)
+    throw new Error(
+      `rea_computed_branch native API boundary is unavailable: ${JSON.stringify(boundary)}`,
+    );
+  if (
+    boundary.jump_tables.some(
+      (table) => table.dispatch_address === branchAddress,
+    )
+  )
+    throw new Error(
+      `Unbounded computed branch at ${branchAddress} was reported as a recovered jump table`,
+    );
+  const unresolved = (boundary.unresolved_indirect_branches ?? []).find(
+    (branch) => branch.branch_address === branchAddress,
+  );
+  if (unresolved === undefined)
+    throw new Error(
+      `Computed branch at ${branchAddress} is missing from unresolved_indirect_branches: ${JSON.stringify(boundary.unresolved_indirect_branches)}`,
+    );
+  if (
+    unresolved.decompiler_outcome !== "jump_table_recovery_failed" ||
+    !unresolved.evidence.some(
+      (evidence) => evidence.source === "ghidra-decompiler-warning",
+    )
+  )
+    throw new Error(
+      `Computed branch at ${branchAddress} did not retain its decompiler warning evidence: ${JSON.stringify(unresolved)}`,
+    );
+  // A caller can store the warning text as an entry comment. The comment must
+  // not hide the actual decompiler-generated warning or its Evidence.
+  const warningDetail = unresolved.evidence.find(
+    (evidence) => evidence.source === "ghidra-decompiler-warning",
+  )?.detail;
+  const warningText = warningDetail?.match(/reported "([^"]+)"/u)?.[1];
+  if (!warningText)
+    throw new Error(`Missing original Ghidra warning text: ${warningDetail}`);
+  const annotated = await functionCall(client, "annotate_native_function", {
+    procedure: computed.address,
+    comment: warningText,
+  });
+  const retained =
+    annotated.dossier.native_api?.unresolved_indirect_branches?.find(
+      (branch) => branch.branch_address === branchAddress,
+    );
+  if (
+    annotated.annotations.comment !== warningText ||
+    retained?.decompiler_outcome !== "jump_table_recovery_failed" ||
+    !retained.evidence.some(
+      (evidence) => evidence.source === "ghidra-decompiler-warning",
+    )
+  )
+    throw new Error(
+      `Stored comment hid genuine jump-table warning at ${branchAddress}: ${JSON.stringify(retained)}`,
+    );
+  // A caller comment that spells the whole warning is rendered as a second
+  // warning line. Only that line is discounted, so the real one still counts.
+  const forged = `WARNING: ${warningText}`;
+  const reannotated = await functionCall(client, "annotate_native_function", {
+    procedure: computed.address,
+    comment: forged,
+  });
+  const renderedWarnings =
+    reannotated.dossier.pseudocode.match(
+      /WARNING:\s+Could not recover jumptable at/gu,
+    )?.length ?? 0;
+  const kept =
+    reannotated.dossier.native_api?.unresolved_indirect_branches?.find(
+      (branch) => branch.branch_address === branchAddress,
+    );
+  if (
+    reannotated.annotations.comment !== forged ||
+    renderedWarnings < 2 ||
+    kept?.decompiler_outcome !== "jump_table_recovery_failed" ||
+    !kept.evidence.some(
+      (evidence) => evidence.source === "ghidra-decompiler-warning",
+    )
+  )
+    throw new Error(
+      `A stored copy of the warning hid the genuine jump-table warning at ${branchAddress} (${String(renderedWarnings)} rendered): ${JSON.stringify(kept)}`,
+    );
+  // A long stored warning can wrap or be truncated by the decompiler.
+  // That must not consume a separate real warning at the same branch.
+  const verbose = `WARNING: ${warningText} ${"padding ".repeat(100)}`;
+  const afterVerboseComment = await functionCall(
+    client,
+    "annotate_native_function",
+    { procedure: computed.address, comment: verbose },
+  );
+  const preserved =
+    afterVerboseComment.dossier.native_api?.unresolved_indirect_branches?.find(
+      (branch) => branch.branch_address === branchAddress,
+    );
+  if (
+    afterVerboseComment.annotations.comment !== verbose ||
+    preserved?.decompiler_outcome !== "jump_table_recovery_failed" ||
+    !preserved.evidence.some(
+      (evidence) => evidence.source === "ghidra-decompiler-warning",
+    )
+  )
+    throw new Error(
+      `Long caller comment hid a real decompiler warning at ${branchAddress}: ${JSON.stringify(preserved)}`,
+    );
+  // The tail call's classification depends on Ghidra's own heuristics, so it
+  // is recorded rather than asserted.
+  const tailCall = requireProcedure(names, "rea_indirect_tail_call");
+  const tailDossier = await functionCall(client, "analyze_function", {
+    procedure: tailCall.address,
+  });
+  return {
+    computed_branch: {
+      branch_address: unresolved.branch_address,
+      decompiler_outcome: unresolved.decompiler_outcome,
+      listing_targets: unresolved.listing_targets,
+    },
+    tail_call: {
+      procedure: tailCall.address,
+      native_api_available: tailDossier.native_api?.available ?? null,
+      unresolved_indirect_branches:
+        tailDossier.native_api?.unresolved_indirect_branches ?? null,
+    },
+  };
+}
+
 export async function verifyRelativeSwitch(client, procedures, entrySize) {
   // Relocatable loaders may choose an assembler-generated alias as the function name.
   const names = await inventoryCall(client, "list_names", {
@@ -632,6 +783,7 @@ export async function verifyRelativeSwitch(client, procedures, entrySize) {
   const dossier = await functionCall(client, "analyze_function", {
     procedure: procedure.address,
   });
+  assertNoUnresolvedIndirectBranches(dossier, "rea_relative_switch");
   const table = dossier.native_api?.jump_tables.find((item) =>
     item.data_sources.some(
       (source) =>
@@ -693,6 +845,7 @@ export async function verifyRelativeSignedSwitch(client, selectorBias = 0) {
   const dossier = await functionCall(client, "analyze_function", {
     procedure: procedure.address,
   });
+  assertNoUnresolvedIndirectBranches(dossier, "rea_relative_switch_signed");
   const table = dossier.native_api?.jump_tables.find((item) =>
     item.data_sources.some(
       (source) =>

@@ -3,6 +3,19 @@
 These source-owned fixtures are compiled at verification time; generated
 binaries and Ghidra projects are never committed.
 
+The optional `ReaIndirectBranchEvidenceProbe.java` and
+`scripts/verify-real-ghidra-warning-attribution.mjs` exercise source-owned
+AArch64, AVR and MIPS warning-attribution cases: overlay-address identity,
+addressable-word coordinates, delay slots and misleading caller comments.
+On Linux x64, the corrected bridge passed this real-Ghidra 12.1.4 / JDK 21
+verification in [fork Actions run 41359355962](https://github.com/jaelliot/rea/actions/runs/41359355962).
+The corrected profile revision and snapshot admission separately passed
+216 focused tests in [run 41359939917](https://github.com/jaelliot/rea/actions/runs/41359939917);
+the extra general AArch64 workflow in that run was blocked by the unrelated
+default MCP input-element limit. These source-owned cases do not establish
+runtime PSP overlay residency, CLI/MCP end-to-end coverage for the new typed
+probe or correctness of commercial game binaries.
+
 - `../c/riscv.c` and `riscv-probe.S` produce source-owned RV32/RV64 ELF images
   with double-float ABI declarations and an independently known instruction.
   `../c/riscv-float-abi.c`, `riscv-probe.S` and `riscv-isa-probe.S` produce

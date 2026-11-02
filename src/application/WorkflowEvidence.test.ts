@@ -613,12 +613,22 @@ it.each([
         recordUnknown: (input) => records.recordUnknown(input),
       }).ok,
     ).toBe(true);
-    expect(records.listUnknowns()).toMatchObject([
-      { question: `Which boundary? (Evidence ${evidence.evidence_id})` },
-    ]);
+    const unknowns = records
+      .listUnknowns()
+      .map(({ question: retained }) => retained);
+    expect(unknowns).toHaveLength(2);
+    expect(unknowns).toEqual(
+      expect.arrayContaining([
+        `Which boundary? (Evidence ${evidence.evidence_id})`,
+        `Which indirect branches does this function contain? The provider did not report an indirect-branch inventory. (Evidence ${evidence.evidence_id})`,
+      ]),
+    );
     expect(records.evidenceById(evidence.evidence_id)).toEqual(evidence);
     expect(evidence.normalized_result).toMatchObject({
-      residual_unknowns: [question],
+      residual_unknowns: expect.arrayContaining([
+        question,
+        "Which indirect branches does this function contain? The provider did not report an indirect-branch inventory.",
+      ]),
     });
   },
 );

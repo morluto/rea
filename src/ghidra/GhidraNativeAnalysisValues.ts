@@ -31,12 +31,23 @@ const ghidraJumpTable = jumpTable.extend({
   ),
 });
 
+const ghidraUnresolvedIndirectBranch =
+  availableNativeApiBoundarySchema.shape.unresolved_indirect_branches
+    .unwrap()
+    .element.extend({
+      branch_address: nativeAddressObservationSchema,
+      listing_targets: z.array(nativeAddressObservationSchema),
+    });
+
 /** Ghidra API facts carry canonical coordinates and HighFunction provenance. */
 export const ghidraNativeApiBoundary = z.discriminatedUnion("available", [
   unavailableNativeApiBoundarySchema,
   availableNativeApiBoundarySchema.extend({
     provenance: z.literal("ghidra-high-function"),
     jump_tables: z.array(ghidraJumpTable),
+    unresolved_indirect_branches: z
+      .array(ghidraUnresolvedIndirectBranch)
+      .exactOptional(),
   }),
 ]);
 

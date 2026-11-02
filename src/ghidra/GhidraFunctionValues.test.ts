@@ -626,6 +626,39 @@ describe("Ghidra compact reference provenance", () => {
   );
 });
 
+describe("Ghidra unresolved indirect branch contract", () => {
+  it("accepts and preserves a canonical unresolved indirect branch", () => {
+    // A rejection-only case cannot tell old from new: the previous strict
+    // schema rejected the whole field. Acceptance fails on that base.
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    const boundary = dossier.native_api;
+    if (boundary?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    const branch = {
+      branch_address: "0x401040",
+      decompiler_outcome: "jump_table_recovery_failed",
+      listing_targets: ["0x401060"],
+      evidence: [
+        {
+          kind: "indirect-branch",
+          source: "ghidra-decompiler-warning",
+          detail:
+            'The decompiler reported "Could not recover jumptable at 0x00401040. Too many branches".',
+        },
+      ],
+    };
+    const parsed = parseFunctionValueFixture("analyze_function", {
+      ...dossier,
+      native_api: { ...boundary, unresolved_indirect_branches: [branch] },
+    });
+    if (!parsed.ok) throw parsed.error;
+    const output = functionDossierSchema.parse(parsed.value).native_api;
+    if (output?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    expect(output.unresolved_indirect_branches).toEqual([branch]);
+  });
+});
+
 describe("Ghidra jump-table mapping contract", () => {
   it("preserves evidenced defaults separately from cases and unresolved targets", () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
@@ -868,6 +901,30 @@ const malformedOutputs = (): Array<
                 {
                   ...mapping,
                   target_address: "401020",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+    [
+      "non-canonical unresolved indirect branch",
+      "analyze_function",
+      {
+        ...dossier,
+        native_api: {
+          ...nativeApi,
+          unresolved_indirect_branches: [
+            {
+              branch_address: "401040",
+              decompiler_outcome: "no_jump_table_warning",
+              listing_targets: [],
+              evidence: [
+                {
+                  kind: "indirect-branch",
+                  source: "ghidra-listing",
+                  detail: "computed jump",
                 },
               ],
             },

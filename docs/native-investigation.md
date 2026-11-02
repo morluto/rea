@@ -475,6 +475,30 @@ scaled ADD/BR instructions and the recovered target set. It reads exactly the
 proven count and preserves unknowns for other forms. Real ELF and host ARM64
 Mach-O fixtures check each case against source-owned return values.
 
+Computed jumps that Ghidra keeps inside the function but recovers no jump table
+for appear in `unresolved_indirect_branches`. When recovery fails, Ghidra's
+decompiler rewrites the jump as a call or return, so these sites would otherwise
+leave no trace. Each entry keeps the listing's flow targets, which carry no case
+values, and the decompiler outcome: `jump_table_recovery_failed` when it reported
+"Could not recover jumptable" for that address, or `no_jump_table_warning` when it
+reported nothing for it. Neither outcome distinguishes an in-function dispatch
+from an indirect tail call: on Ghidra 12.1.4 an unbounded computed jump and a
+tail call through a loaded function pointer both report the recovery failure.
+Warning provenance comes from typed decompiler comment tokens rather than
+the printed warning address. The token source preserves overlay and
+address-unit identity; caller-authored listing comments at that same source
+are discounted by rendered occurrence instead of being treated as decompiler
+warnings. The inventory lists at most 256 sites and 64 listing
+targets per site; `unresolved_indirect_branches_omitted` and
+`listing_targets_omitted` count the rest, and omitted sites add one residual
+unknown.
+Any entry adds
+`indirect-branch-target-recovery` to `inspect_native_api.unsupported_branches`
+and a residual unknown per site. The field is absent when the provider did not
+inspect indirect branches; `inspect_native_api` then reports
+`indirect-branch-inventory` as unsupported with a residual unknown, so an
+uninspected function is not presented as having none.
+
 ## Static inspection
 
 Thin Mach-O admission and each admitted FAT slice walk declared load-command headers, checking
@@ -1202,7 +1226,8 @@ before any comment or name is changed.
 - `npm run verify:ghidra`: host-native debug/stripped targets, native type layout,
   instruction/call facts, value dependencies and process/project cleanup.
 - `npm run verify:ghidra:aarch64-jump-table`: optimized ELF and byte/halfword
-  relative tables, plus ARM64 Mach-O on an ARM64 macOS host.
+  relative tables, an unbounded computed branch reported as unresolved, plus
+  ARM64 Mach-O on an ARM64 macOS host.
 - `npm run verify:apple-dispatch`: source-built Objective-C protocols, classes,
   properties and categories, and Swift conformances and vtables. Each is linked
   with legacy `LC_DYLD_INFO` and with chained fixups (and as arm64e on Apple
