@@ -236,11 +236,11 @@ describe("MCP composed workflow target admission: reverse engineering", () => {
       );
       const closed = await closeRequest;
       // An unrestricted provider command may have changed the artifact, so the
-      // snapshot is refused rather than written; the Evidence stays exportable.
+      // target is retired and saving remains unavailable until a fresh open.
       expect(closed.isError).toBe(true);
-      expect(JSON.stringify(closed.content)).toContain(
-        "evidence_integrity_mismatch",
-      );
+      expect(parseMcpToolError(closed)).toMatchObject({
+        error: { code: "target_unavailable" },
+      });
       await expect(access(snapshotPath)).rejects.toMatchObject({
         code: "ENOENT",
       });
