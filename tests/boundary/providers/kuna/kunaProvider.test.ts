@@ -182,13 +182,13 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
 
 it("commits the observed Kuna release and digest to the analysis profile", async () => {
   const { profile, kuna } = await session("rea-kuna-profile-", {
-    version: { stdout: "kuna 1.988\n" },
+    version: { stdout: "kuna 1.989\n" },
   });
 
   expect(profile).toMatchObject({
-    provider: { id: "kuna", name: "Kuna", version: "1.988" },
+    provider: { id: "kuna", name: "Kuna", version: "1.989" },
     parameters: {
-      kuna_version: "1.988",
+      kuna_version: "1.989",
       kuna_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
       kuna_command: kuna,
       verified_release: true,
