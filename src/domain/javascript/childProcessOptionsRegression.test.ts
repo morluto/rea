@@ -40,7 +40,7 @@ describe("child-process options detection", () => {
       {
         method: "execFile",
         environmentSupplied: true,
-        stdioMode: "default",
+        stdioMode: "pipe",
         resolution: "complete",
       },
       {
@@ -101,7 +101,7 @@ describe("child-process options detection", () => {
       })),
     ).toEqual([
       { environmentSupplied: true, stdioMode: "pipe" },
-      { environmentSupplied: true, stdioMode: "default" },
+      { environmentSupplied: true, stdioMode: "pipe" },
       { environmentSupplied: true, stdioMode: "array" },
     ]);
   });
@@ -116,13 +116,53 @@ describe("child-process options detection", () => {
     `);
 
     expect(
-      ir.childProcessSpawns.every(
-        ({ environmentSupplied, stdioMode }) =>
-          environmentSupplied === false && stdioMode === "default",
+      ir.childProcessSpawns.map(
+        ({ method, environmentSupplied, stdioMode }) => ({
+          method,
+          environmentSupplied,
+          stdioMode,
+        }),
       ),
-    ).toBe(true);
+    ).toEqual([
+      { method: "spawn", environmentSupplied: false, stdioMode: "default" },
+      { method: "execFile", environmentSupplied: false, stdioMode: "pipe" },
+      { method: "fork", environmentSupplied: false, stdioMode: "default" },
+    ]);
+  });
 
-    expect(ir.childProcessSpawns).toHaveLength(3);
+  it("reports the effective piped stdio for exec and execFile", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      import { exec, execFile, spawn } from "node:child_process";
+
+      exec("echo ignored", { stdio: "ignore" });
+      exec("echo inherited", { stdio: "inherit" });
+      execFile("tool", { stdio: "ignore" });
+      execFile("tool", [], { stdio: "inherit" });
+      execFile("tool", [], { stdio: ["ignore", "pipe", "pipe"] });
+      exec("echo dynamic", { stdio: input });
+      exec("echo bare");
+      exec("echo callback", done);
+      execFile("tool", [], undefined);
+      spawn("tool", { stdio: "ignore" });
+    `);
+
+    expect(
+      ir.childProcessSpawns.map(({ method, stdioMode }) => ({
+        method,
+        stdioMode,
+      })),
+    ).toEqual([
+      { method: "exec", stdioMode: "pipe" },
+      { method: "exec", stdioMode: "pipe" },
+      { method: "execFile", stdioMode: "pipe" },
+      { method: "execFile", stdioMode: "pipe" },
+      { method: "execFile", stdioMode: "pipe" },
+      { method: "exec", stdioMode: "pipe" },
+      { method: "exec", stdioMode: "pipe" },
+      { method: "exec", stdioMode: "pipe" },
+      { method: "execFile", stdioMode: "pipe" },
+      { method: "spawn", stdioMode: "ignore" },
+    ]);
   });
 
   it("reads env as Node does, where a falsy value inherits the parent environment", () => {
