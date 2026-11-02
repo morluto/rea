@@ -1,4 +1,5 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -10,10 +11,11 @@ import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResol
 import { AnalysisInputError } from "../../../../src/domain/analysisErrorCore.js";
 import { createNativeUiHelperRuntime } from "../../../../src/native/NativeUiHelperRuntime.js";
 import { observeNativeUi } from "../../../../src/native/NativeUiObservation.js";
+import { cleanupOwnedProcessGroup } from "../../../../src/process/ProcessOwnership.js";
 import {
-  observeProcessStartIdentity,
-  signalProcessWithStartIdentity,
-} from "../../../../src/process/ProcessOwnershipObservation.js";
+  ProviderProcessSupervisor,
+  spawnOwnedProviderProcess,
+} from "../../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 const scopeSchema = z.object({
@@ -21,31 +23,33 @@ const scopeSchema = z.object({
   window_id: z.number().int().positive(),
 });
 
+// Ownership starts with the launch: the app inherits the launcher's run token, so
+// the sweep finds it with or without a ready record. /usr/bin/open's own token is
+// withheld, so its retained handle must stop it before the sweep can succeed.
 const launch = async (bundle: string, name: string) => {
   const coordinates = join(bundle, "..", `${name}.json`);
   await writeFile(coordinates, "");
-  const launcher = spawn(
-    "/usr/bin/open",
-    ["-W", "-n", "-g", "--stdout", coordinates, bundle],
-    { stdio: "ignore" },
+  const owned = await spawnOwnedProviderProcess({
+    command: "/usr/bin/open",
+    arguments: ["-W", "-n", "-g", "--stdout", coordinates, bundle],
+    runId: randomUUID(),
+    sweepTokenOwnedProcesses: true,
+  });
+  const launcher = new ProviderProcessSupervisor(
+    { process: owned.process, ownsProcessLifetime: true },
+    { maxDiagnosticBytes: { stdout: 0, stderr: 64 * 1024 } },
   );
+  onTestFinished(async () => {
+    const stopped = await launcher.stop();
+    const swept = await cleanupOwnedProcessGroup(owned.ownership);
+    expect(stopped.status).not.toBe("incomplete");
+    expect(swept).toMatchObject({ cleaned: true });
+  });
   const deadline = performance.now() + 30_000;
   for (;;) {
     const [line] = (await readFile(coordinates, "utf8")).split("\n");
-    if (line !== undefined && line.length > 0) {
-      const scope = scopeSchema.parse(JSON.parse(line));
-      const identity = await observeProcessStartIdentity(scope.pid);
-      onTestFinished(async () => {
-        if (identity?.state === "readable")
-          await signalProcessWithStartIdentity(
-            scope.pid,
-            identity.identity,
-            "SIGKILL",
-          );
-        launcher.kill("SIGKILL");
-      });
-      return scope;
-    }
+    if (line !== undefined && line.length > 0)
+      return scopeSchema.parse(JSON.parse(line));
     if (performance.now() >= deadline)
       throw new Error("The off-screen fixture never reported its window");
     await delay(50);

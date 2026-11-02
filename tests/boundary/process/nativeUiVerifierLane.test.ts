@@ -11,25 +11,35 @@ import { liveProcesses } from "../../../src/process/ProcessOwnershipProcessTree.
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 // Stands in for /usr/bin/open: starts a detached app that inherits its environment.
+// Each stand-in records itself and leaves when the test releases it, or expires.
+const standInPrelude = `
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
+const record = (kind) => appendFileSync(config.events, JSON.stringify({ kind, pid: process.pid }) + "\\n");
+setInterval(() => {
+  if (existsSync(config.release)) process.exit(0);
+}, 10);
+setTimeout(() => process.exit(0), 60000);
+`;
+
 const launcherSource = `
 import { spawn } from "node:child_process";
-import { appendFileSync, openSync, readFileSync } from "node:fs";
-const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
+import { openSync } from "node:fs";
+${standInPrelude}
+record("launcher");
 const args = process.argv.slice(2);
 const coordinates = args[args.indexOf("--stdout") + 1];
-const app = spawn(process.execPath, [new URL("./fixture.mjs", import.meta.url).pathname], {
+spawn(process.execPath, [new URL("./fixture.mjs", import.meta.url).pathname], {
   detached: true,
   stdio: ["ignore", openSync(coordinates, "a"), "ignore"],
-});
-app.unref();
-appendFileSync(config.events, JSON.stringify({ pid: app.pid }) + "\\n");
-setTimeout(() => process.exit(0), 60000);
+}).unref();
 `;
 
 const fixtureSource = `
 import { writeSync } from "node:fs";
+${standInPrelude}
+record("fixture");
 writeSync(1, JSON.stringify({ pid: process.pid, window_id: 7 }) + "\\n");
-setTimeout(() => process.exit(0), 60000);
 `;
 
 // Runs the actual verifier and observation mapping. Only the compiler and launcher
@@ -82,10 +92,16 @@ syncBuiltinESMExports();
 const denied = `printf '%s' '{"ok":false,"code":"screen-recording-denied","message":"authored permission denial"}'`;
 const answersChangedBytes = `case "$1" in *'"sha256":"0000000000'*) printf '%s' '{"ok":false,"code":"target-mismatch","message":"authored digest refusal"}'; exit 0;; esac; ${denied}`;
 
+const standInSchema = z.object({
+  kind: z.enum(["launcher", "fixture"]),
+  pid: z.number().int().positive(),
+});
+
 const runVerifier = async (helper: string, flags: readonly string[]) => {
   const workspace = await createTestTempDirectory("rea-native-ui-lane-");
   const paths = {
     events: join(workspace, "events.jsonl"),
+    release: join(workspace, "release"),
     launcherEntry: join(workspace, "launcher.mjs"),
   };
   await writeFile(paths.events, "");
@@ -109,8 +125,27 @@ const runVerifier = async (helper: string, flags: readonly string[]) => {
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
-  onTestFinished(() => {
+  const standIns = async () =>
+    (await readFile(paths.events, "utf8"))
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => standInSchema.parse(JSON.parse(line)));
+  const isLive = async (pid: number) =>
+    liveProcesses(await systemProcessOwnershipHost.listProcesses()).some(
+      (process) => process.pid === pid,
+    );
+  const untilGone = async (pid: number) => {
+    const deadline = performance.now() + 15_000;
+    while ((await isLive(pid)) && performance.now() < deadline) await delay(25);
+    return !(await isLive(pid));
+  };
+  // Runs on a timeout or failed assertion too: the verifier cannot release a stand-in
+  // once killed, and its fixture would otherwise outlive the test until it expired.
+  onTestFinished(async () => {
     child.kill("SIGKILL");
+    await writeFile(paths.release, "");
+    for (const { pid } of await standIns())
+      expect(await untilGone(pid)).toBe(true);
   });
   let stdout = "";
   let stderr = "";
@@ -123,22 +158,13 @@ const runVerifier = async (helper: string, flags: readonly string[]) => {
   const code = await new Promise<number | null>((settle) => {
     child.once("close", settle);
   });
-  const { pid } = z
-    .object({ pid: z.number().int().positive() })
-    .parse(
-      JSON.parse((await readFile(paths.events, "utf8")).split("\n")[0] ?? ""),
-    );
-  const deadline = performance.now() + 15_000;
-  const isLive = async () =>
-    liveProcesses(await systemProcessOwnershipHost.listProcesses()).some(
-      (process) => process.pid === pid,
-    );
-  while ((await isLive()) && performance.now() < deadline) await delay(25);
+  const fixture = (await standIns()).find(({ kind }) => kind === "fixture");
+  expect(fixture, stderr).toBeDefined();
   return {
     code,
     stdout,
     stderr,
-    fixtureLive: await isLive(),
+    fixtureLive: !(await untilGone(fixture?.pid ?? -1)),
     roots: (await readdir(workspace)).filter((name) =>
       name.startsWith("rea-ui-fixture-"),
     ),
