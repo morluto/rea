@@ -21,7 +21,7 @@ describe("release exposure filesystem boundary", () => {
     const service = createReleaseExposureService();
     try {
       const result = await service.inspect({ path: root });
-      if (!result.ok) throw new Error(result.error.message);
+      if (!result.ok) throw result.error;
       const report = releaseExposureReportSchema.parse(
         result.value.normalized_result,
       );
@@ -55,7 +55,7 @@ describe("release exposure filesystem boundary", () => {
     const service = createReleaseExposureService();
     try {
       const result = await service.inspect({ path: archive });
-      if (!result.ok) throw new Error(result.error.message);
+      if (!result.ok) throw result.error;
       expect(result.value.limitations.join("\n")).toContain(
         "integrity contradiction",
       );
@@ -121,7 +121,7 @@ describe("release exposure filesystem boundary", () => {
     const service = createReleaseExposureService();
     try {
       const result = await service.inspect({ path: root });
-      if (!result.ok) throw new Error(result.error.message);
+      if (!result.ok) throw result.error;
       const report = result.value.normalized_result as {
         summary: {
           no_exposure_observed_in_assessed_checks: boolean;
@@ -164,7 +164,7 @@ describe("release exposure app bundle boundary", () => {
     const service = createReleaseExposureService();
     try {
       const result = await service.inspect({ path: app });
-      if (!result.ok) throw new Error(result.error.message);
+      if (!result.ok) throw result.error;
       const check = releaseExposureReportSchema
         .parse(result.value.normalized_result)
         .checks.find((item) => item.id === "electron.run_as_node");
