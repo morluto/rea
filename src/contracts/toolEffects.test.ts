@@ -111,6 +111,7 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   goto_address: "start names an object boundary, not a launch",
   prev_address: "start names an object boundary, not a launch",
   trace_call_path: "start names the traversal origin",
+  search_bytes: "start names an inclusive search bound, not a launch",
   observe_native_ui: "observes an already-running app without launching it",
   inspect_adb_package: "reports install times without changing the device",
   list_adb_processes: "lists running processes without changing the device",
