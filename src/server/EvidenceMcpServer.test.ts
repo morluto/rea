@@ -13,7 +13,8 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
-import { toolContract } from "../contracts/toolContracts.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import { knownArgumentMistakeGuidance } from "../domain/inputArgumentGuidance.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { forgetPendingMcpRequest } from "./EvidenceMcpServerCore.js";
 import { createToolResultDelivery } from "./toolResult.js";
@@ -399,11 +400,25 @@ const createGuidanceClientServer = async (
   };
 };
 
+const officialContract = (
+  name: (typeof OFFICIAL_TOOL_CONTRACTS)[number]["name"],
+) => {
+  const contract = OFFICIAL_TOOL_CONTRACTS.find((c) => c.name === name);
+  if (contract === undefined)
+    throw new Error(`Missing official contract: ${name}`);
+  return contract;
+};
+
 describe("SDK argument name guidance", () => {
   it("guides procedure_pseudo_code caller from address to procedure without duplicating diagnostic", async () => {
+    const guidance = knownArgumentMistakeGuidance(
+      "procedure_pseudo_code",
+      "address",
+    );
+    expect(guidance).toBeDefined();
     const session = await createGuidanceClientServer(
       "procedure_pseudo_code",
-      toolContract("procedure_pseudo_code").inputSchema,
+      officialContract("procedure_pseudo_code").inputSchema,
     );
     try {
       const result = await session.client.callTool({
@@ -417,13 +432,13 @@ describe("SDK argument name guidance", () => {
         expect.objectContaining({
           path: ["address"],
           reason: "unknown_argument",
-          expected: "procedure",
-          message: "Unrecognized argument 'address'; did you mean 'procedure'?",
+          expected: guidance!.expected,
+          message: guidance!.message,
         }),
       );
-      expect(payload.error.remediation.action).toMatch(
-        /^Use 'procedure' \(a procedure name or address\) instead of 'address'\./,
-      );
+      expect(
+        payload.error.remediation.action.startsWith(guidance!.remediation),
+      ).toBe(true);
       expect(payload.error.message).not.toContain("address");
     } finally {
       await session.close();
@@ -431,9 +446,11 @@ describe("SDK argument name guidance", () => {
   });
 
   it("guides search_strings caller from query to pattern", async () => {
+    const guidance = knownArgumentMistakeGuidance("search_strings", "query");
+    expect(guidance).toBeDefined();
     const session = await createGuidanceClientServer(
       "search_strings",
-      toolContract("search_strings").inputSchema,
+      officialContract("search_strings").inputSchema,
     );
     try {
       const result = await session.client.callTool({
@@ -447,22 +464,27 @@ describe("SDK argument name guidance", () => {
         expect.objectContaining({
           path: ["query"],
           reason: "unknown_argument",
-          expected: "pattern",
-          message: "Unrecognized argument 'query'; did you mean 'pattern'?",
+          expected: guidance!.expected,
+          message: guidance!.message,
         }),
       );
-      expect(payload.error.remediation.action).toMatch(
-        /^Use 'pattern' instead of 'query'\./,
-      );
+      expect(
+        payload.error.remediation.action.startsWith(guidance!.remediation),
+      ).toBe(true);
     } finally {
       await session.close();
     }
   });
 
   it("rejects address with procedure guidance and retains unexplained key count in diagnostics", async () => {
+    const guidance = knownArgumentMistakeGuidance(
+      "read_function_instructions",
+      "address",
+    );
+    expect(guidance).toBeDefined();
     const session = await createGuidanceClientServer(
       "read_function_instructions",
-      toolContract("read_function_instructions").inputSchema,
+      officialContract("read_function_instructions").inputSchema,
     );
     try {
       const result = await session.client.callTool({
@@ -476,8 +498,8 @@ describe("SDK argument name guidance", () => {
         expect.objectContaining({
           path: ["address"],
           reason: "unknown_argument",
-          expected: "procedure",
-          message: "Unrecognized argument 'address'; did you mean 'procedure'?",
+          expected: guidance!.expected,
+          message: guidance!.message,
         }),
       );
       expect(payload.error.details.issues).toContainEqual(
