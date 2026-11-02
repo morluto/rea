@@ -40,7 +40,8 @@ the member count. Each member keeps its stored name, index and declared offset.
 Members are stored without compression and stream directly from the carrier.
 A truncated record, a name that exceeds the directory, a member outside the
 file and a duplicate member name are malformed-input errors. The directory is
-limited to 16 MiB and readable member bytes share the archive expansion budget.
+limited to 16 MiB and 65,536 members, and readable member bytes share the
+archive expansion budget.
 Members such as `Il2CppData/Metadata/global-metadata.dat` can then be inspected
 with [`inspect_il2cpp_metadata`](il2cpp-metadata.md).
 
@@ -72,7 +73,11 @@ the declared Unity version, not from embedded type trees. An object that does
 not match its layout keeps null fields, is counted in
 `coverage.undecoded_objects` and makes coverage `partial`. Producers older than
 5.5, or with an unparsable version, return counts and tables with no decoded
-fields. A malformed header or metadata table fails without partial success.
+fields. A malformed header or metadata table fails without partial success:
+this includes a data offset inside the header or metadata, duplicate path IDs,
+overlapping object spans and a reference-type table or user string that does
+not fit. A file declaring more than 1,048,576 objects is refused as a fixed
+count allowance before the object table is retained.
 
 `submesh_vertex_extent` is the largest `firstVertex + vertexCount` across a
 mesh's submeshes. It is derived from submesh ranges and is not

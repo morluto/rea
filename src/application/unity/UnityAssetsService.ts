@@ -78,10 +78,11 @@ export class UnityAssetsService {
           limitations: value.limitations,
           locations: [
             { kind: "artifact-path", path: value.artifact.path },
+            // Decoded object fields come from the data area, so cover the whole file.
             {
               kind: "file-offset-range",
               start: 0,
-              end: value.header.data_offset,
+              end: value.artifact.bytes,
             },
           ],
         },

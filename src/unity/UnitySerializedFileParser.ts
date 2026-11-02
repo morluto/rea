@@ -35,6 +35,11 @@ const malformed = (detail: string): UnityAssetsFormatFailure =>
 const MONO_BEHAVIOUR = 114;
 /** Smallest object-table row: aligned i64 path ID, offset, size and type. */
 const MIN_OBJECT_ROW_BYTES = 20;
+/**
+ * Resource policy, not a format maximum: every row is retained, so the table
+ * is admitted by count before allocation rather than by source bytes alone.
+ */
+export const UNITY_SERIALIZED_FILE_MAX_OBJECTS = 1_048_576;
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** Bounded cursor over the metadata region; alignment is file-absolute. */
@@ -186,6 +191,8 @@ const readHeader = (bytes: Uint8Array): Header => {
     header.dataOffset > header.fileSize
   )
     throw malformed("metadata or data offset lies outside the file");
+  if (header.dataOffset < header.metadataStart + header.metadataSize)
+    throw malformed("data offset lies inside the header or metadata");
   return header;
 };
 
@@ -264,10 +271,19 @@ export const parseUnitySerializedFile = (
     typeClasses.push(readType(reader, version, typeTree, false));
 
   const objectCount = reader.count("objects", MIN_OBJECT_ROW_BYTES);
+  if (objectCount > UNITY_SERIALIZED_FILE_MAX_OBJECTS)
+    throw new UnityAssetsFormatFailure(
+      "limit",
+      `SerializedFile declares ${String(objectCount)} objects, above the ${String(UNITY_SERIALIZED_FILE_MAX_OBJECTS)}-object inventory allowance`,
+    );
   const rows: ObjectRow[] = [];
+  const pathIds = new Set<string>();
   for (let index = 0; index < objectCount; index += 1) {
     reader.align();
     const pathId = reader.i64("object path ID").toString();
+    if (pathIds.has(pathId))
+      throw malformed(`object path ID ${pathId} is duplicated`);
+    pathIds.add(pathId);
     const relative =
       version >= 22
         ? reader.i64("object offset")
@@ -292,6 +308,16 @@ export const parseUnitySerializedFile = (
       throw malformed(`object ${pathId} lies outside the data area`);
     rows.push({ pathId, start, size, classId });
   }
+  // Shared spans would decode and retain the same bytes once per row.
+  let spanEnd = 0;
+  const byStart = [...rows].sort(
+    (left, right) => left.start - right.start || left.size - right.size,
+  );
+  for (const row of byStart) {
+    if (row.start < spanEnd)
+      throw malformed(`object ${row.pathId} overlaps another object`);
+    spanEnd = row.start + row.size;
+  }
 
   const scripts = reader.count("script references", 12);
   for (let index = 0; index < scripts; index += 1) {
@@ -312,6 +338,13 @@ export const parseUnitySerializedFile = (
       type,
     });
   }
+  // Not reported, but bounds-checked so corrupt trailing metadata is refused.
+  if (version >= 20) {
+    const referenceTypes = reader.count("reference types", 4);
+    for (let index = 0; index < referenceTypes; index += 1)
+      readType(reader, version, typeTree, true);
+  }
+  reader.cstring("user information");
 
   return {
     artifact,

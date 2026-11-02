@@ -7,6 +7,7 @@ import {
   buildUnityWebData,
   unityGameObject,
   unitySceneObjects,
+  unityTransform,
 } from "../../tests/fixtures/unity.js";
 
 const artifact = (bytes: Buffer) => ({
@@ -183,4 +184,63 @@ it("rejects unsupported versions and inconsistent headers", () => {
   const outside = buildSerializedFile({ objects: unitySceneObjects() });
   outside.writeUInt32BE(outside.length, 20);
   expect(() => parse(outside)).toThrow(/outside the file/u);
+  const inside = buildSerializedFile({ objects: unitySceneObjects() });
+  inside.writeBigUInt64BE(0n, 32);
+  expect(() => parse(inside)).toThrow(/inside the header or metadata/u);
+});
+
+it("rejects duplicate path IDs and overlapping object spans", () => {
+  const object = { classId: 1, bytes: unityGameObject("Shared", []) };
+  expect(() =>
+    parse(
+      buildSerializedFile({
+        objects: [
+          { ...object, pathId: 1n },
+          { ...object, pathId: 1n },
+        ],
+      }),
+    ),
+  ).toThrow(/path ID 1 is duplicated/u);
+  expect(() =>
+    parse(
+      buildSerializedFile({
+        objects: [
+          { ...object, pathId: 1n },
+          { ...object, pathId: 2n, offset: 0 },
+        ],
+      }),
+    ),
+  ).toThrow(/overlaps another object/u);
+});
+
+it("bounds-checks the trailing reference-type table", () => {
+  const bytes = buildSerializedFile({ objects: unitySceneObjects() });
+  const metadataEnd = 48 + bytes.readUInt32BE(20);
+  // Metadata ends with the reference-type count and an empty user string.
+  bytes.writeInt32LE(0x7fffffff, metadataEnd - 5);
+  expect(() => parse(bytes)).toThrow(/reference types count/u);
+});
+
+it("keeps the report when a Transform position is not finite", () => {
+  const report = parse(
+    buildSerializedFile({
+      objects: [
+        { pathId: 1n, classId: 1, bytes: unityGameObject("Root", [2n]) },
+        {
+          pathId: 2n,
+          classId: 4,
+          bytes: unityTransform({
+            gameObject: 1n,
+            position: [Number.NaN, 0, 0],
+          }),
+        },
+      ],
+    }),
+  );
+  expect(report.root_game_objects).toEqual([]);
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    decoded_objects: 1,
+    undecoded_objects: 1,
+  });
 });

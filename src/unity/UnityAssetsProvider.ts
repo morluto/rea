@@ -31,7 +31,10 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok } from "../domain/result.js";
 import { UnityAssetsFormatFailure } from "./UnityAssets.errors.js";
-import { parseUnitySerializedFile } from "./UnitySerializedFileParser.js";
+import {
+  parseUnitySerializedFile,
+  UNITY_SERIALIZED_FILE_MAX_OBJECTS,
+} from "./UnitySerializedFileParser.js";
 
 const OPERATION = "inspect_unity_assets";
 
@@ -66,6 +69,21 @@ const failureForPrimary = (
     return new AnalysisCancelledError(OPERATION, {
       cause: artifactFileCancellationCause(cause),
     });
+  if (cause instanceof UnityAssetsFormatFailure && cause.kind === "limit")
+    return new AnalysisResourceConstraintError(
+      OPERATION,
+      "memory",
+      cause.message,
+      { max_objects: UNITY_SERIALIZED_FILE_MAX_OBJECTS },
+      {
+        cause,
+        retryable: false,
+        fixedAllowance: {
+          name: "The SerializedFile object inventory allowance",
+          kind: "count",
+        },
+      },
+    );
   if (cause instanceof UnityAssetsFormatFailure)
     return cause.kind === "unsupported"
       ? new AnalysisUnsupportedTargetError(

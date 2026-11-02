@@ -174,6 +174,8 @@ export interface UnityFixtureObject {
   readonly pathId: bigint;
   readonly classId: number;
   readonly bytes: Buffer;
+  /** Reuse an earlier data-relative offset instead of appending the bytes. */
+  readonly offset?: number;
 }
 
 /** Format 17–22 little-endian SerializedFile without type trees. */
@@ -202,9 +204,11 @@ export const buildSerializedFile = (options: {
   const data = new Writer();
   for (const object of options.objects) {
     metadata.align().i64(object.pathId);
-    if (version >= 22) metadata.i64(BigInt(data.length));
-    else metadata.i32(data.length);
+    const offset = object.offset ?? data.length;
+    if (version >= 22) metadata.i64(BigInt(offset));
+    else metadata.i32(offset);
     metadata.i32(object.bytes.length).i32(classes.indexOf(object.classId));
+    if (object.offset !== undefined) continue;
     data
       .push(object.bytes)
       .push(Buffer.alloc((8 - (object.bytes.length % 8)) % 8));

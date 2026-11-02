@@ -16,6 +16,13 @@ export const UNITY_WEB_DATA_PREFIX_BYTES = UNITY_WEB_DATA_SIGNATURE.length + 4;
 /** Resource policy, not a format maximum: real directories are a few KiB. */
 export const UNITY_WEB_DATA_MAX_DIRECTORY_BYTES = 16 * 1024 * 1024;
 
+/**
+ * Resource policy, not a format maximum: real builds hold a few dozen members.
+ * Zero-length members cost no readable bytes, so the retained records need
+ * their own bound before allocation.
+ */
+export const UNITY_WEB_DATA_MAX_MEMBERS = 65_536;
+
 /** Whether bytes start with the UnityWebData1.0 signature. */
 export const hasUnityWebDataHeader = (bytes: Uint8Array): boolean =>
   bytes.length >= UNITY_WEB_DATA_SIGNATURE.length &&
@@ -73,6 +80,8 @@ export const parseUnityWebDataDirectory = (
   const members: UnityWebDataMember[] = [];
   let cursor = UNITY_WEB_DATA_PREFIX_BYTES;
   while (cursor < directoryEnd) {
+    if (members.length >= UNITY_WEB_DATA_MAX_MEMBERS)
+      return `directory declares more than ${String(UNITY_WEB_DATA_MAX_MEMBERS)} members`;
     if (cursor + 12 > directoryEnd)
       return `record ${String(members.length)} is truncated`;
     const offset = bytes.readUInt32LE(cursor);

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
+import { fixedTupleSchema } from "../fixedTupleSchema.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const uint = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -81,7 +82,7 @@ const rootGameObjectSchema = z.strictObject({
   active: z.boolean().nullable(),
   components: uint.nullable(),
   children: uint,
-  local_position: z.tuple([z.number(), z.number(), z.number()]),
+  local_position: fixedTupleSchema([z.number(), z.number(), z.number()]),
 });
 
 const coverageSchema = z.strictObject({

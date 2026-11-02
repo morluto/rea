@@ -5,10 +5,25 @@ import type { Readable } from "node:stream";
 import { expect, it } from "vitest";
 
 import { UnityWebDataArtifactReader } from "./UnityWebDataArtifactReader.js";
+import {
+  parseUnityWebDataDirectory,
+  UNITY_WEB_DATA_MAX_MEMBERS,
+} from "../domain/unityWebDataFormat.js";
 import { buildUnityWebData } from "../../tests/fixtures/unity.js";
 import { classifyArtifactBytesAtPath } from "../../tests/fixtures/artifactClassification.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+
+it("bounds retained directory records before allocating them", () => {
+  const members = Array.from(
+    { length: UNITY_WEB_DATA_MAX_MEMBERS + 1 },
+    (_, index) => ({ path: String(index), bytes: Buffer.alloc(0) }),
+  );
+  const carrier = buildUnityWebData(members);
+  expect(parseUnityWebDataDirectory(carrier, carrier.length)).toMatch(
+    /more than 65536 members/u,
+  );
+});
 
 const collect = async (stream: Readable): Promise<Buffer> => {
   const chunks: Buffer[] = [];

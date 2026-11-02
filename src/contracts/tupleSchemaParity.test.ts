@@ -9,6 +9,7 @@ import { applicationVersionComparisonResultSchema } from "../domain/javascript/j
 import { kernelModuleSchema } from "../domain/native/kernelModule.js";
 import { pinvokeVerificationSchema } from "../domain/managed/managedNativeVerificationSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
+import { unityAssetsSchema } from "../domain/unity/unityAssets.js";
 import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
 
 const directions = [
@@ -132,6 +133,18 @@ const cases: readonly {
       ...[[], [0], [0, 0, 0, 0], [0, null, 0], [0, 256, 0], null].map(
         (pad) => ({ value: { ...signatureInfo, pad }, valid: false }),
       ),
+    ],
+  },
+  {
+    name: "Unity root GameObject positions",
+    schema:
+      unityAssetsSchema.shape.root_game_objects.element.shape.local_position,
+    samples: [
+      { value: [1, 2, 3], valid: true },
+      ...[[], [1, 2], [1, 2, 3, 4], [1, null, 3], null].map((value) => ({
+        value,
+        valid: false,
+      })),
     ],
   },
   {

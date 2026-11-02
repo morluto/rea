@@ -127,7 +127,11 @@ export class UnityObjectReader {
   }
 
   f32(): number {
-    return this.#view.getFloat32(this.#take(4), this.littleEndian);
+    const value = this.#view.getFloat32(this.#take(4), this.littleEndian);
+    // NaN or infinity cannot pass the public number schema; fail the object only.
+    if (!Number.isFinite(value))
+      throw new UnityObjectDecodeFailure("float is not finite");
+    return value;
   }
 
   i64(): bigint {
