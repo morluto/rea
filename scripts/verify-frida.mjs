@@ -2,7 +2,7 @@ import { basename } from "node:path";
 
 import { FridaInstrumentationService } from "../dist/application/frida/FridaInstrumentationService.js";
 import { FridaInstrumentationManager } from "../dist/frida/FridaInstrumentationManager.js";
-import { isValidFridaRemoteAddress } from "../dist/contracts/fridaRemoteAddress.js";
+import { isValidFridaRemoteAddress } from "../dist/domain/fridaRemoteAddress.js";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 const options = parseArguments(process.argv.slice(2));
