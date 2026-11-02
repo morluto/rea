@@ -11,6 +11,7 @@ import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
+import { FirmwareDoctor } from "./firmware/FirmwareDoctor.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
 import { AnalysisCleanupLeaseGroup } from "./artifacts/AnalysisCleanupLease.js";
@@ -24,6 +25,7 @@ import {
 export const createSystemDoctorHost = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
   signal?: AbortSignal,
+  options: { readonly firmware?: boolean } = {},
 ): DoctorHost => {
   const registrationReads = new WeakMap<
     RetainedResourceScope,
@@ -73,29 +75,72 @@ export const createSystemDoctorHost = (
       // parser-owned error when IDA itself was explicitly selected.
       return analysisProvider === "ida" ? registration : ok(undefined);
     },
-    providerInspections: async (resourceScope, inspectionSignal) => [
-      await inspectSystemGhidraProvider(
-        environment,
-        resourceScope,
-        inspectionSignal,
-      ),
-      await inspectIdaRegistration(
-        environment.REA_IDA_MCP_CONFIG,
-        resourceScope,
-        inspectionSignal,
-        environment.REA_IDA_MCP_CONFIG === undefined
-          ? undefined
-          : readRegistration(
-              environment.REA_IDA_MCP_CONFIG,
-              resourceScope,
-              inspectionSignal,
-            ),
-      ),
-      await inspectJadxProvider(environment, resourceScope, inspectionSignal),
-      await inspectKunaProvider(environment, process.platform, {
-        resourceScope,
-        signal: inspectionSignal,
-      }),
+    providerInspections: [
+      async (resourceScope, inspectionSignal) => [
+        await inspectSystemGhidraProvider(
+          environment,
+          resourceScope,
+          inspectionSignal,
+        ),
+      ],
+      async (resourceScope, inspectionSignal) => [
+        await inspectIdaRegistration(
+          environment.REA_IDA_MCP_CONFIG,
+          resourceScope,
+          inspectionSignal,
+          environment.REA_IDA_MCP_CONFIG === undefined
+            ? undefined
+            : readRegistration(
+                environment.REA_IDA_MCP_CONFIG,
+                resourceScope,
+                inspectionSignal,
+              ),
+        ),
+      ],
+      async (resourceScope, inspectionSignal) => [
+        await inspectJadxProvider(environment, resourceScope, inspectionSignal),
+      ],
+      async (resourceScope, inspectionSignal) => [
+        await inspectKunaProvider(environment, process.platform, {
+          resourceScope,
+          signal: inspectionSignal,
+        }),
+      ],
+      ...(options.firmware === false
+        ? []
+        : [
+            async (
+              resourceScope: RetainedResourceScope,
+              inspectionSignal: AbortSignal,
+            ) => {
+              const firmware = new FirmwareDoctor(
+                environment,
+                process.platform,
+                {},
+                inspectionSignal,
+              );
+              try {
+                return await firmware.inspect();
+              } finally {
+                if (firmware.hasPendingCleanup)
+                  resourceScope.retain(
+                    {
+                      async close() {
+                        const reason = await firmware.close();
+                        if (reason !== undefined)
+                          throw new ProviderCleanupError(
+                            "firmware",
+                            ["firmware-doctor"],
+                            { reason },
+                            { operation: "doctor" },
+                          );
+                      },
+                    },
+                    "firmware-doctor",
+                  );
+              }
+            },
+          ]),
     ],
     linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
       inspectLinuxHopperDemoRuntime(
