@@ -613,7 +613,7 @@ const installationCoordinates = async (
   if (
     platform === "darwin" &&
     options.javaHome === undefined &&
-    (selectedJava.source === "path" || selectedJava.source === "default") &&
+    selectedJava.source !== "configured" &&
     javaProbe !== undefined &&
     !javaProbe.ok &&
     !(javaProbe.error instanceof AnalysisError) &&
@@ -626,6 +626,7 @@ const installationCoordinates = async (
       failure: javaProbe.error,
     });
     for (const candidate of homebrewJavaCandidates()) {
+      if (candidate === selectedJava.command) continue;
       const fallback = await host.probeJava(
         candidate,
         ghidraJavaEnvironment(undefined, options.environment, platform),

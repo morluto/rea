@@ -1793,11 +1793,13 @@ it.each(["arm64", "x64"] as const)(
 );
 
 it.each([
-  ["arm64", "/opt/homebrew", "/usr/local"],
-  ["x64", "/usr/local", "/opt/homebrew"],
+  ["arm64", true, "/opt/homebrew", "/usr/local"],
+  ["x64", true, "/usr/local", "/opt/homebrew"],
+  ["arm64", false, "/opt/homebrew", "/usr/local"],
+  ["x64", false, "/usr/local", "/opt/homebrew"],
 ] as const)(
-  "orders installed Homebrew Java candidates on macOS %s",
-  async (architecture, preferred, other) => {
+  "orders installed Homebrew Java candidates on macOS %s with PATH Java %s",
+  async (architecture, pathJava, preferred, other) => {
     const suffix = "/libexec/openjdk.jdk/Contents/Home/bin/java";
     const candidates = [
       `${preferred}/opt/openjdk${suffix}`,
@@ -1807,12 +1809,12 @@ it.each([
       `${other}/opt/openjdk@21${suffix}`,
       `${other}/opt/openjdk@25${suffix}`,
     ];
-    for (const selected of [0, 1, 2, undefined]) {
+    for (const selected of [0, 1, 2, 3, undefined]) {
       const commands: string[] = [];
       const inspection = await inspectGhidraInstallation(
         {
           resourceOwner: inspectionResources.owner,
-          environment: { PATH: "/usr/bin" },
+          environment: { PATH: pathJava ? "/usr/bin" : "/empty-bin" },
           installDir: INSTALL,
           platform: "darwin",
           architecture,
@@ -1822,7 +1824,7 @@ it.each([
             "application.version=12.1.4\napplication.java.min=21\napplication.java.max=25\n",
           directoryEntries: () => ["openjdk@25", "openjdk@21"],
           executable: (candidate) =>
-            candidate === "/usr/bin/java" ||
+            (pathJava && candidate === "/usr/bin/java") ||
             candidates.includes(candidate) ||
             candidate.endsWith("/mac_x86_64/decompile") ||
             host().executable(candidate),
@@ -1842,7 +1844,7 @@ it.each([
         }),
       );
       expect(commands).toEqual([
-        "/usr/bin/java",
+        ...(pathJava ? ["/usr/bin/java"] : []),
         ...candidates.slice(
           0,
           selected === undefined ? undefined : selected + 1,
