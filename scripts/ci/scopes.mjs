@@ -173,6 +173,9 @@ const PATH_SCOPES = {
     "tests/boundary/process/directAnalysisSignals.test.ts",
     "tests/boundary/process/processCaptureLifecycle.test.ts",
     "tests/boundary/process/processCli.test.ts",
+    "tests/boundary/process/nativeUiVerifierFixtureOwnership.test.ts",
+    "scripts/verify-native-ui.mjs",
+    "scripts/lib/native-ui-fixture-lifecycle.*",
     "tests/boundary/mcp/sessionMcp.test.ts",
   ],
   // Four-host installed-package matrix and the Windows curated lane.

@@ -893,6 +893,18 @@ it.each([
     { code: true, apple: true, package: false, runtime: false },
   ],
   [
+    "tests/boundary/process/nativeUiVerifierFixtureOwnership.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "scripts/verify-native-ui.mjs",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "scripts/lib/native-ui-fixture-lifecycle.mjs",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
     "tests/boundary/cli/nativePlistCli.test.ts",
     { code: true, apple: true, package: false, runtime: false },
   ],

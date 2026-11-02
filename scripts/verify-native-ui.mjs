@@ -1,7 +1,5 @@
-import { execFile, spawn } from "node:child_process";
-import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -9,19 +7,27 @@ import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { observeNativeUi } from "../dist/native/NativeUiObservation.js";
 import { NATIVE_UI_HELPER_MAX_BUFFER } from "../dist/native/NativeUiOutputBudget.js";
 import { artifactMcpResult, withArtifactMcp } from "./lib/artifact-e2e.mjs";
-import { observeProcessStartIdentity } from "../dist/process/ProcessOwnershipObservation.js";
+import { createNativeUiFixtureOwner } from "./lib/native-ui-fixture-lifecycle.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 if (process.platform !== "darwin")
   throw new Error(
     "Native UI verification requires macOS, an interactive desktop and Xcode command-line tools",
   );
-const root = await mkdtemp(join(tmpdir(), "rea-ui-fixture-"));
-let child;
-let childExit;
-let fixturePid;
-let fixtureIdentity;
-let report;
-try {
+const fixture = await createNativeUiFixtureOwner();
+const { root } = fixture;
+// The fixture outlives this process unless released, so interruption must too.
+for (const [signal, exitCode] of [
+  ["SIGINT", 130],
+  ["SIGTERM", 143],
+])
+  process.once(signal, () => {
+    void fixture
+      .close()
+      .catch((cause) => console.error(cause))
+      .finally(() => process.exit(exitCode));
+  });
+const report = await withVerifierCleanup(async () => {
   const childRetrievalTest = join(root, "child-retrieval-test");
   await promisify(execFile)("/usr/bin/xcrun", [
     "swiftc",
@@ -90,35 +96,7 @@ try {
     "-o",
     executable,
   ]);
-  const coordinates = join(root, "scope.json");
-  await writeFile(coordinates, "");
-  child = spawn(
-    "/usr/bin/open",
-    ["-W", "-n", "-g", "--stdout", coordinates, join(root, "Fixture.app")],
-    { stdio: "ignore" },
-  );
-  childExit = new Promise((resolve) => child.once("exit", resolve));
-  let scope;
-  const deadline = Date.now() + 20000;
-  while (Date.now() < deadline) {
-    const output = await readFile(coordinates, "utf8");
-    if (output.includes("\n")) {
-      scope = JSON.parse(output.split("\n")[0]);
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  if (scope === undefined)
-    throw new Error(
-      "Source-owned UI fixture failed to expose one window within 20 seconds",
-    );
-  fixturePid = scope.pid;
-  fixtureIdentity = await observeProcessStartIdentity(fixturePid);
-  assert.equal(
-    fixtureIdentity?.state,
-    "readable",
-    "Fixture OS start identity is unavailable",
-  );
+  const scope = await fixture.launch(join(root, "Fixture.app"));
   const target = await parseBinaryTarget(executable);
   if (!target.ok) throw target.error;
   const observation = await observeNativeUi(
@@ -247,7 +225,7 @@ try {
   );
   if (mismatch.ok || !mismatch.error.message.includes("target-mismatch"))
     throw new Error("Real helper did not reject changed target bytes");
-  report = {
+  return {
     ok: true,
     verification_status: observation.ok ? "passed" : "permission-boundary-only",
     positive_e2e: observation.ok,
@@ -259,26 +237,5 @@ try {
     mismatch_rejected: true,
     target_owned: true,
   };
-} finally {
-  if (fixturePid !== undefined && fixtureIdentity?.state === "readable") {
-    const current = await observeProcessStartIdentity(fixturePid);
-    if (current !== undefined) {
-      assert.ok(
-        current.state === "readable" &&
-          current.identity === fixtureIdentity.identity,
-        "Fixture PID identity changed; refusing to signal another process",
-      );
-      try {
-        process.kill(fixturePid, "SIGTERM");
-      } catch (cause) {
-        if (cause.code !== "ESRCH") throw cause;
-      }
-    }
-  }
-  if (child !== undefined && child.exitCode === null) {
-    child.kill("SIGTERM");
-    await childExit;
-  }
-  await rm(root, { recursive: true, force: true });
-}
+}, [() => fixture.close()]);
 process.stdout.write(`${JSON.stringify(report)}\n`);

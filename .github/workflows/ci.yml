@@ -817,6 +817,7 @@ jobs:
           tests/boundary/process/directAnalysisSignals.test.ts
           tests/boundary/process/processCaptureLifecycle.test.ts
           tests/boundary/process/processCli.test.ts
+          tests/boundary/process/nativeUiVerifierFixtureOwnership.test.ts
           tests/boundary/mcp/sessionMcp.test.ts
 
   reconstruction-readiness:

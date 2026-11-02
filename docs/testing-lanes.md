@@ -962,7 +962,10 @@ conformance/vtable fixture.
   allows a host-permission-boundary-only result and explicitly reports
   `positive_e2e: false`; it must not be reported as capture/action proof.
   Both commands reject a changed executable digest and clean up the fixture
-  process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md).
+  process and helper. LaunchServices starts the fixture outside `open`'s process
+  tree, so its launch carries a run token that cleanup sweeps with or without a
+  ready record. Incomplete cleanup fails the lane and retains the fixture root.
+  These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md).
 
 `npm run verify:native-calls` needs macOS with Command Line Tools (`clang`,
 `lldb`, `codesign`, `nm`) and actual debugger access to the owned fixtures.
