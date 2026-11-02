@@ -12,6 +12,7 @@ import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   createAnalysisExecution,
@@ -825,12 +826,12 @@ const checkQueuedSwitchReceipt = async (
       }
       return result;
     });
+  const pending = mcp.callTool({
+    name: "open_binary",
+    arguments: { path: target, provider_id: "missing" },
+  });
   try {
-    const pending = mcp.callTool({
-      name: "open_binary",
-      arguments: { path: target, provider_id: "missing" },
-    });
-    await settled.promise;
+    await awaitAcknowledgement(settled.promise, pending, "failed-open receipt");
     const switched = await mcp.callTool({
       name: "open_binary",
       arguments: { path: other, provider_id: "alpha" },
@@ -852,6 +853,7 @@ const checkQueuedSwitchReceipt = async (
       });
   } finally {
     release.resolve();
+    await Promise.allSettled([pending]);
     spy.mockRestore();
   }
 };
