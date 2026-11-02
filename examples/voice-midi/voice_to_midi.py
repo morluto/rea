@@ -43,9 +43,18 @@ def estimate_frequency(samples: Any, sample_rate: int, min_hz: float = 65.0, max
         where=overlap_energy > 1e-8,
     )
 
-    peak_indices = np.flatnonzero((scores[1:-1] >= scores[:-2]) & (scores[1:-1] > scores[2:])) + 1
+    overlap_samples = count - lags
+    valid = overlap_samples >= np.maximum(32, 2 * lags)
+    scores = np.where(valid, scores, 0.0)
+    interior_peaks = np.flatnonzero((scores[1:-1] >= scores[:-2]) & (scores[1:-1] > scores[2:])) + 1
+    edge_peaks = []
+    if scores[0] >= scores[1]:
+        edge_peaks.append(0)
+    if scores[-1] > scores[-2]:
+        edge_peaks.append(len(scores) - 1)
+    peak_indices = np.array(edge_peaks + interior_peaks.tolist(), dtype=np.int64)
     if peak_indices.size:
-        peak_threshold = float(scores[peak_indices].max()) * 0.995
+        peak_threshold = float(scores[peak_indices].max()) * 0.985
         prominent_peaks = peak_indices[scores[peak_indices] >= peak_threshold]
         best_peak = int(prominent_peaks[0] if prominent_peaks.size else peak_indices[np.argmax(scores[peak_indices])])
     else:
