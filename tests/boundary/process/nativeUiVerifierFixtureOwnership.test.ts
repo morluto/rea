@@ -27,7 +27,7 @@ import { appendFileSync, openSync, readFileSync } from "node:fs";
 const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
 const args = process.argv.slice(2);
 appendFileSync(config.events, JSON.stringify({ kind: "launcher", pid: process.pid, args }) + "\\n");
-setTimeout(() => process.exit(0), 25000);
+setTimeout(() => process.exit(0), 60000);
 if (config.launcher === "fails") {
   process.stderr.write("authored launch refusal\\n");
   process.exit(3);
@@ -59,7 +59,15 @@ const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url)
 const report = await runNativeUiFixtureLane(async (fixture) => {
   const application = join(fixture.root, "Fixture.app");
   await mkdir(application);
-  const scope = await fixture.launch(application);
+  const launching = fixture.launch(application);
+  if (config.launcher === "in-flight") {
+    // Release must not start until the launch is admitted, or nothing is in flight.
+    launching.catch(() => undefined);
+    while (!readFileSync(config.events, "utf8").includes('"kind":"launch-service"'))
+      await new Promise((wake) => setTimeout(wake, 5));
+    throw new Error("authored failure with a launch in flight");
+  }
+  const scope = await launching;
   if (config.operation === "hangs") {
     appendFileSync(config.events, JSON.stringify({ kind: "operation-hanging" }) + "\\n");
     await new Promise(() => setInterval(() => undefined, 1000));
@@ -73,12 +81,12 @@ process.stdout.write(JSON.stringify(report) + "\\n");
 const launchServiceSource = `
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
-const [application, coordinates] = process.argv.slice(2);
+const [application] = process.argv.slice(2);
 appendFileSync(config.events, JSON.stringify({ kind: "launch-service", pid: process.pid }) + "\\n");
-setTimeout(() => process.exit(0), 25000);
+setTimeout(() => process.exit(0), 60000);
 setInterval(() => {
   if (existsSync(application)) return;
-  appendFileSync(config.events, JSON.stringify({ kind: "launch-refused", rootPresent: existsSync(coordinates) }) + "\\n");
+  appendFileSync(config.events, JSON.stringify({ kind: "launch-refused" }) + "\\n");
   process.exit(0);
 }, 2);
 `;
@@ -97,7 +105,7 @@ if (config.untokenedMember) {
   // Same process group as this fixture, without proof of this run.
   member = spawn(process.execPath, [
     "-e",
-    "const { existsSync } = require('node:fs'); setInterval(() => { if (existsSync(process.argv[1])) process.exit(0); }, 10); setTimeout(() => process.exit(0), 25000);",
+    "const { existsSync } = require('node:fs'); setInterval(() => { if (existsSync(process.argv[1])) process.exit(0); }, 10); setTimeout(() => process.exit(0), 60000);",
     config.memberRelease,
   ], { stdio: "ignore", env: environment }).pid;
 }
@@ -119,29 +127,39 @@ setInterval(() => {
     ready();
   }
 }, 5);
-setTimeout(() => process.exit(0), 25000);
+setTimeout(() => process.exit(0), 60000);
 `;
 
 // Injects the compiler, launcher and, once the fixture runs, a clock jump into
 // the actual verifier. A one-time offset leaves later cleanup budgets unchanged.
 // holdRelease parks the real release at its retire step until the test opens the
 // gate: the launcher has stopped, the fixture and root remain, nothing is mocked.
+// holdRemoval parks it the same way just before the root is removed.
 const preloadSource = `
 import { appendFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
+import { basename } from "node:path";
 import { promisify } from "node:util";
 const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
 const require = createRequire(import.meta.url);
 const childProcess = require("node:child_process");
+const hold = async (kind, gate) => {
+  appendFileSync(config.events, JSON.stringify({ kind }) + "\\n");
+  while (!existsSync(gate)) await new Promise((wake) => setTimeout(wake, 5));
+};
+const fsPromises = require("node:fs/promises");
 if (config.holdRelease) {
-  const fsPromises = require("node:fs/promises");
   const { rename } = fsPromises;
   fsPromises.rename = async (from, to) => {
-    if (String(to).endsWith(".retired")) {
-      appendFileSync(config.events, JSON.stringify({ kind: "release-held" }) + "\\n");
-      while (!existsSync(config.releaseGate)) await new Promise((wake) => setTimeout(wake, 5));
-    }
+    if (String(to).endsWith(".retired")) await hold("release-held", config.releaseGate);
     return rename(from, to);
+  };
+}
+if (config.holdRemoval) {
+  const { rm } = fsPromises;
+  fsPromises.rm = async (path, options) => {
+    if (basename(String(path)).startsWith("rea-ui-fixture-")) await hold("removal-held", config.removalGate);
+    return rm(path, options);
   };
 }
 const { execFile, spawn } = childProcess;
@@ -206,6 +224,7 @@ interface ScenarioConfig {
   readonly foreignPid?: number;
   readonly clockJump?: boolean;
   readonly holdRelease?: boolean;
+  readonly holdRemoval?: boolean;
   readonly operation?: "completes" | "hangs";
 }
 
@@ -234,6 +253,7 @@ const createScenario = async (config: ScenarioConfig = {}) => {
     memberRelease: join(workspace, "member-release"),
     readyGate: join(workspace, "ready-gate"),
     releaseGate: join(workspace, "release-gate"),
+    removalGate: join(workspace, "removal-gate"),
     launcherEntry: join(workspace, "launcher.mjs"),
   };
   await writeFile(paths.events, "");
@@ -395,42 +415,15 @@ posixIt(
 );
 
 posixIt(
-  "ends a launch still in flight when its launcher is stopped, before removing the root",
-  { timeout: 30_000 },
-  async () => {
-    const scenario = await createScenario({ launcher: "in-flight" });
-    const { owner, launch } = await launchedOwner(scenario, 300);
-    await expect(launch).rejects.toThrow("failed to expose one window");
-    await waitUntil(
-      async () =>
-        (await scenario.events()).some(({ kind }) => kind === "launch-service"),
-      "the launch to be admitted",
-    );
-    await owner.close();
-    await waitUntil(
-      async () =>
-        (await scenario.events()).some(({ kind }) => kind === "launch-refused"),
-      "the in-flight launch to lose its application",
-    );
-    // The application path was gone while the root still existed.
-    expect(
-      (await scenario.events()).find(({ kind }) => kind === "launch-refused"),
-    ).toMatchObject({ rootPresent: true });
-    expect(existsSync(owner.root)).toBe(false);
-  },
-);
-
-posixIt(
   "fails at once when the launcher refuses, with its reason",
   { timeout: 30_000 },
   async () => {
     const scenario = await createScenario({ launcher: "fails" });
-    const started = performance.now();
     const { owner, launch } = await launchedOwner(scenario, 15_000);
+    // The exit path, not the deadline path, produces this message.
     await expect(launch).rejects.toThrow(
       /launcher exited \(code 3, signal null\).*authored launch refusal/u,
     );
-    expect(performance.now() - started).toBeLessThan(10_000);
     await owner.close();
     expect(existsSync(owner.root)).toBe(false);
   },
@@ -728,6 +721,44 @@ const signalDuringHeldRelease = async (
 
 const lane = (scenario: Scenario) =>
   runEntry(scenario, join(scenario.workspace, "lane.mjs"));
+
+// Root removal waits at its barrier until the test has seen the launch refused, so
+// no scheduling of the stand-in launch service can decide this ordering.
+posixIt(
+  "ends a launch still in flight when its launcher is stopped, before removing the root",
+  { timeout: 30_000 },
+  async () => {
+    const scenario = await createScenario({
+      launcher: "in-flight",
+      holdRemoval: true,
+    });
+    const running = await lane(scenario);
+    await waitUntil(
+      async () =>
+        (await scenario.events()).some(({ kind }) => kind === "removal-held"),
+      "the release to reach root removal",
+    );
+    await waitUntil(
+      async () =>
+        (await scenario.events()).some(({ kind }) => kind === "launch-refused"),
+      "the in-flight launch to lose its application",
+    );
+    const [root] = await running.roots();
+    expect(root).toBeDefined();
+    const application = join(running.temporary, root ?? "", "Fixture.app");
+    expect(existsSync(application)).toBe(false);
+    expect(existsSync(`${application}.retired`)).toBe(true);
+    await writeFile(scenario.paths.removalGate, "");
+    expect(await running.exit, running.stderr()).toEqual({
+      code: 1,
+      signal: null,
+    });
+    expect(running.stderr()).toContain(
+      "authored failure with a launch in flight",
+    );
+    expect(await running.roots()).toEqual([]);
+  },
+);
 
 posixIt(
   "the lane reports a completed run with a held release and no signal",

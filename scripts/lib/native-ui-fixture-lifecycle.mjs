@@ -20,7 +20,7 @@ import {
 
 const READY_TIMEOUT_MS = 20_000;
 const READY_POLL_INTERVAL_MS = 100;
-const LAUNCHER_OUTPUT_CLOSE_GRACE_MS = 1_000;
+const LAUNCHER_OUTPUT_CLOSE_GRACE_MS = 5_000;
 const INTERRUPT_EXIT_CODES = { SIGINT: 130, SIGTERM: 143 };
 
 /** Cleanup stays incomplete; the owner keeps its run token and root for retry. */
