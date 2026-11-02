@@ -147,7 +147,8 @@ const MEMBER_ENCODING_HEADER_BYTES = 512;
 const WIDE_TEXT_NUL_DIVISOR = 8;
 const PE_MEMBER_NAME = /\.(?:dll|exe|sys)$/iu;
 const JAVASCRIPT_MEMBER_NAME = /\.(?:[cm]?[jt]s|[jt]sx)$/iu;
-const HTML_MEMBER_NAME = /\.html?$/iu;
+/** Markup that `htmlArtifactReferences` reads for scripts. SVG can carry them too. */
+const SCRIPT_PAGE_NAME = /\.(?:html?|svg)$/iu;
 
 type NativeFormat = "elf" | "mach-o" | "mach-o-universal" | "pe";
 type InventoryOccurrence = ArtifactInventoryResult["occurrences"][number];
@@ -839,12 +840,12 @@ const isJavaScriptMember = (member: MemberView): boolean =>
 const isCssMember = (member: MemberView): boolean =>
   member.logical.toLowerCase().endsWith(".css");
 
-const isHtmlMember = (member: MemberView): boolean =>
-  HTML_MEMBER_NAME.test(member.logical);
+const isScriptPageMember = (member: MemberView): boolean =>
+  SCRIPT_PAGE_NAME.test(member.logical);
 
 /** A member whose scripts can declare a map the directive parser reads. */
 const holdsScripts = (member: MemberView): boolean =>
-  isJavaScriptMember(member) || isHtmlMember(member);
+  isJavaScriptMember(member) || isScriptPageMember(member);
 
 /**
  * The role a package reader states for its entry. A Bun sourcemap region is
@@ -1201,7 +1202,8 @@ const examineTextMember = async (
         if (isJavaScriptMember(member))
           examineInlineMaps(state, member, text.text, member.logical);
         // A page another page loads as a script still ships as a page.
-        if (isHtmlMember(member)) examineHtmlScripts(state, member, text.text);
+        if (isScriptPageMember(member))
+          examineHtmlScripts(state, member, text.text);
       }
     }
   } else {

@@ -3114,6 +3114,26 @@ describe("ReleaseExposureReader HTML script references", () => {
     expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
   });
 
+  it("reads the scripts of a standalone SVG", async () => {
+    const scanned = await inspect(
+      await directory({
+        "screen.svg": `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><script><![CDATA[\nrun();\n${inlineMap}]]></script></svg>`,
+      }),
+    );
+    expect(scanned.source_maps.embedded).toBe(1);
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
+  it("finds nothing in an SVG without scripts", async () => {
+    const scanned = await inspect(
+      await directory({
+        "icon.svg":
+          '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>',
+      }),
+    );
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 0 });
+  });
+
   it("still reads a page another page loads as a script as HTML", async () => {
     const scanned = await inspect(
       await directory({
