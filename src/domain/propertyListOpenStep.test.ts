@@ -8,9 +8,17 @@ import {
   startsOpenStepPropertyList,
 } from "./propertyListOpenStep.js";
 
+it("decodes Unicode escapes in quoted OpenStep dictionary keys and values", () => {
+  expect(
+    decodeOpenStepPropertyList(
+      String.raw`{ "CFBundle\U0045xecutable" = "M\U0061in"; }`,
+    ),
+  ).toEqual({ CFBundleExecutable: "Main" });
+});
+
 it.each([
   "{ numeric = (42, -2.5, 0x10, YES); path = /a/b:c$; }",
-  String.raw`{ escapes = "\n\r\t\0\"\\\q\137\U0041"; }`,
+  String.raw`{ escapes = "\n\r\t\"\\\q"; }`,
   "{ bytes = (<ffzz0>, <0>, <a b c d>, <>); }",
   '/* header */ ("//text", "/*text*/", /* before */ value, // after\n)',
   "{ first = x second = y; third = (a, b,); }",
@@ -20,6 +28,26 @@ it.each([
 ])("preserves pinned lexical and container values for %s", (text) => {
   expect(decodeOpenStepPropertyList(text)).toEqual(parseOpenStep(text));
 });
+
+it.each([
+  [String.raw`"M\141in"`, "Main"],
+  [String.raw`"\303\251"`, "ˆ’"],
+  [String.raw`"\0\05\1015"`, "\0\u0005A5"],
+  [String.raw`"\U00e9\UD83D\UDE00"`, "é😀"],
+  [String.raw`"\a\b\f\n\r\t\v"`, "\u0007\b\f\n\r\t\v"],
+  [String.raw`"\q\x41\u0041"`, "qx41u0041"],
+] as const)("decodes Foundation quoted string %s", (source, expected) => {
+  expect(decodeOpenStepPropertyList(source)).toBe(expected);
+});
+
+it.each([String.raw`"\376"`, String.raw`"\377"`])(
+  "rejects an undefined NeXTSTEP octet in %s",
+  (source) => {
+    expect(() => decodeOpenStepPropertyList(source)).toThrowError(
+      expect.objectContaining({ code: "invalid_octal_escape", position: 1 }),
+    );
+  },
+);
 
 const syntaxFailure = (read: () => unknown): Error => {
   try {

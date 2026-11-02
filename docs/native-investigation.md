@@ -530,6 +530,11 @@ markup, including UTF-8 and BOM-marked UTF-16 sources. Unidentified text and
 OpenStep plists, including a data-only value such as `<deadbeef>`, report
 `unknown` even when plutil decodes their values through an XML conversion.
 
+App bundle resolution decodes OpenStep quoted keys and values with Foundation
+escape semantics: `\Uhhhh` denotes a UTF-16 code unit and one to three octal
+digits denote a NeXTSTEP-encoded byte, not a UTF-8 sequence. Escaping a name
+does not change the executable selected or relax the existing path checks.
+
 Plist inspection reads bounded original bytes through an owned file descriptor.
 Binary and UTF-8/BOM-marked UTF-16 XML sources decode directly, retaining scalar
 facts without a mandatory `plutil` conversion. UTF-8 JSON containers also decode

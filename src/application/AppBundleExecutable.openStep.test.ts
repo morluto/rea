@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { parseOpenStep } from "plist";
@@ -29,3 +29,27 @@ it.each([
     value: { executable, infoPlist },
   });
 });
+
+it.each([
+  String.raw`{ CFBundleExecutable = "M\U0061in"; }`,
+  String.raw`{ CFBundleExecutable = "M\141in"; }`,
+  String.raw`{ "CFBundle\U0045xecutable" = "Main"; }`,
+])(
+  "resolves escaped executable identity without modifying %s",
+  async (source) => {
+    const root = await createTestTempDirectory("rea-openstep-escapes-");
+    const bundle = join(root, "Fixture.app");
+    const programs = join(bundle, "Contents", "MacOS");
+    const executable = join(programs, "Main");
+    const infoPlist = join(bundle, "Contents", "Info.plist");
+    await mkdir(programs, { recursive: true });
+    await writeFile(infoPlist, source);
+    await writeFile(executable, "fixture - never executed");
+    expect(await resolveAppBundleExecutable(bundle)).toEqual({
+      ok: true,
+      value: { executable, infoPlist },
+    });
+    expect(await readFile(infoPlist, "utf8")).toBe(source);
+    expect(await readFile(executable, "utf8")).toBe("fixture - never executed");
+  },
+);

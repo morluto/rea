@@ -11,6 +11,7 @@ const OPEN_STEP_SYNTAX_CODES = [
   "unterminated_array",
   "expected_separator",
   "unexpected_character",
+  "invalid_octal_escape",
 ] as const;
 
 export type OpenStepPropertyListCode = (typeof OPEN_STEP_SYNTAX_CODES)[number];
@@ -65,7 +66,7 @@ const skipTrivia = (text: string, start: number, strict = true): number => {
 
 /**
  * Own OpenStep containers, source depth and dictionary members together.
- * The pinned scalar decoder retains its quoted escape and hexadecimal semantics.
+ * Quoted strings use Foundation escape semantics; hex data stays with plist.
  */
 export const decodeOpenStepPropertyList = (
   text: string,
@@ -163,10 +164,61 @@ export const decodeOpenStepPropertyList = (
     // Scalar dictionary keys do not add source-value nesting; compound keys do.
     if (!dictionaryKey) assertDepth(depth);
     const token = text.slice(start, cursor);
-    return character === '"' || character === "<"
-      ? parseOpenStep(token)
-      : token;
+    if (character === '"') return decodeQuotedString(token, start);
+    return character === "<" ? parseOpenStep(token) : token;
   };
   // The pinned format reads one root and leaves all trailing source untouched.
   return value(0);
+};
+
+// NeXTSTEP octets 0x80..0xfd, verified against CoreFoundation's old-style
+// plist reader. Octal escapes are neither UTF-8 sequences nor Latin-1.
+const NEXTSTEP_HIGH_CHARACTERS =
+  "\u00a0ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖÙÚÛÜÝÞµ×÷" +
+  "©¡¢£⁄¥ƒ§¤’“«‹›ﬁﬂ®–†‡·¦¶•‚„”»…‰¬¿" +
+  "¹ˋ´ˆ˜¯˘˙¨²˚¸³˝˛ˇ—±¼½¾àáâãäåçèéêë" +
+  "ìÆíªîïðñŁØŒºòóôõöæùúûıüýłøœßþÿ";
+
+const QUOTED_CONTROL_ESCAPES: Readonly<Record<string, string>> = {
+  a: "\u0007",
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  v: "\v",
+};
+
+/** Decode keys and values once, after the existing scalar syntax validation. */
+const decodeQuotedString = (token: string, sourceStart: number): string => {
+  const pinned = parseOpenStep(token) as string;
+  if (!token.includes("\\")) return pinned;
+  return token
+    .slice(1, -1)
+    .replace(
+      /\\(?:U([\da-fA-F]{0,4})|([0-7]{1,3})|([\s\S]))/gu,
+      (
+        _escape,
+        unicode: string | undefined,
+        octal: string | undefined,
+        character: string | undefined,
+        offset: number,
+      ) => {
+        if (unicode !== undefined)
+          return String.fromCharCode(Number.parseInt(unicode || "0", 16));
+        if (octal !== undefined) {
+          // Foundation accumulates at most three octal digits into one octet.
+          const octet = Number.parseInt(octal, 8) & 0xff;
+          if (octet < 0x80) return String.fromCharCode(octet);
+          const decoded = NEXTSTEP_HIGH_CHARACTERS[octet - 0x80];
+          if (decoded === undefined)
+            throw new OpenStepPropertyListError(
+              "invalid_octal_escape",
+              sourceStart + 1 + offset,
+            );
+          return decoded;
+        }
+        return QUOTED_CONTROL_ESCAPES[character!] ?? character!;
+      },
+    );
 };
