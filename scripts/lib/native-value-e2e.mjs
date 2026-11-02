@@ -228,6 +228,26 @@ async function verifyNativeValueAdapters(
     );
     assert.equal(functionEvidence.operation, "analyze_function");
     assert.equal(functionEvidence.provider.id, "ghidra");
+    const flow = functionEvidence.normalized_result.native_value_flow;
+    assert.equal(flow.available, true);
+    const identifiesEffectScope = (value) =>
+      value.includes("LOAD and STORE") && value.includes("address varnodes");
+    assert.ok(flow.limitations.some(identifiesEffectScope));
+    const effectsView = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: functionEvidence.evidence_id,
+        },
+        view: { kind: "native", facet: "value_flow_effects" },
+      },
+    });
+    assert.notEqual(effectsView.isError, true, JSON.stringify(effectsView));
+    const effectsPage = requireMcpOutput(effectsView, "inspect_analysis_view");
+    assert.ok(
+      effectsPage.normalized_result.limitations.some(identifiesEffectScope),
+    );
     assert.deepEqual(
       functionEvidence.normalized_result.facet_availability,
       Object.fromEntries(
