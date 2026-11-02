@@ -3,7 +3,7 @@ import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
 import { idaAddressSchema } from "./IdaProtocolValues.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 
 /** Apply the named public contract and IDA's explicit-address boundary before startup. */
 export const parseIdaInput = (
@@ -14,12 +14,11 @@ export const parseIdaInput = (
   const parsed = contract?.inputSchema.safeParse(parameters);
   if (parsed?.success !== true)
     return err(
-      new AnalysisInputError(
+      analysisInputErrorFromIssues(
         operation,
+        parsed?.error.issues ?? [],
+        parameters,
         { cause: parsed?.error },
-        parsed?.error === undefined
-          ? []
-          : projectInputIssues(parsed.error.issues, parameters),
       ),
     );
   if (operation === "xrefs" && typeof parameters.address !== "string")

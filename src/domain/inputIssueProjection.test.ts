@@ -6,6 +6,7 @@ import {
   projectInputIssues,
   projectInputIssuesWithinBudget,
 } from "./inputIssueProjection.js";
+import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { processScenarioSchema } from "./process/processScenario.js";
 
 describe("input issue projection", () => {
@@ -119,6 +120,121 @@ describe("input issue projection", () => {
   });
 });
 
+describe("input issue argument guidance", () => {
+  it("guides callers from neighboring-tool argument names while keeping unknown keys strict", () => {
+    const procedureSchema = z.strictObject({
+      procedure: z.string(),
+      document: z.string().optional(),
+    });
+    const badProcedure = procedureSchema.safeParse({
+      address: "0x401000",
+      count: 10,
+    });
+    if (badProcedure.success) throw new Error("expected invalid input");
+
+    for (const op of [
+      "read_function_instructions",
+      "procedure_pseudo_code",
+      "procedure_assembly",
+    ]) {
+      const error = analysisInputErrorFromIssues(
+        op,
+        badProcedure.error.issues,
+        { address: "0x401000", count: 10 },
+      );
+      expect(error.issues).toEqual([
+        { path: ["procedure"], reason: "missing_argument", expected: "string" },
+        {
+          path: ["address"],
+          reason: "unknown_argument",
+          expected: "procedure",
+          message: "Unrecognized argument 'address'; did you mean 'procedure'?",
+        },
+        { path: ["count"], reason: "unknown_argument" },
+      ]);
+      expect(projectAnalysisError(error).remediation.action).toBe(
+        `Use 'procedure' (a procedure name or address) instead of 'address'. Read the declared input schema or CLI usage for ${op}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`,
+      );
+    }
+
+    const searchSchema = z.strictObject({
+      pattern: z.string().min(1),
+    });
+    const badSearch = searchSchema.safeParse({ query: "flag" });
+    if (badSearch.success) throw new Error("expected invalid input");
+
+    for (const op of ["search_strings", "search_procedures"]) {
+      const searchError = analysisInputErrorFromIssues(
+        op,
+        badSearch.error.issues,
+        { query: "flag" },
+      );
+      expect(searchError.issues).toEqual([
+        { path: ["pattern"], reason: "missing_argument", expected: "string" },
+        {
+          path: ["query"],
+          reason: "unknown_argument",
+          expected: "pattern",
+          message: "Unrecognized argument 'query'; did you mean 'pattern'?",
+        },
+      ]);
+      expect(projectAnalysisError(searchError).remediation.action).toBe(
+        `Use 'pattern' instead of 'query'. Read the declared input schema or CLI usage for ${op}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`,
+      );
+    }
+  });
+
+  it("guides callers for symmetric neighboring-tool argument names", () => {
+    const addressSchema = z.strictObject({
+      address: z.string(),
+    });
+    const badAddress = addressSchema.safeParse({ procedure: "main" });
+    if (badAddress.success) throw new Error("expected invalid input");
+
+    for (const op of ["xrefs", "resolve_containing_procedure", "read_bytes"]) {
+      const error = analysisInputErrorFromIssues(op, badAddress.error.issues, {
+        procedure: "main",
+      });
+      expect(error.issues).toEqual([
+        { path: ["address"], reason: "missing_argument", expected: "string" },
+        {
+          path: ["procedure"],
+          reason: "unknown_argument",
+          expected: "address",
+          message: "Unrecognized argument 'procedure'; did you mean 'address'?",
+        },
+      ]);
+      expect(projectAnalysisError(error).remediation.action).toBe(
+        `Use 'address' instead of 'procedure'. Read the declared input schema or CLI usage for ${op}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`,
+      );
+    }
+
+    const querySchema = z.strictObject({
+      query: z.string(),
+    });
+    const badQuery = querySchema.safeParse({ pattern: "flag" });
+    if (badQuery.success) throw new Error("expected invalid input");
+
+    for (const op of ["search_guidance", "trace_feature"]) {
+      const error = analysisInputErrorFromIssues(op, badQuery.error.issues, {
+        pattern: "flag",
+      });
+      expect(error.issues).toEqual([
+        { path: ["query"], reason: "missing_argument", expected: "string" },
+        {
+          path: ["pattern"],
+          reason: "unknown_argument",
+          expected: "query",
+          message: "Unrecognized argument 'pattern'; did you mean 'query'?",
+        },
+      ]);
+      expect(projectAnalysisError(error).remediation.action).toBe(
+        `Use 'query' instead of 'pattern'. Read the declared input schema or CLI usage for ${op}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`,
+      );
+    }
+  });
+});
+
 describe("bounded input issue projection", () => {
   it("bounds union expansion before constructing field diagnostics", () => {
     const schema = z.object({
@@ -188,5 +304,42 @@ describe("bounded input issue projection", () => {
     expect(projectInputIssuesWithinBudget([issue], {}, 32_000)).toHaveLength(
       10,
     );
+  });
+
+  it("bounds pre-allocation budget accounting for guided unrecognized keys", () => {
+    const issue: z.core.$ZodIssue = {
+      code: "unrecognized_keys",
+      path: [],
+      keys: ["address"],
+      message: "Unrecognized keys: address",
+    };
+    expect(projectInputIssuesWithinBudget([issue], {}, 800)).toEqual([
+      { path: ["address"], reason: "unknown_argument" },
+    ]);
+
+    expect(
+      projectInputIssuesWithinBudget(
+        [issue],
+        {},
+        800,
+        "read_function_instructions",
+      ),
+    ).toBeUndefined();
+
+    expect(
+      projectInputIssuesWithinBudget(
+        [issue],
+        {},
+        2000,
+        "read_function_instructions",
+      ),
+    ).toEqual([
+      {
+        path: ["address"],
+        reason: "unknown_argument",
+        expected: "procedure",
+        message: "Unrecognized argument 'address'; did you mean 'procedure'?",
+      },
+    ]);
   });
 });
