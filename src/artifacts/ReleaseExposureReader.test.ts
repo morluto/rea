@@ -33,6 +33,7 @@ import {
   MAX_RELEASE_EXPOSURE_INVENTORY_ENTRIES,
   MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
   MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES,
+  MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES,
   MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES,
   MAX_RELEASE_EXPOSURE_SOURCE_MAPS,
   MAX_RELEASE_EXPOSURE_TEXT_BYTES,
@@ -2658,6 +2659,26 @@ describe("ReleaseExposureReader HTML script references", () => {
       }),
     );
     expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+  });
+
+  it("keeps a script past the target allowance unassessed", async () => {
+    const baseBytes = 64 * 1024;
+    const references = Array.from(
+      { length: MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES / baseBytes + 1 },
+      (_, index) => `<script src="s${String(index)}"></script>`,
+    );
+    const scanned = await inspect(
+      await directory({
+        "a.html": `<base href="/${"a".repeat(baseBytes)}/">${references.join("")}`,
+        "b.html": '<script src="main"></script>',
+        main: inlineMap,
+      }),
+    );
+    expect(scanned.source_maps).toMatchObject({
+      embedded: 0,
+      skipped: references.length + 1,
+    });
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
   });
 
   it("keeps coverage unknown for a script read before its HTML file", async () => {

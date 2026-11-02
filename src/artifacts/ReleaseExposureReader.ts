@@ -75,6 +75,7 @@ import {
   MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES,
   MAX_RELEASE_EXPOSURE_PACKAGED_PE_READS,
   MAX_RELEASE_EXPOSURE_SAMPLES,
+  MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES,
   MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES,
   MAX_RELEASE_EXPOSURE_SOURCE_MAPS,
   MAX_RELEASE_EXPOSURE_TEXT_BYTES,
@@ -701,6 +702,8 @@ interface ScanState {
   examinedMaps: Set<string>;
   /** Local script elements' targets whose names do not say JavaScript. */
   scriptTargets: Set<string>;
+  /** Bytes of resolved path offered to `scriptTargets`, kept or refused. */
+  scriptTargetBytes: number;
   /** Members already examined as a script. */
   examinedScripts: Set<string>;
   visitText: ReleaseExposureTextVisitor;
@@ -742,6 +745,7 @@ const createState = (visitText: ReleaseExposureTextVisitor): ScanState => ({
   examinedLocations: new Set(),
   examinedMaps: new Set(),
   scriptTargets: new Set(),
+  scriptTargetBytes: 0,
   examinedScripts: new Set(),
   visitText,
 });
@@ -1197,10 +1201,20 @@ const noteScriptReference = (
   }
 };
 
+/**
+ * A base href is copied into every target it resolves, so a page's paths can
+ * outgrow its text many times over. A target past the allowance stays unassessed.
+ */
 const noteScriptTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(location);
-  if (state.examinedScripts.has(target)) return;
-  if (state.examinedLocations.has(target) || state.examinedMaps.has(target))
+  if (state.examinedScripts.has(target) || state.scriptTargets.has(target))
+    return;
+  if (state.examinedLocations.has(target) || state.examinedMaps.has(target)) {
+    state.skippedMaps += 1;
+    return;
+  }
+  state.scriptTargetBytes += Buffer.byteLength(target);
+  if (state.scriptTargetBytes > MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES)
     state.skippedMaps += 1;
   else state.scriptTargets.add(target);
 };

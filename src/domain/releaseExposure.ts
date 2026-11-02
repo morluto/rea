@@ -17,6 +17,8 @@ export const MAX_RELEASE_EXPOSURE_INVENTORY_BYTES = 2 * 1024 * 1024 * 1024;
 export const MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES = 256 * 1024;
 /** Bytes read across all text members. */
 export const MAX_RELEASE_EXPOSURE_TEXT_BYTES = 4 * 1024 * 1024;
+/** Resolved paths retained for HTML script targets across one audit. */
+export const MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES = 1024 * 1024;
 /** Source maps read from one artifact. */
 export const MAX_RELEASE_EXPOSURE_SOURCE_MAPS = 32;
 /** Bytes read from one source map. */
@@ -40,6 +42,7 @@ export const RELEASE_EXPOSURE_LIMITATION =
 export const RELEASE_EXPOSURE_ALLOWANCES = [
   `Selected file reads stop at ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes.`,
   `Text member scans read at most ${String(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES)} bytes each and ${String(MAX_RELEASE_EXPOSURE_TEXT_BYTES)} bytes in total.`,
+  `HTML script targets keep at most ${String(MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES)} bytes of resolved paths. Later targets stay unassessed.`,
   `Source map scans read at most ${String(MAX_RELEASE_EXPOSURE_SOURCE_MAPS)} maps and ${String(MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES)} bytes each. sourcesContent text is counted and then dropped.`,
   `Other files and package members are identified from their first ${String(MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES)} bytes, and those without a NUL byte in that prefix are scanned as text. Up to ${String(MAX_RELEASE_EXPOSURE_PACKAGED_PE_READS)} packaged PE images are read for debug records, ${String(MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES)} bytes each.`,
   `Go, Rust, and Electron fuse readers run on at most ${String(MAX_RELEASE_EXPOSURE_NATIVE_IMAGES)} native images.`,
