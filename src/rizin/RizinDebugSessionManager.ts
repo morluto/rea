@@ -1471,6 +1471,8 @@ export class RizinDebugSessionManager {
     const previouslyConfirmedDetach = session.confirmedDetachedInferiorIdentity;
     if (session.exited)
       throw new Error("Rizin exited before inferior detach could be verified.");
+    if (session.protocolError !== undefined)
+      await this.#synchronizeCleanup(session);
     if (session.completedDetachCommand !== undefined)
       return this.#verifyCompletedDetachCommand(
         session,
@@ -1481,8 +1483,6 @@ export class RizinDebugSessionManager {
         session,
         session.confirmedDetachedInferiorIdentity,
       );
-    if (session.protocolError !== undefined)
-      await this.#synchronizeCleanup(session);
     session.inferiorInventoryComplete = false;
     const inferior = await this.#readInferiorInventory(session);
     if (inferior.length === 0) {
