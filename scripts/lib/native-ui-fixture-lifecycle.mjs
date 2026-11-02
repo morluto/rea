@@ -13,11 +13,15 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../../dist/process/ProviderProcess.js";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./verifier-cleanup.mjs";
 
 const READY_TIMEOUT_MS = 20_000;
 const READY_POLL_INTERVAL_MS = 100;
 const LAUNCHER_OUTPUT_CLOSE_GRACE_MS = 1_000;
+const INTERRUPT_EXIT_CODES = { SIGINT: 130, SIGTERM: 143 };
 
 /** Cleanup stays incomplete; the owner keeps its run token and root for retry. */
 export class NativeUiFixtureCleanupFailure extends Error {
@@ -234,3 +238,63 @@ export const createNativeUiFixtureOwner = async ({
     launcherCommand,
     readyTimeoutMs,
   );
+
+/**
+ * Run one lane around a fixture owner and settle its process outcome in one place.
+ *
+ * A signal only records the interruption and ends the operation's race. The
+ * release always runs to settlement, and every signal stays handled until then:
+ * npm forwards Ctrl-C, so a default action on a repeated signal would kill the
+ * release and orphan the fixture. SIGKILL remains the operator's override.
+ *
+ * The first failure selects the status and every failure is reported. A signal
+ * after the operation failed keeps that failure and exit 1; a signal after it
+ * succeeded returns its completed value with the interrupted exit status.
+ */
+export const runNativeUiFixtureLane = async (operation, options) => {
+  const fixture = await createNativeUiFixtureOwner(options);
+  let interruption;
+  let operationFailure;
+  let interrupt;
+  const interrupted = new Promise((_, reject) => {
+    interrupt = reject;
+  });
+  interrupted.catch(() => undefined);
+  const listeners = Object.entries(INTERRUPT_EXIT_CODES).map(
+    ([signal, exitCode]) => {
+      const listener = () => {
+        if (interruption !== undefined) return;
+        interruption = Object.assign(
+          new Error(`Native UI verification interrupted by ${signal}`),
+          { exitCode },
+        );
+        interrupt(interruption);
+      };
+      process.on(signal, listener);
+      return [signal, listener];
+    },
+  );
+  try {
+    const value = await withVerifierCleanup(
+      () =>
+        Promise.race([operation(fixture), interrupted]).catch((cause) => {
+          operationFailure = cause;
+          throw cause;
+        }),
+      [() => fixture.close()],
+    );
+    if (interruption !== undefined) process.exitCode = interruption.exitCode;
+    return value;
+  } catch (cause) {
+    if (
+      interruption === undefined ||
+      (operationFailure !== undefined && operationFailure !== interruption)
+    )
+      throw cause;
+    console.error(cause === interruption ? cause.message : cause);
+    // An interrupted operation may still be running; nothing else ends it.
+    process.exit(interruption.exitCode);
+  } finally {
+    for (const [signal, listener] of listeners) process.off(signal, listener);
+  }
+};

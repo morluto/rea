@@ -7,27 +7,14 @@ import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { observeNativeUi } from "../dist/native/NativeUiObservation.js";
 import { NATIVE_UI_HELPER_MAX_BUFFER } from "../dist/native/NativeUiOutputBudget.js";
 import { artifactMcpResult, withArtifactMcp } from "./lib/artifact-e2e.mjs";
-import { createNativeUiFixtureOwner } from "./lib/native-ui-fixture-lifecycle.mjs";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { runNativeUiFixtureLane } from "./lib/native-ui-fixture-lifecycle.mjs";
 
 if (process.platform !== "darwin")
   throw new Error(
     "Native UI verification requires macOS, an interactive desktop and Xcode command-line tools",
   );
-const fixture = await createNativeUiFixtureOwner();
-const { root } = fixture;
-// The fixture outlives this process unless released, so interruption must too.
-for (const [signal, exitCode] of [
-  ["SIGINT", 130],
-  ["SIGTERM", 143],
-])
-  process.once(signal, () => {
-    void fixture
-      .close()
-      .catch((cause) => console.error(cause))
-      .finally(() => process.exit(exitCode));
-  });
-const report = await withVerifierCleanup(async () => {
+const report = await runNativeUiFixtureLane(async (fixture) => {
+  const { root } = fixture;
   const childRetrievalTest = join(root, "child-retrieval-test");
   await promisify(execFile)("/usr/bin/xcrun", [
     "swiftc",
@@ -237,5 +224,5 @@ const report = await withVerifierCleanup(async () => {
     mismatch_rejected: true,
     target_owned: true,
   };
-}, [() => fixture.close()]);
+});
 process.stdout.write(`${JSON.stringify(report)}\n`);

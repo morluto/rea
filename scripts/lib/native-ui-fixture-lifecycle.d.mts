@@ -26,3 +26,15 @@ export function createNativeUiFixtureOwner(options?: {
   readonly launcherCommand?: string;
   readonly readyTimeoutMs?: number;
 }): Promise<NativeUiFixtureOwner>;
+
+/**
+ * Run one lane around a fixture owner and settle its process outcome in one
+ * place. Exits 130 or 143 when an interruption is the first failure.
+ */
+export function runNativeUiFixtureLane<Value>(
+  operation: (fixture: NativeUiFixtureOwner) => Promise<Value>,
+  options?: {
+    readonly launcherCommand?: string;
+    readonly readyTimeoutMs?: number;
+  },
+): Promise<Value>;

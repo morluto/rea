@@ -48,6 +48,27 @@ spawn(process.execPath, [entry, args.at(-1), coordinates], {
 if (config.launcher === "exits") process.exit(0);
 `;
 
+// The lane around an authored operation: the verifier's real operation needs
+// native capture, so its successful path cannot be reached with injected tools.
+const laneSource = (lifecycle: string) => `
+import { appendFileSync, readFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { runNativeUiFixtureLane } from ${JSON.stringify(lifecycle)};
+const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
+const report = await runNativeUiFixtureLane(async (fixture) => {
+  const application = join(fixture.root, "Fixture.app");
+  await mkdir(application);
+  const scope = await fixture.launch(application);
+  if (config.operation === "hangs") {
+    appendFileSync(config.events, JSON.stringify({ kind: "operation-hanging" }) + "\\n");
+    await new Promise(() => setInterval(() => undefined, 1000));
+  }
+  return { completed: true, pid: scope.pid };
+}, { launcherCommand: config.launcherEntry });
+process.stdout.write(JSON.stringify(report) + "\\n");
+`;
+
 // Stands in for the launch service that keeps working after the launcher dies.
 const launchServiceSource = `
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
@@ -103,12 +124,26 @@ setTimeout(() => process.exit(0), 25000);
 
 // Injects the compiler, launcher and, once the fixture runs, a clock jump into
 // the actual verifier. A one-time offset leaves later cleanup budgets unchanged.
+// holdRelease parks the real release at its retire step until the test opens the
+// gate: the launcher has stopped, the fixture and root remain, nothing is mocked.
 const preloadSource = `
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { promisify } from "node:util";
 const config = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
-const childProcess = createRequire(import.meta.url)("node:child_process");
+const require = createRequire(import.meta.url);
+const childProcess = require("node:child_process");
+if (config.holdRelease) {
+  const fsPromises = require("node:fs/promises");
+  const { rename } = fsPromises;
+  fsPromises.rename = async (from, to) => {
+    if (String(to).endsWith(".retired")) {
+      appendFileSync(config.events, JSON.stringify({ kind: "release-held" }) + "\\n");
+      while (!existsSync(config.releaseGate)) await new Promise((wake) => setTimeout(wake, 5));
+    }
+    return rename(from, to);
+  };
+}
 const { execFile, spawn } = childProcess;
 const compile = (args) => {
   const output = args[args.indexOf("-o") + 1];
@@ -170,6 +205,8 @@ interface ScenarioConfig {
   readonly untokenedMember?: boolean;
   readonly foreignPid?: number;
   readonly clockJump?: boolean;
+  readonly holdRelease?: boolean;
+  readonly operation?: "completes" | "hangs";
 }
 
 const isLive = async (pid: number): Promise<boolean> =>
@@ -196,6 +233,7 @@ const createScenario = async (config: ScenarioConfig = {}) => {
     release: join(workspace, "release"),
     memberRelease: join(workspace, "member-release"),
     readyGate: join(workspace, "ready-gate"),
+    releaseGate: join(workspace, "release-gate"),
     launcherEntry: join(workspace, "launcher.mjs"),
   };
   await writeFile(paths.events, "");
@@ -207,6 +245,13 @@ const createScenario = async (config: ScenarioConfig = {}) => {
   await writeFile(join(workspace, "fixture.mjs"), fixtureSource);
   await writeFile(join(workspace, "launch-service.mjs"), launchServiceSource);
   await writeFile(join(workspace, "preload.mjs"), preloadSource);
+  await writeFile(
+    join(workspace, "lane.mjs"),
+    laneSource(
+      pathToFileURL(resolve("scripts/lib/native-ui-fixture-lifecycle.mjs"))
+        .href,
+    ),
+  );
   await writeFile(
     join(workspace, "config.json"),
     JSON.stringify({ launcher: "waits", ready: "never", ...config, ...paths }),
@@ -602,13 +647,9 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   },
 );
 
-// The verifier refuses other hosts before any fixture is created. These drive
-// the actual entrypoint; its compiler and launcher are injected, so they cover
-// the entrypoint's ownership wiring and not native capture.
-const macosIt = it.skipIf(process.platform !== "darwin");
-
-const runVerifier = async (
+const runEntry = async (
   scenario: Awaited<ReturnType<typeof createScenario>>,
+  entry: string,
 ) => {
   const temporary = join(scenario.workspace, "tmp");
   await mkdir(temporary);
@@ -617,7 +658,7 @@ const runVerifier = async (
     [
       "--import",
       pathToFileURL(join(scenario.workspace, "preload.mjs")).href,
-      resolve("scripts/verify-native-ui.mjs"),
+      entry,
     ],
     {
       env: { ...process.env, TMPDIR: temporary },
@@ -631,12 +672,15 @@ const runVerifier = async (
   child.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString("utf8");
   });
-  child.stdout.resume();
+  let stdout = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout += chunk.toString("utf8");
+  });
   const exit = new Promise<{
     readonly code: number | null;
     readonly signal: NodeJS.Signals | null;
   }>((resolveExit) => {
-    child.once("exit", (code, signal) => {
+    child.once("close", (code, signal) => {
       resolveExit({ code, signal });
     });
   });
@@ -644,8 +688,215 @@ const runVerifier = async (
     (await readdir(temporary)).filter((name) =>
       name.startsWith("rea-ui-fixture-"),
     );
-  return { child, exit, roots, stderr: () => stderr };
+  return {
+    child,
+    exit,
+    roots,
+    temporary,
+    stderr: () => stderr,
+    stdout: () => stdout,
+  };
 };
+
+type RunningEntry = Awaited<ReturnType<typeof runEntry>>;
+type Scenario = Awaited<ReturnType<typeof createScenario>>;
+
+// Waits for the barrier inside the real release, then proves the signals neither
+// ended the process nor released anything early. A pending signal would coalesce
+// with the next, and a delay can only miss a defect here, never invent one.
+const signalDuringHeldRelease = async (
+  scenario: Scenario,
+  entry: RunningEntry,
+  signals: readonly NodeJS.Signals[],
+) => {
+  await waitUntil(
+    async () =>
+      (await scenario.events()).some(({ kind }) => kind === "release-held"),
+    "the release to reach its barrier",
+  );
+  for (const signal of signals) {
+    entry.child.kill(signal);
+    await delay(150);
+  }
+  const fixture = await scenario.started();
+  expect(entry.child.signalCode, entry.stderr()).toBeNull();
+  expect(entry.child.exitCode, entry.stderr()).toBeNull();
+  expect(await isLive(fixture.pid)).toBe(true);
+  expect(await entry.roots()).toHaveLength(1);
+  return fixture;
+};
+
+const lane = (scenario: Scenario) =>
+  runEntry(scenario, join(scenario.workspace, "lane.mjs"));
+
+posixIt(
+  "the lane reports a completed run with a held release and no signal",
+  { timeout: 30_000 },
+  async () => {
+    const scenario = await createScenario({
+      ready: "immediate",
+      holdRelease: true,
+    });
+    const running = await lane(scenario);
+    const fixture = await signalDuringHeldRelease(scenario, running, []);
+    await writeFile(scenario.paths.releaseGate, "");
+    expect(await running.exit, running.stderr()).toEqual({
+      code: 0,
+      signal: null,
+    });
+    expect(JSON.parse(running.stdout())).toEqual({
+      completed: true,
+      pid: fixture.pid,
+    });
+    expect(await isLive(fixture.pid)).toBe(false);
+    expect(await running.roots()).toEqual([]);
+  },
+);
+
+for (const [signal, exitCode] of [
+  ["SIGTERM", 143],
+  ["SIGINT", 130],
+] as const)
+  posixIt(
+    `the lane keeps a completed report and exits ${String(exitCode)} when ${signal} arrives during a held release`,
+    { timeout: 30_000 },
+    async () => {
+      const scenario = await createScenario({
+        ready: "immediate",
+        holdRelease: true,
+      });
+      const running = await lane(scenario);
+      const fixture = await signalDuringHeldRelease(scenario, running, [
+        signal,
+        signal,
+      ]);
+      await writeFile(scenario.paths.releaseGate, "");
+      expect(await running.exit, running.stderr()).toEqual({
+        code: exitCode,
+        signal: null,
+      });
+      expect(JSON.parse(running.stdout())).toEqual({
+        completed: true,
+        pid: fixture.pid,
+      });
+      expect(await isLive(fixture.pid)).toBe(false);
+      expect(await running.roots()).toEqual([]);
+    },
+  );
+
+posixIt(
+  "the lane reports the retained root and exits interrupted when a held release fails after a completed run",
+  { timeout: 30_000 },
+  async () => {
+    const scenario = await createScenario({
+      ready: "immediate",
+      holdRelease: true,
+      untokenedMember: true,
+    });
+    const running = await lane(scenario);
+    const fixture = await signalDuringHeldRelease(scenario, running, [
+      "SIGTERM",
+      "SIGTERM",
+    ]);
+    await writeFile(scenario.paths.releaseGate, "");
+    expect(await running.exit, running.stderr()).toEqual({
+      code: 143,
+      signal: null,
+    });
+    const [root] = await running.roots();
+    expect(root).toBeDefined();
+    expect(running.stderr()).toContain(
+      `retained ${join(running.temporary, root ?? "")} for run ${fixture.runId}`,
+    );
+    expect(running.stderr()).toContain("token mismatch");
+    expect(await isLive(fixture.pid)).toBe(true);
+  },
+);
+
+for (const [outcome, untokenedMember] of [
+  ["released", false],
+  ["retained", true],
+] as const)
+  posixIt(
+    `the lane ends a hung operation on a signal once its release settles as ${outcome}`,
+    { timeout: 30_000 },
+    async () => {
+      const scenario = await createScenario({
+        ready: "immediate",
+        operation: "hangs",
+        untokenedMember,
+      });
+      const running = await lane(scenario);
+      await waitUntil(
+        async () =>
+          (await scenario.events()).some(
+            ({ kind }) => kind === "operation-hanging",
+          ),
+        "the operation to hang",
+      );
+      const fixture = await scenario.started();
+      running.child.kill("SIGTERM");
+      expect(await running.exit, running.stderr()).toEqual({
+        code: 143,
+        signal: null,
+      });
+      expect(running.stdout()).toBe("");
+      expect(running.stderr()).toContain(
+        untokenedMember ? "cleanup is incomplete" : "interrupted by SIGTERM",
+      );
+      expect(await isLive(fixture.pid)).toBe(untokenedMember);
+      expect(await running.roots()).toHaveLength(untokenedMember ? 1 : 0);
+    },
+  );
+
+posixIt(
+  "the lane fails with the retained root when release fails after a completed run and no signal",
+  { timeout: 30_000 },
+  async () => {
+    const scenario = await createScenario({
+      ready: "immediate",
+      untokenedMember: true,
+    });
+    const running = await lane(scenario);
+    expect(await running.exit, running.stderr()).toEqual({
+      code: 1,
+      signal: null,
+    });
+    expect(running.stdout()).toBe("");
+    expect(running.stderr()).toContain("cleanup is incomplete");
+    expect(await running.roots()).toHaveLength(1);
+  },
+);
+
+posixIt(
+  "joined closes share one failed release, and a later close retries it",
+  { timeout: 30_000 },
+  async () => {
+    const scenario = await createScenario({ untokenedMember: true });
+    const { owner, launch } = await launchedOwner(scenario, 300);
+    await expect(launch).rejects.toThrow("failed to expose one window");
+    const fixture = await scenario.started();
+    const first = owner.close();
+    const joined = owner.close();
+    expect(joined).toBe(first);
+    await expect(first).rejects.toBeInstanceOf(NativeUiFixtureCleanupFailure);
+    expect(existsSync(owner.root)).toBe(true);
+    await writeFile(scenario.paths.memberRelease, "");
+    await waitUntil(
+      async () => !(await isLive(fixture.member ?? -1)),
+      "the unproven member to exit",
+    );
+    await expectReleased(owner, scenario, fixture.pid);
+  },
+);
+
+// The verifier refuses other hosts before any fixture is created. These drive
+// the actual entrypoint; its compiler and launcher are injected, so they cover
+// the entrypoint's ownership wiring and not native capture.
+const macosIt = it.skipIf(process.platform !== "darwin");
+
+const runVerifier = (scenario: Scenario) =>
+  runEntry(scenario, resolve("scripts/verify-native-ui.mjs"));
 
 macosIt(
   "the verifier leaves no fixture or root after a missing handshake",
@@ -700,3 +951,64 @@ for (const [signal, exitCode] of [
       expect(await verifier.roots()).toEqual([]);
     },
   );
+
+for (const signals of [
+  ["SIGTERM"],
+  // npm forwards Ctrl-C, so one keypress can deliver the same signal twice.
+  ["SIGINT", "SIGINT"],
+  ["SIGTERM", "SIGTERM", "SIGINT"],
+] as const)
+  macosIt(
+    `the verifier finishes a held release through ${signals.join(", ")} and keeps its primary failure`,
+    { timeout: 40_000 },
+    async () => {
+      const scenario = await createScenario({
+        clockJump: true,
+        holdRelease: true,
+      });
+      const verifier = await runVerifier(scenario);
+      const fixture = await signalDuringHeldRelease(
+        scenario,
+        verifier,
+        signals,
+      );
+      await writeFile(scenario.paths.releaseGate, "");
+      expect(await verifier.exit, verifier.stderr()).toEqual({
+        code: 1,
+        signal: null,
+      });
+      expect(verifier.stderr()).toContain("failed to expose one window");
+      expect(await isLive(fixture.pid)).toBe(false);
+      expect(await verifier.roots()).toEqual([]);
+    },
+  );
+
+macosIt(
+  "the verifier reports both failures and the retained root when a held release fails after a signal",
+  { timeout: 40_000 },
+  async () => {
+    const scenario = await createScenario({
+      clockJump: true,
+      holdRelease: true,
+      untokenedMember: true,
+    });
+    const verifier = await runVerifier(scenario);
+    const fixture = await signalDuringHeldRelease(scenario, verifier, [
+      "SIGTERM",
+      "SIGTERM",
+    ]);
+    await writeFile(scenario.paths.releaseGate, "");
+    expect(await verifier.exit, verifier.stderr()).toEqual({
+      code: 1,
+      signal: null,
+    });
+    expect(verifier.stderr()).toContain("failed to expose one window");
+    const [root] = await verifier.roots();
+    expect(root).toBeDefined();
+    expect(verifier.stderr()).toContain(
+      `retained ${join(verifier.temporary, root ?? "")} for run ${fixture.runId}`,
+    );
+    expect(verifier.stderr()).toContain("token mismatch");
+    expect(await isLive(fixture.pid)).toBe(true);
+  },
+);
