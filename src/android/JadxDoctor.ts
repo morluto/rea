@@ -1,11 +1,9 @@
-import type {
-  RetainedResourceScope,
-  ProviderAvailability,
-} from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
 } from "../application/Doctor.js";
+import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   inspectJadxAvailability,
