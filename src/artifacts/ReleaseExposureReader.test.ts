@@ -2151,6 +2151,82 @@ describe("ReleaseExposureReader unexpanded packages", () => {
   });
 });
 
+describe("ReleaseExposureReader native members named as maps", () => {
+  it.each([
+    ["a JavaScript map name", "payload.js.map"],
+    ["a linker map name", "payload.map"],
+  ])("reads a native member with %s by its bytes", async (_, name) => {
+    const root = await createTestTempDirectory("rea-release-map-native-");
+    const file = join(root, "app");
+    await writeFile(
+      file,
+      cArchiveExecutable({
+        carrier: "elf",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          {
+            name,
+            typeCode: "x",
+            compress: true,
+            payload: pe(0x8664, 64, 0x0002, false, {
+              pdbPath: "C:\\build\\payload.pdb",
+            }),
+          },
+        ],
+      }),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.pdb).toMatchObject({
+      examined: 1,
+      failed: 0,
+      paths: ["C:\\build\\payload.pdb"],
+    });
+    expect(scanned.pdb.image_paths).toEqual([`${file}/${name}`]);
+    expect(scanned.omitted).toContainEqual(
+      expect.objectContaining({ subject: PACKAGED_NATIVE_IMAGES, count: 1 }),
+    );
+    expect(scanned.source_maps.unparsed).toBe(0);
+    expect(scanned.debug_companions.paths).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a script's declared map",
+      "loader.js",
+      "//# sourceMappingURL=payload.dat\n",
+    ],
+    ["a page's script", "index.html", '<script src="payload.dat"></script>'],
+  ])(
+    "reads a native member named as %s by its bytes",
+    async (_, name, text) => {
+      const root = await bundled([
+        { path: name, bytes: Buffer.from(text) },
+        {
+          path: "payload.dat",
+          bytes: pe(0x8664, 64, 0x0002, false, {
+            pdbPath: "C:\\build\\target.pdb",
+          }),
+        },
+      ]);
+      const scanned = await inspect(root);
+      expect(scanned.pdb.paths).toContain("C:\\build\\target.pdb");
+      expect(scanned.source_maps.skipped).toBe(0);
+    },
+  );
+
+  it("reads short text that begins like a DOS header as text", async () => {
+    const root = await bundled([
+      { path: "note.txt", bytes: Buffer.from(`MZ${"a".repeat(80)}`) },
+    ]);
+    const scanned = await inspect(root);
+    expect(scanned.textLocations).toEqual([
+      `${join(root, "app.dll")}/note.txt`,
+    ]);
+    expect(scanned.pdb).toMatchObject({ failed: 0, paths: [] });
+  });
+});
+
 describe("ReleaseExposureReader unexpanded package PE reads", () => {
   it("reads a native member by its bytes when its name says text", async () => {
     const root = await bundled([

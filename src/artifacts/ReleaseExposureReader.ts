@@ -951,9 +951,9 @@ const examineMember = async (
   if (member.encrypted) noteUnreadMember(state, member);
   else if (nativePackaged)
     readable = await examinePackagedBinary(state, member, context);
-  else if (map) readable = await examineMapMember(state, member);
+  else if (map) readable = await examineMapMember(state, member, context);
   else if (isText(member.logical, member.kind))
-    readable = await examineTextMember(state, member, context);
+    readable = await examineTextMember(state, member, context, listed.kind);
   else if (packageFormat !== null)
     readable = await examinePackagedBinary(state, member, context);
   else if (asNativeFormat(member.format) === null)
@@ -998,6 +998,7 @@ const notePeNotExamined = (state: ScanState, location: string): void => {
 const examineMapMember = async (
   state: ScanState,
   member: MemberView,
+  context: ScanContext,
 ): Promise<boolean> => {
   // A member a script names or an owner marks as a map is a JavaScript map
   // whatever it is called. Only an undeclared `.map` may be a linker map.
@@ -1007,7 +1008,13 @@ const examineMapMember = async (
   const declared = undeclared
     ? member
     : { ...member, logical: `${member.logical}.js.map` };
-  const loaded = await examineMap(state, declared);
+  const read = await readMap(state, declared);
+  const native =
+    read === null ? null : packagedNativeOfRead(member, read.loaded);
+  if (native !== null)
+    return examinePackagedBinary(state, { ...member, format: native }, context);
+  if (read !== null) settleMapRead(state, declared, read);
+  const loaded = read?.loaded ?? null;
   if (loaded?.kind === "bytes")
     scanText(
       state,
@@ -1034,23 +1041,44 @@ const chargeMapRead = (
   return { hasSlot: true, bytes: MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES };
 };
 
-/** Returns the read so a caller can also scan its text, or null when nothing was read. */
-const examineMap = async (
+interface MapRead {
+  readonly hasSlot: boolean;
+  readonly loaded: MemberRead;
+}
+
+/** The bytes a map read may use, or null when no read is allowed. */
+const readMap = async (
   state: ScanState,
-  map: Pick<MemberView, "logical" | "location" | "read">,
-): Promise<MemberRead | null> => {
+  map: Pick<MemberView, "logical" | "read">,
+): Promise<MapRead | null> => {
   const { hasSlot, bytes } = chargeMapRead(state);
   if (!hasSlot && isJavaScriptSourceMapName(map.logical)) {
     state.skippedMaps += 1;
     return null;
   }
-  const loaded = await map.read(bytes);
+  return { hasSlot, loaded: await map.read(bytes) };
+};
+
+const settleMapRead = (
+  state: ScanState,
+  map: Pick<MemberView, "logical" | "location">,
+  { hasSlot, loaded }: MapRead,
+): void => {
   if (loaded.kind === "unread") noteUnreadMap(state, map, null);
   else if (loaded.kind === "over_allowance")
     noteUnreadMap(state, map, loaded.prefix);
   else if (hasSlot) readSourceMap(state, map, loaded.bytes);
   else noteUnreadMap(state, map, loaded.bytes);
-  return loaded;
+};
+
+/** Returns the read so a caller can also scan its text, or null when nothing was read. */
+const examineMap = async (
+  state: ScanState,
+  map: Pick<MemberView, "logical" | "location" | "read">,
+): Promise<MemberRead | null> => {
+  const read = await readMap(state, map);
+  if (read !== null) settleMapRead(state, map, read);
+  return read?.loaded ?? null;
 };
 
 /**
@@ -1182,6 +1210,7 @@ const examineTextMember = async (
   state: ScanState,
   member: MemberView,
   context: ScanContext,
+  listedKind = member.kind,
 ): Promise<boolean> => {
   // CSS can declare inline maps, but the directive parser only handles JavaScript.
   if (isCssMember(member)) state.skippedMaps += 1;
@@ -1195,7 +1224,7 @@ const examineTextMember = async (
   const loaded = await member.read(
     Math.min(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES, remaining),
   );
-  const native = packagedNativeOfTextName(member, loaded);
+  const native = packagedNativeOfRead({ ...member, kind: listedKind }, loaded);
   if (native !== null) {
     state.textBytes += state.memberBytesRead - bytesReadBefore;
     return examinePackagedBinary(state, { ...member, format: native }, context);
@@ -1238,15 +1267,13 @@ const hasNodeShebang = (prefix: Buffer): boolean => {
 };
 
 /**
- * Recognize text from bounded content. A name such as `.env.production`,
- * `server.key`, or `credentials` is not a complete statement of what a file is.
- * Content that could not be probed leaves text coverage undecided.
+ * A name is not a format: a package member called `payload.json` or
+ * `payload.js.map` can be a PE, and a script or map declaration names whatever
+ * is at its target. The route's own read decides, so real text and maps cost no
+ * further read. A kind the owner stated is kept; a promoted member passes the
+ * kind it was listed with.
  */
-/**
- * A name is not a format: a package member called `payload.json` can be a PE.
- * The text read's own bytes decide, so real text costs no further read.
- */
-const packagedNativeOfTextName = (
+const packagedNativeOfRead = (
   member: MemberView,
   loaded: MemberRead,
 ): NativeFormat | null => {
@@ -1260,6 +1287,11 @@ const packagedNativeOfTextName = (
   );
 };
 
+/**
+ * Recognize text from bounded content. A name such as `.env.production`,
+ * `server.key`, or `credentials` is not a complete statement of what a file is.
+ * Content that could not be probed leaves text coverage undecided.
+ */
 const examineProbedText = async (
   state: ScanState,
   member: MemberView,
