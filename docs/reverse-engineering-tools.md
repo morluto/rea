@@ -77,6 +77,8 @@ close_gdb_session {"session_id":"…"}
 
 Persistent command Evidence retains the caller-selected and resolved startup paths in `parameters.launch_provenance`. These paths describe launch provenance, not the current target after unrestricted commands. `rizin_debug_session_status.output_invalid_utf8` reports whether lossy frame decoding has been observed during the session. Command Evidence sets `output_invalid_utf8` only when loss was observed in frames collected for that command, including retained partial output; earlier startup or command frames do not mark later valid output as lossy.
 
+Rizin debugger sessions start with `-e scr.color=0` so debugger output defaults to plain text. A caller can enable colour with `e scr.color=1`; that setting remains in effect for later commands in the same session until changed again. REA preserves output, including literal ANSI bytes.
+
 Session status retains up to 64 recent protocol frames. Each history entry keeps a complete-character UTF-8 prefix of at most 16 KiB, plus a truncation marker when needed; `recent_output_truncated` reports omitted history. This history budget also accounts for replacement characters from invalid UTF-8. It does not shorten command Evidence, which has its own 16 MiB output budget. Rizin debug startup waits 30000 ms and each command frame waits 120000 ms. This release has no runtime override for those deadlines, the 16777216 byte frame cap, the 16777216 byte command-output cap, the 4096 frame command cap, session capacity, or the pending-command queue. Evidence names the cap that stopped the command. The one-shot `command_timeout_ms` setting does not change a debug session.
 
 ```sh
