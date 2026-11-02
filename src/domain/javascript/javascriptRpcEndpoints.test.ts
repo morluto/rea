@@ -35,6 +35,11 @@ describe("RPC object property ownership", () => {
     ['url: "/trpc/live", [0x1n]: {}', "/trpc/live"],
     ['url: "/trpc/live", [0b1n]: {}', "/trpc/live"],
     ['url: "/trpc/live", [-1n]: {}', "/trpc/live"],
+    ["url: `/trpc/live`", "/trpc/live"],
+    ['url: "/trpc/old", url: `/trpc/live`', "/trpc/live"],
+    ['url: `/trpc/old`, url: "/trpc/live"', "/trpc/live"],
+    ["url: `/trpc/${runtimeUrl}`", null],
+    ['url: "/trpc/old", url: `/trpc/${runtimeUrl}`', null],
   ] as const)(
     "reads only the final known link URL from {%s}",
     (options, value) => {
@@ -318,6 +323,7 @@ describe("tRPC binding identity and bundled syntax", () => {
       const p = (t.createTRPCProxyClient as any)({});
       p.posts.query();
       (0, t.httpLink)({ url: "/api/other" });
+      (0, t.httpLink)({ url: \`/api/template\` });
     `),
     ).toEqual([
       {
@@ -328,6 +334,11 @@ describe("tRPC binding identity and bundled syntax", () => {
       { kind: "network", value: "users", mechanism: "trpc:procedure:query" },
       { kind: "network", value: "posts", mechanism: "trpc:procedure:query" },
       { kind: "network", value: "/api/other", mechanism: "trpc:link:httpLink" },
+      {
+        kind: "network",
+        value: "/api/template",
+        mechanism: "trpc:link:httpLink",
+      },
     ]);
   });
 
