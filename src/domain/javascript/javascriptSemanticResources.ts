@@ -227,6 +227,21 @@ const acquisitionMethod = (
 const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
 
+/**
+ * The number JavaScript's unary coercion produces for an exactly readable
+ * non-numeric primitive, or `undefined` when the operand is not one.
+ */
+const primitiveToNumber = (value: t.Node): number | undefined => {
+  if (t.isStringLiteral(value)) return Number(value.value);
+  if (t.isBooleanLiteral(value)) return Number(value.value);
+  if (t.isNullLiteral(value)) return 0;
+  if (t.isTemplateLiteral(value) && value.expressions.length === 0) {
+    const cooked = value.quasis[0]?.value.cooked;
+    return cooked === undefined || cooked === null ? undefined : Number(cooked);
+  }
+  return undefined;
+};
+
 /** Whether a number Node accepts as a TCP port. */
 const usablePort = (bits: number): boolean =>
   Number.isInteger(bits) && bits >= 0 && bits <= 65535;
@@ -277,7 +292,21 @@ const rejectsPortValue = (
     // socket exists.
     if (value.operator === "void" || value.operator === "!") return true;
     const operand = unwrapJavaScriptExpression(value.argument).node;
-    if (!t.isNumericLiteral(operand)) return false;
+    // JavaScript coerces a unary operand over an exact non-numeric primitive, so
+    // `-true` is `-1` and `+"bad"` is `NaN`; neither is a usable port.
+    if (!t.isNumericLiteral(operand)) {
+      const coerced = primitiveToNumber(operand);
+      if (coerced === undefined) return false;
+      const result =
+        value.operator === "-"
+          ? -coerced
+          : value.operator === "+"
+            ? coerced
+            : value.operator === "~"
+              ? ~coerced
+              : undefined;
+      return result === undefined ? false : !usablePort(result);
+    }
     const bits =
       value.operator === "-"
         ? -operand.value

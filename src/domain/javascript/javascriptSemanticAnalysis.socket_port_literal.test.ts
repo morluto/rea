@@ -392,3 +392,27 @@ it.each([
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
   expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
 });
+
+/**
+ * JavaScript coerces a unary operand over an exact non-numeric primitive, so the
+ * port is decidable rather than unknown:
+ *
+ *   net.connect(-true)    -> -1, THREW ERR_SOCKET_BAD_PORT
+ *   net.connect(+"bad")   -> NaN, THREW ERR_SOCKET_BAD_PORT
+ *   net.connect(~null)    -> -1, THREW ERR_SOCKET_BAD_PORT
+ *   net.connect(+"80")    -> 80, socket created
+ */
+it.each([
+  ["a negated boolean port", `net.connect(-true)`],
+  ["a unary-plus bad string port", `net.connect(+"bad")`],
+  ["a bitwise-not null port", `net.connect(~null)`],
+  ["a negated numeric string port", `net.connect(-"644")`],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it("keeps the socket acquisition for a coerced usable port", () => {
+  expect(socketAcquisitionsFor(`net.connect(+"80")`)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});
