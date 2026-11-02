@@ -11,17 +11,18 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+
 
 def estimate_frequency(samples: Any, sample_rate: int, min_hz: float = 65.0, max_hz: float = 1_000.0) -> float | None:
     """Estimate the strongest periodic frequency using normalized autocorrelation."""
-    count = len(samples)
+    values = np.asarray(samples, dtype=np.float64)
+    count = values.size
     if count < 4:
         return None
 
-    mean = float(sum(samples)) / count
-    centered = [float(sample) - mean for sample in samples]
-    energy = sum(sample * sample for sample in centered)
-    if energy <= 1e-8:
+    centered = values - values.mean()
+    if float(np.dot(centered, centered)) <= 1e-8:
         return None
 
     min_lag = max(1, int(sample_rate / max_hz))
@@ -29,14 +30,28 @@ def estimate_frequency(samples: Any, sample_rate: int, min_hz: float = 65.0, max
     if min_lag >= max_lag:
         return None
 
-    best_lag = 0
-    best_score = 0.0
-    for lag in range(min_lag, max_lag + 1):
-        score = sum(centered[index] * centered[index + lag] for index in range(count - lag))
-        score /= energy
-        if score > best_score:
-            best_score = score
-            best_lag = lag
+    correlation = np.correlate(centered, centered, mode="full")[count - 1:]
+    lags = np.arange(min_lag, max_lag + 1)
+    overlap_energy = np.sqrt(
+        np.array([np.dot(centered[:-lag], centered[:-lag]) for lag in lags])
+        * np.array([np.dot(centered[lag:], centered[lag:]) for lag in lags])
+    )
+    scores = np.divide(
+        correlation[lags],
+        overlap_energy,
+        out=np.zeros_like(overlap_energy),
+        where=overlap_energy > 1e-8,
+    )
+
+    peak_indices = np.flatnonzero((scores[1:-1] >= scores[:-2]) & (scores[1:-1] > scores[2:])) + 1
+    if peak_indices.size:
+        peak_threshold = float(scores[peak_indices].max()) * 0.995
+        prominent_peaks = peak_indices[scores[peak_indices] >= peak_threshold]
+        best_peak = int(prominent_peaks[0] if prominent_peaks.size else peak_indices[np.argmax(scores[peak_indices])])
+    else:
+        best_peak = int(np.argmax(scores))
+    best_lag = int(lags[best_peak])
+    best_score = float(scores[best_peak])
 
     if best_lag == 0 or best_score < 0.35:
         return None
@@ -93,7 +108,13 @@ def rms(samples: Any) -> float:
     return math.sqrt(sum(float(sample) * float(sample) for sample in samples) / max(1, len(samples)))
 
 
-def run(device: str | None, midi_port: str | None, sample_rate: int, block_size: int, channel: int) -> None:
+def parse_device(device: str | None) -> str | int | None:
+    if device is None:
+        return None
+    return int(device) if device.isdecimal() else device
+
+
+def run(device: str | int | None, midi_port: str | None, sample_rate: int, block_size: int, channel: int) -> None:
     try:
         import mido
         import sounddevice as sd
@@ -140,13 +161,13 @@ def run(device: str | None, midi_port: str | None, sample_rate: int, block_size:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Convert monophonic microphone pitch to MIDI notes.")
-    parser.add_argument("--device", help="Input device name or index.")
+    parser.add_argument("--device", help="Input device name or numeric index.")
     parser.add_argument("--midi-port", help="MIDI output port name; defaults to the first available port.")
     parser.add_argument("--sample-rate", type=int, default=16_000)
     parser.add_argument("--block-size", type=int, default=2_048)
     parser.add_argument("--channel", type=int, default=0)
     args = parser.parse_args()
-    run(args.device, args.midi_port, args.sample_rate, args.block_size, args.channel)
+    run(parse_device(args.device), args.midi_port, args.sample_rate, args.block_size, args.channel)
 
 
 if __name__ == "__main__":
