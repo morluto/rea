@@ -1,23 +1,33 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { afterAll, expect, it, onTestFinished } from "vitest";
+import { afterAll, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
+import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../../../src/contracts/analysisViewToolContracts.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import {
   createEvidence,
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { batchDecompileResultSchema } from "../../../src/domain/native/batchDecompile.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
+import { createServer } from "../../../src/server/createServer.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  closeEnhancedToolResources,
+  connect as connectFixedAnalysis,
+} from "./enhancedToolsHarness.js";
 import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
 
 const MAIN_BODY = "int main(void) { return 0; }";
@@ -82,23 +92,39 @@ const provider = (calls: { count: number }, bodies: typeof BODIES) =>
     return Promise.resolve(ok(ghidraFixtureResult(operation, input)));
   }) satisfies NonNullable<Parameters<typeof connectGhidraMcp>[1]>;
 
+const [inspectAnalysisViewContract] = ANALYSIS_VIEW_TOOL_CONTRACTS.filter(
+  ({ name }) => name === "inspect_analysis_view",
+);
+if (inspectAnalysisViewContract === undefined)
+  throw new Error("Missing inspect_analysis_view contract");
+
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
 
 /** Replies these tools deliver must validate against what they advertise. */
 const ADVERTISED_OUTPUTS = ["batch_decompile", "inspect_analysis_view"];
 
-const connect = async (profile: "full" | "compact") => {
+const connect = async (
+  profile: "full" | "compact",
+  options: {
+    readonly budget?: number;
+    readonly bodies?: typeof BODIES;
+    readonly execute?: Parameters<typeof connectGhidraMcp>[1];
+  } = {},
+) => {
   const calls = { count: 0 };
   const harness = await connectGhidraMcp(
     `batch-decompile-views-${profile}`,
-    provider(calls, BODIES),
+    options.execute ?? provider(calls, options.bodies ?? BODIES),
     {
       environment: {
         REA_MCP_INPUT_SCHEMA_PROFILE: profile,
         REA_MCP_OUTPUT_SCHEMA_PROFILE: profile,
       },
       schemaValidator: schemaValidation,
+      ...(options.budget === undefined
+        ? {}
+        : { delivery: createToolResultDelivery(options.budget) }),
     },
   );
   onTestFinished(() => harness.close());
@@ -197,19 +223,18 @@ const invalidIssue = (message: string) => ({
 });
 
 it.each(["full", "compact"] as const)(
-  "selects retained batch rows and bodies without repeating analysis (%s)",
+  "selects retained batch rows and bodies from a summary without repeating analysis (%s)",
   async (profile) => {
     const harness = await connect(profile);
-    const parent = (
-      await harness.call("batch_decompile", { addresses: SELECTORS })
-    ).evidence;
-    const parentId = parent.evidence_id;
-    const reply = await harness.call("inspect_analysis_view", {
-      source: retained(parentId),
-      view: { kind: "summary" },
+    const reply = await harness.call("batch_decompile", {
+      addresses: SELECTORS,
+      detail: "summary",
     });
     const summary = viewOf(reply.evidence);
+    const parentId = z.string().parse(summary.parent_evidence_id);
+    const parent = parseEvidence(harness.session.evidenceById(parentId));
 
+    // The selection never reaches the record, so the parent is the same analysis.
     expect(parent.parameters).toEqual({ addresses: SELECTORS });
     expect(
       batchDecompileResultSchema.parse(parent.normalized_result),
@@ -245,6 +270,18 @@ it.each(["full", "compact"] as const)(
       ]),
     );
     const callsAfterBatch = harness.calls.count;
+
+    // The same summary is reachable later through the retained parent.
+    expect(
+      viewOf(
+        (
+          await harness.call("inspect_analysis_view", {
+            source: retained(parentId),
+            view: { kind: "summary" },
+          })
+        ).evidence,
+      ).summary,
+    ).toEqual(summary.summary);
 
     // The default page is an index without bodies.
     const index = await view(harness, parentId, { collection: "items" });
@@ -408,6 +445,83 @@ it("pages one body exactly without splitting a Unicode character", async () => {
   ).toMatchObject(invalidIssue("splits a UTF-16 surrogate pair"));
 });
 
+it("recovers oversized batches and pages through smaller selections of the parent", async () => {
+  const budget = 64 * 1024;
+  const large = `int main(void) { /*${"x".repeat(budget * 2)}*/ }`;
+  const harness = await connect("full", {
+    budget,
+    bodies: { "0x401000": large, "0x402000": large },
+  });
+  const constraint = (result: CallToolResult) => {
+    const { error } = parseMcpToolError(result);
+    expect(error.code).toBe("resource_constraint");
+    const limits = z
+      .object({ details: z.object({ reported_limits: jsonObjectSchema }) })
+      .parse(error).details.reported_limits;
+    return z
+      .object({
+        name: z.literal("inspect_analysis_view"),
+        arguments: inspectAnalysisViewContract.inputSchema,
+      })
+      .parse(limits.continuation);
+  };
+
+  // The complete batch names a body-free first page of its retained parent.
+  const first = constraint(
+    await harness.reply("batch_decompile", {
+      addresses: ["main", "emoji", "bodyless"],
+    }),
+  );
+  const source = first.arguments.source;
+  if (source.kind !== "retained-evidence") throw new Error("Expected parent");
+  expect(first.arguments.view).toEqual({
+    kind: "batch-decompile",
+    collection: "items",
+    where: {},
+    include_pseudocode: false,
+    offset: 0,
+    limit: 64,
+  });
+  const rows = await harness.call(first.name, first.arguments);
+  expect(rowIndices(viewOf(rows.evidence))).toEqual([0, 1, 2]);
+  expect(Buffer.byteLength(JSON.stringify(rows.result))).toBeLessThan(budget);
+
+  // Several bodies that cannot fit continue with fewer rows from the same parent.
+  const withBodies = {
+    kind: "batch-decompile",
+    collection: "items",
+    include_pseudocode: true,
+  };
+  const fewer = constraint(
+    await harness.reply("inspect_analysis_view", {
+      source,
+      view: withBodies,
+    }),
+  );
+  expect(fewer.arguments).toMatchObject({
+    source,
+    view: { ...withBodies, limit: 1 },
+  });
+
+  // One body that cannot fit continues with its text pages rather than an export.
+  const text = constraint(await harness.reply(fewer.name, fewer.arguments));
+  expect(text.arguments).toMatchObject({
+    source,
+    view: { kind: "batch-decompile", collection: "pseudocode", index: 0 },
+  });
+  const oversizedPage = constraint(
+    await harness.reply("inspect_analysis_view", {
+      source,
+      view: { ...text.arguments.view, limit: budget * 2 },
+    }),
+  );
+  expect(oversizedPage.arguments).toMatchObject({
+    source,
+    view: { collection: "pseudocode", index: 0, limit: budget },
+  });
+  expect((await readBody(harness, source.evidence_id, 0)).text).toBe(large);
+});
+
 it("reads the same rows from a bundle and an Evidence file without a provider", async () => {
   const harness = await connect("full");
   const parent = (
@@ -459,15 +573,196 @@ it("reads the same rows from a bundle and an Evidence file without a provider", 
   }
 });
 
+it("keeps the caller's own source when a page cannot fit, without retaining its parent", async () => {
+  const budget = 64 * 1024;
+  const body = `int f(void) { /*${"x".repeat(budget * 2)}*/ }`;
+  const row = {
+    procedure: { status: "resolved", address: "0x1", name: null },
+    status: "ok",
+    pseudocode: body,
+  };
+  const parent = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "batch_decompile",
+      parameters: {},
+      result: {
+        items: [
+          { address: "a", ...row },
+          { address: "b", ...row },
+        ],
+        total: 2,
+        succeeded: 2,
+        failed: 0,
+      },
+      predicateType: "rea.analysis",
+      confidence: "derived",
+      authority: "shipped-artifact",
+    },
+  );
+  const root = await createTestTempDirectory("rea-batch-decompile-source-");
+  const path = join(root, "batch.json");
+  await writeFile(path, JSON.stringify(parent));
+  const session = createTestBinarySession(() => {
+    throw new Error("Retained batch views must not open a provider");
+  });
+  const { client, close } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "batch-decompile-source", version: "1.0.0" },
+    schemaValidator: schemaValidation,
+    serverOptions: { delivery: createToolResultDelivery(budget) },
+  });
+  onTestFinished(close);
+  const inspect = (source: unknown, selected: Record<string, unknown>) =>
+    client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source, view: { kind: "batch-decompile", ...selected } },
+    });
+  const continuationOf = (result: Parameters<typeof parseMcpToolError>[0]) =>
+    z
+      .object({ details: z.object({ reported_limits: jsonObjectSchema }) })
+      .parse(parseMcpToolError(result).error).details.reported_limits
+      .continuation;
+  const withBodies = { collection: "items", include_pseudocode: true };
+
+  // A file source continues from that file: its parent was never retained.
+  const file = { kind: "evidence-file", path };
+  expect(continuationOf(await inspect(file, withBodies))).toMatchObject({
+    arguments: { source: file, view: { limit: 1 } },
+  });
+  const oneRow = continuationOf(
+    await inspect(file, { ...withBodies, limit: 1 }),
+  );
+  expect(oneRow).toMatchObject({
+    arguments: {
+      source: file,
+      view: { collection: "pseudocode", index: 0 },
+    },
+  });
+  const followed = await client.callTool(
+    z.object({ name: z.string(), arguments: jsonObjectSchema }).parse(oneRow),
+  );
+  expect(followed.isError, JSON.stringify(followed)).not.toBe(true);
+  expect(session.hasEvidence(parent.evidence_id)).toBe(false);
+
+  // An inline record cannot be repeated within the reply it overflowed.
+  const inline = { kind: "inline", evidence: parent };
+  const overflowed = await inspect(inline, withBodies);
+  expect(parseMcpToolError(overflowed).error.code).toBe("resource_constraint");
+  expect(continuationOf(overflowed)).toBeUndefined();
+
+  // A server that retains nothing still reads the file, and can name it again.
+  const unretained = createServer(
+    {
+      kind: "fixed",
+      analysis: {
+        execute: () => {
+          throw new Error("Retained batch views must not call a provider");
+        },
+      },
+    },
+    { delivery: createToolResultDelivery(budget) },
+  );
+  const fixedClient = new Client({
+    name: "batch-unretained",
+    version: "1.0.0",
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  onTestFinished(async () => {
+    await fixedClient.close();
+    await unretained.close();
+  });
+  await unretained.connect(serverTransport);
+  await fixedClient.connect(clientTransport);
+  const noRecorder = continuationOf(
+    await fixedClient.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: file,
+        view: { kind: "batch-decompile", ...withBodies },
+      },
+    }),
+  );
+  expect(noRecorder).toMatchObject({
+    arguments: { source: file, view: { limit: 1 } },
+  });
+  const followedUnretained = await fixedClient.callTool(
+    z
+      .object({ name: z.string(), arguments: jsonObjectSchema })
+      .parse(
+        continuationOf(
+          await fixedClient.callTool(
+            z
+              .object({ name: z.string(), arguments: jsonObjectSchema })
+              .parse(noRecorder),
+          ),
+        ),
+      ),
+  );
+  expect(
+    followedUnretained.isError,
+    JSON.stringify(followedUnretained),
+  ).not.toBe(true);
+});
+
+it("delivers no summary without retention, on a ledger failure or after cancellation", async () => {
+  onTestFinished(closeEnhancedToolResources);
+  let calls = 0;
+  const unretained = await connectFixedAnalysis({
+    execute: () => {
+      calls++;
+      throw new Error("Selected delivery must fail before analysis");
+    },
+  });
+  expect(
+    parseMcpToolError(
+      await unretained.callTool({
+        name: "batch_decompile",
+        arguments: { addresses: ["0x1"], detail: "summary" },
+      }),
+    ).error,
+  ).toMatchObject({ code: "capability_unavailable" });
+  expect(calls).toBe(0);
+
+  const ledger = await connect("full");
+  vi.spyOn(ledger.session, "recordEvidence").mockReturnValue(
+    err(new AnalysisOutputError("record_evidence", "ledger refused the batch")),
+  );
+  const refused = await ledger.reply("batch_decompile", {
+    addresses: ["main"],
+    detail: "summary",
+  });
+  expect(parseMcpToolError(refused).error.code).toBe("unreadable_output");
+
+  const cancelled = await connect("full", {
+    execute: (operation, input) =>
+      Promise.resolve(
+        operation === "procedure_pseudo_code"
+          ? err(new GhidraSessionError("cancelled", "Decompile cancelled"))
+          : ok(ghidraFixtureResult(operation, input)),
+      ),
+  });
+  const stopped = await cancelled.reply("batch_decompile", {
+    addresses: ["main"],
+    detail: "summary",
+  });
+  expect(parseMcpToolError(stopped).error.code).toBe("cancelled");
+  const records = await cancelled.reply("get_evidence_bundle", {
+    detail: "summary",
+    filters: { operation: "batch_decompile" },
+  });
+  expect(records.structuredContent).toMatchObject({ result: { records: [] } });
+});
+
 it("binds views to their parent and each page to its own collection", async () => {
   const harness = await connect("full");
-  const emptyParent = (await harness.call("batch_decompile", { addresses: [] }))
-    .evidence.evidence_id;
   const summary = viewOf(
     (
-      await harness.call("inspect_analysis_view", {
-        source: retained(emptyParent),
-        view: { kind: "summary" },
+      await harness.call("batch_decompile", {
+        addresses: [],
+        detail: "summary",
       })
     ).evidence,
   );
@@ -477,7 +772,9 @@ it("binds views to their parent and each page to its own collection", async () =
     pseudocode: { code_units: 0, largest: null },
   });
   expect(
-    await view(harness, emptyParent, { collection: "items" }),
+    await view(harness, z.string().parse(summary.parent_evidence_id), {
+      collection: "items",
+    }),
   ).toMatchObject({
     items: [],
     coverage: { status: "empty", exhausted: true },

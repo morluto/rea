@@ -212,6 +212,11 @@ export const publishEvidenceDelivery = async (input: {
   return ok({ delivered: input.delivered, evidenceBundle: written.value });
 };
 
+/** A delivery failure can follow commit; its receipt then owns the source closure. */
+export const evidenceDeliveryCommitted = (error: AnalysisError): boolean =>
+  error.diagnostics?.evidence_bundle !== undefined ||
+  (error instanceof EvidenceFileError && error.published !== undefined);
+
 /** Publish a completed bundle and retry its exact staged-output cleanup owner. */
 const persistEvidenceBundleCommand = async (
   bundle: EvidenceBundle,
