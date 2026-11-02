@@ -15,7 +15,7 @@ import {
   capturePointer,
 } from "./CaptureRedaction.js";
 import { createHarValidator } from "./HarSchema.js";
-import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureRelease.js";
+import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 
 type DecodedCapture = Omit<
   WebNetworkCapture,

@@ -28,11 +28,11 @@ import {
   MAX_EVM_TIMEOUT_MS,
 } from "../domain/evm/evmInterface.js";
 import {
-  EVMOLE_PROVIDER_IDENTITY,
   EVM_CPU_SECONDS,
   EVM_INTERFACE_LIMITS,
   EVM_FILE_SIZE_FAILURE_EXIT,
 } from "./EvmoleRelease.js";
+import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 
 /** Both a structured worker refusal and reply-file admission name this allowance. */

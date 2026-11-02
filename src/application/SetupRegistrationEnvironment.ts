@@ -65,6 +65,7 @@ const SELECTED_REGISTRATION_SETTINGS = [
   "REA_GHIDRA_PROJECT_PATH",
   "REA_GHIDRA_PROGRAM_NAME",
   "REA_GHIDRA_NATIVEAOT_JAR",
+  "REA_HOPPER_CALLER_SCAN_BUDGET_MS",
   "REA_HOPPER_STARTUP_TIMEOUT_MS",
   "REA_JEB_MCP_URL",
   "REA_JEB_MCP_TIMEOUT_MS",
@@ -106,3 +107,17 @@ export const providerRegistrationEnvironment = (
       )
       .sort(([left], [right]) => compareUnicodeCodePoints(left, right)),
   );
+
+/** Spell selected settings as setup records them: an explicit selection wins. */
+export const registrationSpelledSettings = (
+  settings: Readonly<Record<string, string>>,
+  environment: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string>> => {
+  const explicit = explicitSetupRegistrationEnvironment(environment);
+  return Object.fromEntries(
+    Object.entries(settings).map(([key, value]) => [
+      key,
+      explicit[key] ?? value,
+    ]),
+  );
+};

@@ -1,3 +1,4 @@
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { randomUUID, createHash } from "node:crypto";
 import { access, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -221,9 +222,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         });
       const directory = environment.REA_WABT_BIN_DIRECTORY ?? "";
       if (!isAbsolute(directory))
-        throw new Error(
-          "REA_WABT_BIN_DIRECTORY must be an absolute tool directory.",
-        );
+        throw new WabtAdmissionError("directory_not_absolute", {
+          setting: "REA_WABT_BIN_DIRECTORY",
+        });
       const commands: {
         tool: "wasm-validate" | "wasm-objdump" | "wasm2wat";
         path: string;
@@ -466,7 +467,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         objdump === undefined ||
         decode === undefined
       )
-        throw new Error("Incomplete WABT tool profile.");
+        throw new WabtAdmissionError("incomplete_tool_profile");
       const validation = await execute(validate, validate.arguments, true);
       if (validation.exitCode !== 0)
         throw new AnalysisInputError(

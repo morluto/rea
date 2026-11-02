@@ -391,7 +391,6 @@ cliTest(
     const home = await createTestTempDirectory("rea-gemini-case-");
     const system = join(home, "system.json");
     const defaults = join(home, "defaults.json");
-    await writeFile(system, JSON.stringify({ mcp: { allowed: ["REA"] } }));
     const environment = {
       HOME: home,
       USERPROFILE: home,
@@ -404,20 +403,20 @@ cliTest(
         cwd: home,
         environment,
       });
-    // The intersection compares names case-insensitively, so the spelling that
-    // survives must not decide the outcome: the same pair of policies in
-    // either arrangement has to consolidate to the same decision.
+    // Keep another server in both policies. Without normalized matching the
+    // intersection would then exclude REA rather than become an unrestricted
+    // empty allowlist, so each ordering independently detects that regression.
     for (const [systemSpelling, defaultSpelling] of [
       ["REA", "rea"],
       ["rea", "REA"],
     ]) {
       await writeFile(
         system,
-        JSON.stringify({ mcp: { allowed: [systemSpelling] } }),
+        JSON.stringify({ mcp: { allowed: [systemSpelling, "other"] } }),
       );
       await writeFile(
         defaults,
-        JSON.stringify({ mcp: { allowed: [defaultSpelling] } }),
+        JSON.stringify({ mcp: { allowed: [defaultSpelling, "other"] } }),
       );
       const result = await run();
       expect(result.exitCode, `${systemSpelling}+${defaultSpelling}`).toBe(0);

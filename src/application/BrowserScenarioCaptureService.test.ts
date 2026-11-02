@@ -114,6 +114,38 @@ it.each([
   },
 );
 
+it("retains completed scenario Evidence when cancellation arrives during capture", async () => {
+  const caller = new AbortController();
+  const reason = { requested: "stop after capture" };
+  const provider: BrowserScenarioCapturePort = {
+    identity: () => scenarioIdentity,
+    captureScenario: async (received, options) => {
+      expect(received).toBe(scenario);
+      expect(options?.signal).toBe(caller.signal);
+      caller.abort(reason);
+      return ok(capture);
+    },
+  };
+  const result = await captureBrowserScenario(provider, scenario, {
+    signal: caller.signal,
+  });
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "capture_browser_scenario",
+    provider: scenarioIdentity,
+    confidence: "observed",
+    authority: "controlled-replay",
+    parameters: {
+      browser: scenario.browser,
+      start_url: scenario.start_url,
+      actions: scenario.actions,
+    },
+    normalized_result: capture,
+  });
+});
+
 it("keeps startup cancellation and its incomplete capture", async () => {
   const reason = { requested: "stop during initial navigation" };
   const completed = scriptScenarioFixture();

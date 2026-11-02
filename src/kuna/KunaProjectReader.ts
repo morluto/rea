@@ -4,6 +4,7 @@ import {
   sameRegularFileState,
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
+import { KunaDocumentError } from "./KunaDocumentError.js";
 import { assertKunaFileState } from "./KunaProjectState.js";
 import { createReadStream } from "node:fs";
 import { open } from "node:fs/promises";
@@ -126,7 +127,7 @@ const readSpan = async (
       },
     );
     if (buffer.length !== length)
-      throw new Error(`${path} is shorter than its recorded span`);
+      throw new KunaDocumentError("span_short", { path });
     if (!sameRegularFileState(expected, await owner.handle.stat()))
       throw new RegularFileChangedError(path);
     await assertKunaFileState(path, expected);
@@ -349,7 +350,12 @@ export class KunaProjectReader {
         .slice(text.value.indexOf("\n") + 1)
         .replace(/\n+$/u, ""),
       files,
-      limitations: [],
+      limitations:
+        this.project.manifest.inputs.jobs > 1
+          ? [
+              "Parallel Kuna project export does not propagate callee-first prototypes between workers; function signatures and call arguments may differ from a serial export.",
+            ]
+          : [],
     });
   }
 

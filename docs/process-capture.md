@@ -652,6 +652,33 @@ that directory: it outlives each run, so the first compilation into a new
 directory pays a cold-cache build and later runs reuse it. An absent or empty
 value keeps the shared default.
 
+With the default `xcrun` compiler and module cache, REA also keeps one verified
+copy of the compiled helper in `~/Library/Caches/rea/process-helper/`, so later
+REA processes skip both the compile and macOS's first-launch assessment of a
+new executable. Each entry is keyed by the helper source, the `swiftc` and SDK
+that `xcrun --find swiftc` and `xcrun --show-sdk-path` resolve (their real
+paths, sizes and modification times, so `DEVELOPER_DIR`, `TOOLCHAINS`,
+`xcode-select` and in-place toolchain updates all select a new entry), the CPU
+architecture and the Darwin release. Before running an entry, REA requires the
+cache directory, the entry and its files to be owned by the current user and
+not writable by group or others, every real parent directory to be owned by
+the current user or root and not writable by others (sticky root-owned
+directories excepted), no ACL on any of them to allow another principal a
+write-class right (the default `deny delete` entries are fine), the helper and
+manifest to be regular files rather than
+links or FIFOs, and the helper's SHA-256 to match the manifest. Anything else is
+never executed and never removed, because another REA process may still be
+verifying or running that path; REA then compiles a per-process helper as
+before. A published entry is never replaced. If the cache is unavailable, for
+example under a read-only home directory, the ownership operation proceeds
+with the per-process compile. These checks reject corruption, loosened
+permissions and other users, but they do not defend against another process
+running as the same user, which could already modify REA itself. Setting
+`REA_DARWIN_SWIFTC_PATH` or `REA_DARWIN_MODULE_CACHE_PATH` keeps the per-process
+compile and writes nothing to this cache. REA does not prune old entries; each
+is about 240 KiB. Delete the directory while no REA process is running, or run
+`rea uninstall --purge-data`, to remove them.
+
 `xcrun` also maintains a separate tool-lookup cache. Its `--no-cache` option
 refreshes entries and does not guarantee a write-free lookup. To avoid that
 lookup while compiling REA's helper, set `REA_DARWIN_SWIFTC_PATH` to the absolute

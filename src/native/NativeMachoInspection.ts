@@ -43,6 +43,7 @@ import {
   isMissingUuidDyldFailure,
   isUnbackedTextDyldFailure,
   isVtoolContainerRefusal,
+  nativeCommandOperand,
   nativeMachoCapturedOutput,
   missingUuidLimitation,
   parseDyldFileTypeRefusal,
@@ -106,6 +107,9 @@ const REQUIRED_SLICE_COMMANDS = [
 const OPTIONAL_VTOOL_COMMAND = ["vtool", ["-show-build"]] as const;
 const VTOOL_UNAVAILABLE_LIMITATION =
   "vtool is unavailable; build metadata is normalized from binary load commands.";
+/** Recorded when vtool refuses the universal container and slice facts remain. */
+export const VTOOL_CONTAINER_REFUSAL_LIMITATION =
+  "vtool declined the universal container as not Mach-O; build metadata is normalized from binary load commands.";
 /** Inspect one Mach-O with the required native commands and normalized output. */
 export const inspectNativeMacho = async (
   context: NativeMachoInspectionContext,
@@ -125,7 +129,7 @@ export const inspectNativeMacho = async (
   const parsedLipo = parseLipoCapture(
     lipo,
     "inspect_macho",
-    context.target.path,
+    nativeCommandOperand(lipo) ?? context.target.path,
   );
   if (!parsedLipo.ok) return parsedLipo;
   const { format, architectures } = parsedLipo.value;
@@ -164,7 +168,7 @@ export const inspectNativeMacho = async (
             isUnbackedTextDyldFailure(capture) ||
             parseDyldFileTypeRefusal(capture) !== null
         : tool === "vtool" && format === "fat"
-          ? (capture) => isVtoolContainerRefusal(capture, context.target.path)
+          ? (capture) => isVtoolContainerRefusal(capture)
           : undefined,
     );
   // vtool knows no variant subtypes, so no spelling selects an arm64e.x1 slice.
@@ -200,10 +204,8 @@ export const inspectNativeMacho = async (
     );
   else if (optional.ok) {
     captures.push(optional.value);
-    if (isVtoolContainerRefusal(optional.value, context.target.path))
-      limitations.push(
-        "vtool declined the universal container as not Mach-O; build metadata is normalized from binary load commands.",
-      );
+    if (isVtoolContainerRefusal(optional.value))
+      limitations.push(VTOOL_CONTAINER_REFUSAL_LIMITATION);
   } else if (optional.error._tag === "AnalysisCapabilityUnavailableError")
     limitations.push(VTOOL_UNAVAILABLE_LIMITATION);
   else return err(optional.error);
@@ -347,7 +349,6 @@ export const inspectNativeMacho = async (
     parsedImports.items,
     captures[nmIndex]!,
     { format, architectures, encryption },
-    context.target.path,
     {
       name: selectedArchitectureName,
       container_file_offset: containerOffset ?? null,
@@ -433,7 +434,6 @@ const normalizeMacho = (
     readonly architectures: readonly LipoArchitecture[];
     readonly encryption: MachoEncryptionRead;
   },
-  artifactPath: string,
   selectedArchitecture: {
     readonly name: string | null;
     readonly container_file_offset: number | null;
@@ -470,7 +470,7 @@ const normalizeMacho = (
   const uuid = reconcileMachoUuid(
     load.commands,
     dwarfdump.stdout,
-    artifactPath,
+    nativeCommandOperand(dwarfdump) ?? "",
     selectedArchitecture.name === null
       ? null
       : {

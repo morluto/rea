@@ -1,54 +1,23 @@
-import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
-import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
-import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
-import { DotnetBundleArtifactReader } from "./DotnetBundleArtifactReader.js";
-import { AsarArtifactReader } from "./AsarArtifactReader.js";
-import type { ArtifactReader } from "./ArtifactReader.js";
-import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
-import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
-import { EspImageArtifactReader } from "./EspImageArtifactReader.js";
-import { FitArtifactReader } from "./FitArtifactReader.js";
-import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
-import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
-import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
-import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
-import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
-import { UImageArtifactReader } from "./UImageArtifactReader.js";
-import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
-import { ZipArtifactReader } from "./ZipArtifactReader.js";
 import type { ArtifactOccurrence } from "../domain/artifactGraph.js";
+import type { ArtifactReader } from "./ArtifactReader.js";
 import {
-  isZipPackageFormat,
-  type ZipPackageFormat,
-} from "../domain/zipPackageFormat.js";
+  ARTIFACT_FORMATS,
+  type ArtifactReaderConstruction,
+} from "./artifactFormats.js";
+
+export type { ArtifactReaderConstruction } from "./artifactFormats.js";
 
 /** Formats with an artifact entry reader; availability policy belongs to the caller. */
-export type ArtifactReaderFormat =
-  | "directory"
-  | "asar"
-  | "pyinstaller"
-  | "node-sea"
-  | "dotnet-bundle"
-  | "bun-standalone"
-  | "godot-pck"
-  | "unityfs"
-  | "uimage"
-  | "intel-hex"
-  | "srec"
-  | "fit"
-  | "mach-o-universal"
-  | "dmg"
-  | "esp-image"
-  | ZipPackageFormat;
-
-interface ArtifactReaderConstruction {
-  readonly environment: Readonly<NodeJS.ProcessEnv>;
-  readonly unreadableDirectories: "fail" | "omit";
-  readonly admission?: ArtifactReaderAdmission | undefined;
-  readonly asarHeaderAdmission?: AsarHeaderAdmission | undefined;
-  /** Caller-selected root spelling; only ASAR companion lookup consumes this. */
-  readonly selectedPath?: string | undefined;
-}
+export type ArtifactReaderFormat = {
+  [Id in keyof typeof ARTIFACT_FORMATS]: (typeof ARTIFACT_FORMATS)[Id] extends {
+    readonly createReader: (
+      path: string,
+      options: ArtifactReaderConstruction,
+    ) => ArtifactReader;
+  }
+    ? Id
+    : never;
+}[keyof typeof ARTIFACT_FORMATS];
 
 export function createArtifactReader(
   path: string,
@@ -66,91 +35,8 @@ export function createArtifactReader(
   format: ArtifactOccurrence["artifact_format"],
   options: ArtifactReaderConstruction,
 ): ArtifactReader | undefined {
-  const admission = options.admission;
-  const rootSource =
-    admission !== undefined && "kind" in admission
-      ? admission.source
-      : admission;
-  if (isZipPackageFormat(format))
-    return new ZipArtifactReader(path, format, undefined, rootSource);
-  switch (format) {
-    case "directory":
-      return new DirectoryArtifactReader(path, options.unreadableDirectories);
-    case "asar":
-      return new AsarArtifactReader(path, {
-        ...(options.asarHeaderAdmission === undefined
-          ? {}
-          : { headerAdmission: options.asarHeaderAdmission }),
-        ...(options.selectedPath === undefined
-          ? {}
-          : { selectedPath: options.selectedPath }),
-      });
-    case "pyinstaller":
-      return new PyInstallerArtifactReader(
-        path,
-        admission !== undefined &&
-          "kind" in admission &&
-          admission.kind === "pyinstaller"
-          ? admission
-          : rootSource,
-      );
-    case "bun-standalone":
-      return new BunStandaloneArtifactReader(
-        path,
-        admission !== undefined &&
-          "kind" in admission &&
-          admission.kind === "bun-standalone"
-          ? admission
-          : rootSource,
-      );
-    case "dotnet-bundle":
-      return new DotnetBundleArtifactReader(
-        path,
-        admission !== undefined &&
-          "kind" in admission &&
-          admission.kind === "dotnet-bundle"
-          ? admission
-          : rootSource,
-      );
-    case "node-sea":
-      return new NodeSeaArtifactReader(
-        path,
-        admission !== undefined &&
-          "kind" in admission &&
-          admission.kind === "node-sea"
-          ? admission
-          : rootSource,
-      );
-    case "godot-pck":
-      return new GodotPckArtifactReader(
-        path,
-        admission !== undefined &&
-          "kind" in admission &&
-          admission.kind === "godot-pck"
-          ? admission
-          : rootSource,
-      );
-    case "uimage":
-      return new UImageArtifactReader(path, rootSource);
-    case "unityfs":
-      return new UnityFsArtifactReader(path, rootSource);
-    case "intel-hex":
-    case "srec":
-      return new HexRecordArtifactReader(path, format, rootSource);
-    case "fit":
-      return new FitArtifactReader(path, rootSource);
-    case "mach-o-universal":
-      return new MachOSliceArtifactReader(
-        path,
-        options.environment,
-        undefined,
-        rootSource,
-      );
-    case "dmg":
-      return new NativeDmgArtifactReader(path, options.environment);
-    case "esp-image":
-      return new EspImageArtifactReader(path, rootSource);
-    default:
-      return undefined;
-  }
+  const descriptor = ARTIFACT_FORMATS[format];
+  return "createReader" in descriptor
+    ? descriptor.createReader(path, options)
+    : undefined;
 }

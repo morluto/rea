@@ -5,6 +5,7 @@ import {
   semanticBindingCanBeRebound,
   semanticOpaqueBindingReadMayHaveChanged,
 } from "./javascriptSemanticOpaqueEffects.js";
+import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import * as t from "@babel/types";
 
 import {
@@ -204,7 +205,10 @@ function* indexSemanticAmbientWritesSteps(
   yield* indexJavaScriptAmbientWritesSteps(
     state.program,
     state,
-    createSemanticOpaqueGlobalObserver(state),
+    createSemanticOpaqueGlobalObserver(state, {
+      createAmbientPathResolver,
+      createSemanticModuleInterop,
+    }),
     (node) => observePossibleCommonJsDelegateWrite(node, state),
   );
   if (state.opaqueEffects.globalSites.length > 0)
@@ -506,15 +510,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
  * Receiver identity facts for the overloaded `.open` syntax, plus
  * `configuration` for `.get` reads of a `getConfiguration(...)` result.
  */
-export type JavaScriptOpenReceiverFact =
-  | "window"
-  | "indexed-db"
-  | "cache-storage"
-  | "local"
-  | "local-indexed-db"
-  | "local-cache-storage"
-  | "configuration"
-  | "extension-state";
+export type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 
 /** Lexical receiver identities that select static endpoint interpretations. */
 export interface JavaScriptReceiverFacts {

@@ -61,12 +61,12 @@ it("discovers configuration without probing and admits only verified targets", a
     diagnostics: { version_probed: false },
   });
   expect(await fakeKunaCalls(kuna)).toEqual([]);
+  const capabilities = configured.capabilities();
+  expect(capabilities.length).toBeGreaterThan(0);
   expect(
-    configured
-      .capabilities()
-      .every(
-        ({ available, cachePolicy }) => available && cachePolicy === "live",
-      ),
+    capabilities.every(
+      ({ available, cachePolicy }) => available && cachePolicy === "live",
+    ),
   ).toBe(true);
 
   const executable = (
@@ -181,19 +181,41 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
 });
 
 it("commits the observed Kuna release and digest to the analysis profile", async () => {
-  const { profile, kuna } = await session("rea-kuna-profile-");
+  const { profile, kuna } = await session("rea-kuna-profile-", {
+    version: { stdout: "kuna 1.989\n" },
+  });
 
   expect(profile).toMatchObject({
-    provider: { id: "kuna", name: "Kuna", version: "1.833" },
+    provider: { id: "kuna", name: "Kuna", version: "1.989" },
     parameters: {
-      kuna_version: "1.833",
+      kuna_version: "1.989",
       kuna_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
       kuna_command: kuna,
-      verified_release: true,
       jobs: 1,
       cache_policy: "live",
     },
   });
+});
+
+it("reports an unverified release on observations without binding policy into the profile", async () => {
+  const { profile, open } = await session("rea-kuna-policy-", {
+    version: { stdout: "kuna 1.988\n" },
+  });
+  expect(profile.parameters).not.toHaveProperty("verified_release");
+  expect(profile.parameters).toMatchObject({
+    kuna_version: "1.988",
+    kuna_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+  });
+  const client = open();
+  const inventory = await run(client, "list_procedures");
+  const warning = "Kuna 1.988 is not REA's verified 1.989 release";
+  expect(inventory.limitations.join("\n")).toContain(warning);
+  const dossier = await run(client, "analyze_function", { procedure: "main" });
+  expect(dossier.limitations.join("\n")).toContain(warning);
+  expect(
+    (dossier.result as { limitations: string[] }).limitations.join("\n"),
+  ).toContain(warning);
+  await client.close();
 });
 
 it("lists the selected document without starting target analysis", async () => {
@@ -211,6 +233,39 @@ it("lists the selected document without starting target analysis", async () => {
   } finally {
     await client.close();
   }
+});
+
+it("qualifies only parallel project pseudocode, including dossier results", async () => {
+  const { open } = await session(
+    "rea-kuna-parallel-context-",
+    { delayMs: 300 },
+    { REA_KUNA_JOBS: "2" },
+  );
+  const client = open();
+  const caveat =
+    "Parallel Kuna project export does not propagate callee-first prototypes";
+  const cold = await run(client, "procedure_pseudo_code", {
+    procedure: "main",
+  });
+  expect(cold.rawResult).toMatchObject({ source: { kind: "single-function" } });
+  expect(cold.limitations.join("\n")).not.toContain(caveat);
+  await run(client, "procedure_assembly", { procedure: "main" });
+  const warm = await run(client, "procedure_pseudo_code", {
+    procedure: "main",
+  });
+  expect(warm.rawResult).toMatchObject({ source: { kind: "project-export" } });
+  expect(warm.limitations.join("\n")).toContain(caveat);
+  const dossier = await run(client, "analyze_function", { procedure: "main" });
+  expect(dossier.limitations.join("\n")).toContain(caveat);
+  expect(
+    (dossier.result as { limitations: string[] }).limitations.join("\n"),
+  ).toContain(caveat);
+  const missing = await run(client, "procedure_pseudo_code", {
+    procedure: "broken",
+  });
+  expect(missing.result).toBeNull();
+  expect(missing.limitations.join("\n")).not.toContain(caveat);
+  await client.close();
 });
 
 it("answers a cold request from one function, then serves the finished export", async () => {
