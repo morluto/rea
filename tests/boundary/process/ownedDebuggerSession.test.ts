@@ -11,6 +11,7 @@ import { beforeAll, expect, it, onTestFinished, vi } from "vitest";
 
 import {
   closeOwnedDebuggerSessions,
+  readLinuxProcessStartTime,
   stopOwnedDebuggerProcess,
   verifyOwnedInferiorsEnded,
 } from "../../../src/process/ownedDebuggerSession.js";
@@ -726,6 +727,16 @@ it("preserves unknown identity reads and rejects empty proof", async () => {
   expect(await verifyOwnedInferiorsEnded([], read)).toBe(false);
   expect(read).not.toHaveBeenCalled();
 });
+
+it.skipIf(process.platform !== "linux")(
+  "reads Linux inferior start time and recognizes absent processes",
+  async () => {
+    const ownStartTime = await readLinuxProcessStartTime(String(process.pid));
+    expect(typeof ownStartTime).toBe("string");
+    expect(ownStartTime?.length).toBeGreaterThan(0);
+    expect(await readLinuxProcessStartTime("99999999")).toBeNull();
+  },
+);
 
 it("allows closing when the provider confirms no inferior is attached", async () => {
   const signals: NodeJS.Signals[] = [];
