@@ -987,8 +987,11 @@ const examineMapMember = async (
   member: MemberView,
 ): Promise<boolean> => {
   // A member a script names or an owner marks as a map is a JavaScript map
-  // whatever it is called.
-  const declared = member.logical.toLowerCase().endsWith(".map")
+  // whatever it is called. Only an undeclared `.map` may be a linker map.
+  const undeclared =
+    member.logical.toLowerCase().endsWith(".map") &&
+    !state.mapTargets.has(memberLocationKey(member.location));
+  const declared = undeclared
     ? member
     : { ...member, logical: `${member.logical}.js.map` };
   const loaded = await examineMap(state, declared);
@@ -1380,7 +1383,9 @@ const noteLocalMapReference = (
   }
   if (/^[a-z][a-z0-9+.-]+:/iu.test(url)) return;
   const path = url.replace(/[?#].*$/su, "");
-  if (path.length === 0 || isSourceMap(path, "file")) return;
+  // A generic `.map` name stays a target: only the declaration tells it from a
+  // linker map.
+  if (path.length === 0 || isJavaScriptSourceMapName(path)) return;
   let decoded: string;
   try {
     decoded = decodeURIComponent(path);
@@ -1398,6 +1403,8 @@ const noteLocalMapReference = (
  */
 const noteMapTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(location);
+  // A map read before its declaration may have settled as a linker map.
+  if (state.companionPaths.delete(location)) state.skippedMaps += 1;
   if (state.examinedMaps.has(target) || state.mapTargets.has(target)) return;
   if (state.examinedLocations.has(target)) {
     state.skippedMaps += 1;

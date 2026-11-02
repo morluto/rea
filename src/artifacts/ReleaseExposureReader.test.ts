@@ -2631,6 +2631,32 @@ describe("ReleaseExposureReader member identity", () => {
     },
   );
 
+  it.each([
+    ["app.js", { embedded: 0, unparsed: 1, skipped: 0 }],
+    ["z.js", { embedded: 0, unparsed: 0, skipped: 1 }],
+  ])(
+    "keeps a malformed assets.map that %s declares unresolved",
+    async (script, expected) => {
+      const root = await createTestTempDirectory("rea-release-generic-map-");
+      await writeFile(
+        join(root, script),
+        "const value = 1;\n//# sourceMappingURL=assets.map\n",
+      );
+      await writeFile(join(root, "assets.map"), "not a map\n");
+      const scanned = await inspect(root);
+      expect(scanned.source_maps).toMatchObject(expected);
+      expect(scanned.debug_companions.paths).toEqual([]);
+    },
+  );
+
+  it("keeps an undeclared malformed assets.map a linker map", async () => {
+    const root = await createTestTempDirectory("rea-release-linker-map-");
+    await writeFile(join(root, "assets.map"), "not a map\n");
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 0 });
+    expect(scanned.debug_companions.paths).toHaveLength(1);
+  });
+
   it("counts a declared map target that never ships as skipped", async () => {
     const root = await createTestTempDirectory("rea-release-missing-map-");
     await writeFile(
