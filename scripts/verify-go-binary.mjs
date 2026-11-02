@@ -16,7 +16,11 @@ import {
   closeVerifierResources,
   withVerifierCleanup,
 } from "./lib/verifier-cleanup.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { VerifierStdioClientTransport } from "./lib/verifier-stdio-transport.mjs";
 
 /** The retained owner remains the exact authority for retrying this release. */
@@ -97,8 +101,14 @@ const fixture = {
       () => transport?.closeAndVerifyChild(),
     ]);
     verifier = await completeVerifierRun(run);
-    if (verifier.process_lineage.status === "verified")
-      assert.deepEqual(verifier.process_lineage.descendants, []);
+    // On POSIX an unavailable lineage is an unknown, so it keeps the root. Windows
+    // has no lineage facility here, and requiring one would retain every root, so
+    // the report states the weaker proof there instead of implying more.
+    if (process.platform === "win32")
+      omittedCoverage.push(
+        "Verifier process lineage is unavailable on Windows; the fixture root's release relies on the MCP child's completion alone, and other descendants were not observed.",
+      );
+    else assertVerifierCleanupComplete(verifier.process_lineage);
     await root.close();
     await assert.rejects(lstat(root.path), { code: "ENOENT" });
     rootRemoved = true;

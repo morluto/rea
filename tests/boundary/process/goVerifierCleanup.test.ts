@@ -25,6 +25,9 @@ const outcomeSchema = z.object({
     status: z.string().optional(),
     retained_root: z.string().nullable(),
     descendants: z.number().nullable(),
+    lineage_status: z.string().optional(),
+    lineage_reason: z.string().nullable(),
+    omitted_coverage: z.array(z.string()),
   }),
   retained_at_failure: z.array(z.string()),
   retained_after_retry: z.array(z.string()).optional(),
@@ -216,10 +219,62 @@ posixTest(
   "retains the root while another owned descendant is live",
   async ({ processes }) => {
     const outcome = await runScenario(processes, "live-descendant");
-    expect(outcome.failure.messages[0]).toMatch(PRIMARY);
-    expect(outcome.failure.messages).toHaveLength(2);
-    expect(outcome.report.descendants).toBe(1);
+    expect(outcome.failure.messages).toEqual([
+      expect.stringMatching(PRIMARY),
+      "Owned descendants survived verifier cleanup",
+    ]);
+    expect(outcome.report).toMatchObject({
+      lineage_status: "verified",
+      descendants: 1,
+    });
     expect(outcome.retained_at_failure).toHaveLength(1);
     expect(outcome.root_removed_after_retry).toBe(true);
+  },
+);
+
+posixTest.for([
+  ["failed-snapshot", /lineage could not be inspected/u],
+  ["unreadable-environment", /descendant \d+ environment was unreadable/u],
+  ["foreign-descendant", /descendant \d+ run token did not match/u],
+] as const)(
+  "retains the root while lineage is unknown after a %s, then retries",
+  async ([scenario, reason], { processes }) => {
+    const outcome = await runScenario(processes, scenario);
+    expect(outcome.failure.messages).toEqual([
+      expect.stringMatching(PRIMARY),
+      expect.stringMatching(reason),
+    ]);
+    expect(outcome.report.lineage_status).toBe("unavailable");
+    expect(outcome.report.lineage_reason).toMatch(reason);
+    expect(outcome.retained_at_failure).toHaveLength(1);
+    expect(outcome.report.retained_root).toBe(outcome.retained_at_failure[0]);
+    const released = outcome.events.indexOf("root-close");
+    expect(released).toBeGreaterThan(outcome.events.indexOf("child-close"));
+    // The child's proof alone did not release it: only the retry reached the root.
+    expect(outcome.events.filter((kind) => kind === "root-close")).toHaveLength(
+      1,
+    );
+    expect(outcome.root_removed_after_retry).toBe(true);
+    expect(outcome.report.omitted_coverage).toEqual([]);
+  },
+);
+
+posixTest(
+  "releases the root where lineage has no facility, and says what that leaves unproven",
+  async ({ processes }) => {
+    const outcome = await runScenario(processes, "windows-lineage");
+    expect(outcome.failure.messages).toEqual([expect.stringMatching(PRIMARY)]);
+    expect(outcome.report).toMatchObject({
+      retained_root: null,
+      lineage_status: "unavailable",
+      lineage_reason: expect.stringMatching(/Job Object/u),
+      omitted_coverage: [
+        expect.stringMatching(/MCP child's completion alone/u),
+      ],
+    });
+    expect(outcome.retained_at_failure).toEqual([]);
+    expect(outcome.events.indexOf("root-close")).toBeGreaterThan(
+      outcome.events.indexOf("child-close"),
+    );
   },
 );
