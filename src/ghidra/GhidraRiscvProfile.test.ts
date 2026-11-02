@@ -683,7 +683,7 @@ describe("RISC-V calling-convention handshake", () => {
       reason: "a report from a double-float session",
       value: target(),
       reported: report,
-      operation: "health",
+      operation: "list_procedures",
     },
   ] as const)("rejects $reason", async ({ value, reported, operation }) => {
     const { counts, client } = await session(value, reported);
@@ -1061,6 +1061,19 @@ describe("RISC-V load preparation handshake", () => {
       expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
     },
   );
+
+  it("closes a session without a preparation that reports one, before any analysis call", async () => {
+    const { counts, client } = await session(
+      target(),
+      undefined,
+      target(),
+      moved,
+    );
+    const failed = await client.execute("list_procedures", {});
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
+    expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
+  });
 
   it("refuses a profile whose preparation disagrees with the target", async () => {
     for (const [value, profileFor] of [

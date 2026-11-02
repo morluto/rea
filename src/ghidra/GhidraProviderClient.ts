@@ -211,6 +211,9 @@ export const createGhidraProviderClient = (input: {
       }),
     );
   const riscvCallingConvention = ghidraRiscvCallingConvention(target);
+  // The calling-convention and load-preparation reports bind in both
+  // directions, so every RISC-V session checks them.
+  const riscv = target.kind === "executable" && target.architecture === "riscv";
   if (
     riscvCallingConvention !==
     committedProfile.parameters.riscv_calling_convention
@@ -844,8 +847,7 @@ export const createGhidraProviderClient = (input: {
         seeds !== undefined ||
         disabledAnalyzers !== undefined ||
         softFloat ||
-        riscvCallingConvention !== undefined ||
-        riscvLoadPreparation !== undefined
+        riscv
       ) {
         const started = await startSession(operation, options);
         if (!started.ok) return started;
