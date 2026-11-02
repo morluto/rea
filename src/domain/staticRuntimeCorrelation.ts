@@ -14,7 +14,11 @@ import {
 } from "./comparisonEvidenceResult.js";
 import { evidenceSchema, type Evidence } from "./evidence.js";
 import { hasComparisonEvidenceIdentity } from "./comparisonEvidenceIdentity.js";
-import { functionComparisonDimensionNameSchema } from "./functionComparisonSchemas.js";
+import {
+  functionComparisonDimensionNameSchema,
+  isNormalizedViewDimension,
+  NORMALIZED_VIEW_DIMENSIONS,
+} from "./functionComparisonSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
 import {
   comparisonStatusSchema,
@@ -45,7 +49,10 @@ const artifactSelectorSchema = z
 const functionSelectorSchema = z
   .object({
     kind: z.literal("function"),
-    dimension: functionComparisonDimensionNameSchema,
+    dimension: z.enum([
+      ...functionComparisonDimensionNameSchema.options,
+      ...NORMALIZED_VIEW_DIMENSIONS,
+    ]),
   })
   .strict();
 const staticSelectorSchema = z.discriminatedUnion("kind", [
@@ -314,6 +321,22 @@ const selectStatic = (
         "Function selector requires function comparison Evidence",
       );
     const result = comparison.result;
+    if (isNormalizedViewDimension(selector.dimension)) {
+      const view = result.normalized_views?.views.find(
+        ({ dimension }) => dimension === selector.dimension,
+      );
+      if (view === undefined)
+        throw callerInputError(
+          input,
+          path,
+          "Function selector requires the requested normalized view; rerun compare_functions with include_normalized_views",
+        );
+      return {
+        status: view.status,
+        conclusion_kind: view.conclusion_kind,
+        limitations: view.limitations,
+      };
+    }
     const match = result.dimensions.find(
       ({ dimension }) => dimension === selector.dimension,
     );

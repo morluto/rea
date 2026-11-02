@@ -42,7 +42,9 @@ export const compareFunctionEvidence = (
   });
   if (!right.ok) return right;
   try {
-    const comparison = compareFunctions(left.value, right.value);
+    const comparison = compareFunctions(left.value, right.value, {
+      includeNormalizedViews: selected.value.input.include_normalized_views,
+    });
     const leftEvidence = left.value.evidence;
     const rightEvidence = right.value.evidence;
     const leftIds = [leftEvidence.evidence_id];
@@ -53,11 +55,17 @@ export const compareFunctionEvidence = (
       parameters: {
         left_evidence_id: leftEvidence.evidence_id,
         right_evidence_id: rightEvidence.evidence_id,
+        ...(comparison.normalized_views === undefined
+          ? {}
+          : { include_normalized_views: true }),
       },
       result: comparison,
       confidence: "derived",
       authority: "analyst-inference",
-      limitations: comparison.limitations,
+      limitations: [
+        ...comparison.limitations,
+        ...(comparison.normalized_views?.limitations ?? []),
+      ],
       evidenceLinks: [...leftIds, ...rightIds],
     });
     return ok({

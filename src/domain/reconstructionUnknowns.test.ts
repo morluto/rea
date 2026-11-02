@@ -100,3 +100,37 @@ it("aggregates constituent unknowns without importing another comparison's scope
     reconstructionClaimUnknowns(heads, ev("a"), [ev("b")], ["assembly"]),
   ).toEqual([]);
 });
+
+it("keeps normalized-view unknowns out of exact overall claims", () => {
+  const comparisonId = ev("a");
+  const normalized = createResidualUnknown(
+    {
+      ...base,
+      question: "Normalized pseudocode",
+      comparison_conclusion_scope: {
+        comparison_evidence_id: comparisonId,
+        dimensions: ["pseudocode_normalized"],
+      },
+      relationships: [],
+    },
+    ev("c"),
+    null,
+  );
+  const heads = new Map([[normalized.unknown_id, normalized]]);
+  expect(
+    reconstructionClaimUnknowns(
+      heads,
+      comparisonId,
+      [ev("b")],
+      ["overall", "pseudocode", "calls"],
+    ),
+  ).toEqual([]);
+  expect(
+    reconstructionClaimUnknowns(
+      heads,
+      comparisonId,
+      [ev("b")],
+      ["pseudocode_normalized"],
+    ).map(({ unknown_id }) => unknown_id),
+  ).toEqual([normalized.unknown_id]);
+});
