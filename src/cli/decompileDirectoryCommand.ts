@@ -24,7 +24,7 @@ export const registerDecompileDirectoryCommand = (
     description:
       "Write every function's pseudocode into a directory and return a manifest",
     args: z.object({
-      path: z.string().describe("App or program path"),
+      path: localPathStringSchema.describe("App or program path"),
     }),
     options: z.object({
       output: localPathStringSchema.describe(

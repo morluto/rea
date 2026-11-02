@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 
@@ -13,7 +13,76 @@ const FUNCTIONS = [
   { name: "late", addr: "0x1080" },
 ] as const;
 
+const createAppBundleWithFakeKuna = async (root: string) => {
+  const bundle = join(root, "Example.app");
+  await mkdir(join(bundle, "Contents", "MacOS"), { recursive: true });
+  await writeFile(
+    join(bundle, "Contents", "Info.plist"),
+    "<plist><dict><key>CFBundleExecutable</key><string>Example</string></dict></plist>",
+  );
+  await writeFile(join(bundle, "Contents", "MacOS", "Example"), elf(2, 1, 62));
+  const kuna = await writeFakeKuna(root, {
+    functions: [{ name: "main", addr: "0x1000" }],
+    inventoryImports: false,
+  });
+  return { bundle, kuna };
+};
+
 describe("decompile-all CLI", () => {
+  cliTest(
+    "rejects an empty target before resolving or exporting the working directory",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-decompile-all-empty-");
+      const { bundle, kuna } = await createAppBundleWithFakeKuna(root);
+      const environment = {
+        REA_LOG_LEVEL: "silent",
+        REA_KUNA_COMMAND: kuna,
+        REA_KUNA_CACHE_DIR: join(root, "cache"),
+      };
+
+      const empty = await cli.run({
+        arguments: [
+          "decompile-all",
+          "",
+          "--provider",
+          "kuna",
+          "--output",
+          join(root, "empty-output"),
+          "--json",
+        ],
+        cwd: bundle,
+        environment,
+      });
+      expect(empty.exitCode).toBe(1);
+      expect(empty.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: expect.arrayContaining([
+          expect.objectContaining({ path: "path", code: "too_small" }),
+        ]),
+      });
+      await expect(readdir(join(root, "empty-output"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const explicit = await cli.run({
+        arguments: [
+          "decompile-all",
+          ".",
+          "--provider",
+          "kuna",
+          "--output",
+          join(root, "dot-output"),
+          "--json",
+        ],
+        cwd: bundle,
+        environment,
+      });
+      expect(explicit.exitCode, JSON.stringify(explicit.json)).toBe(0);
+      expect(await readdir(join(root, "dot-output", "functions"))).toEqual([
+        "0x1000.c",
+      ]);
+    },
+  );
+
   cliTest(
     "maps filters, limit and a relative output directory to the export",
     async ({ cli }) => {
