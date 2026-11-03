@@ -4,6 +4,7 @@ import { compareJavaScriptApplicationVersions } from "../../../../src/domain/jav
 import { traceApplicationFeature } from "../../../../src/domain/javascript/javascriptFeatureTrace.js";
 import { matchJavaScriptApplicationVersions } from "../../../../src/domain/javascript/javascriptApplicationVersionKeys.js";
 import { findApplicationFeatureSeeds } from "../../../../src/domain/javascript/javascriptFeatureSeed.js";
+import { itemViewSchema } from "../../../../src/domain/analysisView/analysisViewShape.js";
 import { projectJavaScriptApplicationView } from "../../../../src/domain/analysisView/javascriptApplicationView.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -319,11 +320,11 @@ const expectOccurrenceAssetCompatibility = (
         limitations: [],
       },
       analysis,
-      {
+      itemViewSchema.parse({
         kind: "item",
         collection: "modules",
         selector: { node_id: asset.node_id },
-      },
+      }),
     );
     expect(view).toMatchObject({
       ok: true,
