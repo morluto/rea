@@ -711,6 +711,48 @@ posix.each([
   },
 );
 
+posix.each(["ENOENT", "EACCES"] as const)(
+  "keeps the resolved path and digest of a relative selection that does not start with %s",
+  async (code) => {
+    const { executable, path } = await rizinExecutableFixture();
+    // The selected script does not start, as when its interpreter is missing
+    // or not executable; an explicit selection has no later candidate.
+    const run = vi.fn(
+      async (
+        _command: string,
+        _args: readonly string[],
+        _options?: ExecFileOutputOptions,
+      ): Promise<never> => {
+        throw Object.assign(new Error(`spawn ${code}`), { code });
+      },
+    );
+    const service = new TestReverseEngineeringService({
+      run,
+      lookup: (command, _directory, searchPath, bounds) =>
+        lookupExecutable(
+          command,
+          () => dirname(executable),
+          searchPath,
+          bounds,
+        ),
+      environment: { REA_RIZIN_COMMAND: "./rizin" },
+    });
+    const result = await service.executeRizinCommand({ path, command: "iI" });
+    if (result.ok) throw new Error("Expected the launch to fail");
+    expect(result.error.diagnostics).toMatchObject({
+      provider_executable: "./rizin",
+      provider_executable_path: executable,
+      provider_executable_sha256: await sha256Of(executable),
+      provider_identity: "assumed",
+    });
+    // The probe and the command both ran the resolved path.
+    expect(run.mock.calls.map(([command]) => command)).toEqual([
+      executable,
+      executable,
+    ]);
+  },
+);
+
 posix.each([
   ["the host refuses to inspect", "stat"],
   ["lacks execute permission", "mode"],

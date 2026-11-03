@@ -11,7 +11,12 @@ import { shareFileCall } from "./SharedFileCall.js";
 
 /** Where a command resolves through an effective PATH, or why it does not. */
 export type ExecutableLookup =
-  | { readonly status: "found"; readonly path: string }
+  | {
+      readonly status: "found";
+      readonly path: string;
+      /** The path an explicitly selected command names, which its launch runs. */
+      readonly selectedPath?: string;
+    }
   /** The host refused to inspect an explicitly selected path. */
   | {
       readonly status: "denied";
@@ -154,7 +159,11 @@ export const lookupExecutable = async (
       // directory, so the search stops there without a path to report.
       if (executable.status === "fulfilled")
         return unnamed === undefined
-          ? { status: "found", path: candidate }
+          ? {
+              status: "found",
+              path: candidate,
+              ...(selectedPath === undefined ? {} : { selectedPath }),
+            }
           : { status: "no-working-directory", cause: unnamed.cause };
       const code = systemErrorCode(executable.cause);
       checked.push(`${candidate}${systemErrorSuffix(code)}`);
