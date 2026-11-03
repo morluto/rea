@@ -261,6 +261,7 @@
 * **cli:** preserve script export evidence through shared finalization ([991a240](https://github.com/morluto/rea/commit/991a2406060ae200ee5db260e486e68c1f5bb4bd))
 * **cli:** prevent mcp discovery from registering clients ([#7919](https://github.com/morluto/rea/issues/7919)) ([9e1a1e7](https://github.com/morluto/rea/commit/9e1a1e700ad9a84fa6a49ecc7abd8b38918b2154))
 * **cli:** project nested array slices ([47a8000](https://github.com/morluto/rea/commit/47a8000cce89303d174288e74a2e6c1569f5c3de))
+* **cli:** protect Amp settings during default registration ([#8076](https://github.com/morluto/rea/issues/8076)) ([4b961e3](https://github.com/morluto/rea/commit/4b961e3715375971aee6dec848827c9c072d947b))
 * **cli:** recognize integrity failures with partial observations ([#7836](https://github.com/morluto/rea/issues/7836)) ([0747e46](https://github.com/morluto/rea/commit/0747e46401a4f5e487302dcc5061548b4634db5c))
 * **cli:** refuse lossy text output ([#7852](https://github.com/morluto/rea/issues/7852)) ([3a51230](https://github.com/morluto/rea/commit/3a512303d956931608d66bece4b8e858bca1fcea))
 * **cli:** reject empty Evidence file arguments ([#7988](https://github.com/morluto/rea/issues/7988)) ([d157560](https://github.com/morluto/rea/commit/d157560d402fbd1b54069ff59039dcde73e4a7e1))
