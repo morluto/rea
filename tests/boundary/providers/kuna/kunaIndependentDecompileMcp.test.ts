@@ -10,6 +10,7 @@ import { elfNoteFixture } from "../../../../src/native/elf/ElfNotes.fixture.js";
 import { createApplicationMcpHarness } from "../../../fixtures/applicationMcpHarness.js";
 import { advertisedMcpToolSchemas } from "../../../fixtures/advertisedMcpTool.js";
 import { createMcpSchemaValidation } from "../../../fixtures/mcpSchemaValidation.js";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import {
   fakeKunaCalls,
@@ -76,8 +77,14 @@ it("runs a cold independent request without starting a project export", async ()
     ) as {
       error: { code: string; remediation: { action: string } };
     };
-    expect(failure.error.code).toBe("provider_timeout");
-    expect(failure.error.remediation.action).not.toContain("project export");
+    expect(failure.error).toMatchObject({
+      code: "provider_timeout",
+      remediation: {
+        action:
+          "Raise REA_KUNA_TIMEOUT_MS in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.",
+      },
+      details: { timeout_ms: 300 },
+    });
     expect(
       (await fakeKunaCalls(kuna)).filter(
         ({ argv }) => argv[0] === "decompile-project",
@@ -235,6 +242,7 @@ it("retains the independent run slot until an unproven stop is resolved", async 
   });
   const caller = new AbortController();
   let restoreAcquire: (() => void) | undefined;
+  let queued: Promise<unknown> | undefined;
   try {
     const call = (
       name: string,
@@ -278,12 +286,16 @@ it("retains the independent run slot until an unproven stop is resolved", async 
         return result;
       });
     restoreAcquire = () => spy.mockRestore();
-    const queued = call(
+    queued = call(
       "procedure_pseudo_code",
       { procedure: "main", analysis: "independent_fresh" },
       caller.signal,
     ).catch(() => undefined);
-    await admission;
+    await awaitAcknowledgement(
+      admission,
+      queued,
+      "independent run slot admission",
+    );
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(slotSettled).toBe(false);
     expect(
@@ -310,9 +322,10 @@ it("retains the independent run slot until an unproven stop is resolved", async 
       (await fakeKunaCalls(kuna)).filter(({ argv }) => argv[0] === "decompile"),
     ).toHaveLength(2);
   } finally {
-    restoreAcquire?.();
     caller.abort();
     unproven.release();
+    await queued;
+    restoreAcquire?.();
     await harness.close();
     const closed = await provider.closeOwnedResources();
     if (!closed.ok) throw closed.error;
