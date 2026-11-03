@@ -44,6 +44,14 @@ const OPERATION = "inspect_go_binary";
 const INPUT_BYTES = 256 * 1024 * 1024;
 const OUTPUT_BYTES = 8 * 1024 * 1024;
 
+/** Keep the reader's selected-path recovery, such as a refused symlink's target. */
+const selectedPathRefusal = (cause: ArtifactReaderFailure) => ({
+  cause,
+  ...(cause.userMessage === undefined
+    ? {}
+    : { remediationAction: cause.userMessage }),
+});
+
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,
   path: string,
@@ -113,7 +121,7 @@ const failureForPrimary = (
         },
       );
     if (cause.reason === "path")
-      return new AnalysisInputError(OPERATION, { cause }, [
+      return new AnalysisInputError(OPERATION, selectedPathRefusal(cause), [
         { path: ["path"], reason: "invalid_format", message: cause.message },
       ]);
   }

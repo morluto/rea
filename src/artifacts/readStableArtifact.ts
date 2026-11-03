@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { lstat, open, type FileHandle } from "node:fs/promises";
+import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
@@ -38,11 +38,49 @@ export const completedStableArtifact = (
 export interface StableArtifactFileSystem {
   lstat(path: string): Promise<BigIntStats>;
   open(path: string, flags: number): Promise<FileHandle>;
+  /** Names a refused symlink's target for recovery; it never admits that target. */
+  realpath?(path: string): Promise<string>;
 }
 
 const FILE_SYSTEM: StableArtifactFileSystem = {
   lstat: (path) => lstat(path, { bigint: true }),
   open,
+  realpath,
+};
+
+/**
+ * Refuse a selected symlink while naming its current target, so a caller can
+ * deliberately select that canonical path. The target is only reported: the
+ * read never follows it, because the selected spelling would otherwise stop
+ * identifying the bytes that were read.
+ */
+const selectedPathFailure = async (
+  path: string,
+  metadata: BigIntStats,
+  fileSystem: StableArtifactFileSystem,
+): Promise<ArtifactReaderFailure> => {
+  const message = `Expected a regular file without a symlink: ${path}`;
+  if (!metadata.isSymbolicLink() || fileSystem.realpath === undefined)
+    return new ArtifactReaderFailure("path", message);
+  let target: string;
+  try {
+    target = await fileSystem.realpath(path);
+  } catch {
+    return new ArtifactReaderFailure(
+      "path",
+      `${message} (its target does not currently resolve)`,
+      {
+        userMessage: `The selected path is a symlink whose target does not currently resolve: ${path}. Select an existing regular file directly, then retry.`,
+      },
+    );
+  }
+  return new ArtifactReaderFailure(
+    "path",
+    `${message} (it resolves to ${target})`,
+    {
+      userMessage: `The selected path is a symlink to ${target}. Symlinks are not followed; if that target is the intended artifact, retry with path ${target}.`,
+    },
+  );
 };
 
 const afterValidation = async <T>(
@@ -74,10 +112,7 @@ export const readStableArtifact = async (
   assertArtifactReadActive(signal);
   const before = await fileSystem.lstat(path);
   if (!before.isFile() || before.isSymbolicLink())
-    throw new ArtifactReaderFailure(
-      "path",
-      `Expected a regular file without a symlink: ${path}`,
-    );
+    throw await selectedPathFailure(path, before, fileSystem);
   const maximumSize = BigInt(maximumBytes);
   if (before.size > maximumSize)
     throw new ArtifactReaderFailure(

@@ -1,4 +1,4 @@
-import { writeFile, symlink } from "node:fs/promises";
+import { realpath, writeFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
@@ -132,6 +132,36 @@ it.skipIf(process.platform === "win32")(
     const result = await new GoBinaryProvider().inspect({ path: selected });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisInputError);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "names the resolved target when refusing a selected symlink (#8714)",
+  async () => {
+    const root = await createTestTempDirectory("rea-go-symlink-target-");
+    const selected = join(root, "cloudflared");
+    const original = join(root, "original.elf");
+    await writeFile(original, createGoBinaryFixture().bytes);
+    await symlink(original, selected);
+    const target = await realpath(original);
+    const result = await new GoBinaryProvider().inspect({ path: selected });
+    if (result.ok) throw new Error("expected the symlink to be refused");
+    expect(result.error).toBeInstanceOf(AnalysisInputError);
+    const projected = projectAnalysisError(result.error);
+    expect(projected.details).toMatchObject({
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: `Expected a regular file without a symlink: ${selected} (it resolves to ${target})`,
+        },
+      ],
+    });
+    expect(projected.remediation.action).toBe(
+      `The selected path is a symlink to ${target}. Symlinks are not followed; if that target is the intended artifact, retry with path ${target}.`,
+    );
+    const retried = await new GoBinaryProvider().inspect({ path: target });
+    if (!retried.ok) throw retried.error;
   },
 );
 
