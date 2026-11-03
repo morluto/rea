@@ -1516,6 +1516,7 @@ describe("ReleaseExposureService Go relative flag paths", () => {
     [`-extldflags "-L private-sdk -static"`, "private-sdk"],
     [`all=-extldflags '-Wl,-L,private-sdk'`, "private-sdk"],
     [`-extldflags "-Xlinker -L -Xlinker private-sdk"`, "private-sdk"],
+    [`-extldflags '-L "/srv/private sdk"'`, "/srv/private sdk"],
   ])(
     "reads the external linker flags in %s as the compiler driver does",
     async (value, path) => {
@@ -1602,7 +1603,7 @@ describe("ReleaseExposureService Go paths", () => {
       "/opt/quote",
       "/opt/my libs",
       "/opt/link.ld",
-      "/srv/ext lib",
+      "/srv/ext",
       "/src/a",
       "/b",
     ]);

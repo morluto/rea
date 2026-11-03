@@ -883,38 +883,44 @@ const goFlags = (value: string): string[] =>
 
 /**
  * One Go tool's flags, each `-X` kept apart from the string it sets, and the
- * values given to `-extldflags` kept apart for the external linker.
+ * values given to `-extldflags` kept apart for the external linker. `own` is
+ * every flag the tool reads itself, `-X` strings included, split as `goFlags`
+ * splits them.
  */
 const goToolFlags = (
   value: string,
-): { flags: string[]; external: string[] } => {
+): { flags: string[]; own: string[]; external: string[] } => {
   const flags: string[] = [];
+  const own: string[] = [];
   const external: string[] = [];
   let argument: "string" | "external" | null = null;
   for (const [index, field] of goFields(value).entries()) {
     if (argument !== null) {
       if (argument === "external") external.push(field);
+      else own.push(...splitGoField(field));
       argument = null;
       continue;
     }
     const flag = index === 0 ? field.replace(GO_PACKAGE_SELECTOR, "") : field;
-    if (GO_LINKER_STRING_FLAG.test(flag)) {
-      if (/^-{1,2}X$/u.test(flag)) argument = "string";
-      continue;
-    }
     const externalFlags = GO_EXTERNAL_LINKER_FLAGS.exec(flag);
     if (externalFlags !== null) {
       if (externalFlags[1] === undefined) argument = "external";
       else external.push(externalFlags[1]);
       continue;
     }
+    own.push(...splitGoField(field));
+    if (GO_LINKER_STRING_FLAG.test(flag)) {
+      if (/^-{1,2}X$/u.test(flag)) argument = "string";
+      continue;
+    }
     flags.push(...splitGoField(flag));
   }
-  return { flags, external };
+  return { flags, own, external };
 };
 
-const goFlagPaths = (value: string): string[] =>
-  goFlags(value).flatMap((flag) =>
+/** Rooted paths in flags, with their `=` and `,` structure kept. */
+const flagPaths = (flags: string[]): string[] =>
+  flags.flatMap((flag) =>
     [...flag.matchAll(GO_FLAG_PATH)].flatMap(([, path]) =>
       path === undefined ? [] : [path.trimEnd()],
     ),
@@ -922,7 +928,7 @@ const goFlagPaths = (value: string): string[] =>
 
 /**
  * A path flag's relative argument, attached or in the next field. A rooted
- * argument belongs to `goFlagPaths`, which keeps its `=` and `,` structure.
+ * argument belongs to `flagPaths`, which keeps its `=` and `,` structure.
  */
 const goRelativeFlagPaths = (flags: string[], pathFlag: RegExp): string[] =>
   flags.flatMap((flag, index) => {
@@ -952,24 +958,29 @@ const splitForwardedLinkerFlags = (
   return { compiler, linker };
 };
 
-/** Relative paths in flags a C compiler driver reads. */
-const compilerRelativePaths = (value: string): string[] => {
-  const { compiler, linker } = splitForwardedLinkerFlags(goFlags(value));
+/** Rooted and relative paths in flags a C compiler driver reads. */
+const compilerPaths = (value: string): string[] => {
+  const flags = goFlags(value);
+  const { compiler, linker } = splitForwardedLinkerFlags(flags);
   return [
+    ...flagPaths(flags),
     ...goRelativeFlagPaths(compiler, GO_COMPILER_PATH_FLAG),
     ...goRelativeFlagPaths(linker, LINKER_PATH_FLAG),
   ];
 };
 
-/** Relative paths in the settings that take a path flag. */
-const goSettingRelativePaths = (key: string, value: string): string[] => {
-  if (GO_COMPILER_SETTING.test(key)) return compilerRelativePaths(value);
+/**
+ * Paths in a flag setting. Each `-extldflags` value is read only as the
+ * external linker splits it, so a path quoted inside it is read whole.
+ */
+const goSettingPaths = (key: string, value: string): string[] => {
+  if (GO_COMPILER_SETTING.test(key)) return compilerPaths(value);
   const pathFlag = GO_TOOL_PATH_FLAGS.get(key);
-  if (pathFlag === undefined) return [];
-  const { flags, external } = goToolFlags(value);
+  const { flags, own, external } = goToolFlags(value);
   return [
-    ...goRelativeFlagPaths(flags, pathFlag),
-    ...external.flatMap(compilerRelativePaths),
+    ...flagPaths(own),
+    ...(pathFlag === undefined ? [] : goRelativeFlagPaths(flags, pathFlag)),
+    ...external.flatMap(compilerPaths),
   ];
 };
 
@@ -995,8 +1006,7 @@ const goPaths = (
       continue;
     }
     if (!GO_FLAG_SETTING.test(setting.key)) continue;
-    for (const path of goFlagPaths(setting.value)) add(path);
-    for (const path of goSettingRelativePaths(setting.key, setting.value))
+    for (const path of goSettingPaths(setting.key, setting.value))
       paths.add(path);
   }
   return [...paths];
