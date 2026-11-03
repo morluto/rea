@@ -606,14 +606,17 @@ user-level file only. Loading this registration and real REA tool calls
 through WorkBuddy are verified.
 
 If a WorkBuddy or CodeBuddy session hits HTTP 400 `code 11133` with an empty
-`param` while advertising REA tools, the gateway is rejecting the full input
-schema catalog. Compact advertisements are already the default on current REA,
-so this usually means an explicit `REA_MCP_INPUT_SCHEMA_PROFILE=full` override
-is still set. Remove that override, or set it to `compact`, on
-`mcpServers.rea.env` in that host's MCP config, then restart the host. The host
-name alone does not identify the downstream model; see
-[#2999](https://github.com/morluto/rea/issues/2999) and the compact profile
-section in [mcp-contracts.md](mcp-contracts.md).
+`param` while advertising REA tools, treat that opaque code as a signal to
+inspect the advertised profile, not as proof that the gateway rejected the
+full catalog. One reported case recovered after switching from `full` to
+`compact` ([#2999](https://github.com/morluto/rea/issues/2999)); compatibility
+depends on the selected gateway and model. Compact advertisements are already
+the default on current REA. Check the effective `REA_MCP_INPUT_SCHEMA_PROFILE`
+on `mcpServers.rea.env` in that host's MCP config. If an explicit `full`
+override is set, remove it or set it to `compact`, then restart the host and
+confirm that compact recovers the request. The host name alone does not
+identify the downstream model; see the compact profile section in
+[mcp-contracts.md](mcp-contracts.md).
 
 ## ZCode
 
@@ -624,14 +627,17 @@ user-level `~/.zcode/cli/config.json`. Entries carry `command`, `args`, and
 skill copy there.
 
 When a ZCode session hits HTTP 400 `code 11133` with an empty `param` while
-advertising REA tools through a WorkBuddy/CodeBuddy-backed gateway, treat it as
-a full-catalog rejection. Compact is already the default; clear or flip any
-explicit `REA_MCP_INPUT_SCHEMA_PROFILE=full` on the effective REA entry's
-`env`—`mcp.servers.rea.env` in the native `~/.zcode/cli/config.json`, or
-`mcpServers.rea.env` in `~/.agents/mcp.json` when that fallback is the active
-registration—then start a new ZCode session
-([#2999](https://github.com/morluto/rea/issues/2999)). The client name alone
-does not identify the downstream model.
+advertising REA tools through a WorkBuddy/CodeBuddy-backed gateway, treat that
+opaque code as a signal, not proof of a full-catalog rejection. The A/B
+evidence in [#2999](https://github.com/morluto/rea/issues/2999) is one
+ZCode-through-gateway report against a Kimi-K3 backend. Compact is already the
+default. Check the effective `REA_MCP_INPUT_SCHEMA_PROFILE` on the active REA
+entry's `env`—`mcp.servers.rea.env` in the native `~/.zcode/cli/config.json`,
+or `mcpServers.rea.env` in `~/.agents/mcp.json` when that fallback is the
+active registration. If an explicit `full` override is set, clear it or set
+it to `compact`, then start a new ZCode session and confirm that compact
+recovers the request. The client name alone does not identify the downstream
+model.
 
 ZCode reads the user-scope `~/.agents/mcp.json` fallback only while the native
 `.zcode` config defines no servers at all, with no merging. When setup writes
