@@ -104,6 +104,7 @@
 * **native:** select retained batch decompile results through analysis views ([#8629](https://github.com/morluto/rea/issues/8629)) ([dec8d2d](https://github.com/morluto/rea/commit/dec8d2d58898c71abb17a37c338935f32bd14210))
 * **plugins:** make Claude Code and Codex installs self-contained ([#7514](https://github.com/morluto/rea/issues/7514)) ([0cd7ef4](https://github.com/morluto/rea/commit/0cd7ef456bf960da265e04b341e82a24b1e377d5))
 * **web:** page retained bundle endpoint observations and inferences ([#7259](https://github.com/morluto/rea/issues/7259)) ([6d5532a](https://github.com/morluto/rea/commit/6d5532a204b338a6c770fcbae61e0d55bda70793))
+* **website:** publish agent discovery and Markdown responses ([eef8f44](https://github.com/morluto/rea/commit/eef8f44003e6bf781baf4f885f84d03b31ea6c3a))
 * **workflows:** expose guided prompts through CLI and MCP ([#6995](https://github.com/morluto/rea/issues/6995)) ([5ae7765](https://github.com/morluto/rea/commit/5ae77656e7c4b9c40e84566a445660af34a23ad4))
 
 
