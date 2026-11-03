@@ -257,6 +257,8 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     idempotent: false,
   }),
   inspect_byte_entropy: evidence,
+  inspect_raw_bytes: evidence,
+  search_raw_bytes: evidence,
   inspect_pe_resources: evidence,
   inspect_pe_certificates: evidence,
   inspect_pe_imports: evidence,

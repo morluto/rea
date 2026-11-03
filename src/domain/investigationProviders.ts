@@ -73,6 +73,13 @@ export const BYTE_ENTROPY_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for execution-free reads and searches of raw file bytes. */
+export const RAW_BYTES_PROVIDER = Object.freeze({
+  id: "raw-bytes",
+  name: "REA raw file bytes",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free PE and ELF export tables. */
 export const NATIVE_EXPORTS_PROVIDER = Object.freeze({
   id: "rea-native-exports",

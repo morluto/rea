@@ -411,6 +411,8 @@ const availabilityFor = (context: AvailabilityContext): Availability => {
   // These built-in workflows accept a caller-selected endpoint; they do not load the optional passive provider.
   if (
     context.name === "inspect_byte_entropy" ||
+    context.name === "inspect_raw_bytes" ||
+    context.name === "search_raw_bytes" ||
     context.name === "observe_web_execution" ||
     context.name === "inspect_web_event_listeners"
   )

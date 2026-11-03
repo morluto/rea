@@ -1314,6 +1314,37 @@ of a later null value. Inspect the slot's `xrefs` and the writer's assembly or
 pseudocode, retaining uncertainty about execution order and runtime values.
 These operations inspect static evidence and do not execute the target.
 
+## Raw file offsets versus program memory addresses
+
+Two different coordinate systems address bytes, and each has its own tools.
+
+| Coordinate             | Meaning                                                                                                                                       | Tools                                                                          |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Program memory address | A loader-adjusted address in an analyzed program: segments are mapped, relocations and fixups applied, and uninitialized memory is unreadable | `read_bytes`, `search_bytes`, `goto_address` and the other address-based tools |
+| Raw file offset        | A position counted from the first byte of the file as stored on disk                                                                          | `inspect_raw_bytes`, `search_raw_bytes`, `address_to_file_offset` results      |
+
+The same byte generally has different values in the two systems: a section loaded
+at `0x140001000` can come from file offset `0x400`, and loader fixups can change
+the bytes themselves. Pass a program address to `read_bytes` and a file offset to
+`inspect_raw_bytes`; do not mix them.
+
+- Use `read_bytes` and `search_bytes` when the file is open as an analysis target
+  and the question is about the program as it runs: instructions, data at a
+  symbol, a pattern inside a mapped segment.
+- Use `inspect_raw_bytes` and `search_raw_bytes` when the file is not loaded as a
+  program, or when the question is about the bytes on disk: game data archives,
+  containers, headers before the loader, firmware blobs, or a loaded binary's
+  raw layout. They need only a local path and no open target.
+- To convert, `address_to_file_offset` maps a program address to a file offset,
+  and the result can be passed to `inspect_raw_bytes`. The conversion is
+  start-address only; see [Static Ghidra bytes](#static-ghidra-bytes-and-source-mappings).
+
+`inspect_raw_bytes` returns at most 4096 bytes per call (larger requests are
+rejected before the file is opened) and an out-of-range window is an error.
+`search_raw_bytes` streams the file, caps matches per page and pages with
+`start_offset`/`next_offset`. Both return complete Evidence and are described in
+[Raw file bytes](binary-diagnostics.md#raw-file-bytes).
+
 ## Editable analysis settings
 
 Agents can call `update_analysis_settings` to raise a curated admission,
