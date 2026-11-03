@@ -202,6 +202,18 @@ export class AsarArtifactReader implements ArtifactReader {
       offset === undefined || headerSize === undefined
         ? undefined
         : 8 + headerSize + offset;
+    if (facts.size === null)
+      throw new ArtifactEntryContentUnavailable(
+        `ASAR entry declares no readable size: ${producedEntry.path}`,
+        "ASAR packed entry bytes were not read because its declared size cannot bound them; no content hash or child artifact was produced.",
+        undefined,
+        artifactIntegrityDetails(
+          producedEntry.path,
+          producedEntry.declaredIntegrity,
+          null,
+          false,
+        ),
+      );
     if (
       archiveSize === undefined ||
       start === undefined ||

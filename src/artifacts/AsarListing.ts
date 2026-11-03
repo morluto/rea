@@ -1,6 +1,7 @@
 import { setImmediate } from "node:timers/promises";
+import { z } from "zod";
 
-import { asarNodeSchema } from "./AsarNode.js";
+import { asarDeclaredSizeSchema, asarNodeSchema } from "./AsarNode.js";
 import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
 import { assertAsarReadActive } from "./AsarFailure.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -9,6 +10,11 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 const MAX_LISTING_BYTES = 64 * 1024 * 1024;
 const BLOCK_INTEGRITY_LIMITATION =
   "ASAR block integrity declarations were not validated. Whole-file digest comparison does not establish block integrity or Electron runtime acceptance.";
+// Listing keeps a member whose size cannot bound its content, as it keeps an
+// unreadable offset; only reading that member fails.
+const asarListingNodeSchema = asarNodeSchema.extend({
+  size: z.unknown().optional(),
+});
 
 type AsarListedFacts = Pick<
   ArtifactEntry,
@@ -19,7 +25,8 @@ export type AsarListedEntry = AsarListedFacts &
     | { readonly kind: "directory" | "symlink"; readonly size: number | null }
     | {
         readonly kind: "file";
-        readonly size: number;
+        /** Null when the declared size cannot bound the member's content. */
+        readonly size: number | null;
         readonly packedOffset: number | undefined;
       }
   );
@@ -81,7 +88,7 @@ export const readAsarListing = async (
     )
       throw new ArtifactReaderFailure(
         "path",
-        "ASAR header has an unsafe path component",
+        `ASAR header has an unsafe path component under ${frame.parent.length === 0 ? "the archive root" : frame.parent}: ${JSON.stringify(name)}`,
       );
     const units =
       frame.parent.length + name.length + (frame.parent.length === 0 ? 0 : 1);
@@ -89,7 +96,22 @@ export const readAsarListing = async (
     // occurrence even when the engine can share a string prefix.
     admitRetainedBytes(units * 2 + 256);
     const path = frame.parent.length === 0 ? name : `${frame.parent}/${name}`;
-    const metadata = asarNodeSchema.parse(raw);
+    const parsed = asarListingNodeSchema.safeParse(raw);
+    if (!parsed.success) {
+      const fields = [
+        ...new Set(
+          parsed.error.issues.map((issue) =>
+            issue.path.length === 0 ? "entry" : issue.path.join("."),
+          ),
+        ),
+      ].join(", ");
+      throw new ArtifactReaderFailure(
+        "format",
+        `ASAR entry metadata is malformed (${fields}): ${path}`,
+        { cause: parsed.error },
+      );
+    }
+    const metadata = parsed.data;
     if (
       metadata.files === undefined &&
       metadata.link === undefined &&
@@ -97,13 +119,28 @@ export const readAsarListing = async (
     )
       throw new ArtifactReaderFailure(
         "format",
-        "ASAR entry has no directory, link or file metadata",
+        `ASAR entry has no directory, link or file metadata: ${path}`,
       );
     const declaration = metadata.integrity;
     const supportedIntegrity =
       declaration?.algorithm === "SHA256" &&
       /^[a-f0-9]{64}$/u.test(declaration.hash);
     const limitations: string[] = [];
+    const declaredSize = asarDeclaredSizeSchema.safeParse(metadata.size);
+    const size = declaredSize.success ? declaredSize.data : null;
+    if (metadata.size !== undefined && !declaredSize.success) {
+      // Keep the parsed source value; JSON escaping can expand one string code
+      // unit to six characters, so admit it before rendering.
+      if (typeof metadata.size === "string")
+        admitRetainedBytes(metadata.size.length * 12 + 256);
+      const declared =
+        typeof metadata.size === "number" || typeof metadata.size === "string"
+          ? `size ${JSON.stringify(metadata.size)}`
+          : `a ${metadata.size === null ? "null" : typeof metadata.size} size`;
+      const limitation = `ASAR entry declares ${declared}, which is not a non-negative safe integer.`;
+      admitRetainedBytes(limitation.length * 2 + 64);
+      limitations.push(limitation);
+    }
     if (
       declaration !== undefined &&
       (Object.hasOwn(declaration, "blockSize") ||
@@ -141,13 +178,13 @@ export const readAsarListing = async (
       entries.push({
         ...facts,
         kind: metadata.files !== undefined ? "directory" : "symlink",
-        size: metadata.size ?? null,
+        size,
       });
     else if (metadata.size !== undefined)
       entries.push({
         ...facts,
         kind: "file",
-        size: metadata.size,
+        size,
         packedOffset: parseArchiveOffset(metadata.offset),
       });
     if (metadata.files !== undefined)

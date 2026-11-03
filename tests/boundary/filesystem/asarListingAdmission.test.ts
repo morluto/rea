@@ -88,6 +88,41 @@ it.each(["..", ".", "", "a/../b", "a/b", "a\0b"])(
   },
 );
 
+it.each([
+  [
+    { size: 0, offset: 0 },
+    "ASAR entry metadata is malformed (offset): app/main.js",
+  ],
+  [
+    { size: 0, offset: "0", unpacked: "yes", executable: 1 },
+    "ASAR entry metadata is malformed (unpacked, executable): app/main.js",
+  ],
+  ["entry", "ASAR entry metadata is malformed (entry): app/main.js"],
+  [{}, "ASAR entry has no directory, link or file metadata: app/main.js"],
+])(
+  "names the member whose metadata %j stops inventory",
+  async (metadata, message) => {
+    const json = JSON.stringify({
+      files: { app: { files: { "main.js": metadata } } },
+    });
+    await expect(
+      inventoryArtifact(await archiveWith(asarHeaderBytes(json))),
+    ).rejects.toMatchObject({ reason: "format", message });
+  },
+);
+
+it("names the parent of an unsafe ASAR path component", async () => {
+  const json = JSON.stringify({
+    files: { app: { files: { "..": { size: 0, offset: "0" } } } },
+  });
+  await expect(
+    inventoryArtifact(await archiveWith(asarHeaderBytes(json))),
+  ).rejects.toMatchObject({
+    reason: "path",
+    message: 'ASAR header has an unsafe path component under app: ".."',
+  });
+});
+
 it("orders raw names portably and retains prototype-named entries and links", async () => {
   const path = await archiveWith(
     asarHeaderBytes(
@@ -182,6 +217,120 @@ it.each([undefined, "01", "-1", "9007199254740992"])(
     }
   },
 );
+
+it.each([
+  [-1000, "size -1000"],
+  [1.5, "size 1.5"],
+  [2 ** 53, "size 9007199254740992"],
+  ["12", 'size "12"'],
+  [null, "a null size"],
+])(
+  "inventories the other members when one declares size %j",
+  async (size, declared) => {
+    // Figma Desktop ships `.codesign` with size -1000 and the empty-input digest.
+    const empty = createHash("sha256").update("").digest("hex");
+    const payload = Buffer.from("console.log(1);\n");
+    const digest = createHash("sha256").update(payload).digest("hex");
+    const bytes = Buffer.concat([
+      asarHeaderBytes(
+        JSON.stringify({
+          files: {
+            ".codesign": {
+              size,
+              offset: "0",
+              integrity: { algorithm: "SHA256", hash: empty },
+            },
+            "main.js": {
+              size: payload.length,
+              offset: "0",
+              integrity: { algorithm: "SHA256", hash: digest },
+            },
+          },
+        }),
+      ),
+      payload,
+    ]);
+    const path = await archiveWith(bytes);
+    const limitation = `ASAR entry declares ${declared}, which is not a non-negative safe integer.`;
+
+    const reader = new AsarArtifactReader(path);
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const invalid = entries.find((entry) => entry.path === ".codesign");
+      expect(invalid).toMatchObject({
+        kind: "file",
+        declaredSize: null,
+        declaredIntegrity: { algorithm: "sha256", digest: empty },
+        limitations: [limitation],
+      });
+      await expect(reader.open(invalid!)).rejects.toMatchObject({
+        reason: "unavailable",
+        message: "ASAR entry declares no readable size: .codesign",
+      });
+      const valid = entries.find((entry) => entry.path === "main.js")!;
+      expect(
+        Buffer.compare(await buffer(await reader.open(valid)), payload),
+      ).toBe(0);
+    } finally {
+      await reader.close();
+    }
+
+    const inventory = await inventoryArtifact(path);
+    const occurrence = (name: string) =>
+      inventory.occurrences.find((row) => row.logical_path === name);
+    expect(occurrence(".codesign")).toMatchObject({
+      artifact_id: null,
+      declared_size: null,
+      hash_status: "unavailable",
+      limitations: [
+        limitation,
+        "ASAR packed entry bytes were not read because its declared size cannot bound them; no content hash or child artifact was produced.",
+      ],
+    });
+    expect(occurrence("main.js")?.hash_status).toBe("verified");
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+  },
+);
+
+it("reads unpacked members and lists directories whose declared size is invalid", async () => {
+  const payload = Buffer.from("native");
+  const digest = createHash("sha256").update(payload).digest("hex");
+  const bytes = asarHeaderBytes(
+    JSON.stringify({
+      files: {
+        companion: {
+          size: -1,
+          unpacked: true,
+          integrity: { algorithm: "SHA256", hash: digest },
+        },
+        folder: { size: -1, files: { child: { size: 0, offset: "0" } } },
+      },
+    }),
+  );
+  const path = await archiveWith(bytes);
+  await mkdir(`${path}.unpacked`);
+  await writeFile(join(`${path}.unpacked`, "companion"), payload);
+  const limitation =
+    "ASAR entry declares size -1, which is not a non-negative safe integer.";
+  const inventory = await inventoryArtifact(path);
+  const occurrence = (name: string) =>
+    inventory.occurrences.find((row) => row.logical_path === name);
+  // Unpacked bytes come from the companion file, not a packed range.
+  expect(occurrence("companion")).toMatchObject({
+    declared_size: null,
+    unpacked: true,
+    hash_status: "verified",
+    limitations: [limitation],
+  });
+  expect(occurrence("companion")?.artifact_id).not.toBeNull();
+  expect(occurrence("folder")).toMatchObject({
+    entry_kind: "directory",
+    declared_size: null,
+    limitations: [limitation],
+  });
+  expect(occurrence("folder/child")?.hash_status).toBe("verified");
+});
 
 it("preserves directory and link priority with unrecognized integrity declarations", async () => {
   const bytes = asarHeaderBytes(
