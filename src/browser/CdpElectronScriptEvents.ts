@@ -1,14 +1,15 @@
+import {
+  readCdpExecutionContextCreated,
+  readCdpExecutionContextDestroyed,
+  readCdpScriptParsed,
+  selectCdpScriptFrame,
+  type CdpContextFrameClaim,
+} from "./CdpScriptContextFacts.js";
 import type { CdpEvent } from "./CdpConnection.js";
 import type { ElectronScriptFrameClaims } from "../domain/javascript/electronObservation.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { CDP_CAPTURE_SCRIPT_METADATA_LIMITS } from "./CdpCaptureEventTypes.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
-import {
-  executionContextKey,
-  recordValue,
-  scriptMetadataValues,
-  cdpStringValue,
-} from "./CdpCaptureValues.js";
 
 export interface ElectronScriptDraft {
   readonly scriptId: string;
@@ -37,7 +38,7 @@ export interface ElectronScriptMetadataRetention {
 export const ingestElectronScriptEvent = (input: {
   readonly event: CdpEvent;
   readonly scripts: ElectronScriptDraft[];
-  readonly executionContextFrames: Map<string, string>;
+  readonly executionContextFrames: Map<string, CdpContextFrameClaim>;
   readonly completeness: CdpCaptureCompleteness;
   readonly retention: ElectronScriptMetadataRetention;
 }): void => {
@@ -46,8 +47,7 @@ export const ingestElectronScriptEvent = (input: {
     return;
   }
   if (input.event.method === "Runtime.executionContextDestroyed") {
-    const parameters = recordValue(input.event.params);
-    const key = executionContextKey(parameters?.executionContextId);
+    const key = readCdpExecutionContextDestroyed(input.event.params).contextKey;
     if (key !== null) input.executionContextFrames.delete(key);
     return;
   }
@@ -56,10 +56,10 @@ export const ingestElectronScriptEvent = (input: {
     return;
   }
   if (input.event.method !== "Debugger.scriptParsed") return;
-  const value = recordValue(input.event.params);
-  const scriptId = cdpStringValue(value?.scriptId);
-  const rawUrl = cdpStringValue(value?.url);
-  if (scriptId === undefined) {
+  const facts = readCdpScriptParsed(input.event.params);
+  const scriptId = facts.scriptId;
+  const rawUrl = facts.url;
+  if (scriptId === undefined || scriptId === "") {
     input.completeness.exclude("scripts", "invalid_protocol_value");
     return;
   }
@@ -67,43 +67,32 @@ export const ingestElectronScriptEvent = (input: {
     input.completeness.exclude("scripts", "unattributed_origin");
     return;
   }
-  const contextKey = executionContextKey(value?.executionContextId);
   const contextFrame =
-    contextKey === null
+    facts.contextKey === null
       ? undefined
-      : input.executionContextFrames.get(contextKey);
-  const auxiliary = recordValue(value?.executionContextAuxData);
-  const reportedFrame = cdpStringValue(auxiliary?.frameId);
-  const declaredFrame = reportedFrame === "" ? undefined : reportedFrame;
-  const conflictingFrame =
-    declaredFrame !== undefined &&
-    contextFrame !== undefined &&
-    declaredFrame !== contextFrame;
+      : input.executionContextFrames.get(facts.contextKey);
+  const attribution = selectCdpScriptFrame(facts.frameClaim, contextFrame);
   if (
-    conflictingFrame ||
-    (value?.executionContextAuxData !== undefined && auxiliary === undefined) ||
-    (auxiliary !== undefined &&
-      Object.hasOwn(auxiliary, "frameId") &&
-      declaredFrame === undefined) ||
-    (value?.hasSourceURL !== undefined &&
-      typeof value.hasSourceURL !== "boolean")
+    attribution.invalid ||
+    attribution.conflicting ||
+    facts.invalidHasSourceUrl
   )
     input.completeness.exclude("scripts", "invalid_protocol_value");
+  const reportedFrame = facts.frameClaim.frameId;
   const script: ElectronScriptDraft = {
     scriptId,
     rawUrl,
-    ...scriptMetadataValues(value),
-    frameId: conflictingFrame ? null : (declaredFrame ?? contextFrame ?? null),
+    ...facts.metadata,
+    frameId: attribution.frameId,
     frameClaims: {
       ...(reportedFrame === undefined
         ? {}
         : { script_event_frame_id: reportedFrame }),
-      ...(contextFrame === undefined
+      ...(contextFrame?.frameId === undefined
         ? {}
-        : { execution_context_frame_id: contextFrame }),
+        : { execution_context_frame_id: contextFrame.frameId }),
     },
-    hasSourceUrl:
-      typeof value?.hasSourceURL === "boolean" ? value.hasSourceURL : null,
+    hasSourceUrl: facts.hasSourceUrl,
   };
   const remaining =
     CDP_CAPTURE_SCRIPT_METADATA_LIMITS.retainedBytes - input.retention.bytes;
@@ -120,12 +109,9 @@ export const ingestElectronScriptEvent = (input: {
 
 const retainExecutionContext = (
   event: CdpEvent,
-  frames: Map<string, string>,
+  frames: Map<string, CdpContextFrameClaim>,
 ): void => {
-  const parameters = recordValue(event.params);
-  const runtimeContext = recordValue(parameters?.context);
-  const contextKey = executionContextKey(runtimeContext?.id);
-  const frameId = cdpStringValue(recordValue(runtimeContext?.auxData)?.frameId);
-  if (contextKey === null || frameId === undefined || frameId === "") return;
-  frames.set(contextKey, frameId);
+  const facts = readCdpExecutionContextCreated(event.params);
+  if (facts.contextKey === null) return;
+  frames.set(facts.contextKey, facts.frameClaim);
 };

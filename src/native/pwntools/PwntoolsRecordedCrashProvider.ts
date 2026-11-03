@@ -8,11 +8,12 @@ import {
   recordedCrashSchema,
   type InspectRecordedCrashInput,
   type RecordedCrash,
+  type RecordedCrashPartialObservation,
 } from "../../domain/native/recordedCrash.js";
 import type { RecordedCrashPort } from "../../application/binaryDiagnostics/RecordedCrashPort.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { PwntoolsDecoder, type PwntoolsLauncher } from "./PwntoolsDecoder.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { validateCoreFileMappingAuthority } from "../pwndbg/CoreFileMappingAuthority.js";
 import { validateRecordedCrashSources } from "./RecordedCrashSourceBindings.js";
 import { validateRecordedCrashStructure } from "./RecordedCrashStructureBindings.js";
@@ -48,17 +49,7 @@ export class PwntoolsRecordedCrashProvider
           import.meta.url,
         ),
         payloadSchema: recordedCrashPayloadSchema,
-        project: async ({
-          input,
-          payload,
-          snapshot,
-          rootPath,
-          resources,
-          diagnostics,
-          options,
-          runCommand,
-          timeoutMs,
-        }) => {
+        project: ({ input, payload, snapshot, diagnostics }): RecordedCrash => {
           const validate = (debuggerContext: RecordedCrash["debugger"]) =>
             recordedCrashSchema.safeParse({
               ...payload,
@@ -122,7 +113,35 @@ export class PwntoolsRecordedCrashProvider
                   { capturedOutput: diagnostics },
                 );
             }
+          return value;
+        },
+        partialObservation: (input, value) =>
+          input.include_debugger_context ? unavailableDebugger(value) : value,
+        enrich: async ({
+          environment,
+          input,
+          report: value,
+          snapshot,
+          rootPath,
+          resources,
+          options,
+          runCommand,
+          timeoutMs,
+        }) => {
           if (!input.include_debugger_context) return value;
+          const diagnostics = value.decoder_diagnostics;
+          const validate = (debuggerContext: RecordedCrash["debugger"]) =>
+            recordedCrashSchema.safeParse({
+              ...value,
+              debugger: debuggerContext,
+              diagnostics:
+                debuggerContext.status === "available"
+                  ? recordedCrashStageOutput(
+                      diagnostics,
+                      debuggerContext.diagnostics,
+                    )
+                  : diagnostics,
+            });
           try {
             if (options?.signal?.aborted)
               throw new AnalysisCancelledError("inspect_recorded_crash", {
@@ -167,10 +186,7 @@ export class PwntoolsRecordedCrashProvider
             return enriched.data;
           } catch (cause: unknown) {
             if (cause instanceof AnalysisError)
-              cause.retainPartialObservation({
-                ...value,
-                debugger: { status: "unavailable", requested: true },
-              });
+              cause.retainPartialObservation(unavailableDebugger(value));
             throw cause;
           }
         },
@@ -181,3 +197,10 @@ export class PwntoolsRecordedCrashProvider
     );
   }
 }
+
+const unavailableDebugger = (
+  value: RecordedCrash,
+): RecordedCrashPartialObservation => ({
+  ...value,
+  debugger: { status: "unavailable", requested: true },
+});

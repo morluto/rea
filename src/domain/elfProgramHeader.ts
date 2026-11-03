@@ -1,5 +1,10 @@
 import { err, ok } from "./result.js";
 
+export type ElfProgramHeader = Extract<
+  ReturnType<typeof readElfProgramHeader>,
+  { readonly ok: true }
+>["value"];
+
 /** Fixed ELF32/ELF64 program declarations; consumers own type, precision and mapping admission. */
 export const readElfProgramHeader = (
   bytes: Uint8Array,

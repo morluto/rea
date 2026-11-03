@@ -225,7 +225,7 @@ it.skipIf(process.platform === "win32")(
       },
     });
     expect(result.limitations).toContain(
-      "Interface Builder resource-key joins may be incomplete because the decoded UI graph was truncated.",
+      "Interface Builder resource-key joins may be incomplete because the decoded object inventory is incomplete.",
     );
   },
 );
@@ -338,7 +338,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
     return bundle;
   };
   const emptyGraph = {
-    graph: { nodes: [], truncated: false },
+    graph: { nodes: [], truncated: false, coverage: [] },
   } as unknown as Awaited<ReturnType<typeof analyzeInterfaceBuilderBundle>>;
 
   it("keeps the Interface Builder analysis running while catalogs are inspected", async () => {
@@ -517,7 +517,7 @@ it.each([
   },
 );
 
-it.each(["reported carutil", "observed assetutil"])(
+it.each(["reported carutil", "tab-indented carutil", "observed assetutil"])(
   "attributes %s rejection of a readable nested catalog as invalid bytes",
   async (variant) => {
     const bundle = await createTestTempDirectory("rea-asset-rejected-");
@@ -535,9 +535,9 @@ it.each(["reported carutil", "observed assetutil"])(
     // catalog. This test injects those diagnoses, without running Apple tools.
     const stderr =
       "BOMStreamWithFileAndSys: read: Operation not permitted\n" +
-      (variant === "reported carutil"
+      (variant !== "observed assetutil"
         ? `assetutil Error: Unable to read file at '${path}'\n` +
-          `carutil: error:\n    ${path} is not a valid AssetCatalog\n`
+          `carutil: error:\n${variant === "tab-indented carutil" ? "\t" : "    "}${path} is not a valid AssetCatalog\n`
         : `assetutil: file error error exiting: 'can't read from: '${path}' Undefined error: 0' invalid file\n`);
     const cause = Object.assign(new Error("assetutil exited 1"), {
       code: 1,
@@ -580,6 +580,7 @@ it.each(["reported carutil", "observed assetutil"])(
 it.each([
   "unrecognized text",
   "another catalog",
+  "tab-indented another catalog",
   "signal",
   "truncated capture",
   "failed capture",
@@ -589,13 +590,15 @@ it.each([
   const bundle = await createTestTempDirectory("rea-asset-unknown-rejection-");
   const path = join(bundle, "Assets.car");
   await writeFile(path, "readable catalog");
-  const rejectedPath = scenario === "another catalog" ? `${path}.other` : path;
+  const rejectedPath = scenario.includes("another catalog")
+    ? `${path}.other`
+    : path;
   const stderr =
     scenario === "unrecognized text"
       ? "Operation not permitted; catalog may be invalid"
       : scenario.startsWith("different file-error")
         ? `assetutil: file error error exiting: 'can't read from: '${path}' Undefined error: ${scenario === "different file-error code" ? "13" : "0"}' ${scenario === "different file-error text" ? "access denied" : "invalid file"}\n`
-        : `carutil: error:\n    ${rejectedPath} is not a valid AssetCatalog\n`;
+        : `carutil: error:\n${scenario.startsWith("tab-indented") ? "\t" : "    "}${rejectedPath} is not a valid AssetCatalog\n`;
   const cause = Object.assign(new Error("assetutil failed"), {
     code: 1,
     stdout: "",
@@ -690,3 +693,70 @@ it("preserves every own JSON metadata field through catalog inspection and page 
   expect(Object.hasOwn(metadata, "__proto__")).toBe(true);
   expect(Object.getPrototypeOf(metadata)).toBe(Object.prototype);
 });
+
+it.skipIf(process.platform === "win32")(
+  "retains an exited assetutil failure when cancellation arrives while inherited pipes drain",
+  async () => {
+    const bundle = await createTestTempDirectory("rea-asset-exit-pipes-");
+    await writeFile(join(bundle, "Assets.car"), "inert catalog");
+    const exited = join(bundle, "root-exited");
+    const release = join(bundle, "release");
+    const descendant = [
+      'const fs = require("node:fs");',
+      "const parent = Number(process.argv[1]);",
+      "const timer = setInterval(() => {",
+      "  try { process.kill(parent, 0); } catch {",
+      `    fs.writeFileSync(${JSON.stringify(exited)}, "");`,
+      "  }",
+      `  if (fs.existsSync(${JSON.stringify(release)})) { clearInterval(timer); process.exit(0); }`,
+      "}, 10);",
+      "setTimeout(() => process.exit(0), 5000).unref();",
+    ].join("\n");
+    const program = [
+      'const { spawn } = require("node:child_process");',
+      `const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}, String(process.pid)], { stdio: "inherit" });`,
+      "child.unref();",
+      'process.stderr.write("specific catalog failure\\n");',
+      "process.exit(7);",
+    ].join("\n");
+    const controller = new AbortController();
+    let settled = false;
+    const analysis = analyzeAppleAssetCatalogs({
+      bundlePath: bundle,
+      targetSha256: "a".repeat(64),
+      environment: {},
+      signal: controller.signal,
+      runAssetUtil: async (_path, signal) =>
+        (
+          await processOutput.execFileOutput(
+            process.execPath,
+            ["-e", program],
+            {
+              signal,
+              stopSignal: "SIGTERM",
+            },
+          )
+        ).stdout,
+    })
+      .catch((cause: unknown) => cause)
+      .finally(() => {
+        settled = true;
+      });
+    try {
+      await vi.waitFor(() => expect(access(exited)).resolves.toBeUndefined());
+      expect(settled).toBe(false);
+      controller.abort("late cancellation");
+      expect(settled).toBe(false);
+      await writeFile(release, "");
+      expect(await analysis).toMatchObject({
+        _tag: "AnalysisOutputError",
+        diagnostics: { catalog_path: "Assets.car" },
+        capturedOutput: { stderr: "specific catalog failure\n", exit_code: 7 },
+      });
+    } finally {
+      await writeFile(release, "");
+      controller.abort();
+      await analysis;
+    }
+  },
+);

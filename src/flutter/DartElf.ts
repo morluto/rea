@@ -1,3 +1,7 @@
+import {
+  observeElfStringTableEntry,
+  elfStringTableText,
+} from "../domain/elfStringTable.js";
 import { readElfDynamicEntry } from "../domain/elfDynamicEntry.js";
 import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
@@ -35,14 +39,10 @@ class BoundedReader {
   }
 
   cString(offset: number, tableEnd: number): string | null {
-    if (offset < 0 || offset >= tableEnd || tableEnd > this.bytes.length)
-      return null;
-    const end = this.bytes
-      .subarray(offset, Math.min(tableEnd, offset + 257))
-      .indexOf(0);
-    return end < 0
-      ? null
-      : this.bytes.subarray(offset, offset + end).toString("latin1");
+    if (tableEnd < 0 || tableEnd > this.bytes.length) return null;
+    return elfStringTableText(
+      observeElfStringTableEntry(this.bytes.subarray(0, tableEnd), offset, 257),
+    );
   }
 }
 

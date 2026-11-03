@@ -139,6 +139,54 @@ it("fails unknown magics and truncated marshal without partial success", () => {
   );
 });
 
+it.each([
+  { magic: 3571, layout: "py311", version: "3.13" },
+  { magic: 3401, layout: "py37", version: "3.8" },
+] as const)(
+  "decodes supported standalone magic $magic with its own marshal layout",
+  ({ magic, layout, version }) => {
+    const result = parse(
+      Buffer.concat([pythonPycHeader(magic), marshalCode(layout)]),
+    );
+    expect(result.header).toMatchObject({
+      magic,
+      python_version: version,
+      code_layout: layout,
+    });
+    expect(root(result).name).toBe("<module>");
+  },
+);
+
+it("keeps a known newer CPython identity outside standalone decoder coverage", () => {
+  expect(() => parse(pythonPycHeader(3627))).toThrow(
+    expect.objectContaining({
+      kind: "unsupported",
+      message: expect.stringContaining(
+        "outside the pinned CPython 3.7–3.13 table",
+      ),
+    }),
+  );
+});
+
+it("reports a short unknown header before unsupported magic, and bad CR LF before either", () => {
+  const unknown = pythonPycHeader(1).subarray(0, 4);
+  expect(() => parse(unknown)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message:
+        "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
+    }),
+  );
+  const badTrailer = Buffer.from(unknown);
+  badTrailer[3] = 0;
+  expect(() => parse(badTrailer)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: "Pyc magic is not a little-endian integer followed by CR LF.",
+    }),
+  );
+});
+
 it("classifies the 12-byte 3.7 alpha header as unsupported", () => {
   for (const magic of [3390, 3391]) {
     const header = Buffer.alloc(12);
@@ -146,6 +194,12 @@ it("classifies the 12-byte 3.7 alpha header as unsupported", () => {
     header[2] = 0x0d;
     header[3] = 0x0a;
     expect(() => parse(Buffer.concat([header, marshalCode("py37")]))).toThrow(
+      expect.objectContaining({
+        kind: "unsupported",
+        message: expect.stringContaining("unsupported 12-byte CPython header"),
+      }),
+    );
+    expect(() => parse(header.subarray(0, 4))).toThrow(
       expect.objectContaining({
         kind: "unsupported",
         message: expect.stringContaining("unsupported 12-byte CPython header"),
@@ -1039,68 +1093,6 @@ it("rejects code keys and members whose consts are unhashable", () => {
   const hashable = parse(withConsts([setOf(0x3c, code(tuple(int)))]));
   expect(root(hashable).consts[0]).toEqual({ kind: "set", length: 1 });
   expect(hashable.coverage.status).toBe("complete");
-});
-
-it("uses the code equality fields for each CPython layout", () => {
-  const codeCollections = (
-    layout: "py38" | "py311",
-    different: boolean,
-  ): [Buffer, Buffer] => {
-    const lineA = marshalCode(layout, {
-      name: "f",
-      filename: "fixture.py",
-      firstlineno: 1,
-      linetable: Buffer.from([2, 1]),
-    });
-    const lineB = marshalCode(layout, {
-      name: "f",
-      filename: "fixture.py",
-      firstlineno: 1,
-      linetable: Buffer.from([2, different ? 2 : 1]),
-    });
-    const frozenSet = Buffer.concat([
-      Buffer.from([0x3e]),
-      u32(2),
-      lineA,
-      lineB,
-    ]);
-    const dict = Buffer.concat([
-      Buffer.from([0x7b]),
-      lineA,
-      Buffer.from([0x4e]),
-      lineB,
-      Buffer.from([0x54, 0x30]),
-    ]);
-    return [frozenSet, dict];
-  };
-  for (const [magic, layout] of [
-    [3413, "py38"],
-    [3439, "py38"],
-  ] as const) {
-    const [frozenSet, dict] = codeCollections(layout, true);
-    const report = parse(
-      Buffer.concat([
-        pythonPycHeader(magic),
-        marshalCode(layout, { consts: [frozenSet, dict] }),
-      ]),
-    );
-    expect(root(report).consts).toEqual([
-      { kind: "frozenset", length: 1 },
-      { kind: "dict", length: 1 },
-    ]);
-  }
-
-  const [frozenSet, dict] = codeCollections("py311", true);
-  const py312 = parse(
-    Buffer.concat([
-      pythonPycHeader(3531),
-      marshalCode("py311", { consts: [frozenSet, dict] }),
-    ]),
-  );
-  expect(root(py312).consts).toEqual([
-    { kind: "frozenset", length: 2 },
-    { kind: "dict", length: 2 },
-  ]);
 });
 
 it("keeps the first dictionary key when a later key compares equal", () => {

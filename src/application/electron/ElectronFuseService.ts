@@ -20,7 +20,7 @@ export class ElectronFuseService {
 
   /** Await and retry the reader's exact retained descriptor owners. */
   async close(): Promise<void> {
-    await this.provider.close?.();
+    await this.provider.close();
   }
 
   /** Read fuse wires for one explicitly selected path without launching it. */

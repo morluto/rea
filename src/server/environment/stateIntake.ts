@@ -7,6 +7,7 @@ import {
 } from "../../artifacts/ArtifactResourceScope.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
+import { paddedBase64ByteLength } from "../../domain/paddedBase64.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import {
@@ -126,8 +127,8 @@ const fileFailure = (cause: unknown): IntakeFailure =>
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const BASE64 =
-  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+const MAX_INLINE_BASE64_CHARACTERS =
+  Math.ceil(STATE_INTAKE_LIMIT_BYTES / 3) * 4;
 
 /** Parse loaded bytes as UTF-8 JSON, marking values parsing would change; the content is never echoed. */
 const parseDocumentBytes = (bytes: Uint8Array): Result<unknown, RpcError> => {
@@ -316,10 +317,12 @@ const fileBytes = async (
   files: ArtifactResourceScope,
 ): Promise<Result<Uint8Array, RpcError>> => {
   if (typeof file.bytes === "string" && file.uri === undefined) {
-    if (!BASE64.test(file.bytes))
+    if (file.bytes.length > MAX_INLINE_BASE64_CHARACTERS) return err(TOO_LARGE);
+    const byteLength = paddedBase64ByteLength(file.bytes);
+    if (byteLength === undefined)
       return err(invalidParams("the file part's bytes are not base64"));
-    const bytes = Buffer.from(file.bytes, "base64");
-    return bytes.length > STATE_INTAKE_LIMIT_BYTES ? err(TOO_LARGE) : ok(bytes);
+    if (byteLength > STATE_INTAKE_LIMIT_BYTES) return err(TOO_LARGE);
+    return ok(Buffer.from(file.bytes, "base64"));
   }
   if (
     typeof file.uri !== "string" ||

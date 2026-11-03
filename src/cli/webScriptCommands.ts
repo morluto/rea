@@ -47,9 +47,9 @@ export const registerWebScriptCommands = (
             signal,
             "Web script export resources",
           );
-          return "evidence_id" in result
-            ? result
-            : { error: "Script export failed", ...result };
+          return result.ok
+            ? result.value
+            : { error: "Script export failed", ...result.error };
         }),
       ),
   });

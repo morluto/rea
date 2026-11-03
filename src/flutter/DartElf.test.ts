@@ -522,6 +522,32 @@ it("keeps section admission ahead of program admission for unrepresentable raw o
   });
 });
 
+it.each([256, 257])(
+  "preserves Dart's narrower symbol-name window for a %i-byte name",
+  async (length) => {
+    const name = "n".repeat(length);
+    const original = buildElf64Image([{ name: "seed", value: 64, size: 4 }]);
+    const sectionTable = Number(original.readBigUInt64LE(0x28));
+    const stringHeader = sectionTable + 2 * 64;
+    const stringOffset = Number(original.readBigUInt64LE(stringHeader + 0x18));
+    const bytes = Buffer.concat([original, Buffer.alloc(length + 2)]);
+    bytes.write(name, stringOffset + 1, "latin1");
+    bytes[stringOffset + 1 + length] = 0;
+    bytes.writeBigUInt64LE(BigInt(length + 2), stringHeader + 0x20);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 0x20);
+    expect(await readElfSymbols(bytes, [name])).toEqual(
+      length === 256
+        ? { symbols: [{ name, offset: 64, size: 4 }], failures: [] }
+        : {
+            symbols: [],
+            failures: [
+              { reason: `symbol ${name} is not in the dynamic symbol table` },
+            ],
+          },
+    );
+  },
+);
+
 it("checks raw symbol precision only after definition and requested-name selection", async () => {
   const bytes = buildElf64Image([
     { name: "unselected", value: 64, size: 4 },

@@ -270,7 +270,11 @@ it(
         summary: {
           browser_windows: 3,
           context_bridge_apis: 2,
-          ipc: { paired_renderer_transmissions: 4 },
+          ipc: {
+            paired_renderer_transmissions: 0,
+            ambiguous_renderer_transmissions: 7,
+            unpaired_literal_renderer_transmissions: 0,
+          },
         },
       },
     });
@@ -326,7 +330,13 @@ describe("Electron CLI artifact behavior", () => {
         normalized_result: {
           input_path: root,
           format: "directory",
-          summary: { ipc: { paired_renderer_transmissions: 4 } },
+          summary: {
+            ipc: {
+              paired_renderer_transmissions: 0,
+              ambiguous_renderer_transmissions: 7,
+              unpaired_literal_renderer_transmissions: 0,
+            },
+          },
         },
       });
     },

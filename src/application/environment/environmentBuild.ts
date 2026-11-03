@@ -25,6 +25,7 @@ import {
 import {
   anonymousOrigin,
   credentialScanWarnings,
+  savedCredentialWarnings,
   nameFromCaptureFile,
   type EnvironmentBuildWarning,
 } from "./environmentBuildReport.js";
@@ -106,9 +107,6 @@ export interface EnvironmentBuildInput {
   /** Refuse an existing directory and never create its parent, as MCP output directories require. */
   readonly exclusiveDestination?: boolean | undefined;
 }
-
-/** The report environment-build prints and export_environment_bundle returns. */
-export type { EnvironmentBuildReport };
 
 const captureOperations = new Set([
   "inspect_web_network_capture",
@@ -320,7 +318,10 @@ export const buildEnvironment = async (
     name,
     operation: ENVIRONMENT_EXPORT_OPERATION,
   });
-  warnings.push(...credentialScanWarnings(recorded.value));
+  warnings.push(
+    ...credentialScanWarnings(recorded.value),
+    ...savedCredentialWarnings(capture.parameters),
+  );
 
   const packageSource: EnvironmentPackageSource =
     input.packageTarball === undefined

@@ -1,3 +1,6 @@
+import { pythonPycFixture } from "../../python/PythonPyc.fixture.js";
+import { parsePythonPyc } from "../../python/PythonPycParser.js";
+import { inspectPythonPycInputSchema } from "../../domain/python/pythonPyc.js";
 import { createHash } from "node:crypto";
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,11 +18,12 @@ it("lists modules from a supported PYZ and leaves an unknown magic opaque", asyn
       modules: [{ name: "json.decoder", typeCode: 0, body }],
     }),
   );
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok || parsed.value.kind !== "entries") return;
+  expect(parsed).toMatchObject({ ok: true, value: { kind: "entries" } });
+  if (!parsed.ok || parsed.value.kind !== "entries")
+    throw new Error("Expected PYZ entries");
   expect(parsed.value.pythonVersion).toBe("3.9");
   expect(parsed.value.entries).toMatchObject([
-    { name: "json.decoder", typeCode: 0, package: false },
+    { name: "json.decoder", typeCode: 0, role: "module" },
   ]);
 
   const opaque = await readImage(
@@ -28,8 +32,9 @@ it("lists modules from a supported PYZ and leaves an unknown magic opaque", asyn
       modules: [{ name: "json.decoder", typeCode: 0, body }],
     }),
   );
-  expect(opaque.ok).toBe(true);
-  if (!opaque.ok || opaque.value.kind !== "opaque") return;
+  expect(opaque).toMatchObject({ ok: true, value: { kind: "opaque" } });
+  if (!opaque.ok || opaque.value.kind !== "opaque")
+    throw new Error("Expected an opaque PYZ");
   expect(Buffer.compare(opaque.value.pythonMagic, Buffer.alloc(4))).toBe(0);
   expect(opaque.value.limitation).toContain("left opaque");
   expect(opaque.value.pythonVersion).toBeUndefined();
@@ -42,8 +47,9 @@ it("leaves a PYZ opaque when the table uses an unsupported marshal type", async 
     toc: Buffer.from([0x4e]),
   });
   const parsed = await readImage(image);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok || parsed.value.kind !== "opaque") return;
+  expect(parsed).toMatchObject({ ok: true, value: { kind: "opaque" } });
+  if (!parsed.ok || parsed.value.kind !== "opaque")
+    throw new Error("Expected an opaque PYZ");
   expect(parsed.value.limitation).toContain("left opaque");
   expect(parsed.value.pythonMagic).toEqual(PYTHON_39_MAGIC);
   expect(parsed.value.pythonVersion).toBe("3.9");
@@ -182,3 +188,41 @@ it("reports the signature after completing a readable table and image hash", asy
     error: { reason: "format", message: "PYZ archive magic does not match" },
   });
 });
+
+it.each([
+  { magic: 3412, layout: "py38", version: "3.8", reconstructable: false },
+  { magic: 3571, layout: "py311", version: "3.13", reconstructable: true },
+] as const)(
+  "keeps standalone identity separate from PYZ reconstruction for magic $magic",
+  async ({ magic, layout, version, reconstructable }) => {
+    const pyc = pythonPycFixture(layout, { magic });
+    const standalone = parsePythonPyc(
+      pyc,
+      {
+        path: "/fixtures/module.pyc",
+        bytes: pyc.length,
+        sha256: createHash("sha256").update(pyc).digest("hex"),
+      },
+      inspectPythonPycInputSchema.parse({ path: "/fixtures/module.pyc" }),
+    );
+    expect(standalone.header.python_version).toBe(version);
+    const image = pyzArchive({
+      magic: pyc.subarray(0, 4),
+      modules: [{ name: "module", typeCode: 0, body: pyc.subarray(16) }],
+    });
+    const parsed = await readImage(image);
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: {
+        kind: reconstructable ? "entries" : "opaque",
+        pythonMagic: pyc.subarray(0, 4),
+        pythonVersion: reconstructable ? version : undefined,
+        sha256: createHash("sha256").update(image).digest("hex"),
+      },
+    });
+    if (parsed.ok && parsed.value.kind === "entries")
+      expect(parsed.value.entries).toMatchObject([
+        { name: "module", typeCode: 0, role: "module" },
+      ]);
+  },
+);

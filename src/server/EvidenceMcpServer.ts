@@ -11,12 +11,8 @@ import {
 import { toolFamilyId } from "../contracts/toolFamilies.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { McpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
-import {
-  EvidenceMcpServerCore,
-  type CompactInputSchemaPresentation,
-} from "./EvidenceMcpServerCore.js";
-
-export { type CompactInputSchemaPresentation } from "./EvidenceMcpServerCore.js";
+import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
+import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 
 /** Canonical composition retains the constructor's existing identity defaults. */
 export class EvidenceMcpServer extends EvidenceMcpServerCore {

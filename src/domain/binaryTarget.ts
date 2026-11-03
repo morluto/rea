@@ -5,8 +5,8 @@ import type {
   MipsElfMetadata,
   PeCodeViewRecord,
   RiscvElfMetadata,
-  PowerPcElfMetadata,
   UniversalMachOSlice,
+  UniversalMachOSliceIdentity,
 } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
 import {
@@ -54,7 +54,7 @@ export type ExecutableMetadata =
       readonly format: "elf";
       readonly architecture: "powerpc";
       readonly availableArchitectures: readonly "powerpc"[];
-      readonly powerpc: PowerPcElfMetadata;
+      readonly powerpc: ElfFamilyMetadata;
     }
   | {
       readonly format: "elf";
@@ -78,6 +78,7 @@ export type ExecutableMetadata =
       readonly architecture: HeaderArchitecture;
       readonly availableArchitectures: readonly HeaderArchitecture[];
       readonly universalSlice: UniversalMachOSlice;
+      readonly universalSlices: readonly UniversalMachOSliceIdentity[];
     }
   | {
       readonly format: "pe";
@@ -149,8 +150,7 @@ const parseThinMachO = (
   const table = readMachoLoadCommandTableHeader(bytes, fileSize);
   if (!table.ok) return table;
   if (table.value === null) return err("unsupported binary format");
-  const identity = readMachoHeaderPrefixFacts(bytes.subarray(0, 12)).identity;
-  if (identity === null) return err("unsupported Mach-O architecture");
+  const { identity } = table.value;
   const architecture =
     identity.cpuType === CPU_TYPE_ARM64_32
       ? "arm64_32"
@@ -304,6 +304,15 @@ const parseFatMachO = (
     architecture: selected.architecture,
     availableArchitectures: declaredFamilies(declarations),
     universalSlice: { offset: selected.offset, size: selected.size },
+    universalSlices:
+      header.state === "parsed"
+        ? header.slices.map(({ offset, size, cpuType, cpuSubtype }) => ({
+            offset,
+            size,
+            cpuType,
+            cpuSubtype,
+          }))
+        : [],
   });
 };
 
@@ -388,8 +397,10 @@ const parseElf = (
 ): Result<ExecutableMetadata, string> => {
   const fixedHeader = readElfFixedHeader(bytes, fileSize);
   if (!fixedHeader.ok) return fixedHeader;
-  const { elfClass, byteOrder, architecture, type, flags } = fixedHeader.value;
-  if (architecture === null) return err("unsupported ELF architecture");
+  const { elfClass, byteOrder, architecture, machine, type, flags } =
+    fixedHeader.value;
+  if (architecture === null)
+    return err(`unsupported ELF architecture: e_machine ${String(machine)}`);
   if (
     architecture === "mips" ||
     architecture === "riscv" ||

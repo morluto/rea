@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { nativeLoadImageSchema } from "../../../src/domain/native/nativeLoadImage.js";
 import { nativeApiInspectionResultSchema } from "../../../src/domain/native/nativeApiBoundary.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ok } from "../../../src/domain/result.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";

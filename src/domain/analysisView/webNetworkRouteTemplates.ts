@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readRecordedResponseDeclaration } from "./recordedResponseBody.js";
 import {
   parseRecordedTransportUrl,
   parseUrlQueryParameterNames,
@@ -45,13 +46,6 @@ export type Reserve = (bytes: number) => boolean;
 const requestSchema = z.object({
   request: z.object({ url: z.unknown(), method: z.unknown() }),
 });
-const responseSchema = z.object({
-  response: z.object({
-    status: z.unknown().optional(),
-    content: z.unknown().optional(),
-  }),
-});
-const contentSchema = z.object({ mimeType: z.unknown().optional() });
 // Conservative representation allowances, not an enforced V8 heap limit.
 // Fixed charges include the accumulator, bucket/set entries, array growth and
 // page/schema projection. Text includes UTF-16 storage and two worst-case JSON
@@ -153,12 +147,9 @@ export const readRecordedRequestLine = (
   if (typeof method !== "string" || method.length === 0)
     return excluded("method-unavailable");
   if (parsed.path === null) return excluded("url-unparseable");
-  const response = responseSchema.safeParse(reported);
-  const status = response.success ? response.data.response.status : undefined;
-  const content = contentSchema.safeParse(
-    response.success ? response.data.response.content : undefined,
-  );
-  const mime = content.success ? content.data.mimeType : undefined;
+  const response = readRecordedResponseDeclaration(reported);
+  const status = response?.status;
+  const mime = response?.content?.mimeType;
   const rawMime = typeof mime === "string" ? mime : "";
   if (!temporary(textBytes(rawMime.length))) return null;
   return {

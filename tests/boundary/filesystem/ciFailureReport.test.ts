@@ -40,7 +40,7 @@ const context = (
   turboVersion: "2.11.7",
   platform: "linux",
   architecture: "x64",
-  taskHashes: { "lint:built": taskHash },
+  taskHashes: { lint: taskHash },
 });
 const run = (overrides: Partial<CiRun> = {}) =>
   normalizeWorkflowRun({
@@ -119,6 +119,57 @@ it("attributes only an identical structured lint failure with matching task, con
       "supported_diagnostics_match_failed_task_and_source_on_verified_main_ancestor",
   });
 });
+
+it.each(["context", "mainContext"] as const)(
+  "keeps mixed legacy and canonical lint receipts unknown when %s uses the old task",
+  (side) => {
+    const input = comparison();
+    const receipt = input[side]!;
+    expect(
+      classifyFailure({
+        ...input,
+        [side]: {
+          ...receipt,
+          taskHashes: { "lint:built": "a".repeat(16) },
+        },
+      }),
+    ).toEqual({
+      classification: "unknown",
+      reason: "owning_task_hash_differs",
+    });
+  },
+);
+
+it.each([
+  ...[
+    "nodeVersion",
+    "npmVersion",
+    "turboVersion",
+    "platform",
+    "architecture",
+  ].map((field) => [field, { [field]: "" }] as const),
+  ["optional head hash", { prHeadSha: "bad" }],
+  [
+    "unrelated task hash",
+    { taskHashes: { lint: "a".repeat(16), typecheck: "bad" } },
+  ],
+] as const)(
+  "keeps malformed %s provenance unknown on either side",
+  (_label, invalid) => {
+    for (const side of ["context", "mainContext"] as const) {
+      const input = comparison();
+      expect(
+        classifyFailure({
+          ...input,
+          [side]: { ...input[side], ...invalid },
+        }),
+      ).toEqual({
+        classification: "unknown",
+        reason: "static_task_context_missing_or_invalid",
+      });
+    }
+  },
+);
 
 it.each(["path", "code"] as const)(
   "keeps applicability unknown when the lint %s is unavailable on both runs",

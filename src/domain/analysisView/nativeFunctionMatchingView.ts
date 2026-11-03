@@ -1,7 +1,6 @@
 import { z } from "zod";
 import {
   nativeFunctionMatchingSchema,
-  nativeFunctionMatchingContextSchema,
   nativeFunctionMatchSchema,
   nativeFunctionMatchMemberSchema,
   nativeMatchStateSchema,
@@ -17,11 +16,12 @@ import {
 } from "./analysisViewCoverage.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import type { JsonValue } from "../jsonValue.js";
 
 const matchRow = nativeFunctionMatchSchema.extend({
@@ -80,8 +80,6 @@ export const nativeFunctionMatchingViewItemsSchema = z.union([
     }),
   ),
 ]);
-export const nativeFunctionMatchingViewContextSchema =
-  nativeFunctionMatchingContextSchema;
 interface FunctionRow {
   readonly member: NativeFunctionMatching["matches"][number]["left"][number];
   readonly match_id: string;
@@ -262,9 +260,13 @@ const selectedItems = (
 /** Query immutable matching facts without copying full alias groups into selected pages. */
 export const projectNativeFunctionMatchingView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "function-matches")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    | SummaryAnalysisView
+    | z.output<typeof nativeFunctionMatchingViewRequestSchema>
+  >(admitted, "summary", "function-matches");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -286,7 +288,7 @@ export const projectNativeFunctionMatchingView = (
   const shared = sharedContext(parent, entry.report);
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: context,
@@ -295,7 +297,7 @@ export const projectNativeFunctionMatchingView = (
   const rows = filterRows(entry, view),
     items = selectedItems(entry, view, rows);
   return ok({
-    kind: "function-matches",
+    kind: "function-matches" as const,
     view,
     ...shared,
     ...context,

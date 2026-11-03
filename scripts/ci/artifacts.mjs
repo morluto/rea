@@ -273,7 +273,7 @@ function normalizeLint(report) {
     .filter((item) => item.severity === "error")
     .map((item) => {
       if (
-        (item.filename !== undefined && !repoPath(item.filename)) ||
+        (item.filename !== undefined && !validRepoPath(item.filename)) ||
         (item.code !== undefined && typeof item.code !== "string") ||
         typeof item.message !== "string"
       )
@@ -304,7 +304,7 @@ function normalizeDuplicates(report) {
   if (exitCode !== 1) return [];
   return report.duplicates.map((item) => {
     const paths = [item.firstFile?.name, item.secondFile?.name].sort();
-    if (paths.some((path) => !repoPath(path)))
+    if (paths.some((path) => !validRepoPath(path)))
       throw new Error("jscpd duplicate paths are malformed");
     return { kind: "jscpd", paths };
   });
@@ -336,18 +336,6 @@ async function readLimitedBytes(response, limit) {
     offset += chunk.byteLength;
   }
   return result;
-}
-
-function repoPath(value) {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    !value.startsWith("/") &&
-    !value.includes("\\") &&
-    value
-      .split("/")
-      .every((part) => part !== "" && part !== "." && part !== "..")
-  );
 }
 
 function positiveId(value) {
@@ -390,7 +378,7 @@ function blobIdentityStatus(diagnostics, blobs) {
 }
 function sameTaskHashes(diagnostics, left, right) {
   return diagnostics.every((diagnostic) => {
-    const task = diagnostic.kind === "jscpd" ? "jscpd" : "lint:built";
+    const task = diagnostic.kind === "jscpd" ? "jscpd" : "lint";
     return (
       TASK_HASH.test(left.taskHashes[task] ?? "") &&
       left.taskHashes[task] === right.taskHashes[task]
@@ -398,19 +386,11 @@ function sameTaskHashes(diagnostics, left, right) {
   });
 }
 function validContext(value) {
-  return (
-    value?.version === 1 &&
-    SHA.test(value.sourceSha ?? "") &&
-    value.sourceClean === true &&
-    typeof value.nodeVersion === "string" &&
-    typeof value.npmVersion === "string" &&
-    typeof value.turboVersion === "string" &&
-    typeof value.platform === "string" &&
-    typeof value.architecture === "string" &&
-    value.taskHashes &&
-    typeof value.taskHashes === "object" &&
-    !Array.isArray(value.taskHashes)
-  );
+  try {
+    return parseStaticTaskContext(value).sourceClean;
+  } catch {
+    return false;
+  }
 }
 function sameExecutionContext(left, right) {
   return [

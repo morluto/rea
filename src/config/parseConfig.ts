@@ -9,6 +9,7 @@ import { parseEnvironment } from "./environment.js";
 import { providerStartupTimeoutSchema } from "./providerStartupTimeout.js";
 import { homeDirectoryFromEnvironment } from "./homeDirectory.js";
 import { DEFAULT_BRIDGE_MAX_REQUEST } from "./bridgeMaxRequestBytes.js";
+import { hopperCallerScanBudgetFromEnvironment } from "./hopperCallerScanBudget.js";
 import { DEFAULT_REGEX_MATCHING_DEADLINE } from "./regexMatchingDeadline.js";
 import { DEFAULT_REGEX_WORKER_HEAP_REQUEST } from "./regexWorkerHeapRequest.js";
 import type { AppConfig } from "./types.js";
@@ -40,15 +41,18 @@ export const defaultHopperLauncherPath = (
 };
 
 /**
- * Environment native analysis admits. JEB validates its own timeout during
+ * Environment native analysis admits. JEB validates its own settings during
  * optional provider composition; that setting must not block unrelated
  * CLI/MCP startup. Registration validation still checks it directly.
  */
 const nativeAnalysisEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
 ): Readonly<Record<string, string | undefined>> => {
-  const { REA_JEB_MCP_TIMEOUT_MS: _jebTimeout, ...appEnvironment } =
-    environment;
+  const {
+    REA_JEB_MCP_TIMEOUT_MS: _jebTimeout,
+    REA_JEB_MCP_URL: _jebUrl,
+    ...appEnvironment
+  } = environment;
   return appEnvironment;
 };
 
@@ -106,6 +110,9 @@ export const parseConfig = (
     ...(env.REA_MCP_MAX_RESPONSE_BYTES === undefined
       ? {}
       : { mcpMaxResponseBytes: env.REA_MCP_MAX_RESPONSE_BYTES }),
+    ...(env.REA_MCP_MAX_INPUT_ELEMENTS === undefined
+      ? {}
+      : { mcpMaxInputElements: env.REA_MCP_MAX_INPUT_ELEMENTS }),
     ...(env.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
       ? {}
       : { mcpInputSchemaProfile: env.REA_MCP_INPUT_SCHEMA_PROFILE }),
@@ -162,6 +169,10 @@ export const parseConfig = (
         homeDirectoryFromEnvironment(environment, process.platform),
       ),
     hopperStartupTimeoutMs: env.REA_HOPPER_STARTUP_TIMEOUT_MS,
+    hopperCallerScanBudget: hopperCallerScanBudgetFromEnvironment(
+      environment.REA_HOPPER_CALLER_SCAN_BUDGET_MS,
+      env.REA_HOPPER_CALLER_SCAN_BUDGET_MS,
+    ),
     hopperTargetPath: env.HOPPER_TARGET_PATH,
     hopperTargetKind: env.HOPPER_TARGET_KIND,
     hopperLoaderArgs: env.loaderArgs,

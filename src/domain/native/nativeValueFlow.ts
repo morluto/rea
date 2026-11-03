@@ -81,3 +81,28 @@ export const nativeValueFlowSchema = z.discriminatedUnion("available", [
   availableNativeValueFlowSchema,
   unavailableNativeValueFlowSchema,
 ]);
+
+/** Lightweight retained metadata; historical records may omit newer omission counts.
+ * Strip full flow collections without parsing or copying them. An empty recorded
+ * unavailable reason remains source evidence even though new producers forbid it.
+ */
+export const nativeValueFlowMetadataSchema = z.union([
+  availableNativeValueFlowSchema
+    .pick({
+      available: true,
+      truncated: true,
+      omitted_operations_lower_bound: true,
+      known_omitted_inputs: true,
+      known_omitted_edges: true,
+    })
+    .partial({
+      omitted_operations_lower_bound: true,
+      known_omitted_inputs: true,
+      known_omitted_edges: true,
+    })
+    .strip(),
+  unavailableNativeValueFlowSchema
+    .pick({ available: true, reason: true })
+    .extend({ reason: z.string() })
+    .strip(),
+]);

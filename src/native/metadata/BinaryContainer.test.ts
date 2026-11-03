@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryStringReadLimitFailure,
   createFileMappingIndex,
   mappedFileOffset,
   readMappedCString,
@@ -10,6 +11,24 @@ import {
   type FileMapping,
   type ZeroFillMapping,
 } from "./BinaryContainer.js";
+
+it("distinguishes a mapped string read allowance from malformed bytes", () => {
+  const bytes = Buffer.from("long-name\0");
+  const index = createFileMappingIndex([
+    { address: 100n, offset: 0, size: bytes.length },
+  ]);
+  expect(() => index.readCString(bytes, 100n, 3)).toThrow(
+    BinaryStringReadLimitFailure,
+  );
+  try {
+    index.readCString(bytes, 100n, 3);
+  } catch (cause) {
+    expect(cause).toMatchObject({ maximumBytes: 3 });
+  }
+  expect(index.readCString(bytes, 100n, bytes.length).toString()).toBe(
+    "long-name",
+  );
+});
 
 const outcome = (translate: () => number): number | string => {
   try {

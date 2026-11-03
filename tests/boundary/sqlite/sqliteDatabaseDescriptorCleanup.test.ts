@@ -183,6 +183,16 @@ const serveInspection = async (
   return { output: JSON.parse(stdout) as unknown, exitCode: process.exitCode };
 };
 
+const expectedMember = async (role: string, path: string) => {
+  const bytes = await readFile(path);
+  return {
+    role,
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
+  };
+};
+
 it.each(["database", "WAL", "journal"] as const)(
   "retains a failed %s descriptor and retries it at shutdown",
   async (member) => {
@@ -190,6 +200,7 @@ it.each(["database", "WAL", "journal"] as const)(
     const first = await selected.provider.inspect({
       path: selected.database.path,
     });
+    if (first.ok) throw new Error("Expected incomplete source cleanup");
     expect(first).toMatchObject({
       ok: false,
       error: {
@@ -197,6 +208,29 @@ it.each(["database", "WAL", "journal"] as const)(
         cleanupResources: [expect.stringContaining(selected.path)],
       },
     });
+    const sources =
+      member === "journal"
+        ? []
+        : [
+            { role: "database", path: selected.database.path },
+            ...(member === "WAL"
+              ? [{ role: "wal", path: selected.database.walPath }]
+              : []),
+          ];
+    const members = await Promise.all(
+      sources.map((source) => expectedMember(source.role, source.path)),
+    );
+    if (members.length > 0)
+      expect(
+        projectAnalysisError(first.error).details?.diagnostics,
+      ).toMatchObject({
+        snapshot_acquisition: { consistency: "unverified", members },
+      });
+    else
+      expect(
+        projectAnalysisError(first.error).details?.diagnostics,
+      ).not.toHaveProperty("snapshot_acquisition");
+    expect(first.error.partialObservation).toBeUndefined();
     const handle = descriptorCleanup.handles[0];
     if (handle === undefined)
       throw new Error("Expected owned source descriptor");
@@ -217,10 +251,45 @@ it.each(["database", "WAL", "journal"] as const)(
     await selected.provider.close();
     expect(descriptorCleanup.attempts).toBe(4);
     expect(handle.fd).toBe(-1);
+    if (members.length > 0)
+      expect(
+        projectAnalysisError(first.error).details?.diagnostics,
+      ).toMatchObject({
+        snapshot_acquisition: { consistency: "unverified", members },
+      });
     for (const root of selected.roots)
       await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
+
+it("delivers individually completed database and WAL facts through CLI cleanup failure", async () => {
+  const selected = await fixture("WAL");
+  const members = await Promise.all([
+    expectedMember("database", selected.database.path),
+    expectedMember("wal", selected.database.walPath),
+  ]);
+  const result = await serveInspection(
+    selected.provider,
+    selected.database.path,
+  );
+  expect(result).toMatchObject({
+    exitCode: 1,
+    output: {
+      code: "cleanup_incomplete",
+      details: {
+        diagnostics: {
+          primary_error: {
+            details: {
+              diagnostics: {
+                snapshot_acquisition: { consistency: "unverified", members },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+});
 
 it.each(["EACCES", "EPERM"])(
   "retains the original %s inspection diagnostics through CLI shutdown",
@@ -604,6 +673,10 @@ it.each(["EACCES", "EPERM"])(
         diagnostics: { previous_error: { code: "access_denied" } },
       },
     });
+    if (result.ok) throw new Error("Expected physical source denial");
+    expect(
+      projectAnalysisError(result.error).details?.diagnostics,
+    ).not.toHaveProperty("snapshot_acquisition");
   },
 );
 
@@ -636,6 +709,15 @@ it.each(["database", "WAL", "journal"] as const)(
       _tag: "AnalysisCancelledError",
     });
     expect(result.error.cleanupPrimary?.cause).toBe(reason);
+    if (member === "WAL")
+      expect(
+        projectAnalysisError(result.error).details?.diagnostics,
+      ).toMatchObject({
+        snapshot_acquisition: {
+          consistency: "unverified",
+          members: [await expectedMember("database", selected.database.path)],
+        },
+      });
     for (const root of selected.roots)
       await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
   },

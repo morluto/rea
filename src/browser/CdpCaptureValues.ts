@@ -31,13 +31,6 @@ export const cdpStringValue = (value: unknown): string | undefined =>
 export const numberValue = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
-export const executionContextKey = (value: unknown): string | null => {
-  const identifier = numberValue(value);
-  return identifier !== undefined && Number.isSafeInteger(identifier)
-    ? String(identifier)
-    : null;
-};
-
 /** An omitted resource size is unknown; a supplied invalid size is malformed. */
 export const resourceContentSize = (
   value: unknown,
@@ -47,27 +40,6 @@ export const resourceContentSize = (
   return size !== undefined && size >= 0
     ? ok(size)
     : err({ _tag: "InvalidCdpResourceSize" });
-};
-
-/** Preserve partial script declarations; omitted or invalid fields remain unknown. */
-export const scriptMetadataValues = (
-  value: UnknownRecord | undefined,
-): {
-  readonly hash: string | null;
-  readonly length: number | null;
-  readonly isModule: boolean | null;
-  readonly language: string | null;
-} => {
-  const length = numberValue(value?.length);
-  return {
-    hash: cdpStringValue(value?.hash) ?? null,
-    length:
-      length !== undefined && Number.isSafeInteger(length) && length >= 0
-        ? length
-        : null,
-    isModule: typeof value?.isModule === "boolean" ? value.isModule : null,
-    language: cdpStringValue(value?.scriptLanguage) ?? null,
-  };
 };
 
 export const requiredRecord = (value: unknown): UnknownRecord => {

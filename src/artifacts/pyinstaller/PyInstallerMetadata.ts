@@ -2,7 +2,11 @@ import type {
   PyInstallerMetadata,
   PyInstallerEntryMetadata,
 } from "../../domain/artifactFormatMetadata.js";
-import type { CArchiveEntry, PyInstallerCookie } from "./CArchiveLayout.js";
+import {
+  isCArchivePythonModule,
+  type CArchiveEntry,
+  type PyInstallerCookie,
+} from "./CArchiveLayout.js";
 import type { PyzArchive, PyzEntry } from "./PyzArchive.js";
 
 const cookiePythonVersion = (value: number) =>
@@ -27,10 +31,12 @@ export const cookieMetadata = (
     toc_offset: cookie.tocOffset,
     toc_size: cookie.tocLength,
     entry_count: entries.length,
-    runtime_option_count: entries.filter((entry) => entry.typeCode === "o")
-      .length,
-    external_dependency_count: entries.filter((entry) => entry.typeCode === "d")
-      .length,
+    runtime_option_count: entries.filter(
+      (entry) => entry.role === "runtime-option",
+    ).length,
+    external_dependency_count: entries.filter(
+      (entry) => entry.role === "dependency",
+    ).length,
     python_version_raw: cookie.pythonVersion,
     python_major: version?.major ?? null,
     python_minor: version?.minor ?? null,
@@ -106,12 +112,12 @@ export const cArchiveEntryMetadata = (
       source_name: entry.name,
       type_code: entry.typeCode,
       relative_offset: entry.offset,
-      compression_flag: entry.compressionFlag === 1 ? 1 : 0,
+      compression_flag: entry.compressionFlag,
     },
-    ["s", "m", "M"].includes(entry.typeCode),
+    entry.role === "script" || isCArchivePythonModule(entry),
     header,
   ),
-  ...(entry.typeCode === "d" ? dependencyMetadata(entry.name) : {}),
+  ...(entry.role === "dependency" ? dependencyMetadata(entry.name) : {}),
   pyz_status:
     archive?.kind === "entries"
       ? "decoded"
@@ -166,7 +172,7 @@ export const pyzEntryMetadata = (
       relative_offset: entry.offset,
       compression_flag: entry.compressionFlag,
     },
-    entry.typeCode === 0 || entry.typeCode === 1,
+    entry.role === "module" || entry.role === "package",
     header,
   ),
   encryption_source: pyzEntryEncrypted(entry, encryptionMarker)

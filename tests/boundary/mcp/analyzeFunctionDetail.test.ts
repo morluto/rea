@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { parseGhidraFunctionInput } from "../../../src/ghidra/GhidraFunctionValues.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
@@ -309,3 +309,32 @@ it("rejects a summary request before analysis when the server retains no Evidenc
   expect(reply.isError).toBe(true);
   expect(execute).not.toHaveBeenCalled();
 });
+
+it.each([true, false])(
+  "delivers an unreadable dossier's partial Evidence through the session writer (retained=%s)",
+  async (retain) => {
+    const { client, ledger } = await connect(retain, {
+      not: "a dossier",
+    } as never);
+
+    const reply = await client.callTool({
+      name: "analyze_function",
+      arguments: { procedure: "main", detail: "complete" },
+    });
+
+    expect(reply.isError).toBe(true);
+    const partial = JSON.parse(
+      reply.content.find((item) => item.type === "text")?.text ?? "{}",
+    ).error.details.partial_observation;
+    if (!retain) {
+      expect(parseEvidence(partial).operation).toBe("analyze_function");
+      return;
+    }
+    expect(partial).toMatchObject({ kind: "retained-evidence" });
+    expect(ledger.forAnalysis(partial.evidence_id)).toMatchObject({
+      evidence_id: partial.evidence_id,
+      operation: "analyze_function",
+      normalized_result: { not: "a dossier" },
+    });
+  },
+);

@@ -59,9 +59,7 @@ const collectionAt = (
   segments?: readonly string[],
 ): string => {
   const params = new Set(tool.params.map((param) => param.index));
-  return `/${tool.path_template
-    .slice(1)
-    .split("/")
+  return `/${segmentsOf(tool.path_template)
     .slice(0, end)
     .map((segment, index) => {
       if (!params.has(index)) return segment;
@@ -78,7 +76,7 @@ export const collectionScope = (
   tool: EnvironmentManifestTool,
   segments?: readonly string[],
 ): string => {
-  const length = tool.path_template.slice(1).split("/").length;
+  const length = segmentsOf(tool.path_template).length;
   return collectionAt(
     tool,
     tool.params.some((param) => param.index === length - 1)

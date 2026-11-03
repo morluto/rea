@@ -130,6 +130,10 @@ export const runAdbCapture = async (
       return err(
         new AnalysisProtocolError(`adb failed for ${operation}`, { cause }),
       );
+    const detail = {
+      cause,
+      capturedOutput: execFileFailureCapturedOutput(failure),
+    };
     if (failure.outputTruncated) {
       const name = `The adb output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override)`;
       const allowance =
@@ -145,7 +149,7 @@ export const runAdbCapture = async (
           "memory",
           `adb output exceeded the ${String(limits.maxOutputBytes)}-byte capture budget`,
           { max_output_bytes: limits.maxOutputBytes },
-          { cause, ...allowance },
+          { ...detail, ...allowance },
         ),
       );
     }
@@ -181,9 +185,12 @@ export const runAdbCapture = async (
       )
     )
       return err(
-        new AnalysisUnsupportedTargetError(operation, target.device, excerpt, {
-          cause,
-        }),
+        new AnalysisUnsupportedTargetError(
+          operation,
+          target.device,
+          excerpt,
+          detail,
+        ),
       );
     if (
       /No such file or directory|Permission denied|read: Permission denied/iu.test(
@@ -201,13 +208,13 @@ export const runAdbCapture = async (
           ? localPath
           : (target.path ?? target.device);
       return err(
-        new AnalysisUnsupportedTargetError(operation, path, excerpt, { cause }),
+        new AnalysisUnsupportedTargetError(operation, path, excerpt, detail),
       );
     }
     if (failure.killed)
       return err(
         new AnalysisTimeoutError(operation, limits.timeoutMs, {
-          cause,
+          ...detail,
           userMessage: `adb ${operation} reached its ${String(limits.timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
           remediationAction: `This ${String(limits.timeoutMs)} ms adb deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
         }),

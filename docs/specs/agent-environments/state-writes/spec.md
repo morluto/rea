@@ -543,7 +543,11 @@ contradicts it. Otherwise the reason, in this precedence, is:
    never showed), so it could answer only for entities the environment itself
    created. An update's answer renders the entity it wrote, so a field one of
    its rules writes counts as held, except an increment's, which adds only to
-   a held value.
+   a held value;
+6. `unknown-clock`: an otherwise servable plan needs `clock`, `held-clock`, or
+   `nested-clock`, but the capture establishes no global served clock start.
+   Its learned rules and confirming reads remain retained, and plans without
+   this clock dependency remain eligible for serving.
 
 `checked_record_ordinals` lists the confirming reads.
 

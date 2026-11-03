@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { realpath } from "node:fs/promises";
+import { readStableArtifact } from "../readStableArtifact.js";
+import { projectStableArtifactFailure } from "../StableArtifactFailure.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { z } from "zod";
 
 import { decodeBinaryPlistValue } from "./BinaryPlistMaterializer.js";
 import {
   AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
@@ -33,11 +38,17 @@ import {
 } from "../DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../ArtifactFileOperation.js";
+import {
+  artifactSelectedPathErrno,
+  artifactFilePrimaryFacts,
+  assertArtifactReadActive,
+  bindArtifactFileCleanup,
+} from "../ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import {
@@ -49,6 +60,19 @@ import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
 const MAX_BYTES = 64 * 1024 * 1024;
 /** Decoded representation budget, the same 8:1 ratio Interface Builder uses. */
 const MAX_DECODE_BYTES = 8 * MAX_BYTES;
+
+/** Share typed selector validation across bundle and standalone reads. */
+const parseKeyedArchiveInput = (parameters: unknown) => {
+  const parsed = keyedArchiveInputSchema.safeParse(parameters);
+  if (!parsed.success)
+    throw analysisInputErrorFromIssues(
+      "inspect_keyed_archive",
+      parsed.error.issues,
+      parameters,
+      { cause: parsed.error },
+    );
+  return parsed.data;
+};
 
 /** Parse inert plist bytes, preserving data and dates with explicit typed values. */
 export const decodeKeyedArchiveBytes = (
@@ -216,12 +240,125 @@ export const inspectBundleKeyedArchive = (input: BundleKeyedArchiveInput) => {
   });
 };
 
+/** Inspect the admitted physical file while retaining its caller-selected identity. */
+export const inspectStandaloneKeyedArchive = (input: {
+  readonly path: string;
+  readonly selectedPath: string;
+  readonly targetSha256: string;
+  readonly parameters: unknown;
+  readonly platform: NodeJS.Platform;
+  readonly resources: ArtifactResourceScope;
+  readonly signal?: AbortSignal;
+}) =>
+  input.resources.run(async () => {
+    const selected = parseKeyedArchiveInput(input.parameters);
+    const selectedBasename = basename(input.selectedPath);
+    const physicalBasename = basename(input.path);
+    const basenames = [...new Set([selectedBasename, physicalBasename])];
+    if (selected.path !== "." && !basenames.includes(selected.path))
+      throw new AnalysisInputError("inspect_keyed_archive", undefined, [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message:
+            "For an active plist, path must select that archive (omit path or use its basename).",
+          expected: basenames.length === 1 ? selectedBasename : basenames,
+        },
+      ]);
+    await assertStandaloneArchiveSelection(
+      input.path,
+      input.selectedPath,
+      input.signal,
+    );
+    const snapshot = await readStableArtifact(
+      input.path,
+      MAX_BYTES,
+      input.signal,
+      undefined,
+      input.resources,
+    ).catch((cause: unknown) => {
+      const failure = artifactFilePrimaryFacts(cause).cause;
+      if (
+        failure instanceof Error &&
+        "code" in failure &&
+        (failure.code === "EACCES" || failure.code === "EPERM")
+      )
+        throw projectStableArtifactFailure(
+          cause,
+          new AnalysisAccessDeniedError(
+            "inspect_keyed_archive",
+            input.selectedPath,
+            failure.code,
+            { cause: failure },
+          ),
+          input.selectedPath,
+          ARTIFACT_GRAPH_PROVIDER.id,
+          "inspect_keyed_archive",
+        );
+      throw cause;
+    });
+    await assertStandaloneArchiveSelection(
+      input.path,
+      input.selectedPath,
+      input.signal,
+    );
+    if (snapshot.sha256 !== input.targetSha256)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Active archive digest changed: expected ${input.targetSha256}, observed ${snapshot.sha256}`,
+      );
+    return decodeSelectedArchive(snapshot.bytes, {
+      targetSha256: input.targetSha256,
+      archiveSha256: snapshot.sha256,
+      parameters: selected,
+      platform: input.platform,
+      archivePath: selected.path === "." ? selectedBasename : selected.path,
+      artifactPath: input.selectedPath,
+    });
+  });
+
+/** Selected aliases must continue naming the admitted physical archive. */
+const assertStandaloneArchiveSelection = async (
+  path: string,
+  selectedPath: string,
+  signal?: AbortSignal,
+): Promise<void> => {
+  assertArtifactReadActive(signal);
+  const changed = (cause?: unknown) =>
+    new AnalysisArtifactChangedError(
+      "inspect_keyed_archive",
+      selectedPath,
+      "Selected archive no longer resolves to the admitted file.",
+      { cause },
+    );
+  let current: string;
+  try {
+    current = await realpath(selectedPath);
+  } catch (cause: unknown) {
+    if (artifactSelectedPathErrno(cause) !== undefined) throw changed(cause);
+    if (
+      cause instanceof Error &&
+      "code" in cause &&
+      (cause.code === "EACCES" || cause.code === "EPERM")
+    )
+      throw new AnalysisAccessDeniedError(
+        "inspect_keyed_archive",
+        selectedPath,
+        cause.code,
+        { cause },
+      );
+    throw cause;
+  }
+  assertArtifactReadActive(signal);
+  if (current !== path) throw changed();
+};
+
 /** Read exactly one regular, contained bundle entry without following symlinks. */
 const readSelectedKeyedArchive = async (
   input: BundleKeyedArchiveInput,
   reader: DirectoryArtifactReader,
 ) => {
-  const selected = keyedArchiveInputSchema.parse(input.parameters);
+  const selected = parseKeyedArchiveInput(input.parameters);
   if (
     selected.path.startsWith("/") ||
     selected.path
@@ -285,22 +422,46 @@ const readSelectedKeyedArchive = async (
     chunks.push(bytes);
   }
   const bytes = Buffer.concat(chunks, size);
+  return decodeSelectedArchive(bytes, {
+    targetSha256: input.targetSha256,
+    archiveSha256: createHash("sha256").update(bytes).digest("hex"),
+    resourceRoot: input.resourceRoot,
+    parameters: selected,
+    platform: input.platform,
+    archivePath: entry.path,
+    artifactPath: join(input.bundlePath, entry.path),
+  });
+};
+
+/** Decode and bind one archive at its owning read boundary. */
+const decodeSelectedArchive = (
+  bytes: Buffer,
+  input: {
+    readonly targetSha256: BundleKeyedArchiveInput["targetSha256"];
+    readonly archiveSha256: string;
+    readonly resourceRoot?: BundleKeyedArchiveInput["resourceRoot"];
+    readonly parameters: ReturnType<typeof keyedArchiveInputSchema.parse>;
+    readonly platform?: NodeJS.Platform | undefined;
+    readonly archivePath: string;
+    readonly artifactPath: string;
+  },
+) => {
   try {
     return keyedArchiveResultSchema.parse({
       target_sha256: input.targetSha256,
       ...(input.resourceRoot === undefined
         ? {}
         : { resource_root: input.resourceRoot }),
-      archive_path: entry.path,
-      archive_sha256: createHash("sha256").update(bytes).digest("hex"),
-      ...decodeKeyedArchiveBytes(bytes, selected),
+      archive_path: input.archivePath,
+      archive_sha256: input.archiveSha256,
+      ...decodeKeyedArchiveBytes(bytes, input.parameters),
     });
   } catch (cause) {
     if (cause instanceof AnalysisInputError) throw cause;
     if (cause instanceof UnsupportedBinaryPlistUidError)
       throw new AnalysisUnsupportedTargetError(
         "inspect_keyed_archive",
-        join(input.bundlePath, entry.path),
+        input.artifactPath,
         cause.message,
         { cause },
       );
@@ -308,7 +469,7 @@ const readSelectedKeyedArchive = async (
     if (cause instanceof KeyedArchiveKindError)
       throw new AnalysisUnsupportedTargetError(
         "inspect_keyed_archive",
-        join(input.bundlePath, entry.path),
+        input.artifactPath,
         cause.message,
         {
           cause,

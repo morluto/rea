@@ -50,9 +50,15 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      details: { operation: "environment-export" },
+      code: "cleanup_incomplete",
+      details: {
+        operation: "environment-export",
+        cleanup: "incomplete",
+        resources: [files.manifestPath],
+        diagnostics: { input_path: files.manifestPath, input_role: "manifest" },
+        cleanup_reason: "controlled persistent close failure",
+      },
     });
-    expect(JSON.stringify(result.json)).toContain("cleanup");
     await expect(readFile(join(directory, "README.md"))).rejects.toMatchObject({
       code: "ENOENT",
     });

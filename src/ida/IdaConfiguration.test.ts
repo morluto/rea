@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { appendFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createIdaTarget } from "../../tests/fixtures/idaMcp.js";
@@ -6,6 +6,7 @@ import { readIdaConfiguration } from "./IdaConfiguration.js";
 import { decodeIdaToolResult } from "./IdaMcpConnection.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import * as regularFile from "../filesystem/RegularFile.js";
 
 const resourceScope: RetainedResourceScope = {
   retain: () => undefined,
@@ -75,6 +76,29 @@ describe("IDA registration and MCP result boundaries", () => {
       error: { message: expect.stringContaining("64 KiB") },
     });
   });
+});
+
+it("rejects registration growth beyond the byte limit after descriptor admission", async () => {
+  const { root } = await createIdaTarget();
+  roots.push(root);
+  const path = join(root, "mcp.json");
+  await writeFile(path, JSON.stringify({ command: "python" }));
+  const openRegularFile = regularFile.openRegularFile;
+  const admission = vi
+    .spyOn(regularFile, "openRegularFile")
+    .mockImplementation(async (...args) => {
+      const source = await openRegularFile(...args);
+      await appendFile(path, " ".repeat(65_536));
+      return source;
+    });
+  try {
+    expect(await read(path)).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("64 KiB") },
+    });
+  } finally {
+    admission.mockRestore();
+  }
 });
 
 describe("IDA registration descriptor ownership", () => {

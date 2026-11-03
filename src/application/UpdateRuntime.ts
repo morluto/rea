@@ -1,5 +1,6 @@
 import { realpath, stat } from "node:fs/promises";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lt, valid } from "semver";
@@ -89,7 +90,9 @@ export const bunGlobalDirectory = (
   platform: NodeJS.Platform,
 ): string => {
   const explicit = nonemptyEnvironment(environment.BUN_INSTALL_GLOBAL_DIR);
-  if (explicit !== undefined) return resolve(explicit);
+  // Bun opens the explicit project path with native filesystem traversal;
+  // its derived BUN_INSTALL/XDG paths below are normalized lexically instead.
+  if (explicit !== undefined) return absoluteCallerPath(explicit);
   const installRoot = nonemptyEnvironment(environment.BUN_INSTALL);
   if (installRoot !== undefined)
     return resolve(installRoot, "install", "global");
@@ -112,17 +115,22 @@ export const detectBunInstallation = async (
 ): Promise<BunInstallation | undefined> => {
   try {
     const canonicalPackageRoot = await host.canonicalPath(packageRoot);
+    const canonicalGlobalDirectory = await host.canonicalPath(globalDirectory);
     const globalPackageRoot = await host.canonicalPath(
-      join(globalDirectory, "node_modules", PRODUCT_IDENTITY.packageName),
+      join(
+        canonicalGlobalDirectory,
+        "node_modules",
+        PRODUCT_IDENTITY.packageName,
+      ),
     );
     if (
       canonicalPackageRoot !== globalPackageRoot ||
-      !(await host.isFile(join(globalDirectory, "package.json")))
+      !(await host.isFile(join(canonicalGlobalDirectory, "package.json")))
     )
       return undefined;
     return {
       manager: "bun",
-      globalDirectory,
+      globalDirectory: canonicalGlobalDirectory,
       packageRoot: canonicalPackageRoot,
     };
   } catch (cause: unknown) {
@@ -238,7 +246,7 @@ export const systemUpdateHost = (
   const commands = new UpdateCommandRunner();
   const requireOutput = async (command: readonly string[]): Promise<string> => {
     const result = await commands.runProbe(command, environment);
-    if (!result.ok) throw new Error(result.error);
+    if (!result.ok) throw new Error(result.error.detail);
     return result.value;
   };
   return {
@@ -263,7 +271,11 @@ export const systemUpdateHost = (
           context.workingDirectory,
         );
         if (!version.ok)
-          return err({ kind: "unavailable", detail: version.error });
+          return err({
+            kind: "package-manager-unavailable",
+            manager: "bun",
+            detail: version.error.detail,
+          });
         const bunVersion = valid(version.value);
         // bun info was introduced in 1.2.17; older releases reserve the command.
         if (bunVersion === null || lt(bunVersion, "1.2.17"))
@@ -272,16 +284,21 @@ export const systemUpdateHost = (
             detail: `REA updates for Bun global installations require Bun 1.2.17 or later; bun --version returned ${JSON.stringify(version.value)}. Upgrade Bun manually, then rerun rea update.`,
           });
       }
-      return npmReleaseLookup(
-        await commands.runProbe(
-          installation?.manager === "bun"
-            ? BUN_LATEST_VERSION_COMMAND
-            : npmLatestVersionCommand(installation),
-          context.environment,
-          "structured",
-          context.workingDirectory,
-        ),
+      const result = await commands.runProbe(
+        installation?.manager === "bun"
+          ? BUN_LATEST_VERSION_COMMAND
+          : npmLatestVersionCommand(installation),
+        context.environment,
+        "structured",
+        context.workingDirectory,
       );
+      if (!result.ok && result.error.kind === "launch")
+        return err({
+          kind: "package-manager-unavailable",
+          manager: installation?.manager ?? "npm",
+          detail: result.error.detail,
+        });
+      return npmReleaseLookup(result.ok ? result : err(result.error.detail));
     },
     installVersion: async (installation, version, output) => {
       const context = packageManagerContext(installation, environment);
@@ -293,21 +310,26 @@ export const systemUpdateHost = (
       );
       return result.ok ? ok(undefined) : result;
     },
-    installedVersion: (installation) =>
-      commands.runProbe(
+    installedVersion: async (installation) => {
+      const result = await commands.runProbe(
         [
           process.execPath,
           join(installation.packageRoot, "scripts", "rea.mjs"),
           "--version",
         ],
         environment,
-      ),
+      );
+      return result.ok ? result : err(result.error.detail);
+    },
     planMaintenance: (installation) =>
       planIntegrationMaintenance(
         home ?? homeDirectoryFromEnvironment(environment, process.platform),
         join(installation.packageRoot, "scripts", "rea.mjs"),
         environment,
-        (command) => commands.runProbe(command, environment),
+        async (command) => {
+          const result = await commands.runProbe(command, environment);
+          return result.ok ? result : err(result.error.detail);
+        },
         resources,
       ),
     close: async () => {

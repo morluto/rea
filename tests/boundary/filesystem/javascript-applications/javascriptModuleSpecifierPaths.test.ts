@@ -8,6 +8,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import type { JavaScriptArtifactFile } from "../../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { resolveStandaloneArtifactPath } from "../../../support/javascriptArtifactPathResolution.js";
 import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
+import { importReferenceSource } from "../../../support/referenceSourceResourceScope.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 
 const filesFor = (paths: readonly string[]) =>
@@ -159,22 +160,26 @@ describe("module specifier punctuation", () => {
 });
 
 describe("ESM module URL decoding", () => {
-  it("resolves URL-encoded imports to the files loaded by Node", async () => {
+  it("resolves ESM URL paths to the files loaded by Node", async () => {
     const cases = [
-      ["./plain.mjs", "plain.mjs"],
-      ["./space%20name.mjs", "space name.mjs"],
-      ["./pr%C3%A9load.mjs", "préload.mjs"],
-      ["./name%3F%23.mjs", "name?#.mjs"],
-      ["./percent%2520.mjs?cache=1#v2", "percent%20.mjs"],
+      ["./plain.mjs", "plain.mjs", "static"],
+      ["./space%20name.mjs", "space name.mjs", "static"],
+      ["./pr%C3%A9load.mjs", "préload.mjs", "static"],
+      ["./name%3F%23.mjs", "name?#.mjs", "static"],
+      ["./percent%2520.mjs?cache=1#v2", "percent%20.mjs", "static"],
+      ["./nested\\direct.mjs", "nested/direct.mjs", "static"],
+      ["./unused\\..\\nested\\parent.mjs", "nested/parent.mjs", "dynamic"],
     ] as const;
     const root = await createTestTempDirectory("rea-module-url-");
     const main = join(root, "main.mjs");
+    await mkdir(join(root, "nested"));
     await writeFile(
       main,
       cases
-        .map(
-          ([specifier], index) =>
-            `import value${index} from ${JSON.stringify(specifier)}; console.log(value${index});`,
+        .map(([specifier, , mode], index) =>
+          mode === "dynamic"
+            ? `const { default: value${index} } = await import(${JSON.stringify(specifier)}); console.log(value${index});`
+            : `import value${index} from ${JSON.stringify(specifier)}; console.log(value${index});`,
         )
         .join("\n"),
     );
@@ -184,7 +189,11 @@ describe("ESM module URL decoding", () => {
         `export default ${JSON.stringify(target)};`,
       );
       const encoded = specifier.slice(2).split("?", 1)[0]?.split("#", 1)[0];
-      if (encoded !== undefined && encoded !== target)
+      if (
+        encoded !== undefined &&
+        encoded !== target &&
+        (!encoded.includes("\\") || process.platform !== "win32")
+      )
         await writeFile(join(root, encoded), 'export default "encoded decoy";');
     }
     const native = await promisify(execFile)(process.execPath, [main], {
@@ -212,6 +221,22 @@ describe("ESM module URL decoding", () => {
       for (const edge of imports)
         expect(edge.properties.resolved_path).toBe(target);
     }
+
+    const historical = await importReferenceSource({
+      root,
+      caller: "relative-module-separators-test",
+      policy: { secretPatterns: [] },
+    });
+    if (!historical.ok) throw historical.error;
+    for (const [, target] of cases)
+      expect(historical.value.relationships).toContainEqual(
+        expect.objectContaining({
+          from_path: "main.mjs",
+          to: target,
+          kind: "imports",
+          resolution: "internal",
+        }),
+      );
   });
 
   it("preserves CommonJS literal percent names", () => {

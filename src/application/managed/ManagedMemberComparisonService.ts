@@ -1,8 +1,12 @@
-import { parseAnalysisInput } from "../AnalysisInput.js";
-import { z } from "zod";
+import {
+  resolveEvidenceRequest,
+  type EvidenceLookup,
+} from "../EvidenceInputResolver.js";
+import type { ExecutionOptions } from "../AnalysisProvider.js";
 
 import {
   compareManagedMembers,
+  compareManagedMembersRequestSchema,
   type ManagedMemberComparisonResult,
 } from "../../domain/managed/managedMemberComparison.js";
 import { readManagedMemberEvidence } from "../../domain/managed/managedMemberComparisonMatch.js";
@@ -13,6 +17,7 @@ import {
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   classifyBinaryTargetFilesystemFailure,
@@ -30,11 +35,6 @@ import {
   MANAGED_WORKFLOW_PROVIDER,
 } from "../../domain/investigationProviders.js";
 
-const managedMemberComparisonRequestSchema = z.strictObject({
-  left: z.unknown(),
-  right: z.unknown(),
-});
-
 export interface ManagedMemberComparisonExecution {
   readonly evidence: Evidence;
   readonly summary: ManagedMemberComparisonResult["summary"];
@@ -44,17 +44,21 @@ export interface ManagedMemberComparisonExecution {
 /** Authenticate both source records, then compare their parsed observations. */
 export const executeManagedMemberComparison = (
   input: unknown,
+  lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
 ): Result<ManagedMemberComparisonExecution, AnalysisError> => {
   const operation = "compare_managed_members";
-  const request = parseAnalysisInput(
+  const request = resolveEvidenceRequest(
     operation,
     input,
-    managedMemberComparisonRequestSchema,
+    compareManagedMembersRequestSchema,
+    lookup,
+    options,
   );
   if (!request.ok) return request;
-  const left = readManagedMemberEvidence(request.value.left, "left");
+  const left = readManagedMemberEvidence(request.value.input.left, "left");
   if (!left.ok) return left;
-  const right = readManagedMemberEvidence(request.value.right, "right");
+  const right = readManagedMemberEvidence(request.value.input.right, "right");
   if (!right.ok) return right;
   if (left.value.evidence.evidence_id === right.value.evidence.evidence_id)
     return err(
@@ -108,12 +112,28 @@ export const compareManagedMemberPaths = async (
   let partialEvidence: Evidence | undefined;
   try {
     const [leftTarget, rightTarget] = await Promise.all([
-      resolveTarget(input.leftPath),
-      resolveTarget(input.rightPath),
+      resolveTarget(
+        input.leftPath,
+        resources === undefined ? {} : { resources },
+      ),
+      resolveTarget(
+        input.rightPath,
+        resources === undefined ? {} : { resources },
+      ),
     ]);
     // Report an unopenable path like every other path-based command does,
     // with the failed path and constraint, rather than a bare input error.
-    if (!leftTarget.ok) return err(leftTarget.error);
+    if (!leftTarget.ok) {
+      if (!rightTarget.ok && rightTarget.error.cleanupIncomplete)
+        return err(
+          analysisErrorWithCleanupFailure(
+            leftTarget.error,
+            rightTarget.error,
+            operation,
+          ).bindCleanupDependencies([leftTarget.error, rightTarget.error]),
+        );
+      return err(leftTarget.error);
+    }
     if (!rightTarget.ok) return err(rightTarget.error);
     const inspectTarget = async (
       target: BinaryTarget,
@@ -123,11 +143,10 @@ export const compareManagedMemberPaths = async (
       const selectedPath = input[inputField];
       let snapshot: Awaited<ReturnType<typeof readManagedSnapshot>>;
       try {
-        snapshot = await readSnapshot(
-          path,
-          operation,
-          resources === undefined ? {} : { resources },
-        );
+        snapshot = await readSnapshot(path, operation, {
+          expectedSha256: target.sha256,
+          ...(resources === undefined ? {} : { resources }),
+        });
       } catch (cause: unknown) {
         const failure = classifyBinaryTargetFilesystemFailure(path, cause);
         if (failure !== undefined) throw failure;

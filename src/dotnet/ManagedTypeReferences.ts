@@ -7,7 +7,10 @@ import {
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
 import { readManagedValue } from "./ManagedReaderFailure.js";
-import { metadataRowOffset } from "./ManagedMetadataLayout.js";
+import {
+  MANAGED_CODED_INDEXES,
+  metadataRowOffset,
+} from "./ManagedMetadataLayout.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 
 export interface ManagedTypeReference {
@@ -48,8 +51,8 @@ export const managedTypeReferences = (
         const raw = cursor.readIndex(layout.codedIndexSize("ResolutionScope"));
         const scope = decodeMetadataCodedIndex(
           raw,
-          2,
-          [0, 26, 35, 1],
+          MANAGED_CODED_INDEXES.ResolutionScope.bits,
+          MANAGED_CODED_INDEXES.ResolutionScope.tables,
           layout.rowCounts,
         );
         if (scope.kind === "invalid")

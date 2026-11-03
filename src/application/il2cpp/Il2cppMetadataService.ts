@@ -44,7 +44,7 @@ export class Il2cppMetadataService {
   async close(): Promise<void> {
     let failure: AnalysisError | undefined;
     for (const close of [
-      () => this.provider.close?.(),
+      () => this.provider.close(),
       () => this.seeds?.close(),
     ]) {
       try {

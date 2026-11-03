@@ -19,7 +19,7 @@ export class BeamService {
   constructor(readonly provider: BeamPort) {}
 
   close(): Promise<void> {
-    return this.provider.close?.() ?? Promise.resolve();
+    return this.provider.close();
   }
 
   async inspect(

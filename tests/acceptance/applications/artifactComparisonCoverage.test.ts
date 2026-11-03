@@ -3,12 +3,14 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect } from "vitest";
+import { machoImage } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
 } from "../../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
+import { artifactIdForContent } from "../../../src/domain/artifactIdentity.js";
 import {
   createEvidence,
   parseEvidence,
@@ -16,6 +18,7 @@ import {
 } from "../../../src/domain/evidence.js";
 
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
@@ -134,6 +137,214 @@ const assertCoverageControls = async ({
   ).toThrow();
 };
 
+const assertMalformedImportsRejected = async (
+  left: Evidence,
+  right: Evidence,
+  inventory: ArtifactInventoryResult,
+  call: Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"],
+) => {
+  // Reauthenticate an imported malformed carrier; this does not claim that
+  // the real inventory producer emitted members beyond its commitment.
+  const sha256 = "f".repeat(64);
+  const oversized = createEvidence(
+    {
+      path: right.subject!.local_path,
+      sha256: inventory.manifest.root_sha256,
+      format: inventory.manifest.root_format,
+    },
+    right.provider,
+    {
+      operation: "inventory_artifact",
+      parameters: {},
+      result: {
+        ...inventory,
+        nodes: [
+          ...inventory.nodes,
+          {
+            ...inventory.nodes[0]!,
+            sha256,
+            artifact_id: artifactIdForContent(sha256),
+          },
+        ],
+      },
+      confidence: "derived",
+      authority: "shipped-artifact",
+    },
+  );
+  const rejected = await call("compare_artifacts", {
+    left,
+    right: oversized,
+  });
+  expect(rejected.isError, JSON.stringify(rejected)).toBe(true);
+  expect(parseMcpToolError(rejected)).toMatchObject({
+    error: { code: "evidence_integrity_mismatch" },
+  });
+  // Missing members do not prevent checking identities whose complete inputs
+  // are already present on an imported page.
+  for (const result of [
+    ...[
+      { occurrence_id: `occ_${"f".repeat(64)}` },
+      { artifact_id: null },
+      { artifact_format: "unknown" },
+      { entry_kind: "directory" },
+      { parent_occurrence_id: `occ_${"f".repeat(64)}` },
+    ].map((patch) => ({
+      ...inventory,
+      nodes: [],
+      occurrences: inventory.occurrences.map((occurrence) => ({
+        ...occurrence,
+        ...patch,
+      })),
+    })),
+    {
+      ...inventory,
+      nodes: [],
+      manifest: {
+        ...inventory.manifest,
+        manifest_id: `agm_${"f".repeat(64)}`,
+      },
+    },
+    {
+      ...inventory,
+      nodes: [],
+      manifest: {
+        ...inventory.manifest,
+        root_artifact_id: artifactIdForContent(sha256),
+      },
+    },
+  ]) {
+    const malformed = createEvidence(
+      {
+        path: right.subject!.local_path,
+        sha256: inventory.manifest.root_sha256,
+        format: inventory.manifest.root_format,
+      },
+      right.provider,
+      {
+        operation: "inventory_artifact",
+        parameters: {},
+        result,
+        confidence: "derived",
+        authority: "shipped-artifact",
+      },
+    );
+    const response = await call("compare_artifacts", {
+      left,
+      right: malformed,
+    });
+    expect(response.isError, JSON.stringify(response)).toBe(true);
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: { code: "evidence_integrity_mismatch" },
+    });
+  }
+};
+
+cliTest(
+  "validates supplied edge commitments on imported partial inventories",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-partial-edge-");
+    const path = join(root, "input.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("a.txt", new TextReader("abc"));
+    await writer.add("b.txt", new TextReader("def"));
+    await writeFile(path, await writer.close());
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stderr).toBe(0);
+    const source = inventoryEvidence(inspected.json);
+    const inventory = artifactInventoryResultSchema.parse(
+      source.normalized_result,
+    );
+    const edge = inventory.edges[0]!;
+    const occurrence = inventory.occurrences.find(
+      (item) => item.occurrence_id === edge.occurrence_id,
+    )!;
+    const omittedNode = inventory.nodes.find(
+      (node) =>
+        node.artifact_id !== inventory.manifest.root_artifact_id &&
+        node.artifact_id !== occurrence.artifact_id,
+    )!;
+    const partial = {
+      ...inventory,
+      nodes: inventory.nodes.filter(
+        (node) => node.artifact_id !== omittedNode.artifact_id,
+      ),
+    };
+    const derive = (result: unknown) =>
+      createEvidence(
+        {
+          path,
+          sha256: inventory.manifest.root_sha256,
+          format: inventory.manifest.root_format,
+        },
+        source.provider,
+        {
+          operation: "inventory_artifact",
+          parameters: {},
+          result,
+          confidence: "derived",
+          authority: "shipped-artifact",
+        },
+      );
+    const { call } = await connectLocalToolsMcp();
+    const valid = await call("compare_artifacts", {
+      left: derive(partial),
+      right: derive(partial),
+    });
+    expect(valid.isError, JSON.stringify(valid)).not.toBe(true);
+    expect(
+      parseEvidence(valid.structuredContent).normalized_result,
+    ).toMatchObject({
+      status: "truncated",
+      summary: { changed: 0 },
+    });
+    const tampered = {
+      ...partial,
+      edges: partial.edges.map((item) =>
+        item === edge ? { ...item, relation: "loads" } : item,
+      ),
+    };
+    const rejected = await call("compare_artifacts", {
+      left: derive(partial),
+      right: derive(tampered),
+    });
+    expect(rejected.isError, JSON.stringify(rejected)).toBe(true);
+    expect(parseMcpToolError(rejected)).toMatchObject({
+      error: { code: "evidence_integrity_mismatch" },
+    });
+    const nullChild = await call("compare_artifacts", {
+      left: derive(partial),
+      right: derive({
+        ...partial,
+        occurrences: partial.occurrences.map((item) =>
+          item === occurrence ? { ...item, artifact_id: null } : item,
+        ),
+      }),
+    });
+    expect(nullChild.isError, JSON.stringify(nullChild)).toBe(true);
+    expect(parseMcpToolError(nullChild)).toMatchObject({
+      error: { code: "evidence_integrity_mismatch" },
+    });
+    // Without the referenced occurrence, the digest cannot yet be checked.
+    const unresolved = await call("compare_artifacts", {
+      left: derive(partial),
+      right: derive({
+        ...tampered,
+        occurrences: tampered.occurrences.filter(
+          (item) => item.occurrence_id !== edge.occurrence_id,
+        ),
+      }),
+    });
+    expect(unresolved.isError, JSON.stringify(unresolved)).not.toBe(true);
+    expect(
+      parseEvidence(unresolved.structuredContent).normalized_result,
+    ).toMatchObject({
+      status: "truncated",
+    });
+  },
+);
+
 cliTest(
   "compares fully observed roots without inventing coverage gaps through CLI and MCP",
   async ({ cli }) => {
@@ -166,6 +377,7 @@ cliTest(
     const inventory = artifactInventoryResultSchema.parse(
       right.normalized_result,
     );
+    await assertMalformedImportsRejected(left, right, inventory, call);
     expect(inventory.coverage).toEqual({ scope: "root", status: "complete" });
     expect(inventory.manifest).toMatchObject({
       root_format: "plist",
@@ -294,9 +506,9 @@ cliTest.skipIf(process.platform === "win32")(
       [leftPath, rightPath].flatMap((path) => [
         writeFile(
           join(path, "Info.plist"),
-          "<plist><dict><key>CFBundleExecutable</key><string>main.js</string></dict></plist>",
+          "<plist><dict><key>CFBundleExecutable</key><string>main</string></dict></plist>",
         ),
-        writeFile(join(path, "main.js"), "export const value = 1;"),
+        writeFile(join(path, "main"), machoImage({})),
       ]),
     );
     const fifo = await processes.run("mkfifo", [join(leftPath, "p")]);

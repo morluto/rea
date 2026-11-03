@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 
 import { compareManagedMemberPaths } from "../application/managed/ManagedMemberComparisonService.js";
@@ -7,7 +8,11 @@ import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ok } from "../domain/result.js";
+import {
+  evidenceBundleOption,
+  runEvidenceInputCommand,
+} from "./evidenceInputCommand.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
@@ -40,11 +45,18 @@ const registerInspectManagedArtifact = (
   cli.command(CLI_COMMANDS.inspectManagedArtifact, {
     description: "Inspect PE/CLI identity without loading target code",
     args: z.object({
-      path: z.string().describe("Managed PE executable or assembly path"),
+      path: localPathStringSchema.describe(
+        "Managed PE executable or assembly path",
+      ),
     }),
     run: ({ args }) =>
       logCliCommand(logger, "inspect-managed-artifact", () =>
-        runProviderAnalysis(args.path, "inspect_managed_artifact", {}, logger),
+        runProviderAnalysis(
+          args.path,
+          "inspect_managed_artifact",
+          {},
+          logger,
+        ).then(projectCliAnalysisResult),
       ),
   });
 };
@@ -58,7 +70,9 @@ const registerInspectManagedMembers = (
     description:
       "Inspect PE/CLI metadata members, signatures, CIL anchors, and ldstr string literals without loading target code",
     args: z.object({
-      path: z.string().describe("Managed PE executable or assembly path"),
+      path: localPathStringSchema.describe(
+        "Managed PE executable or assembly path",
+      ),
     }),
     options: z.object({
       type: managedMembersInputSchema.shape.type_names.describe(
@@ -90,7 +104,7 @@ const registerInspectManagedMembers = (
                 ? {}
                 : { evidenceBundlePath: options.evidenceBundle }),
             },
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });
@@ -105,7 +119,9 @@ const registerInspectManagedNativeBoundaries = (
     description:
       "Inspect PE/CLI PInvoke and native implementation boundary declarations without loading target code",
     args: z.object({
-      path: z.string().describe("Managed PE executable or assembly path"),
+      path: localPathStringSchema.describe(
+        "Managed PE executable or assembly path",
+      ),
     }),
     run: ({ args }) =>
       logCliCommand(logger, "inspect-managed-native-boundaries", () =>
@@ -114,14 +130,18 @@ const registerInspectManagedNativeBoundaries = (
           "inspect_managed_native_boundaries",
           {},
           logger,
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
 };
 
 const compareManagedMemberArgs = z.object({
-  leftPath: z.string().describe("Baseline managed PE executable or assembly"),
-  rightPath: z.string().describe("Candidate managed PE executable or assembly"),
+  leftPath: localPathStringSchema.describe(
+    "Baseline managed PE executable or assembly",
+  ),
+  rightPath: localPathStringSchema.describe(
+    "Candidate managed PE executable or assembly",
+  ),
 });
 
 const registerCompareManagedMembers = (
@@ -152,9 +172,9 @@ const registerCompareManagedMembers = (
             signal,
             "Managed member comparison resources",
           );
-          return "evidence_id" in result
-            ? result
-            : { error: "Managed member comparison failed", ...result };
+          return result.ok
+            ? result.value
+            : { error: "Managed member comparison failed", ...result.error };
         }),
       ),
   });
@@ -172,16 +192,29 @@ const registerImportManagedReconstruction = (
         .string()
         .describe("Inline managed reconstruction JSON or JSON file path"),
     }),
-    run: ({ args }) =>
-      logCliCommand(logger, "import-managed-reconstruction", async () => {
-        const input = await parseCliJsonInput(
-          args.inputJson,
-          "import-managed-reconstruction",
-        );
-        if (!input.ok) return input.error;
-        const result = importManagedReconstructionEvidence(input.value);
-        return result.ok ? result.value : projectAnalysisError(result.error);
-      }),
+    options: z.object({ evidenceBundle: evidenceBundleOption }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "import-managed-reconstruction", async () => {
+          const input = await parseCliJsonInput(
+            args.inputJson,
+            "import-managed-reconstruction",
+            signal,
+          );
+          if (!input.ok) return input.error;
+          return runEvidenceInputCommand(
+            "import_managed_reconstruction",
+            options.evidenceBundle,
+            signal,
+            (lookup) =>
+              Promise.resolve(
+                importManagedReconstructionEvidence(input.value, lookup, {
+                  signal,
+                }),
+              ),
+          ).then(projectCliAnalysisResult);
+        }),
+      ),
   });
 };
 
@@ -197,17 +230,32 @@ const registerVerifyManagedNativeBoundaries = (
         .string()
         .describe("Inline managed/native verification JSON or JSON file path"),
     }),
-    run: ({ args }) =>
-      logCliCommand(logger, "verify-managed-native-boundaries", async () => {
-        const input = await parseCliJsonInput(
-          args.inputJson,
-          "verify-managed-native-boundaries",
-        );
-        if (!input.ok) return input.error;
-        const result = executeManagedNativeBoundaries(input.value);
-        return result.ok
-          ? result.value.evidence
-          : projectAnalysisError(result.error);
-      }),
+    options: z.object({ evidenceBundle: evidenceBundleOption }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "verify-managed-native-boundaries", async () => {
+          const input = await parseCliJsonInput(
+            args.inputJson,
+            "verify-managed-native-boundaries",
+            signal,
+          );
+          if (!input.ok) return input.error;
+          return runEvidenceInputCommand(
+            "verify_managed_native_boundaries",
+            options.evidenceBundle,
+            signal,
+            (lookup) => {
+              const result = executeManagedNativeBoundaries(
+                input.value,
+                lookup,
+                { signal },
+              );
+              return Promise.resolve(
+                result.ok ? ok(result.value.evidence) : result,
+              );
+            },
+          ).then(projectCliAnalysisResult);
+        }),
+      ),
   });
 };

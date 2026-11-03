@@ -495,22 +495,28 @@ describe("doctor runtime check", () => {
   );
 });
 
-it.each([undefined, "", "not-a-version", "14garbage"])(
-  "retains unknown host support for macOS probe value %s",
-  async (version) => {
-    const result = await runDoctor(
-      undefined,
-      host({ macosVersion: () => Promise.resolve(version) }),
-    );
-    expect(result.checks).toContainEqual(
-      expect.objectContaining({
-        name: "host",
-        ok: false,
-        classification: "unknown",
-      }),
-    );
-  },
-);
+it.each([
+  undefined,
+  "",
+  "not-a-version",
+  "14garbage",
+  "14.garbage",
+  "14.",
+  "14.0\n",
+  "99999999999999999",
+])("retains unknown host support for macOS probe value %s", async (version) => {
+  const result = await runDoctor(
+    undefined,
+    host({ macosVersion: () => Promise.resolve(version) }),
+  );
+  expect(result.checks).toContainEqual(
+    expect.objectContaining({
+      name: "host",
+      ok: false,
+      classification: "unknown",
+    }),
+  );
+});
 
 it.skipIf(process.platform !== "darwin")(
   "reads the macOS version without PATH utilities",
@@ -754,6 +760,36 @@ describe("doctor installation identity", () => {
       detail: "Installed REA skill identity is missing.",
       remediation: "Run rea setup to update the installed REA skill.",
     });
+  });
+  it("classifies an unreadable installed skill as unknown, not drift", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        installedSkillIdentity: () =>
+          Promise.resolve({
+            version: null,
+            toolCount: null,
+            canonical: false,
+            issues: [
+              {
+                client: "shared",
+                path: "/home/.agents/skills/rea",
+                kind: "unreadable",
+                detail: "Selected skill copy could not be read",
+              },
+            ],
+          }),
+      }),
+    );
+
+    expect(result.identity?.skill).toMatchObject({ state: "unknown" });
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: "skill:identity",
+        ok: false,
+        classification: "unknown",
+      }),
+    );
   });
   it("reports stale client registration paths without claiming live state", async () => {
     const result = await runDoctor(

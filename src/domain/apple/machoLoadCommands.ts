@@ -62,7 +62,7 @@ export const readMachoLoadCommandDeclarations = (
 export const readMachoLoadCommandTableHeader = (
   bytes: Uint8Array,
   fileSize: number,
-): Result<MachoLoadCommandTableHeader | null, string> => {
+): Result<MachoHeaderDeclarations | null, string> => {
   const parsed = readMachoLoadCommandDeclarations(bytes, fileSize);
   if (!parsed.ok || parsed.value === null) return parsed;
   const { commandBytes, headerSize } = parsed.value;
@@ -134,3 +134,42 @@ export class MachoLoadCommandCursor {
         );
   }
 }
+
+export type MachoCommandStringFailure =
+  | {
+      readonly _tag: "InvalidMachoCommandString";
+      readonly reason: "truncated-offset" | "unterminated";
+    }
+  | {
+      readonly _tag: "InvalidMachoCommandString";
+      readonly reason: "invalid-offset";
+      readonly offset: number;
+    };
+
+/** Locate an lc_str payload within one admitted command; callers own text interpretation. */
+export const readMachoCommandStringBytes = (
+  body: Uint8Array,
+  minimumOffset: number,
+  littleEndian: boolean,
+): Result<
+  { readonly offset: number; readonly bytes: Uint8Array },
+  MachoCommandStringFailure
+> => {
+  if (body.byteLength < 12)
+    return err({
+      _tag: "InvalidMachoCommandString",
+      reason: "truncated-offset",
+    });
+  const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+  const offset = view.getUint32(8, littleEndian);
+  if (offset < minimumOffset || offset >= body.byteLength)
+    return err({
+      _tag: "InvalidMachoCommandString",
+      reason: "invalid-offset",
+      offset,
+    });
+  const end = body.indexOf(0, offset);
+  if (end < 0)
+    return err({ _tag: "InvalidMachoCommandString", reason: "unterminated" });
+  return ok({ offset, bytes: body.subarray(offset, end) });
+};

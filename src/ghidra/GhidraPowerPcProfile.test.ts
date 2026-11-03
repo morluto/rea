@@ -5,7 +5,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
   BinaryTarget,
-  PowerPcElfMetadata,
+  ElfFamilyMetadata,
 } from "../domain/binaryTargetTypes.js";
 import { silentLogger } from "../logger.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
@@ -38,7 +38,7 @@ const configFor = (environment: NodeJS.ProcessEnv) => {
   return parsed.value;
 };
 const config = configFor({});
-const target = (change: Partial<PowerPcElfMetadata> = {}): BinaryTarget => ({
+const target = (change: Partial<ElfFamilyMetadata> = {}): BinaryTarget => ({
   path: "/fixture.elf",
   sha256: "a".repeat(64),
   kind: "executable",
@@ -124,6 +124,8 @@ describe("bounded Ghidra PowerPC admission", () => {
     );
     if (!left.ok) throw left.error;
     if (!right.ok) throw right.error;
+    expect(left.value.profile?.digest).toEqual(expect.any(String));
+    expect(right.value.profile?.digest).toEqual(expect.any(String));
     expect(left.value.profile?.digest).not.toBe(right.value.profile?.digest);
   });
 
@@ -143,7 +145,7 @@ describe("bounded Ghidra PowerPC admission", () => {
     [{ type: 1 }, "ET_EXEC"],
     [{ type: 3 }, "ET_EXEC"],
     [{ flags: 0x80000000 }, "EF_PPC_EMB"],
-  ] satisfies [Partial<PowerPcElfMetadata>, string][])(
+  ] satisfies [Partial<ElfFamilyMetadata>, string][])(
     "refuses an unverified PowerPC interpretation %j",
     async (change, reason) => {
       const ghidra = new GhidraProvider(config, silentLogger, {}, host);

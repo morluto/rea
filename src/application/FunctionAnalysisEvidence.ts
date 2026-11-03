@@ -6,7 +6,7 @@ import type {
 import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
-import { parseFunctionDossier } from "../domain/hopperValues.js";
+import { parseFunctionDossier } from "../domain/native/functionDossier.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -49,9 +49,25 @@ export const executeFunctionAnalysisEvidence = async (
   );
   const sources = sourceLedger.recordsForAnalysis();
   if (!recorded.ok) return withEvidenceSources(recorded, sources);
+  const observation = {
+    ...execution.value,
+    sourceEvidence: sources,
+    ...(execution.value.subject === undefined && target !== undefined
+      ? { subject: target }
+      : {}),
+  };
   const dossier = parseFunctionDossier(execution.value.result);
-  if (!dossier.ok) return withEvidenceSources(dossier, sources);
-  const observation = execution.value;
+  if (!dossier.ok) {
+    dossier.error.retainPartialObservation(
+      createAnalysisExecutionEvidence(
+        "analyze_function",
+        arguments_,
+        observation,
+        "observed",
+      ),
+    );
+    return withEvidenceSources(dossier, sources);
+  }
   return withEvidenceSources(
     completeProviderEvidence(
       createAnalysisExecutionEvidence(
@@ -59,11 +75,7 @@ export const executeFunctionAnalysisEvidence = async (
         arguments_,
         {
           ...observation,
-          sourceEvidence: sources,
           result: dossier.value,
-          ...(observation.subject === undefined && target !== undefined
-            ? { subject: target }
-            : {}),
         },
         "observed",
       ),

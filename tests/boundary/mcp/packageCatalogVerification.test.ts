@@ -7,11 +7,27 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 it("verifies canonical names, converted schemas and session metadata together", async () => {
   const harness = await createApplicationMcpHarness();
   try {
-    const tools = await harness.client.listTools();
-    const status = await harness.client.callTool({
-      name: "binary_session",
-      arguments: {},
-    });
+    const listed = await harness.client.listTools();
+    const sessionDefinition = listed.tools.find(
+      ({ name }) => name === "binary_session",
+    );
+    if (sessionDefinition === undefined)
+      throw new Error("Expected the binary_session definition");
+    // Catalog order must not select which schema validates the lifecycle call.
+    const tools = {
+      ...listed,
+      tools: [
+        ...listed.tools.filter(({ name }) => name !== "binary_session"),
+        sessionDefinition,
+      ],
+    };
+    const status = await harness.client.callTool(
+      {
+        name: "binary_session",
+        arguments: {},
+      },
+      { toolDefinition: sessionDefinition },
+    );
     const forwarded: unknown[][] = [];
     const client = {
       listTools: async (...args: unknown[]) => {
@@ -27,7 +43,10 @@ it("verifies canonical names, converted schemas and session metadata together", 
     const canonical = await verifyCompleteToolCatalog(client, options);
     expect(forwarded).toEqual([
       [undefined, options],
-      [{ name: "binary_session", arguments: {} }, options],
+      [
+        { name: "binary_session", arguments: {} },
+        { ...options, toolDefinition: sessionDefinition },
+      ],
     ]);
     expect(canonical).toEqual(tools.tools.map(({ name }) => name).sort());
 
@@ -61,10 +80,20 @@ it("verifies canonical names, converted schemas and session metadata together", 
       }))
       .filter((group) => group.names.length > 0);
     toolContract("binary_session").outputSchema.parse(body);
-    const matchingOmission = {
+    const disagreeingOmission = {
       ...status,
       content: [{ type: "text" as const, text: JSON.stringify(body) }],
     };
+    const matchingOmission = {
+      ...disagreeingOmission,
+      structuredContent: body,
+    };
+    await expect(
+      verifyCompleteToolCatalog({
+        ...client,
+        callTool: async () => disagreeingOmission,
+      }),
+    ).rejects.toThrow("binary_session text and structured results disagree");
     // Equal inventories are insufficient when both omit the same canonical tool.
     await expect(
       verifyCompleteToolCatalog({

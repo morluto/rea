@@ -13,6 +13,7 @@ import { pythonVersionForMagic } from "./PythonBytecode.js";
 
 const PYZ_MAGIC = Buffer.from("PYZ\0");
 const PYZ_HEADER_BYTES = 12;
+const PYZ_ENTRY_ROLES = ["module", "package", "data", "namespace"] as const;
 
 /** One PYZ table entry. Type codes follow the archive's module, package, data, and namespace values. */
 export interface PyzEntry {
@@ -23,8 +24,7 @@ export interface PyzEntry {
   readonly length: number;
   /** PYZ compresses every nonempty payload, independently of its logical module type. */
   readonly compressionFlag: 0 | 1;
-  readonly package: boolean;
-  readonly namespace: boolean;
+  readonly role: (typeof PYZ_ENTRY_ROLES)[number];
 }
 
 export type PyzArchive =
@@ -246,14 +246,15 @@ const onePyzEntry = (
         "PYZ table entry positions are not integers",
       ),
     );
-  if (typeCode < 0 || typeCode > 3)
+  const role = PYZ_ENTRY_ROLES[typeCode];
+  if (role === undefined)
     return err(
       pyInstallerFailure(
         "format",
         `PYZ table entry type ${String(typeCode)} is not a known module, package, data, or namespace code`,
       ),
     );
-  if (typeCode !== 3 && length === 0)
+  if (role !== "namespace" && length === 0)
     return err(
       pyInstallerFailure(
         "format",
@@ -280,7 +281,6 @@ const onePyzEntry = (
     offset,
     length,
     compressionFlag: length === 0 ? 0 : 1,
-    package: typeCode === 1 || typeCode === 3,
-    namespace: typeCode === 3,
+    role,
   });
 };

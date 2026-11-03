@@ -2,7 +2,7 @@ import {
   relationshipCoverageLimitations,
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
-import type { FunctionDossier } from "./hopperValues.js";
+import type { FunctionDossier } from "./native/functionDossier.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 
 const callerCoveragePrefix = "Callers: ";

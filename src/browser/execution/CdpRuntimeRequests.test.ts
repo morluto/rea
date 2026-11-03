@@ -66,3 +66,35 @@ it("preserves a typed resource refusal for oversized retained initiator facts", 
     });
   }
 });
+
+it("retains separate occurrences of a reused request identity and raw initiator facts", () => {
+  const requests = new CdpRuntimeRequests(sources);
+  for (const timestamp of [0, 1.25]) {
+    const request = event({ url: `${origin}/resource-${timestamp}` });
+    requests.ingest({
+      ...request,
+      params: {
+        ...request.params,
+        timestamp,
+        initiator: {
+          type: "parser",
+          vendor_extension: { occurrence: timestamp, labels: ["observed"] },
+        },
+      },
+    });
+  }
+  expect(requests.result()).toEqual(
+    [0, 1.25].map((timestamp) =>
+      expect.objectContaining({
+        request_id: "request",
+        url: `${origin}/resource-${timestamp}`,
+        timestamp_seconds: timestamp,
+        reported_initiator: {
+          type: "parser",
+          vendor_extension: { occurrence: timestamp, labels: ["observed"] },
+        },
+        causal_attribution: "unknown",
+      }),
+    ),
+  );
+});

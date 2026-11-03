@@ -1,6 +1,6 @@
 import { readElfRelocationEntry } from "../domain/elfRelocation.js";
 import { readElfDynamicEntry } from "../domain/elfDynamicEntry.js";
-import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
+import type { ElfProgramHeader } from "../domain/elfProgramHeader.js";
 import type { MipsElfMetadata } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -23,7 +23,7 @@ type SharedLoadFacts = Extract<
 
 /** Source ELF facts only; the provider owns interpretation and admission. */
 export const readMipsElfSharedLoad = async (
-  programHeaders: Buffer,
+  programHeaders: readonly ElfProgramHeader[],
   little: boolean,
   fileSize: number,
   read: ReadRange,
@@ -37,15 +37,8 @@ export const readMipsElfSharedLoad = async (
     memorySize: number;
   }[] = [];
   let dynamic: { offset: number; address: number; size: number } | undefined;
-  for (let position = 0; position < programHeaders.length; position += 32) {
+  for (const program of programHeaders) {
     checkCancelled();
-    const parsedProgram = readElfProgramHeader(
-      programHeaders.subarray(position, position + 32),
-      32,
-      little,
-    );
-    if (!parsedProgram.ok) return err(parsedProgram.error.message);
-    const program = parsedProgram.value;
     const { type } = program;
     const offset = Number(program.offset);
     const size = Number(program.fileSize);

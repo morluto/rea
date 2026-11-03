@@ -1,3 +1,5 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -55,6 +57,10 @@ import { LocalWebModuleArtifacts } from "../../../src/browser/modules/WebModuleA
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import {
+  webArtifactAcquisitionSchema,
+  type WebArtifactAcquisition,
+} from "../../../src/domain/webArtifactAcquisition.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { webModuleArtifactsFixture } from "../../fixtures/webModuleTrace.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -65,14 +71,23 @@ const sourceFixture = async (source: string) => {
   const manifestPath = join(root, "manifest.json");
   const sourcePath = join(root, "files", "modules", "main.js");
   await mkdir(join(root, "files", "modules"), { recursive: true });
-  await writeFile(sourcePath, source);
-  await writeFile(manifestPath, JSON.stringify(fixture.manifest));
+  const sourceBytes = Buffer.from(source);
+  const manifestBytes = Buffer.from(JSON.stringify(fixture.manifest));
+  await writeFile(sourcePath, sourceBytes);
+  await writeFile(manifestPath, manifestBytes);
   return {
     input: { manifest_path: manifestPath, script_index: 0 },
     sourcePath,
-    fixture,
+    sourceBytes,
+    manifestBytes,
   };
 };
+
+const fileIdentity = (path: string, bytes: Buffer) => ({
+  path,
+  sha256: createHash("sha256").update(bytes).digest("hex"),
+  bytes: bytes.length,
+});
 
 it("retains cancelled source read ownership until service close retries it", async () => {
   onTestFinished(() => {
@@ -85,7 +100,8 @@ it("retains cancelled source read ownership until service close retries it", asy
     injected.closeAttempts = 0;
     injected.sourceHandle = undefined;
   });
-  const { input, sourcePath } = await sourceFixture('import "./dep.js";');
+  const { input, sourcePath, manifestBytes } =
+    await sourceFixture('import "./dep.js";');
 
   injected.sourcePath = sourcePath;
   injected.failClose = true;
@@ -109,6 +125,23 @@ it("retains cancelled source read ownership until service close retries it", asy
   const cancelled = await service.trace(input, { signal: controller.signal });
   expect(cancelled.ok).toBe(false);
   if (cancelled.ok) throw new Error("Expected cancelled source read");
+  const expectedAcquisition: WebArtifactAcquisition = {
+    kind: "web-artifact-acquisition",
+    analysis: "not-performed",
+    files: [
+      {
+        role: "manifest",
+        file: fileIdentity(input.manifest_path, manifestBytes),
+        admission: "manifest-validated",
+      },
+    ],
+  };
+  expect(
+    webArtifactAcquisitionSchema.parse(cancelled.error.partialObservation),
+  ).toEqual(expectedAcquisition);
+  expect(
+    projectAnalysisError(cancelled.error).details?.partial_observation,
+  ).toEqual(expectedAcquisition);
   expect(cancelled.error.cleanupIncomplete).toBe(true);
   expect(cancelled.error.cleanupResources).toContain(sourcePath);
   expect(resolver.resolve).not.toHaveBeenCalled();
@@ -145,7 +178,7 @@ it("retains cancelled source read ownership until service close retries it", asy
     "web-module-artifacts",
     "trace_web_module_imports",
     new AbortController().signal,
-  );
+  ).then(projectCliAnalysisResult);
   expect(finalized).toMatchObject({
     code: "cleanup_incomplete",
     details: { resources: [sourcePath] },
@@ -158,6 +191,13 @@ it("retains cancelled source read ownership until service close retries it", asy
   expect(injected.closeAttempts).toBeGreaterThan(attemptsBeforeRetry);
   expect(resolver.close).toHaveBeenCalledTimes(3);
   expect(injected.sourceHandle?.fd).toBe(-1);
+  expect(primaryAnalysisError(cancelled.error).partialObservation).toEqual(
+    expectedAcquisition,
+  );
+  expect(
+    projectAnalysisError(primaryAnalysisError(cancelled.error)).details
+      ?.partial_observation,
+  ).toEqual(expectedAcquisition);
   for (const error of [cancelled.error, blocked.error, cleanupFailure]) {
     expect(error).toMatchObject({
       cleanupIncomplete: false,
@@ -176,9 +216,8 @@ it.each([
 ])(
   "keeps physical source read failure and exact cleanup ownership %j",
   async ({ readFails, closeFails, cancel }) => {
-    const { input, sourcePath, fixture } = await sourceFixture(
-      "export const value = 1;",
-    );
+    const { input, sourcePath, sourceBytes, manifestBytes } =
+      await sourceFixture("export const value = 1;");
     const physical = Object.assign(new Error("fixture descriptor EIO"), {
       code: "EIO",
       syscall: "read",
@@ -212,7 +251,10 @@ it.each([
     if (!readFails && !cancel) {
       if (!result.ok) throw result.error;
       expect(result.value.normalized_result).toMatchObject({
-        source: { path: sourcePath, sha256: fixture.sourceFile.sha256 },
+        source: {
+          path: sourcePath,
+          sha256: fileIdentity(sourcePath, sourceBytes).sha256,
+        },
         manifest: { path: input.manifest_path },
       });
       await service.close();
@@ -229,7 +271,34 @@ it.each([
       });
     else expect(primary).toBeInstanceOf(AnalysisCancelledError);
     expect(primary.cause).toBe(readFails ? physical : reason);
-    expect(result.error.partialObservation).toBeUndefined();
+    const expectedAcquisition: WebArtifactAcquisition = {
+      kind: "web-artifact-acquisition",
+      analysis: "not-performed",
+      files: [
+        {
+          role: "manifest",
+          file: fileIdentity(input.manifest_path, manifestBytes),
+          admission: "manifest-validated",
+        },
+        // Descriptor-finalization cancellation precedes selected-source digest/length admission.
+        ...(!readFails
+          ? [
+              {
+                role: "source" as const,
+                file: fileIdentity(sourcePath, sourceBytes),
+                admission: "read" as const,
+              },
+            ]
+          : []),
+      ],
+    };
+    expect(
+      webArtifactAcquisitionSchema.parse(result.error.partialObservation),
+    ).toEqual(expectedAcquisition);
+    expect(primary.partialObservation).toEqual(expectedAcquisition);
+    expect(
+      projectAnalysisError(result.error).details?.partial_observation,
+    ).toEqual(expectedAcquisition);
     expect(result.error.cleanupIncomplete).toBe(closeFails);
     if (closeFails) {
       expect(result.error.cleanupResources).toEqual([sourcePath]);
@@ -242,6 +311,10 @@ it.each([
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(result.error.cleanupResources).toEqual([]);
     expect(primaryAnalysisError(result.error)).toBe(primary);
+    expect(primary.partialObservation).toEqual(expectedAcquisition);
+    expect(projectAnalysisError(primary).details?.partial_observation).toEqual(
+      expectedAcquisition,
+    );
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: readFails ? "artifact_operation_failed" : "cancelled",
       ...(readFails
@@ -283,7 +356,9 @@ it("preserves both web cleanup owners' resources, diagnostics and recovery actio
       },
     },
   );
-  const projected = [artifacts, resolver].map(projectAnalysisError);
+  const projected = [artifacts, resolver].map((failure) =>
+    projectAnalysisError(failure),
+  );
   await expect(service.close()).rejects.toMatchObject({
     cleanupResources: ["artifact-root", "shared-resource", "resolver-root"],
     diagnostics: { failures: projected },

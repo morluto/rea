@@ -265,6 +265,16 @@ describe("deriveApkPosture v1 comparison", () => {
     ).toBe(true);
   });
 
+  it("explains unknown identities on both sides without repeating reasons", () => {
+    const result = v1([null], [null, null]);
+    expect(result.posture.v1_signers_match_block_signers).toBeNull();
+    expect(result.notes).toEqual([
+      "v1_signers_match_block_signers is null: one or more v1 signer identities are unknown; inspect the v1 signer records for details.",
+      "v1_signers_match_block_signers is null: one or more v2 signer identities are unknown; inspect the block signer records for details.",
+    ]);
+    expect(v1(["aa"], ["aa"]).notes).toEqual([]);
+  });
+
   it("leaves the v1 comparison unknown, with a reason, when the lineage origin is unknown", () => {
     for (const lineage of [
       { kind: "undecoded" } as const,

@@ -46,7 +46,8 @@ export const requireMcpOutput = (
     if (!isDeepStrictEqual(text, result.structuredContent))
       throw new Error(`${operation} text and structured results disagree`);
   }
-  return output;
+  // Downstream parseEvidence must authenticate source facts, not a schema projection.
+  return Object.hasOwn(output, "normalized_result") ? text : output;
 };
 
 const operationResultKey = (contract) => {

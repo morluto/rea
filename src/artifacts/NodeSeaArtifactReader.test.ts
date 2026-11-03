@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto";
+import { once } from "node:events";
+import { writeFileSync } from "node:fs";
+import { buffer } from "node:stream/consumers";
+import { createReader } from "./inventory/reader.js";
 import { open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setImmediate } from "node:timers";
@@ -107,6 +112,27 @@ it.each([
     (node) => node.size === Buffer.byteLength(script),
   );
   expect(scriptNode).toBeDefined();
+  const direct = new NodeSeaArtifactReader(path);
+  try {
+    for await (const entry of direct.entries()) {
+      const occurrence = snapshot.occurrences.find(
+        (row) => row.logical_path === entry.path,
+      );
+      expect(occurrence?.format_metadata).toEqual(entry.formatMetadata);
+      const member = await buffer(await direct.open(entry));
+      expect(
+        snapshot.nodes.find(
+          (node) => node.artifact_id === occurrence?.artifact_id,
+        ),
+      ).toMatchObject({
+        sha256: createHash("sha256").update(member).digest("hex"),
+        size: member.length,
+      });
+    }
+    expect(direct.formatMetadata()).toEqual(root?.format_metadata);
+  } finally {
+    await direct.close();
+  }
 });
 
 it("accepts the __NODE_SEA segment spelling and a universal Mach-O slice", async () => {
@@ -593,24 +619,37 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
   }
 });
 
-it("settles an active member stream when closed", async () => {
-  const path = await writeCarrier(
-    "close",
-    nodeSeaElf({ main: Buffer.alloc(1024 * 1024, 65) }),
-  );
-  const reader = new NodeSeaArtifactReader(path);
-  try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
-    const entry = entries[0];
-    if (entry === undefined) throw new Error("Missing main script");
-    const stream = await reader.open(entry);
-    await reader.close();
-    expect(stream.destroyed).toBe(true);
-  } finally {
-    await reader.close();
-  }
-});
+it.each([8, 1024 * 1024])(
+  "retires an unread %i-byte member through the shared reader factory",
+  async (size) => {
+    const path = await writeCarrier(
+      "close",
+      nodeSeaElf({ main: Buffer.alloc(size, 65) }),
+    );
+    const reader = createReader(path, "node-sea", {});
+    if (reader === undefined) throw new Error("Missing Node SEA reader");
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const entry = entries[0];
+      if (entry === undefined) throw new Error("Missing main script");
+      const stream = await reader.open(entry);
+      const produced = size === 8 ? once(stream, "finish") : undefined;
+      await once(stream, "readable");
+      if (produced !== undefined) await produced;
+      expect(stream.destroyed).toBe(false);
+      await reader.close();
+      expect(stream.destroyed).toBe(true);
+      expect(stream.closed).toBe(true);
+      await expect(buffer(stream)).rejects.toMatchObject({
+        reason: "unavailable",
+      });
+      await reader.close();
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it("honors cancellation before admitting a carrier", async () => {
   const path = await writeCarrier("cancel", nodeSeaElf());
@@ -773,3 +812,31 @@ it("confirms SEA naming before rejecting an unrelated cyclic PE resource branch"
     await handle.close();
   }
 });
+
+it.each(["valid replacement", "malformed blob"] as const)(
+  "rejects post-classification carrier mutation before publishing Node SEA facts: %s",
+  async (mode) => {
+    const blob = buildNodeSeaBlob(populated);
+    const original = nodeSeaElf({ blob, fuse: "set" });
+    const changed =
+      mode === "valid replacement"
+        ? buildNodeSeaBlob({ ...populated, main: script.toUpperCase() })
+        : Buffer.from(blob);
+    if (mode === "malformed blob") changed[0] = (changed[0] ?? 0) ^ 0xff;
+    const replacement = nodeSeaElf({ blob: changed, fuse: "set" });
+    expect(replacement.length).toBe(original.length);
+    const path = await writeCarrier("classification-mutation", original);
+    let created: NodeSeaArtifactReader | undefined;
+    await expect(
+      scanCanonicalArtifactInventory(path, {}, (...args) => {
+        expect(args[1]).toBe("node-sea");
+        writeFileSync(args[0], replacement);
+        const reader = createReader(...args);
+        if (reader instanceof NodeSeaArtifactReader) created = reader;
+        return reader;
+      }),
+    ).rejects.toMatchObject({ reason: "integrity" });
+    expect(created).toBeInstanceOf(NodeSeaArtifactReader);
+    expect(created?.formatMetadata()).toBeUndefined();
+  },
+);

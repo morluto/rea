@@ -62,7 +62,7 @@ Ai văzut într-o aplicație o funcționalitate pe care ai vrea să o incluzi î
 
 REA conectează agentul tău la unelte pentru inspectarea fișierelor binare native, a aplicațiilor JavaScript și Electron, a ansamblurilor .NET și a site-urilor web. Poți folosi aceleași unelte și din terminal. Analiza rulează local, iar rezultatele includ dovezile și limitările care stau la baza fiecărei concluzii.
 
-Programul de configurare înregistrează REA în agentul tău și instalează instrucțiunile corespunzătoare pentru fluxul de lucru. Analiza nativă poate folosi o instalare existentă de Hopper, Ghidra sau IDA; programul de configurare poate instala opțional Hopper, cu aprobarea ta. Analiza statică JavaScript nu necesită un motor de analiză nativă.
+Programul de configurare înregistrează REA în agentul tău și instalează instrucțiunile corespunzătoare pentru fluxul de lucru. Analiza nativă poate folosi o instalare existentă de Hopper, Ghidra, IDA sau Kuna; programul de configurare poate instala opțional Hopper, cu aprobarea ta. Analiza statică JavaScript nu necesită un motor de analiză nativă.
 
 > **[Vizitează site-ul REA](https://rea.tools/)** pentru instrucțiuni de configurare, ghiduri ilustrate și studii de caz reale.
 
@@ -187,7 +187,7 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Țintă                               | Ce returnează REA                                                                                                             | Cerințe și ghid                                                                                                                        |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | Aplicații desktop instalate         | Componente de execuție candidate, fișiere auxiliare, indicii despre componente și următoarele verificări                      | Inspectare integrată a directoarelor și antetelor, cu limite de resurse; [aplicații desktop](../desktop-applications.md)               |
-| Fișiere binare native               | Pseudocod, cod de asamblare, șiruri de caractere, simboluri, apeluri și referințe                                             | Hopper, Ghidra sau IDA; [analiză nativă](../native-investigation.md)                                                                   |
+| Fișiere binare native               | Pseudocod, cod de asamblare, șiruri de caractere, simboluri, apeluri și referințe                                             | Hopper, Ghidra, IDA sau Kuna; [analiză nativă](../native-investigation.md)                                                             |
 | Structura ELF, offline              | Secțiuni, segmente, simboluri și relocări originale, precum și indicii statice despre mecanismele de protecție                | pwntools furnizat de utilizator, pe Linux x64; [diagnosticarea binarelor](../binary-diagnostics.md)                                    |
 | Fișiere binare Go                   | Versiunea compilatorului încorporată în fișier, modulele, înlocuirile și setările de compilare                                | Inspectare statică integrată a fișierelor ELF/PE/Mach-O cu o singură arhitectură; nu necesită instalarea Go                            |
 | Obiecte de cod GPU                  | Ținte CUDA/HIP, parametri și resurse selectate ale kernelurilor GPU, textul PTX păstrat                                       | Inspectare statică integrată a fișierelor ELF/PE/fatbin/CUBIN/PTX; [obiecte de cod GPU](../gpu-code-objects.md)                        |
@@ -342,11 +342,11 @@ poți folosi [înregistrarea manuală MCP](../installation.md#mcp-registry).
 </details>
 
 <details>
-<summary><strong>Am nevoie de Hopper, Ghidra sau IDA?</strong></summary>
+<summary><strong>Am nevoie de Hopper, Ghidra, IDA sau Kuna?</strong></summary>
 
 Analiza nativă aprofundată folosește unul dintre aceste instrumente. Inspectarea
 statică JavaScript și .NET funcționează fără un motor de analiză nativă.
-Programul de configurare poate instala Hopper după aprobare; pentru Ghidra și IDA
+Programul de configurare poate instala Hopper după aprobare; pentru Ghidra, IDA și Kuna
 folosește instalările existente. Consultă [configurarea motoarelor de analiză](../installation.md#hopper).
 
 </details>
@@ -429,7 +429,7 @@ Raportează vulnerabilitățile conform [SECURITY.md](../../SECURITY.md).
 
 ## Istoricul stelelor
 
-🎉 **300.000 de stele pe GitHub — vă mulțumim!**
+🎉 **400.000 de stele pe GitHub — vă mulțumim!**
 
 Mulțumim tuturor celor care folosesc REA, raportează erori, propun funcționalități,
 testează versiuni și contribuie cu remedieri.

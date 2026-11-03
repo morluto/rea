@@ -12,6 +12,9 @@ import { PythonPycService } from "../../../src/application/python/PythonPycServi
 import { BeamService } from "../../../src/application/erlang/BeamService.js";
 import { BeamProvider } from "../../../src/erlang/BeamProvider.js";
 import { erlangBeamFixture } from "../../../src/erlang/Beam.fixture.js";
+import { DevicetreeService } from "../../../src/application/binaryDiagnostics/DevicetreeService.js";
+import { DevicetreeProvider } from "../../../src/firmware/devicetree/DevicetreeProvider.js";
+import { devicetreeFixture } from "../../../src/firmware/devicetree/Devicetree.fixture.js";
 
 const injected = vi.hoisted(() => ({
   opened: undefined as
@@ -48,6 +51,12 @@ const providers = [
     operation: "inspect_erlang_beam",
     bytes: erlangBeamFixture(),
     create: () => new BeamService(new BeamProvider()),
+  },
+  {
+    name: "devicetree",
+    operation: "inspect_devicetree",
+    bytes: devicetreeFixture(),
+    create: () => new DevicetreeService(new DevicetreeProvider()),
   },
 ];
 
@@ -149,6 +158,50 @@ it.each(
       denyClose = false;
       await service.close();
       for (const close of releases) await close();
+    }
+  },
+);
+
+it.each([{ source: "BEAM successful close" }, null])(
+  "preserves BEAM cancellation during successful close with reason %j",
+  async (reason) => {
+    const root = await createTestTempDirectory("rea-beam-successful-close-");
+    const path = join(root, "selected.beam");
+    const bytes = erlangBeamFixture();
+    await fileSystem.writeFile(path, bytes);
+    const controller = new AbortController();
+    const handles: FileHandle[] = [];
+    injected.opened = (openedPath, handle) => {
+      if (String(openedPath) !== path) return;
+      handles.push(handle);
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        controller.abort(reason);
+        await close();
+      });
+    };
+    const service = new BeamService(new BeamProvider());
+    try {
+      const result = await service.inspect(
+        { path },
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected finalization cancellation");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(result.error.partialObservation).toEqual({
+        kind: "file-snapshot-hash",
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      });
+      expect(handles).toHaveLength(1);
+      expect(handles[0]?.fd).toBe(-1);
+      await service.close();
+      expect(handles).toHaveLength(1);
+    } finally {
+      await service.close();
     }
   },
 );

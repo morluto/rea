@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -275,6 +275,43 @@ it.each([
     );
     // A cask argument makes Homebrew fetch and cache its API data.
     expect(calls).toEqual([["--caskroom"]]);
+  },
+);
+
+it.skipIf(process.platform === "win32").each(["absolute", "home"])(
+  "preserves symlink traversal in the cask appdir (%s)",
+  async (spelling) => {
+    const root = await createTestTempDirectory("rea-doctor-cask-path-");
+    const home = join(root, "home");
+    const caskroom = join(root, "Caskroom");
+    const metadata = join(caskroom, "hopper-disassembler", ".metadata");
+    const target = join(root, "selected", "nested");
+    await mkdir(home, { recursive: true });
+    await mkdir(target, { recursive: true });
+    await mkdir(metadata, { recursive: true });
+    await symlink(target, join(home, "apps"));
+    const suffix = "Hopper Disassembler.app/Contents/MacOS/hopper";
+    const selected = join(root, "selected", suffix);
+    await mkdir(dirname(selected), { recursive: true });
+    await writeFile(selected, "selected Hopper");
+    const appdir = spelling === "home" ? "~/apps/.." : `${home}/apps/..`;
+    await writeFile(
+      join(metadata, "config.json"),
+      JSON.stringify({ explicit: { appdir } }),
+    );
+    const host = systemDoctorHost({
+      platform: "darwin",
+      environment: { HOME: home },
+      execFileOutput: async () => ({
+        stdout: `${caskroom}\n`,
+        stderr: "",
+        stdoutBytes: Buffer.byteLength(`${caskroom}\n`),
+        stderrBytes: 0,
+      }),
+    });
+    const discovered = await host.brewHopperPath();
+    expect(discovered).toBe(`${home}/apps/../${suffix}`);
+    expect(await readFile(discovered!, "utf8")).toBe("selected Hopper");
   },
 );
 

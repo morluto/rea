@@ -289,8 +289,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     const leaseResult = await this.#acquireLaunchLease(session.runId);
     if (!leaseResult.ok) return leaseResult;
     const lease = leaseResult.value;
-    let leaseTransferred = false;
-    try {
+    const outcome = await (async () => {
       let loadedPath = this.options.targetPath;
       const preparedImage = this.options.preparedImage;
       const sourceSha256 =
@@ -354,11 +353,33 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         ownsProcessLifetime,
         lease,
       });
-      leaseTransferred = launched.ok;
       return launched;
-    } finally {
-      if (!leaseTransferred) await lease?.release();
-    }
+    })().catch((cause: unknown) => err(new HopperStartError({ cause })));
+    if (outcome.ok || lease === undefined) return outcome;
+    const released = await this.#probeResources.release({
+      kind: "lease",
+      resource: lease.socketPath ?? session.directory,
+      lease,
+    });
+    if (released.kind === "released") return outcome;
+    const cleanup = this.#probeResources.cleanupFailure({ kind: "completed" }, [
+      released,
+    ]);
+    const leaseFailure = new HopperStartError({
+      cause: cleanup,
+      cleanup: cleanup.cleanup,
+    });
+    bindRetainedArtifactCleanup(leaseFailure, cleanup);
+    const failure = new HopperStartError({
+      cause: cleanup,
+      cleanupPrimary: outcome.error,
+      cleanup: cleanup.cleanup,
+      ...(outcome.error.userMessage === undefined
+        ? {}
+        : { userMessage: outcome.error.userMessage }),
+    });
+    failure.bindCleanupDependencies([outcome.error, leaseFailure]);
+    return err(failure);
   }
 
   async #launchPreparedTarget(input: {
@@ -389,6 +410,32 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     let launched = false;
     try {
       if (signal?.aborted === true) return err(hopperCancelledBySignal(signal));
+      if ((this.dependencies.platform ?? process.platform) === "darwin") {
+        // The vendor helper embeds argv in AppleScript quoted literals. Check
+        // the actual prepared paths before even starting the application. Do
+        // not rewrite caller names or double-escape values passed to the helper.
+        const rejected = [
+          this.options.launcherPath,
+          ...argumentsForTarget,
+        ].findIndex((value) => /["\\\r\n]/u.test(value));
+        if (rejected !== -1)
+          return err(
+            new HopperStartError({
+              userMessage:
+                "The macOS Hopper launcher cannot pass double quotes, backslashes or line breaks literally through its AppleScript handoff. Select launcher, target and runtime paths and loader arguments without these characters; the selected values were not rewritten.",
+              launchRejection: {
+                boundary: "argument_encoding",
+                reason: "applescript_literal",
+                ...(rejected === 0
+                  ? { source: "launcher_path" as const }
+                  : {
+                      source: "argument" as const,
+                      argument_index: rejected - 1,
+                    }),
+              },
+            }),
+          );
+      }
       let expectedLinuxSha256: string | undefined;
       if (usesLinuxDemo(this.options)) {
         const inspected = await (
@@ -474,13 +521,8 @@ export class HopperApplicationLauncher implements BridgeLauncher {
             ...(nativeHelperVerified
               ? { nativeHelperVerified: true as const }
               : {}),
-            // The vendor helper interpolates these values into AppleScript
-            // literals without escaping. Preserve them, but withhold the
-            // pre-handoff conclusion when they can alter that script.
-            ...((this.dependencies.platform ?? process.platform) === "darwin" &&
-            ![this.options.launcherPath, ...argumentsForTarget].some((value) =>
-              /["\\\r\n]/u.test(value),
-            )
+            // Argument admission above established literal handoff semantics.
+            ...((this.dependencies.platform ?? process.platform) === "darwin"
               ? { authorizationDenialBeforeHandoff: true as const }
               : {}),
           });
@@ -488,8 +530,8 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       return err(hopperLaunchFailure(cause, signal));
     } finally {
       // Remove the token-bearing bootstrap file on every non-success path.
-      // Only the launched process needs the file; all error returns, early
-      // cancellations, and thrown exceptions must not leave it on disk.
+      // This is best effort: the caller owns session.directory and performs
+      // authoritative private-runtime cleanup, retaining it when removal fails.
       if (!launched)
         await rm(bootstrapPath, { force: true }).catch(() => undefined);
     }
@@ -507,7 +549,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         ? await (
             this.dependencies.acquireApplicationLease ??
             acquireLinuxHopperApplicationLease
-          )({ runId })
+          )({ runId, resources: this.#probeResources })
         : await (
             this.dependencies.acquireTargetLease ?? acquireHopperTargetLease
           )({
@@ -515,6 +557,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
             targetKind: this.options.targetKind,
             loaderArgs: this.options.loaderArgs,
             runId,
+            resources: this.#probeResources,
           });
       if (!acquisition.acquired)
         return err(
@@ -556,7 +599,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       await chmod(bootstrapPath, 0o600);
       return ok(bootstrapPath);
     } catch (cause: unknown) {
-      // Clean up any partially written bootstrap file that may contain the token.
+      // Best effort; the caller also owns cleanup of the private runtime root.
       await rm(bootstrapPath, { force: true }).catch(() => undefined);
       return err(new HopperStartError({ cause }));
     }

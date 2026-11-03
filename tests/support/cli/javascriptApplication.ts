@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import type { SharedMcpCall, TestCli } from "./cliFixture.js";
 
 const execute = promisify(execFile);
@@ -32,7 +33,7 @@ export const resolveJavaScriptApplicationMcpCall = async (
 ): Promise<SharedMcpCall> => {
   if (mcpCall !== undefined) return mcpCall;
   if (cli.sharedMcpCall !== undefined) return cli.sharedMcpCall();
-  return (await connectLocalToolsMcp()).call;
+  return (await connectLocalToolsMcp(INLINE_EVIDENCE_MCP_ENVIRONMENT)).call;
 };
 
 /**

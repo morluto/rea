@@ -23,7 +23,7 @@ export class PythonPycService {
   constructor(readonly provider: PythonPycPort) {}
 
   close(): Promise<void> {
-    return this.provider.close?.() ?? Promise.resolve();
+    return this.provider.close();
   }
 
   async inspect(

@@ -20,7 +20,7 @@
 
 **[Sitio web](https://rea.tools/es/) · [Guías](https://rea.tools/es/guides/) · [Casos prácticos](https://rea.tools/es/showcase/)**
 
-[Inicio rápido](#inicio-rápido) · [Cómo funciona REA](#cómo-funciona-rea) · [Qué puedes analizar](#qué-puedes-analizar) · [Casos prácticos](#casos-prácticos) · [Crear entornos de RL](#build-rl-environments) · [Preguntas frecuentes](#preguntas-frecuentes) · [Herramientas GNU objdump y Rizin](../reverse-engineering-tools.md) · [Documentación](#documentación)
+[Inicio rápido](#inicio-rápido) · [Cómo funciona REA](#cómo-funciona-rea) · [Qué puedes analizar](#qué-puedes-analizar) · [Casos prácticos](#casos-prácticos) · [Crear entornos de RL](#build-rl-environments) · [Preguntas frecuentes](#preguntas-frecuentes) · [Documentación](#documentación)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@
 
 REA conecta tu agente con herramientas para inspeccionar binarios nativos, aplicaciones JavaScript y Electron, ensamblados .NET y sitios web. También puedes usar las mismas herramientas desde la terminal. El análisis se ejecuta localmente y los resultados incluyen las pruebas y limitaciones que sustentan cada conclusión.
 
-La configuración registra REA con tu agente e instala las instrucciones de trabajo correspondientes. El análisis nativo puede usar Hopper, Ghidra o IDA ya instalados; la configuración puede instalar Hopper con tu aprobación. El análisis estático de JavaScript no requiere un motor de análisis nativo.
+La configuración registra REA con tu agente e instala las instrucciones de trabajo correspondientes. El análisis nativo puede usar Hopper, Ghidra, IDA o Kuna ya instalados; la configuración puede instalar Hopper con tu aprobación. El análisis estático de JavaScript no requiere un motor de análisis nativo.
 
 > **[Visita el sitio web de REA](https://rea.tools/es/)** para encontrar instrucciones de configuración, guías ilustradas y casos reales.
 
@@ -151,7 +151,7 @@ REA requiere Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), adem�
 
 | Objetivo                    | Qué devuelve REA                                                                                                               | Requisitos y guía                                                                                                                            |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Binarios nativos            | Pseudocódigo, ensamblador, cadenas, símbolos, llamadas y referencias                                                           | Hopper, Ghidra o IDA; [análisis nativo](../native-investigation.md)                                                                          |
+| Binarios nativos            | Pseudocódigo, ensamblador, cadenas, símbolos, llamadas y referencias                                                           | Hopper, Ghidra, IDA o Kuna; [análisis nativo](../native-investigation.md)                                                                    |
 | Estructura ELF sin ejecutar | Secciones, segmentos, símbolos/reubicaciones originales y posibles medidas de mitigación detectadas mediante análisis estático | pwntools proporcionado por quien llama, en Linux x64; [diagnóstico de binarios](../binary-diagnostics.md)                                    |
 | PE certificates             | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                                   | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                      |
 | PE imports                  | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                     | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                |
@@ -189,6 +189,8 @@ REA requiere Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), adem�
 | Firmas APK                  | Firmantes v1/v2/v3/v3.1, huellas de certificados, rotación de claves y coherencia interna de resúmenes                         | Inspección estática integrada; `inspect_apk_signature`                                                                                       |
 
 La inspección estática de JavaScript y .NET lee los archivos suministrados sin ejecutar la aplicación. La captura en ejecución inicia el objetivo seleccionado o interactúa con él con los permisos de tu usuario; cada guía describe sus efectos.
+
+Para inspeccionar binarios nativos sin conexión, REA también admite GNU objdump y Rizin, que debes proporcionar por tu cuenta. La [guía de herramientas de ingeniería inversa](../reverse-engineering-tools.md) explica la configuración de los proveedores, los comandos de la CLI y las limitaciones de Evidence. REA no instala ni actualiza ninguno de estos proveedores.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -278,9 +280,9 @@ Cualquier agente que admita servidores MCP locales. La configuración prepara lo
 </details>
 
 <details>
-<summary><strong>¿Necesito Hopper, Ghidra o IDA?</strong></summary>
+<summary><strong>¿Necesito Hopper, Ghidra, IDA o Kuna?</strong></summary>
 
-El análisis nativo en profundidad utiliza uno de ellos. La inspección estática de JavaScript y .NET funciona sin un motor de análisis nativo. La configuración puede instalar Hopper después de tu aprobación; Ghidra e IDA usan las instalaciones que ya tienes. Consulta [configuración de proveedores](../installation.md#hopper).
+El análisis nativo en profundidad utiliza uno de ellos. La inspección estática de JavaScript y .NET funciona sin un motor de análisis nativo. La configuración puede instalar Hopper después de tu aprobación; Ghidra, IDA y Kuna usan las instalaciones que ya tienes. Consulta [configuración de proveedores](../installation.md#hopper).
 
 </details>
 
@@ -348,7 +350,7 @@ Informa de vulnerabilidades siguiendo [SECURITY.md](../../SECURITY.md).
 
 ## Historial de estrellas
 
-🎉 **300.000 estrellas en GitHub: ¡gracias!**
+🎉 **400.000 estrellas en GitHub: ¡gracias!**
 
 Gracias a quienes usan REA, informan de errores, solicitan funciones, prueban compilaciones y contribuyen con correcciones.
 

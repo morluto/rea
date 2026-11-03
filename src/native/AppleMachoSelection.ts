@@ -1,13 +1,26 @@
+import {
+  machoDependencyCommand,
+  readMachoDylibCommandFacts,
+} from "../domain/apple/machoDylibCommand.js";
 import { readMachoSectionHeader } from "../domain/apple/machoSectionHeader.js";
-import { readMachoSegmentHeader } from "../domain/apple/machoSegmentHeader.js";
+import {
+  admitMachoSegmentMapping,
+  readMachoSegmentHeader,
+} from "../domain/apple/machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
   readMachoLoadCommandDeclarations,
 } from "../domain/apple/machoLoadCommands.js";
 import { createHash } from "node:crypto";
+import {
+  BinaryFormatFailure,
+  createFileMappingIndex,
+  type ZeroFillMapping,
+  type FileMapping,
+} from "./metadata/BinaryContainer.js";
 
 import type { FixupCommands } from "./AppleMachoFixups.js";
-import { decodeMachoName } from "./AppleMachoNames.js";
+import { decodeMachoFixedName, decodeMachoName } from "./AppleMachoNames.js";
 import {
   MACHO_ARCHITECTURE_POLICIES,
   machoSubtypeRank,
@@ -170,7 +183,10 @@ export const parseMachoLayout = (
   }
   if (table.wide && !table.littleEndian) {
     if (cpuType !== 0x01000012)
-      throw new TypeError("Unsupported big-endian Mach-O CPU type");
+      throw new BinaryFormatFailure(
+        "unsupported",
+        "Unsupported big-endian Mach-O CPU type",
+      );
     throw new UnsupportedMachoMetadataFormatError(
       "Unsupported big-endian 64-bit PowerPC Mach-O metadata",
     );
@@ -185,14 +201,15 @@ export const parseMachoLayout = (
     throw new UnsupportedMachoMetadataFormatError(
       `Unsupported 32-bit Mach-O metadata for requested CPU type ${architecture}`,
     );
-  const commands = table.commandCount;
   const commandEnd = slice + table.headerSize + table.commandBytes;
-  if (commands > 4096 || commandEnd > sliceEnd)
+  if (commandEnd > sliceEnd)
     throw new RangeError("Malformed Mach-O command bounds");
   const state: LayoutState = {
     slice,
     sliceEnd,
     segments: [],
+    mappings: [],
+    zeroFills: [],
     sections: [],
     dylibs: [],
     binds: [],
@@ -216,19 +233,20 @@ export const parseMachoLayout = (
   const complete = framing.finish();
   if (!complete.ok) throw new RangeError(complete.error);
   const { segments, sections, chained, binds, rebases, dylibs } = state;
+  const mappings = createFileMappingIndex(state.mappings, state.zeroFills);
   const offset = (address: bigint, size = 1): number => {
-    const matches = segments.filter(
-      (segment) =>
-        address >= segment.address &&
-        address + BigInt(size) <= segment.address + segment.size,
-    );
-    if (matches.length !== 1)
+    try {
+      return mappings.offset(address, size);
+    } catch (cause) {
+      // Metadata consumers use RangeError to retain partial facts when a
+      // pointer is unavailable. Mapping interpretation belongs to the shared
+      // image reader, including aliases that only overlap part of the span.
+      if (!(cause instanceof BinaryFormatFailure)) throw cause;
       throw new RangeError(
         `Unmapped or ambiguous metadata pointer ${hex(address)}`,
+        { cause },
       );
-    const segment = matches[0];
-    if (segment === undefined) throw new RangeError("Missing metadata segment");
-    return segment.offset + Number(address - segment.address);
+    }
   };
   return {
     segments,
@@ -257,6 +275,8 @@ interface LayoutState {
   readonly slice: number;
   readonly sliceEnd: number;
   readonly segments: Segment[];
+  readonly mappings: FileMapping[];
+  readonly zeroFills: ZeroFillMapping[];
   readonly sections: Section[];
   readonly dylibs: FixupCommands["dylibs"][number][];
   readonly binds: FixupCommands["binds"][number][];
@@ -286,21 +306,43 @@ const collectSegment = (
   if (!parsed.ok) throw new RangeError("Truncated segment command");
   const {
     address,
+    memorySize,
+    nameBytes,
     fileSize,
     fileOffset,
     protection,
     sectionCount: count,
     headerSize,
   } = parsed.value;
+  const admitted = admitMachoSegmentMapping(parsed.value, 64);
+  if (!admitted.ok) throw new RangeError(admitted.error.message);
   if (fileOffset + fileSize > BigInt(state.sliceEnd - state.slice))
     throw new RangeError("Segment file range exceeds target bytes");
+  const name = decodeMachoFixedName(nameBytes);
   state.segments.push({
     address,
     size: fileSize,
     offset: state.slice + Number(fileOffset),
     executable: (protection & 4) !== 0,
   });
-  if (fileOffset === 0n && fileSize > 0n) state.baseAddress ??= address;
+  if (!admitted.value.unmapped && name !== "__PAGEZERO")
+    state.mappings.push({
+      address,
+      size: Number(fileSize),
+      offset: state.slice + Number(fileOffset),
+    });
+  if (memorySize > fileSize && name !== "__PAGEZERO")
+    state.zeroFills.push({
+      address: address + fileSize,
+      size: memorySize - fileSize,
+    });
+  if (
+    !admitted.value.unmapped &&
+    name !== "__PAGEZERO" &&
+    fileOffset === 0n &&
+    fileSize > 0n
+  )
+    state.baseAddress ??= address;
   if (headerSize + count * 80 > size)
     throw new RangeError("Truncated section table");
   for (let section = 0; section < count; section++) {
@@ -315,10 +357,7 @@ const collectSegment = (
     if (sectionSize > BigInt(Number.MAX_SAFE_INTEGER))
       throw new RangeError("Section size exceeds exact numeric range");
     state.sections.push({
-      name: nameBytes
-        // ASCII decoding masks high bits and can fabricate known metadata names.
-        .toString("latin1")
-        .replace(/\0.*$/u, ""),
+      name: decodeMachoFixedName(nameBytes),
       address,
       size: Number(sectionSize),
     });
@@ -328,9 +367,6 @@ const collectSegment = (
 const LC_DYLD_INFO = 0x22;
 const LC_DYLD_INFO_ONLY = 0x80000022;
 const LC_DYLD_CHAINED_FIXUPS = 0x80000034;
-const DYLIB_COMMANDS: readonly number[] = [
-  0xc, 0x80000018, 0x8000001f, 0x20, 0x80000023,
-];
 
 /** Record fixup data ranges and dylib install names from one load command. */
 const collectFixupCommand = (
@@ -360,16 +396,27 @@ const collectFixupCommand = (
       const bound = range(at);
       if (bound.size > 0) state.binds.push({ ...bound, stream });
     }
-  } else if (DYLIB_COMMANDS.includes(kind)) {
-    if (size < 24) throw new RangeError("Truncated dylib command");
-    const nameOffset = bytes.readUInt32LE(cursor + 8);
-    if (nameOffset < 24 || nameOffset >= size)
+  } else if (machoDependencyCommand(kind) !== null) {
+    const parsed = readMachoDylibCommandFacts(
+      bytes.subarray(cursor, cursor + size),
+      true,
+    );
+    if (!parsed.ok) {
+      if (parsed.error._tag === "InvalidMachoDylibCommand")
+        throw new RangeError("Truncated dylib command");
+      if (parsed.error.reason === "unterminated")
+        throw new RangeError("Unterminated dylib install name");
       throw new RangeError("Dylib install name is outside its load command");
-    const end = bytes.indexOf(0, cursor + nameOffset);
-    if (end < 0 || end >= cursor + size)
-      throw new RangeError("Unterminated dylib install name");
+    }
+    const { nameBytes } = parsed.value;
     state.dylibs.push(
-      decodeMachoName(bytes.subarray(cursor + nameOffset, end)),
+      decodeMachoName(
+        Buffer.from(
+          nameBytes.buffer,
+          nameBytes.byteOffset,
+          nameBytes.byteLength,
+        ),
+      ),
     );
   }
 };

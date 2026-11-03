@@ -18,6 +18,7 @@ const fault = vi.hoisted(() => ({
   fail: false,
   span: "",
   short: false,
+  maximum: Number.POSITIVE_INFINITY,
   reads: 0,
   entered: 0,
   closeEntered: 0,
@@ -51,6 +52,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           if (key === "read")
             return async (...readArgs: unknown[]) => {
               fault.entered += 1;
+              if (typeof readArgs[2] === "number")
+                readArgs[2] = Math.min(readArgs[2], fault.maximum);
               const read = await Reflect.apply(target.read, target, readArgs);
               fault.reads += 1;
               fault.afterRead();
@@ -79,6 +82,7 @@ afterEach(() => {
   fault.fail = false;
   fault.span = "";
   fault.short = false;
+  fault.maximum = Number.POSITIVE_INFINITY;
   fault.reads = 0;
   fault.entered = 0;
   fault.closeEntered = 0;
@@ -92,9 +96,13 @@ afterEach(() => {
   fault.handles = [];
 });
 
-it.each([false, true])(
-  "preserves the span outcome and retries the exact handle when close fails (short=%s)",
-  async (short) => {
+it.each([
+  { short: false, maximum: Number.POSITIVE_INFINITY },
+  { short: false, maximum: 3 },
+  { short: true, maximum: 3 },
+])(
+  "preserves the span outcome and retries the exact handle when close fails ($short, $maximum)",
+  async ({ short, maximum }) => {
     const { cacheRoot, open: createClient } = await session(
       "rea-kuna-span-close-",
     );
@@ -113,6 +121,7 @@ it.each([false, true])(
         "program.asm",
       );
       fault.short = short;
+      fault.maximum = maximum;
       fault.fail = true;
       const result = await client.execute(
         "procedure_assembly",
@@ -126,15 +135,18 @@ it.each([false, true])(
       );
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanupResources).toContain(fault.span);
-      expect(fault.reads).toBe(1);
+      const reads = fault.reads;
+      if (!short && maximum === 3) expect(reads).toBeGreaterThan(1);
+      else expect(reads).toBe(1);
       expect(fault.closes).toBe(1);
       expect(fault.opens).toBe(1);
       const handle = fault.handles[0];
       if (handle === undefined) throw new Error("missing span descriptor");
       if (short) {
-        expect(result.error.cleanupPrimary?.userMessage).toContain(
-          "shorter than its recorded span",
-        );
+        expect(result.error.cleanupPrimary?.cause).toMatchObject({
+          _tag: "KunaDocumentError",
+          code: "span_short",
+        });
         expect(result.error.diagnostics?.span_read).toBeUndefined();
       } else {
         expect(result.error).toBeInstanceOf(ProviderCleanupError);
@@ -155,7 +167,7 @@ it.each([false, true])(
       expect(blocked.ok).toBe(false);
       if (blocked.ok) return;
       expect(blocked.error.cleanupIncomplete).toBe(true);
-      expect(fault.reads).toBe(1);
+      expect(fault.reads).toBe(reads);
       expect(fault.opens).toBe(1);
       expect(fault.closes).toBeGreaterThan(1);
       expect(handle.fd).toBeGreaterThanOrEqual(0);
@@ -278,6 +290,63 @@ it.each(
       fault.afterRead = () => undefined;
       await client.close();
       await foreign.close();
+      for (const handle of fault.handles)
+        if (handle.fd >= 0) await handle.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "cancels continued positive short span reads and releases the exact owner (closeFails=%s)",
+  async (closeFails) => {
+    const { cacheRoot, open: createClient } = await session(
+      "rea-kuna-span-short-cancel-",
+    );
+    const client = createClient();
+    try {
+      await run(client, "procedure_assembly", { procedure: "main" });
+      const [key] = await readdir(join(cacheRoot, "projects"));
+      fault.span = join(
+        cacheRoot,
+        "projects",
+        key ?? "",
+        "project",
+        "program.asm",
+      );
+      fault.maximum = 3;
+      fault.fail = closeFails;
+      const controller = new AbortController();
+      const reason = { requested: "continued span read" };
+      fault.afterRead = () => {
+        if (fault.reads === 2) controller.abort(reason);
+      };
+      const result = await client.execute(
+        "procedure_assembly",
+        { procedure: "main" },
+        { signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected continued-read cancellation");
+      const primary = closeFails ? result.error.cleanupPrimary : result.error;
+      expect(primary).toBeInstanceOf(AnalysisCancelledError);
+      expect(primary?.cause).toBe(reason);
+      expect(fault.reads).toBe(2);
+      const handle = fault.handles[0];
+      if (handle === undefined)
+        throw new Error("Missing cancelled span descriptor");
+      if (closeFails) {
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(handle.fd).toBeGreaterThanOrEqual(0);
+        fault.fail = false;
+        expect(await client.close()).toEqual({ ok: true, value: null });
+        expect(result.error.cleanupIncomplete).toBe(false);
+      }
+      expect(handle.fd).toBe(-1);
+    } finally {
+      fault.fail = false;
+      fault.afterRead = () => undefined;
+      fault.span = "";
+      await client.close();
       for (const handle of fault.handles)
         if (handle.fd >= 0) await handle.close();
     }

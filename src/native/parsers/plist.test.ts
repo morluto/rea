@@ -2,6 +2,10 @@ import { expect, it } from "vitest";
 import { buildBinary, type PlistValue } from "plist";
 import { MAX_JSON_DEPTH, jsonValueSchema } from "../../domain/jsonValue.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { plistUidValue } from "../../domain/apple/plistUid.js";
+import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
+import { projectPlistValue } from "../../domain/apple/plistValue.js";
+import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   decodeBinaryPlistScalars,
   scanBinaryPlistScalars,
@@ -19,6 +23,35 @@ import {
   binaryPlistObjectTable,
   binaryPlistWithOverlappingDateAndData,
 } from "../../../tests/fixtures/binaryPlistObjectTable.js";
+
+it("retains binary dictionary identity after native plist number projection", () => {
+  const result = parsePlistBinary(
+    Buffer.from(buildBinary({ nested: { CF$UID: 7 }, reference: { UID: 7 } })),
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  const value = result.value.value as Record<string, unknown>;
+  expect(value).toEqual({ nested: { CF$UID: 7 }, reference: { UID: 7 } });
+  expect(plistUidValue(value["nested"])).toBeUndefined();
+  expect(plistUidValue(value["reference"])).toBe(7);
+});
+
+it("projects wide integers in binary CF$UID dictionaries as data", () => {
+  const bytes = Buffer.alloc(27 + 3 + 32);
+  bytes.write("bplist00");
+  bytes.set([0xd1, 1, 2, 0x56], 8);
+  bytes.write("CF$UID", 12);
+  bytes[18] = 0x13;
+  bytes.writeBigInt64BE(9007199254740993n, 19);
+  const result = parsePlistBinary(
+    binaryPlistObjectTable(bytes, [8, 11, 18], 27),
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  expect(result.value.value).toEqual({
+    CF$UID: { $plist_type: "integer", decimal: "9007199254740993" },
+  });
+});
 
 it.each([
   "binary data",
@@ -877,3 +910,86 @@ it("retains nested own dictionary names consistently in native JSON, XML and bin
     );
   }
 });
+
+it.each([
+  [
+    "integer",
+    "<integer>9007199254740992</integer>",
+    "9007199254740992",
+    { $plist_type: "integer", decimal: "9007199254740992" },
+  ],
+  [
+    "real",
+    "<real>9007199254740992</real>",
+    "9007199254740992",
+    9007199254740992,
+  ],
+  [
+    "integer/real collision",
+    "<integer>9007199254740992</integer><real>9007199254740992</real>",
+    "9007199254740992,9007199254740992",
+    9007199254740992,
+  ],
+] as const)(
+  "shares %s association across native JSON, XML and archive projection",
+  (_label, elements, json, expected) => {
+    const xml = `<plist><array>${elements}</array></plist>`;
+    const nativeJson = readPlistJson(`[${json}]`).project(xml);
+    const nativeXml = parsePlistXml(xml);
+    if (!nativeJson.ok) throw nativeJson.error;
+    if (!nativeXml.ok) throw nativeXml.error;
+    const decoded = parseXmlPropertyList(xml);
+    const numbers = createPlistNumberProjection(decoded.numberLiterals);
+    const archive = numbers.project(projectPlistValue(decoded.value).value);
+    const values = json.split(",").map(() => expected);
+    expect(nativeJson.value.value).toEqual(values);
+    expect(nativeXml.value.value).toEqual(values);
+    expect(archive).toEqual(values);
+  },
+);
+
+it("retains JSON source spelling when XML integers collide after rounding", () => {
+  const xml =
+    "<plist><array><integer>9007199254740992</integer><integer>9007199254740993</integer></array></plist>";
+  const json = readPlistJson("[9007199254740992,9007199254740993]").project(
+    xml,
+  );
+  const converted = parsePlistXml(xml);
+  if (!json.ok) throw json.error;
+  if (!converted.ok) throw converted.error;
+  expect(json.value.value).toEqual([
+    { $plist_type: "integer", decimal: "9007199254740992" },
+    { $plist_type: "integer", decimal: "9007199254740993" },
+  ]);
+  expect(converted.value.value).toEqual([9007199254740992, 9007199254740992]);
+  expect(json.value.limitations).toEqual([
+    expect.stringContaining("2 integer value(s)"),
+  ]);
+  expect(converted.value.limitations).toEqual([
+    expect.stringContaining("XML conversion"),
+    expect.stringContaining("2 number(s)"),
+  ]);
+});
+
+it.each(["\n", "\r\n", "\r", "\u2028", "\u2029"])(
+  "retains native OpenStep fields after line comments ending in %j",
+  (newline) => {
+    const source =
+      "// exported metadata" +
+      newline +
+      "{ CFBundleIdentifier = org.example.original; // note" +
+      newline +
+      "CFBundleName = Retained;\n }";
+    const result = parsePlistXmlSource(Buffer.from(source));
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        value: {
+          CFBundleIdentifier: "org.example.original",
+          CFBundleName: "Retained",
+        },
+        bundle: { identifier: "org.example.original", name: "Retained" },
+      },
+    });
+  },
+);

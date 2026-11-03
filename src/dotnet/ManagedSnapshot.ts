@@ -40,6 +40,10 @@ interface ManagedSnapshot extends ManagedSourceObservation {
   readonly bytes: Buffer;
 }
 
+interface ManagedSnapshotReadOptions extends RegularFileReadOptions {
+  readonly expectedSha256?: string;
+}
+
 /** Admit one observed source digest before any parser or cache consumes its bytes. */
 export const verifyManagedSourceIdentity = (
   target: { readonly path: string; readonly sha256: string },
@@ -77,7 +81,7 @@ const managedSnapshotCapacityError = (
 export const readManagedSnapshot = async (
   path: string,
   operation: string,
-  options: RegularFileReadOptions = {},
+  options: ManagedSnapshotReadOptions = {},
 ): Promise<ManagedSnapshot> => {
   return readManagedFile(
     path,
@@ -106,7 +110,7 @@ export const readManagedSnapshot = async (
 export const hashManagedSource = async (
   path: string,
   operation: string,
-  options: RegularFileReadOptions = {},
+  options: ManagedSnapshotReadOptions = {},
 ): Promise<ManagedSourceObservation> =>
   readManagedFile(
     path,
@@ -142,24 +146,42 @@ const readManagedFile = <Value extends ManagedSourceObservation>(
   path: string,
   operation: string,
   read: (handle: FileHandle, metadata: Stats) => Promise<Value>,
-  options: RegularFileReadOptions,
+  options: ManagedSnapshotReadOptions,
 ): Promise<Value> =>
   withRegularFileCompletion(path, read, options)
     .then(({ value, cancellation }) => {
-      if (cancellation !== undefined)
-        throw new AnalysisCancelledError(operation, {
-          cause: cancellation.reason,
-          partialObservation: {
-            kind: "file-snapshot-hash",
-            path,
-            bytes: value.byteLength,
-            sha256: value.sha256,
-          },
+      if (cancellation !== undefined) {
+        const identity =
+          options.expectedSha256 === undefined
+            ? undefined
+            : verifyManagedSourceIdentity(
+                { path, sha256: options.expectedSha256 },
+                value,
+                operation,
+              );
+        const failure =
+          identity !== undefined && !identity.ok
+            ? identity.error
+            : new AnalysisCancelledError(operation, {
+                cause: cancellation.reason,
+              });
+        throw failure.retainPartialObservation({
+          kind: "file-snapshot-hash",
+          path,
+          bytes: value.byteLength,
+          sha256: value.sha256,
         });
+      }
       return value;
     })
     .catch((cause: unknown) => {
-      throw normalizeManagedReadFailure(cause, path, operation, options.signal);
+      throw normalizeManagedReadFailure(
+        cause,
+        path,
+        operation,
+        options.signal,
+        options.expectedSha256,
+      );
     });
 
 /** Keep cleanup ownership and the original typed read failure at this boundary. */
@@ -168,6 +190,7 @@ const normalizeManagedReadFailure = (
   fallbackPath: string,
   operation: string,
   signal?: AbortSignal,
+  expectedSha256?: string,
 ): unknown => {
   // An exact caller reason is opaque, even if it resembles a cleanup record.
   if (signal?.aborted === true && cause === signal.reason)
@@ -177,6 +200,7 @@ const normalizeManagedReadFailure = (
     fallbackPath,
     operation,
     signal,
+    expectedSha256,
   );
   if (cleanupError !== undefined) return cleanupError;
   return normalizeReadFailure(cause, fallbackPath, operation, signal);
@@ -188,6 +212,7 @@ export const managedCleanupError = (
   fallbackPath: string,
   operation: string,
   signal?: AbortSignal,
+  expectedSha256?: string,
 ): AnalysisError | undefined => {
   if (cause instanceof RegularFileCleanupFailure) {
     const cancellation = regularFileCancellation(cause);
@@ -198,6 +223,14 @@ export const managedCleanupError = (
       { cause, operation },
     );
     bindRegularFileCleanup(cause, cleanup);
+    const identity =
+      cause.outcome.kind === "completed" && expectedSha256 !== undefined
+        ? verifyManagedSourceIdentity(
+            { path: cause.path, sha256: expectedSha256 },
+            cause.outcome.value as ManagedSourceObservation,
+            operation,
+          )
+        : undefined;
     const failure =
       cause.outcome.kind === "failed"
         ? normalizeReadFailure(
@@ -206,11 +239,13 @@ export const managedCleanupError = (
             operation,
             signal,
           )
-        : cancellation === undefined
-          ? undefined
-          : new AnalysisCancelledError(operation, {
-              cause: cancellation.reason,
-            });
+        : identity !== undefined && !identity.ok
+          ? identity.error
+          : cancellation === undefined
+            ? undefined
+            : new AnalysisCancelledError(operation, {
+                cause: cancellation.reason,
+              });
     // This boundary produces only these snapshot facts. The descriptor owner
     // confirms completion independently of a failed final close.
     if (cause.outcome.kind === "completed") {

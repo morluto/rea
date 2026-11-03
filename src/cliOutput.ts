@@ -1,8 +1,3 @@
-export {
-  normalizeCliArguments,
-  splitIncurBuiltinArguments,
-  type IncurBuiltinArgumentSplit,
-} from "./cliBuiltinArguments.js";
 import {
   declaredSensitiveValues,
   splitIncurBuiltinArguments,
@@ -24,19 +19,25 @@ const UNSUPPORTED_OUTPUT_COMBINATION_MESSAGE =
   "Token windows cannot preserve structured output. Remove --token-limit/--token-offset and use --filter-output or command pagination.";
 
 type StructuredOutputFormat = "json" | "jsonl" | "yaml";
-/** Output formats Incur renders, in its documented order. */
-export const CLI_OUTPUT_FORMATS = [
+/** Formats that render a complete document, including target-free commands. */
+export const CLI_DOCUMENT_OUTPUT_FORMATS = [
   "toon",
   "json",
   "yaml",
   "md",
   "jsonl",
 ] as const;
+/** Delimited formats require an explicitly selected row collection. */
+export const CLI_OUTPUT_FORMATS = [
+  ...CLI_DOCUMENT_OUTPUT_FORMATS,
+  "csv",
+  "tsv",
+] as const;
 export type CliOutputFormat = (typeof CLI_OUTPUT_FORMATS)[number];
-const INCUR_OUTPUT_FORMATS: ReadonlySet<string> = new Set(CLI_OUTPUT_FORMATS);
+const CLI_OUTPUT_FORMAT_SET: ReadonlySet<string> = new Set(CLI_OUTPUT_FORMATS);
 
 const isCliOutputFormat = (value: string): value is CliOutputFormat =>
-  INCUR_OUTPUT_FORMATS.has(value);
+  CLI_OUTPUT_FORMAT_SET.has(value);
 
 /**
  * Render a document REA writes outside Incur's command pipeline. JSON follows
@@ -59,9 +60,17 @@ export const cliOutputValueRejection = (
   value: string,
 ): string | undefined => {
   if (flag === "--format")
-    return INCUR_OUTPUT_FORMATS.has(value)
+    return CLI_OUTPUT_FORMAT_SET.has(value)
       ? undefined
-      : `Invalid format: "${value}". Expected one of: ${[...INCUR_OUTPUT_FORMATS].join(", ")}`;
+      : `Invalid format: "${value}". Expected one of: ${[...CLI_OUTPUT_FORMAT_SET].join(", ")}`;
+  if (flag === "--columns") {
+    const columns = value.split(",").map((column) => column.trim());
+    return columns.length > 0 &&
+      columns.every((column) => column.length > 0) &&
+      new Set(columns).size === columns.length
+      ? undefined
+      : `Invalid value for --columns: "${value}". Expected unique, nonempty comma-separated column names.`;
+  }
   if (
     (flag === "--token-limit" || flag === "--token-offset") &&
     (!Number.isSafeInteger(Number(value)) ||
@@ -87,7 +96,8 @@ export type CliOutputArgumentValidation =
 
 interface CliOutputControls {
   readonly filterOutput: string | undefined;
-  readonly format: string;
+  readonly columns: readonly string[] | undefined;
+  readonly format: CliOutputFormat;
   /** Whether `--json` or `--format` selected the format, rather than the default. */
   readonly formatExplicit: boolean;
   readonly fullOutput: boolean;
@@ -110,11 +120,12 @@ export interface ParsedCliOutputArguments extends CliOutputControls {
 export const parseCliOutputArguments = (
   arguments_: readonly string[],
 ): ParsedCliOutputArguments => {
-  let format: string = "toon";
+  let format: CliOutputFormat = "toon";
   let rootVersion = false;
   let versionEligible = true;
   let formatExplicit = false;
   let filterOutput: string | undefined;
+  let columns: readonly string[] | undefined;
   let fullOutput = false;
   let missingValue: string | undefined;
   let invalidValue: string | undefined;
@@ -125,6 +136,7 @@ export const parseCliOutputArguments = (
     const parseError = invalidValue !== undefined;
     const controls: CliOutputControls = {
       filterOutput,
+      columns,
       format,
       formatExplicit,
       fullOutput,
@@ -146,13 +158,15 @@ export const parseCliOutputArguments = (
     };
     return {
       ...controls,
-      validation: validateCliOutputControls(controls),
+      validation: validateCliOutputControls(controls, rootVersion),
       versionReportFormat:
         rootVersion &&
         versionEligible &&
         formatExplicit &&
         !parseError &&
         missingValue === undefined &&
+        format !== "csv" &&
+        format !== "tsv" &&
         isCliOutputFormat(format)
           ? format
           : undefined,
@@ -166,7 +180,11 @@ export const parseCliOutputArguments = (
       const next = arguments_[index + 1];
       if (next === undefined || next.startsWith("-")) rootVersion = true;
       else versionEligible = false;
-    } else if (argument !== "--json" && argument !== "--format")
+    } else if (
+      argument !== "--json" &&
+      argument !== "--format" &&
+      argument !== "--timings"
+    )
       versionEligible = false;
     // Incur scans builtins across `--` and reads spaced value forms, which
     // normalizeCliArguments has produced. Mirror those effective values.
@@ -180,7 +198,7 @@ export const parseCliOutputArguments = (
       if (value) {
         const rejection = cliOutputValueRejection(argument, value);
         if (rejection !== undefined) invalidValue ??= rejection;
-        else {
+        else if (isCliOutputFormat(value)) {
           format = value;
           formatExplicit = true;
         }
@@ -191,6 +209,16 @@ export const parseCliOutputArguments = (
     if (argument === "--filter-output") {
       if (arguments_[index + 1]) {
         filterOutput = arguments_[index + 1];
+        index += 1;
+      } else missingValue ??= argument;
+      continue;
+    }
+    if (argument === "--columns") {
+      const value = arguments_[index + 1];
+      if (value) {
+        const rejection = cliOutputValueRejection(argument, value);
+        if (rejection !== undefined) invalidValue ??= rejection;
+        else columns = value.split(",").map((column) => column.trim());
         index += 1;
       } else missingValue ??= argument;
       continue;
@@ -235,13 +263,18 @@ export const missingCliOutputValueMessage = (flag: string): string =>
   `${flag} requires a value, as in ${flag} <value> or ${flag}=<value>.`;
 
 /** Reject output controls that cannot safely produce a complete result. */
-const validateCliOutputControls = ({
-  filterOutput,
-  format,
-  missingValue,
-  invalidValue,
-  tokenWindow,
-}: CliOutputControls): CliOutputArgumentValidation => {
+const validateCliOutputControls = (
+  {
+    filterOutput,
+    columns,
+    format,
+    missingValue,
+    invalidValue,
+    tokenWindow,
+    tokenCount,
+  }: CliOutputControls,
+  rootVersion: boolean,
+): CliOutputArgumentValidation => {
   if (invalidValue !== undefined)
     return {
       ok: false,
@@ -256,6 +289,47 @@ const validateCliOutputControls = ({
       code: "INVALID_OUTPUT_FILTER",
       message:
         "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output.",
+    };
+  const delimited = format === "csv" || format === "tsv";
+  // Name missing delimited controls before their combination checks; preserve
+  // existing precedence for Incur's other output flags.
+  if (missingValue !== undefined && (delimited || missingValue === "--columns"))
+    return {
+      ok: false,
+      format: format === "yaml" || format === "jsonl" ? format : "json",
+      code: "MISSING_OUTPUT_VALUE",
+      message: missingCliOutputValueMessage(missingValue),
+    };
+  if (delimited && rootVersion)
+    return {
+      ok: false,
+      format: "json",
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+      message:
+        "CSV/TSV output is available only for selected row collections, not --version.",
+    };
+  if (delimited && (filterOutput === undefined || columns === undefined))
+    return {
+      ok: false,
+      format: "json",
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+      message:
+        "CSV/TSV output requires --filter-output <row-array-path> and --columns <column,...>; nested Evidence is not flattened.",
+    };
+  if (!delimited && columns !== undefined)
+    return {
+      ok: false,
+      format: format === "yaml" || format === "jsonl" ? format : "json",
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+      message: "--columns is available only with --format csv or --format tsv.",
+    };
+  if (delimited && (tokenWindow || tokenCount))
+    return {
+      ok: false,
+      format: "json",
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+      message:
+        "Token counting and token windows cannot preserve CSV/TSV records or metadata. Remove --token-count/--token-limit/--token-offset.",
     };
   if (
     tokenWindow &&

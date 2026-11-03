@@ -21,10 +21,8 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import {
-  functionBodySchema,
-  functionDossierSchema,
-} from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { functionBodySchema } from "../dist/domain/native/functionBody.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildDosMzFixture } from "../tests/conformance/ghidra/dos-mz-fixture.mjs";
 import {
@@ -127,6 +125,13 @@ try {
   assert.equal(image.module_bytes, fixture.module_bytes);
   assert.equal(image.entry.linear_address, expected.entry);
   assert.ok(image.checks.every((check) => check.matched));
+  assert.ok(image.observations.relocations.length > 0);
+  assert.ok(
+    image.observations.relocations.every(
+      ({ symbol }) => symbol === null || typeof symbol === "string",
+    ),
+    "Each real Ghidra relocation must record its symbol observation",
+  );
   const cliImage = await cliEvidence("inspect-native-load-image");
   // Snapshot filenames are session-specific. Every measured byte/range/check is stable.
   const stableImage = (value) => ({
@@ -380,17 +385,33 @@ try {
     arguments: { procedure: "0xffffffffffffffff" },
   });
   assert.equal(invalid.isError, true, "Unmapped address did not fail");
+  // The CLI reads a fresh session, so compare it with MCP before the boundary
+  // helper's temporary rename and restoration.
+  const entryWindow = await call("read_function_instructions", {
+    procedure: identities.entry.address,
+  });
+  const cliWindow = await cliEvidence("instructions", identities.entry.address);
+  assert.deepEqual(cliWindow.normalized_result, entryWindow);
   await verifyGhidraAddressBoundaries(
     client,
     identities.entry.address,
     cliEvidence,
   );
-  const cliWindow = await cliEvidence("instructions", identities.entry.address);
+  const entrySymbol = entryWindow.procedure.symbol;
+  assert.ok(entrySymbol != null, "The DOS entry needs observed symbol facts");
+  // Restoring the name is itself a user edit, so Ghidra records user provenance.
   assert.deepEqual(
-    cliWindow.normalized_result,
     await call("read_function_instructions", {
       procedure: identities.entry.address,
     }),
+    {
+      ...entryWindow,
+      procedure: {
+        ...entryWindow.procedure,
+        symbol: { ...entrySymbol, source: "user_defined" },
+      },
+    },
+    "Restoring the entry name changed more than its symbol provenance",
   );
   assert.equal(
     digest(await readFile(targetPath)),

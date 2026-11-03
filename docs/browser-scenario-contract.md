@@ -51,6 +51,30 @@ covers endpoint discovery only. The following WebSocket handshake and
 `Target.attachToTarget` each use `command_timeout_ms`. `capture.limits` controls retained event and network-content
 budgets; it does not change those liveness deadlines.
 
+## Validate a scenario before running it
+
+`validate-browser-scenario INPUT_JSON` checks one scenario against the same
+`browserScenarioSchema` refinement that `capture_browser_scenario` admits, and
+stops there. `INPUT_JSON` may be inline JSON, a JSON file path, or `-` for
+standard input.
+
+```bash
+rea validate-browser-scenario ./browser-scenario.json --json
+```
+
+A valid scenario reports `{"valid":true,"actions":<count>,"secrets":<count>}`
+and exits 0. An invalid one exits 1 and reports the same field paths capture
+would report, so a correction made here is the correction capture needs:
+duplicate or reserved step IDs, duplicate secret identities and
+environment-variable names, undeclared secret references, request-step
+violations, and unknown fields.
+
+Validation performs no browser discovery, launch, attachment, or navigation and
+constructs no provider. It does not read secret environment variables, so a
+scenario whose declared variables are unset still validates; the missing-value
+failure belongs to capture. A schema-valid scenario does not prove that the
+executable or target is available on the host.
+
 ## Minimal launch example
 
 Save this as `browser-scenario.json`, replacing the executable path with an
@@ -173,6 +197,12 @@ distinction: it closes and deletes provider-owned profiles, but only disconnects
 from an external CDP browser. Real-browser verification checks both outcomes and
 confirms that an attached external browser remains alive.
 
+CDP connections leave Playwright's default-context overrides disabled. The
+selected page receives the declared scenario environment and temporary focus
+emulation, so actions can complete while that page is in the background.
+Its environment owner clears these overrides before disconnecting; other pages
+keep their media settings. Connecting does not create a bootstrap page.
+
 That cleanup requires REA to remain running. Abrupt termination, including
 Windows process-tree termination or POSIX `SIGKILL`, can leave the launch
 profile and Playwright artifacts behind. A profile can retain cookies, history,
@@ -207,7 +237,8 @@ HTTP(S) URLs may include ordinary query values and fragments directly. Use
 ordered structured query entries when a value needs to reference a declared
 environment-backed secret. Form, storage, and cookie values are either literal
 strings or declared secret references; request step headers can also read a
-cookie or local storage value from the page. Raw URL userinfo credentials are rejected.
+cookie or local storage value from the page, and request steps and `goto`
+destinations can send [saved values](#saved-values). Raw URL userinfo credentials are rejected.
 Captured credential-header
 values are not retained, and declared secret values are redacted automatically.
 A secret may be declared solely to
@@ -380,8 +411,10 @@ data you may change. This scenario creates one item:
 - Request steps follow no redirects: a redirect answer fails the step, and
   nothing is sent to the location it names, though a write the redirect
   answered may already have been applied. `expected_status` cannot name a 3xx
-  status. Give the path the redirect names; with header values selected, the
-  capture records its `Location`.
+  status. Manual redirects can be opaque to the page and may not produce a
+  response event; their status and `Location` can therefore be unavailable even
+  when network events and header values were selected. Such captures report
+  incomplete event coverage.
 - Header values are literals, declared secrets, a cookie the browser holds for
   the request URL (`{"source": "cookie", "name"}`, HttpOnly cookies included,
   whose value the page's scripts can then see while the request runs), or a
@@ -400,6 +433,17 @@ data you may change. This scenario creates one item:
   by default) get smaller: after a 32-character `X-CSRFToken` value, a body over
   about 47 KiB is kept as `unavailable`. Raise `capture.limits` when the
   application's responses are larger.
+- A header can send Basic credentials, `{"source": "basic_credentials", "parts":
+  [username, password]}`: the base64 of `username:password`, after a `prefix`
+  such as `"Basic "` or with none, as some APIs take encoded credentials in
+  their own header. Each part is a literal, a declared secret, a saved value, a
+  cookie or a local storage entry, so a header a frontend builds from a login
+  token can be sent too; the password is never a literal other than empty, since
+  Evidence records literals as written, and a username with a colon fails the
+  step, since Basic authentication ends the username at its first colon. The
+  encoded value is redacted however short, as
+  `[REDACTED:page:<step_id>.<header>]`, and parts read from the page are
+  redacted as page values are.
 - Validation refuses a header name given twice in a step, header names a
   page's `fetch` cannot set, such as `Cookie`, `Origin`, `Host` or `Sec-*`, and
   `User-Agent`, which Chrome drops; it refuses line breaks and other ASCII
@@ -424,6 +468,143 @@ page requests: select network content (bodies or header values) to record it.
 Captures with request steps state in `limitations` that the steps sent their
 declared requests through the page's fetch. A scenario without request steps
 is unchanged.
+
+## Saved values
+
+A step can keep a string or number from a JSON response, by name, and a later
+step can send it, so a scenario can read back, edit and delete an object whose
+id the application assigns:
+
+```json
+{
+  "browser": {
+    "mode": "launch",
+    "executable_path": "/absolute/path/to/chromium"
+  },
+  "start_url": { "url": "http://127.0.0.1:3000/items" },
+  "actions": [
+    {
+      "step_id": "save-item-1",
+      "action": "click",
+      "timeout_ms": 10000,
+      "locator": { "kind": "role", "role": "button", "name": "Save" },
+      "save_response": {
+        "method": "POST",
+        "path": "/api/items",
+        "save": [{ "name": "item_1", "json_pointer": "/id" }]
+      }
+    },
+    {
+      "step_id": "open-item-1",
+      "action": "goto",
+      "timeout_ms": 10000,
+      "destination": { "url": "http://127.0.0.1:3000/items/{saved:item_1}" },
+      "wait_until": "load"
+    },
+    {
+      "step_id": "copy-item-1",
+      "action": "request",
+      "timeout_ms": 10000,
+      "method": "POST",
+      "path": "/api/items/{saved:item_1}/copies",
+      "json": {
+        "source_id": "{saved:item_1}",
+        "title": "Copy of {saved:item_1}"
+      },
+      "expected_status": [201]
+    }
+  ]
+}
+```
+
+- A `request` step saves with `save: [{name, json_pointer, secret}]`, from its
+  own response. A `click` or `press` step saves with `save_response: {method,
+  path, save}`, from a newly observed matching response while the step waits.
+  The recorder watches before the action and excludes requests already running,
+  such as an earlier autosave. Method/path matching does not prove that the UI
+  caused the request: use a path that distinguishes the intended operation from
+  background polling. Multiple observed matches before binding fail as ambiguous;
+  requests starting after this observation window cannot be ruled out. It matches the method and a path on the
+  start origin as the browser spells it, so a path may name `My List` or
+  `My%20List` (`{*}` matches one segment, and the query is ignored), and fails
+  the step unless a 2xx JSON response arrives before its `timeout_ms`; one still
+  being read when the step times out or is cancelled saves nothing. A pointer
+  that names no string or number fails the step, so later steps never send a
+  missing value, as does a response over 4,000,000 characters: a request step
+  stops reading and aborts its fetch there. A UI step reads a body only when
+  its decoded size is bounded at 12,000,000 bytes or less: its received size,
+  or the declared Content-Length of one served from cache, times 1032 for each
+  gzip or deflate coding, the most DEFLATE expands. Other codings and unknown
+  or zero sizes are refused before materializing the body; decoded text over
+  the character limit also fails. The UI action may already have applied.
+- `{saved:name}` sends a saved value in a request step's `path`, including its
+  query, and in a `goto` destination's `url`, percent-encoded; a destination's
+  structured `query` values are sent as declared. A saved value that makes a
+  path segment `.` or `..`, alone or with the text beside it (including `%2e`),
+  fails the step, since the URL would drop it. In a request step's `json` body,
+  a string that is only `{saved:name}` becomes the saved value with the JSON
+  type it was saved with, so a saved number id is sent as a number, and
+  `{saved:name}` inside a longer string is filled as text. A header value or
+  Basic credentials part sends one as `{"source": "saved", "name"}`. Other
+  braces, such as `{id}`, are sent as written, and so is a percent-encoded
+  `%7Bsaved:name%7D` anywhere but a `goto` URL, whose parsed form spells the
+  braces that way.
+- Validation refuses a saved value that no earlier step saves. A later save of
+  the same name replaces the value. An integer past 2^53, which JSON parsing
+  would round to another number, and a number that is not finite, such as
+  `1e400`, negative zero, or a value that underflows to zero, such as `1e-400`, fail the step
+  that saves it.
+- A scenario keeps at most 4,000,000 characters of saved values at once,
+  counting distinct retained redaction spellings, including trimmed variants,
+  of values saved as secret. Replacing a binding releases its live value
+  charge, while secret spellings remain protected for the scenario lifetime.
+  A save past the budget fails before changing the binding.
+- A value saved with `secret: true` is redacted however short, as a declared
+  secret is, as `[REDACTED:page:<step_id>.<name>]`. The selected source
+  response is protected before retaining its body or header values, including
+  when only headers were requested. If that body cannot be read safely, its
+  body and header values remain unavailable. Before publishing the capture,
+  the selected source transaction's earlier URL, request headers and request
+  body are also protected using the admitted values. Unresolved source values
+  withhold that transaction's affected metadata/content with an explicit
+  limitation. Before publication, retained events are rechecked
+  with the final marked-response values, including immediate follow-up requests
+  and their response bodies, console/page errors, WebSocket text and event URL/name fields. Learned redaction facts are independent of source-identity readiness. Unknown source values withhold only the selected
+  source transaction. Other saved values, such as ids, stay visible, since
+  environments model them. The environment build warns about saved values
+  named like credentials that are not marked secret
+  (`credential-named-saved-values`).
+- Page-derived cookie/local-storage values and constructed Basic credentials
+  remain redacted only from observations made after they were read/built.
+  They do not retroactively rewrite earlier facts. The final event projection
+  borrows only declared and response-marked patterns; promotion of an already
+  held page value to an explicit response secret preserves its first marker.
+  Projection state is session-local, references admitted pattern/byte owners,
+  and is invalidated on admission or response classification changes.
+- Screenshots are withheld as `missing` from the start when the scenario plans
+  any response save marked `secret: true`, page-derived or Basic authentication
+  header values, or whenever nonempty sensitive values
+  are already known. Raw pixels cannot be safely text-redacted, so the provider
+  does not request pixels in those cases. This also protects earlier steps and
+  partial failures without retaining an image to scrub later. Other requested
+  artifacts remain available; affected screenshot/aggregate completeness is
+  partial and is not eligible for equality.
+- Saved URLs and expanded request JSON are admitted before building their expanded strings or
+  serializing. Its allowance is the smaller of Node's string limit and
+  one sixteenth of current V8 available heap bytes, allowing for the expanded
+  tree, serialization, Playwright transport and browser-side copies. Size
+  accounting includes JSON escaping and repeated references; each distinct
+  saved value's size is measured once per request. An oversized request fails
+  before browser dispatch; the complete request envelope, including repeated
+  header values, is checked as well. URL encoding uses a conservative
+  nine-characters-per-UTF-16-unit allowance before encoding a saved value.
+  Reduce the payload/repetitions, or raise the parent
+  Node heap and restart; this is a conservative allocation estimate, not a
+  measurement or guarantee of browser/process-family memory.
+- Evidence records a request step's empty `save` list as absent, so a scenario
+  that saves nothing records the same parameters and `scenario_sha256` as
+  before saved values existed, and REA versions without saved values read its
+  captures.
 
 ## Network evidence
 
@@ -472,8 +653,9 @@ the browser's wall-clock start, and `elapsed_ms`, its time from that start to
 the end of the response, when the browser reports them. The environment views
 time scenario records from these, as HAR entries are timed: the browser's start
 where it reported one, else `observed_at`, which trails it by up to tens of
-milliseconds while REA reads other responses, and a duration of 0 where the
-browser reported none. Captures made before these fields existed lack them and
+milliseconds while REA reads other responses. A duration is retained only from a
+unique terminal event that reports it; missing or ambiguous durations stay
+omitted, while an explicitly reported zero remains zero. Captures made before these fields existed lack them and
 are read in record order. REA versions before them refuse captures that carry
 them. Scenario comparisons ignore all three (`ignore_network_request_timing`).
 Requests sharing a URL remain distinct. Redirects link to the preceding

@@ -29,7 +29,7 @@ export class GoBinaryService {
   constructor(readonly provider: GoBinaryPort) {}
 
   close(): Promise<void> {
-    return this.provider.close?.() ?? Promise.resolve();
+    return this.provider.close();
   }
 
   /** Inspect one explicitly selected file without acquiring a binary session. */

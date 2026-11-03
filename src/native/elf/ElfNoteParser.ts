@@ -1,9 +1,10 @@
 import {
-  observeElfSectionName,
-  elfSectionNameText,
-} from "../../domain/elfSectionName.js";
+  observeElfStringTableEntry,
+  elfStringTableText,
+} from "../../domain/elfStringTable.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
+import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { createHash } from "node:crypto";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -128,7 +129,7 @@ class ElfReader {
     offset: number,
     text: TextBudget,
   ): { name: string | null; limitation: string | null } {
-    const observed = observeElfSectionName(
+    const observed = observeElfStringTableEntry(
       table,
       offset,
       text.limit - text.used + 1,
@@ -141,7 +142,7 @@ class ElfReader {
       };
     chargeText(text, observed.contentBytes);
     return {
-      name: elfSectionNameText(observed),
+      name: elfStringTableText(observed),
       limitation:
         observed.state === "truncated"
           ? "ELF section names are incomplete because a name is not NUL-terminated."
@@ -308,6 +309,8 @@ export const parseElfNotes = (
     sections.offset > BigInt(Number.MAX_SAFE_INTEGER)
   )
     return fail("ELF offset or size exceeds a safe integer.");
+  const presence = validateElfSectionTablePresence(raw.value);
+  if (!presence.ok) return fail(presence.error);
   const phoff = Number(programs.offset);
   const shoff = Number(sections.offset);
   const phentsize = programs.width;

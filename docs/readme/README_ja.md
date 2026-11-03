@@ -20,7 +20,7 @@
 
 **[ウェブサイト](https://rea.tools/ja/) · [ガイド](https://rea.tools/ja/guides/) · [事例](https://rea.tools/ja/showcase/)**
 
-[クイックスタート](#クイックスタート) · [REA の仕組み](#rea-の仕組み) · [分析できる対象](#分析できる対象) · [事例](#事例) · [RL 環境を構築する](#build-rl-environments) · [よくある質問](#よくある質問) · [GNU objdump・Rizin ツール](../reverse-engineering-tools.md) · [ドキュメント](#ドキュメント)
+[クイックスタート](#クイックスタート) · [REA の仕組み](#rea-の仕組み) · [分析できる対象](#分析できる対象) · [事例](#事例) · [RL 環境を構築する](#build-rl-environments) · [よくある質問](#よくある質問) · [ドキュメント](#ドキュメント)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@
 
 REA はエージェントを分析ツールにつなぎ、ネイティブバイナリ、JavaScript や Electron のアプリ、.NET アセンブリ、ウェブサイトを調べられるようにします。同じツールをターミナルからも使えます。分析はローカルで実行され、結果には各結論を裏付ける根拠と制限事項が含まれます。
 
-セットアップはエージェントに REA を登録し、対応するワークフロー指示をインストールします。ネイティブ解析には既存の Hopper、Ghidra、IDA を使用でき、承認すれば Hopper をインストールできます。静的 JavaScript 解析にネイティブ解析エンジンは不要です。
+セットアップはエージェントに REA を登録し、対応するワークフロー指示をインストールします。ネイティブ解析には既存の Hopper、Ghidra、IDA、Kuna を使用でき、承認すれば Hopper をインストールできます。静的 JavaScript 解析にネイティブ解析エンジンは不要です。
 
 > **[REA のウェブサイト](https://rea.tools/ja/)**で、セットアップ手順、図解ガイド、実際の事例を確認できます。
 
@@ -151,7 +151,7 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 
 | 対象                             | REA が返すもの                                                                              | 要件とガイド                                                                                                                                   |
 | -------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| ネイティブバイナリ               | 疑似コード、アセンブリ、文字列、シンボル、呼び出し、参照                                    | Hopper、Ghidra、または IDA；[ネイティブ分析](../native-investigation.md)                                                                       |
+| ネイティブバイナリ               | 疑似コード、アセンブリ、文字列、シンボル、呼び出し、参照                                    | Hopper、Ghidra、IDA、または Kuna；[ネイティブ分析](../native-investigation.md)                                                                 |
 | オフライン ELF レイアウト        | セクション、セグメント、元のシンボル／再配置情報、静的解析によるセキュリティ対策の候補      | Linux x64 で利用者が用意する pwntools；[バイナリ診断](../binary-diagnostics.md)                                                                |
 | PE certificates                  | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                        |
 | PE imports                       | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                  |
@@ -189,6 +189,8 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 | APK 署名                         | v1/v2/v3/v3.1 署名者、証明書指紋、鍵ローテーション、ダイジェストの自己整合性                | 組み込みの静的解析; `inspect_apk_signature`                                                                                                    |
 
 静的な JavaScript と .NET の検査は、指定されたファイルを読み取り、アプリケーションを実行しません。実行時キャプチャは、あなたのユーザー権限で対象を実行したり、対象とやり取りしたりします。それぞれの実行時ガイドに、どのような操作が行われるかを記載しています。
+
+ネイティブバイナリのオフライン検査では、利用者が用意した GNU objdump と Rizin も使用できます。[リバースエンジニアリングツールのガイド](../reverse-engineering-tools.md)では、プロバイダーのセットアップ、CLI コマンド、Evidence の制約を説明しています。REA はどちらのプロバイダーもインストールや更新を行いません。
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -280,9 +282,9 @@ REA は実行可能な環境と、起動して応答することを確認する�
 </details>
 
 <details>
-<summary><strong>Hopper、Ghidra、IDA は必要ですか？</strong></summary>
+<summary><strong>Hopper、Ghidra、IDA、Kuna は必要ですか？</strong></summary>
 
-深いネイティブ分析には、そのいずれかを使います。静的な JavaScript と .NET の検査には、ネイティブ分析エンジンは必要ありません。セットアップは承認後に Hopper をインストールできます。Ghidra と IDA は既存のインストールを使います。[プロバイダーのセットアップ](../installation.md#hopper)を参照してください。
+深いネイティブ分析には、そのいずれかを使います。静的な JavaScript と .NET の検査には、ネイティブ分析エンジンは必要ありません。セットアップは承認後に Hopper をインストールできます。Ghidra、IDA、Kuna は既存のインストールを使います。[プロバイダーのセットアップ](../installation.md#hopper)を参照してください。
 
 </details>
 
@@ -350,7 +352,7 @@ npx rea-agents@latest setup
 
 ## スター履歴
 
-🎉 **GitHub スター 300,000 件、ありがとうございます！**
+🎉 **GitHub スター 400,000 件、ありがとうございます！**
 
 REA の利用、バグ報告、機能の要望、ビルドのテスト、修正への貢献に感謝します。
 

@@ -25,6 +25,7 @@ import {
   validateFatSliceIdentity,
   type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
+import { MACHO_CPU_TYPES } from "../domain/apple/machoTargetSelection.js";
 import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
 import {
   HopperCancelledError,
@@ -33,6 +34,7 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 
 import {
   copyHopperSource,
@@ -280,11 +282,13 @@ const inspectHopperMachOImage = async (
         cause === undefined ? undefined : { cause },
       ),
     );
-  const read = async (offset: number, length: number): Promise<Buffer> => {
-    const bytes = Buffer.alloc(length);
-    const { bytesRead } = await file.read(bytes, 0, length, offset);
-    return bytes.subarray(0, bytesRead);
-  };
+  const read = (offset: number, length: number): Promise<Buffer> =>
+    readFileHandleRange(file, offset, length, () => {
+      if (signal?.aborted)
+        throw new AnalysisCancelledError("open_binary", {
+          cause: signal.reason,
+        });
+    });
   const header = await read(0, 8);
   const fatPrefix = readFatHeaderPrefix(header);
   const thinPrefix = readMachoHeaderPrefixFacts(header);
@@ -363,7 +367,6 @@ const inspectHopperMachOImage = async (
   )
     return invalid("Hopper cannot select the admitted Mach-O architecture");
   const architecture = target.architecture;
-  const cpuTypes = { x86: 7, x86_64: 0x1000007, arm: 12, arm64: 0x100000c };
   const matches = [];
   for (const slice of parsed.slices) {
     if (signal?.aborted)
@@ -390,7 +393,7 @@ const inspectHopperMachOImage = async (
       );
     const identityError = validateFatSliceIdentity(slice, identity);
     if (identityError !== null) return invalid(identityError);
-    if (slice.cpuType === cpuTypes[architecture]) matches.push(slice);
+    if (slice.cpuType === MACHO_CPU_TYPES[architecture]) matches.push(slice);
   }
   if (findOverlappingFatSlices(parsed.slices) !== null)
     return invalid("FAT slices overlap");

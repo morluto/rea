@@ -7,7 +7,11 @@ import {
   type SafeJsonParseResult,
 } from "../domain/safeJson.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { HOPPER_DOWNLOAD_BYTES } from "./HopperDownload.js";
+import {
+  describeHopperRequestFailure,
+  HOPPER_DOWNLOAD_BYTES,
+  type HopperRequestFailure,
+} from "./HopperDownload.js";
 import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 
 /** Vendor endpoints, shared by installation and existing-build inspection. */
@@ -52,6 +56,14 @@ const selectedPlatformsSchema = z.object({
   Arch: z.unknown().optional(),
 });
 
+/** Interpret channel identity once using the same URL semantics as the downloader. */
+const isPublicHopperDownload = (url: URL): boolean =>
+  url.origin === "https://www.hopperapp.com" &&
+  url.username === "" &&
+  url.password === "" &&
+  !urlDeclaresQueryOrFragment(url) &&
+  url.pathname.startsWith("/downloader/public/");
+
 /** Admit the selected macOS row without projecting away vendor release metadata. */
 export const parseMacHopperReleases = (
   raw: unknown,
@@ -68,7 +80,7 @@ export const parseMacHopperReleases = (
       ),
     );
   const retained = release.data as MacHopperRelease;
-  if (!retained.filename.startsWith(HOPPER_DOWNLOAD_PREFIX))
+  if (!isPublicHopperDownload(new URL(retained.filename)))
     return err(
       new HopperReleaseError(
         "release_metadata",
@@ -77,6 +89,18 @@ export const parseMacHopperReleases = (
     );
   return ok(retained);
 };
+
+/**
+ * The minimum macOS version the selected release declares (`deployment_target`).
+ * Undefined when the row declares none as text; the signed application's own
+ * requirement is still checked before it is copied.
+ */
+export const macHopperReleaseMinimumSystemVersion = (
+  release: MacHopperRelease,
+): string | undefined =>
+  typeof release.deployment_target === "string"
+    ? release.deployment_target
+    : undefined;
 
 /** Stable publisher identity; signing subkeys are admitted through this primary. */
 export const HOPPER_LINUX_PRIMARY_FINGERPRINT =
@@ -92,6 +116,8 @@ const suffixes = { deb: ".deb", rpm: ".rpm", arch: ".pkg.tar.xz" } as const;
 
 export class HopperReleaseError extends Error {
   readonly _tag = "HopperReleaseError";
+  /** The vendor request whose transport failure produced this error. */
+  readonly download: HopperRequestFailure | undefined;
   constructor(
     readonly reason:
       | "release_metadata"
@@ -104,10 +130,23 @@ export class HopperReleaseError extends Error {
       | "cleanup_failed"
       | "cache_missing",
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly download?: HopperRequestFailure },
   ) {
     super(message, options);
     this.name = this._tag;
+    this.download = options?.download;
+  }
+
+  /** Describe a failed vendor request once, from the transport's observed facts. */
+  static fromDownload(
+    reason: HopperReleaseError["reason"],
+    download: HopperRequestFailure,
+  ): HopperReleaseError {
+    return new HopperReleaseError(
+      reason,
+      describeHopperRequestFailure(download),
+      { download },
+    );
   }
 }
 
@@ -154,10 +193,7 @@ export const parseLinuxHopperRelease = (
     );
   const url = new URL(parsed.data.filename);
   if (
-    url.origin !== "https://www.hopperapp.com" ||
-    url.username !== "" ||
-    url.password !== "" ||
-    urlDeclaresQueryOrFragment(url) ||
+    !isPublicHopperDownload(url) ||
     !url.pathname.startsWith("/downloader/public/Hopper-") ||
     !url.pathname.endsWith(`-Linux-demo${suffixes[family]}`)
   )

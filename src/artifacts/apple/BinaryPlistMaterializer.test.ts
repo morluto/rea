@@ -6,6 +6,7 @@ import { scanBinaryPlistScalars } from "./PlistScalars.js";
 import { plistUidValue } from "../../domain/apple/plistUid.js";
 import { decodeBinaryPlistValue } from "./BinaryPlistMaterializer.js";
 import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
+import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 
 const source = (objects: readonly Buffer[]): Buffer => {
   const table =
@@ -82,6 +83,37 @@ it("keeps a source UID distinct from an ordinary UID-shaped dictionary", () => {
   expect(value[1]).toEqual({ UID: 7 });
   expect(plistUidValue(value[0])).toBe(7);
   expect(plistUidValue(value[1])).toBeUndefined();
+});
+
+it("preserves binary dictionary identity through scalar and number projections", () => {
+  const bytes = source([
+    Buffer.from([0xa2, 1, 2]),
+    Buffer.from([0x80, 7]),
+    Buffer.from([0xd1, 3, 4]),
+    text("CF$UID"),
+    Buffer.from([0x10, 7]),
+  ]);
+  const metadata = scanBinaryPlistScalars(bytes);
+  const numbers = createPlistNumberProjection(metadata.literals);
+  const projected = numbers.project(projectPlistValue(decode(bytes)).value);
+  if (!Array.isArray(projected)) throw new Error("Expected projected array");
+  expect(projected).toEqual([{ UID: 7 }, { CF$UID: 7 }]);
+  expect(plistUidValue(projected[0])).toBe(7);
+  expect(plistUidValue(projected[1])).toBeUndefined();
+  // Reprojection must keep the source dictionary distinct from XML's convention.
+  const repeated = numbers.project(projected);
+  if (!Array.isArray(repeated)) throw new Error("Expected projected array");
+  expect(plistUidValue(repeated[1])).toBeUndefined();
+});
+
+it("retains XML's Foundation reference convention through number projection", () => {
+  const decoded = parseXmlPropertyList(
+    "<plist><dict><key>CF$UID</key><integer>7</integer></dict></plist>",
+  );
+  const numbers = createPlistNumberProjection(decoded.numberLiterals);
+  const projected = numbers.project(projectPlistValue(decoded.value).value);
+  expect(projected).toEqual({ CF$UID: 7 });
+  expect(plistUidValue(projected)).toBe(7);
 });
 
 it("materializes normalized three-byte tables from a nonzero root without losing source numbers", () => {
