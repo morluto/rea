@@ -494,3 +494,21 @@ describe("overlap and copy batching", () => {
     expect(steps.next().done).toBe(false);
   });
 });
+
+describe("zeroing the view", () => {
+  it("yields while zeroing a view larger than one batch, and leaves gaps zero", () => {
+    const image = readWasmModuleImage(
+      module(memory(64), data([0, [1]], [(1 << 21) + 8, [2]])),
+    );
+    const steps = readInitialLinearMemorySteps({
+      dataSegments: image.dataSegments,
+    });
+    expect(steps.next().done).toBe(false);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    const view = step.value.bytes;
+    expect(view[0]).toBe(1);
+    expect(view[(1 << 21) + 8]).toBe(2);
+    expect(view.subarray(1, 1 << 21).every((byte) => byte === 0)).toBe(true);
+  });
+});
