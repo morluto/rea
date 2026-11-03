@@ -4823,7 +4823,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // this method attaches to the stored Trace domain object rather than re-importing,
         // because the OSGi split-package layout makes TenetPlusPlusLoader uninstantiable
         // inside the long-running bridge.
-        File argFile = new File(projectArg);
+        File argFile = new File(projectArg).getAbsoluteFile();
         File projectDir;
         String projectName;
         if (argFile.isFile() && argFile.getName().endsWith(".gpr")) {
@@ -4850,7 +4850,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // (register reads, byte searches, module/thread listings) keep working.
         Project traceProject;
         Project active = projectManager().getActiveProject();
-        if (active != null && active.getName().equals(projectName)) {
+        // Reuse the active project only when it is the SAME project (name AND
+        // directory), not merely one with the same name in another directory.
+        boolean sameProject = active != null
+            && active.getProjectLocator().getName().equals(projectName)
+            && active.getProjectLocator().getProjectDir().getAbsolutePath().equals(projectDir.getAbsolutePath());
+        if (sameProject) {
             traceProject = active;
         } else {
             if (active != null) {
@@ -4888,8 +4893,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("modules", currentTrace.getModuleManager().getAllModules().size());
         result.addProperty("threads", currentTrace.getThreadManager().getAllThreads().size());
         result.addProperty("language", currentTrace.getBaseLanguage().getLanguageID().toString());
-        AddressSpace traceSpace = currentTrace.getBaseAddressFactory().getDefaultAddressSpace();
-        result.addProperty("image_base", canonicalAddress(traceSpace.getMinAddress()));
+        // The address space's minimum address is not the executable's image base
+        // (it is typically zero for a trace whose image loads at a nonzero
+        // address), so report the base as explicitly unknown rather than a
+        // misleading value callers could use to misrelate trace addresses.
+        result.addProperty("image_base", (String) null);
         result.addProperty("imported", true);
         return result;
     }

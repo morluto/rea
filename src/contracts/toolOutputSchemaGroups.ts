@@ -150,7 +150,7 @@ export const traceImportResultSchema = z.strictObject({
   modules: z.number(),
   threads: z.number(),
   language: z.string().min(1),
-  image_base: z.string().min(1),
+  image_base: z.string().min(1).nullable(),
   imported: z.boolean(),
 });
 export const traceInfoResultSchema = z.strictObject({
