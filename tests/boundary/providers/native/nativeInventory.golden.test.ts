@@ -269,7 +269,9 @@ it("retains distinct same-family FAT slices for signature coverage", async () =>
   });
 });
 
-it.each([42, 0x81000002])(
+// 0xc1000002 carries an arm64e capability flag outside the versioned
+// pointer-authentication ABI, so codesign may name it differently.
+it.each([42, 0xc1000002])(
   "reports unknown signature coverage for unmapped FAT subtype %i",
   async (subtype) => {
     const path = join(
@@ -309,6 +311,64 @@ it.each([42, 0x81000002])(
         expect.stringContaining("Partial signature coverage"),
       ]),
     });
+  },
+);
+
+const ARM64E_V0 = { type: CPU.arm64.type, subtype: 0x80000002 } as const;
+const ARM64E_V1 = { type: CPU.arm64.type, subtype: 0x81000002 } as const;
+
+it.each([
+  ["arm64e.v1 beside x86_64", [ARM64E_V1, CPU.x86_64], false],
+  ["arm64e.v1 before arm64e", [ARM64E_V1, ARM64E_V0], true],
+  ["arm64e before arm64e.v1", [ARM64E_V0, ARM64E_V1], true],
+] as const)(
+  "inspects the selected %s slice through codesign's arm64e selector",
+  async (_label, cpus, laterSliceShadowed) => {
+    const path = join(
+      await createTestTempDirectory("rea-native-arm64e-abi-"),
+      "fixture",
+    );
+    await writeFile(
+      path,
+      fatImage(cpus.map((cpu) => ({ cpu, bytes: machoImage({ cpu }) }))),
+    );
+    const header = parseExecutableHeader(await readFile(path), "arm64");
+    if (!header.ok || header.value.format !== "mach-o-universal")
+      throw new Error("expected universal fixture");
+    // Admission selects the first slice; codesign resolves -a arm64e to the
+    // first arm64e slice in table order, whatever its ABI version.
+    expect(header.value.universalSlice.offset).toBe(
+      header.value.universalSlices[0]?.offset,
+    );
+    const replay = signatureRunner({
+      signed: await fixture("codesign.txt"),
+      unsigned: await fixture("dyld-inventory/codesign-unsigned.txt"),
+      entitlements: await fixture("entitlements.xml"),
+      unsignedHeader: true,
+    });
+    const calls: (readonly string[])[] = [];
+    const runner: NativeCommandRunner = {
+      run(tool, args, options) {
+        calls.push(args);
+        return replay.run(tool, args, options);
+      },
+    };
+    const client = new NativeMacOSProvider({}, runner, "darwin").createClient({
+      ...(await nativeMachoTargetForFile(path)),
+      ...header.value,
+    });
+    const result = await client.execute("inspect_signature", {});
+    if (!result.ok) throw result.error;
+    expect(calls[0]).toEqual(expect.arrayContaining(["-a", "arm64e"]));
+    // A later slice with the same selector name has no exact selector.
+    const unknown = expect.stringContaining("signature states are unknown");
+    expect(
+      inspectSignatureSchema.parse(result.value.result).limitations,
+    ).toEqual(
+      laterSliceShadowed
+        ? expect.arrayContaining([unknown])
+        : expect.not.arrayContaining([unknown]),
+    );
   },
 );
 
