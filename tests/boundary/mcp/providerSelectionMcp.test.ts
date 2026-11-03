@@ -6,11 +6,13 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createDeferred } from "../../fixtures/binarySession.js";
+import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 
 import {
   createAnalysisExecution,
@@ -557,32 +559,52 @@ const expectedOpenSelection = (path: string, sha256: string) => ({
 
 const expectQueuedOpenReceipt = async (
   mcp: Client,
+  session: BinarySession,
   first: string,
   second: string,
   snapshotPath: string,
 ) => {
   const call = (name: string, args: Record<string, unknown>) =>
     mcp.callTool({ name, arguments: args });
-  const failedSwitch = call("open_binary", {
-    path: second,
-    provider_id: "beta",
-    snapshot_path: snapshotPath,
-  });
-  const nextSwitch = call("open_binary", { path: second, provider_id: "beta" });
-  const [failedReply, nextReply] = await Promise.all([
-    failedSwitch,
-    nextSwitch,
-  ]);
-  expect(failedReply.isError).toBe(true);
-  expect(nextReply.isError).not.toBe(true);
-  const sha = (value: string) =>
-    createHash("sha256").update(value).digest("hex");
-  expect(
-    parseMcpToolError(failedReply).error.details?.selection_at_failure,
-  ).toEqual(expectedOpenSelection(first, sha("first fixture")));
-  expect((await call("binary_session", {})).structuredContent).toMatchObject({
-    result: { path: second, sha256: sha("second fixture") },
-  });
+  const originalOpen = session.open.bind(session);
+  const failedSettled = createDeferred<void>();
+  const deliverFailure = createDeferred<void>();
+  const intercept = vi
+    .spyOn(session, "open")
+    .mockImplementation(async (path, options) => {
+      const result = await originalOpen(path, options);
+      if (path === second && options?.loadSnapshot !== undefined) {
+        failedSettled.resolve();
+        await deliverFailure.promise;
+      }
+      return result;
+    });
+  try {
+    const failedSwitch = call("open_binary", {
+      path: second,
+      provider_id: "beta",
+      snapshot_path: snapshotPath,
+    });
+    await failedSettled.promise;
+    const nextReply = await call("open_binary", {
+      path: second,
+      provider_id: "beta",
+    });
+    expect(nextReply.isError).not.toBe(true);
+    const sha = (value: string) =>
+      createHash("sha256").update(value).digest("hex");
+    expect((await call("binary_session", {})).structuredContent).toMatchObject({
+      result: { path: second, sha256: sha("second fixture") },
+    });
+    deliverFailure.resolve();
+    const failedReply = await failedSwitch;
+    expect(
+      parseMcpToolError(failedReply).error.details?.selection_at_failure,
+    ).toEqual(expectedOpenSelection(first, sha("first fixture")));
+  } finally {
+    deliverFailure.resolve();
+    intercept.mockRestore();
+  }
 };
 
 it("reports confirmed snapshot binding differences and keeps the active session", async () => {
@@ -704,7 +726,7 @@ it("reports confirmed snapshot binding differences and keeps the active session"
     true,
   );
 
-  await expectQueuedOpenReceipt(mcp, first, second, snapshotPath);
+  await expectQueuedOpenReceipt(mcp, session, first, second, snapshotPath);
 
   revision = 1;
   const raw = join(testDirectory, "raw.bin");
