@@ -1037,7 +1037,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         List<Address> candidates = new ArrayList<>(mappedAddresses);
         if (candidates.size() > 1)
-            throw new RequestFailure("ambiguous", "File offset " + coordinate +
+            throw new RequestFailure("ambiguous_file_offset", "File offset " + coordinate +
                 " has multiple loaded mappings: " + candidates.stream().map(ReaGhidraBridge::canonicalAddress).toList() +
                 "; select an explicit analysis address");
         if (candidates.isEmpty())

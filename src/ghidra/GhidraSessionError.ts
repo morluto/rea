@@ -191,7 +191,7 @@ const createGhidraSessionError = (failure: {
 export const isGhidraInputFailureCode = (code: string | undefined): boolean =>
   code === "invalid_request" ||
   code === "not_found" ||
-  code === "ambiguous" ||
+  code === "ambiguous_file_offset" ||
   code === "ambiguous_procedure";
 
 /** Bind session-failure construction to its causal diagnostic scope. */

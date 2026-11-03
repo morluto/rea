@@ -1226,6 +1226,21 @@ const projectPrimarySessionError = (
       },
       [{ path: [], reason: "invalid_value", message: failure.message }],
     );
+  if (
+    failure.kind === "remote" &&
+    failure.remoteCode === "ambiguous_file_offset"
+  )
+    return new AnalysisInputError(
+      operation,
+      {
+        ...context,
+        userMessage: failure.message,
+        remediationAction:
+          "Inspect the candidate analysis addresses and select an appropriate function entry or containing address. A file mapping alone does not establish a function; do not repeat the unchanged call.",
+        conformsToInputContract: true,
+      },
+      [{ path: [], reason: "invalid_value", message: failure.message }],
+    );
   if (failure.kind === "remote" && isGhidraInputFailureCode(failure.remoteCode))
     return new AnalysisInputError(operation, context, [
       { path: [], reason: "invalid_value", message: failure.message },

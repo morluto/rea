@@ -57,3 +57,43 @@ it.each(["compact", "full"] as const)(
     }
   },
 );
+
+it.each(["compact", "full"] as const)(
+  "keeps file-offset mapping ambiguity distinct from function identity (%s)",
+  async (profile) => {
+    const message =
+      "File offset 0x400 has multiple loaded mappings: [0x1000, 0x2000]; select an explicit analysis address";
+    const harness = await connectGhidraMcp(
+      "ambiguous-ghidra-offset",
+      () =>
+        Promise.resolve(
+          err(
+            new GhidraSessionError(
+              "remote",
+              message,
+              {},
+              { remoteCode: "ambiguous_file_offset" },
+            ),
+          ),
+        ),
+      { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile } },
+    );
+    try {
+      const response = await harness.mcp.callTool({
+        name: "procedure_pseudo_code",
+        arguments: { procedure: "file-offset:0x400" },
+      });
+      const { error } = parseMcpToolError(response);
+      expect(error).toMatchObject({
+        code: "invalid_request",
+        message,
+        remediation: {
+          action: expect.stringContaining("does not establish a function"),
+        },
+      });
+      expect(error.recovery).toBeUndefined();
+    } finally {
+      await harness.close();
+    }
+  },
+);
