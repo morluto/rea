@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { appendFile, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it as test } from "vitest";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
@@ -124,6 +124,16 @@ it("retains each written function's producer across an export resume", async () 
       status: "failed",
       provider_source: failed?.provider_source,
     }),
+  );
+  // The descriptor is historical: the source cache can disappear while the
+  // verified output and its recorded source facts remain unchanged.
+  await unlink(oldSource.source.path);
+  const afterSourceRemoval = await run("clean", true);
+  expect(
+    afterSourceRemoval.functions.find((item) => item.address === "0x1000"),
+  ).toEqual(first);
+  expect(digest(await readFile(join(output, first.relative_path)))).toBe(
+    before,
   );
   // A file published before a journal append can be adopted on resume, but
   // matching bytes do not identify the run that originally wrote the file.

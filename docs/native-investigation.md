@@ -231,8 +231,9 @@ complete limitations of the observations it used.
 When available, `provider_source` records the source of that attempt's
 pseudocode observation: a file path, SHA-256 and byte range, or a
 single-function decompile. The latter describes the method, not a unique run. A file
-descriptor identifies the observed source but does not keep the file from
-being removed or authenticate the journal. `status: "unknown"` distinguishes
+descriptor records the source as observed; the file may since have changed or
+been removed, so compare its current digest before using it. The descriptor
+does not authenticate the journal. `status: "unknown"` distinguishes
 an unavailable source from an existing matching output whose original producer
 is unknown. Older journal records can omit this field; omission is unknown.
 Failed attempts retain their source in the append-only journal when the
