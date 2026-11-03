@@ -25,4 +25,5 @@ export interface RecordedMcpCatalog {
 
 /** Replaced after compilation by the recorder; source runs use eager composition. */
 export const RECORDED_MCP_CATALOG_SHA256:
-  Readonly<Record<McpInputSchemaProfile, string>> | undefined = undefined;
+  | Readonly<Record<McpInputSchemaProfile, string>>
+  | undefined = undefined;
