@@ -40,7 +40,9 @@ import {
 } from "./exportTree.js";
 import {
   bodyRecord,
+  establishedPseudocodeFields,
   functionFileText,
+  pseudocodeExportFacts,
   type FunctionBody,
 } from "./functionFile.js";
 import {
@@ -548,6 +550,7 @@ const publishOne = async (input: {
       bodySupport: body.support,
     };
   }
+  const facts = pseudocodeExportFacts(decompiled.value);
   const relativePath = input.session.pathFor(input.procedure.address);
   const bytes = Buffer.from(
     functionFileText({
@@ -556,6 +559,7 @@ const publishOne = async (input: {
       identity: input.identity,
       limitations: caveats,
       pseudocode,
+      facts,
     }),
     "utf8",
   );
@@ -594,6 +598,7 @@ const publishOne = async (input: {
     body: bodyRecord(body.fact),
     // The header may truncate; the journal keeps the complete list.
     ...(caveats.length === 0 ? {} : { limitations: caveats }),
+    ...establishedPseudocodeFields(facts),
   });
   if (!appended.ok) return { result: appended, bodySupport: body.support };
   input.state.written += committed.status === "written" ? 1 : 0;

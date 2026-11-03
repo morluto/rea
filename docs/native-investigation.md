@@ -219,10 +219,15 @@ pseudocode file per analyzed function and returns only a manifest: counts, the
 output directory, capped failure reasons, provider identity, and the
 analysis-profile digest. The manifest and `decompile-index.json` do not contain
 pseudocode. Each file records the provider name, canonical address, inclusive
-body ranges when `procedure_info` supplies them, and the `procedure_info` and
-pseudocode limitations for that function. Header values are abbreviated to
+body ranges when `procedure_info` supplies them, the `procedure_info` and
+pseudocode limitations for that function, and language, representation, and
+production-source facts when the pseudocode observation retained them
+(otherwise `unavailable`). Files keep the `.c` path spelling for resume
+compatibility; that extension is naming only and does not establish C syntax.
+Header values are abbreviated to
 2,000 characters per value and the joined limitation line to 4,000 characters;
-the index retains the complete selected names, addresses, provider facts and
+the index retains the complete selected names, addresses, provider facts,
+optional language/representation/source fields, and
 caveats. Failure details retain at most 32 rows within 2,048 JSON-encoded
 UTF-8 bytes; names may be omitted to keep complete addresses and reasons. The
 index retains every failure and its complete observed name.

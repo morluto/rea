@@ -9,7 +9,12 @@ export const DECOMPILE_DIRECTORY_JOURNAL_NAME = "decompile-journal.jsonl";
 /** Derived catalog of the journal. It never contains pseudocode. */
 export const DECOMPILE_DIRECTORY_INDEX_NAME = "decompile-index.json";
 
-/** Directory of one `.c` file per function, named from the canonical address. */
+/**
+ * Directory of one file per function, named from the canonical address with a
+ * `.c` path spelling. The extension is resume-stable naming only and does not
+ * establish C syntax; language and representation belong on the file header and
+ * optional function-record fields when the observation retained them.
+ */
 export const DECOMPILE_DIRECTORY_FUNCTIONS_DIRECTORY = "functions";
 
 /** First supported journal version. */
@@ -254,6 +259,21 @@ export const decompileDirectoryFunctionSchema = z
       .optional(),
     /** Complete provider caveats of the observations this attempt used. */
     limitations: z.array(z.string().min(1)).min(1).optional(),
+    /**
+     * Provider-reported pseudocode language when the observation retained it.
+     * Omitted means unavailable; never inferred from the `.c` path spelling.
+     */
+    language: z.string().min(1).optional(),
+    /**
+     * Provider-reported pseudocode representation when the observation retained
+     * it. Omitted means unavailable.
+     */
+    representation: z.string().min(1).optional(),
+    /**
+     * Production source kind from the observation rawResult when retained
+     * (for example single-function or project-export). Omitted means unavailable.
+     */
+    source: z.string().min(1).optional(),
   })
   .superRefine((record, context) => {
     const valid =
@@ -315,7 +335,8 @@ export const decompileDirectoryIndexSchema = z.strictObject({
 
 /**
  * A function file path owned by this export: `functions/<safe>.c` with one
- * path segment and no traversal.
+ * path segment and no traversal. The `.c` suffix is path spelling for resume
+ * compatibility and does not establish C syntax.
  */
 export const isDecompileFunctionRelativePath = (value: string): boolean => {
   if (value.includes("\\") || value.includes("\0")) return false;

@@ -147,6 +147,12 @@ const harness = (options?: {
   readonly addressCaveats?: boolean;
   /** Addresses procedure_info classifies as external, as Ghidra does for imports. */
   readonly external?: readonly string[];
+  /**
+   * Optional procedure_pseudo_code rawResult facts. Stub language/representation
+   * and production source without requiring a live provider.
+   */
+  readonly pseudocodeRawResult?: JsonValue;
+  readonly pseudocodeText?: string;
 }) => {
   const procedures = options?.procedures ?? [
     { address: "0x3000", name: "Bar::late" },
@@ -232,20 +238,27 @@ const harness = (options?: {
         const selected = options?.mismatch === address ? otherProfile : profile;
         return Promise.resolve(
           ok(
-            createAnalysisExecution(`int fn(void) { ${sentinel} }`, provider, {
-              ...(options?.unprofiled === address
-                ? {}
-                : { analysisProfile: selected }),
-              ...(options?.foreignTarget === address
-                ? { subject: { ...subject, sha256: "cd".repeat(32) } }
-                : {}),
-              limitations: [
-                "terminal call may cut the body",
-                ...(options?.addressCaveats === true
-                  ? [`terminal call at ${address}`]
-                  : []),
-              ],
-            }),
+            createAnalysisExecution(
+              options?.pseudocodeText ?? `int fn(void) { ${sentinel} }`,
+              provider,
+              {
+                ...(options?.unprofiled === address
+                  ? {}
+                  : { analysisProfile: selected }),
+                ...(options?.foreignTarget === address
+                  ? { subject: { ...subject, sha256: "cd".repeat(32) } }
+                  : {}),
+                ...(options?.pseudocodeRawResult === undefined
+                  ? {}
+                  : { rawResult: options.pseudocodeRawResult }),
+                limitations: [
+                  "terminal call may cut the body",
+                  ...(options?.addressCaveats === true
+                    ? [`terminal call at ${address}`]
+                    : []),
+                ],
+              },
+            ),
           ),
         );
       }
@@ -316,6 +329,12 @@ describe("decompile_all manifest", () => {
     ).toBe(true);
     expect(text).toContain("// range: 0x1000-0x1000 inclusive");
     expect(text).toContain("// limitations: terminal call may cut the body");
+    expect(text).toContain("// language: unavailable");
+    expect(text).toContain("// representation: unavailable");
+    expect(text).toContain("// source: unavailable");
+    expect(text).toContain(
+      "// path_extension: .c; export path spelling only — does not establish C syntax",
+    );
     expect(text.slice(text.indexOf("\n\n") + 2)).toBe(
       `int fn(void) { ${sentinel} }`,
     );
@@ -351,6 +370,73 @@ describe("decompile_all manifest", () => {
       toolContract("decompile_all").outputSchema.safeParse(evidence).success,
     ).toBe(true);
     expect(JSON.stringify(evidence)).not.toContain(sentinel);
+  });
+
+  it("preserves observation language, representation, and source on the file and index", async () => {
+    const rustLike = "unsafe fn audit_compute(a: i32, b: i32) -> i32 { a }";
+    const { tools } = harness({
+      procedures: [{ address: "0x1000", name: "_audit_compute" }],
+      pseudocodeText: rustLike,
+      pseudocodeRawResult: {
+        language: "rust-language",
+        representation: "provider-pseudocode",
+        source: { kind: "single-function" },
+      },
+    });
+    const result = await run(tools, directory());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const text = await readFile(
+      join(directory(), "functions/0x1000.c"),
+      "utf8",
+    );
+    expect(text).toContain("// language: rust-language");
+    expect(text).toContain("// representation: provider-pseudocode");
+    expect(text).toContain("// source: single-function");
+    expect(text).toContain(
+      "// path_extension: .c; export path spelling only — does not establish C syntax",
+    );
+    expect(text.endsWith(rustLike)).toBe(true);
+
+    const index = decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+          "utf8",
+        ),
+      ),
+    );
+    expect(index.functions).toEqual([
+      expect.objectContaining({
+        address: "0x1000",
+        status: "written",
+        relative_path: "functions/0x1000.c",
+        language: "rust-language",
+        representation: "provider-pseudocode",
+        source: "single-function",
+      }),
+    ]);
+
+    const journalLine = [
+      ...(
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME),
+          "utf8",
+        )
+      )
+        .trim()
+        .split("\n")
+        .slice(1),
+    ].map((line) => decompileJournalLineSchema.parse(JSON.parse(line)));
+    expect(journalLine).toEqual([
+      expect.objectContaining({
+        kind: "function",
+        language: "rust-language",
+        representation: "provider-pseudocode",
+        source: "single-function",
+      }),
+    ]);
   });
 
   it("records one decompiler failure without aborting or writing that file", async () => {
