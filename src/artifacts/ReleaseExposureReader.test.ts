@@ -2196,6 +2196,27 @@ describe("ReleaseExposureReader unexpanded packages", () => {
 });
 
 describe("ReleaseExposureReader native members named as maps", () => {
+  it("keeps a selected or listed native image named release.map out of map routing", async () => {
+    const root = await createTestTempDirectory("rea-release-map-selected-");
+    const elf = Buffer.alloc(64);
+    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    elf.write("not a map\n", 16);
+    const file = join(root, "release.map");
+    await writeFile(file, elf);
+    for (const scanned of [await inspect(file), await inspect(root)]) {
+      expect(scanned.native_images).toMatchObject([
+        { path: file, format: "elf" },
+      ]);
+      expect(scanned.debug_companions.paths).toEqual([]);
+      expect(scanned.source_maps).toMatchObject({
+        embedded: 0,
+        skipped: 0,
+        unparsed: 0,
+      });
+      expect(debugCompanionsStatus(scanned)).toBe("not_observed");
+    }
+  });
+
   it.each([
     ["a JavaScript map name", "payload.js.map"],
     ["a linker map name", "payload.map"],

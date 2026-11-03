@@ -957,18 +957,19 @@ const examineMember = async (
       : listed;
   (map ? state.examinedMaps : state.examinedLocations).add(key);
   if (!map && isJavaScriptMember(member)) state.examinedScripts.add(key);
-  // An owner's native format outranks anything the member's name suggests.
-  const nativePackaged =
-    packageFormat !== null && asNativeFormat(member.format) !== null;
+  // An owner's native format outranks anything the member's name suggests,
+  // for a packaged member and for a selected or listed native image alike.
+  const native = asNativeFormat(member.format) !== null;
   if (member.encrypted) noteUnreadMember(state, member);
-  else if (nativePackaged)
-    readable = await examinePackagedBinary(state, member, context);
-  else if (map) readable = await examineMapMember(state, member, context);
+  else if (native) {
+    if (packageFormat !== null)
+      readable = await examinePackagedBinary(state, member, context);
+  } else if (map) readable = await examineMapMember(state, member, context);
   else if (isText(member.logical, member.kind))
     readable = await examineTextMember(state, member, context, listed.kind);
   else if (packageFormat !== null)
     readable = await examinePackagedBinary(state, member, context);
-  else if (asNativeFormat(member.format) === null)
+  else
     await examineProbedText(
       state,
       member,
