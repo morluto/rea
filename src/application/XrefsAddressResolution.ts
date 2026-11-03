@@ -90,12 +90,20 @@ export const resolveXrefsName = async (
   const [address] = addresses;
   if (addresses.size <= 1) return ok(address ?? null);
   return err(
-    new AnalysisInputError(operation, undefined, [
+    new AnalysisInputError(
+      operation,
       {
-        path: [operation === "xrefs" ? "address" : "name"],
-        reason: "invalid_value",
-        message: `Analyzed symbol name ${JSON.stringify(selector)} is ambiguous at ${[...addresses].sort().join(", ")}. Select an exact address.`,
+        conformsToInputContract: true,
+        remediationAction:
+          "Select an exact address from the candidates and call xrefs with that address.",
       },
-    ]),
+      [
+        {
+          path: [operation === "xrefs" ? "address" : "name"],
+          reason: "invalid_value",
+          message: `Analyzed symbol name ${JSON.stringify(selector)} is ambiguous at ${[...addresses].sort().join(", ")}. Select an exact address.`,
+        },
+      ],
+    ),
   );
 };
