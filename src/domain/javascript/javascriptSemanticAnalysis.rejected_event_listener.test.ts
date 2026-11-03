@@ -283,6 +283,56 @@ e.on("ready");`),
 });
 
 /**
+ * A call that runs after the registration cannot change whether that
+ * registration threw. Measured on Node 22.22.2: `e.on("x")` throws
+ * `ERR_INVALID_ARG_TYPE` before `configure(e)` or `e.emit("done")` run, so a
+ * later escape is not evidence about this call.
+ */
+it("still rejects a missing listener registered before the receiver escapes", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+e.on("ready");
+function configure(target) {
+  target.on = (name, fn = () => {}) => target.addListener(name, fn);
+}
+configure(e);
+e.emit("done");`),
+  ).not.toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
+ * `prototype[key]` records an unknown property name, which still covers the
+ * method this call selects. Measured on Node 22.22.2: after that write
+ * `e.on("ready")` stores one listener.
+ */
+it("keeps the registration of a receiver whose method is replaced by key", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const original = EventEmitter.prototype.addListener;
+const key = "on";
+EventEmitter.prototype[key] = function (name, fn = () => {}) { return original.call(this, name, fn); };
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
+ * A write through an inline require belongs to the module rather than to a
+ * binding. Measured on Node 22.22.2: it replaces `on` for every instance, so
+ * `e.on("ready")` stores one listener.
+ */
+it("keeps the registration of a receiver after an inline require write", () => {
+  expect(
+    eventsForSource(`const original = require("node:events").EventEmitter.prototype.addListener;
+require("node:events").EventEmitter.prototype.on = function (name, fn = () => {}) { return original.call(this, name, fn); };
+const { EventEmitter } = require("node:events");
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
  * `emit` passes its remaining arguments to listeners that already exist, so it
  * does not validate them the way a registration does.
  */

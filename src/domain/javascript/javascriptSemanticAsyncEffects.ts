@@ -24,6 +24,7 @@ import {
 } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   affectsBuiltinPath,
@@ -198,31 +199,57 @@ const nodeEventEmitterConstruction = (
 };
 
 /**
- * Report whether any binding in this module writes a `prototype.<method>` slot.
+ * Report whether a recorded path can select, or replace, `prototype.<method>`.
+ * The path is recorded against whichever object owns the write, so it carries
+ * the owner's own prefix (`EventEmitter.prototype.on`, `events.EventEmitter
+ * .prototype.on`) and only its tail names the slot. An unknown property key
+ * such as `prototype[key]` covers the method as well, so the tail is compared
+ * with the shared builtin-path rule instead of by exact keys.
+ */
+const affectsPrototypeMethod = (
+  path: JavaScriptSemanticPropertyPath,
+  method: string,
+): boolean => {
+  for (let index = 0; index < path.length; index += 1)
+    if (affectsBuiltinPath(path.slice(index), ["prototype", method]))
+      return true;
+  return false;
+};
+
+/**
+ * Report whether any object in this module writes a `prototype.<method>` slot.
  * A receiver cannot be held to the native contract once the method that answers
  * the call may have been replaced on a shared prototype. The write is recorded
  * on whichever binding owns the object, so a scan covers every spelling of it:
  * the class itself, a namespace import, a member require, or an alias of any of
- * them. A file that reassigns `prototype.<method>` for an unrelated class loses
- * the proof as well, which keeps the guard narrow instead of guessing which
- * definition answers the call.
+ * them. A write through an inline `require(...)` has no binding at all and is
+ * recorded against the module, so those records are scanned too. A file that
+ * reassigns `prototype.<method>` for an unrelated class loses the proof as
+ * well, which keeps the guard narrow instead of guessing which definition
+ * answers the call.
  */
 const writesPrototypeMethod = (
   method: string,
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
+  const precedes = (write: t.Node | undefined): boolean =>
+    !semanticTopLevelEffectFollowsCapture(read, write, state.parentsByNode);
   for (const binding of state.bindingsById.values())
     if (
       binding.memberWrites.some(
         ({ path, node: write }) =>
-          path.at(-1) === method &&
-          path.at(-2) === "prototype" &&
-          !semanticTopLevelEffectFollowsCapture(
-            read,
-            write,
-            state.parentsByNode,
-          ),
+          affectsPrototypeMethod(path, method) && precedes(write),
+      )
+    )
+      return true;
+  for (const specifier of NODE_EVENTS_SPECIFIERS)
+    if (
+      (state.requiredModuleEffects.get(specifier) ?? []).some(
+        ({ kind, path, node: write }) =>
+          kind === "write" &&
+          affectsPrototypeMethod(path, method) &&
+          precedes(write),
       )
     )
       return true;
@@ -256,10 +283,19 @@ const nodeEventEmitterReceiver = (
   // call replace the method first, so the proof no longer holds. Reading
   // `emitter.on` in order to call it passes the function value rather than the
   // instance, and the collector records the operation's own call as one of
-  // these escapes, so that call is not evidence against the receiver.
+  // these escapes, so that call is not evidence against the receiver. A call
+  // that runs after this one cannot change whether it threw, so it is not
+  // evidence either.
   if (
     binding.escapedPaths.some(
-      (escape) => escape.path.length === 0 && escape.node !== call,
+      (escape) =>
+        escape.path.length === 0 &&
+        escape.node !== call &&
+        !semanticTopLevelEffectFollowsCapture(
+          call,
+          escape.node,
+          state.parentsByNode,
+        ),
     )
   )
     return false;
