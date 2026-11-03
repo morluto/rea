@@ -67,7 +67,7 @@ const sharedAnalysisSemantics = {
     "address-first-unique-target-source-mapping-v2",
   instruction_flow_evidence: "decoded-return-pcode-v1",
   instruction_status: "unlisted-address-without-decode-v1",
-  instruction_references: "exact-address-incoming-without-synthetic-entry-v2",
+  instruction_references: "exact-address-incoming-without-synthetic-entry-v3",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
 } as const;
 
