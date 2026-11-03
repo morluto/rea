@@ -124,6 +124,11 @@ also accept source-file byte offsets. Existing symbols and analysis addresses
 take precedence; a `0x`-prefixed number that resolves to no procedure falls back
 to its observed source mapping. Use `--file-offset=0x...` on the CLI or
 `procedure: "file-offset:0x..."` through MCP to select file coordinates explicitly.
+To select an analysis address without the bare-hex fallback, qualify it with its
+Ghidra address space, for example `ram:0x...`. The `inspect-native-load-image`
+CLI command or MCP `inspect_native_load_image` reports Ghidra's observed default
+address space; use the space appropriate to the address, and retain any
+load-image verification limitations.
 Multiple mapping candidates fail as ambiguous rather than selecting a bank or
 address space. A successful conversion retains the file offset, mapped address
 and procedure entry in raw Evidence and `locations`.
