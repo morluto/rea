@@ -726,6 +726,7 @@
 * **web:** retain invalid browser selection ([#7903](https://github.com/morluto/rea/issues/7903)) ([f638028](https://github.com/morluto/rea/commit/f6380282fb8491782c665cf210846d541453704e))
 * **web:** retain source-map declaration provenance ([e80fb63](https://github.com/morluto/rea/commit/e80fb638be5fcff7194455feb358dc193cbc81d7))
 * **website:** align Electron guide with downloadable source ([#7858](https://github.com/morluto/rea/issues/7858)) ([251e27e](https://github.com/morluto/rea/commit/251e27ef3bc8fbd9e6811c24d06ed4c18830eb1a))
+* **website:** identify all public deployment verification requests ([79766ca](https://github.com/morluto/rea/commit/79766ca96a22ee0b6e04c3681546d492702b4ae7))
 * **website:** improve layout and clarify homepage copy ([a174892](https://github.com/morluto/rea/commit/a174892e3e52b58e74df5b9f53ba4d0e0617177c))
 * **website:** keep phone navigation labels from splitting mid-word ([#7497](https://github.com/morluto/rea/issues/7497)) ([313af71](https://github.com/morluto/rea/commit/313af7119cd8687bd10a468a424e243a9bc28bc2)), closes [#3597](https://github.com/morluto/rea/issues/3597)
 * **website:** surface RL environments and adjust homepage navigation ([ff6d96b](https://github.com/morluto/rea/commit/ff6d96bce8c54dc8f0e2184bfcb397d99506dae2))
