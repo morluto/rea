@@ -12,7 +12,7 @@ describe("DWARF dumper comparison", () => {
    Abbrev Offset: 0x0
    Pointer Size:  8
  <0><b>: Abbrev Number: 1 (DW_TAG_compile_unit)
-    <c>   DW_AT_producer    : (indirect string, offset: 0x0): clang version 17 https://x
+    <c>   DW_AT_producer    : (indirect string, offset: 0): clang version 17 https://x
     <11>   DW_AT_name        : alpha.c
     <15>   DW_AT_comp_dir    : (indirect line string, offset: 0x0): /tmp/two:words
     <19>   DW_AT_GNU_dwo_name: (indirect string, offset: 0x12): alpha.dwo

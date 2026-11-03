@@ -130,7 +130,7 @@ const quoted = (line) => {
   if (attribute === null) return null;
   const tail = attribute[1]
     .replace(
-      /^\((?:indirect (?:line )?string, offset|indexed string): 0x[0-9a-f]+\):\s*/iu,
+      /^\((?:indirect (?:line )?string, offset|indexed string): (?:0x)?[0-9a-f]+\):\s*/iu,
       "",
     )
     .trim();
