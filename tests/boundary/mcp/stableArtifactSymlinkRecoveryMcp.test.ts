@@ -37,6 +37,13 @@ mcpTest.skipIf(process.platform === "win32")(
         expect(diagnostic.remediation.action, name).toContain(target);
         expect(diagnostic, name).not.toHaveProperty("recovery");
       }
+      const captureResponse = await client.callTool({
+        name: "inspect_web_network_capture",
+        arguments: { capture_path: selected, format: "har" },
+      });
+      const captureError = parseMcpToolError(captureResponse).error;
+      expect(captureError.remediation.action).toContain(target);
+      expect(captureError).not.toHaveProperty("recovery");
     } finally {
       const closed = await session.close();
       if (!closed.ok) throw closed.error;
