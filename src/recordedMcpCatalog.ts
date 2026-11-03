@@ -16,6 +16,8 @@ export interface RecordedMcpCatalog {
   readonly instructions: string;
   readonly identity: ReturnType<typeof createCatalogIdentity>;
   readonly tools: readonly Tool[];
+  /** Tool names derived from canonical Evidence-input declarations at build time. */
+  readonly evidenceReferenceAlternatives: readonly string[];
   readonly prompts: readonly (Prompt & {
     readonly parameters: Readonly<Record<string, PromptArgumentContract>>;
   })[];
@@ -23,5 +25,4 @@ export interface RecordedMcpCatalog {
 
 /** Replaced after compilation by the recorder; source runs use eager composition. */
 export const RECORDED_MCP_CATALOG_SHA256:
-  | Readonly<Record<McpInputSchemaProfile, string>>
-  | undefined = undefined;
+  Readonly<Record<McpInputSchemaProfile, string>> | undefined = undefined;
