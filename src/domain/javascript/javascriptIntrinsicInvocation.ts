@@ -147,7 +147,7 @@ export const resolveJavaScriptGenericInvocation = (
  * Binding a function alone is not a write; only its eventual call is examined.
  */
 export const resolveJavaScriptIntrinsicInvocation = (
-  node: t.CallExpression | t.OptionalCallExpression,
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   intrinsicPath: (node: t.Node) => readonly string[] | undefined,
   boundIntrinsic: (node: t.Node) => JavaScriptIntrinsicInvocation | undefined,
   intrinsicReadChanged: (node: t.Node, path: readonly string[]) => boolean,
@@ -238,6 +238,15 @@ export const resolveJavaScriptIntrinsicInvocation = (
       receiver = selected.context.receiver;
       explicitReceiver = true;
       arguments_ = selected.context.arguments;
+      continue;
+    }
+    if (path.join(".") === "intrinsic.Reflect.construct") {
+      const callable = arguments_?.[0];
+      if (!t.isExpression(callable)) return undefined;
+      callee = callable;
+      receiver = undefined;
+      explicitReceiver = true;
+      arguments_ = arrayArguments(arguments_?.[1], nativeArrayIteration);
       continue;
     }
     if (path.join(".") === "intrinsic.Reflect.apply") {

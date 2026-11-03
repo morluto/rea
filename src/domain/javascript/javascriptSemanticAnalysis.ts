@@ -228,6 +228,7 @@ function* indexSemanticMemberMutationFactsSteps(
     (site, reference, path) =>
       referenceEffectsMayHaveChanged(state, site, reference, path),
   );
+  state.memberMutationFactsComplete = true;
   indexedMemberMutationStates.add(state);
   invalidateSemanticRequireDelegateWrites(state);
 }
@@ -1041,6 +1042,7 @@ const createState = (
   };
   return {
     arrayIterationUnknown: false,
+    memberMutationFactsComplete: false,
     program,
     opaqueEffects: {
       mayReferenceGlobalCode: false,

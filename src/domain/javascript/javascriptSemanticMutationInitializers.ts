@@ -70,6 +70,7 @@ interface InitializerPositionCache {
     readonly t.Statement[],
     {
       readonly reads: WeakMap<t.FunctionDeclaration, number | null>;
+      readonly memberEffectsComplete: boolean;
       readonly opaquePositions: WeakMap<t.Node, number | null>;
       opaqueSitesIndexed: number;
       firstOpaqueRead: number | null;
@@ -881,10 +882,14 @@ const moduleFunctionFirstRead = (
 ): number | null => {
   const cache = initializerPositionCache(parents).moduleFunctionReads;
   let retained = cache.get(body);
+  const memberEffectsComplete = state?.memberMutationFactsComplete === true;
+  if (retained?.memberEffectsComplete !== memberEffectsComplete)
+    retained = undefined;
   if (retained === undefined) {
     const reads = new WeakMap<t.FunctionDeclaration, number | null>();
     retained = {
       reads,
+      memberEffectsComplete,
       opaquePositions: new WeakMap(),
       opaqueSitesIndexed: 0,
       firstOpaqueRead: Infinity,
@@ -1012,6 +1017,25 @@ const moduleFunctionFirstRead = (
       }
       return globalReceivers.get(input) ?? null;
     };
+    const receiverAtRead = (input: t.Node, read: t.Node): boolean | null => {
+      const identity = globalReceiver(input);
+      if (identity !== false || state === undefined) return identity;
+      if (!memberEffectsComplete) return identity;
+      const root = unwrapJavaScriptExpression(input).node;
+      if (!t.isIdentifier(root)) return identity;
+      const binding = resolveSemanticBindingState(state, root, root.name);
+      if (binding === undefined) return null;
+      for (const effect of [...binding.memberWrites, ...binding.escapedPaths]) {
+        if (
+          effect.node !== undefined &&
+          semanticReadPrecedesEffectWithinActivation(read, effect.node, parents)
+        )
+          continue;
+        if (semanticEffectTiming(read, effect.node, state) !== "after")
+          return null;
+      }
+      return identity;
+    };
     const active = new Set<t.Function>();
     const retainNamedRead = (
       name: string,
@@ -1064,7 +1088,8 @@ const moduleFunctionFirstRead = (
               const projected =
                 source.iterationSources !== undefined ||
                 source.projection.length > 1;
-              if (!projected && globalReceiver(source.node) === false) continue;
+              if (!projected && receiverAtRead(source.node, node) === false)
+                continue;
               // Select the receiver through the shared property-reference owner.
               // Unknown/iterated sources retain possible activation.
               if (projected && source.iterationSources === undefined) {
@@ -1081,7 +1106,7 @@ const moduleFunctionFirstRead = (
                 }
                 if (
                   receiver !== undefined &&
-                  globalReceiver(receiver) === false
+                  receiverAtRead(receiver, node) === false
                 )
                   continue;
               }
@@ -1135,7 +1160,7 @@ const moduleFunctionFirstRead = (
             const receiver = unwrapJavaScriptExpression(node.object).node;
             // Classic scripts expose hoisted functions through the global object.
             // Property names are not referenced identifiers; keep their read timing too.
-            if (globalReceiver(receiver) !== false) {
+            if (receiverAtRead(receiver, node) !== false) {
               name = semanticStaticPropertyKey(node.property, node.computed);
               if (name === null) {
                 if (unknownPropertyRead !== null)

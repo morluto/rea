@@ -134,6 +134,8 @@ export interface JavaScriptOpaqueScopeEffects {
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
   arrayIterationUnknown: boolean;
+  /** Receiver isolation requires the completed member-effect inventory. */
+  memberMutationFactsComplete: boolean;
   readonly program: t.Program;
   readonly opaqueEffects: JavaScriptOpaqueScopeEffects;
   /** Effective loader for static imports in this source artifact. */

@@ -62,7 +62,7 @@ export const createSemanticOpaqueGlobalObserver = (
     ) => {
       intrinsicPath: (node: t.Node) => readonly string[] | undefined;
       intrinsicInvocation: (
-        node: t.CallExpression | t.OptionalCallExpression,
+        node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
       ) => { readonly path: readonly string[] } | undefined;
     };
   },
@@ -92,9 +92,7 @@ export const createSemanticOpaqueGlobalObserver = (
     )
       return;
     invocationSite = node;
-    const path = t.isNewExpression(node)
-      ? interop.intrinsicPath(node.callee)
-      : interop.intrinsicInvocation(node)?.path;
+    const path = interop.intrinsicInvocation(node)?.path;
     // Constructed code may escape and activate a classic-script global. Keep
     // its creation as a conservative timing bound, not proof of execution.
     if (
