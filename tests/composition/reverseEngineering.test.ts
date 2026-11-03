@@ -586,9 +586,28 @@ it("shares one preflight deadline across stat and digest", async () => {
   expect(performance.now() - started).toBeLessThan(280);
 });
 
+/** Joins a destroyed stream's close within a bound. */
+const joinClose = async (stream: Readable): Promise<void> => {
+  if (stream.closed) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve) => stream.once("close", () => resolve())),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("the stalled stream did not close")),
+          1_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 /**
  * A stream whose open stalls, as on an unresponsive mount, until the test
- * returns it. `release` returns the open, even after a failed assertion, and
+ * answers it. `release` answers the open, even after a failed assertion, and
  * joins the stream's close within a bound.
  */
 const stalledOpen = () => {
@@ -599,31 +618,45 @@ const stalledOpen = () => {
     },
     read() {},
   });
-  const returnOpen = (): void => {
+  const answer = (): void => {
     const callback = held;
     held = undefined;
     callback?.();
   };
   const release = async (): Promise<void> => {
-    returnOpen();
+    answer();
     stream.destroy();
-    if (stream.closed) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        new Promise<void>((resolve) => stream.once("close", () => resolve())),
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(
-            () => reject(new Error("the stalled open's stream did not close")),
-            1_000,
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
+    await joinClose(stream);
   };
-  return { stream, returnOpen, release };
+  return { stream, answer, release };
+};
+
+/**
+ * A stream that opens and then holds a read, as an unresponsive mount can,
+ * until the test answers it. Like a file stream, it closes only after the read
+ * in flight returns. `release` answers the read, even after a failed
+ * assertion, and joins the stream's close within a bound.
+ */
+const stalledRead = () => {
+  let held: (() => void) | undefined;
+  const stream = new Readable({
+    read() {},
+    destroy(error, callback) {
+      held = () => callback(error);
+    },
+  });
+  queueMicrotask(() => stream.emit("open", 3));
+  const answer = (): void => {
+    const callback = held;
+    held = undefined;
+    callback?.();
+  };
+  const release = async (): Promise<void> => {
+    stream.destroy();
+    answer();
+    await joinClose(stream);
+  };
+  return { stream, answer, release };
 };
 
 it.each(["deadline", "cancellation"] as const)(
@@ -668,38 +701,44 @@ it.each(["deadline", "cancellation"] as const)(
   },
 );
 
-it("makes a hash wait for an earlier open of the same path that has not returned", async () => {
-  const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
-  let stalled: ReturnType<typeof stalledOpen> | undefined;
-  const opened: Readable[] = [];
-  // The first open stalls until the test returns it; a later one reads "x".
-  const open = () => {
-    const stream =
-      opened.length === 0
-        ? (stalled = stalledOpen()).stream
-        : Readable.from([Buffer.from("x")]);
-    opened.push(stream);
-    return stream as unknown as ReturnType<
-      typeof import("node:fs").createReadStream
-    >;
-  };
-  const path = "/tmp/rea-unreturned-open";
-  try {
-    for (const _attempt of [1, 2])
+it.each([
+  ["open", stalledOpen],
+  ["read", stalledRead],
+] as const)(
+  "makes a hash wait for an earlier %s of the same path that has not returned",
+  async (operation, stall) => {
+    const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
+    let stalled: ReturnType<typeof stall> | undefined;
+    const opened: Readable[] = [];
+    // The first stream stalls until the test answers it; a later one reads "x".
+    const open = () => {
+      const stream =
+        opened.length === 0
+          ? (stalled = stall()).stream
+          : Readable.from([Buffer.from("x")]);
+      opened.push(stream);
+      return stream as unknown as ReturnType<
+        typeof import("node:fs").createReadStream
+      >;
+    };
+    const path = `/tmp/rea-unreturned-${operation}`;
+    try {
+      for (const _attempt of [1, 2])
+        await expect(
+          digestFile(path, undefined, stat, 50, open),
+        ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+      // The second hash waited for the first stream instead of starting another.
+      expect(opened).toHaveLength(1);
+      stalled?.answer();
       await expect(
-        digestFile(path, undefined, stat, 50, open),
-      ).rejects.toMatchObject({ code: "ETIMEDOUT" });
-    // The second hash waited for the first open instead of starting another.
-    expect(opened).toHaveLength(1);
-    stalled?.returnOpen();
-    await expect(digestFile(path, undefined, stat, 1_000, open)).resolves.toBe(
-      createHash("sha256").update("x").digest("hex"),
-    );
-    expect(opened).toHaveLength(2);
-  } finally {
-    await stalled?.release();
-  }
-});
+        digestFile(path, undefined, stat, 1_000, open),
+      ).resolves.toBe(createHash("sha256").update("x").digest("hex"));
+      expect(opened).toHaveLength(2);
+    } finally {
+      await stalled?.release();
+    }
+  },
+);
 
 it("shares a stalled stat between hashes of the same path", async () => {
   let stats = 0;

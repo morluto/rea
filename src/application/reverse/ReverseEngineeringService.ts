@@ -1480,12 +1480,14 @@ const reverseCommandTimeoutGuidance = (
 });
 
 /**
- * Opens that have not returned, by stream factory and path. Destroying a
- * stream cannot cancel its open, which a stalled mount can hold, with a libuv
- * worker, indefinitely; a later hash of the same path waits for that open
- * instead of starting another, so stalled opens stay bounded by the paths.
+ * Streams that have not closed, by stream factory and path. Destroying a
+ * stream cancels neither its open nor a read in flight, which a stalled mount
+ * can hold, with a libuv worker, indefinitely; the stream closes only after
+ * that operation returns. A later hash of the same path waits for that close
+ * instead of starting another, so stalled opens and reads stay bounded by the
+ * paths.
  */
-const unreturnedOpens = new WeakMap<object, Map<string, Promise<void>>>();
+const unclosedStreams = new WeakMap<object, Map<string, Promise<void>>>();
 
 export const digestFile = async (
   path: string,
@@ -1504,12 +1506,12 @@ export const digestFile = async (
     throw Object.assign(new Error("Artifact digest requires a regular file"), {
       code: "EINVAL",
     });
-  const opens = unreturnedOpens.get(open) ?? new Map<string, Promise<void>>();
-  unreturnedOpens.set(open, opens);
+  const streams = unclosedStreams.get(open) ?? new Map<string, Promise<void>>();
+  unclosedStreams.set(open, streams);
   for (
-    let earlier = opens.get(path);
+    let earlier = streams.get(path);
     earlier !== undefined;
-    earlier = opens.get(path)
+    earlier = streams.get(path)
   ) {
     const pending = earlier;
     await settleWithDeadline(
@@ -1527,19 +1529,18 @@ export const digestFile = async (
   return new Promise<string>((resolveDigest, rejectDigest) => {
     const hash = createHash("sha256");
     const stream = open(path);
-    const returned = new Promise<void>((resolve) => {
-      stream.once("open", () => resolve());
+    const closed = new Promise<void>((resolve) => {
       stream.once("error", () => resolve());
       stream.once("close", () => resolve());
     });
-    opens.set(path, returned);
-    void returned.then(() => {
-      if (opens.get(path) === returned) opens.delete(path);
+    streams.set(path, closed);
+    void closed.then(() => {
+      if (streams.get(path) === closed) streams.delete(path);
     });
-    // A stream destroyed while its open is pending reports the error only
-    // after that open returns, which a stalled mount can delay indefinitely.
-    // The deadline and cancellation therefore end the wait themselves; the
-    // stream closes its file once the open returns.
+    // A stream destroyed while its open or a read is pending reports the
+    // error only after that operation returns, which a stalled mount can delay
+    // indefinitely. The deadline and cancellation therefore end the wait
+    // themselves; the stream closes its file once the operation returns.
     const stop = (cause: Error): void => {
       cleanup();
       stream.destroy(cause);

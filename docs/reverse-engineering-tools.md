@@ -161,8 +161,9 @@ the version unknown, and Evidence or the launch failure keeps it as
 `provider_executable_path`. A lookup or hash that stops waiting for a stalled
 `stat` or `access` leaves that call running; a later lookup or hash of the same
 path waits for it instead of starting another. A hash also ends at the deadline
-or on cancellation while the file's open is still pending, and a later hash of
-the same path waits for that open to return before it opens the file again.
+or on cancellation while the file's open or a read is still pending, and a
+later hash of the same path waits until that earlier hash has closed the file
+before it opens the file again.
 
 Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override. A typed failure's `captured_output` marks a stream that held invalid UTF-8 with `stdout_invalid_utf8` or `stderr_invalid_utf8`.
 
