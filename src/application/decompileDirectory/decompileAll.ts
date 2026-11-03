@@ -598,7 +598,16 @@ const publishOne = async (input: {
       : { status: "reported", source: decompiled.value.sourceDescriptor };
   const pseudocode = decompiled.value.result;
   if (typeof pseudocode !== "string" || pseudocode.length === 0) {
-    const reason = pseudocodeFailure(pseudocode);
+    const reason =
+      input.retryFailed === undefined &&
+      pseudocode === null &&
+      decompiled.value.pseudocodeAbsence?.kind === "provider-failure"
+        ? {
+            code: "no_pseudocode",
+            message:
+              "The provider reported a function decompilation failure. If it supports independent decompilation, resume this export with retry_failed: independent_fresh (CLI: --resume --retry-failed independent_fresh). The retry may use different analysis context.",
+          }
+        : pseudocodeFailure(pseudocode);
     recordFailure(input.state, input.procedure, reason);
     return {
       result: await input.session.append(

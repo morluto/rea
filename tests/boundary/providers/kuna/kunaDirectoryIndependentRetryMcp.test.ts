@@ -19,7 +19,7 @@ const schemas = createMcpSchemaValidation();
 afterAll(() => schemas.clear());
 
 it.each(["compact", "full"] as const)(
-  "retries only reported project failures and preserves both attempts (%s)",
+  "guides resume and retries only reported project failures (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-directory-independent-");
     const kuna = await writeFakeKuna(root, { functions: FUNCTIONS });
@@ -64,14 +64,31 @@ it.each(["compact", "full"] as const)(
       };
       await call("open_binary", { path: target, provider_id: "kuna" });
       await call("procedure_assembly", { procedure: "main" });
+      const initial = parseEvidence(
+        await call("decompile_all", { output_directory: output }),
+      );
+      expect(initial.normalized_result).toMatchObject({
+        counts: { written: 2, failed: 2 },
+        failures: expect.arrayContaining([
+          expect.objectContaining({
+            address: "0x1080",
+            message: expect.stringContaining("resume this export"),
+          }),
+          expect.objectContaining({
+            address: "0x2000",
+            message: "The provider returned null pseudocode for this function.",
+          }),
+        ]),
+      });
       const evidence = parseEvidence(
         await call("decompile_all", {
           output_directory: output,
+          resume: true,
           retry_failed: "independent_fresh",
         }),
       );
       expect(evidence.normalized_result).toMatchObject({
-        counts: { written: 3, failed: 1 },
+        counts: { written: 1, failed: 1, skipped: 2 },
       });
       const index = JSON.parse(
         await readFile(join(output, "decompile-index.json"), "utf8"),
@@ -114,6 +131,15 @@ it.each(["compact", "full"] as const)(
             },
         );
       expect(journal.filter((row) => row.address === "0x1080")).toEqual([
+        expect.objectContaining({
+          status: "failed",
+          pseudocode_absence: expect.objectContaining({
+            kind: "provider-failure",
+          }),
+          failure: expect.objectContaining({
+            message: expect.stringContaining("resume this export"),
+          }),
+        }),
         expect.objectContaining({
           status: "failed",
           pseudocode_absence: expect.objectContaining({
