@@ -25,5 +25,13 @@ cliTest(
         }),
       ]),
     });
+    for (const required of [
+      "analyzeHeadless",
+      "-import",
+      "-noanalysis",
+      ".gpr",
+      "REA_GHIDRA_PROGRAM_NAME",
+    ])
+      expect(GHIDRA_PACKED_PROGRAM_RECOVERY).toContain(required);
   },
 );
