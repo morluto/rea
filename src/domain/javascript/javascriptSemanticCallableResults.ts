@@ -41,7 +41,7 @@ export const semanticCallableResultExpressions = (
   }
   if (!t.isFunction(callable)) return [];
   const output: SemanticCallableResultExpression[] = [];
-  const pending = childNodes(callable.body).reverse();
+  const pending = [...childNodes(callable.body)].reverse();
   while (pending.length > 0) {
     const node = pending.pop();
     if (node === undefined || t.isFunction(node) || t.isClass(node)) continue;
@@ -60,7 +60,7 @@ export const semanticCallableResultExpressions = (
         kind: "yield",
         delegated: node.delegate,
       });
-    for (const child of childNodes(node).reverse()) pending.push(child);
+    for (const child of [...childNodes(node)].reverse()) pending.push(child);
   }
   resultExpressions.set(callable, output);
   return output;

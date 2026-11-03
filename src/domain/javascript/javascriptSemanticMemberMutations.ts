@@ -346,7 +346,7 @@ const accessorEffectOperands = (
       (parent.kind === "using" || parent.kind === "await using")
     )
       operands.push({ kind: "escape", node: node.init ?? node.id });
-    for (const child of childNodes(node).reverse())
+    for (const child of [...childNodes(node)].reverse())
       pending.push({ node: child, parent: node });
   }
   accessorOperands.set(method, operands);

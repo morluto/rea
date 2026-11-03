@@ -100,6 +100,33 @@ interface PropertyPathCoverageNode {
   >;
 }
 
+// Length-prefixed so that no property name, copy selection, or context string can
+// forge a separator and collide with a different path. `u` marks an absent context,
+// which is distinct from the empty string.
+const absentContext = "u";
+
+const contextSuffix = (context: string | undefined): string =>
+  context === undefined
+    ? absentContext
+    : `${String(context.length)}:${context}`;
+
+const coverageKey = (name: string, context: string | undefined): string =>
+  `${String(name.length)}:${name}${contextSuffix(context)}`;
+
+// Selections carry an excluded-key list and an optional index, so the encoding
+// length-prefixes every entry and keeps the two apart.
+const selectionKey = (
+  key: JavaScriptSemanticPropertySelection | null,
+  context: string | undefined,
+): string => {
+  const suffix = contextSuffix(context);
+  if (key === null) return `${absentContext}${suffix}`;
+  const excluded = key.excludedKeys
+    .map((entry) => `${String(entry.length)}:${entry}`)
+    .join("");
+  return `s${String(key.startIndex ?? "")}|${excluded}${suffix}`;
+};
+
 const coverageNode = (): PropertyPathCoverageNode => ({
   terminal: false,
   exact: new Map(),
@@ -120,7 +147,7 @@ export class SemanticPropertyPathCoverage {
     for (const [offset, key] of path.entries()) {
       const context = contexts?.[offset];
       if (key !== null && typeof key !== "object") {
-        const name = JSON.stringify([String(key), context]);
+        const name = coverageKey(String(key), context);
         let child = node.exact.get(name);
         if (child === undefined) {
           child = coverageNode();
@@ -128,7 +155,7 @@ export class SemanticPropertyPathCoverage {
         }
         node = child;
       } else {
-        const identity = JSON.stringify([key, context]);
+        const identity = selectionKey(key, context);
         let selected = node.selectors.get(identity);
         if (selected === undefined) {
           selected = { key, context, node: coverageNode() };
@@ -157,9 +184,7 @@ export class SemanticPropertyPathCoverage {
       if (key === undefined) continue;
       const context = contexts?.[current.offset];
       if (key !== null && typeof key !== "object") {
-        const exact = current.node.exact.get(
-          JSON.stringify([String(key), context]),
-        );
+        const exact = current.node.exact.get(coverageKey(String(key), context));
         if (exact !== undefined)
           pending.push({ node: exact, offset: current.offset + 1 });
       }

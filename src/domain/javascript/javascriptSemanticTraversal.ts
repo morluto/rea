@@ -153,7 +153,21 @@ interface TraversalFrame {
  * expansion; bespoke `Object.values` / duplicated `childNodes` walkers must
  * not be reintroduced (they diverge on loc/comment fields and ordering).
  */
-export const childNodes = (node: t.Node): t.Node[] => {
+const childNodeCache = new WeakMap<t.Node, readonly t.Node[]>();
+
+/**
+ * Child nodes of one node. The result is shared across every traversal of the same
+ * AST, so the returned array is read-only and callers must copy before mutating.
+ */
+export const childNodes = (node: t.Node): readonly t.Node[] => {
+  const cached = childNodeCache.get(node);
+  if (cached !== undefined) return cached;
+  const computed = computeChildNodes(node);
+  childNodeCache.set(node, computed);
+  return computed;
+};
+
+const computeChildNodes = (node: t.Node): readonly t.Node[] => {
   const keys = javaScriptAstChildKeys(node);
   const children: t.Node[] = [];
   for (const key of keys) {
