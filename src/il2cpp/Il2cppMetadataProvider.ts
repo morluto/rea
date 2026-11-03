@@ -10,7 +10,10 @@ import {
   type StableArtifactSnapshot,
 } from "../artifacts/readStableArtifact.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  selectedPathRefusal,
+} from "../artifacts/ArtifactReader.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -145,7 +148,7 @@ const failureForPrimary = (
         },
       );
     if (cause.reason === "path")
-      return new AnalysisInputError(OPERATION, { cause }, [
+      return new AnalysisInputError(OPERATION, selectedPathRefusal(cause), [
         { path: [field], reason: "invalid_format", message: cause.message },
       ]);
   }

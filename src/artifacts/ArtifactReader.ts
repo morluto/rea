@@ -346,6 +346,22 @@ export class ArtifactReaderFailure extends Error {
   }
 }
 
+/**
+ * Input-error options for a reader `path` refusal that keep the reader's own
+ * recovery, such as a refused symlink's resolved target, as the remediation.
+ */
+export const selectedPathRefusal = (
+  cause: ArtifactReaderFailure,
+): {
+  readonly cause: ArtifactReaderFailure;
+  readonly remediationAction?: string;
+} => ({
+  cause,
+  ...(cause.reason !== "path" || cause.userMessage === undefined
+    ? {}
+    : { remediationAction: cause.userMessage }),
+});
+
 /** Fixed reader input ceilings share producer-owned recovery across CLI and MCP. */
 export const artifactFixedLimitFailure = (
   name: string,

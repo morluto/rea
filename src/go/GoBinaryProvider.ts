@@ -12,7 +12,10 @@ import {
   artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  selectedPathRefusal,
+} from "../artifacts/ArtifactReader.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { GoBinaryPort } from "../application/go/GoBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -43,14 +46,6 @@ import {
 const OPERATION = "inspect_go_binary";
 const INPUT_BYTES = 256 * 1024 * 1024;
 const OUTPUT_BYTES = 8 * 1024 * 1024;
-
-/** Keep the reader's selected-path recovery, such as a refused symlink's target. */
-const selectedPathRefusal = (cause: ArtifactReaderFailure) => ({
-  cause,
-  ...(cause.userMessage === undefined
-    ? {}
-    : { remediationAction: cause.userMessage }),
-});
 
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,

@@ -3,7 +3,10 @@ import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
 } from "../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  selectedPathRefusal,
+} from "../artifacts/ArtifactReader.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
@@ -154,7 +157,7 @@ const beamFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
+      return new AnalysisInputError(OPERATION, selectedPathRefusal(cause), [
         {
           path: ["path"],
           reason: "invalid_format",
