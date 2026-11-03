@@ -1234,7 +1234,7 @@ export class KunaSessionClient implements AnalysisClient {
                   "The standalone output exceeds REA's fixed buffer. Run rea function for this target with Kuna to build the project, then retry this function. If the project cannot supply pseudocode, consider another provider.",
                 continuingCallerGuidance: {
                   remediationAction:
-                    "The standalone output exceeds REA's fixed buffer. Wait for the project export to complete, for example by requesting procedure_assembly, then retry this function. If the project cannot supply pseudocode, consider another provider.",
+                    "The standalone output exceeds REA's fixed buffer. If the original session is open, wait for its project export, for example by requesting procedure_assembly. Otherwise reopen the target and wait for its project. Then retry the function. If the project cannot supply pseudocode, consider another provider.",
                 },
               },
             ),

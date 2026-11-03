@@ -570,7 +570,7 @@ it("can recover a standalone output overflow from a completed project", async ()
     expect(projectAnalysisError(failure.error)).toMatchObject({
       code: "resource_constraint",
       retryable: true,
-      remediation: { action: expect.stringContaining("project export") },
+      remediation: { action: expect.stringContaining("reopen the target") },
       details: {
         reported_limits: { output_limit_bytes: KUNA_FUNCTION_TEXT_BYTES },
       },
