@@ -182,10 +182,19 @@ const commentFacet = (
 ): Facet => {
   if (
     result?.ok === false &&
-    result.error instanceof AnalysisCapabilityUnavailableError &&
-    !result.error.retryable &&
-    result.error.remediationAction === undefined
+    result.error instanceof AnalysisCapabilityUnavailableError
   ) {
+    if (
+      result.error.retryable ||
+      result.error.remediationAction !== undefined
+    ) {
+      const projected = projectAnalysisError(result.error);
+      return {
+        state: "unavailable",
+        reason: result.error.userMessage ?? result.error.message,
+        remediation: projected.remediation.action,
+      };
+    }
     return {
       state: "unavailable",
       reason: result.error.message,

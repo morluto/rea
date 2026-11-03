@@ -25,6 +25,18 @@ it.each(["compact", "full"] as const)(
     await writeFile(target, Buffer.from([0xb8, 0x00, 0x4c, 0xcd, 0x21]));
     const session = createTestBinarySession(() => ({
       execute: async (operation, parameters) => {
+        if (operation === "comment" && parameters.address === "0x403000")
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              operation,
+              "temporarily unavailable",
+              {
+                retryable: true,
+                remediationAction: "Wait for the fixture to become ready.",
+              },
+            ),
+          );
         if (operation === "comment" || operation === "inline_comment")
           return err(
             new AnalysisCapabilityUnavailableError(
@@ -38,7 +50,7 @@ it.each(["compact", "full"] as const)(
             ? parameters.address === "0x402000"
               ? { query_address: "0x402000", found: false }
               : {
-                  query_address: "0x401001",
+                  query_address: parameters.address,
                   found: true,
                   procedure: {
                     address: "0x401000",
@@ -115,6 +127,18 @@ it.each(["compact", "full"] as const)(
         state: "unavailable",
         remediation:
           "Review provider availability in binary_session and select another supported provider if appropriate.",
+      });
+      const transient = await client.callTool({
+        name: "inspect_address_context",
+        arguments: { address: "0x403000", document: "fixture" },
+      });
+      expect(transient.isError, JSON.stringify(transient)).not.toBe(true);
+      const transientResult = contract.outputSchema.parse(
+        transient.structuredContent,
+      ).result;
+      expect(transientResult.comment).toMatchObject({
+        state: "unavailable",
+        remediation: "Wait for the fixture to become ready.",
       });
     } finally {
       await client.close();
