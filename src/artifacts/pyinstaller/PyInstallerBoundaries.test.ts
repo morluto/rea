@@ -2,7 +2,13 @@ import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader
 import { dirname, join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { createHash, randomBytes } from "node:crypto";
-import { rename, unlink, writeFile, type FileHandle } from "node:fs/promises";
+import {
+  rename,
+  unlink,
+  utimes,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { deflateSync } from "node:zlib";
 import { setImmediate } from "node:timers/promises";
@@ -275,6 +281,8 @@ it("binds materialization to the inventoried digest and checks cached carrier fr
     await reader.prepareContainer(hash(bytes));
     await reader.prepareContainer(hash(bytes));
     await writeFile(path, archive(Buffer.from("other")));
+    // Same-size rewrites can share coarse kernel timestamps; make the change observable.
+    await utimes(path, new Date(1_000_000), new Date(1_000_000));
     await expect(reader.prepareContainer(hash(bytes))).rejects.toMatchObject({
       reason: "integrity",
     });
