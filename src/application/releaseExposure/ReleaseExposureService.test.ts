@@ -1550,6 +1550,28 @@ describe("ReleaseExposureService Go relative flag paths", () => {
   });
 });
 
+describe("ReleaseExposureService Go profile path", () => {
+  it.each([
+    ["private-training.pgo", ["private-training.pgo"]],
+    ["/srv/my profiles/a,b.pgo", ["/srv/my profiles/a,b.pgo"]],
+    ["auto", []],
+    ["off", []],
+  ])("reads -pgo %s as one profile path", async (value, samples) => {
+    const report = await goReport({
+      path: "github.com/acme/app",
+      main: null,
+      dependencies: [],
+      settings: [{ key: "-pgo", value }],
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    });
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe(samples.length > 0 ? "exposed" : "not_observed");
+    expect(check?.observation.samples ?? []).toEqual(samples);
+  });
+});
+
 describe("ReleaseExposureService Go paths", () => {
   it("keeps Go paths with spaces and attached compiler flags whole", async () => {
     const report = await goReport({

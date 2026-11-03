@@ -811,9 +811,15 @@ const filesystemPath = (value: string | null | undefined): string | null => {
   return null;
 };
 
-/** Go build settings whose values are flags or a build input path. */
+/** Go build settings whose values are flags. */
 const GO_FLAG_SETTING =
-  /^(?:CGO_[A-Z]+FLAGS|-asmflags|-gccgoflags|-gcflags|-ldflags|-pgo)$/u;
+  /^(?:CGO_[A-Z]+FLAGS|-asmflags|-gccgoflags|-gcflags|-ldflags)$/u;
+/**
+ * `-pgo file` names one profile, so its value is a whole path, or under
+ * `-trimpath` the bare file name; `auto` and `off` name no file.
+ */
+const goProfilePath = (value: string): string | null =>
+  value.length === 0 || value === "auto" || value === "off" ? null : value;
 /**
  * One field as Go's `quoted.Split` reads a flag value: a field that begins with
  * `"` or `'` runs to the matching quote, which it drops; any other field runs to
@@ -983,6 +989,11 @@ const goPaths = (
     add(dependency.replacement?.path);
   }
   for (const setting of module.settings) {
+    if (setting.key === "-pgo") {
+      const path = goProfilePath(setting.value);
+      if (path !== null) paths.add(path);
+      continue;
+    }
     if (!GO_FLAG_SETTING.test(setting.key)) continue;
     for (const path of goFlagPaths(setting.value)) add(path);
     for (const path of goSettingRelativePaths(setting.key, setting.value))
