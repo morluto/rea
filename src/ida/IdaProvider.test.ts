@@ -40,6 +40,7 @@ it.each([
         status: "unavailable",
         code: selected ? "open_options_invalid" : "not_configured",
         reason: expect.stringContaining("REA_IDA_MCP_CONFIG"),
+        remediation: expect.stringContaining("REA_IDA_MCP_CONFIG"),
         diagnostics: {
           configured: selected,
           registration_path: selected ? path : null,
@@ -49,10 +50,11 @@ it.each([
               { setting: "REA_IDA_MCP_CONFIG", constraint: expect.any(String) },
             ],
           },
-          configuration_remediation:
-            expect.stringContaining("REA_IDA_MCP_CONFIG"),
         },
       });
+      expect(snapshot.availability.diagnostics).not.toHaveProperty(
+        "configuration_remediation",
+      );
       expect(connect).not.toHaveBeenCalled();
     } finally {
       const closed = await provider.closeOwnedResources();
@@ -120,15 +122,22 @@ it.each(["missing", "file", "directory", "omitted"] as const)(
           status: "unavailable",
           code: "open_options_invalid",
           reason: expect.stringContaining(workspace),
+          remediation: expect.stringContaining("workspaceRoot"),
           diagnostics: {
             workspace_root: workspace,
             live_connection_probed: false,
-            configuration_remediation: expect.stringContaining("workspaceRoot"),
           },
         });
         expect(snapshot.capabilities.every(({ available }) => !available)).toBe(
           true,
         );
+        expect(
+          snapshot.capabilities.find(
+            ({ operation }) => operation === "procedure_pseudo_code",
+          ),
+        ).toMatchObject({
+          remediation: expect.stringContaining("workspaceRoot"),
+        });
         expect(
           snapshot.capabilities.find(
             ({ operation }) => operation === "procedure_callers",

@@ -239,10 +239,10 @@ it("retains failed receipt acknowledgements and retries before another command",
       bridge.client.execute({
         sessionId: bridge.session.session_id,
         expectedGeneration: bridge.session.document_generation,
-        command: "iI",
+        command: "fixture-receipt-count",
         json: false,
       }),
-    ).resolves.toMatchObject({ executionState: "complete" });
+    ).resolves.toMatchObject({ executionState: "complete", output: "0" });
   } finally {
     await bridge.close();
   }
@@ -263,10 +263,10 @@ it("retains a receipt when an ACK reply omits its acknowledgement field", async 
       bridge.client.execute({
         sessionId: bridge.session.session_id,
         expectedGeneration: bridge.session.document_generation,
-        command: "iI",
+        command: "fixture-receipt-count",
         json: false,
       }),
-    ).resolves.toMatchObject({ executionState: "complete" });
+    ).resolves.toMatchObject({ executionState: "complete", output: "0" });
   } finally {
     await bridge.close();
   }
