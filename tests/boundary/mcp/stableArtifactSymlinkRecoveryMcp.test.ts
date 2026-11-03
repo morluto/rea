@@ -27,6 +27,7 @@ mcpTest.skipIf(process.platform === "win32")(
         "inspect_rust_binary",
         "inspect_elf_notes",
         "inspect_devicetree",
+        "inspect_sqlite_database",
       ]) {
         const response = await client.callTool({
           name,
