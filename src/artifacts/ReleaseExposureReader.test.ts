@@ -2925,6 +2925,7 @@ describe("ReleaseExposureReader inline map reads", () => {
 
   it("does not read a map in a data block or a script that loads by URL", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-html-");
+    await writeFile(join(root, "app.js"), "run();\n");
     await writeFile(
       join(root, "index.html"),
       `<script type="application/json">//# sourceMappingURL=${dataUrl}\n</script>` +
@@ -3319,6 +3320,14 @@ describe("ReleaseExposureReader HTML script references", () => {
         "index.html": '<script src="app"></script>',
       }),
     );
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
+
+  it("keeps coverage unknown for a named script beside a selected HTML file", async () => {
+    const page = '<script src="app.js"></script>';
+    const root = await directory({ "app.js": inlineMap, "index.html": page });
+    const scanned = await inspect(join(root, "index.html"));
     expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
     expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
   });

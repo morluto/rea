@@ -1366,10 +1366,11 @@ const examineHtmlScripts = (
 };
 
 /**
- * A script element loads its target whatever the file is called. A name that
- * says JavaScript is examined as a script anyway, and a remote script is not
- * shipped. Any other target is recorded so it is examined as a script when it
- * is reached. A target that cannot be placed on disk stays unassessed.
+ * A script element loads its target whatever the file is called, and a remote
+ * script is not shipped. Every local target is recorded so it is examined as a
+ * script when it is reached, and one that is never reached, such as a sibling
+ * of a selected file, stays unassessed rather than absent. A target that cannot
+ * be placed on disk stays unassessed.
  */
 const noteScriptReference = (
   state: ScanState,
@@ -1384,7 +1385,6 @@ const noteScriptReference = (
       baseHref === null ? page : new URL(baseHref, page),
     );
     if (url.protocol === "http:" || url.protocol === "https:") return;
-    if (JAVASCRIPT_MEMBER_NAME.test(url.pathname)) return;
     noteScriptTarget(state, fileURLToPath(url));
   } catch {
     state.skippedMaps += 1;
