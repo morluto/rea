@@ -391,6 +391,8 @@ still found. Each match is reported by the file offset of its first byte with a
 hex dump of the lines that cover it plus `context_lines` lines on each side.
 Overlapping matches are all reported. When `max_matches` stops the scan,
 `complete` is `false` and `next_offset` is the `start_offset` for the next page.
+There is no total output budget: 1000 matches with `context_lines` 8 can return
+about 1 MB, so lower `max_matches` or `context_lines` to keep replies small.
 
 Both operations check that the file identity, size and timestamps do not change
 during the read and honor cancellation. Their Evidence carries no whole-file

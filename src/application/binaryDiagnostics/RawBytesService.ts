@@ -194,6 +194,7 @@ export class RawBytesService {
               limitations: [
                 OFFSET_LIMITATION,
                 "Overlapping matches are all reported; a match is reported at the offset of its first byte.",
+                "There is no total output budget: a page of 1000 matches with context_lines 8 can return about 1 MB; lower max_matches or context_lines to keep replies small.",
                 ...(found.nextOffset === null
                   ? []
                   : [
