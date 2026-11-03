@@ -1330,7 +1330,8 @@ const envProgram = (args: string[]): string | undefined => {
   const fields = [...args];
   while (fields.length > 0) {
     const field = fields.shift() ?? "";
-    if (field === "--") return fields[0];
+    // Past `--` nothing is an option, but settings still come first.
+    if (field === "--") return fields.find((rest) => !rest.includes("="));
     if (ENV_OPTION_WITH_ARGUMENT.has(field)) {
       fields.shift();
       continue;

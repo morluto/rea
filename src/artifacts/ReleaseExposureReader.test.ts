@@ -3108,6 +3108,7 @@ describe("ReleaseExposureReader Node shebang scripts", () => {
     ["#!/usr/bin/env -C /srv/app node"],
     ["#!/usr/bin/env -Snode --no-warnings"],
     ["#!/usr/bin/env --unset NODE_OPTIONS -- node"],
+    ["#!/usr/bin/env -S -- MODE=production node"],
     ["#!/usr/local/bin/node --no-warnings"],
     ["#! /usr/bin/nodejs"],
   ])("reads the map of %j in a directory", async (shebang) => {
