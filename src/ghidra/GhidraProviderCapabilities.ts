@@ -51,6 +51,10 @@ const stringInventoryLimitation =
 const searchLimitation =
   "Regex mode uses Java Pattern semantics. Matcher or compiler stack exhaustion returns a resource constraint without closing the session; literal mode avoids regex recursion and returns complete matching values.";
 
+/** Attached to an empty xrefs result: absence of resolved references is not proof. */
+export const ghidraEmptyXrefsLimitation =
+  "Ghidra's ReferenceManager resolved no references to this address in this session. An empty list reflects what this analysis resolved, not proof that the address is unreferenced; before concluding the address has no xrefs, cross-check the disassembly or use trace_feature on a known string.";
+
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
   operation: string,

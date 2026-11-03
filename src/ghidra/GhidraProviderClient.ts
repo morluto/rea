@@ -103,6 +103,7 @@ import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import {
   ghidraHealthLimitations,
+  ghidraEmptyXrefsLimitation,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
@@ -846,6 +847,22 @@ export const createGhidraProviderClient = (input: {
         : parseGhidraInventoryResult(operation, called.value);
       if (!result.ok) return result;
       let { value: normalized, ...observation } = result.value;
+      let executionMetadata: GhidraExecutionMetadata = observation;
+      if (
+        operation === "xrefs" &&
+        Array.isArray(normalized) &&
+        normalized.length === 0
+      ) {
+        // An empty list is the provider's observation, not proof: distinguish
+        // "no references were resolved" from "the address is unreferenced".
+        executionMetadata = {
+          ...executionMetadata,
+          limitations: [
+            ...(executionMetadata.limitations ?? []),
+            ghidraEmptyXrefsLimitation,
+          ],
+        };
+      }
       if (
         (operation === "search_procedures" || operation === "search_strings") &&
         input.value.mode === "literal" &&
@@ -856,7 +873,7 @@ export const createGhidraProviderClient = (input: {
           normalized,
           input.value.pattern,
         );
-        observation = { ...observation, rawResult: called.value };
+        executionMetadata = { ...executionMetadata, rawResult: called.value };
       }
       if (
         operation === "inspect_native_data_type" &&
@@ -881,7 +898,10 @@ export const createGhidraProviderClient = (input: {
           const metadata = nativeAotOwner?.readTypeDetail(address);
           if (metadata !== undefined) {
             // Preserve the database reply independently of the derived overlay.
-            observation = { ...observation, rawResult: called.value };
+            executionMetadata = {
+              ...executionMetadata,
+              rawResult: called.value,
+            };
             normalized = jsonValueSchema.parse({
               ...normalized,
               metadata_recovery: metadata,
@@ -889,7 +909,7 @@ export const createGhidraProviderClient = (input: {
           }
         }
       }
-      return ok(projectExecution(operation, normalized, observation));
+      return ok(projectExecution(operation, normalized, executionMetadata));
     },
     executeIfReady: async (operation, parameters, options) => {
       if (operation !== "list_documents" && operation !== "list_procedures")

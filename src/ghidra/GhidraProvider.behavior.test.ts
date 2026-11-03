@@ -3,6 +3,7 @@ import {
   EXISTING_PROJECT_WINDOWS_REMEDIATION,
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   existingProjectCapabilities,
+  ghidraEmptyXrefsLimitation,
 } from "./GhidraProviderCapabilities.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
@@ -3120,6 +3121,47 @@ const sessionInfo = () => ({
     default_address_space: "ram",
     sha256: "a".repeat(64),
   },
+});
+
+describe("Ghidra empty xrefs diagnostics", () => {
+  const emptyXrefsProvider = (result: readonly string[]) =>
+    provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () => Promise.resolve(ok<string[]>([...result])),
+      close: () => Promise.resolve(ok(null)),
+    }));
+
+  it("names unresolved references in the limitations of an empty xrefs result", async () => {
+    const ghidra = emptyXrefsProvider([]);
+    const client = await createElfClient(ghidra);
+    try {
+      const execution = await client.execute("xrefs", {
+        address: "0x1005409a2",
+      });
+      if (!execution.ok) throw execution.error;
+      expect(execution.value.result).toEqual([]);
+      expect(execution.value.limitations).toContain(ghidraEmptyXrefsLimitation);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("does not add the unresolved-references caveat to a non-empty xrefs result", async () => {
+    const ghidra = emptyXrefsProvider(["0x100003670"]);
+    const client = await createElfClient(ghidra);
+    try {
+      const execution = await client.execute("xrefs", {
+        address: "0x1005409a2",
+      });
+      if (!execution.ok) throw execution.error;
+      expect(execution.value.result).toEqual(["0x100003670"]);
+      expect(execution.value.limitations).not.toContain(
+        ghidraEmptyXrefsLimitation,
+      );
+    } finally {
+      await client.close();
+    }
+  });
 });
 
 describe("Ghidra PDB coverage", () => {
