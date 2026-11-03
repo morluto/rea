@@ -82,7 +82,7 @@ export const transformVerifierTypeScript = (
   url,
   format,
   strip = nodeModule.stripTypeScriptTypes,
-  loadTypeScript = () => require("typescript"),
+  loadTypeScript = () => require("typescript6"),
 ) => {
   try {
     return strip(source, {
