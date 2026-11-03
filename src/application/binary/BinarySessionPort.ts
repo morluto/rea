@@ -33,7 +33,11 @@ export type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.j
 /** Selection observed at the end of one serialized open attempt. */
 export type OpenSelectionReceipt =
   | { readonly kind: "binary"; readonly path: string; readonly sha256: string }
-  | { readonly kind: "resources"; readonly path: string }
+  | {
+      readonly kind: "resources";
+      readonly path: string;
+      readonly caller_path: string;
+    }
   | { readonly kind: "none" };
 
 export type BinaryOpenResult =

@@ -554,6 +554,7 @@ export class BinarySession
       return {
         kind: "resources",
         path: this.#activeBundleResources.root.canonicalPath,
+        caller_path: this.#activeBundleResources.root.callerPath,
       };
     return { kind: "none" };
   }

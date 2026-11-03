@@ -945,7 +945,8 @@ choices return typed selection details. A selected provider is never replaced
 automatically after a runtime failure.
 
 When an admitted `open_binary` attempt fails, `error.details.selection_at_failure`
-records the binary path and SHA-256, resource root, or absence of selection at
+records the canonical binary path and SHA-256, resource root (including its
+caller-selected path), or absence of selection at
 the end of that serialized attempt. This is a past observation: a queued or
 later operation may already have changed the selection. Call `binary_session`
 for current state. Validation failures that do not enter the session have no

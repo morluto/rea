@@ -162,6 +162,7 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
   expect(rejectedBinary.selection).toEqual({
     kind: "resources",
     path: opened.value.canonicalPath,
+    caller_path: opened.value.callerPath,
   });
   const snapshot = session.exportAnalysisSnapshot();
   if (snapshot.ok)
