@@ -1621,15 +1621,23 @@ it("hashes a long TYPE_REF tuple chain without recursing", () => {
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
 });
 
-it("names the two opcode tables behind magic 3620", () => {
+it("names the two opcode tables behind magics 3615 and 3620", () => {
   const file = (magic: number): Buffer =>
     Buffer.concat([pythonPycHeader(magic), marshalCode("py311")]);
-  const shared = expect.arrayContaining([
-    expect.stringMatching(/Magic 3620 is shared.*3621/),
-  ]);
-  expect(parse(file(3620)).limitations).toEqual(shared);
-  for (const magic of [3619, 3621])
-    expect(parse(file(magic)).limitations, String(magic)).not.toEqual(shared);
+  const shared = (magic: number) =>
+    expect.arrayContaining([
+      expect.stringMatching(new RegExp(`Magic ${String(magic)} is shared`)),
+    ]);
+  expect(parse(file(3615)).limitations).toEqual(shared(3615));
+  expect(parse(file(3620)).limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringMatching(/Magic 3620 is shared.*3621/),
+    ]),
+  );
+  for (const magic of [3614, 3616, 3619, 3621])
+    expect(parse(file(magic)).limitations, String(magic)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/is shared by builds/)]),
+    );
 });
 
 it("rejects code CPython treats as corrupt instead of complete coverage", () => {

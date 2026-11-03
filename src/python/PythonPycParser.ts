@@ -20,7 +20,7 @@ import {
   PythonPycResourceFailure,
 } from "./PythonPyc.errors.js";
 import {
-  PYTHON_PYC_SHARED_TABLE_MAGIC,
+  PYTHON_PYC_SHARED_TABLE_MAGICS,
   pythonPycBytecodeIdentity,
 } from "./PythonPycBytecodeEquality.js";
 
@@ -268,6 +268,7 @@ export const parsePythonPyc = (
   const codeObjects = flattenCode(root.value);
   const unknownFlags =
     flags & ~(PYTHON_PYC_HASH_BASED | PYTHON_PYC_CHECK_SOURCE);
+  const sharedTables = PYTHON_PYC_SHARED_TABLE_MAGICS.get(magic);
   return {
     artifact: {
       path: artifact.path,
@@ -296,11 +297,11 @@ export const parsePythonPyc = (
             "Magic 3410 is shared by CPython revisions with different negative co_stacksize/co_flags constructor checks; these raw values are preserved, but this header cannot establish constructor acceptance.",
           ]
         : []),
-      ...(magic === PYTHON_PYC_SHARED_TABLE_MAGIC
-        ? [
-            "Magic 3620 is shared by CPython 3.14.0a6 and later main-branch builds that already carry the 3621 opcode table; code-object equality uses the raw bytecode, so code objects that differ only in inline cache units stay distinct.",
-          ]
-        : []),
+      ...(sharedTables === undefined
+        ? []
+        : [
+            `Magic ${magic} is shared by builds with different opcode tables (${sharedTables}); code-object equality uses the raw bytecode, so code objects that differ only in inline cache units stay distinct.`,
+          ]),
       ...(unknownFlags === 0
         ? []
         : [

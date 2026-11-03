@@ -61,14 +61,14 @@ const inlineCacheProfiles = (
  * 3d0824aef261895bad55f7e1fa7267a926206924 (3662),
  * 879c85f6e4ca8424ff6b4fddfbc946889572bf13 (3663),
  * and 600f4dbd54bb35f56ecf1430134d2072b0520aa3 (3665). Magic 3610 was reserved but never
- * built, so it keeps the 3609 table. Magic 3615 first carried
- * ab61d3f4303d14a413bc9ae6557c730ffdf7579e's table for three days until
- * a10f99375e7912df863cf101a38e9703cfcd72f1 reverted it; the pinned table is
- * 75b49621578a45415bfeedd6cc68d50e821d8281's. Builds of magic 3620 after
- * 053c285f6b41f92fbdd1d4ff0c959cceefacd7cd (the day before 3621) already
- * carry the 3621 table, so no table is pinned to 3620 (see
- * `PYTHON_PYC_SHARED_TABLE_MAGIC`). Final 3.14 magic 3627 matches v3.14.4 and
- * final 3.15 magic 3666 matches v3.15.0.
+ * built, so it keeps the 3609 table. Two magics were written by builds with
+ * different tables and have none pinned (see `PYTHON_PYC_SHARED_TABLE_MAGICS`):
+ * magic 3615 first carried ab61d3f4303d14a413bc9ae6557c730ffdf7579e's table
+ * for three days until a10f99375e7912df863cf101a38e9703cfcd72f1 reverted it,
+ * and the re-landed table is 75b49621578a45415bfeedd6cc68d50e821d8281's;
+ * builds of magic 3620 after 053c285f6b41f92fbdd1d4ff0c959cceefacd7cd (the
+ * day before 3621) already carry the 3621 table. Final 3.14 magic 3627 matches
+ * v3.14.4 and final 3.15 magic 3666 matches v3.15.0.
  */
 const INLINE_CACHE_ENTRIES_BY_MAGIC: ReadonlyMap<
   number,
@@ -667,31 +667,6 @@ const INLINE_CACHE_ENTRIES_BY_MAGIC: ReadonlyMap<
     ],
   ),
   ...inlineCacheProfiles(
-    [3615],
-    [
-      [2, 1],
-      [39, 1],
-      [40, 3],
-      [45, 5],
-      [52, 3],
-      [55, 3],
-      [56, 1],
-      [57, 1],
-      [69, 1],
-      [74, 1],
-      [79, 9],
-      [89, 4],
-      [93, 1],
-      [97, 1],
-      [98, 1],
-      [99, 1],
-      [100, 1],
-      [103, 1],
-      [107, 4],
-      [116, 1],
-    ],
-  ),
-  ...inlineCacheProfiles(
     [3616, 3617, 3618],
     [
       [38, 1],
@@ -918,13 +893,23 @@ const INLINE_CACHE_ENTRIES_BY_MAGIC: ReadonlyMap<
 ]);
 
 /**
- * Magic 3620 is shared by CPython 3.14.0a6 and the main-branch builds after
- * 053c285f6b41f92fbdd1d4ff0c959cceefacd7cd that already carry the 3621
- * opcode table; the header cannot tell them apart, and the wrong table would
- * merge distinct code objects. No table is pinned to it, so its identity is the
- * raw bytecode, which keeps code objects that differ only in cache units apart.
+ * Magics written by CPython builds with two different opcode tables, with the
+ * builds each one covers. The header cannot tell those builds apart, and the
+ * wrong table would merge distinct code objects, so no table is pinned to
+ * these magics: their identity is the raw bytecode, which keeps code objects
+ * that differ only in cache units apart.
  */
-export const PYTHON_PYC_SHARED_TABLE_MAGIC = 3620;
+export const PYTHON_PYC_SHARED_TABLE_MAGICS: ReadonlyMap<number, string> =
+  new Map([
+    [
+      3615,
+      "CPython main carried a different opcode table under magic 3615 for three days before reverting it",
+    ],
+    [
+      3620,
+      "CPython 3.14.0a6 and the later main-branch builds that already carry the 3621 opcode table both write magic 3620",
+    ],
+  ]);
 
 /** Preserve CPython's bytecode-size check and omit only cache code units. */
 export const pythonPycBytecodeIdentity = (
