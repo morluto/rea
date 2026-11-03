@@ -379,7 +379,7 @@ export const evidenceSubjectDisplay = (evidence: {
 };
 
 export type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
-type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
+export type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
 
 export type EvidenceProvider = Readonly<z.output<typeof providerSchema>>;
 

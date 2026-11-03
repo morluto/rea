@@ -30,6 +30,15 @@ import {
 } from "./UnicornProviderMetadata.js";
 import { UNICORN_LIMITS, UNICORN_PYTHON_ENV_VAR } from "./UnicornRelease.js";
 
+/**
+ * Startup allowance added to the emulation budget for the outer bridge
+ * deadline. The worker's own timer enforces budgets.timeout_ms from when it
+ * starts; this covers Python/pwntools import, request handling, and the
+ * reply round-trip so the parent does not expire first and discard the
+ * worker's own timeout report. Timeout errors still name the budget.
+ */
+const BRIDGE_STARTUP_ALLOWANCE_MS = 30_000;
+
 export interface UnicornClientOptions {
   readonly bridgePath?: string;
   readonly launcher?: UnicornBridgeLauncher;
@@ -121,7 +130,8 @@ export class UnicornClient implements AnalysisClient {
         stub_policy: input.stub_policy,
         budgets: input.budgets,
       },
-      timeoutMs: input.budgets.timeout_ms,
+      timeoutMs: input.budgets.timeout_ms + BRIDGE_STARTUP_ALLOWANCE_MS,
+      budgetMs: input.budgets.timeout_ms,
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
       ...(this.#launcher === undefined ? {} : { launcher: this.#launcher }),
       ...(this.#runtimeDirBase === undefined
@@ -169,6 +179,14 @@ export class UnicornClient implements AnalysisClient {
         // as the authority.
         subject: null,
         authority: "controlled-replay",
+        environment: {
+          id: "unicorn-2.1.2",
+          platform: process.platform,
+          architecture: input.architecture,
+          isolation: "process",
+        },
+        subjectUnavailableReason:
+          "Target-free Unicorn run: function bytes are caller-supplied, not an opened artifact.",
       }),
     );
   }

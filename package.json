@@ -76,6 +76,8 @@
     "bridge/agentenv/computer.py",
     "bridge/agentenv/solve.py",
     "bridge/agentenv/solve_cleanup.py",
+    "bridge/unicorn/emulate_function.py",
+    "bridge/unicorn/emulate_function_impl.py",
     "scripts/rea.mjs",
     "scripts/lib/cli-process-environment.mjs",
     "scripts/lib/runtime-admission.mjs",

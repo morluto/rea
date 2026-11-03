@@ -9,6 +9,11 @@ import {
 const CODE = 0x1000000;
 const STACK = 0x7f000000;
 
+const emulateFunctionContract = () =>
+  UNICORN_TOOL_CONTRACTS.find(
+    (contract) => contract.name === "emulate_function",
+  )!;
+
 const baseInput = () => ({
   architecture: "x86_64",
   function_bytes: "89f801f0c3",
@@ -23,14 +28,14 @@ describe("emulate_function contract", () => {
     expect(UNICORN_TOOL_CONTRACTS.map((contract) => contract.name)).toEqual([
       "emulate_function",
     ]);
-    const contract = UNICORN_TOOL_CONTRACTS[0]!;
+    const contract = emulateFunctionContract();
     expect(contract.kind).toBe("native-provider");
     expect(contract.requiresActiveTarget).toBe(false);
     expect(contract.description).toMatch(/stubbed and recorded/);
   });
 
   it("parses the contract example input with defaults applied", () => {
-    const contract = UNICORN_TOOL_CONTRACTS[0]!;
+    const contract = emulateFunctionContract();
     const example = contract.examples[0]!.input;
     const parsed = emulateFunctionInputSchema.parse(example);
     expect(parsed.architecture).toBe("x86_64");

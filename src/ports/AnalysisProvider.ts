@@ -20,6 +20,7 @@ import type {
   EvidenceAuthority,
   EvidenceLocation,
   EvidenceSubjectTarget,
+  ExecutionEnvironment,
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
@@ -140,6 +141,8 @@ export interface CreateAnalysisExecutionOptions {
   readonly sourceEvidence?: readonly Evidence[];
   readonly subject?: EvidenceSubjectTarget | null;
   readonly authority?: EvidenceAuthority;
+  readonly environment?: ExecutionEnvironment | null;
+  readonly subjectUnavailableReason?: string;
 }
 
 /**
@@ -222,6 +225,12 @@ export function createAnalysisExecution(
     ...(options.authority === undefined
       ? {}
       : { authority: options.authority }),
+    ...(options.environment === undefined
+      ? {}
+      : { environment: options.environment }),
+    ...(options.subjectUnavailableReason === undefined
+      ? {}
+      : { subjectUnavailableReason: options.subjectUnavailableReason }),
   };
 }
 

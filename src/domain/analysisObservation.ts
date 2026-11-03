@@ -8,6 +8,7 @@ import {
   type EvidenceLocation,
   type EvidenceProvider,
   type EvidenceSubjectTarget,
+  type ExecutionEnvironment,
 } from "./evidence.js";
 import type { AnalysisProfileCommitment } from "./analysisProfile.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -35,6 +36,10 @@ export interface AnalysisObservation {
    * subject, which a service REA does not own cannot name.
    */
   readonly authority?: EvidenceAuthority;
+  /** Execution environment descriptor; null means no environment is claimed. */
+  readonly environment?: ExecutionEnvironment | null;
+  /** Reason the subject identity is unavailable, when no target is supplied. */
+  readonly subjectUnavailableReason?: string;
 }
 
 /** Build the single borrowed observation used for admission and commitment. */
@@ -97,5 +102,16 @@ export const createAnalysisExecutionEvidence = (
       evidenceLinks:
         execution.sourceEvidence?.map(({ evidence_id }) => evidence_id) ?? [],
     },
-    options,
+    {
+      ...options,
+      ...(execution.authority === undefined
+        ? {}
+        : { authority: execution.authority }),
+      ...(execution.environment === undefined
+        ? {}
+        : { environment: execution.environment }),
+      ...(execution.subjectUnavailableReason === undefined
+        ? {}
+        : { subjectUnavailableReason: execution.subjectUnavailableReason }),
+    },
   );
