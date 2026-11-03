@@ -78,7 +78,21 @@ export class AsarArtifactReader implements ArtifactReader {
           jsonBytes: admitted.jsonBytes,
         };
         assertAsarReadActive(signal);
-        return readAsarListing(admitted.header, signal);
+        try {
+          return await readAsarListing(admitted.header, signal);
+        } catch (cause: unknown) {
+          // Listing names members relative to this archive; keep which archive.
+          if (
+            cause instanceof ArtifactReaderFailure &&
+            (cause.reason === "format" || cause.reason === "path")
+          )
+            throw new ArtifactReaderFailure(
+              cause.reason,
+              `${cause.message} in ${this.path}`,
+              { cause },
+            );
+          throw cause;
+        }
       }, signal);
     } catch (cause: unknown) {
       throw asarFailure(this.path, "inventory", cause);

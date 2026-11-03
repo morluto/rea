@@ -22,6 +22,57 @@ const asarListingNodeSchema = asarNodeSchema.extend({
   size: z.unknown().optional(),
 });
 
+const malformedMetadata = (subject: string, error: z.ZodError) => {
+  const fields = [
+    ...new Set(
+      error.issues.map((issue) =>
+        issue.path.length === 0 ? "entry" : issue.path.join("."),
+      ),
+    ),
+  ].join(", ");
+  return new ArtifactReaderFailure(
+    "format",
+    `${subject} metadata is malformed (${fields})`,
+    { cause: error },
+  );
+};
+
+/** Interpret one declared size once; an invalid one keeps a source fact, not a number. */
+const readDeclaredSize = (
+  value: unknown,
+): { readonly size: number | null; readonly limitation?: string } => {
+  if (value === undefined) return { size: null };
+  const parsed = asarDeclaredSizeSchema.safeParse(value);
+  if (parsed.success) return { size: parsed.data };
+  // JSON.parse has already rounded a number beyond the safe-integer range or
+  // turned it into Infinity, so its source spelling is unknown here.
+  if (
+    typeof value === "number" &&
+    !(Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER)
+  )
+    return {
+      size: null,
+      limitation:
+        "ASAR entry declares a numeric size outside the safe-integer range; its exact source value was not retained.",
+    };
+  const declared =
+    typeof value === "number"
+      ? `size ${String(value)}`
+      : typeof value === "string"
+        ? `size ${quoteSource(value)}`
+        : value === null
+          ? "a null size"
+          : Array.isArray(value)
+            ? "an array size"
+            : typeof value === "object"
+              ? "an object size"
+              : `a ${typeof value} size`;
+  return {
+    size: null,
+    limitation: `ASAR entry declares ${declared}, which is not a non-negative safe integer.`,
+  };
+};
+
 type AsarListedFacts = Pick<
   ArtifactEntry,
   "declaredIntegrity" | "executable" | "unpacked"
@@ -54,7 +105,10 @@ export const readAsarListing = async (
   header: unknown,
   signal?: AbortSignal,
 ): Promise<AsarListedEntry[]> => {
-  const root = asarNodeSchema.parse(header);
+  const parsedRoot = asarListingNodeSchema.safeParse(header);
+  if (!parsedRoot.success)
+    throw malformedMetadata("ASAR root", parsedRoot.error);
+  const root = parsedRoot.data;
   if (root.files === undefined)
     throw new ArtifactReaderFailure("format", "ASAR root has no files table");
   const entries: AsarListedEntry[] = [];
@@ -94,7 +148,7 @@ export const readAsarListing = async (
     )
       throw new ArtifactReaderFailure(
         "path",
-        `ASAR header has an unsafe path component under ${frame.parent.length === 0 ? "the archive root" : frame.parent}: ${quoteSource(name)}`,
+        `ASAR header has an unsafe path component under ${frame.parent.length === 0 ? "the archive root" : quoteSource(frame.parent)}: ${quoteSource(name)}`,
       );
     const units =
       frame.parent.length + name.length + (frame.parent.length === 0 ? 0 : 1);
@@ -103,20 +157,8 @@ export const readAsarListing = async (
     admitRetainedBytes(units * 2 + 256);
     const path = frame.parent.length === 0 ? name : `${frame.parent}/${name}`;
     const parsed = asarListingNodeSchema.safeParse(raw);
-    if (!parsed.success) {
-      const fields = [
-        ...new Set(
-          parsed.error.issues.map((issue) =>
-            issue.path.length === 0 ? "entry" : issue.path.join("."),
-          ),
-        ),
-      ].join(", ");
-      throw new ArtifactReaderFailure(
-        "format",
-        `ASAR entry metadata is malformed (${fields}): ${path}`,
-        { cause: parsed.error },
-      );
-    }
+    if (!parsed.success)
+      throw malformedMetadata(`ASAR entry ${quoteSource(path)}`, parsed.error);
     const metadata = parsed.data;
     if (
       metadata.files === undefined &&
@@ -125,27 +167,20 @@ export const readAsarListing = async (
     )
       throw new ArtifactReaderFailure(
         "format",
-        `ASAR entry has no directory, link or file metadata: ${path}`,
+        `ASAR entry ${quoteSource(path)} has no directory, link or file metadata`,
       );
     const declaration = metadata.integrity;
     const supportedIntegrity =
       declaration?.algorithm === "SHA256" &&
       /^[a-f0-9]{64}$/u.test(declaration.hash);
     const limitations: string[] = [];
-    const declaredSize = asarDeclaredSizeSchema.safeParse(metadata.size);
-    const size = declaredSize.success ? declaredSize.data : null;
-    if (metadata.size !== undefined && !declaredSize.success) {
-      // Keep the parsed source value. JSON.parse already turned out-of-range
-      // numbers into Infinity, which String keeps and JSON.stringify drops.
-      const declared =
-        typeof metadata.size === "number"
-          ? `size ${String(metadata.size)}`
-          : typeof metadata.size === "string"
-            ? `size ${quoteSource(metadata.size)}`
-            : `a ${metadata.size === null ? "null" : typeof metadata.size} size`;
-      const limitation = `ASAR entry declares ${declared}, which is not a non-negative safe integer.`;
-      admitRetainedBytes(limitation.length * 2 + 64);
-      limitations.push(limitation);
+    const { size, limitation: sizeLimitation } = readDeclaredSize(
+      metadata.size,
+    );
+    if (sizeLimitation !== undefined) {
+      // Quoted source text is already bounded; charge the retained copy.
+      admitRetainedBytes(sizeLimitation.length * 2 + 64);
+      limitations.push(sizeLimitation);
     }
     if (
       declaration !== undefined &&

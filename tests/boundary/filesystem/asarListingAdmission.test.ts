@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
@@ -88,51 +88,77 @@ it.each(["..", ".", "", "a/../b", "a/b", "a\0b"])(
   },
 );
 
+/** Listing failures name the member, then the archive that holds it. */
+const inArchive = (message: string, path: string) =>
+  expect.stringMatching(
+    new RegExp(
+      `^${message.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")} in \\S*${basename(path).replace(".", "\\.")}$`,
+      "u",
+    ),
+  );
+
 it.each([
   [
     { size: 0, offset: 0 },
-    "ASAR entry metadata is malformed (offset): app/main.js",
+    'ASAR entry "app/main.js" metadata is malformed (offset)',
   ],
   [
     { size: 0, offset: "0", unpacked: "yes", executable: 1 },
-    "ASAR entry metadata is malformed (unpacked, executable): app/main.js",
+    'ASAR entry "app/main.js" metadata is malformed (unpacked, executable)',
   ],
-  ["entry", "ASAR entry metadata is malformed (entry): app/main.js"],
-  [{}, "ASAR entry has no directory, link or file metadata: app/main.js"],
+  ["entry", 'ASAR entry "app/main.js" metadata is malformed (entry)'],
+  [{}, 'ASAR entry "app/main.js" has no directory, link or file metadata'],
 ])(
   "names the member whose metadata %j stops inventory",
   async (metadata, message) => {
     const json = JSON.stringify({
       files: { app: { files: { "main.js": metadata } } },
     });
-    await expect(
-      inventoryArtifact(await archiveWith(asarHeaderBytes(json))),
-    ).rejects.toMatchObject({ reason: "format", message });
+    const path = await archiveWith(asarHeaderBytes(json));
+    await expect(inventoryArtifact(path)).rejects.toMatchObject({
+      reason: "format",
+      message: inArchive(message, path),
+    });
   },
 );
+
+it("names the rejected root fields", async () => {
+  const path = await archiveWith(
+    asarHeaderBytes(JSON.stringify({ files: {}, unpacked: "yes" })),
+  );
+  await expect(inventoryArtifact(path)).rejects.toMatchObject({
+    reason: "format",
+    message: inArchive("ASAR root metadata is malformed (unpacked)", path),
+  });
+});
 
 it("bounds the quoted unsafe ASAR path component", async () => {
   const component = `${"a".repeat(300)}/x`;
   const json = JSON.stringify({
     files: { [component]: { size: 0, offset: "0" } },
   });
-  await expect(
-    inventoryArtifact(await archiveWith(asarHeaderBytes(json))),
-  ).rejects.toMatchObject({
+  const path = await archiveWith(asarHeaderBytes(json));
+  await expect(inventoryArtifact(path)).rejects.toMatchObject({
     reason: "path",
-    message: `ASAR header has an unsafe path component under the archive root: ${JSON.stringify("a".repeat(256))}... (302 UTF-16 code units)`,
+    message: inArchive(
+      `ASAR header has an unsafe path component under the archive root: ${JSON.stringify("a".repeat(256))}... (302 UTF-16 code units)`,
+      path,
+    ),
   });
 });
 
-it("names the parent of an unsafe ASAR path component", async () => {
+it("bounds the quoted parent of an unsafe ASAR path component", async () => {
+  const parent = "d".repeat(300);
   const json = JSON.stringify({
-    files: { app: { files: { "..": { size: 0, offset: "0" } } } },
+    files: { [parent]: { files: { "..": { size: 0, offset: "0" } } } },
   });
-  await expect(
-    inventoryArtifact(await archiveWith(asarHeaderBytes(json))),
-  ).rejects.toMatchObject({
+  const path = await archiveWith(asarHeaderBytes(json));
+  await expect(inventoryArtifact(path)).rejects.toMatchObject({
     reason: "path",
-    message: 'ASAR header has an unsafe path component under app: ".."',
+    message: inArchive(
+      `ASAR header has an unsafe path component under ${JSON.stringify("d".repeat(256))}... (300 UTF-16 code units): ".."`,
+      path,
+    ),
   });
 });
 
@@ -231,27 +257,37 @@ it.each([undefined, "01", "-1", "9007199254740992"])(
   },
 );
 
+const invalidSize = (declared: string) =>
+  `ASAR entry declares ${declared}, which is not a non-negative safe integer.`;
+const unretainedSize =
+  "ASAR entry declares a numeric size outside the safe-integer range; its exact source value was not retained.";
+
+// Header spellings, so values JSON.parse rounds or overflows stay exact here.
 it.each([
-  [-1000, "size -1000"],
-  [1.5, "size 1.5"],
-  [2 ** 53, "size 9007199254740992"],
-  ["12", 'size "12"'],
-  [null, "a null size"],
-  [Number.POSITIVE_INFINITY, "size Infinity"],
+  ["-1000", invalidSize("size -1000")],
+  ["1.5", invalidSize("size 1.5")],
+  ['"12"', invalidSize('size "12"')],
+  ["null", invalidSize("a null size")],
+  ["true", invalidSize("a boolean size")],
+  ["{}", invalidSize("an object size")],
+  ["[]", invalidSize("an array size")],
   [
-    "9".repeat(300),
-    `size ${JSON.stringify("9".repeat(256))}... (300 UTF-16 code units)`,
+    JSON.stringify("9".repeat(300)),
+    invalidSize(
+      `size ${JSON.stringify("9".repeat(256))}... (300 UTF-16 code units)`,
+    ),
   ],
+  ["9007199254740992", unretainedSize],
+  ["9007199254740993", unretainedSize],
+  ["1e400", unretainedSize],
+  ["-1e400", unretainedSize],
 ])(
   "inventories the other members when one declares size %s",
-  async (size, declared) => {
+  async (sizeText, limitation) => {
     // Figma Desktop ships `.codesign` with size -1000 and the empty-input digest.
     const empty = createHash("sha256").update("").digest("hex");
     const payload = Buffer.from("console.log(1);\n");
     const digest = createHash("sha256").update(payload).digest("hex");
-    // JSON cannot spell Infinity; 1e400 parses to it as in a real header.
-    const sizeText =
-      size === Number.POSITIVE_INFINITY ? "1e400" : JSON.stringify(size);
     const bytes = Buffer.concat([
       asarHeaderBytes(
         JSON.stringify({
@@ -272,7 +308,6 @@ it.each([
       payload,
     ]);
     const path = await archiveWith(bytes);
-    const limitation = `ASAR entry declares ${declared}, which is not a non-negative safe integer.`;
 
     const reader = new AsarArtifactReader(path);
     try {
