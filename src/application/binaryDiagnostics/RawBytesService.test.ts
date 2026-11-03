@@ -406,3 +406,50 @@ it("reports a changed artifact when the file grows between admission and the rea
     error: { _tag: "AnalysisArtifactChangedError" },
   });
 });
+
+const BOUNDARY_NEEDLE = [0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04];
+
+it.each([
+  // Whole-byte first constraint: the indexOf-anchored scan path.
+  ["exact", 4, "de ad be ef", undefined],
+  ["exact", 8, "de ad be ef 01 02 03 04", undefined],
+  // Partial first byte: the byte-by-byte scan path.
+  ["partial-first-byte", 4, "d0 ad be ef", "f0 ff ff ff"],
+  [
+    "partial-first-byte",
+    8,
+    "d0 ad be ef 01 02 03 04",
+    "f0 ff ff ff ff ff ff ff",
+  ],
+])(
+  "finds a %s %i-byte match at every start position around the chunk boundary",
+  async (_mode, length, pattern, mask) => {
+    const chunk = RAW_BYTES_SCAN_CHUNK_BYTES;
+    const needle = BOUNDARY_NEEDLE.slice(0, length);
+    const root = await createTestTempDirectory("rea-raw-sweep-");
+    const path = join(root, "data.bin");
+    const service = new RawBytesService();
+    try {
+      // From wholly before the boundary (start = chunk - length) through the
+      // first start that lies wholly after it (start = chunk). The carried
+      // overlap must be exactly length - 1 bytes: one fewer loses the match
+      // that starts at chunk - (length - 1).
+      for (let start = chunk - length; start <= chunk; start += 1) {
+        const bytes = Buffer.alloc(2 * chunk + 64, 0xaa);
+        Buffer.from(needle).copy(bytes, start);
+        await writeFile(path, bytes);
+        const report = await searchResult(service, {
+          path,
+          pattern,
+          ...(mask === undefined ? {} : { mask }),
+        });
+        expect(
+          report.matches.map(({ offset }) => offset),
+          `needle at ${String(start)} (chunk - ${String(chunk - start)})`,
+        ).toEqual([start]);
+      }
+    } finally {
+      await service.close();
+    }
+  },
+);
