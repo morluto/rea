@@ -82,6 +82,7 @@ cliTest(
       const f = await fixture(original);
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const before = await readFile(f.settings, "utf8");
+        const beforeNames = new Set(await readdir(f.directory));
         const result = await cli.run({
           arguments: [
             "mcp",
@@ -95,7 +96,12 @@ cliTest(
           timeoutMs: 20_000,
         });
         expect(result.exitCode, result.stderr).toBe(0);
-        expect(result.stdout).toContain("Amp");
+        if (output.length > 0)
+          expect(JSON.parse(result.stdout)).toMatchObject({
+            name: "rea",
+            command: "fixture-server --mcp",
+            agents: expect.arrayContaining(["Amp"]),
+          });
         expect(JSON.parse(await readFile(f.settings, "utf8"))).toEqual({
           "amp.mcpServers": {
             rea: {
@@ -107,7 +113,12 @@ cliTest(
           },
           theme: "dark",
         });
-        const backup = result.stderr.trim().split(" retained at ")[1]!;
+        const created = (await readdir(f.directory)).filter(
+          (name) => !beforeNames.has(name),
+        );
+        expect(created).toHaveLength(1);
+        const backup = join(f.directory, created[0]!);
+        expect(result.stderr).toContain(backup);
         expect(await readFile(backup, "utf8")).toBe(before);
         if (process.platform !== "win32")
           expect((await stat(backup)).mode & 0o777).toBe(0o600);
@@ -226,10 +237,14 @@ cliTest(
         timeoutMs: 20_000,
       });
       expect(result.exitCode).toBe(1);
-      expect(result.stdout).toContain("MCP_ADD_FAILED");
+      if (output.length > 0)
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          code: "MCP_ADD_FAILED",
+        });
+      else expect(result.stdout).toContain("MCP_ADD_FAILED");
       expect(result.stdout).not.toContain("VALIDATION_ERROR");
-      expect(result.stdout).not.toContain("Registered rea");
-      expect(result.stderr).not.toContain("backup retained");
+      expect(result.stdout).not.toContain("\r\x1b[K");
+      expect(result.stderr).not.toContain(`${f.settings}.rea.backup`);
       expect(await readFile(f.settings, "utf8")).toBe(original);
       expect(await readFile(`${f.settings}.rea.backup`, "utf8")).toBe(original);
       expect((await readFile(f.log, "utf8")).trim().split("\n")).toHaveLength(
@@ -347,9 +362,9 @@ cliTest(
         });
         expect(result.exitCode, result.stdout).toBe(0);
         expect(result.stdout).not.toContain("VALIDATION_ERROR");
-        expect(result.stdout).not.toContain("Registered rea");
+        expect(result.stdout).not.toContain("\r\x1b[K");
         expect(result.stdout.length).toBeGreaterThan(0);
-        expect(result.stderr).not.toContain("backup retained");
+        expect(result.stderr).not.toContain(f.settings);
         expect(await readdir(f.directory)).toEqual(
           initial === undefined ? [] : ["settings.json"],
         );

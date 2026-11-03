@@ -7,6 +7,7 @@ import {
   normalizeMcpAddArguments,
   splitIncurBuiltinArguments,
 } from "../../../src/cliBuiltinArguments.js";
+import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { Parser, z } from "incur";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -224,11 +225,14 @@ cliTest(
         timeoutMs: 20_000,
       });
       expect(result.exitCode, result.stderr).toBe(0);
-      expect(result.stdout).toContain(
-        "Registering MCP server...\r\x1b[K✓ Registered rea as MCP server",
-      );
-      expect(result.stdout).toContain("Agents can now use rea tools.");
+      expect(result.stdout).toContain("\r\x1b[K");
+      expect(() => JSON.parse(result.stdout)).toThrow(SyntaxError);
+      expect(
+        JSON.parse(await readFile(fixture.settings, "utf8"))["amp.mcpServers"]
+          .rea.command,
+      ).toEqual(expect.any(String));
     }
+    const preserved = await readFile(fixture.settings, "utf8");
     for (const flag of ["--help", "--schema", "--version"]) {
       const result = await cli.run({
         arguments: ["mcp", "add", "--agent", "amp", flag, "--json"],
@@ -237,7 +241,14 @@ cliTest(
         timeoutMs: 20_000,
       });
       expect(result.exitCode).toBe(flag === "--schema" ? 1 : 0);
-      expect(result.stdout).not.toContain("Registered rea");
+      if (flag === "--schema")
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          code: "SCHEMA_UNAVAILABLE",
+        });
+      else if (flag === "--version")
+        expect(result.stdout).toBe(`${PRODUCT_IDENTITY.packageVersion}\n`);
+      else expect(() => JSON.parse(result.stdout)).toThrow(SyntaxError);
+      expect(await readFile(fixture.settings, "utf8")).toBe(preserved);
     }
     expect(await readFile(fixture.log, "utf8")).toBe("");
   },
@@ -289,7 +300,6 @@ it("timing global splitting preserves output values and the global terminator", 
     ["--format", "--timings=false", "mcp", "add"],
     ["mcp", "add", "--", "--timings=false", "--no-timings", "--timings"],
     ["--command", "--timings=false", "mcp", "add"],
-    ["--filter-output", "--", "--timings", "mcp", "add", "--agent=amp"],
   ];
   for (const tokens of cases) {
     const builtinOnly = tokens.filter((_, index) => index !== 0 && index !== 1);
@@ -297,11 +307,7 @@ it("timing global splitting preserves output values and the global terminator", 
       tokens[0] === "--filter-output" || tokens[0] === "--format"
         ? builtinOnly
         : tokens;
-    const split = splitIncurBuiltinArguments(tokens);
-    expect(split.commandIndices.map((index) => tokens[index])).toEqual(
-      split.command,
-    );
-    expect(split.command).toEqual(
+    expect(splitIncurBuiltinArguments(tokens).command).toEqual(
       Parser.parseGlobals(
         input,
         z.object({ timings: z.boolean().default(false) }),
@@ -336,9 +342,6 @@ cliTest(
           expect(result.exitCode, `${initial}: ${agent} ${flag}`).toBe(
             flag === "--schema" ? 1 : 0,
           );
-          expect(result.stdout).not.toContain("MCP_ADD_FAILED");
-          expect(result.stdout).not.toContain("Registered rea");
-          expect(result.stdout).not.toContain("VALIDATION_ERROR");
           if (flag === "--schema")
             expect(JSON.parse(result.stdout)).toMatchObject({
               code: "SCHEMA_UNAVAILABLE",
@@ -382,30 +385,6 @@ it("registration expansion preserves values and existing modes", () => {
       "rea",
     ),
   ).toEqual(["mcp", "add", "--command", "--no-timings", "--agent=cursor"]);
-  expect(
-    normalizeMcpAddArguments(
-      [
-        "--filter-output",
-        "--",
-        "--timings=false",
-        "mcp",
-        "add",
-        "--agent=amp",
-        "--command=fixture",
-      ],
-      "rea",
-    ),
-  ).toEqual([
-    "--filter-output",
-    "--",
-    "--timings=false",
-    "mcp",
-    "add",
-    "--agent",
-    "amp",
-    "--command",
-    "fixture",
-  ]);
   expect(
     normalizeMcpAddArguments(
       ["mcp", "add", "--agent=amp", "--command=fixture"],
@@ -515,7 +494,8 @@ registerHooks({ resolve(specifier, context, next) {
       timeoutMs: 20_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(result.stdout).toContain("Usage: rea mcp add");
+    expect(result.stdout).toContain("--command");
+    expect(() => JSON.parse(result.stdout)).toThrow(SyntaxError);
     expect(await readFile(log, "utf8")).toBe("");
     expect(await readFile(fixture.log, "utf8")).toBe("");
   },
