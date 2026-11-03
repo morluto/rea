@@ -20,6 +20,7 @@ import {
   decompileDirectoryManifestSchema,
 } from "../../../src/contracts/decompileDirectory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { closeEnhancedToolResources, connect } from "./enhancedToolsHarness.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
@@ -60,6 +61,90 @@ const addressCaveats: AnalysisOperationPort = {
 afterEach(async () => {
   vi.restoreAllMocks();
   await closeEnhancedToolResources();
+});
+
+it("directs callers to indexed caveats when an export returns null or empty pseudocode", async () => {
+  const parent = await createTestTempDirectory(
+    "rea-decompile-failure-handoff-",
+  );
+  const output = join(parent, "out");
+  const caveats = ["Provider reported a watchdog stall.", longCaveat];
+  const port: AnalysisOperationPort = {
+    execute: (operation, parameters, options) => {
+      if (operation === "list_procedures")
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution(
+              addresses.map((address) => ({ address, value: address })),
+              provider,
+              {
+                analysisProfile: profile,
+                subject: {
+                  path: "/tmp/fixture",
+                  sha256: "ab".repeat(32),
+                  format: "elf",
+                  architecture: "x86_64",
+                },
+              },
+            ),
+          ),
+        );
+      if (operation !== "procedure_pseudo_code")
+        return addressCaveats.execute(operation, parameters, options);
+      return Promise.resolve(
+        ok(
+          createAnalysisExecution(
+            parameters.procedure === addresses[0] ? null : "",
+            provider,
+            { analysisProfile: profile, limitations: caveats },
+          ),
+        ),
+      );
+    },
+  };
+  const client = await connect(port);
+  const schemas = await advertisedMcpToolSchemas(client, "decompile_all");
+  for (const [index, address] of addresses.slice(0, 2).entries()) {
+    const result = await client.callTool(
+      {
+        name: "decompile_all",
+        arguments: {
+          output_directory: output,
+          address_start: address,
+          address_end: address,
+          resume: index > 0,
+        },
+      },
+      { toolDefinition: schemas.toolDefinition },
+    );
+    expect(result.isError).not.toBe(true);
+    expect(
+      schemas.ajv.validate(schemas.outputSchema, result.structuredContent),
+    ).toBe(true);
+    const manifest = decompileDirectoryManifestSchema.parse(
+      parseEvidence(result.structuredContent).normalized_result,
+    );
+    expect(manifest).toMatchObject({
+      counts: { failed: 1 },
+      failures: [
+        { address, code: index === 0 ? "no_pseudocode" : "empty_pseudocode" },
+      ],
+      failures_omitted: 0,
+    });
+    expect(manifest.limitations).toContain(
+      "See index_path for complete failure records and any recorded per-function provider limitations.",
+    );
+    const saved = decompileDirectoryIndexSchema.parse(
+      JSON.parse(await readFile(manifest.index_path, "utf8")),
+    );
+    expect(
+      saved.functions.find((record) => record.address === address),
+    ).toMatchObject({
+      status: "failed",
+      limitations: expect.arrayContaining(caveats),
+    });
+    expect(JSON.stringify(result)).not.toContain(longCaveat);
+  }
 });
 
 describe("decompile_all MCP caveats", () => {
@@ -233,6 +318,9 @@ it("keeps long-name failures inside the tool window and complete in the index", 
   expect(manifest.counts.failed).toBe(32);
   expect(manifest.failures.length).toBeGreaterThan(0);
   expect(manifest.failures_omitted + manifest.failures.length).toBe(32);
+  expect(
+    Buffer.byteLength(JSON.stringify(manifest.failures)),
+  ).toBeLessThanOrEqual(2048);
   expect(manifest.failures.every((failure) => !("name" in failure))).toBe(true);
   expect(manifest.failures.every((failure) => failure.code.length > 0)).toBe(
     true,

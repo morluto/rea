@@ -1009,7 +1009,14 @@ const manifestOf = (input: {
     provider: input.identity.provider,
     analysis_profile_digest: input.identity.analysisProfileDigest,
     target_sha256: input.identity.targetSha256,
-    limitations: [...input.limitations],
+    limitations: [
+      ...input.limitations,
+      ...(input.state.failed === 0
+        ? []
+        : [
+            "See index_path for complete failure records and any recorded per-function provider limitations.",
+          ]),
+    ],
     resume: input.input.resume,
   };
 };
