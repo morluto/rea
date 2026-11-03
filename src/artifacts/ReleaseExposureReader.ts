@@ -988,10 +988,21 @@ const noteUnreadMember = (state: ScanState, member: MemberView): void => {
   else noteUnreadBinary(state, member);
 };
 
+/**
+ * A member whose bytes were not read. A native one may carry a package that
+ * nothing here can clear, so member coverage stays unknown, as it does for a
+ * packaged image the embedded-package probe could not read.
+ */
 const noteUnreadBinary = (state: ScanState, member: MemberView): void => {
   const native = asNativeFormat(member.format);
-  if (native !== null) state.packagedNative += 1;
-  else state.skippedText += 1;
+  if (native !== null) {
+    state.packagedNative += 1;
+    noteUnexaminedPackage(state);
+    pushLimitation(
+      state,
+      `Did not probe ${member.location} for an embedded package.`,
+    );
+  } else state.skippedText += 1;
   if (native === "pe" || PE_MEMBER_NAME.test(member.logical))
     notePeNotExamined(state, member.location);
 };

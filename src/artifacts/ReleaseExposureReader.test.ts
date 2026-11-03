@@ -2328,6 +2328,34 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
     ]);
   });
 
+  it("leaves member coverage unknown when a packaged native image cannot be read", async () => {
+    const root = await createTestTempDirectory("rea-release-unread-native-");
+    const elf = Buffer.alloc(64);
+    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    await writeFile(
+      join(root, "app.asar"),
+      asarArchive([{ name: "native.node", bytes: elf }]),
+    );
+    createdReaders.wrap = (reader, path) => {
+      if (path !== join(root, "app.asar")) return reader;
+      const open = reader.open.bind(reader);
+      reader.open = (entry, signal) =>
+        entry.path.endsWith("native.node")
+          ? Promise.reject(new Error("member read failed"))
+          : open(entry, signal);
+      return reader;
+    };
+    try {
+      const scanned = await inspect(root);
+      expect(scanned.coverage).toBe("unknown");
+      expect(scanned.limitations).toContain(
+        "Did not probe app.asar/native.node for an embedded package.",
+      );
+    } finally {
+      createdReaders.wrap = undefined;
+    }
+  });
+
   it("leaves member coverage unknown when a package cannot be listed", async () => {
     const root = await bundled([{ path: "app.js", bytes: Buffer.from("1") }]);
     createdReaders.wrap = (reader, path) => {
