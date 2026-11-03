@@ -501,7 +501,8 @@ export class KunaSessionClient implements AnalysisClient {
           }),
         );
       if (
-        operation === "procedure_pseudo_code" ||
+        (operation === "procedure_pseudo_code" &&
+          parameters.analysis !== "independent_fresh") ||
         operation === "procedure_assembly" ||
         operation === "analyze_function"
       )
@@ -791,6 +792,33 @@ export class KunaSessionClient implements AnalysisClient {
           limitations: classification,
         });
       case "procedure_pseudo_code": {
+        if (parameters.analysis === "independent_fresh") {
+          const signal =
+            options.signal === undefined
+              ? this.#session.signal
+              : AbortSignal.any([options.signal, this.#session.signal]);
+          const standalone = await this.#singleFunction(
+            operation,
+            selected.address,
+            installation,
+            signal,
+            true,
+          );
+          if (standalone === EXPORT_READY)
+            throw new Error(
+              "Independent decompilation unexpectedly yielded to project",
+            );
+          if (!standalone.ok) return standalone;
+          return ok({
+            result: standalone.value,
+            source: { kind: "single-function" },
+            locations,
+            limitations: [
+              "This is a fresh independent single-function decompile; it does not use the project export's whole-program prototypes.",
+              ...classification,
+            ],
+          });
+        }
         const pseudocode = await this.#pseudocode(
           operation,
           selected,
@@ -1206,7 +1234,11 @@ export class KunaSessionClient implements AnalysisClient {
           );
           if (!text.ok) return text;
           return ok({
-            ...text.value,
+            result: text.value.result,
+            limitations: text.value.limitations,
+            ...(text.value.files === undefined
+              ? {}
+              : { files: text.value.files }),
             source: { kind: "project-export", project: reader.project },
           });
         } catch (cause: unknown) {
@@ -1349,10 +1381,13 @@ export class KunaSessionClient implements AnalysisClient {
     address: string,
     installation: KunaInstallation,
     signal: AbortSignal,
+    independent = false,
   ): Promise<SingleFunctionOutcome> {
     const prepared = await this.#commands.prepare();
     if (!prepared.ok) return prepared;
-    const admitted = await this.#admitSingleFunction(signal);
+    const admitted = independent
+      ? await this.#runSlots.acquire(signal)
+      : await this.#admitSingleFunction(signal);
     if (admitted === EXPORT_READY) return admitted;
     if (admitted === undefined)
       return err(
@@ -1495,7 +1530,7 @@ export class KunaSessionClient implements AnalysisClient {
         pseudocode:
           text === null
             ? unavailable(
-                pseudocode.value.limitations.at(-1) ??
+                pseudocode.value.unavailableReason ??
                   "Kuna did not supply pseudocode.",
               )
             : { available: true },

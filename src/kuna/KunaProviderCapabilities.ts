@@ -104,6 +104,9 @@ export const kunaCapabilities = (
   KUNA_OPERATIONS.map((operation) => ({
     provider: KUNA_PROVIDER_IDENTITY,
     operation,
+    ...(operation === "procedure_pseudo_code"
+      ? { independentDecompile: true as const }
+      : {}),
     ...(availability.status === "available"
       ? ({ available: true, reason: null } as const)
       : ({

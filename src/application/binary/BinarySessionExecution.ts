@@ -18,6 +18,7 @@ import type {
 } from "../AnalysisProvider.js";
 import {
   isSnapshotCacheable,
+  requestsFreshIndependentDecompile,
   requiresNativeSourceAdmissionBeforeReplay,
 } from "./AnalysisSnapshotCache.js";
 import type { SessionProviderRoute } from "./SessionProviderRouter.js";
@@ -79,6 +80,17 @@ export const prepareSessionExecution = (
       ),
     );
   }
+  if (
+    requestsFreshIndependentDecompile(operation, parameters) &&
+    capability.independentDecompile !== true
+  )
+    return err(
+      new AnalysisCapabilityUnavailableError(
+        capability.provider.id,
+        operation,
+        "This provider does not declare fresh independent decompilation.",
+      ),
+    );
   const profile =
     active.profile !== null &&
     capability.provider.id === active.profile.provider.id

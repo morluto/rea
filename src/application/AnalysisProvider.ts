@@ -293,6 +293,7 @@ export type CapabilityDescriptor = CapabilityAvailability & {
    * exclusions apply to every policy.
    */
   readonly cachePolicy?: "snapshot" | "live";
+  readonly independentDecompile?: true;
   /** Exact source profile for an operation implemented by a versioned local reader. */
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly provider: ProviderIdentity;
