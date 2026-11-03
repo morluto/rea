@@ -11,7 +11,7 @@ test.each([false, true])(
     );
     if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.normalized_result,
+      reconciled.value.evidence.normalized_result,
     );
     const target = result.reconciliations.find(
       ({ entity_kind }) => entity_kind === "target",
