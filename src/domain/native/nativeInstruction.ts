@@ -57,6 +57,18 @@ export const nativeInstructionSchema = z.strictObject({
       "decoded is an instruction at the address; not-instruction-boundary is inside a listed instruction; data is defined data; outside-memory is outside the program's memory. Ghidra's not-in-listing means the address is in memory with no listed instruction or defined data; no decode was attempted, and memory may be uninitialized. The legacy undecodable value in older Evidence has the same ambiguous meaning and does not prove decoding failed.",
     ),
   procedure: z.string().nullable(),
+  containing_instruction: z
+    .strictObject({
+      address: z.string().min(1),
+      length: z.int().positive(),
+      mnemonic: z.string().min(1),
+      raw_disassembly: z.string().min(1),
+      provenance: z.string().min(1),
+    })
+    .optional()
+    .describe(
+      "Provider-observed listed instruction containing the exact requested interior address. Its address and length describe the containing instruction; the query address remains unchanged. Omission means not recorded or not applicable, including older Evidence. This does not imply a function, alternate decode, reachability, or runtime execution.",
+    ),
   architecture: z.string(),
   mode: z
     .string()

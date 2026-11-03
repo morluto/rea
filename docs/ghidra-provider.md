@@ -258,6 +258,15 @@ same function can be retried after raising the limit. See the
 [settings design](design/limits-and-recovery.md) for snapshots, precedence,
 and provider integration.
 
+When `inspect_native_instruction` selects a byte inside a listed instruction,
+`containing_instruction` reports its separate start, length and Ghidra Listing
+text, retaining any non-default address space. The requested address remains
+unchanged, and a containing function may be absent. This is a listing
+observation, not proof of execution or an alternate decode. Earlier Evidence can
+omit the field. The analysis-profile revision prevents older snapshots from
+replaying results without it; open the target without the old snapshot and save
+a fresh snapshot when needed.
+
 Function extents and instruction completeness refer to Ghidra's analyzed body.
 An inferred no-return call can terminate that body before subsequent bytes.
 Pseudocode, assembly, procedure info, instruction windows, incoming and outgoing

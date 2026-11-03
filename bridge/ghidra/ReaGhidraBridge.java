@@ -1335,8 +1335,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
         flow.addProperty("conditional", false);
         flow.addProperty("computed", false);
         if (instruction == null) {
-            result.addProperty("status", !currentProgram.getMemory().contains(address) ? "outside-memory" : currentProgram.getListing().getInstructionContaining(address) != null
+            Instruction containing = currentProgram.getListing().getInstructionContaining(address);
+            result.addProperty("status", !currentProgram.getMemory().contains(address) ? "outside-memory" : containing != null
                 ? "not-instruction-boundary" : currentProgram.getListing().getDefinedDataContaining(address) != null ? "data" : "not-in-listing");
+            if (containing != null && currentProgram.getMemory().contains(address)) {
+                JsonObject containingInstruction = new JsonObject();
+                containingInstruction.addProperty("address", canonicalAddress(containing.getAddress()));
+                containingInstruction.addProperty("length", containing.getLength());
+                containingInstruction.addProperty("mnemonic", containing.getMnemonicString());
+                containingInstruction.addProperty("raw_disassembly", containing.toString());
+                containingInstruction.addProperty("provenance", "ghidra-listing");
+                result.add("containing_instruction", containingInstruction);
+            }
             for (String key : List.of("bytes", "length", "mnemonic", "raw_disassembly")) result.add(key, JsonNull.INSTANCE);
         } else {
             result.addProperty("status", "decoded");
