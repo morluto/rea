@@ -426,6 +426,7 @@ const decodeCoreFile = (
     end_address: string;
     file_offset_pages: string;
     path: string;
+    path_hex: string;
   }[] = [];
   let strPos = tableBytes;
   for (let i = 0; i < count; i++) {
@@ -433,7 +434,8 @@ const decodeCoreFile = (
     const nullIdx = descriptor.indexOf(0, strPos);
     if (nullIdx < 0) return null;
     const pathBuf = descriptor.subarray(strPos, nullIdx);
-    const path = pathBuf.toString("utf8");
+    const path = pathBuf.toString("latin1");
+    const path_hex = pathBuf.toString("hex");
     chargeText(text, pathBuf.length);
     strPos = nullIdx + 1;
     const raw = rawMappings[i];
@@ -443,6 +445,7 @@ const decodeCoreFile = (
       end_address: hexWord(raw.end),
       file_offset_pages: hexWord(raw.offsetPages),
       path,
+      path_hex,
     });
   }
 
@@ -487,8 +490,11 @@ const decodeCoreAuxv = (
 ): ElfNotes["entries"][number]["core"] => {
   const wordSize = wide ? 8 : 4;
   const entrySize = wordSize * 2;
-  const auxv: { type: number; type_name: string | null; value: string }[] = [];
-  const maxEntries = Math.min(Math.floor(descriptor.length / entrySize), 128);
+  if (descriptor.length < entrySize || descriptor.length % entrySize !== 0)
+    return null;
+  const totalPairs = descriptor.length / entrySize;
+  const MAX_AUXV_PAIRS = 512;
+  if (totalPairs > MAX_AUXV_PAIRS) return null;
 
   const readWord = (off: number): bigint => {
     if (wide) {
@@ -501,11 +507,15 @@ const decodeCoreAuxv = (
     );
   };
 
-  for (let i = 0; i < maxEntries; i++) {
+  const auxv: { type: number; type_name: string | null; value: string }[] = [];
+  let terminated = false;
+  for (let i = 0; i < totalPairs; i++) {
     const off = i * entrySize;
-    if (off + entrySize > descriptor.length) break;
     const aType = Number(readWord(off));
-    if (aType === 0) break;
+    if (aType === 0) {
+      terminated = true;
+      break;
+    }
     const aVal = readWord(off + wordSize);
     auxv.push({
       type: aType,
@@ -513,6 +523,8 @@ const decodeCoreAuxv = (
       value: hexWord(aVal),
     });
   }
+
+  if (!terminated) return null;
 
   return {
     prpsinfo: null,

@@ -807,12 +807,16 @@ it("decodes Linux core dump notes (NT_PRPSINFO, NT_FILE, NT_SIGINFO, NT_AUXV) fo
             end_address: "0x405000",
             file_offset_pages: "0x0",
             path: "/usr/bin/test-proc",
+            path_hex: Buffer.from("/usr/bin/test-proc").toString("hex"),
           },
           {
             start_address: "0x7fff0000",
             end_address: "0x7fff2000",
             file_offset_pages: "0xa",
             path: "/lib/x86_64-linux-gnu/libc.so.6",
+            path_hex: Buffer.from("/lib/x86_64-linux-gnu/libc.so.6").toString(
+              "hex",
+            ),
           },
         ],
       },
@@ -924,6 +928,7 @@ it("decodes Linux core dump notes for 32-bit big-endian", () => {
         end_address: "0x12000",
         file_offset_pages: "0x0",
         path: "/bin/proc32",
+        path_hex: Buffer.from("/bin/proc32").toString("hex"),
       },
     ],
   });
@@ -941,10 +946,18 @@ it("tolerates malformed core notes by returning null without throwing", () => {
     Buffer.from("00000000000000010000000000001000", "hex"), // count 1, page_size 4096, but no map entries or filenames
   );
   const truncatedSiginfo = elfNote("CORE", 0x53494749, Buffer.alloc(4)); // requires 12 bytes
+  const unterminatedAuxv = elfNote(
+    "CORE",
+    6,
+    Buffer.from("00000000000000060000000000001000", "hex"), // AT_PAGESZ=4096 but lacks AT_NULL terminator
+  );
+  const truncatedAuxv = elfNote("CORE", 6, Buffer.alloc(7)); // not multiple of entry size
   const notes = Buffer.concat([
     truncatedPrpsinfo,
     truncatedFile,
     truncatedSiginfo,
+    unterminatedAuxv,
+    truncatedAuxv,
   ]);
 
   const bytes = elfNoteFixture({
@@ -954,11 +967,15 @@ it("tolerates malformed core notes by returning null without throwing", () => {
   });
 
   const report = parse(bytes);
-  expect(report.entries).toHaveLength(3);
+  expect(report.entries).toHaveLength(5);
   expect(report.entries[0]?.core).toBeNull();
   expect(report.entries[0]?.type_name).toBe("core_prpsinfo");
   expect(report.entries[1]?.core).toBeNull();
   expect(report.entries[1]?.type_name).toBe("core_file");
   expect(report.entries[2]?.core).toBeNull();
   expect(report.entries[2]?.type_name).toBe("core_siginfo");
+  expect(report.entries[3]?.core).toBeNull();
+  expect(report.entries[3]?.type_name).toBe("core_auxv");
+  expect(report.entries[4]?.core).toBeNull();
+  expect(report.entries[4]?.type_name).toBe("core_auxv");
 });

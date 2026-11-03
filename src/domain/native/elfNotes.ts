@@ -120,6 +120,7 @@ const coreFileMappingSchema = z.strictObject({
   end_address: z.string().regex(/^0x[0-9a-f]+$/),
   file_offset_pages: z.string().regex(/^0x[0-9a-f]+$/),
   path: z.string(),
+  path_hex: z.string().regex(/^[0-9a-f]*$/),
 });
 
 const coreFileSchema = z.strictObject({

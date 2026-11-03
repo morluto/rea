@@ -99,12 +99,16 @@ const assertCoreEntries = (entries: unknown[]): void => {
             end_address: "0x555555558000",
             file_offset_pages: "0x0",
             path: "/opt/target-service",
+            path_hex: Buffer.from("/opt/target-service").toString("hex"),
           },
           {
             start_address: "0x7ffff7dc0000",
             end_address: "0x7ffff7de0000",
             file_offset_pages: "0x0",
             path: "/lib/x86_64-linux-gnu/libc.so.6",
+            path_hex: Buffer.from("/lib/x86_64-linux-gnu/libc.so.6").toString(
+              "hex",
+            ),
           },
         ],
       },
