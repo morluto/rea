@@ -96,7 +96,7 @@ const selectedPathFailure = async (
     "path",
     `${message} (it resolves to ${target})`,
     {
-      userMessage: `The selected path is a symlink to ${target}. Symlinks are not followed; if that target is the intended artifact, retry with path ${target}.`,
+      userMessage: `The selected path is a symlink to ${target}. Symlinks are not followed; if that target is the intended artifact, select ${target} for the same input instead, then retry.`,
     },
   );
 };

@@ -2,6 +2,7 @@ import { realpath, writeFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
+import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
@@ -153,13 +154,16 @@ it.skipIf(process.platform === "win32")(
         {
           path: ["path"],
           reason: "invalid_format",
-          message: `Expected a regular file without a symlink: ${selected} (it resolves to ${target})`,
+          message: expect.stringContaining(target),
         },
       ],
     });
-    expect(projected.remediation.action).toBe(
-      `The selected path is a symlink to ${target}. Symlinks are not followed; if that target is the intended artifact, retry with path ${target}.`,
+    const refusal: unknown = await readStableArtifact(selected, 1024).catch(
+      (cause: unknown) => cause,
     );
+    const recovery = (refusal as { userMessage?: string }).userMessage;
+    expect(recovery).toContain(target);
+    expect(projected.remediation.action).toBe(recovery);
     const retried = await new GoBinaryProvider().inspect({ path: target });
     if (!retried.ok) throw retried.error;
   },

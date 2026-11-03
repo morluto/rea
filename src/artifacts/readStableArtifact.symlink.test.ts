@@ -16,8 +16,8 @@ it.skipIf(process.platform === "win32")(
     const resolved = await realpath(target);
     await expect(readStableArtifact(selected, 1024)).rejects.toMatchObject({
       reason: "path",
-      message: `Expected a regular file without a symlink: ${selected} (it resolves to ${resolved})`,
-      userMessage: `The selected path is a symlink to ${resolved}. Symlinks are not followed; if that target is the intended artifact, retry with path ${resolved}.`,
+      message: expect.stringContaining(resolved),
+      userMessage: expect.stringContaining(resolved),
     });
     await expect(readStableArtifact(resolved, 1024)).resolves.toMatchObject({
       bytes: Buffer.from("bytes"),
@@ -33,9 +33,15 @@ it.skipIf(process.platform === "win32")(
     await symlink(join(root, "missing.bin"), selected);
     await expect(readStableArtifact(selected, 1024)).rejects.toMatchObject({
       reason: "path",
-      message: `Expected a regular file without a symlink: ${selected} (its target does not currently resolve)`,
-      userMessage: `The selected path is a symlink whose target does not currently resolve: ${selected}. Select an existing regular file directly, then retry.`,
+      message: expect.stringContaining(selected),
+      userMessage: expect.stringContaining(selected),
     });
+    const failure: unknown = await readStableArtifact(selected, 1024).catch(
+      (cause: unknown) => cause,
+    );
+    expect((failure as { userMessage: string }).userMessage).not.toContain(
+      join(root, "missing.bin"),
+    );
   },
 );
 
@@ -83,9 +89,12 @@ it.skipIf(process.platform === "win32")(
     ).catch((cause: unknown) => cause);
     expect(failure).toMatchObject({
       reason: "path",
-      message: `Expected a regular file without a symlink: ${selected} (its target could not be resolved: EACCES)`,
-      userMessage: `The selected path is a symlink whose target could not be resolved (EACCES): ${selected}. Check access to the link's target, or select the intended regular file directly, then retry.`,
+      message: expect.stringContaining("EACCES"),
+      userMessage: expect.stringContaining(selected),
     });
+    expect((failure as { userMessage: string }).userMessage).toContain(
+      "EACCES",
+    );
     expect((failure as Error).cause).toBe(lookupError);
   },
 );

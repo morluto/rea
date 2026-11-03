@@ -7,6 +7,8 @@ import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.j
 import { PythonPycProvider } from "../../src/python/PythonPycProvider.js";
 import { RustBinaryProvider } from "../../src/rust/RustBinaryProvider.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { readStableArtifact } from "../../src/artifacts/readStableArtifact.js";
 
 const selectedSymlink = async (prefix: string) => {
   const root = await createTestTempDirectory(prefix);
@@ -17,13 +19,23 @@ const selectedSymlink = async (prefix: string) => {
   return { selected, target: await realpath(original) };
 };
 
-const expectResolvedTargetRemediation = (error: unknown, target: string) => {
+/** The consumer must surface the reader's own recovery, whatever its wording. */
+const expectResolvedTargetRemediation = async (
+  error: unknown,
+  selected: string,
+  target: string,
+) => {
+  const refusal: unknown = await readStableArtifact(selected, 1024).catch(
+    (cause: unknown) => cause,
+  );
+  expect(refusal).toBeInstanceOf(ArtifactReaderFailure);
+  const { reason, userMessage } = refusal as ArtifactReaderFailure;
+  expect(reason).toBe("path");
+  expect(userMessage).toContain(target);
   expect(error).toBeInstanceOf(AnalysisInputError);
   expect(
     projectAnalysisError(error as AnalysisInputError).remediation.action,
-  ).toBe(
-    `The selected path is a symlink to ${target}. Symlinks are not followed; if that target is the intended artifact, retry with path ${target}.`,
-  );
+  ).toBe(userMessage);
 };
 
 it.skipIf(process.platform === "win32")(
@@ -32,7 +44,7 @@ it.skipIf(process.platform === "win32")(
     const { selected, target } = await selectedSymlink("rea-rust-symlink-");
     const result = await new RustBinaryProvider().inspect({ path: selected });
     if (result.ok) throw new Error("expected the symlink to be refused");
-    expectResolvedTargetRemediation(result.error, target);
+    await expectResolvedTargetRemediation(result.error, selected, target);
   },
 );
 
@@ -46,7 +58,7 @@ it.skipIf(process.platform === "win32")(
         inspectPythonPycInputSchema.parse({ path: selected }),
       );
       if (result.ok) throw new Error("expected the symlink to be refused");
-      expectResolvedTargetRemediation(result.error, target);
+      await expectResolvedTargetRemediation(result.error, selected, target);
     } finally {
       await provider.close();
     }
