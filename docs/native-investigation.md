@@ -455,8 +455,10 @@ truncation; a depth or candidate limit is reported only when no other path
 analyzes or queues that destination. `total_nodes` and `total_edges` count
 retained rows. `truncated` remains true for either kind of omission. Failed
 analyses and unresolved calls stay in `unknowns` and do not truncate the
-traversal; an unknown that names another procedure, such as a thunk target no
-path reached, carries its exact identity in `related_procedure`. Each page
+traversal; an unknown that names another procedure (a destination left
+untraversed by the depth budget or ambiguous candidates, a callee whose
+parameter bindings or arguments are missing, or a thunk target no path reached)
+carries its exact identity in `related_procedure`. Each page
 reruns analysis; pages are not pinned to one snapshot across session edits.
 
 The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;

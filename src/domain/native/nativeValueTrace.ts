@@ -100,7 +100,7 @@ export const nativeValueTraceSchema = z.strictObject({
         .string()
         .nullable()
         .describe(
-          "The exact identity of a procedure this unknown names, such as a thunk target no path reached; reason restates it for display. null when the unknown names no procedure.",
+          "The exact identity of the other procedure this unknown names: a call destination the depth budget or ambiguous candidates left untraversed, a callee whose parameter bindings or arguments are missing, or a thunk target no path reached; reason restates it for display. null when the unknown names no other procedure.",
         ),
       reason: z.string(),
     }),

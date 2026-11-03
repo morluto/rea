@@ -654,6 +654,7 @@ describe("native value call-binding fan-out", () => {
         ...Array.from({ length: callCount }, () => ({
           procedure: callerAddress,
           address: null,
+          related_procedure: calleeAddress,
           reason: `Parameter bindings for ${calleeAddress} are unavailable or omitted`,
         })),
       ],
@@ -984,6 +985,7 @@ describe("native value byte-bound call bindings", () => {
     ]);
     expect(trace.unknowns).toContainEqual(
       expect.objectContaining({
+        related_procedure: "0x2000",
         reason: "Parameter bindings for 0x2000 are unavailable or omitted",
       }),
     );
@@ -1057,12 +1059,13 @@ const traced = async (
 };
 
 const omittedBindings = (callee: string, callers: readonly string[]) =>
-  callers.map((procedure) =>
-    budgetUnknown(
+  callers.map((procedure) => ({
+    ...budgetUnknown(
       procedure,
       `Parameter bindings for ${callee} are unavailable or omitted`,
     ),
-  );
+    related_procedure: callee,
+  }));
 const edgeKey = (edge: { source: string; target: string; kind: string }) =>
   `${edge.kind} ${edge.source} ${edge.target}`;
 
@@ -1244,11 +1247,13 @@ describe("native value traversal limits and policies", () => {
         {
           procedure: "0x1000",
           address: "0x1004",
+          related_procedure: "0x2000",
           reason: "Call depth budget reached",
         },
         {
           procedure: "0x1000",
           address: "0x1008",
+          related_procedure: "0x3000",
           reason: "Call depth budget reached",
         },
         ...omittedBindings("0x2000", ["0x1000"]),
@@ -1323,6 +1328,7 @@ describe("native value traversal limits and policies", () => {
         {
           procedure: "0x1000",
           address: "0x1004",
+          related_procedure: "0x2000",
           reason: "Ambiguous call candidates were not traversed",
         },
       ],

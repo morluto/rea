@@ -440,7 +440,7 @@ export const traceNativeValues = async (
     budget.narrow(skipped.reason, {
       procedure: skipped.caller,
       address: skipped.address,
-      related_procedure: null,
+      related_procedure: destination,
       reason:
         skipped.reason === "ambiguous_call_candidates"
           ? "Ambiguous call candidates were not traversed"
@@ -476,7 +476,7 @@ export const traceNativeValues = async (
       unknowns.push({
         procedure: binding.caller,
         address: null,
-        related_procedure: null,
+        related_procedure: binding.callee,
         reason: `Parameter bindings for ${binding.callee} are unavailable or omitted`,
       });
     for (const node of parameters) {
@@ -485,7 +485,7 @@ export const traceNativeValues = async (
         unknowns.push({
           procedure: binding.caller,
           address: null,
-          related_procedure: null,
+          related_procedure: binding.callee,
           reason: `Argument ${ordinal ?? "unknown"} for ${binding.callee} was not recovered`,
         });
         continue;
