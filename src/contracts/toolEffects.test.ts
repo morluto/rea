@@ -14,7 +14,7 @@ import {
  * not describe that effect.
  */
 const EXECUTION_WORDING =
-  /\b(?:run|runs|running|launch|launches|launching|execute|executes|executing|execution|start|starts|install|installs|uninstall|uninstalls)\b/iu;
+  /\b(?:run|runs|running|launch|launches|launching|execute|executes|executing|execution|start(?!\s+address(?:es)?\b)|starts|install|installs|uninstall|uninstalls)\b/iu;
 
 const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_artifact: "states that mapper execution remains unobserved",
@@ -127,6 +127,17 @@ const declaresForeignAuthority = (name: string): boolean => {
 };
 
 describe("tool effects", () => {
+  it("distinguishes static start addresses from starting a process", () => {
+    expect(EXECUTION_WORDING.test("Inspect each matched start address.")).toBe(
+      false,
+    );
+    expect(EXECUTION_WORDING.test("Inspect the start addresses.")).toBe(false);
+    expect(
+      EXECUTION_WORDING.test(
+        "Inspect the start address, then start the target.",
+      ),
+    ).toBe(true);
+  });
   it("declares the web bundle worker's private file and child process effects", () => {
     const contract = TOOL_CONTRACTS.find(
       ({ name }) => name === "analyze_web_bundle",
