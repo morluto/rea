@@ -25,6 +25,7 @@ import {
 } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { semanticBindingMayHaveOpaqueEffect } from "./javascriptSemanticOpaqueEffects.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
@@ -217,6 +218,30 @@ const constructionRootBinding = (
 };
 
 /**
+ * Report whether a binding can name the events module or its class, which is
+ * what makes a member write on it reach the class this construction used. An
+ * imported or required binding carries the module origin; a local alias such as
+ * `const EE = EventEmitter` is followed through its initializer.
+ */
+const reachesEventsClassSurface = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  binding.directOrigins.some(
+    ({ specifier, importedPath }) =>
+      importedPath.length <= 1 &&
+      NODE_EVENTS_SPECIFIERS.some(
+        (candidate) =>
+          candidate.replace(/^node:/u, "") === specifier.replace(/^node:/u, ""),
+      ),
+  ) ||
+  binding.initializers.some(
+    ({ node }) =>
+      builtinDataEffectCallablePath(node, state, NODE_EVENTS_SPECIFIERS) !==
+      null,
+  );
+
+/**
  * Report whether construction leaves the class's own surface intact. The method
  * that answers a call has to come from the class as Node defines it, so any
  * route that lets other code reshape that class removes the proof: handing the
@@ -224,33 +249,46 @@ const constructionRootBinding = (
  * `init` hook Node invokes while constructing, which can install an own method
  * on the instance), or replacing the exported class through another import of
  * the same module. Enumerating the individual channels instead would leave the
- * next one open, so the proof now requires the surface to be untouched.
+ * next one open, so the proof requires the surface to be untouched.
+ *
+ * Only changes that land before the construction can shape the instance, so a
+ * class-level write that runs afterwards does not count; the shared prototype
+ * is the exception and is checked against the call instead. The scan is limited
+ * to values that can name this surface, because an unrelated object that
+ * happens to carry an `init` property cannot change the class.
  */
 const eventsClassSurfaceTouched = (
   construction: t.NewExpression,
-  read: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   const precedes = (node: t.Node | undefined): boolean =>
-    !semanticTopLevelEffectFollowsCapture(read, node, state.parentsByNode);
+    !semanticTopLevelEffectFollowsCapture(
+      construction,
+      node,
+      state.parentsByNode,
+    );
   const root = constructionRootBinding(construction.callee, state);
   if (
     root !== undefined &&
     root.escapedPaths.some(({ node }) => precedes(node))
   )
     return true;
+  // An unknown property key can name any slot, so it covers this surface too.
   const targetsClass = (path: JavaScriptSemanticPropertyPath): boolean =>
-    path.some((key) => key === "EventEmitter" || key === "init");
+    path.some(
+      (key) =>
+        key === null ||
+        key === "EventEmitter" ||
+        key === "init" ||
+        key === "prototype",
+    );
   for (const binding of state.bindingsById.values()) {
+    const writesSurface = binding.memberWrites.some(
+      ({ path, node }) => precedes(node) && targetsClass(path),
+    );
+    if (!writesSurface) continue;
     const isRoot = root !== undefined && binding.bindingId === root.bindingId;
-    if (
-      binding.memberWrites.some(
-        ({ path, node }) =>
-          precedes(node) &&
-          (path.length > 0 ? isRoot || targetsClass(path) : false),
-      )
-    )
-      return true;
+    if (isRoot || reachesEventsClassSurface(binding, state)) return true;
   }
   for (const specifier of NODE_EVENTS_SPECIFIERS)
     if (
@@ -390,7 +428,13 @@ const nodeEventEmitterReceiver = (
   // Reaching the class is not the same as reaching the method: the class object
   // and the `init` hook Node runs while constructing can both be reshaped, so a
   // construction whose surface was touched keeps its operation.
-  if (eventsClassSurfaceTouched(construction, node, state)) return false;
+  if (eventsClassSurfaceTouched(construction, state)) return false;
+  // A direct `eval` in this activation can rewrite the receiver or the shared
+  // prototype through code no write record describes, so a file that uses one
+  // keeps its operation. Evaluated code that runs later cannot change whether
+  // this call threw, so only earlier sites count.
+  if (semanticBindingMayHaveOpaqueEffect(binding, state, call, "reference"))
+    return false;
   // Constructing the class proves where the receiver came from, not which
   // definition answers the call. Passing the instance to another call lets that
   // call replace the method first, so the proof no longer holds. Reading

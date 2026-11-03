@@ -422,6 +422,49 @@ e.on("ready");`),
 });
 
 /**
+ * An `init` property on an unrelated object cannot reshape the class. Measured
+ * on Node 22.22.2: `e.on("x")` still throws after `config.init = true`.
+ */
+it("still rejects a missing listener beside an unrelated init write", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const config = {};
+config.init = true;
+const e = new EventEmitter();
+e.on("x");`),
+  ).toEqual([]);
+});
+
+/**
+ * Only a hook installed before the construction can shape the instance, so a
+ * later class-level write leaves this receiver on the native method. Measured
+ * on Node 22.22.2: `e.on("x")` still throws after `EventEmitter.init` is
+ * replaced on an already-built receiver.
+ */
+it("still rejects a missing listener when the init hook changes later", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+EventEmitter.init = function () {};
+e.on("x");`),
+  ).toEqual([]);
+});
+
+/**
+ * A direct `eval` can rewrite the receiver with code no write record describes.
+ * Measured on Node 22.22.2: `e.on("ready")` registers one listener after the
+ * evaluated replacement installs a defaulting method.
+ */
+it("keeps the registration when eval may replace the method", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+eval("e.on = (name, fn = () => {}) => e.addListener(name, fn)");
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
  * `emit` passes its remaining arguments to listeners that already exist, so it
  * does not validate them the way a registration does.
  */
