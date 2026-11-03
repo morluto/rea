@@ -461,6 +461,7 @@ Use `address_to_file_offset` to anchor one observed address to original file
 bytes. A mapping for the first address does not establish a contiguous mapping
 for an entire table, and loader fixups can make analysis bytes differ from source
 bytes. Keep source ranges and analysis-memory observations separate.
+For files not loaded as an analyzed program (such as game data archives, containers, or raw binary assets), use `inspect_raw_bytes` to read file slices (up to 4096 bytes with an xxd dump) and `search_raw_bytes` to find masked byte patterns by file offset without an open analysis target.
 
 A pointer table can refer to writable slots populated by a constructor rather
 than directly to immutable resources. An uninitialized block or an observed zero
