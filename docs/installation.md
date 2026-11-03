@@ -1422,6 +1422,20 @@ in the project root; when omitted it defaults to the selected target's filename.
 Paths, globs and command flags are not program names. The matching `.rep`
 directory must be present; restore `.grez` archives with Ghidra first.
 
+For a `.gzf` packed program, first import it into a new Ghidra project in an
+existing, caller-selected directory. A packed program is not a `.grez` project
+archive:
+
+```bash
+"$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "/absolute/new-project-directory" "new-project" \
+  -import "/absolute/program.gzf" -noanalysis
+```
+
+Select the resulting `new-project.gpr` with `REA_GHIDRA_PROJECT_PATH`. If the
+imported program name differs from the selected target's filename, set
+`REA_GHIDRA_PROGRAM_NAME` to the name reported by Ghidra's import. REA then
+opens its own read-only project copy; it does not import the packed program.
+
 ```bash
 export REA_ANALYSIS_PROVIDER=ghidra
 export REA_GHIDRA_PROJECT_PATH=/absolute/projects/app-analysis.gpr
