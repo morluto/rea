@@ -305,15 +305,11 @@ it("names the setting that owns a single-function deadline", async () => {
       message:
         "kuna decompile did not finish within REA_KUNA_TIMEOUT_MS (300 ms).",
       remediation: {
-        action: expect.stringMatching(
-          /^Raise REA_KUNA_TIMEOUT_MS .* restart REA/u,
-        ),
+        action:
+          "Raise REA_KUNA_TIMEOUT_MS in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.",
       },
       details: { timeout_ms: 300 },
     });
-    expect(projectAnalysisError(result.error).remediation.action).not.toContain(
-      "project export",
-    );
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }
