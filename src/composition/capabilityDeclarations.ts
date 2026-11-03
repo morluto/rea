@@ -73,7 +73,7 @@ import {
   IDA_PROVIDER_IDENTITY,
 } from "../ida/IdaProviderMetadata.js";
 import { IL2CPP_METADATA_PROVIDER_IDENTITY } from "../il2cpp/Il2CppMetadataProviderIdentity.js";
-import { UNITY_ADDRESSABLES_PROVIDER_IDENTITY } from "../unity/UnityAddressablesProvider.js";
+import { UNITY_ADDRESSABLES_PROVIDER_IDENTITY } from "../unity/UnityAddressablesProviderIdentity.js";
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../inspector/providerIdentity.js";
 import { WAKARU_PROVIDER_IDENTITY } from "../javascript/recovery/WakaruProviderIdentity.js";
 import { JEB_PROVIDER_IDENTITY } from "../jeb/JebProviderIdentity.js";
