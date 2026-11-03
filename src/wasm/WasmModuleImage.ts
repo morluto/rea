@@ -365,10 +365,12 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
  * highest end. Later segments overwrite earlier ones, as instantiation does;
  * bytes no segment covers are zero.
  */
-export const readInitialLinearMemory = (
+export function* readInitialLinearMemorySteps(
   image: Pick<WasmModuleImage, "dataSegments"> &
     Partial<Pick<WasmModuleImage, "memory">>,
-): WasmInitialLinearMemory => {
+  /** Bytes the caller already holds for this module; they count against the same allowance. */
+  sourceBytes = 0,
+): Generator<void, WasmInitialLinearMemory> {
   const filled = image.dataSegments.filter((s) => s.bytes.length > 0);
   if (filled.length === 0) return { address: 0, bytes: Buffer.alloc(0) };
   let low = Infinity;
@@ -388,10 +390,11 @@ export const readInitialLinearMemory = (
         image.memory.initialPages * WASM_PAGE_BYTES,
       ),
     );
-  if (high - low > WASM_MODULE_LIMITS.linearMemoryBytes)
+  // The source module stays live while the view exists, so both count.
+  if (high - low + sourceBytes > WASM_MODULE_LIMITS.linearMemoryBytes)
     throw new WasmModuleFailure(
       "capacity",
-      `data segments span ${high - low} bytes, above ${WASM_MODULE_LIMITS.linearMemoryBytes}`,
+      `data segments span ${high - low} bytes beside a ${sourceBytes}-byte module, above ${WASM_MODULE_LIMITS.linearMemoryBytes} together`,
     );
   // Sparse segments would make a small file allocate (and searches walk) a
   // large zero span, so the zero bytes the view adds are bounded too.
@@ -403,6 +406,22 @@ export const readInitialLinearMemory = (
       `data segments leave ${high - low - stored} zero bytes in their span, above ${WASM_MODULE_LIMITS.linearMemoryGapBytes}`,
     );
   const memory = Buffer.alloc(high - low);
-  for (const s of filled) s.bytes.copy(memory, s.offset - low);
+  let copied = 0;
+  for (const s of filled) {
+    s.bytes.copy(memory, s.offset - low);
+    if (++copied % 256 === 0) yield;
+  }
   return { address: low, bytes: memory };
+}
+
+/** The whole view at once; callers that can yield use readInitialLinearMemorySteps. */
+export const readInitialLinearMemory = (
+  image: Pick<WasmModuleImage, "dataSegments"> &
+    Partial<Pick<WasmModuleImage, "memory">>,
+  sourceBytes = 0,
+): WasmInitialLinearMemory => {
+  const steps = readInitialLinearMemorySteps(image, sourceBytes);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
 };

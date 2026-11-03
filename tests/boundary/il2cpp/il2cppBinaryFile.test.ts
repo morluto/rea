@@ -2030,7 +2030,7 @@ it("reads a wasm pointer whose zero high bytes lie past the last data segment", 
 it("reports wasm data spread over more than the reconstruction allowance as capacity", () => {
   // Two one-byte segments 1 GiB apart in a 1 GiB + 64 KiB memory.
   expect(failure(wasmMemoryModule(16385, [1], [0x40000010, [1]]))).toEqual({
-    reason: "native-index-capacity",
+    reason: "wasm-memory-capacity",
     kind: "capacity",
   });
 });

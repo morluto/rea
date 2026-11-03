@@ -102,7 +102,7 @@ export const inspectIl2cppMetadataInputSchema = z.strictObject({
   binary_path: absoluteLocalPathStringSchema
     .optional()
     .describe(
-      "Absolute path to the caller-selected matching 64-bit IL2CPP binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so); static reading, never executed",
+      "Absolute path to the caller-selected matching IL2CPP binary (64-bit Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so, or an uncompressed Unity WebGL .wasm module); static reading, never executed",
     ),
   binary_architecture: z
     .enum(["arm64", "amd64"])

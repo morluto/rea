@@ -449,3 +449,21 @@ describe("import yields and sparse memory", () => {
     ).toThrow(/zero bytes in their span/u);
   });
 });
+
+describe("source and view share one allowance", () => {
+  it("counts the module bytes the caller holds against the view", () => {
+    const image = readWasmModuleImage(
+      module(memory(1), data([0, [1, 2, 3, 4]])),
+    );
+    expect(() =>
+      readInitialLinearMemory(
+        { dataSegments: image.dataSegments },
+        WASM_MODULE_LIMITS.linearMemoryBytes - 2,
+      ),
+    ).toThrow(/beside a .*-byte module/u);
+    expect(
+      readInitialLinearMemory({ dataSegments: image.dataSegments }, 0).bytes
+        .length,
+    ).toBe(4);
+  });
+});
