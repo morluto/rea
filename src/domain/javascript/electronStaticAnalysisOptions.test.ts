@@ -339,6 +339,21 @@ it.each([
 );
 
 describe("Classic-script global function activation", () => {
+  it("retains possible classic activation after an erased type import", () => {
+    const source = `import type { T } from './types';
+      const { BrowserWindow } = require('electron'); globalThis.createWindow();
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();`;
+    expect(() =>
+      runInNewContext(source.replace("import type { T } from './types';", ""), {
+        require: () => ({ BrowserWindow: class {} }),
+      }),
+    ).toThrow(/before initialization/);
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({ web_preferences_status: "dynamic", web_preferences: [] });
+  });
   it("keeps a shadowed Function constructor independent of global activation", () => {
     const source = `const { BrowserWindow } = require('electron');
       const Function = () => () => {}; Function('createWindow()')();

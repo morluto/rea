@@ -186,6 +186,35 @@ it("bounds shared partial callback alias expansion by AST size", () => {
   expect(large.referenceReads).toBeLessThan(3 * small.referenceReads);
 });
 
+it.each([true, false])(
+  "orders a module direct-eval activation with early=%s",
+  (early) => {
+    const { state } = indexed(
+      `export {}; ${early ? "eval('open()');" : ""} const make = () => 1; function open() { return make(); } ${early ? "" : "eval('open()');"} open();`,
+    );
+    const binding = [...state.bindingsById.values()].find(
+      (binding) => binding.name === "make",
+    );
+    if (binding === undefined) throw new Error("Missing make binding");
+    let reads = 0;
+    traverseJavaScriptAst(state.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "make" })
+        ) {
+          reads++;
+          expect(
+            semanticBindingAtRead(binding, node.callee, state)
+              .hasDefiniteInitializer,
+          ).toBe(!early);
+        }
+      },
+    });
+    expect(reads).toBe(1);
+  },
+);
+
 it.each([
   ["if(flag){cb=fallback;cb();}", true],
   ["if(flag)cb=fallback;cb();", false],

@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 
 import {
   delayedInstanceFieldValue,
@@ -903,8 +904,12 @@ const moduleFunctionFirstRead = (
     const program =
       firstStatement === undefined ? undefined : parents.get(firstStatement);
     const classicScript =
-      t.isProgram(program) && program.sourceType === "script";
+      t.isProgram(program) && javaScriptRuntimeContext(program) === "unknown";
     const globalReceivers = new WeakMap<t.Node, boolean | null>();
+    const bindingReceivers = new WeakMap<
+      JavaScriptSemanticBindingState,
+      t.Node
+    >();
     const globalReceiver = (input: t.Node): boolean | null => {
       const pending: { node: t.Node; finish: boolean }[] = [
         { node: input, finish: false },
@@ -957,14 +962,20 @@ const moduleFunctionFirstRead = (
               fact.global = true;
             else fact.unknown = true;
           } else {
-            if (
-              binding.initializers.length === 0 ||
-              binding.referenceInitializers.length > 0
-            )
-              fact.unknown = true;
-            for (const initializer of binding.initializers) {
-              if (initializer.projection.length > 0) fact.unknown = true;
-              else fact.dependencies.push(initializer.node);
+            const representative = bindingReceivers.get(binding);
+            if (representative !== undefined && representative !== current) {
+              fact.dependencies.push(representative);
+            } else {
+              bindingReceivers.set(binding, current);
+              if (
+                binding.initializers.length === 0 ||
+                binding.referenceInitializers.length > 0
+              )
+                fact.unknown = true;
+              for (const initializer of binding.initializers) {
+                if (initializer.projection.length > 0) fact.unknown = true;
+                else fact.dependencies.push(initializer.node);
+              }
             }
           }
         } else if (t.isObjectExpression(node)) {
@@ -997,6 +1008,16 @@ const moduleFunctionFirstRead = (
       traverseJavaScriptAst(statement, {
         enter(node, parent) {
           if (t.isFunction(node)) active.add(node);
+          // Direct eval sees lexical module/CommonJS bindings too. Its
+          // scope-owned sites are complete before ambient indexing starts.
+          if (
+            t.isCallExpression(node) &&
+            state?.opaqueEffects.sites.has(node)
+          ) {
+            if (unknownPropertyRead !== null)
+              unknownPropertyRead =
+                active.size > 0 ? null : Math.min(unknownPropertyRead, index);
+          }
           if (
             classicScript &&
             (t.isCallExpression(node) ||
