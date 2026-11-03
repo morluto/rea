@@ -155,7 +155,7 @@ it.each(["compact", "full"] as const)(
       expect(outsideResult.comment).toMatchObject({
         state: "unavailable",
         remediation:
-          "Review provider availability in binary_session with detail complete and select another supported provider if appropriate.",
+          "Review provider availability in binary_session with detail complete and select another supported provider if appropriate. Recheck address coordinates after switching.",
       });
       const transient = await client.callTool({
         name: "inspect_address_context",
@@ -190,7 +190,7 @@ it.each(["compact", "full"] as const)(
       expect(unsupportedResult.procedure).toMatchObject({
         state: "unavailable",
         remediation:
-          "Review provider availability in binary_session with detail complete and select another supported provider if appropriate.",
+          "Review provider availability in binary_session with detail complete and select another supported provider if appropriate. Recheck address coordinates after switching.",
       });
     } finally {
       await client.close();
