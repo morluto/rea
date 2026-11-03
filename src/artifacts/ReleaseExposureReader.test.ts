@@ -3423,6 +3423,14 @@ describe("ReleaseExposureReader cumulative text allowance", () => {
 
 describe("ReleaseExposureReader unfollowed map links", () => {
   const SCRIPT = "const value = 1;\n//# sourceMappingURL=app.js.map\n";
+  const EMBEDDED_PAYLOAD = `const value = 1;\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(
+    JSON.stringify({
+      version: 3,
+      sources: ["a.ts"],
+      sourcesContent: ["const value = 1;"],
+      mappings: "",
+    }),
+  ).toString("base64")}\n`;
 
   it.skipIf(process.platform === "win32")(
     "counts a map symlink in a directory as skipped once, declared or not",
@@ -3465,6 +3473,62 @@ describe("ReleaseExposureReader unfollowed map links", () => {
       expect.objectContaining({ subject: "source maps", count: 1 }),
     );
   });
+
+  it.skipIf(process.platform === "win32")(
+    "counts a directory link whose name can hold a map directive as skipped",
+    async () => {
+      for (const name of ["app.js", "index.html", "screen.svg", "app.css"]) {
+        const root = await createTestTempDirectory("rea-release-script-link-");
+        await writeFile(join(root, "payload"), EMBEDDED_PAYLOAD);
+        await symlink("payload", join(root, name));
+        const scanned = await inspect(root);
+        expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+        expect(scanned.omitted).toContainEqual(
+          expect.objectContaining({ subject: "source maps", count: 1 }),
+        );
+      }
+    },
+  );
+
+  it("counts a script link in an ASAR as skipped", async () => {
+    const root = await createTestTempDirectory("rea-release-asar-script-link-");
+    const archive = join(root, "app.asar");
+    const payload = Buffer.from(EMBEDDED_PAYLOAD);
+    await writeFile(
+      archive,
+      Buffer.concat([
+        asarHeaderBytes(
+          JSON.stringify({
+            files: {
+              "app.js": { link: "payload" },
+              payload: { size: payload.length, offset: "0" },
+            },
+          }),
+        ),
+        payload,
+      ]),
+    );
+    expect((await inspect(archive)).source_maps).toMatchObject({
+      embedded: 0,
+      skipped: 1,
+    });
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "counts a script link once when a page or script also names it",
+    async () => {
+      for (const [name, page] of [
+        ["a-link.svg", '<script src="a-link.svg"></script>'],
+        ["z-link.svg", '<script src="z-link.svg"></script>'],
+      ] as const) {
+        const root = await createTestTempDirectory("rea-release-loaded-link-");
+        await writeFile(join(root, "payload"), "not read\n");
+        await writeFile(join(root, "m-index.html"), page);
+        await symlink("payload", join(root, name));
+        expect((await inspect(root)).source_maps.skipped).toBe(1);
+      }
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "leaves a link that names no map out of the map counts",

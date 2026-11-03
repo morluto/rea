@@ -834,18 +834,24 @@ interface MemberView {
   readonly read: ReadMember;
 }
 
-const isJavaScriptMember = (member: MemberView): boolean =>
+type MemberRole = Pick<MemberView, "kind" | "logical">;
+
+const isJavaScriptMember = (member: MemberRole): boolean =>
   member.kind === "javascript" || JAVASCRIPT_MEMBER_NAME.test(member.logical);
 
-const isCssMember = (member: MemberView): boolean =>
+const isCssMember = (member: MemberRole): boolean =>
   member.logical.toLowerCase().endsWith(".css");
 
-const isScriptPageMember = (member: MemberView): boolean =>
+const isScriptPageMember = (member: MemberRole): boolean =>
   SCRIPT_PAGE_NAME.test(member.logical);
 
 /** A member whose scripts can declare a map the directive parser reads. */
-const holdsScripts = (member: MemberView): boolean =>
+const holdsScripts = (member: MemberRole): boolean =>
   isJavaScriptMember(member) || isScriptPageMember(member);
+
+/** A member that can declare a map, whether or not the parser reads it. */
+const canDeclareMap = (member: MemberRole): boolean =>
+  holdsScripts(member) || isCssMember(member);
 
 /**
  * The role a package reader states for its entry. A Bun sourcemap region is
@@ -973,7 +979,7 @@ const examineMember = async (
 };
 
 const noteUnreadMember = (state: ScanState, member: MemberView): void => {
-  if (holdsScripts(member) || isCssMember(member)) state.skippedMaps += 1;
+  if (canDeclareMap(member)) state.skippedMaps += 1;
   if (asNativeFormat(member.format) !== null) noteUnreadBinary(state, member);
   else if (isDeclaredMap(state, member)) {
     noteUnreadMap(state, member, null);
@@ -2573,15 +2579,26 @@ const entryPath = (
   return logical.startsWith(prefix) ? logical.slice(prefix.length) : logical;
 };
 
-/** Readers do not follow links, so a map one names stays unread, not absent. */
+/**
+ * Readers do not follow links, so a map one names, or a map a script or page
+ * it names could hold, stays unread, not absent. The link is one omission
+ * however many declarations reach it.
+ */
 const noteUnfollowedMapLink = (
   state: ScanState,
   kind: string,
   logical: string,
   location: string,
 ): void => {
-  if (kind !== "symlink" || !isSourceMap(logical, "file")) return;
-  state.examinedMaps.add(memberLocationKey(location));
+  if (kind !== "symlink") return;
+  if (
+    !isSourceMap(logical, "file") &&
+    !canDeclareMap({ kind: "file", logical })
+  )
+    return;
+  const key = memberLocationKey(location);
+  state.examinedMaps.add(key);
+  state.examinedScripts.add(key);
   state.skippedMaps += 1;
 };
 
