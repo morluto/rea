@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  readWasmModuleImageSteps,
   WASM_MODULE_LIMITS,
   WasmModuleFailure,
   readInitialLinearMemory,
@@ -356,5 +357,19 @@ describe("code bodies and segment counts", () => {
     const count = WASM_MODULE_LIMITS.elementSegments + 1;
     const bytes = module(table, section(9, [...u32(count)]));
     expect(failure(bytes)[0]).toBe("capacity");
+  });
+});
+
+describe("table types and yielding", () => {
+  it("refuses a table whose elements are not funcref", () => {
+    const externref = section(4, vec([[0x6f, 0x00, 4]]));
+    expect(failure(module(externref))).toEqual([
+      "unsupported",
+      "table element type 0x6f is not funcref",
+    ]);
+  });
+  it("yields while reading a large function section", () => {
+    const steps = readWasmModuleImageSteps(module(functions(5000)));
+    expect(steps.next().done).toBe(false);
   });
 });

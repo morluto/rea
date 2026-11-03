@@ -64,6 +64,7 @@ export interface WasmInitialLinearMemory {
 const WASM_MAGIC = Buffer.from([0x00, 0x61, 0x73, 0x6d]);
 const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
 const I32_CONST = 0x41;
+const FUNCREF = 0x70;
 const END = 0x0b;
 /** Import, function, table, memory, element, data; others are skipped whole. */
 const PARSED_SECTIONS = new Set([2, 3, 4, 5, 9, 10, 11]);
@@ -144,8 +145,15 @@ class Cursor {
   }
 }
 
-/** Read the static image; the result shares `bytes` for segment views. */
-export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
+/** Records read between yields, so a large module does not block cancellation. */
+const RECORDS_PER_YIELD = 4096;
+
+/** Read the static image in yielding steps; the result shares `bytes` for segment views. */
+export function* readWasmModuleImageSteps(
+  bytes: Buffer,
+): Generator<void, WasmModuleImage> {
+  let work = 0;
+  const tick = () => ++work % RECORDS_PER_YIELD === 0;
   if (bytes.length >= 2 && bytes.subarray(0, 2).equals(GZIP_MAGIC))
     throw unsupported("module is gzip compressed; decompress the .wasm first");
   if (bytes.length > WASM_MODULE_LIMITS.inputBytes)
@@ -174,7 +182,12 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
     memory = { initialPages: min, maximumPages: max, imported };
   };
   const addTable = (cursor: Cursor) => {
-    cursor.byte();
+    // Element segments flags 0 fill a funcref table; any other table type is not read.
+    const type = cursor.byte();
+    if (type !== FUNCREF)
+      throw unsupported(
+        `table element type 0x${type.toString(16)} is not funcref`,
+      );
     const { min } = cursor.limits("table");
     if (++tables > 1) throw unsupported("module has more than one table");
     tableMinimum = min;
@@ -213,7 +226,10 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
       }
     } else if (id === 3) {
       definedFunctionCount = body.u32();
-      for (let count = definedFunctionCount; count > 0; count--) body.u32();
+      for (let count = definedFunctionCount; count > 0; count--) {
+        body.u32();
+        if (tick()) yield;
+      }
     } else if (id === 4) {
       for (let count = body.u32(); count > 0; count--) addTable(body);
     } else if (id === 5) {
@@ -226,6 +242,7 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
           `module has ${count} element segments, above ${WASM_MODULE_LIMITS.elementSegments}`,
         );
       for (let index = 0; index < count; index++) {
+        if (tick()) yield;
         const flags = body.u32();
         if (flags !== 0)
           throw unsupported(`element segment flags ${flags} are not read`);
@@ -238,14 +255,20 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
             `element segments fill more than ${WASM_MODULE_LIMITS.tableSlots} slots`,
           );
         const functions: number[] = [];
-        for (let slot = 0; slot < length; slot++) functions.push(body.u32());
+        for (let slot = 0; slot < length; slot++) {
+          functions.push(body.u32());
+          if (tick()) yield;
+        }
         // An empty segment still traps past the table, so its base is kept.
         elements.push({ base, functions });
       }
     } else if (id === 10) {
       // Each declared function needs a body; without one there is no code to link.
       codeBodies = body.u32();
-      for (let count = codeBodies; count > 0; count--) body.span(body.u32());
+      for (let count = codeBodies; count > 0; count--) {
+        body.span(body.u32());
+        if (tick()) yield;
+      }
     } else if (id === 11) {
       const count = body.u32();
       if (count > WASM_MODULE_LIMITS.dataSegments)
@@ -254,6 +277,7 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
           `module has ${count} data segments, above ${WASM_MODULE_LIMITS.dataSegments}`,
         );
       for (let index = 0; index < count; index++) {
+        if (tick()) yield;
         const flags = body.u32();
         if (flags !== 0)
           throw unsupported(
@@ -288,14 +312,16 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
       throw malformed(
         `element segment at slot ${base} ends past the ${minimum} initial table slots`,
       );
-    functions.forEach((index, slot) => {
+    for (let slot = 0; slot < functions.length; slot++) {
+      const index = functions[slot]!;
       // The function and import sections state the count; a slot past it is damage.
       if (index >= functionCount)
         throw malformed(
           `table slot ${base + slot} names function ${index}, but the module has ${functionCount}`,
         );
       table.set(base + slot, index);
-    });
+      if (tick()) yield;
+    }
   }
 
   // Instantiation traps when a segment ends past the initial (or imported minimum) memory.
@@ -316,6 +342,14 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
     table,
     dataSegments,
   };
+}
+
+/** Read the whole image at once; callers that can yield use readWasmModuleImageSteps. */
+export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
+  const steps = readWasmModuleImageSteps(bytes);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
 };
 
 /**
