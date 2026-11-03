@@ -228,6 +228,12 @@ export const analysisClientFailureForOperation = (
         ...(cause.userMessage === undefined
           ? {}
           : { userMessage: cause.userMessage }),
+        ...(cause.remediationAction === undefined
+          ? {}
+          : { remediationAction: cause.remediationAction }),
+        ...(cause.siblingOperations === undefined
+          ? {}
+          : { siblingOperations: cause.siblingOperations }),
         retryable: cause.retryable,
       },
     );
