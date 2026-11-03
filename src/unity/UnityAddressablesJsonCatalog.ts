@@ -175,6 +175,11 @@ const bundleData = (
 ): UnityAddressablesLocation["data"] => {
   if (object.type_name !== ASSET_BUNDLE_REQUEST_OPTIONS)
     return { kind: "other", type_name: object.type_name };
+  if (object.payload.length % 2 !== 0)
+    throw new UnityAddressablesFormatFailure(
+      "invalid-string",
+      "bundle request options have an odd UTF-16 byte length",
+    );
   let parsed: unknown;
   try {
     parsed = JSON.parse(object.payload.toString("utf16le"));
@@ -266,11 +271,22 @@ const indexIn = (
   return value;
 };
 
+// Fatal decoding: a replacement character would report a changed path.
+const UTF8 = new TextDecoder("utf-8", { fatal: true });
+
 const parseCatalog = (bytes: Buffer): Json => {
+  let text: string;
   try {
-    const parsed: unknown = JSON.parse(
-      bytes.toString("utf8").replace(/^\uFEFF/u, ""),
+    text = UTF8.decode(bytes);
+  } catch (cause) {
+    throw new UnityAddressablesFormatFailure(
+      "invalid-string",
+      "catalog text is not valid UTF-8",
+      { cause },
     );
+  }
+  try {
+    const parsed: unknown = JSON.parse(text.replace(/^\uFEFF/u, ""));
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
       throw new TypeError("top-level value is not an object");
     return parsed as Json;
@@ -365,10 +381,10 @@ const readTables = (
   return { ...tables, entryCount, buckets: rows, dataByIndex: new Map() };
 };
 
-const jsonProviders = (
+function* jsonProviders(
   catalog: Json,
   options: UnityAddressablesReadOptions,
-): UnityAddressablesProvider[] => {
+): Generator<undefined, UnityAddressablesProvider[]> {
   const providers: UnityAddressablesProvider[] = [];
   const add = (value: unknown, role: UnityAddressablesProvider["role"]) => {
     const row = providerRow(value, role);
@@ -381,10 +397,15 @@ const jsonProviders = (
   add(catalog.m_SceneProviderData, "scene");
   // Walk the catalog's own array: a tuple per entry would allocate for
   // every null provider before any row is charged.
-  if (Array.isArray(catalog.m_ResourceProviderData))
-    for (const item of catalog.m_ResourceProviderData) add(item, "resource");
+  if (Array.isArray(catalog.m_ResourceProviderData)) {
+    let index = 0;
+    for (const item of catalog.m_ResourceProviderData) {
+      add(item, "resource");
+      if (++index % ROWS_PER_YIELD === 0) yield;
+    }
+  }
   return providers;
-};
+}
 
 const jsonKey = (
   tables: Tables,
@@ -479,7 +500,7 @@ export function* readJsonCatalogSteps(
 ): UnityAddressablesSteps {
   const catalog = parseCatalog(bytes);
   const tables = readTables(catalog, options);
-  const providers = jsonProviders(catalog, options);
+  const providers = yield* jsonProviders(catalog, options);
   const keys: UnityAddressablesKey[] = [];
   for (let index = 0; index < tables.buckets.length; index++) {
     const row = jsonKey(tables, index, options);

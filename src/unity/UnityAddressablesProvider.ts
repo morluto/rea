@@ -562,7 +562,10 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
           },
           limit,
         );
-        if (fitted.ok) observed.catalog = fitted.value;
+        // Report the refusal before the optional hash read so a hash failure
+        // cannot hide it.
+        if (!fitted.ok) throw fitted.error;
+        observed.catalog = fitted.value;
         const hashFile = await this.#readHashFile(
           input,
           observed,
@@ -570,7 +573,6 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
         );
         if (hashFile !== null && "error" in hashFile)
           return err(hashFile.error);
-        if (!fitted.ok) throw fitted.error;
         let report = fitted.value.report;
         if (hashFile !== null) {
           const complete = withHashFile(fitted.value, hashFile, limit);

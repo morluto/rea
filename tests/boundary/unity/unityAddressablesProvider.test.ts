@@ -156,8 +156,10 @@ it("keeps only bounded source facts when the decoded catalog exceeds the report 
   );
   expect(result.ok).toBe(false);
   if (result.ok) return;
-  // Decoding finished and the hash read failed; the unadmitted catalog is not kept.
-  expect(result.error).toBeInstanceOf(AnalysisInputError);
+  // The report refusal wins over the missing hash file, which is never read;
+  // the unadmitted catalog is not kept.
+  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(result.error.message).not.toContain("missing.hash");
   const partial = result.error.partialObservation as {
     operation: string;
     normalized_result: Record<string, unknown>;

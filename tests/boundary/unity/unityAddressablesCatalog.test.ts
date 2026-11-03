@@ -700,3 +700,45 @@ it("charges JSON row counts before building any bucket", () => {
   ).toThrow("over budget");
   expect(events).toHaveLength(1);
 });
+
+it("refuses a JSON catalog that is not valid UTF-8 instead of replacing bytes", () => {
+  const bytes = jsonCatalog();
+  const at = bytes.indexOf("AddressablesMainContentCatalog");
+  bytes[at] = 0xff;
+  expect(failure(bytes)).toMatchObject({
+    kind: "malformed",
+    reason: "invalid-string",
+  });
+});
+
+it("refuses bundle request options with an odd UTF-16 byte length", () => {
+  const catalog = sampleCatalog();
+  const even = jsonObject(BUNDLE_OPTIONS, "{}");
+  const length = Buffer.alloc(4);
+  length.writeInt32LE(5);
+  const odd = Buffer.concat([
+    even.subarray(0, even.length - 8),
+    length,
+    even.subarray(even.length - 4),
+    Buffer.from([0x20]),
+  ]);
+  const bytes = jsonCatalog(catalog, {
+    patch: (json) => {
+      json.m_ExtraDataString = Buffer.concat(
+        catalog.locations.map(() => odd),
+      ).toString("base64");
+    },
+  });
+  expect(failure(bytes).reason).toBe("invalid-string");
+});
+
+it("yields while walking a large JSON provider table", () => {
+  const bytes = jsonCatalog(sampleCatalog(), {
+    patch: (json) => {
+      json.m_ResourceProviderData = Array.from({ length: 600 }, () => null);
+    },
+  });
+  const steps = readUnityAddressablesCatalogSteps(bytes);
+  // The sample has fewer key and location rows than one yield interval.
+  expect(steps.next().done).toBe(false);
+});

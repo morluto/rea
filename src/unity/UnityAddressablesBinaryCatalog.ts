@@ -259,6 +259,30 @@ const provider = (
   };
 };
 
+/** Instance, scene and resource provider rows, yielding while walking the resource table. */
+function* binaryProviders(
+  reader: BinaryReader,
+  [instance, scene, initObjects]: readonly [number, number, number],
+  options: UnityAddressablesReadOptions,
+): Generator<undefined, UnityAddressablesProvider[]> {
+  const providers: UnityAddressablesProvider[] = [];
+  const add = (id: number, role: UnityAddressablesProvider["role"]) => {
+    const row = provider(reader, id, role);
+    if (row !== null) {
+      options.onRow?.(row);
+      providers.push(row);
+    }
+  };
+  add(instance, "instance");
+  add(scene, "scene");
+  const providerCount = reader.count(initObjects, 4, "resource providers");
+  for (let index = 0; index < providerCount; index++) {
+    add(reader.bytes.readUInt32LE(initObjects + index * 4), "resource");
+    if ((index + 1) % ROWS_PER_YIELD === 0) yield;
+  }
+  return providers;
+}
+
 /** Decode a BinaryStorageBuffer content catalog (header versions 2 and 3). */
 export function* readBinaryCatalogSteps(
   bytes: Buffer,
@@ -345,26 +369,11 @@ export function* readBinaryCatalogSteps(
   }
   options.beforeRows?.({ keys: keyCount, locations: order.length });
 
-  const providers: UnityAddressablesProvider[] = [];
-  for (const [id, role] of [
-    [instance, "instance"],
-    [scene, "scene"],
-  ] as const) {
-    const row = provider(reader, id, role);
-    if (row !== null) {
-      options.onRow?.(row);
-      providers.push(row);
-    }
-  }
-  const providerCount = reader.count(initObjects, 4, "resource providers");
-  for (let index = 0; index < providerCount; index++) {
-    const at = initObjects + index * 4;
-    const row = provider(reader, bytes.readUInt32LE(at), "resource");
-    if (row !== null) {
-      options.onRow?.(row);
-      providers.push(row);
-    }
-  }
+  const providers = yield* binaryProviders(
+    reader,
+    [instance, scene, initObjects],
+    options,
+  );
   const keys: UnityAddressablesKey[] = [];
   for (let index = 0; index < keyCount; index++) {
     const at = keysOffset + index * 8;
