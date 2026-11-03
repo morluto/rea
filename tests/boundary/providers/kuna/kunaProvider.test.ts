@@ -571,9 +571,9 @@ it("can recover a standalone output overflow from a completed project", async ()
       reported_limits: { output_limit_bytes: KUNA_FUNCTION_TEXT_BYTES },
     },
   });
-  expect(
-    projectAnalysisError(first.error, "invocation").remediation.action,
-  ).not.toContain("procedure_assembly");
+  const invocation = projectAnalysisError(first.error, "invocation");
+  expect(invocation.remediation.action).toContain("rea function");
+  expect(invocation.remediation.action).not.toContain("procedure_assembly");
   await run(client, "procedure_assembly", { procedure: "main" });
   const later = await run(client, "procedure_pseudo_code", {
     procedure: "main",
