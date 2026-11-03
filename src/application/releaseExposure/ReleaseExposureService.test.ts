@@ -1437,6 +1437,21 @@ describe("ReleaseExposureService Go linker path options", () => {
   });
 });
 
+describe("ReleaseExposureService Go rooted linker flag paths", () => {
+  it.each([
+    [`-L "/tmp/private,sdk" -s -w`, "/tmp/private,sdk"],
+    [`-L "/tmp/private=sdk" -s -w`, "/tmp/private=sdk"],
+    [`-L=/tmp/private,sdk -s -w`, "/tmp/private,sdk"],
+    [`all=-L=/tmp/private,sdk`, "/tmp/private,sdk"],
+    [`-tmpdir /srv/obj,1`, "/srv/obj,1"],
+  ])("keeps the whole rooted argument in %s", async (value, path) => {
+    const report = await goReport(goModule([{ key: "-ldflags", value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual([path]);
+  });
+});
+
 describe("ReleaseExposureService Go relative flag paths", () => {
   it("keeps relative paths given to compiler path flags, attached or not", async () => {
     const report = await goReport(

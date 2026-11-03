@@ -957,6 +957,41 @@ const goRelativeFlagPaths = (flags: string[], pathFlag: RegExp): string[] =>
       : [argument];
   });
 
+/**
+ * `-trimpath` takes `prefix=replacement` rewrites separated by `;`, so its
+ * rooted value is read by `flagPaths` with that structure kept.
+ */
+const GO_PATH_LIST_FLAG = /^-{1,2}trimpath(?:=|\s+|$)/u;
+
+/**
+ * A Go tool path flag's whole argument, rooted or relative, attached after `=`
+ * or in the next field, with the fields it was read from. The tool takes the
+ * argument as one path, so a `,` or `=` in it is a literal character.
+ * `-trimpath` is the one list among them.
+ */
+const goToolFlagPaths = (
+  flags: string[],
+  pathFlag: RegExp,
+): { paths: string[]; fields: Set<string> } => {
+  const paths: string[] = [];
+  const fields = new Set<string>();
+  for (const [index, flag] of flags.entries()) {
+    const attached = pathFlag.exec(flag)?.[1]?.trimEnd();
+    if (attached === undefined) continue;
+    const next = flags[index + 1];
+    const fromNext =
+      attached.length === 0 && next !== undefined && !next.startsWith("-");
+    const argument = fromNext ? next : attached;
+    if (argument.length === 0) continue;
+    if (GO_PATH_LIST_FLAG.test(flag) && filesystemPath(argument) !== null)
+      continue;
+    paths.push(argument);
+    fields.add(flag);
+    if (fromNext) fields.add(next);
+  }
+  return { paths, fields };
+};
+
 /** A C compiler's own flags, apart from the options it forwards to the linker. */
 const splitForwardedLinkerFlags = (
   flags: string[],
@@ -990,9 +1025,17 @@ const goSettingPaths = (key: string, value: string): string[] => {
   if (GO_COMPILER_SETTING.test(key)) return compilerPaths(value);
   const pathFlag = GO_TOOL_PATH_FLAGS.get(key);
   const { flags, own, external } = goToolFlags(value);
+  const whole =
+    pathFlag === undefined
+      ? { paths: [], fields: new Set<string>() }
+      : goToolFlagPaths(flags, pathFlag);
   return [
-    ...flagPaths(own),
-    ...(pathFlag === undefined ? [] : goRelativeFlagPaths(flags, pathFlag)),
+    ...flagPaths(
+      own.filter(
+        (field) => !whole.fields.has(field.replace(GO_PACKAGE_SELECTOR, "")),
+      ),
+    ),
+    ...whole.paths,
     ...external.flatMap(compilerPaths),
   ];
 };
