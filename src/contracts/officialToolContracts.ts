@@ -263,6 +263,44 @@ export const OFFICIAL_TOOL_CONTRACTS = [
     "Return analyzed references to a code or data address. Hopper may default to its current cursor; headless providers such as Ghidra require an explicit address. Use to connect strings, globals, selectors, and functions; bare addresses are untyped and indirect references may be incomplete. Page a retained result with inspect_analysis_view and native-observation; use native-context for source caveats. Use inspect_native_instruction at the target address for typed incoming references where supported.",
     z.object({ document, address: optionalAddress }),
   ),
+  official(
+    "import_trace",
+    "Attach to an Intel PIN .tenet trace that has already been imported into a Ghidra project (e.g. via analyzeHeadless -loader). The trace is opened from the specified project and becomes the session's current trace for the trace_* query tools. The trace is session-scoped and discarded on close; it does not modify the target artifact. The project argument is the Ghidra project directory (containing the .gpr) or the .gpr file path; the trace argument is the trace's path within that project (e.g. /tiny_elf.tenet).",
+    z.object({
+      project: z.string().min(1),
+      trace: z.string().min(1),
+    }),
+  ),
+  official(
+    "trace_info",
+    "Report the loaded trace's name, snapshot range, and module/thread counts. Requires import_trace first; returns trace_not_loaded when no trace is loaded.",
+    z.object({}),
+  ),
+  official(
+    "trace_snap",
+    "Read processor-context register values at one snapshot. snap is inclusive within the trace's observed range; undefined registers are reported explicitly with defined=false.",
+    z.object({
+      snap: z.number().int(),
+    }),
+  ),
+  official(
+    "trace_search_bytes",
+    "Search the trace's memory across its full lifespan for exact hex byte pairs (no wildcards). Hits report the first and last snapshot where the bytes are present. limit caps returned hits (default 1000).",
+    z.object({
+      pattern: z.string().min(1),
+      limit: z.number().int().min(1).max(1000).optional(),
+    }),
+  ),
+  official(
+    "trace_modules",
+    "List modules observed at the trace's minimum snapshot with their paths.",
+    z.object({}),
+  ),
+  official(
+    "trace_threads",
+    "List threads observed at the trace's minimum snapshot.",
+    z.object({}),
+  ),
 ] as const satisfies readonly ToolContract[];
 
 /** Closed provider operation names exposed by direct analysis adapters. */

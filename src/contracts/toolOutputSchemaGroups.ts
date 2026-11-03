@@ -142,9 +142,70 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
   }),
 ]);
 
+const traceImportResultSchema = z.strictObject({
+  trace: z.string().min(1),
+  min_snap: z.number(),
+  max_snap: z.number(),
+  snapshot_count: z.number(),
+  modules: z.number(),
+  threads: z.number(),
+  language: z.string().min(1),
+  image_base: z.string().min(1),
+  imported: z.boolean(),
+});
+const traceInfoResultSchema = z.strictObject({
+  trace: z.string().min(1),
+  min_snap: z.number(),
+  max_snap: z.number(),
+  snapshot_count: z.number(),
+  modules: z.number(),
+  threads: z.number(),
+  language: z.string().min(1),
+});
+const traceSnapResultSchema = z.strictObject({
+  snap: z.number(),
+  registers: z.array(
+    z.strictObject({
+      name: z.string().min(1),
+      defined: z.boolean(),
+      value: z.string().optional(),
+    }),
+  ),
+});
+const traceByteSearchResultSchema = z.strictObject({
+  pattern: z.string(),
+  matches: z.number(),
+  hits: z.array(
+    z.strictObject({
+      address: z.string().min(1),
+      first_snap: z.number(),
+      last_snap: z.number(),
+    }),
+  ),
+});
+const traceModulesResultSchema = z.strictObject({
+  count: z.number(),
+  modules: z.array(
+    z.strictObject({
+      name: z.string(),
+      path: z.string().nullable(),
+    }),
+  ),
+});
+const traceThreadsResultSchema = z.strictObject({
+  count: z.number(),
+  threads: z.array(z.strictObject({ name: z.string() })),
+});
+
 /** Exact structured-content schemas shared by direct analysis providers. */
 export const officialOutputSchemas = {
   search_bytes: evidenceResultOf(byteSearchResultSchema),
+  import_trace: evidenceResultOf(traceImportResultSchema),
+  trace_info: evidenceResultOf(traceInfoResultSchema),
+  trace_snap: evidenceResultOf(traceSnapResultSchema),
+  trace_search_bytes: evidenceResultOf(traceByteSearchResultSchema),
+  trace_modules: evidenceResultOf(traceModulesResultSchema),
+  trace_threads: evidenceResultOf(traceThreadsResultSchema),
   annotate_native_function: evidenceResultOf(nativeFunctionAnnotationsSchema),
   inspect_native_load_image: analysisDetailOutputSchemaOf(
     nativeLoadImageSchema,
