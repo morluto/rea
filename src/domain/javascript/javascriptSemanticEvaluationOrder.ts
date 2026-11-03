@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import {
+  javaScriptComputedDefinitionKey,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -21,8 +22,7 @@ export const semanticComputedMethodKey = (
   child: t.Node,
 ): boolean =>
   (t.isObjectMethod(parent) || t.isClassMethod(parent)) &&
-  parent.computed &&
-  parent.key === child;
+  javaScriptComputedDefinitionKey(parent, child);
 
 /** Exact source-only cardinality for literal loop heads. */
 export const semanticIterationCardinality = (

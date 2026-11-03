@@ -660,3 +660,35 @@ it.each([64, 128])(
     expect(visits).toBeLessThanOrEqual(count * 2);
   },
 );
+
+it("indexes one statement body for distinct captured functions", () => {
+  const { state } = indexed(
+    `const make=()=>1; ${Array.from({ length: 128 }, (_, i) => `function use${i}(){make();} use${i}();`).join(" ")}`,
+  );
+  const binding = [...state.bindingsById.values()].find(
+    (b) => b.name === "make",
+  );
+  if (binding === undefined) throw Error("Missing fixture binding");
+  const lookup = vi.spyOn(state.program.body, "indexOf");
+  let reads = 0;
+  try {
+    traverseJavaScriptAst(state.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "make" })
+        ) {
+          reads++;
+          expect(
+            semanticBindingAtRead(binding, node.callee, state)
+              .hasDefiniteInitializer,
+          ).toBe(true);
+        }
+      },
+    });
+    expect(reads).toBe(128);
+    expect(lookup.mock.calls.length).toBeLessThanOrEqual(1);
+  } finally {
+    lookup.mockRestore();
+  }
+});

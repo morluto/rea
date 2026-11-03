@@ -1065,6 +1065,7 @@ const createState = (
     bindingWrites: new Map(),
     prototypeRequireMutationObserved: false,
     prototypeEnumerationMayAffect: false,
+    prototypeMutationSites: [],
     callables: [],
     callableNodesById: new Map(),
     moduleLinks: [],
@@ -1141,7 +1142,9 @@ function* collectDefinitionsSteps(
       if (
         t.isWithStatement(node) ||
         t.isForInStatement(node) ||
-        t.isForOfStatement(node)
+        t.isForOfStatement(node) ||
+        t.isArrayExpression(node) ||
+        t.isFunction(node)
       )
         needsPrototypeFacts = true;
       let parentScope = currentSemanticScope(stack);
@@ -1408,16 +1411,27 @@ function* collectDefinitionsSteps(
   if (state.opaqueEffects.byScope.size > 0) clearSemanticValueCaches(state);
 }
 
-type PrototypeOwner = "Object" | "Array" | "String";
+type PrototypeOwner = "Object" | "Array" | "String" | "Function";
 
-const prototypeOwners = ["Object", "Array", "String"] as const;
+const prototypeOwners = ["Object", "Array", "String", "Function"] as const;
 
 /** Preserve uncertainty when source can change or expose a built-in prototype. */
 function* indexPrototypeUncertaintySteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
+  let effectSite: t.Node = program;
+  const seen = new Map<PrototypeOwner, WeakSet<t.Node>>();
   const taint = (owner: PrototypeOwner): void => {
+    let sites = seen.get(owner);
+    if (sites === undefined) {
+      sites = new WeakSet();
+      seen.set(owner, sites);
+    }
+    if (!sites.has(effectSite)) {
+      sites.add(effectSite);
+      state.prototypeMutationSites.push({ owner, node: effectSite });
+    }
     if (owner === "Object") state.prototypeRequireMutationObserved = undefined;
     state.prototypeEnumerationMayAffect = undefined;
   };
@@ -1457,6 +1471,7 @@ function* indexPrototypeUncertaintySteps(
   ]);
   yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
+      effectSite = node;
       const write = semanticWriteSiteTarget(node);
       if (write !== null) {
         for (const target of semanticWriteTargets(write)) {

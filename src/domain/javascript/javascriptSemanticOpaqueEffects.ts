@@ -62,7 +62,11 @@ export const createSemanticOpaqueGlobalObserver = (
     ) => {
       intrinsicPath: (node: t.Node) => readonly string[] | undefined;
       intrinsicInvocation: (
-        node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+        node:
+          | t.CallExpression
+          | t.OptionalCallExpression
+          | t.NewExpression
+          | t.TaggedTemplateExpression,
       ) => { readonly path: readonly string[] } | undefined;
     };
   },
@@ -88,7 +92,8 @@ export const createSemanticOpaqueGlobalObserver = (
     if (
       !t.isCallExpression(node) &&
       !t.isOptionalCallExpression(node) &&
-      !t.isNewExpression(node)
+      !t.isNewExpression(node) &&
+      !t.isTaggedTemplateExpression(node)
     )
       return;
     invocationSite = node;

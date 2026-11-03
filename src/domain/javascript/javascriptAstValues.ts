@@ -1,7 +1,20 @@
 import * as t from "@babel/types";
+
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
+
+/** Computed definition keys use the surrounding evaluation environment. */
+export const javaScriptComputedDefinitionKey = (
+  parent: t.Node | undefined,
+  child: t.Node,
+): boolean =>
+  (t.isObjectMethod(parent) ||
+    t.isClassMethod(parent) ||
+    t.isClassProperty(parent) ||
+    t.isClassAccessorProperty(parent)) &&
+  parent.computed &&
+  parent.key === child;
 
 /** Type-only class fields neither initialize own slots nor shadow inherited members. */
 export const isRuntimeJavaScriptClassProperty = (

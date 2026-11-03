@@ -66,6 +66,10 @@ interface InitializerPositionCache {
   readonly read: WeakMap<t.Node, BindingReadPosition>;
   readonly enclosingFunction: WeakMap<t.Node, t.Function | null>;
   readonly functionPosition: WeakMap<t.Function, StatementPosition | null>;
+  readonly statementIndices: WeakMap<
+    readonly t.Statement[],
+    ReadonlyMap<t.Statement, number>
+  >;
   readonly moduleFunctionReads: WeakMap<
     readonly t.Statement[],
     {
@@ -103,6 +107,7 @@ const initializerPositionCache = (
     read: new WeakMap(),
     enclosingFunction: new WeakMap(),
     functionPosition: new WeakMap(),
+    statementIndices: new WeakMap(),
     moduleFunctionReads: new WeakMap(),
     evaluationChildren: new WeakMap(),
     expressionAncestry: undefined,
@@ -125,7 +130,13 @@ const statementPosition = (
       : statement;
   const parent = parents.get(enclosing);
   if (!t.isProgram(parent) && !t.isBlockStatement(parent)) return null;
-  const index = parent.body.indexOf(enclosing);
+  const cache = initializerPositionCache(parents).statementIndices;
+  let positions = cache.get(parent.body);
+  if (positions === undefined) {
+    positions = new Map(parent.body.map((entry, index) => [entry, index]));
+    cache.set(parent.body, positions);
+  }
+  const index = positions.get(enclosing) ?? -1;
   return index < 0
     ? null
     : {
@@ -1117,7 +1128,60 @@ const moduleFunctionFirstRead = (
       }
       return receiverBounds.get(root) ?? null;
     };
+    // A single owner-specific bound serves every literal read in this body.
+    const prototypeBounds = new Map<
+      "Array" | "Function",
+      ReceiverBound | null
+    >();
+    for (const owner of ["Array", "Function"] as const) {
+      let bound: ReceiverBound | null = { index: Infinity, ambiguous: false };
+      for (const effect of state?.prototypeMutationSites ?? []) {
+        if (effect.owner !== owner && effect.owner !== "Object") continue;
+        const position = directMutationPosition(effect.node, parents);
+        if (position === null || position.body !== body) {
+          bound = null;
+          break;
+        }
+        if (position.index < bound.index)
+          bound = {
+            index: position.index,
+            node: effect.node,
+            ambiguous: false,
+          };
+        else if (position.index === bound.index && effect.node !== bound.node)
+          bound = { ...bound, ambiguous: true };
+      }
+      prototypeBounds.set(owner, bound);
+    }
     const receiverAtRead = (input: t.Node, read: t.Node): boolean | null => {
+      const literal = unwrapJavaScriptExpression(input).node;
+      const owner = t.isArrayExpression(literal)
+        ? "Array"
+        : t.isFunction(literal)
+          ? "Function"
+          : undefined;
+      if (owner !== undefined) {
+        const bound = prototypeBounds.get(owner);
+        if (bound === null) return null;
+        if (bound !== undefined && bound.index !== Infinity) {
+          const position = bindingReadPosition(read, parents);
+          if (
+            position.position === null ||
+            position.repeatingLoop ||
+            position.position.body !== body
+          )
+            return null;
+          if (position.position.index > bound.index) return null;
+          if (
+            position.position.index === bound.index &&
+            (bound.ambiguous ||
+              bound.node === undefined ||
+              state === undefined ||
+              semanticEffectTiming(read, bound.node, state) !== "after")
+          )
+            return null;
+        }
+      }
       const identity = globalReceiver(input);
       if (identity !== false || state === undefined || !memberEffectsComplete)
         return identity;
@@ -1166,6 +1230,7 @@ const moduleFunctionFirstRead = (
       );
     };
     const opaquePositions = retained.opaquePositions;
+    const definitionKeys = new WeakMap<t.Node, t.Function>();
     let unknownPropertyRead: number | null = Infinity;
     for (let index = 0; index < body.length; index++) {
       const statement = body[index];
@@ -1175,6 +1240,14 @@ const moduleFunctionFirstRead = (
           state?.erasedSyntaxNodes.has(node) === true ||
           isErasedJavaScriptValueChild(node, parents.get(node) ?? null),
         enter(node, parent) {
+          if (
+            semanticComputedMethodKey(parent ?? undefined, node) &&
+            parent !== null &&
+            t.isFunction(parent)
+          ) {
+            active.delete(parent);
+            definitionKeys.set(node, parent);
+          }
           if (t.isFunction(node)) active.add(node);
           // Direct eval sees lexical module/CommonJS bindings too. Its
           // scope-owned sites are complete before ambient indexing starts.
@@ -1190,7 +1263,8 @@ const moduleFunctionFirstRead = (
             classicScript &&
             (t.isCallExpression(node) ||
               t.isOptionalCallExpression(node) ||
-              t.isNewExpression(node))
+              t.isNewExpression(node) ||
+              t.isTaggedTemplateExpression(node))
           ) {
             opaquePositions.set(node, active.size > 0 ? null : index);
           }
@@ -1287,6 +1361,8 @@ const moduleFunctionFirstRead = (
         },
         exit(node) {
           if (t.isFunction(node)) active.delete(node);
+          const method = definitionKeys.get(node);
+          if (method !== undefined) active.add(method);
         },
       });
     }

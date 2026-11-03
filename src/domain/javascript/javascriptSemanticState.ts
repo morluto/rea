@@ -128,6 +128,7 @@ export interface JavaScriptOpaqueScopeEffects {
     | t.CallExpression
     | t.OptionalCallExpression
     | t.NewExpression
+    | t.TaggedTemplateExpression
   )[];
 }
 
@@ -160,6 +161,10 @@ export interface JavaScriptSemanticAnalysisState {
   prototypeRequireMutationObserved: boolean | undefined;
   /** Source evidence that Object.prototype may add inherited enumerable keys. */
   prototypeEnumerationMayAffect: boolean | undefined;
+  readonly prototypeMutationSites: {
+    readonly owner: "Object" | "Array" | "String" | "Function";
+    readonly node: t.Node;
+  }[];
   /** Effects on a cached require exports object, independent of local projections. */
   readonly requiredModuleEffects: Map<
     string,
