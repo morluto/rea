@@ -1,4 +1,8 @@
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import {
+  chromiumSandboxEnabled,
+  chromiumSandboxRemediation,
+} from "../ChromiumSandbox.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type {
@@ -71,6 +75,19 @@ export type ModuleResolverLauncher = (
 ) => Promise<ModuleResolverBrowser>;
 const launch: ModuleResolverLauncher = async (options) =>
   (await import("playwright-core")).chromium.launch(options);
+
+const moduleResolverFailure = (
+  cause: unknown,
+  executable: string,
+): ProviderAdapterError => {
+  const errorMessage = cause instanceof Error ? cause.message : String(cause);
+  const remediationAction = chromiumSandboxRemediation(errorMessage);
+  return new ProviderAdapterError("native-module-resolver", OPERATION, {
+    cause,
+    ...(remediationAction === undefined ? {} : { remediationAction }),
+    diagnostics: { executable, error_message: errorMessage },
+  });
+};
 
 /** Use native import.meta.resolve in an owned context with locally fulfilled requests. */
 export class NativeModuleResolver implements WebModuleResolutionPort {
@@ -196,14 +213,12 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
           handleSIGINT: false,
           handleSIGTERM: false,
           handleSIGHUP: false,
+          chromiumSandbox: chromiumSandboxEnabled(this.environment),
           args: [
             "--disable-dev-shm-usage",
             "--disable-background-networking",
             "--renderer-process-limit=1",
             "--js-flags=--max-old-space-size=128",
-            ...(this.environment.REA_BROWSER_NO_SANDBOX === "true"
-              ? ["--no-sandbox"]
-              : []),
           ],
         }),
       );
@@ -238,14 +253,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
               cause instanceof AnalysisCapabilityUnavailableError ||
               cause instanceof BrowserObservationError
             ? cause
-            : new ProviderAdapterError("native-module-resolver", OPERATION, {
-                cause,
-                diagnostics: {
-                  executable,
-                  error_message:
-                    cause instanceof Error ? cause.message : String(cause),
-                },
-              }),
+            : moduleResolverFailure(cause, executable),
       );
     } finally {
       deadline.signal.removeEventListener("abort", onAbort);

@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
-import { NativeModuleResolver } from "./NativeModuleResolver.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  NativeModuleResolver,
+  type ModuleResolverLauncher,
+} from "./NativeModuleResolver.js";
 import { webModuleResolutionObservationSchema } from "../../domain/webModuleTrace.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 
@@ -214,6 +217,54 @@ describe("optional native resolution acquisition", () => {
         executable: "/missing/browser",
         error_message: "spawn EACCES fixture",
       },
+    });
+  });
+});
+
+describe("native resolution Chromium sandbox", () => {
+  const hostPlatform = process.platform;
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: hostPlatform });
+  });
+
+  it.each([
+    { environment: {}, sandbox: true },
+    { environment: { REA_BROWSER_NO_SANDBOX: "false" }, sandbox: true },
+    { environment: { REA_BROWSER_NO_SANDBOX: "true" }, sandbox: false },
+  ])(
+    "launches Chromium with sandbox $sandbox for $environment",
+    async ({ environment, sandbox }) => {
+      Object.defineProperty(process, "platform", { value: "linux" });
+      let launchOptions: Parameters<ModuleResolverLauncher>[0] | undefined;
+      const provider = new NativeModuleResolver(
+        { REA_BROWSER_EXECUTABLE: "/browser", ...environment },
+        (options) => {
+          launchOptions = options;
+          return Promise.reject(new Error("launch boundary reached"));
+        },
+      );
+      const result = await provider.resolve(input);
+      if (result.ok) throw new Error("expected startup failure");
+      expect(launchOptions?.chromiumSandbox).toBe(sandbox);
+      expect(launchOptions?.args).not.toContain("--no-sandbox");
+      expect(result.error).toMatchObject({ remediationAction: undefined });
+    },
+  );
+
+  it("names the sandbox opt-out when Chromium cannot start its sandbox", async () => {
+    const provider = new NativeModuleResolver(
+      { REA_BROWSER_EXECUTABLE: "/browser" },
+      () =>
+        Promise.reject(
+          new Error(
+            "browserType.launch: Target page, context or browser has been closed\n[pid=1][err] [1:1:FATAL:zygote_host_impl_linux.cc(132)] No usable sandbox!",
+          ),
+        ),
+    );
+    const result = await provider.resolve(input);
+    if (result.ok) throw new Error("expected startup failure");
+    expect(result.error).toMatchObject({
+      remediationAction: expect.stringContaining("REA_BROWSER_NO_SANDBOX=true"),
     });
   });
 });
