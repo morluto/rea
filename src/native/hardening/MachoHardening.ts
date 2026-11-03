@@ -573,6 +573,7 @@ const stackRow = (
   const strings = bytes.subarray(stringAt, stringAt + strsize);
   let scanned = 0;
   let unterminated = false;
+  let found: BinaryHardeningRow | null = null;
   for (let index = 0; index < nsyms; index += 1) {
     const entry = symbolAt + index * width;
     const nameOffset = bytes.readUInt32LE(entry);
@@ -581,6 +582,13 @@ const stackRow = (
     // the same name, including libc itself, is not an import into this image.
     const nType = bytes.readUInt8(entry + 4);
     if ((nType & 0x0e) !== 0 || (nType & 0x01) === 0) continue;
+    // After a match, later records are still admitted so symbol order cannot
+    // hide a damaged table; their names need not be read.
+    if (found !== null) {
+      if (nameOffset >= strings.length)
+        malformed("Mach-O symbol name offset is outside the string table");
+      continue;
+    }
     const observed = observeElfStringTableEntry(
       strings,
       nameOffset,
@@ -598,7 +606,7 @@ const stackRow = (
     }
     const name = elfStringTableText(observed) ?? "";
     if (name === "__stack_chk_fail" || name === "___stack_chk_fail")
-      return row(
+      found = row(
         "stack_protector",
         "enabled",
         `Undefined symbol ${name} is present.`,
@@ -608,6 +616,7 @@ const stackRow = (
         },
       );
   }
+  if (found !== null) return found;
   if (unterminated)
     return unknownStackBudget(
       `An undefined symbol name has no NUL within the string table or the ${String(MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES)}-byte name budget, so this import sign is unknown.`,

@@ -439,6 +439,12 @@ it("keeps Mach-O siblings when one slice is big-endian, mismatched or malformed"
   await expect(
     readMachoHardening(machoHardeningFixture({ brokenStrx: true })),
   ).rejects.toMatchObject({ kind: "malformed" });
+  // Symbol order must not decide whether a damaged table is admitted.
+  await expect(
+    readMachoHardening(
+      machoHardeningFixture({ stackChk: true, trailingBrokenStrx: true }),
+    ),
+  ).rejects.toMatchObject({ kind: "malformed" });
   const brokenHeader = machoHardeningFixture();
   brokenHeader.writeUInt32LE(4, 20);
   await expect(readMachoHardening(brokenHeader)).rejects.toMatchObject({

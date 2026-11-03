@@ -999,6 +999,8 @@ export interface MachoHardeningFixtureOptions {
   readonly symbolName?: string;
   readonly nsyms?: number;
   readonly brokenStrx?: boolean;
+  /** An undefined symbol whose name offset is outside the string table, after the named symbol. */
+  readonly trailingBrokenStrx?: boolean;
   readonly bigEndian?: boolean;
   /** Mach-O filetype. Defaults to MH_EXECUTE. */
   readonly fileType?: number;
@@ -1050,13 +1052,13 @@ const machoSymbolPayload = (
   const declaredSymbols = options.symbolScanBudget
     ? 300
     : (options.nsyms ??
-      (options.brokenStrx === true ||
-      symbolName !== "" ||
-      options.longSymbolName === true
-        ? 1
-        : options.stackChk === false
+        (options.brokenStrx === true ||
+        symbolName !== "" ||
+        options.longSymbolName === true
           ? 1
-          : 0));
+          : options.stackChk === false
+            ? 1
+            : 0)) + (options.trailingBrokenStrx === true ? 1 : 0);
   const storedSymbols =
     options.nsyms !== undefined && options.nsyms > 4096 ? 0 : declaredSymbols;
   const symbolBytes = Buffer.alloc(Math.max(storedSymbols, 0) * nlistWidth);
@@ -1076,6 +1078,8 @@ const machoSymbolPayload = (
     symbolBytes.length >= 4
   )
     writeSymbol(0, 1);
+  if (options.trailingBrokenStrx === true)
+    writeSymbol(storedSymbols - 1, strings.length + 50);
   return { wantSymtab, strings, declaredSymbols, symbolBytes };
 };
 
