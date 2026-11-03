@@ -277,6 +277,9 @@ const redactFailure = (
         ...(error.userMessage === undefined
           ? {}
           : { userMessage: text(error.userMessage) }),
+        ...(error.siblingOperations === undefined
+          ? {}
+          : { siblingOperations: error.siblingOperations }),
         ...(error.retryable ? { retryable: true } : {}),
       },
     );

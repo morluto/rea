@@ -240,6 +240,16 @@ const descriptorCleanupError = (
 };
 
 /**
+ * Operations that unconditionally require Kuna's shared project export and
+ * cannot answer from the quick function inventory, reference walk, or a
+ * standalone single-function decompile run.
+ */
+const KUNA_PROJECT_DEPENDENT_OPERATIONS = Object.freeze([
+  "procedure_assembly",
+  "analyze_function",
+] as const satisfies readonly string[]);
+
+/**
  * How a request that needs the export reports the export's failure. A session
  * never rebuilds a failed export, so repeating the request cannot succeed; the
  * error says what to change before reopening the target. Kuna settings are read
@@ -270,6 +280,7 @@ const exportUnavailable = (
     reason,
     {
       cause: failure,
+      siblingOperations: KUNA_PROJECT_DEPENDENT_OPERATIONS,
       // Callers see only the top-level projection, so the export failure's
       // own projected code and details (its limits, target path, captured
       // output and diagnostics) travel whole rather than field by field.

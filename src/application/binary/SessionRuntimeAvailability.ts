@@ -1,4 +1,5 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import type { Result } from "../../domain/result.js";
 import type { CapabilityDescriptor } from "../AnalysisProvider.js";
 
@@ -102,6 +103,20 @@ export class SessionRuntimeAvailability {
       const reason = runtimeFailureReason(result.error);
       if (reason === undefined) return false;
       operation.failure = newer(operation.failure, { dispatch, reason });
+      if (
+        result.error instanceof AnalysisCapabilityUnavailableError &&
+        result.error.siblingOperations !== undefined
+      ) {
+        for (const sibling of result.error.siblingOperations) {
+          if (sibling !== capability.operation) {
+            const siblingOutcomes = outcomes(this.#operations, sibling);
+            siblingOutcomes.failure = newer(siblingOutcomes.failure, {
+              dispatch,
+              reason: `Provider ${result.error.providerId} cannot execute ${sibling}: ${result.error.reason}`,
+            });
+          }
+        }
+      }
       if (PROVIDER_WIDE_FAILURES.has(result.error._tag))
         provider.failure = newer(provider.failure, {
           dispatch,
