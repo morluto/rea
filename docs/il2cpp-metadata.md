@@ -371,7 +371,7 @@ Passive or explicit-memory data segments, non-constant offsets, shared or
 64-bit memory, a memory or function table imported from the host (its
 initial contents are not in the file), non-funcref tables, several memories
 or tables, and reordered or repeated sections are refused. Linking does not use WABT, so the `inspect_wasm_artifact` input
-cap does not apply. `generic_instances` and Ghidra seeds are refused for a
+cap does not apply. The reconstructed view and the module bytes share one 1 GiB allowance, and the zero bytes the view adds between and after segments are limited to 64 MiB (`wasm-memory-capacity`, a byte allowance). `generic_instances` and Ghidra seeds are refused for a
 wasm32 module. Checked on two uncompressed Unity 2022.3.62f3 WebGL builds
 (metadata version 31, release and development, built for this check): every
 linked code row matched Il2CppDumper's slot and `Type$$Method` name (9,557 and

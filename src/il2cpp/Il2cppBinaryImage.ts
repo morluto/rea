@@ -24,7 +24,7 @@ import {
 import {
   WASM_PAGE_BYTES,
   WasmModuleFailure,
-  readInitialLinearMemory,
+  readInitialLinearMemorySteps,
   readWasmModuleImageSteps,
 } from "../wasm/WasmModuleImage.js";
 import { applyElfRelativeRelocationsSteps } from "./ElfRelocations.js";
@@ -131,6 +131,8 @@ const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
 function* openWasmImageSteps(bytes: Buffer): Generator<void, NativeImage> {
   let module;
   let memory;
+  // Reconstruction allowances are bytes; the reader's other allowances are counts.
+  let rebuilding = false;
   try {
     module = yield* readWasmModuleImageSteps(bytes);
     // A host-supplied memory may already hold bytes that data segments do not
@@ -146,12 +148,15 @@ function* openWasmImageSteps(bytes: Buffer): Generator<void, NativeImage> {
         "unsupported",
         "the module imports its function table, whose slots the module does not determine",
       );
-    memory = readInitialLinearMemory(module);
+    rebuilding = true;
+    memory = yield* readInitialLinearMemorySteps(module, bytes.length);
   } catch (cause) {
     if (cause instanceof WasmModuleFailure)
       throw new Il2cppBinaryFormatFailure(
         cause.kind === "capacity"
-          ? "native-index-capacity"
+          ? rebuilding
+            ? "wasm-memory-capacity"
+            : "native-index-capacity"
           : cause.kind === "unsupported"
             ? "unsupported-container"
             : "malformed-container",
