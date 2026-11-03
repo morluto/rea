@@ -10,6 +10,12 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 const MAX_LISTING_BYTES = 64 * 1024 * 1024;
 const BLOCK_INTEGRITY_LIMITATION =
   "ASAR block integrity declarations were not validated. Whole-file digest comparison does not establish block integrity or Electron runtime acceptance.";
+/** Source text quoted in listing diagnostics; longer values keep their length. */
+const MAX_QUOTED_SOURCE_UNITS = 256;
+const quoteSource = (value: string): string =>
+  value.length <= MAX_QUOTED_SOURCE_UNITS
+    ? JSON.stringify(value)
+    : `${JSON.stringify(value.slice(0, MAX_QUOTED_SOURCE_UNITS))}... (${String(value.length)} UTF-16 code units)`;
 // Listing keeps a member whose size cannot bound its content, as it keeps an
 // unreadable offset; only reading that member fails.
 const asarListingNodeSchema = asarNodeSchema.extend({
@@ -88,7 +94,7 @@ export const readAsarListing = async (
     )
       throw new ArtifactReaderFailure(
         "path",
-        `ASAR header has an unsafe path component under ${frame.parent.length === 0 ? "the archive root" : frame.parent}: ${JSON.stringify(name)}`,
+        `ASAR header has an unsafe path component under ${frame.parent.length === 0 ? "the archive root" : frame.parent}: ${quoteSource(name)}`,
       );
     const units =
       frame.parent.length + name.length + (frame.parent.length === 0 ? 0 : 1);
@@ -129,14 +135,14 @@ export const readAsarListing = async (
     const declaredSize = asarDeclaredSizeSchema.safeParse(metadata.size);
     const size = declaredSize.success ? declaredSize.data : null;
     if (metadata.size !== undefined && !declaredSize.success) {
-      // Keep the parsed source value; JSON escaping can expand one string code
-      // unit to six characters, so admit it before rendering.
-      if (typeof metadata.size === "string")
-        admitRetainedBytes(metadata.size.length * 12 + 256);
+      // Keep the parsed source value. JSON.parse already turned out-of-range
+      // numbers into Infinity, which String keeps and JSON.stringify drops.
       const declared =
-        typeof metadata.size === "number" || typeof metadata.size === "string"
-          ? `size ${JSON.stringify(metadata.size)}`
-          : `a ${metadata.size === null ? "null" : typeof metadata.size} size`;
+        typeof metadata.size === "number"
+          ? `size ${String(metadata.size)}`
+          : typeof metadata.size === "string"
+            ? `size ${quoteSource(metadata.size)}`
+            : `a ${metadata.size === null ? "null" : typeof metadata.size} size`;
       const limitation = `ASAR entry declares ${declared}, which is not a non-negative safe integer.`;
       admitRetainedBytes(limitation.length * 2 + 64);
       limitations.push(limitation);

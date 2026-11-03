@@ -111,6 +111,19 @@ it.each([
   },
 );
 
+it("bounds the quoted unsafe ASAR path component", async () => {
+  const component = `${"a".repeat(300)}/x`;
+  const json = JSON.stringify({
+    files: { [component]: { size: 0, offset: "0" } },
+  });
+  await expect(
+    inventoryArtifact(await archiveWith(asarHeaderBytes(json))),
+  ).rejects.toMatchObject({
+    reason: "path",
+    message: `ASAR header has an unsafe path component under the archive root: ${JSON.stringify("a".repeat(256))}... (302 UTF-16 code units)`,
+  });
+});
+
 it("names the parent of an unsafe ASAR path component", async () => {
   const json = JSON.stringify({
     files: { app: { files: { "..": { size: 0, offset: "0" } } } },
@@ -224,19 +237,27 @@ it.each([
   [2 ** 53, "size 9007199254740992"],
   ["12", 'size "12"'],
   [null, "a null size"],
+  [Number.POSITIVE_INFINITY, "size Infinity"],
+  [
+    "9".repeat(300),
+    `size ${JSON.stringify("9".repeat(256))}... (300 UTF-16 code units)`,
+  ],
 ])(
-  "inventories the other members when one declares size %j",
+  "inventories the other members when one declares size %s",
   async (size, declared) => {
     // Figma Desktop ships `.codesign` with size -1000 and the empty-input digest.
     const empty = createHash("sha256").update("").digest("hex");
     const payload = Buffer.from("console.log(1);\n");
     const digest = createHash("sha256").update(payload).digest("hex");
+    // JSON cannot spell Infinity; 1e400 parses to it as in a real header.
+    const sizeText =
+      size === Number.POSITIVE_INFINITY ? "1e400" : JSON.stringify(size);
     const bytes = Buffer.concat([
       asarHeaderBytes(
         JSON.stringify({
           files: {
             ".codesign": {
-              size,
+              size: "__SIZE__",
               offset: "0",
               integrity: { algorithm: "SHA256", hash: empty },
             },
@@ -246,7 +267,7 @@ it.each([
               integrity: { algorithm: "SHA256", hash: digest },
             },
           },
-        }),
+        }).replace('"__SIZE__"', sizeText),
       ),
       payload,
     ]);
