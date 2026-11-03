@@ -314,6 +314,7 @@ const expectOccurrenceAssetCompatibility = (
       {
         evidenceId: `ev_${"a".repeat(64)}`,
         operation: "analyze_javascript_application",
+        predicateType: "rea.javascript-application-analysis",
         normalizedResult: analysis,
         limitations: [],
       },
