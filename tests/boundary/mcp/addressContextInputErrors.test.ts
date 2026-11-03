@@ -25,6 +25,20 @@ it.each(["compact", "full"] as const)(
     await writeFile(target, Buffer.from([0xb8, 0x00, 0x4c, 0xcd, 0x21]));
     const session = createTestBinarySession(() => ({
       execute: async (operation, parameters) => {
+        if (operation === "comment" && parameters.address === "0x405000")
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              operation,
+              "configuration unavailable",
+              {
+                remediationAction: "Restart REA.",
+                continuingCallerGuidance: {
+                  remediationAction: "Refresh the current session.",
+                },
+              },
+            ),
+          );
         if (
           operation === "resolve_containing_procedure" &&
           parameters.address === "0x404000"
@@ -150,6 +164,17 @@ it.each(["compact", "full"] as const)(
       expect(transientResult.comment).toMatchObject({
         state: "unavailable",
         remediation: "Wait for the fixture to become ready.",
+      });
+      const continuing = await client.callTool({
+        name: "inspect_address_context",
+        arguments: { address: "0x405000", document: "fixture" },
+      });
+      const continuingResult = contract.outputSchema.parse(
+        continuing.structuredContent,
+      ).result;
+      expect(continuingResult.comment).toMatchObject({
+        state: "unavailable",
+        remediation: "Refresh the current session.",
       });
       const unsupportedProcedure = await client.callTool({
         name: "inspect_address_context",
