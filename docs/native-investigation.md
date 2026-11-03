@@ -226,6 +226,14 @@ the index retains the complete selected names, addresses, provider facts and
 caveats. Failure details retain at most 32 rows within 2,048 JSON-encoded
 UTF-8 bytes; names may be omitted to keep complete addresses and reasons. The
 index retains every failure and its complete observed name.
+Use `retry_failed: "independent_fresh"` (CLI: `--retry-failed independent_fresh`)
+to request an independent attempt after a null pseudocode observation that the
+provider explicitly reports as a function failure. The failed observation is
+appended before the retry, so cancellation or a later failure keeps it. The
+retry can use different analysis context. Other errors and entries merely
+missing from an export are not retried. A null without a reported function
+failure carries a limitation explaining why no independent retry was attempted.
+A provider that does not report this distinction leaves the cause unknown.
 Each function's `decompile-index.json` record, whatever its status, keeps the
 complete limitations of the observations it used.
 When available, `provider_source` records the source of that attempt's

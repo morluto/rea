@@ -152,6 +152,7 @@ export const decompileAll = async (
       identity: loaded.value.identity,
       signal,
       limit: input.limit,
+      retryFailed: input.retry_failed,
       state,
     });
     limitations = exportLimitations(
@@ -344,6 +345,7 @@ interface PublishInput {
   readonly identity: ExportIdentity;
   readonly signal: AbortSignal | undefined;
   readonly limit: number | undefined;
+  readonly retryFailed: DecompileDirectoryInput["retry_failed"];
   readonly state: PublishState;
 }
 
@@ -465,6 +467,7 @@ const publishOne = async (input: {
   readonly signal: AbortSignal | undefined;
   readonly state: PublishState;
   readonly bodySupport: "unknown" | "unavailable";
+  readonly retryFailed: DecompileDirectoryInput["retry_failed"];
 }): Promise<{
   readonly result: Result<void, AnalysisError>;
   readonly bodySupport: "unknown" | "unavailable";
@@ -495,7 +498,8 @@ const publishOne = async (input: {
       bodySupport: body.support,
     };
   }
-  const decompiled = await input.analysis.execute(
+  let attemptedIndependent = false;
+  let decompiled = await input.analysis.execute(
     "procedure_pseudo_code",
     { procedure: input.procedure.address },
     executionOptions(input.signal),
@@ -505,6 +509,47 @@ const publishOne = async (input: {
     return { result: decompiled, bodySupport: body.support };
   if (isAborted(input.signal))
     return { result: err(cancelled(input.signal)), bodySupport: body.support };
+  if (
+    decompiled.ok &&
+    input.retryFailed === "independent_fresh" &&
+    decompiled.value.result === null &&
+    decompiled.value.pseudocodeAbsence?.kind === "provider-failure" &&
+    observationMismatch(input.identity, decompiled.value) === undefined
+  ) {
+    const original = decompiled.value;
+    const originalSource: NonNullable<
+      DecompileDirectoryFunctionRecord["provider_source"]
+    > =
+      original.sourceDescriptor === undefined
+        ? { status: "unknown", reason: "source_not_available" }
+        : { status: "reported", source: original.sourceDescriptor };
+    const recorded = await input.session.append(
+      failureRecord(input.procedure, body.fact, pseudocodeFailure(null), {
+        limitations: [...new Set([...infoCaveats, ...original.limitations])],
+        providerSource: originalSource,
+        pseudocodeAbsence: original.pseudocodeAbsence,
+      }),
+    );
+    if (!recorded.ok) return { result: recorded, bodySupport: body.support };
+    if (isAborted(input.signal))
+      return {
+        result: err(cancelled(input.signal)),
+        bodySupport: body.support,
+      };
+    attemptedIndependent = true;
+    decompiled = await input.analysis.execute(
+      "procedure_pseudo_code",
+      { procedure: input.procedure.address, analysis: "independent_fresh" },
+      executionOptions(input.signal),
+    );
+    if (!decompiled.ok && decompiled.error.cleanupIncomplete)
+      return { result: decompiled, bodySupport: body.support };
+    if (isAborted(input.signal))
+      return {
+        result: err(cancelled(input.signal)),
+        bodySupport: body.support,
+      };
+  }
   if (!decompiled.ok) {
     if (decompiled.error instanceof AnalysisCancelledError)
       return { result: decompiled, bodySupport: body.support };
@@ -533,7 +578,17 @@ const publishOne = async (input: {
     };
   }
   const caveats = [
-    ...new Set([...infoCaveats, ...decompiled.value.limitations]),
+    ...new Set([
+      ...infoCaveats,
+      ...decompiled.value.limitations,
+      ...(input.retryFailed === "independent_fresh" &&
+      !attemptedIndependent &&
+      decompiled.value.result === null
+        ? [
+            "Independent retry was not attempted because the provider did not report a function failure for this observation.",
+          ]
+        : []),
+    ]),
   ];
   const observationSource: NonNullable<
     DecompileDirectoryFunctionRecord["provider_source"]
@@ -550,6 +605,9 @@ const publishOne = async (input: {
         failureRecord(input.procedure, body.fact, reason, {
           limitations: caveats,
           providerSource: observationSource,
+          ...(decompiled.value.pseudocodeAbsence === undefined
+            ? {}
+            : { pseudocodeAbsence: decompiled.value.pseudocodeAbsence }),
         }),
       ),
       bodySupport: body.support,
@@ -903,6 +961,7 @@ const failureRecord = (
     /** Caveats of the observations this attempt used. */
     readonly limitations?: readonly string[];
     readonly providerSource?: DecompileDirectoryFunctionRecord["provider_source"];
+    readonly pseudocodeAbsence?: DecompileDirectoryFunctionRecord["pseudocode_absence"];
   } = {},
 ): DecompileDirectoryFunctionRecord => ({
   address: procedure.address,
@@ -913,6 +972,9 @@ const failureRecord = (
   ...(options.providerSource === undefined
     ? {}
     : { provider_source: options.providerSource }),
+  ...(options.pseudocodeAbsence === undefined
+    ? {}
+    : { pseudocode_absence: options.pseudocodeAbsence }),
   ...(options.relativePath === undefined
     ? {}
     : { relative_path: options.relativePath }),
