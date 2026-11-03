@@ -55,6 +55,10 @@ const searchLimitation =
 export const ghidraEmptyXrefsLimitation =
   "Ghidra's ReferenceManager returned no actionable references to this address in this session. An empty list reflects what this analysis resolved, not proof that the address is unreferenced; synthetic entry-point references are omitted, so cross-check the disassembly at this address before concluding there are no xrefs.";
 
+/** Attached to empty procedure_references or analyze_function reference facets. */
+export const ghidraEmptyFunctionReferencesLimitation =
+  "Ghidra's ReferenceManager returned no actionable references for this function in this session. An empty list reflects what this analysis resolved, not proof that none exist; synthetic entry-point references are omitted, so cross-check the disassembly before concluding there are no references.";
+
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
   operation: string,

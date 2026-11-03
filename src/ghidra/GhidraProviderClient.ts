@@ -74,6 +74,7 @@ import {
   isGhidraFunctionOperation,
   parseGhidraFunctionInput,
   parseGhidraFunctionResult,
+  type GhidraFunctionOperation,
 } from "./GhidraFunctionValues.js";
 import {
   isGhidraInventoryOperation,
@@ -104,6 +105,7 @@ import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js"
 import {
   ghidraHealthLimitations,
   ghidraEmptyXrefsLimitation,
+  ghidraEmptyFunctionReferencesLimitation,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
@@ -155,6 +157,45 @@ interface GhidraExecutionMetadata {
   readonly locations?: readonly EvidenceLocation[];
   readonly relationshipCoverage?: RelationshipCoverage;
 }
+
+/** The ReferenceManager observation record of one function-reference result. */
+const referenceObservationRecord = (
+  normalized: JsonValue,
+): Readonly<Record<string, JsonValue>> | undefined =>
+  typeof normalized === "object" &&
+  normalized !== null &&
+  !Array.isArray(normalized)
+    ? (normalized as Readonly<Record<string, JsonValue>>)
+    : undefined;
+
+const isEmptyArray = (value: JsonValue | undefined): boolean =>
+  Array.isArray(value) && value.length === 0;
+
+/**
+ * Caveat for an empty ReferenceManager observation: the provider's empty
+ * answer is unresolved, not proof of absence. xrefs reports per address;
+ * procedure_references per requested direction; analyze_function only when
+ * no reference facet observed anything actionable.
+ */
+const emptyReferenceCaveat = (
+  operation: GhidraFunctionOperation,
+  normalized: JsonValue,
+): string | undefined => {
+  if (operation === "xrefs")
+    return isEmptyArray(normalized) ? ghidraEmptyXrefsLimitation : undefined;
+  const record = referenceObservationRecord(normalized);
+  if (record === undefined) return undefined;
+  if (operation === "procedure_references")
+    return isEmptyArray(record.references)
+      ? ghidraEmptyFunctionReferencesLimitation
+      : undefined;
+  if (operation === "analyze_function")
+    return isEmptyArray(record.incoming_references) &&
+      isEmptyArray(record.outgoing_references)
+      ? ghidraEmptyFunctionReferencesLimitation
+      : undefined;
+  return undefined;
+};
 
 /** Build one AnalysisClient for an admitted Ghidra target and profile. */
 export const createGhidraProviderClient = (input: {
@@ -848,18 +889,17 @@ export const createGhidraProviderClient = (input: {
       if (!result.ok) return result;
       let { value: normalized, ...observation } = result.value;
       let executionMetadata: GhidraExecutionMetadata = observation;
-      if (
-        operation === "xrefs" &&
-        Array.isArray(normalized) &&
-        normalized.length === 0
-      ) {
+      const unresolvedReferences = isGhidraFunctionOperation(operation)
+        ? emptyReferenceCaveat(operation, normalized)
+        : undefined;
+      if (unresolvedReferences !== undefined) {
         // An empty list is the provider's observation, not proof: distinguish
-        // "no references were resolved" from "the address is unreferenced".
+        // "no references were resolved" from "there are no references".
         executionMetadata = {
           ...executionMetadata,
           limitations: [
             ...(executionMetadata.limitations ?? []),
-            ghidraEmptyXrefsLimitation,
+            unresolvedReferences,
           ],
         };
       }

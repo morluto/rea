@@ -333,6 +333,11 @@ describe("Ghidra snapshot profile admission", () => {
       legacy: undefined,
     },
     {
+      parameter: "function_references",
+      current: "complete-body-and-entry-reference-manager-v3",
+      legacy: "complete-body-and-entry-reference-manager-v2",
+    },
+    {
       parameter: "call_relationship_coverage",
       current: "function-body-call-coverage-v5",
       legacy: "resolved-call-reference-diagnostics-v1",
