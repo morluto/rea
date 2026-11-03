@@ -847,13 +847,20 @@ const GO_COMPILER_PATH_FLAG =
  */
 const LINKER_PATH_FLAG =
   /^(?:-(?!T(?:bss|data|text|(?:ldata|rodata|text)-segment)(?:=|$))[ILT]|-{1,2}(?:dynamic-linker|library-path|rpath|rpath-link|script)(?==|$))=?(.*)$/su;
-/**
- * A runtime search path the loader expands, such as `$ORIGIN/../lib` or
- * `@loader_path/Frameworks`, which names no directory on the build host.
- */
-const LINKER_RUNTIME_TOKEN =
-  /^(?:\$(?:ORIGIN|LIB|PLATFORM)\b|\$\{(?:ORIGIN|LIB|PLATFORM)\}|@(?:executable_path|loader_path|rpath)(?:\/|$))/u;
 type NativeImageFormat = ReleaseExposureNativeImage["format"];
+/**
+ * A runtime search path the image's loader expands, which names no directory
+ * on the build host. The ELF loader expands `$ORIGIN/../lib`; dyld expands
+ * `@loader_path/Frameworks`. Each token is literal text to the other loader,
+ * and the PE loader reads no search list, so it expands neither.
+ */
+const DYLD_RUNTIME_TOKEN = /^@(?:executable_path|loader_path|rpath)(?:\/|$)/u;
+const LINKER_RUNTIME_TOKENS: Record<NativeImageFormat, RegExp | null> = {
+  elf: /^(?:\$(?:ORIGIN|LIB|PLATFORM)\b|\$\{(?:ORIGIN|LIB|PLATFORM)\})/u,
+  "mach-o": DYLD_RUNTIME_TOKEN,
+  "mach-o-universal": DYLD_RUNTIME_TOKEN,
+  pe: null,
+};
 /** `-rpath` and `-rpath-link` take a search list, not one directory. */
 const LINKER_SEARCH_LIST_FLAG = /^-{1,2}(?:rpath|rpath-link)(?==|$)/u;
 /**
@@ -1037,8 +1044,8 @@ const linkerSearchLists = (flags: string[]): string[] =>
 
 /**
  * Rooted and relative paths in flags a C compiler driver reads. A forwarded
- * search list is read entry by entry, so a loader-expanded entry such as
- * `$ORIGIN` drops only itself. Only a search list is loader-expanded: the
+ * search list is read entry by entry, so an entry the image's loader expands,
+ * such as `$ORIGIN` on ELF, drops only itself. Only a search list is loader-expanded: the
  * argument of `-T`, `-L` or `-I` is a literal path even when it reads `$ORIGIN`.
  * Only the ELF linker splits a search list at `:`. The Mach-O linker stores
  * each `-rpath` argument as one directory, so `@loader_path/lib:extra` is one
@@ -1049,10 +1056,11 @@ const compilerPaths = (value: string, format: NativeImageFormat): string[] => {
   const { compiler, linker } = splitForwardedLinkerFlags(flags);
   const lists = linkerSearchLists(linker);
   const whole = new Set(lists);
+  const token = LINKER_RUNTIME_TOKENS[format];
   const entries = lists.flatMap((list) =>
     (format === "elf" ? list.split(LINKER_SEARCH_LIST_SEPARATOR) : [list])
       .map((entry) => entry.trimEnd())
-      .filter((entry) => entry.length > 0 && !LINKER_RUNTIME_TOKEN.test(entry)),
+      .filter((entry) => entry.length > 0 && token?.test(entry) !== true),
   );
   return [
     ...flagPaths(flags).filter((path) => !whole.has(path)),

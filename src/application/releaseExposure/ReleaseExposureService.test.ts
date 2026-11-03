@@ -1515,7 +1515,11 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
 
   it.each([
     ["-Wl,-rpath,@loader_path/lib:extra", "not_observed", []],
-    ["-Wl,-rpath,$ORIGIN:/opt/private-runtime", "not_observed", []],
+    [
+      "-Wl,-rpath,$ORIGIN:/opt/private-runtime",
+      "exposed",
+      ["$ORIGIN:/opt/private-runtime"],
+    ],
     ["-Wl,-rpath,/opt/a:b", "exposed", ["/opt/a:b"]],
   ])(
     "reads a Mach-O search path in %s as one directory",
@@ -1531,19 +1535,41 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
     },
   );
 
-  it("does not read loader-expanded runtime search paths as build paths", async () => {
-    const report = await goReport(
-      goModule([
-        {
-          key: "CGO_LDFLAGS",
-          value:
-            "-Wl,-rpath,$ORIGIN/../lib -Wl,-rpath=${ORIGIN}/lib -Wl,-rpath,@loader_path/Frameworks -Xlinker -rpath -Xlinker @executable_path",
-        },
-      ]),
-    );
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("not_observed");
-  });
+  it.each([
+    ["elf", "-Wl,-rpath,$ORIGIN/../lib -Wl,-rpath=${ORIGIN}/lib"],
+    [
+      "mach-o",
+      "-Wl,-rpath,@loader_path/Frameworks -Xlinker -rpath -Xlinker @executable_path",
+    ],
+  ] as const)(
+    "does not read %s loader-expanded runtime search paths as build paths",
+    async (format, value) => {
+      const report = await goReport(
+        goModule([{ key: "CGO_LDFLAGS", value }]),
+        [],
+        format,
+      );
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.status).toBe("not_observed");
+    },
+  );
+
+  it.each([
+    ["elf", "-Wl,-rpath,@loader_path/Frameworks", "@loader_path/Frameworks"],
+    ["mach-o", "-Wl,-rpath,$ORIGIN/../lib", "$ORIGIN/../lib"],
+  ] as const)(
+    "keeps a token only the other loader expands as a literal path in %s",
+    async (format, value, path) => {
+      const report = await goReport(
+        goModule([{ key: "CGO_LDFLAGS", value }]),
+        [],
+        format,
+      );
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.status).toBe("exposed");
+      expect(check?.observation.samples).toEqual([path]);
+    },
+  );
 });
 
 describe("ReleaseExposureService Go relative flag paths", () => {
