@@ -2128,6 +2128,7 @@ it("refuses generic instances for a 32-bit ARM image", () => {
       },
     ),
   ).toThrow("generic method instances are not decoded for 32-bit images");
+});
 
 it("refuses a wasm module that imports its memory", () => {
   // env.memory, one page; the host may supply bytes no data segment writes.
