@@ -136,7 +136,7 @@ export function* linkIl2cppBinarySteps(
       );
     const address = readSlot(
       image,
-      module.method_pointers + BigInt((row - 1) * 8),
+      module.method_pointers + BigInt((row - 1) * image.pointerSize),
     );
     if (address === null || address === undefined)
       throw new Il2cppBinaryFormatFailure(
@@ -193,7 +193,10 @@ export function* linkIl2cppBinarySteps(
       );
     // 27.0/27.1 and 27.2 share header version 27 but place byref differently.
     if (version === 27) return { type, name: null };
-    const address = readSlot(image, registration.types + BigInt(type * 8));
+    const address = readSlot(
+      image,
+      registration.types + BigInt(type * image.pointerSize),
+    );
     if (address === "unknown") return { type, name: null };
     if (address === null)
       throw new Il2cppBinaryFormatFailure(
@@ -228,7 +231,9 @@ export function* linkIl2cppBinarySteps(
           facts,
           registration_.field,
           // findMetadataRegistration reports typesCount, word 6.
-          registration.field === null ? null : registration.field - 48n,
+          registration.field === null
+            ? null
+            : registration.field - 6n * BigInt(image.pointerSize),
           options,
         )
       : null;

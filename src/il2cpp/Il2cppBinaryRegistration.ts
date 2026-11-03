@@ -134,12 +134,19 @@ export function* findModules(
   );
   const counts = yield* imageMethodCounts(metadata);
   const candidates = new Map<number, Il2cppCodeGenModule[]>();
+  // Il2CppCodeGenModule: moduleName pointer, methodPointerCount and the
+  // methodPointers array, each in one pointer-sized slot.
+  const width = image.pointerSize;
+  const step = BigInt(width);
   for (const mapping of image.container.mappings) {
-    const start = Number((8n - (mapping.address % 8n)) % 8n);
-    for (let at = start; at + 24 <= mapping.size; at += 8) {
-      if ((at & 0xffff) < 8) yield;
+    const start = Number((step - (mapping.address % step)) % step);
+    for (let at = start; at + 3 * width <= mapping.size; at += width) {
+      if ((at & 0xffff) < width) yield;
       const offset = mapping.offset + at;
-      const target = image.bytes.readBigUInt64LE(offset);
+      const target =
+        width === 8
+          ? image.bytes.readBigUInt64LE(offset)
+          : BigInt(image.bytes.readUInt32LE(offset));
       const indices = names.get(target);
       if (indices === undefined) continue;
       const address = mapping.address + BigInt(at);
@@ -150,7 +157,7 @@ export function* findModules(
         recordOffset = mappedFileOffset(
           image.container.mappings,
           address,
-          24,
+          3 * width,
           image.container.zero_fills,
         );
       } catch (cause) {
@@ -169,9 +176,9 @@ export function* findModules(
       let work = 0;
       for (const index of indices) {
         if (++work % 256 === 0) yield;
-        const count = readUInt32(image, address + 8n);
+        const count = readUInt32(image, address + step);
         if (count !== counts[index]) continue;
-        const pointers = readPointer(image, address + 16n);
+        const pointers = readPointer(image, address + 2n * step);
         if (pointers === null) continue;
         if (!hasPointerArrayCoverage(image, pointers, count)) continue;
         const list = candidates.get(index) ?? [];
@@ -219,22 +226,24 @@ export function* findCodeRegistration(
   const expected = new Set(modules.map((module) => module.address));
   const matches: { field: bigint; array: bigint }[] = [];
   const matchedFields = new Set<bigint>();
+  const width = image.pointerSize;
+  const step = BigInt(width);
   for (const mapping of image.container.mappings) {
-    const start = Number((8n - (mapping.address % 8n)) % 8n);
-    for (let at = start; at + 16 <= mapping.size; at += 8) {
-      if ((at & 0xffff) < 8) yield;
+    const start = Number((step - (mapping.address % step)) % step);
+    for (let at = start; at + 2 * width <= mapping.size; at += width) {
+      if ((at & 0xffff) < width) yield;
       const offset = mapping.offset + at;
-      // The count owns four bytes; the following four only align its pointer.
+      // The count owns four bytes; on 64-bit images the next four only align its pointer.
       if (image.bytes.readUInt32LE(offset) !== modules.length) continue;
       const field = mapping.address + BigInt(at);
       if (readUInt32(image, field) !== modules.length) continue;
-      const array = readPointer(image, field + 8n);
-      if (array === null || !isMapped(image, array, modules.length * 8))
+      const array = readPointer(image, field + step);
+      if (array === null || !isMapped(image, array, modules.length * width))
         continue;
       const seen = new Set<bigint>();
       for (let slot = 0; slot < modules.length; slot++) {
         if (slot % 256 === 0) yield;
-        const pointer = readPointer(image, array + BigInt(slot * 8));
+        const pointer = readPointer(image, array + BigInt(slot * width));
         if (pointer === null || !expected.has(pointer)) break;
         seen.add(pointer);
       }
@@ -286,8 +295,10 @@ function* findModuleArrayByCode(
   expected: ReadonlySet<bigint>,
 ): Generator<void, bigint | null> {
   const arrays = new Set<bigint>();
+  // Code inference runs only for 64-bit amd64 and arm64 images.
+  const step = 8n;
   for (const mapping of image.container.mappings) {
-    const start = Number((8n - (mapping.address % 8n)) % 8n);
+    const start = Number((step - (mapping.address % step)) % step);
     let runStart = start;
     const lastPosition = new Map<bigint, number>();
     for (let at = start; at + 8 <= mapping.size; at += 8) {
@@ -410,24 +421,30 @@ export function* findMetadataRegistration(
   // fields are unusable; code is then not asked to stand in for it.
   let countsMatched = false;
   const low = (offset: number) => image.bytes.readUInt32LE(offset);
+  // Every MetadataRegistration field is one pointer-sized slot; counts sit in
+  // the low four bytes of theirs.
+  const width = image.pointerSize;
+  const step = BigInt(width);
+  const slot = (index: number) => index * width;
   for (const mapping of image.container.mappings) {
-    const start = Number((8n - (mapping.address % 8n)) % 8n);
-    // The fields used below end at byte 112. The full 128-byte registration
+    const start = Number((step - (mapping.address % step)) % step);
+    // The fields used below end at slot 14. The full 16-slot registration
     // must still have loader coverage, including any declared zero-fill tail.
-    for (let at = start; at + 112 <= mapping.size; at += 8) {
-      if ((at & 0xffff) < 8) yield;
+    for (let at = start; at + slot(14) <= mapping.size; at += width) {
+      if ((at & 0xffff) < width) yield;
       const base = mapping.offset + at;
-      if (low(base + 80) !== typeDefinitions) continue;
-      if (low(base + 96) !== typeDefinitions) continue;
+      if (low(base + slot(10)) !== typeDefinitions) continue;
+      if (low(base + slot(12)) !== typeDefinitions) continue;
       const address = mapping.address + BigInt(at);
       if (!hasPointerArrayCoverage(image, address, 16)) continue;
-      if (readUInt32(image, address + 80n) !== typeDefinitions) continue;
-      if (readUInt32(image, address + 96n) !== typeDefinitions) continue;
+      const field = (index: number) => address + BigInt(slot(index));
+      if (readUInt32(image, field(10)) !== typeDefinitions) continue;
+      if (readUInt32(image, field(12)) !== typeDefinitions) continue;
       countsMatched = true;
-      const count = readUInt32(image, address + 48n);
-      const types = readPointer(image, address + 56n);
-      const fieldOffsets = readPointer(image, address + 88n);
-      const typeSizes = readPointer(image, address + 104n);
+      const count = readUInt32(image, field(6));
+      const types = readPointer(image, field(7));
+      const fieldOffsets = readPointer(image, field(11));
+      const typeSizes = readPointer(image, field(13));
       if (
         typeof count !== "number" ||
         count === 0 ||
@@ -435,22 +452,22 @@ export function* findMetadataRegistration(
         types === null ||
         fieldOffsets === null ||
         typeSizes === null ||
-        !isMapped(image, fieldOffsets, 8) ||
-        !isMapped(image, typeSizes, 8) ||
-        !isMapped(image, types, count * 8)
+        !isMapped(image, fieldOffsets, width) ||
+        !isMapped(image, typeSizes, width) ||
+        !isMapped(image, types, count * width)
       )
         continue;
-      const field = mapping.address + BigInt(at + 48);
+      const typesCountField = field(6);
       // Exact load aliases can visit one virtual registration field twice.
-      if (matchedFields.has(field)) continue;
-      matchedFields.add(field);
+      if (matchedFields.has(typesCountField)) continue;
+      matchedFields.add(typesCountField);
       if (matches.length !== 0)
         throw new Il2cppBinaryFormatFailure(
           "metadata-registration-not-found",
           "multiple MetadataRegistration candidates match",
         );
       matches.push({
-        field,
+        field: typesCountField,
         count,
         types,
       });
@@ -588,8 +605,10 @@ function* findTypeTableByCode(
       (typeof slot === "bigint" && recordState(slot) === "unknown")
     );
   };
+  // Code inference runs only for 64-bit amd64 and arm64 images.
+  const step = 8n;
   for (const mapping of container.mappings) {
-    const start = Number((8n - (mapping.address % 8n)) % 8n);
+    const start = Number((step - (mapping.address % step)) % step);
     let runStart = -1;
     let startUnknown = false;
     for (let at = start; at <= mapping.size; at += 8) {

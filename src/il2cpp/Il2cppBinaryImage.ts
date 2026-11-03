@@ -83,6 +83,8 @@ export interface NativeImage {
   /** One image's immutable load mappings, shared by stored and loader-aware reads. */
   readonly fileMappings: FileMappingIndex;
   readonly imageBase: bigint;
+  /** Bytes per pointer slot: 8 for the 64-bit native images, 4 for wasm32. */
+  readonly pointerSize: 4 | 8;
   readonly unresolvedPointerSlots: ReadonlyMap<bigint, number>;
   readonly zeroFillPointers: ReadonlyMap<bigint, bigint>;
   /** Mach-O loader fixups shared by every native pointer consumer. */
@@ -195,6 +197,7 @@ export function* openImageSteps(
       container.zero_fills,
     ),
     imageBase,
+    pointerSize: 8,
     unresolvedPointerSlots: relocated?.unresolved ?? new Map<bigint, number>(),
     zeroFillPointers: relocated?.zeroFillPointers ?? new Map<bigint, bigint>(),
     ...(machoPointerFixups === undefined ? {} : { machoPointerFixups }),
@@ -204,8 +207,10 @@ export function* openImageSteps(
 /** Stored bytes only; loader interpretation belongs to readSlot. */
 const readStoredWord = (image: NativeImage, address: bigint): bigint | null => {
   try {
-    const offset = image.fileMappings.offset(address, 8);
-    return image.bytes.readBigUInt64LE(offset);
+    const offset = image.fileMappings.offset(address, image.pointerSize);
+    return image.pointerSize === 8
+      ? image.bytes.readBigUInt64LE(offset)
+      : BigInt(image.bytes.readUInt32LE(offset));
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;
@@ -233,6 +238,10 @@ export const readUInt32 = (
 };
 
 /** Exact lowercase hexadecimal form of an address in reports and issues. */
+/** One pointer slot's width as a bigint step. */
+export const pointerStep = (image: NativeImage): bigint =>
+  BigInt(image.pointerSize);
+
 export const hexAddress = (value: bigint) => `0x${value.toString(16)}`;
 
 export const isMapped = (image: NativeImage, address: bigint, size: number) => {
@@ -267,7 +276,8 @@ export const hasPointerArrayCoverage = (
   address: bigint,
   count: number,
 ): boolean => {
-  const end = address + BigInt(count) * 8n;
+  const width = BigInt(image.pointerSize);
+  const end = address + BigInt(count) * width;
   let cursor = address;
   while (cursor < end) {
     let fileEnd = cursor;
@@ -283,7 +293,7 @@ export const hasPointerArrayCoverage = (
         if (range.address <= cursor && range.address + range.size > coveredEnd)
           coveredEnd = range.address + range.size;
     const stop = coveredEnd < end ? coveredEnd : end;
-    const size = Number(((stop - cursor) / 8n) * 8n);
+    const size = Number(((stop - cursor) / width) * width);
     if (size <= 0) return false;
     try {
       if (fileEnd === cursor) {
@@ -340,7 +350,8 @@ export const readSlot = (
       // A successful indexed read already excludes zero-fill aliases. Only a
       // non-file-backed slot needs the zero-fill ownership walk.
       raw = readStoredWord(image, address);
-      if (raw === null && isZeroFilled(image, address, 8)) raw = 0n;
+      if (raw === null && isZeroFilled(image, address, image.pointerSize))
+        raw = 0n;
     }
     if (raw === null) return null;
     if (image.machoPointerFixups !== undefined) {
