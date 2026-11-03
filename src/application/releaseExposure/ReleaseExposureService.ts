@@ -846,8 +846,13 @@ const GO_COMPILER_PATH_FLAG =
  */
 const LINKER_PATH_FLAG =
   /^(?:-(?!T(?:bss|data|text|(?:ldata|rodata|text)-segment)(?:=|$))[ILT]|-{1,2}(?:dynamic-linker|library-path|script)(?==|$))=?(.*)$/su;
-/** `go tool link` takes a library directory as `-L dir` or `-L=dir`, never attached. */
-const GO_LINKER_PATH_FLAG = /^-{1,2}L(?:=|\s+|$)(.*)$/su;
+/**
+ * The options `go tool link -h` documents as taking a directory, path or file,
+ * as `-L dir` or `-L=dir`, never attached. `-extld`, `-extar` and `-libgcc`
+ * name a program or `none`, so only their rooted values read as paths.
+ */
+const GO_LINKER_PATH_FLAG =
+  /^-{1,2}(?:I|L|benchmarkprofile|capturehostobjs|cpuprofile|fipso|importcfg|memprofile|o|r|tmpdir)(?:=|\s+|$)(.*)$/su;
 /** The options `go tool compile -h` documents as taking a directory, path or file. */
 const GO_COMPILE_PATH_FLAG =
   /^-{1,2}(?:D|I|asmhdr|bench|blockprofile|coveragecfg|cpuprofile|embedcfg|importcfg|linkobj|memprofile|mutexprofile|o|pgoprofile|symabis|traceprofile|trimpath)(?:=|\s+|$)(.*)$/su;

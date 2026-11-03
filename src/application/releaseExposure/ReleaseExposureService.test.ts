@@ -1411,6 +1411,32 @@ const goModule = (settings: { key: string; value: string }[]) => ({
   complete: true,
 });
 
+describe("ReleaseExposureService Go linker path options", () => {
+  it.each([
+    ["-tmpdir=private-obj -s -w", "private-obj"],
+    ["-tmpdir private-obj", "private-obj"],
+    ["-capturehostobjs private-objs", "private-objs"],
+    ["-cpuprofile=link.prof", "link.prof"],
+    ["-importcfg private.cfg", "private.cfg"],
+    ["-o out/app", "out/app"],
+    ["-r private-lib", "private-lib"],
+  ])("keeps the relative linker path in %s", async (value, path) => {
+    const report = await goReport(goModule([{ key: "-ldflags", value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual([path]);
+  });
+
+  it.each([
+    "-extld clang -extar ar -libgcc none",
+    "-buildmode pie -linkmode external -installsuffix race",
+  ])("does not read the program or mode in %s as a path", async (value) => {
+    const report = await goReport(goModule([{ key: "-ldflags", value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("not_observed");
+  });
+});
+
 describe("ReleaseExposureService Go relative flag paths", () => {
   it("keeps relative paths given to compiler path flags, attached or not", async () => {
     const report = await goReport(
