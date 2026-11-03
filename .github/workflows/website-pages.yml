@@ -154,6 +154,15 @@ jobs:
           from urllib.parse import urljoin, urlsplit
           from urllib.request import Request, urlopen
 
+          def open_public(url, accept=None):
+              headers = {
+                  "Cache-Control": "no-cache",
+                  "User-Agent": "REA-Website-Verifier/1.0 (+https://github.com/morluto/rea)",
+              }
+              if accept:
+                  headers["Accept"] = accept
+              return urlopen(Request(url, headers=headers), timeout=10)
+
           expected = os.environ["GITHUB_SHA"]
           pages_url = os.environ["PAGES_URL"]
           if not pages_url:
@@ -169,11 +178,7 @@ jobs:
               for name, base in list(pending.items()):
                   url = urljoin(base, "deployment.json") + "?commit=" + expected
                   try:
-                      request = Request(url, headers={
-                          "Cache-Control": "no-cache",
-                          "User-Agent": "REA-Website-Verifier/1.0 (+https://github.com/morluto/rea)",
-                      })
-                      with urlopen(request, timeout=10) as response:
+                      with open_public(url) as response:
                           actual = json.load(response).get("commit")
                       if actual == expected:
                           print(f"{name} serves {expected}: {base}")
@@ -189,21 +194,20 @@ jobs:
           if pending:
               sys.exit("Could not verify published revision on: " + ", ".join(pending))
           for name, base in hosts.items():
-              with urlopen(urljoin(base, ".well-known/agent-skills/index.json"), timeout=15) as response:
+              with open_public(urljoin(base, ".well-known/agent-skills/index.json")) as response:
                   skill, = json.load(response)["skills"]
               # Fetch from each selected host, including the /rea/ mirror.
               artifact_url = urljoin(base, urlsplit(skill["url"]).path.lstrip("/"))
-              with urlopen(artifact_url, timeout=15) as response:
+              with open_public(artifact_url) as response:
                   digest = "sha256:" + hashlib.sha256(response.read()).hexdigest()
               if digest != skill["digest"]:
                   sys.exit(name + " serves a skill archive with the wrong digest")
               for manifest in ("ard.json", "ai-catalog.json"):
-                  with urlopen(urljoin(base, ".well-known/" + manifest), timeout=15) as response:
+                  with open_public(urljoin(base, ".well-known/" + manifest)) as response:
                       if not json.load(response).get("entries"):
                           sys.exit(name + " serves an empty discovery manifest")
               if name == "Cloudflare":
-                  request = Request(base, headers={"Accept": "text/markdown"})
-                  with urlopen(request, timeout=15) as response:
+                  with open_public(base, accept="text/markdown") as response:
                       vary = {value.strip().lower() for value in response.headers.get("Vary", "").split(",")}
                       if response.headers.get_content_type() != "text/markdown" or "accept" not in vary:
                           sys.exit("Cloudflare did not negotiate Markdown with Vary: Accept")
