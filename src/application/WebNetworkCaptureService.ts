@@ -330,7 +330,7 @@ const credentialNameLimitations = (
     : []),
   ...(scan.skipped.count > 0
     ? [
-        `${String(scan.skipped.count)} recorded bodies exceed the credential-name scan's 4 MiB limit and were not scanned (${listedPointers(scan.skipped)}).`,
+        `${String(scan.skipped.count)} recorded bodies exceed the credential-name scan's limits (4 MiB of text, or 524288 JSON values or form fields) and were not scanned (${listedPointers(scan.skipped)}).`,
       ]
     : []),
 ];

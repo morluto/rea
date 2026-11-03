@@ -80,6 +80,8 @@ export const credentialNamed = (name: string): boolean => {
 
 /** Bodies larger than this are not scanned. */
 const SCAN_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
+/** Values a body may hold before it is not scanned, bounded before the parse allocates them. */
+const SCAN_BODY_VALUE_LIMIT = 524_288;
 /** Pointers the report lists; the count covers every match. */
 const REPORTED_POINTERS = 20;
 
@@ -119,7 +121,28 @@ const bodyFormat = (
   return text.includes("=") && !/\s/u.test(text) ? "form" : undefined;
 };
 
-/** A recorded body as JSON or form fields, skipped when it is cut or over the limit, or undefined when it is neither. */
+/**
+ * Whether the text can hold more values than the scan reads. Each `[`, `{`
+ * and `,` starts at most one JSON value and each `&` at most one form field,
+ * so counting them bounds the parse before it allocates; one inside a string
+ * only lowers the bound.
+ */
+const exceedsValueLimit = (text: string, format: "json" | "form"): boolean => {
+  let values = 1;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    const starts =
+      format === "json"
+        ? code === 0x5b || code === 0x7b || code === 0x2c
+        : code === 0x26;
+    if (!starts) continue;
+    values++;
+    if (values > SCAN_BODY_VALUE_LIMIT) return true;
+  }
+  return false;
+};
+
+/** A recorded body as JSON or form fields, skipped when it is cut or over a limit, or undefined when it is neither. */
 const parsedBody = (
   text: unknown,
   mediaType: unknown,
@@ -129,9 +152,10 @@ const parsedBody = (
   if (cut || Buffer.byteLength(text, "utf8") > SCAN_BODY_LIMIT_BYTES)
     return { kind: "skipped" };
   const format = bodyFormat(text, mediaType);
+  if (format === undefined) return undefined;
+  if (exceedsValueLimit(text, format)) return { kind: "skipped" };
   if (format === "form")
     return { kind: "form", fields: [...new URLSearchParams(text)] };
-  if (format === undefined) return undefined;
   try {
     return { kind: "json", value: JSON.parse(text) };
   } catch {
@@ -327,7 +351,7 @@ export const credentialScanWarnings = (capture: {
   if (scanned.skipped.count > 0)
     warnings.push({
       code: "credential-scan-incomplete",
-      message: `${String(scanned.skipped.count)} recorded bodies exceed the credential-name scan's 4 MiB limit and were not scanned; evidence.json ships them, so review them before sharing.`,
+      message: `${String(scanned.skipped.count)} recorded bodies exceed the credential-name scan's limits (4 MiB of text, or 524288 JSON values or form fields) and were not scanned; evidence.json ships them, so review them before sharing.`,
       pointers: scanned.skipped.pointers,
     });
   return warnings;

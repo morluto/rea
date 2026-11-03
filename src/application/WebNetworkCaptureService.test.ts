@@ -727,6 +727,31 @@ it("scans only HAR records for credential names", async () => {
   expect(credentialNameLimitation(result.value.limitations)).toEqual([]);
 });
 
+it("reports a body whose values would expand past the credential-name scan's bound", async () => {
+  const report = credentialNamedReport();
+  report.records[0]!.reported = {
+    request: { method: "GET", url: "https://example.test/expansive" },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: `[${"[],".repeat(300_000)}{"password":"x"}]`,
+      },
+    },
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  expect(credentialNameLimitation(result.value.limitations)).toEqual([]);
+  const skipped = result.value.limitations.filter((text) =>
+    text.includes("were not scanned"),
+  );
+  expect(skipped).toHaveLength(1);
+  expect(skipped[0]).toMatch(/^1 /);
+  expect(skipped[0]).toContain("record 0 response");
+});
+
 it("reports bodies the credential-name scan could not read", async () => {
   const report = credentialNamedReport();
   report.records[0]!.reported = {

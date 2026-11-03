@@ -378,8 +378,9 @@ of text, says how many are not listed, and never names a value; the
 [environment build](agent-environments.md) runs the same scan as its
 `credential-named-members` warning. Values already excluded, such as the
 standard authentication headers or declared sensitive values, are not counted.
-Bodies larger than 4 MiB of UTF-8 text are not scanned, and a second limitation
-counts them. Names do not establish sensitivity, so nothing is excluded on
+Bodies larger than 4 MiB of UTF-8 text, or holding more than 524288 JSON
+values or form fields (bounded from the text before it is parsed), are not
+scanned, and a second limitation counts them. Names do not establish sensitivity, so nothing is excluded on
 them; declare the values as sensitive to exclude them. Other capture formats
 are not scanned.
 

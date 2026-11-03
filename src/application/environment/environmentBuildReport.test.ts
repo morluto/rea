@@ -203,6 +203,28 @@ describe("scanCredentialNames body formats", () => {
     }
   });
 
+  it("skips a body holding more values than the scan reads, bounded before it is parsed", () => {
+    const skipped = { count: 1, pointers: ["record 3 request"] };
+    // 300001 empty arrays: under 1 MiB of text, over the value bound.
+    expect(
+      scanCredentialNames([
+        posted("application/json", `[${"[],".repeat(300_000)}[]]`),
+      ]),
+    ).toEqual({ count: 0, pointers: [], skipped });
+    expect(
+      scanCredentialNames([posted(FORM, `${"a=&".repeat(524_288)}token=t`)]),
+    ).toEqual({ count: 0, pointers: [], skipped });
+    expect(
+      scanCredentialNames([
+        posted("application/json", `[${"1,".repeat(200_000)}{"token":"t"}]`),
+      ]),
+    ).toEqual({
+      count: 1,
+      pointers: ["record 3 request /200000/token"],
+      skipped: NONE_SKIPPED,
+    });
+  });
+
   it("finds nothing in plain text that is not a form", () => {
     for (const mimeType of ["text/plain", ""])
       for (const text of ["token=abc to sign in", "Use token=abc", ""])
