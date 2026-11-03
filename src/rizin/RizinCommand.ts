@@ -1,8 +1,8 @@
 import type {
   ProviderToolIdentification,
   ProviderVersionProbe,
-} from "../application/reverse/ReverseEngineeringCommandPort.js";
-import type { RizinInput } from "../domain/reverseEngineering.js";
+  RizinInput,
+} from "../domain/reverseEngineering.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { RIZIN_PROVIDER_IDENTITY } from "./RizinProviderIdentity.js";
 

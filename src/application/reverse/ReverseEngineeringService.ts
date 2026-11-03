@@ -30,11 +30,11 @@ import {
   DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
   MAX_REVERSE_COMMAND_TIMEOUT_MS,
   objdumpInputSchema,
+  type ProviderToolIdentification,
   rizinInputSchema,
   type RizinInput,
 } from "../../domain/reverseEngineering.js";
 import type {
-  ProviderToolIdentification,
   ReverseEngineeringCommandPort,
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";

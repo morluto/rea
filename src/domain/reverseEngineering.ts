@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { commandEvidenceDetailSchema } from "./commandObservation.js";
+import type { EvidenceProvider } from "./evidence.js";
 import { localPathStringSchema } from "./localPath.js";
 
 /** Omitted one-shot objdump/rizin wall clock. Preflight shares it; the command gets it again. */
@@ -92,3 +93,21 @@ export type ObjdumpSelection =
   | z.input<typeof objdumpDisassemblyInputSchema>
   | z.input<typeof objdumpArchitecturesInputSchema>;
 export type RizinInput = z.output<typeof rizinInputSchema>;
+
+/** A provider's reading of the version banner its selected executable printed. */
+export interface ProviderToolIdentification {
+  readonly identity: EvidenceProvider;
+  readonly limitations: readonly string[];
+}
+
+/** Arguments that print a version banner, and the provider's reading of it. */
+export interface ProviderVersionProbe {
+  readonly arguments: readonly string[];
+  /**
+   * Reads the banner: the first stdout line, trimmed and bounded by the
+   * service. Undefined means the banner identifies no tool.
+   */
+  readonly identify: (banner: string) => ProviderToolIdentification | undefined;
+  /** The limitation recorded when no banner identified the tool, whose identity is then assumed. */
+  readonly assumedIdentity: string;
+}
