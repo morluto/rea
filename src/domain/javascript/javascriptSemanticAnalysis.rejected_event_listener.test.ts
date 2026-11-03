@@ -366,6 +366,62 @@ e.on("ready");`),
 });
 
 /**
+ * Handing the class itself to a call opens the same route as handing out its
+ * prototype. Measured on Node 22.22.2: after `configure(EventEmitter)` installs
+ * a defaulting wrapper, `e.on("ready")` does not throw.
+ */
+it("keeps the registration after the class object escapes", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+function configure(Ctor) {
+  Ctor.prototype.on = function (name, fn = () => {}) {
+    return EventEmitter.prototype.addListener.call(this, name, fn);
+  };
+}
+const e = new EventEmitter();
+configure(EventEmitter);
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
+ * Node runs `EventEmitter.init` while constructing, so a replaced hook can give
+ * every new instance its own method. Measured on Node 22.22.2: `e.on("ready")`
+ * does not throw after `init` is replaced with a wrapper that installs one.
+ */
+it("keeps the registration after the init hook is replaced", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const savedInit = EventEmitter.init;
+EventEmitter.init = function (opts) {
+  savedInit.call(this, opts);
+  this.on = function (name, fn = () => {}) {
+    return EventEmitter.prototype.addListener.call(this, name, fn);
+  };
+};
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
+ * Two specifiers name the same mutable module, so a replacement installed
+ * through one import answers the other. Measured on Node 22.22.2: `e.on("ready")`
+ * does not throw after the class is replaced through the first import.
+ */
+it("keeps the registration after the class is replaced through another import", () => {
+  expect(
+    eventsForSource(`import first from "events";
+import second from "node:events";
+first.EventEmitter = class extends first.EventEmitter {
+  on(name, fn = () => {}) { return super.on(name, fn); }
+};
+const e = new second.EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
  * `emit` passes its remaining arguments to listeners that already exist, so it
  * does not validate them the way a registration does.
  */

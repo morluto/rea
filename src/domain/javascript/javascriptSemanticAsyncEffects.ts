@@ -17,6 +17,7 @@ import {
   semanticResolutionBlocked,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
   semanticBindingAtRead,
@@ -199,6 +200,70 @@ const nodeEventEmitterConstruction = (
 };
 
 /**
+ * Resolve the identifier a construction reads the class through: the class
+ * itself for `new EventEmitter()`, and the module namespace for
+ * `new events.EventEmitter()`.
+ */
+const constructionRootBinding = (
+  callee: t.Expression | t.Super,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticBindingState | undefined => {
+  let node: t.Node = unwrapJavaScriptExpression(callee).node;
+  while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
+    node = unwrapJavaScriptExpression(node.object).node;
+  return t.isIdentifier(node)
+    ? resolveSemanticBindingState(state, node, node.name)
+    : undefined;
+};
+
+/**
+ * Report whether construction leaves the class's own surface intact. The method
+ * that answers a call has to come from the class as Node defines it, so any
+ * route that lets other code reshape that class removes the proof: handing the
+ * class or its namespace to a call, writing a member of it (including the
+ * `init` hook Node invokes while constructing, which can install an own method
+ * on the instance), or replacing the exported class through another import of
+ * the same module. Enumerating the individual channels instead would leave the
+ * next one open, so the proof now requires the surface to be untouched.
+ */
+const eventsClassSurfaceTouched = (
+  construction: t.NewExpression,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const precedes = (node: t.Node | undefined): boolean =>
+    !semanticTopLevelEffectFollowsCapture(read, node, state.parentsByNode);
+  const root = constructionRootBinding(construction.callee, state);
+  if (
+    root !== undefined &&
+    root.escapedPaths.some(({ node }) => precedes(node))
+  )
+    return true;
+  const targetsClass = (path: JavaScriptSemanticPropertyPath): boolean =>
+    path.some((key) => key === "EventEmitter" || key === "init");
+  for (const binding of state.bindingsById.values()) {
+    const isRoot = root !== undefined && binding.bindingId === root.bindingId;
+    if (
+      binding.memberWrites.some(
+        ({ path, node }) =>
+          precedes(node) &&
+          (path.length > 0 ? isRoot || targetsClass(path) : false),
+      )
+    )
+      return true;
+  }
+  for (const specifier of NODE_EVENTS_SPECIFIERS)
+    if (
+      (state.requiredModuleEffects.get(specifier) ?? []).some(
+        ({ kind, path, node }) =>
+          kind === "write" && targetsClass(path) && precedes(node),
+      )
+    )
+      return true;
+  return false;
+};
+
+/**
  * Report whether a recorded path can select, or replace, `prototype.<method>`.
  * The path is recorded against whichever object owns the write, so it carries
  * the owner's own prefix (`EventEmitter.prototype.on`, `events.EventEmitter
@@ -265,7 +330,10 @@ const writesPrototypeMethod = (
 const escapesPrototypeObject = (
   path: JavaScriptSemanticPropertyPath,
 ): boolean =>
-  path.length > 0 && (path.at(-1) === "prototype" || path.at(-1) === null);
+  path.length > 0 &&
+  (path.at(-1) === "prototype" ||
+    path.at(-1) === "__proto__" ||
+    path.at(-1) === null);
 
 /**
  * Report whether the shared prototype may have gained a method through a call.
@@ -317,8 +385,12 @@ const nodeEventEmitterReceiver = (
   const initializer = semanticStableInitializer(binding, state);
   if (initializer === undefined || initializer.projection.length !== 0)
     return false;
-  if (nodeEventEmitterConstruction(initializer.node, state) === null)
-    return false;
+  const construction = nodeEventEmitterConstruction(initializer.node, state);
+  if (construction === null) return false;
+  // Reaching the class is not the same as reaching the method: the class object
+  // and the `init` hook Node runs while constructing can both be reshaped, so a
+  // construction whose surface was touched keeps its operation.
+  if (eventsClassSurfaceTouched(construction, node, state)) return false;
   // Constructing the class proves where the receiver came from, not which
   // definition answers the call. Passing the instance to another call lets that
   // call replace the method first, so the proof no longer holds. Reading
