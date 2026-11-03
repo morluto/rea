@@ -983,9 +983,11 @@ const goToolFlagPaths = (
       attached.length === 0 && next !== undefined && !next.startsWith("-");
     const argument = fromNext ? next : attached;
     if (argument.length === 0) continue;
-    if (GO_PATH_LIST_FLAG.test(flag) && filesystemPath(argument) !== null)
-      continue;
+    const list = GO_PATH_LIST_FLAG.test(flag);
+    if (list && filesystemPath(argument) !== null) continue;
     paths.push(argument);
+    // A rewrite list's rooted parts are still read by `flagPaths`.
+    if (list) continue;
     fields.add(flag);
     if (fromNext) fields.add(next);
   }
@@ -1032,7 +1034,9 @@ const goSettingPaths = (key: string, value: string): string[] => {
   return [
     ...flagPaths(
       own.filter(
-        (field) => !whole.fields.has(field.replace(GO_PACKAGE_SELECTOR, "")),
+        (field) =>
+          !whole.fields.has(field) &&
+          !whole.fields.has(field.replace(GO_PACKAGE_SELECTOR, "")),
       ),
     ),
     ...whole.paths,

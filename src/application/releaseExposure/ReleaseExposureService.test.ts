@@ -1444,11 +1444,24 @@ describe("ReleaseExposureService Go rooted linker flag paths", () => {
     [`-L=/tmp/private,sdk -s -w`, "/tmp/private,sdk"],
     [`all=-L=/tmp/private,sdk`, "/tmp/private,sdk"],
     [`-tmpdir /srv/obj,1`, "/srv/obj,1"],
+    [`-L "/tmp/private=-sdk"`, "/tmp/private=-sdk"],
   ])("keeps the whole rooted argument in %s", async (value, path) => {
     const report = await goReport(goModule([{ key: "-ldflags", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");
     expect(check?.status).toBe("exposed");
     expect(check?.observation.samples).toEqual([path]);
+  });
+});
+
+describe("ReleaseExposureService Go trimpath rewrites", () => {
+  it("keeps the rooted half of a relative -trimpath rewrite", async () => {
+    const report = await goReport(
+      goModule([{ key: "-gcflags", value: "-trimpath=src=/srv/build" }]),
+    );
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.observation.samples).toEqual(
+      expect.arrayContaining(["/srv/build"]),
+    );
   });
 });
 
