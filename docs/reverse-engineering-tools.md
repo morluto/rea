@@ -95,9 +95,11 @@ of falling back. Restart REA after changing its launch environment; these are
 not `update_analysis_settings` options. For MCP, set the values in the client's
 REA registration and restart that server.
 
-These settings do not change startup or detach deadlines, Rizin's fixed frame
-and frame-count limits, or one-shot command limits. Startup/detach control
-replies have a separate 16 MiB allowance that a smaller command-output setting
+These settings do not change the fixed initial-prompt or owned-cleanup waits,
+Rizin's fixed frame and frame-count limits, or one-shot command limits. GDB
+initialization and normal-close detach MI requests use the configured command
+deadline, so a shorter selection can also time out those control commands.
+Startup/detach control replies have a separate 16 MiB allowance that a smaller command-output setting
 does not lower. A larger command deadline does not establish that a blocked
 debugger can detach or that cleanup will succeed; retain and inspect any
 `cleanup_incomplete` result before retrying.
