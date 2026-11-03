@@ -247,26 +247,13 @@ describe("native resolution Chromium sandbox", () => {
       if (result.ok) throw new Error("expected startup failure");
       expect(launchOptions?.chromiumSandbox).toBe(sandbox);
       expect(launchOptions?.args).not.toContain("--no-sandbox");
-      expect(result.error).toMatchObject({ remediationAction: undefined });
+      expect(result.error).toMatchObject({
+        remediationAction: sandbox
+          ? expect.stringContaining("REA_BROWSER_NO_SANDBOX=true")
+          : undefined,
+      });
     },
   );
-
-  it("names the sandbox opt-out when Chromium cannot start its sandbox", async () => {
-    const provider = new NativeModuleResolver(
-      { REA_BROWSER_EXECUTABLE: "/browser" },
-      () =>
-        Promise.reject(
-          new Error(
-            "browserType.launch: Target page, context or browser has been closed\n[pid=1][err] [1:1:FATAL:zygote_host_impl_linux.cc(132)] No usable sandbox!",
-          ),
-        ),
-    );
-    const result = await provider.resolve(input);
-    if (result.ok) throw new Error("expected startup failure");
-    expect(result.error).toMatchObject({
-      remediationAction: expect.stringContaining("REA_BROWSER_NO_SANDBOX=true"),
-    });
-  });
 });
 
 describe("completed native resolution finalization", () => {

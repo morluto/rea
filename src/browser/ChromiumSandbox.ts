@@ -15,19 +15,12 @@ export const chromiumSandboxEnabled = (
   platform !== "android" &&
   environment[CHROMIUM_NO_SANDBOX_VARIABLE] !== "true";
 
-// Chromium's own startup diagnostics when the host cannot create its sandbox:
-// a missing namespace or setuid sandbox, or a root user.
-const unavailableSandboxDiagnostics = [
-  "No usable sandbox!",
-  "Running as root without --no-sandbox is not supported",
-] as const;
-
-/** Name the host opt-out when Chromium reports that its sandbox is unavailable. */
-export const chromiumSandboxRemediation = (
-  startupError: string,
-): string | undefined =>
-  unavailableSandboxDiagnostics.some((diagnostic) =>
-    startupError.includes(diagnostic),
-  )
-    ? `Chromium could not start its sandbox on this host. Enable the host's sandbox support, or set ${CHROMIUM_NO_SANDBOX_VARIABLE}=true to run Chromium without its sandbox, then retry.`
-    : undefined;
+/**
+ * Remediation for a sandboxed launch that failed to start.
+ *
+ * Chromium reports sandbox failures through several unrelated messages (no
+ * namespace support, a misconfigured setuid helper, a refused namespace move,
+ * a root user), so REA does not classify the startup log. The retained
+ * diagnostics show whether the sandbox was the cause.
+ */
+export const CHROMIUM_SANDBOX_REMEDIATION = `If the startup diagnostics show that Chromium could not start its sandbox on this host, enable the host's sandbox support or set ${CHROMIUM_NO_SANDBOX_VARIABLE}=true to launch it without the sandbox.`;

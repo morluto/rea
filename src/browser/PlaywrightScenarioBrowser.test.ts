@@ -214,6 +214,10 @@ it.each([
       }),
     ).rejects.toMatchObject({
       diagnostics: { startup_error: "launch boundary reached" },
+      // Chromium's startup log, not REA, says whether the sandbox caused it.
+      remediationAction: sandbox
+        ? expect.stringContaining("REA_BROWSER_NO_SANDBOX=true")
+        : "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.",
     });
 
     expect(launchOptions?.chromiumSandbox).toBe(sandbox);
@@ -221,59 +225,6 @@ it.each([
     expect(launchOptions?.env).toEqual({});
   },
 );
-
-it.each([
-  "Target page, context or browser has been closed\n[pid=1][err] [1:1:FATAL:zygote_host_impl_linux.cc(132)] No usable sandbox! If you are running on Ubuntu 23.10+ or another Linux distro that has disabled unprivileged user namespaces with AppArmor, see https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md.",
-  "Target page, context or browser has been closed\n[pid=1][err] [1:1:ERROR:zygote_host_impl_linux.cc(101)] Running as root without --no-sandbox is not supported. See https://crbug.com/638180.",
-])(
-  "names the sandbox opt-out when Chromium cannot start its sandbox: %#",
-  async (startupError) => {
-    const failure = await openPlaywrightScenarioBrowser(
-      launchScenario,
-      {},
-      {
-        launcher: {
-          connectOverCDP: async () => {
-            throw new Error("Unexpected connection");
-          },
-          launchPersistentContext: async () => {
-            throw new Error(startupError);
-          },
-        },
-      },
-    ).then(
-      () => undefined,
-      (cause: unknown) => cause,
-    );
-
-    expect(failure).toMatchObject({
-      diagnostics: { startup_error: startupError },
-      remediationAction: expect.stringContaining("REA_BROWSER_NO_SANDBOX=true"),
-    });
-  },
-);
-
-it("keeps the generic launch remediation for other startup failures", async () => {
-  await expect(
-    openPlaywrightScenarioBrowser(
-      launchScenario,
-      {},
-      {
-        launcher: {
-          connectOverCDP: async () => {
-            throw new Error("Unexpected connection");
-          },
-          launchPersistentContext: async () => {
-            throw new Error("spawn EACCES fixture");
-          },
-        },
-      },
-    ),
-  ).rejects.toMatchObject({
-    remediationAction:
-      "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.",
-  });
-});
 
 it("waits for bounded event finalization and owned browser teardown", async () => {
   vi.useFakeTimers();

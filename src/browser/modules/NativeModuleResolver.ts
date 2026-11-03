@@ -1,7 +1,7 @@
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import {
+  CHROMIUM_SANDBOX_REMEDIATION,
   chromiumSandboxEnabled,
-  chromiumSandboxRemediation,
 } from "../ChromiumSandbox.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
@@ -79,15 +79,18 @@ const launch: ModuleResolverLauncher = async (options) =>
 const moduleResolverFailure = (
   cause: unknown,
   executable: string,
-): ProviderAdapterError => {
-  const errorMessage = cause instanceof Error ? cause.message : String(cause);
-  const remediationAction = chromiumSandboxRemediation(errorMessage);
-  return new ProviderAdapterError("native-module-resolver", OPERATION, {
+  chromiumSandbox: boolean,
+): ProviderAdapterError =>
+  new ProviderAdapterError("native-module-resolver", OPERATION, {
     cause,
-    ...(remediationAction === undefined ? {} : { remediationAction }),
-    diagnostics: { executable, error_message: errorMessage },
+    ...(chromiumSandbox
+      ? { remediationAction: CHROMIUM_SANDBOX_REMEDIATION }
+      : {}),
+    diagnostics: {
+      executable,
+      error_message: cause instanceof Error ? cause.message : String(cause),
+    },
   });
-};
 
 /** Use native import.meta.resolve in an owned context with locally fulfilled requests. */
 export class NativeModuleResolver implements WebModuleResolutionPort {
@@ -148,6 +151,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
           },
         ),
       );
+    const chromiumSandbox = chromiumSandboxEnabled(this.environment);
     const deadline = new ProviderStartupDeadline(TIMEOUT_MS, options?.signal);
     let activeCall:
       | { settled: boolean; interruption?: AnalysisError }
@@ -213,7 +217,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
           handleSIGINT: false,
           handleSIGTERM: false,
           handleSIGHUP: false,
-          chromiumSandbox: chromiumSandboxEnabled(this.environment),
+          chromiumSandbox,
           args: [
             "--disable-dev-shm-usage",
             "--disable-background-networking",
@@ -253,7 +257,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
               cause instanceof AnalysisCapabilityUnavailableError ||
               cause instanceof BrowserObservationError
             ? cause
-            : moduleResolverFailure(cause, executable),
+            : moduleResolverFailure(cause, executable, chromiumSandbox),
       );
     } finally {
       deadline.signal.removeEventListener("abort", onAbort);
