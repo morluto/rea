@@ -352,15 +352,28 @@ const mapVirtualAddress = (
       backed: load.file_size - delta,
     });
   }
-  if (matches.length !== 1)
+  // Loads with the same address-to-file translation name the same bytes, so
+  // they are one interpretation rather than a conflict.
+  const first = matches[0];
+  if (
+    first === undefined ||
+    matches.some(({ offset }) => offset !== first.offset)
+  )
     malformed("ELF virtual address does not map through exactly one PT_LOAD");
-  const { load: owner, offset, backed } = matches[0]!;
-  // A later PT_LOAD inside the span maps those addresses again, possibly from
-  // other file bytes, so the whole range must stay inside one interpretation.
+  const { load: owner, offset, backed } = first;
+  const translation = owner.file_offset - owner.virtual_address;
+  // Another PT_LOAD inside the span maps those addresses again. Different file
+  // bytes, or a zero-filled tail of an equivalent load, change their
+  // interpretation, so the whole range must end before that point.
   let available = backed;
   for (const load of loads) {
     if (load === owner || load.memory_size === 0n) continue;
-    const start = load.virtual_address - va;
+    const equivalent = load.file_offset - load.virtual_address === translation;
+    if (equivalent && load.memory_size <= load.file_size) continue;
+    const start =
+      (equivalent
+        ? load.virtual_address + load.file_size
+        : load.virtual_address) - va;
     if (start > 0n && start < available) available = start;
   }
   if (size > available)

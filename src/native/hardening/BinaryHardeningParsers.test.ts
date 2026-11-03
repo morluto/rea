@@ -716,9 +716,10 @@ it("reads sectionless GNU hash buckets with many non-owning load declarations", 
   expect(findRow(readElfHardening(bytes).rows, "stack_protector").state).toBe(
     "enabled",
   );
-  // Retaining the mapping must still reject an ambiguous table owner.
+  // Retaining the mapping must still reject an ambiguous table owner: this
+  // load maps the table's addresses from other file bytes.
   const extraAt = phoff + oldPhnum * 56;
-  bytes.writeBigUInt64LE(BigInt(hashAt), extraAt + 8);
+  bytes.writeBigUInt64LE(0n, extraAt + 8);
   bytes.writeBigUInt64LE(BigInt(hashAt), extraAt + 16);
   bytes.writeBigUInt64LE(BigInt(hashBytes), extraAt + 32);
   bytes.writeBigUInt64LE(BigInt(hashBytes), extraAt + 40);
@@ -763,6 +764,27 @@ it.each([
     bytes.writeBigUInt64LE(table + inset, extraAt + 16);
     bytes.writeBigUInt64LE(16n, extraAt + 32);
     bytes.writeBigUInt64LE(16n, extraAt + 40);
+    expect(() => readElfHardening(bytes)).toThrow(message);
+    // The same load with the owner's translation names the same bytes, so the
+    // table keeps one interpretation.
+    let translation: bigint | null = null;
+    for (let index = 0; index < phnum; index += 1) {
+      const at = phoff + index * 56;
+      const va = bytes.readBigUInt64LE(at + 16);
+      if (
+        bytes.readUInt32LE(at) === 1 &&
+        table >= va &&
+        table < va + bytes.readBigUInt64LE(at + 32)
+      )
+        translation = bytes.readBigUInt64LE(at + 8) - va;
+    }
+    expect(translation).not.toBeNull();
+    bytes.writeBigUInt64LE(table + inset + (translation ?? 0n), extraAt + 8);
+    expect(findRow(readElfHardening(bytes).rows, "stack_protector").state).toBe(
+      "enabled",
+    );
+    // A zero-filled tail of that equivalent load still remaps the table.
+    bytes.writeBigUInt64LE(0n, extraAt + 32);
     expect(() => readElfHardening(bytes)).toThrow(message);
   },
 );
