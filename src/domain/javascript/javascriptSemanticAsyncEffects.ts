@@ -257,6 +257,47 @@ const writesPrototypeMethod = (
 };
 
 /**
+ * Report whether an escape hands out the prototype object itself. Reading a
+ * method and passing the function value out (`proto.on`) cannot change the
+ * prototype, but passing the object (`configure(proto)`) lets the call install
+ * a replacement method on it.
+ */
+const escapesPrototypeObject = (
+  path: JavaScriptSemanticPropertyPath,
+): boolean =>
+  path.length > 0 && (path.at(-1) === "prototype" || path.at(-1) === null);
+
+/**
+ * Report whether the shared prototype may have gained a method through a call.
+ * The prototype escapes exactly like an instance does, and the callee can
+ * install a defaulting wrapper on it, so the class no longer answers with the
+ * method it defines.
+ */
+const prototypeObjectEscaped = (
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const precedes = (escape: t.Node | undefined): boolean =>
+    !semanticTopLevelEffectFollowsCapture(read, escape, state.parentsByNode);
+  for (const binding of state.bindingsById.values())
+    if (
+      binding.escapedPaths.some(
+        ({ path, node }) => escapesPrototypeObject(path) && precedes(node),
+      )
+    )
+      return true;
+  for (const specifier of NODE_EVENTS_SPECIFIERS)
+    if (
+      (state.requiredModuleEffects.get(specifier) ?? []).some(
+        ({ kind, path, node }) =>
+          kind === "escape" && escapesPrototypeObject(path) && precedes(node),
+      )
+    )
+      return true;
+  return false;
+};
+
+/**
  * Report whether the receiver is a value this module constructs from Node's
  * `EventEmitter` and still calls the native listener method. Only that class is
  * bound by `checkListener`; other EventEmitter-style APIs define one-argument
@@ -301,18 +342,23 @@ const nodeEventEmitterReceiver = (
     return false;
   // A member write replaces the selected method, so it no longer keeps the
   // native contract. An unrelated write such as `emitter.tag = 1` leaves the
-  // proof intact.
+  // proof intact. Replacing the receiver's own prototype selects a different
+  // method as well, and is recorded as a `__proto__` write.
   if (
     binding.memberWrites.some(
       ({ path, node: write }) =>
-        affectsBuiltinPath(path, [method]) &&
+        (affectsBuiltinPath(path, [method]) || path.at(0) === "__proto__") &&
         !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
     )
   )
     return false;
   // Every instance shares the constructor's prototype, so a write there
-  // replaces the method for this receiver as well.
-  return !writesPrototypeMethod(method, node, state);
+  // replaces the method for this receiver as well, and so does handing that
+  // prototype to a call that may install the method itself.
+  return (
+    !writesPrototypeMethod(method, node, state) &&
+    !prototypeObjectEscaped(node, state)
+  );
 };
 
 const collectEvent = (

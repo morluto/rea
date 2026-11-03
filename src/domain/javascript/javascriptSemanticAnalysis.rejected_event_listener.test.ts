@@ -333,6 +333,39 @@ e.on("ready");`),
 });
 
 /**
+ * Handing the prototype object itself to a call lets that call install a
+ * method. Measured on Node 22.22.2: after `configure(EventEmitter.prototype)`
+ * installs a defaulting wrapper, `e.on("ready")` stores one listener.
+ */
+it("keeps the registration after the prototype object escapes", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+function configure(proto) {
+  const saved = proto.on;
+  proto.on = function (name, fn = () => {}) { return saved.call(this, name, fn); };
+}
+configure(EventEmitter.prototype);
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
+ * Replacing the receiver's own prototype changes which method answers the call.
+ * Measured on Node 22.22.2: with `e.__proto__` set to an object that defaults
+ * the listener, `e.on("ready")` does not throw.
+ */
+it("keeps the registration after the receiver prototype is replaced", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+const saved = EventEmitter.prototype.on;
+e.__proto__ = { on(name, fn = () => {}) { return saved.call(this, name, fn); } };
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
  * `emit` passes its remaining arguments to listeners that already exist, so it
  * does not validate them the way a registration does.
  */
