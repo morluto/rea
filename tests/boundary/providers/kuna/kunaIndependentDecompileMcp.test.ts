@@ -1,10 +1,11 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterAll, expect, it as test } from "vitest";
+import { afterAll, expect, it as test, vi } from "vitest";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
+import { KunaRunSlots } from "../../../../src/kuna/KunaRunSlots.js";
 import { elfNoteFixture } from "../../../../src/native/elf/ElfNotes.fixture.js";
 import { createApplicationMcpHarness } from "../../../fixtures/applicationMcpHarness.js";
 import { advertisedMcpToolSchemas } from "../../../fixtures/advertisedMcpTool.js";
@@ -27,7 +28,11 @@ it("runs a cold independent request without starting a project export", async ()
   const target = join(root, "program");
   await writeFile(target, elfNoteFixture({ bits: 64, type: 2 }));
   const provider = new KunaProvider(
-    { REA_KUNA_COMMAND: kuna, REA_KUNA_CACHE_DIR: join(root, "cache") },
+    {
+      REA_KUNA_COMMAND: kuna,
+      REA_KUNA_CACHE_DIR: join(root, "cache"),
+      REA_KUNA_TIMEOUT_MS: "300",
+    },
     { platform: process.platform },
   );
   const session = composeBinarySession(
@@ -57,6 +62,28 @@ it("runs a cold independent request without starting a project export", async ()
     expect(
       calls.filter(({ argv }) => argv[0] === "decompile-project"),
     ).toHaveLength(0);
+    await setFakeKunaBehavior(kuna, {
+      functions: FUNCTIONS,
+      decompile: "hang",
+    });
+    const timeout = await harness.client.callTool({
+      name: "procedure_pseudo_code",
+      arguments: { procedure: "main", analysis: "independent_fresh" },
+    });
+    expect(timeout.isError).toBe(true);
+    const failure = JSON.parse(
+      (timeout.content[0] as { text: string }).text,
+    ) as {
+      error: { code: string; remediation: { action: string } };
+    };
+    expect(failure.error.code).toBe("provider_timeout");
+    expect(failure.error.remediation.action).not.toContain("project export");
+    expect(
+      (await fakeKunaCalls(kuna)).filter(
+        ({ argv }) => argv[0] === "decompile-project",
+      ),
+    ).toHaveLength(0);
+    await setFakeKunaBehavior(kuna, { functions: FUNCTIONS });
     await call("procedure_assembly", { procedure: "main" });
     expect(
       (await fakeKunaCalls(kuna)).filter(
@@ -207,6 +234,7 @@ it("retains the independent run slot until an unproven stop is resolved", async 
     schemaValidator: schemas,
   });
   const caller = new AbortController();
+  let restoreAcquire: (() => void) | undefined;
   try {
     const call = (
       name: string,
@@ -233,17 +261,38 @@ it("retains the independent run slot until an unproven stop is resolved", async 
       error: { code: string };
     };
     expect(failure.error.code).toBe("cleanup_incomplete");
+    const acquire = KunaRunSlots.prototype.acquire;
+    let arrived!: () => void;
+    const admission = new Promise<void>((resolve) => {
+      arrived = resolve;
+    });
+    let slotSettled = false;
+    const spy = vi
+      .spyOn(KunaRunSlots.prototype, "acquire")
+      .mockImplementation(function (this: KunaRunSlots, signal) {
+        const result = acquire.call(this, signal);
+        void result.then(() => {
+          slotSettled = true;
+        });
+        arrived();
+        return result;
+      });
+    restoreAcquire = () => spy.mockRestore();
     const queued = call(
       "procedure_pseudo_code",
       { procedure: "main", analysis: "independent_fresh" },
       caller.signal,
     ).catch(() => undefined);
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await admission;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(slotSettled).toBe(false);
     expect(
       (await fakeKunaCalls(kuna)).filter(({ argv }) => argv[0] === "decompile"),
     ).toHaveLength(1);
     caller.abort();
     await queued;
+    restoreAcquire();
+    restoreAcquire = undefined;
     expect((await call("close_binary", {})).isError).toBe(true);
     unproven.release();
     expect((await call("close_binary", {})).isError).not.toBe(true);
@@ -261,6 +310,7 @@ it("retains the independent run slot until an unproven stop is resolved", async 
       (await fakeKunaCalls(kuna)).filter(({ argv }) => argv[0] === "decompile"),
     ).toHaveLength(2);
   } finally {
+    restoreAcquire?.();
     caller.abort();
     unproven.release();
     await harness.close();
