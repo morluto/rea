@@ -30,6 +30,7 @@ import { promptsForToolFamilies } from "../contracts/promptToolFamilyScope.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics/byteEntropy.js";
+import { createRawBytesService } from "../composition/binaryDiagnostics/rawBytes.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
@@ -400,6 +401,7 @@ export const createServer = (
       registerServices({
         binaryLayout,
         byteEntropy: createByteEntropyService(artifactResources),
+        rawBytes: createRawBytesService(artifactResources),
         peResources,
         labviewArtifact,
         nativeExports,

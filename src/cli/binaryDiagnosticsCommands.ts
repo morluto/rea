@@ -5,7 +5,10 @@ import {
   withEvidenceCallerInputPath,
   type Evidence,
 } from "../domain/evidence.js";
-import { BYTE_ENTROPY_PROVIDER } from "../domain/investigationProviders.js";
+import {
+  BYTE_ENTROPY_PROVIDER,
+  RAW_BYTES_PROVIDER,
+} from "../domain/investigationProviders.js";
 import { ok } from "../domain/result.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDiagnosticsToolContracts.js";
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
@@ -351,6 +354,77 @@ export const registerBinaryDiagnosticsCommands = (
           await import("../composition/binaryDiagnostics/byteEntropy.js")
         ).createByteEntropyService(),
       BYTE_ENTROPY_PROVIDER.id,
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_raw_bytes"),
+    {
+      description:
+        "Read a bounded slice of a file at a raw file offset (not a memory address) as hex and an xxd-style dump",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: { description: "Local file" },
+        offset: {
+          description: "Start offset as a decimal raw file byte offset",
+        },
+        length: { description: "Number of bytes to read (1 to 4096)" },
+      },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/rawBytes.js")
+        ).createRawBytesService(),
+      RAW_BYTES_PROVIDER.id,
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("search_raw_bytes"),
+    {
+      description:
+        "Search a file for a masked byte pattern and report raw file offsets (not memory addresses)",
+      positionals: ["path", "pattern"],
+      callerPaths: ["path"],
+      fields: {
+        path: { description: "Local file" },
+        pattern: {
+          description:
+            "Hexadecimal byte pattern with optional ?? wildcards (up to 256 bytes)",
+        },
+        mask: {
+          description:
+            "Optional hex bitmask of the same byte length as pattern",
+        },
+        start_offset: {
+          name: "startOffset",
+          description: "Start search at this decimal raw file byte offset",
+        },
+        max_matches: {
+          name: "maxMatches",
+          description: "Maximum matches to return (1 to 1000, default 100)",
+        },
+        context_lines: {
+          name: "contextLines",
+          description: "Hex dump context lines before and after each match (0 to 8)",
+        },
+      },
+    },
+    inspectWithService(
+      async () => {
+        const service = (
+          await import("../composition/binaryDiagnostics/rawBytes.js")
+        ).createRawBytesService();
+        return {
+          inspect: (input, options) => service.search(input, options),
+          close: () => service.close(),
+        };
+      },
+      RAW_BYTES_PROVIDER.id,
     ),
   );
   registerContractCommand(

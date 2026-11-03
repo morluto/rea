@@ -1,0 +1,408 @@
+import { open, stat, writeFile, appendFile } from "node:fs/promises";
+import { join } from "node:path";
+import { expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import {
+  inspectRawBytesSchema,
+  searchRawBytesSchema,
+} from "../../domain/native/rawBytes.js";
+import {
+  RawBytesService,
+  RAW_BYTES_SCAN_CHUNK_BYTES,
+} from "./RawBytesService.js";
+
+const PE_SIGNATURE = [0x50, 0x45, 0x00, 0x00];
+const PE_HEADER_TAIL = [
+  0x64, 0x86, 0x06, 0x00, 0x6c, 0x7d, 0xe9, 0x6a, 0x00, 0x00, 0x00, 0x00,
+];
+
+const fileWith = async (
+  prefix: string,
+  size: number,
+  patches: readonly (readonly [number, readonly number[]])[],
+  fill = 0xaa,
+): Promise<string> => {
+  const root = await createTestTempDirectory(prefix);
+  const path = join(root, "data.bin");
+  const bytes = Buffer.alloc(size, fill);
+  for (const [offset, patch] of patches) Buffer.from(patch).copy(bytes, offset);
+  await writeFile(path, bytes);
+  return path;
+};
+
+const searchResult = async (
+  service: RawBytesService,
+  input: Record<string, unknown>,
+) => {
+  const result = await service.search(input);
+  if (!result.ok) throw result.error;
+  return searchRawBytesSchema.parse(result.value.normalized_result);
+};
+
+/** A service whose every filesystem touch is recorded. */
+const spiedService = () => {
+  const stat = vi.fn(() => Promise.reject(new Error("must not stat")));
+  const open = vi.fn(() => Promise.reject(new Error("must not open")));
+  return {
+    stat,
+    open,
+    service: new RawBytesService({ stat, open } as never),
+  };
+};
+
+it("finds a signature at its mutually exact raw file offset", async () => {
+  const path = await fileWith("rea-raw-sig-", 256, [
+    [0x78, [...PE_SIGNATURE, ...PE_HEADER_TAIL]],
+  ]);
+  const service = new RawBytesService();
+  try {
+    const report = await searchResult(service, {
+      path,
+      pattern: "50 45 00 00",
+    });
+    expect(report.matches.map(({ offset }) => offset)).toEqual([0x78]);
+    expect(report.matches[0]?.offset).toBe(120);
+    expect(report.complete).toBe(true);
+    expect(report.next_offset).toBeNull();
+    expect(report.artifact).toEqual({ path, bytes: 256 });
+    expect(report.matches[0]?.context).toBe(
+      "00000070: aaaa aaaa aaaa aaaa 5045 0000 6486 0600  ........PE..d...",
+    );
+  } finally {
+    await service.close();
+  }
+});
+
+it("reports surrounding hex lines at their absolute offsets", async () => {
+  const path = await fileWith("rea-raw-ctx-", 256, [
+    [0x78, [...PE_SIGNATURE, ...PE_HEADER_TAIL]],
+  ]);
+  const service = new RawBytesService();
+  try {
+    const report = await searchResult(service, {
+      path,
+      pattern: "50 45 00 00",
+      context_lines: 1,
+    });
+    const lines = report.matches[0]!.context.split("\n");
+    expect(lines.map((line) => line.slice(0, 8))).toEqual([
+      "00000060",
+      "00000070",
+      "00000080",
+    ]);
+    expect(lines[1]).toBe(
+      "00000070: aaaa aaaa aaaa aaaa 5045 0000 6486 0600  ........PE..d...",
+    );
+    // The window is clamped at the file start rather than reading before offset 0.
+    const first = await searchResult(service, {
+      path,
+      pattern: "aa aa",
+      max_matches: 1,
+      context_lines: 3,
+    });
+    expect(first.matches[0]?.context.split("\n")[0]?.slice(0, 8)).toBe(
+      "00000000",
+    );
+  } finally {
+    await service.close();
+  }
+});
+
+it("matches a masked RIFF/WAVE header and rejects an unmasked wrong value", async () => {
+  const header = [
+    ...Buffer.from("RIFF"),
+    0x24,
+    0x10,
+    0xe3,
+    0x00,
+    ...Buffer.from("WAVE"),
+  ];
+  const path = await fileWith("rea-raw-mask-", 128, [[5, header]], 0x11);
+  const service = new RawBytesService();
+  try {
+    const wildcards = await searchResult(service, {
+      path,
+      pattern: "52494646 ???????? 57415645",
+    });
+    expect(wildcards.matches.map(({ offset }) => offset)).toEqual([5]);
+    const masked = await searchResult(service, {
+      path,
+      pattern: "52494646 00000000 57415645",
+      mask: "ffffffff 00000000 ffffffff",
+    });
+    expect(masked.matches.map(({ offset }) => offset)).toEqual([5]);
+    const unmasked = await searchResult(service, {
+      path,
+      pattern: "52494646 00000000 57415645",
+    });
+    expect(unmasked.matches).toEqual([]);
+    expect(unmasked.complete).toBe(true);
+    const wrongValue = await searchResult(service, {
+      path,
+      pattern: "52494646 ???????? 57415646",
+      mask: "ffffffff 00000000 ffffffff",
+    });
+    expect(wrongValue.matches).toEqual([]);
+    const nibble = await searchResult(service, {
+      path,
+      pattern: "5f",
+      mask: "f0",
+      max_matches: 1,
+    });
+    expect(nibble.matches.map(({ offset }) => offset)).toEqual([5]);
+  } finally {
+    await service.close();
+  }
+});
+
+it.each([
+  ["a match straddling the first chunk boundary", 3],
+  ["a match ending exactly on the chunk boundary", 8],
+  ["a match starting exactly on the chunk boundary", 0],
+])("finds %s", async (_name, before) => {
+  const chunk = RAW_BYTES_SCAN_CHUNK_BYTES;
+  const needle = [0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04];
+  const first = chunk - before;
+  const second = 2 * chunk - before - 1;
+  const path = await fileWith("rea-raw-chunk-", 2 * chunk + 100, [
+    [first, needle],
+    [second, needle],
+  ]);
+  const service = new RawBytesService();
+  try {
+    const report = await searchResult(service, {
+      path,
+      pattern: "de ad be ef 01 02 03 04",
+      max_matches: 10,
+    });
+    expect(report.matches.map(({ offset }) => offset)).toEqual([first, second]);
+  } finally {
+    await service.close();
+  }
+});
+
+it("finds boundary matches however the operating system splits physical reads", async () => {
+  const needle = [0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04];
+  const offsets = [0, 3571 - 2, 5000, 2 * 3571 - 7, 70_000];
+  const path = await fileWith(
+    "rea-raw-short-",
+    80_000,
+    offsets.map((offset) => [offset, needle] as const),
+  );
+  const service = new RawBytesService({
+    stat,
+    open: async (...args) => {
+      const file = await open(...args);
+      const read = file.read.bind(file);
+      Object.defineProperty(file, "read", {
+        value: async (
+          buffer: Buffer,
+          offset: number,
+          length: number,
+          position: number,
+        ) => read(buffer, offset, Math.min(length, 3571), position),
+      });
+      return file;
+    },
+  });
+  try {
+    const report = await searchResult(service, {
+      path,
+      pattern: "de ad be ef 01 02 03 04",
+      max_matches: 10,
+    });
+    expect(report.matches.map(({ offset }) => offset)).toEqual(offsets);
+  } finally {
+    await service.close();
+  }
+});
+
+it("reports overlapping matches and pages with start_offset when truncated", async () => {
+  const path = await fileWith("rea-raw-page-", 64, [], 0x00);
+  const service = new RawBytesService();
+  try {
+    const page = await searchResult(service, {
+      path,
+      pattern: "00 00",
+      max_matches: 3,
+    });
+    expect(page.matches.map(({ offset }) => offset)).toEqual([0, 1, 2]);
+    expect(page.complete).toBe(false);
+    expect(page.next_offset).toBe(3);
+    const rest = await searchResult(service, {
+      path,
+      pattern: "00 00",
+      max_matches: 1000,
+      start_offset: page.next_offset,
+    });
+    expect(rest.matches).toHaveLength(60);
+    expect(rest.matches[0]?.offset).toBe(3);
+    expect(rest.complete).toBe(true);
+    const exact = await searchResult(service, {
+      path,
+      pattern: "00 00",
+      max_matches: 63,
+    });
+    expect(exact.matches).toHaveLength(63);
+    expect(exact.complete).toBe(true);
+    expect(exact.next_offset).toBeNull();
+  } finally {
+    await service.close();
+  }
+});
+
+it("returns the exact bytes and the xxd dump for a known window", async () => {
+  const path = await fileWith("rea-raw-read-", 256, [
+    [0x78, [...PE_SIGNATURE, ...PE_HEADER_TAIL]],
+  ]);
+  const service = new RawBytesService();
+  try {
+    const result = await service.inspect({ path, offset: 0x78, length: 16 });
+    if (!result.ok) throw result.error;
+    const report = inspectRawBytesSchema.parse(result.value.normalized_result);
+    expect(report.hex_dump).toBe(
+      "00000078: 5045 0000 6486 0600 6c7d e96a 0000 0000  PE..d...l}.j....",
+    );
+    expect(report.data_hex).toBe("50450000648606006c7de96a00000000");
+    expect(report.window).toEqual({ offset: 0x78, length: 16 });
+    expect(report.artifact).toEqual({ path, bytes: 256 });
+    expect(result.value.operation).toBe("inspect_raw_bytes");
+    expect(result.value.confidence).toBe("observed");
+    expect(result.value.provider.id).toBe("raw-bytes");
+    // A window ending exactly at EOF is allowed.
+    const tail = await service.inspect({ path, offset: 250, length: 6 });
+    if (!tail.ok) throw tail.error;
+    expect(
+      inspectRawBytesSchema.parse(tail.value.normalized_result).data_hex,
+    ).toBe("aa".repeat(6));
+  } finally {
+    await service.close();
+  }
+});
+
+it("rejects a window beyond the end of the file with an explicit error, never a short result", async () => {
+  const path = await fileWith("rea-raw-eof-", 256, []);
+  const service = new RawBytesService();
+  try {
+    for (const input of [
+      { path, offset: 250, length: 10 },
+      { path, offset: 256, length: 1 },
+      { path, offset: 4000, length: 1 },
+    ]) {
+      const result = await service.inspect(input);
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisInputError" },
+      });
+      if (result.ok) throw new Error("expected failure");
+      expect(result.error).toMatchObject({
+        issues: [
+          {
+            message: expect.stringMatching(/beyond the end of the file/u),
+          },
+        ],
+      });
+    }
+    const search = await service.search({
+      path,
+      pattern: "aa",
+      start_offset: 257,
+    });
+    expect(search).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+  } finally {
+    await service.close();
+  }
+});
+
+it("rejects an oversized read and an unconstrained pattern before touching the filesystem", async () => {
+  const { service, stat, open } = spiedService();
+  const path = join(process.platform === "win32" ? "C:\\" : "/", "nothing");
+  const cases = [
+    () => service.inspect({ path, offset: 0, length: 4097 }),
+    () => service.inspect({ path, offset: 0, length: 0 }),
+    () => service.search({ path, pattern: "?? ?? ??" }),
+    () => service.search({ path, pattern: "50 45", mask: "00 00" }),
+    () => service.search({ path, pattern: "50 45", max_matches: 1001 }),
+  ];
+  for (const run of cases) {
+    const result = await run();
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+  }
+  expect(stat).not.toHaveBeenCalled();
+  expect(open).not.toHaveBeenCalled();
+});
+
+it("rejects relative paths, missing files and directories as input errors", async () => {
+  const path = await fileWith("rea-raw-input-", 8, []);
+  const service = new RawBytesService();
+  try {
+    for (const input of [
+      { path: "relative.bin", offset: 0, length: 1 },
+      { path: `${path}.missing`, offset: 0, length: 1 },
+      { path: join(path, ".."), offset: 0, length: 1 },
+    ])
+      expect(await service.inspect(input)).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisInputError" },
+      });
+  } finally {
+    await service.close();
+  }
+});
+
+it("honors cancellation before admission and during the scan", async () => {
+  const path = await fileWith("rea-raw-cancel-", 1024 * 1024, []);
+  const reason = { request: "opaque cancellation" };
+  const service = new RawBytesService();
+  const before = await service.search(
+    { path, pattern: "00" },
+    { signal: AbortSignal.abort(reason) },
+  );
+  if (before.ok) throw new Error("expected cancellation");
+  expect(before.error).toMatchObject({ _tag: "AnalysisCancelledError" });
+  expect(before.error.cause).toBe(reason);
+  const controller = new AbortController();
+  const streaming = new RawBytesService({
+    stat,
+    open: async (...args) => {
+      const file = await open(...args);
+      const read = file.read.bind(file);
+      vi.spyOn(file, "read").mockImplementation(async (...readArgs) => {
+        const result = await read(...readArgs);
+        controller.abort(reason);
+        return result;
+      });
+      return file;
+    },
+  });
+  const during = await streaming.search(
+    { path, pattern: "ff", max_matches: 5 },
+    { signal: controller.signal },
+  );
+  if (during.ok) throw new Error("expected cancellation");
+  expect(during.error).toMatchObject({ _tag: "AnalysisCancelledError" });
+  expect(during.error.cause).toBe(reason);
+});
+
+it("reports a changed artifact when the file grows between admission and the read", async () => {
+  const path = await fileWith("rea-raw-changed-", 256, []);
+  const service = new RawBytesService({
+    stat,
+    open: async (...args) => {
+      const file = await open(...args);
+      await appendFile(path, Buffer.from([1, 2, 3]));
+      return file;
+    },
+  });
+  const result = await service.inspect({ path, offset: 0, length: 16 });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisArtifactChangedError" },
+  });
+});

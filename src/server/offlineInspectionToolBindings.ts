@@ -4,6 +4,7 @@ import type { DesktopApplicationService } from "../application/artifacts/Desktop
 import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
 import type { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
 import type { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
+import type { RawBytesService } from "../application/binaryDiagnostics/RawBytesService.js";
 import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
 import type { EspNvsService } from "../application/binaryDiagnostics/EspNvsService.js";
 import type { FirmwareVectorTableService } from "../application/binaryDiagnostics/FirmwareVectorTableService.js";
@@ -65,6 +66,16 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<ByteEntropyService>,
+  rawBytes: ((service) => ({
+    inspect_raw_bytes: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+    search_raw_bytes: {
+      admission: "sdk",
+      run: (input, options) => service.search(input, options),
+    },
+  })) satisfies Bind<RawBytesService>,
   peResources: ((service) => ({
     inspect_pe_resources: {
       admission: "application",
