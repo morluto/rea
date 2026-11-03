@@ -948,8 +948,9 @@ When an admitted `open_binary` attempt fails, `error.details.selection_at_failur
 records the canonical binary path and SHA-256, resource root (including its
 caller-selected path), or absence of selection at
 the end of that serialized attempt. This is a past observation: a queued or
-later operation may already have changed the selection. Call `binary_session`
-for current state. Validation failures that do not enter the session have no
+later operation may already have changed the selection. No selection does not
+establish that cleanup is complete. Call `binary_session` for current state
+and cleanup status. Validation failures that do not enter the session have no
 such receipt. The original error and any cleanup recovery remain authoritative.
 
 `open_binary` resolves an Apple bundle directory (`.app`, `.appex`,

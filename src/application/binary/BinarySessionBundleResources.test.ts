@@ -664,6 +664,10 @@ it("keeps an earlier resource close failure primary when binary candidate cleanu
   expect(result.error.cleanupPrimary).toBeUndefined();
   expect(binaryCloseAttempts).toBe(1);
   expect(resourceCloseAttempts).toBe(1);
+  expect(await session.status()).toMatchObject({
+    open: false,
+    cleanup_pending: true,
+  });
   expect(await session.close()).toMatchObject({ ok: true });
   expect(resourceCloseAttempts).toBe(2);
 });
