@@ -562,6 +562,55 @@ it.each([0, 1, 2])(
   },
 );
 
+it("keeps a PT_NOTE that frames a note inside a section descriptor unknown", () => {
+  const original = elfHardeningFixture({
+    propertyCarrier: "pt-note",
+    property: { arch: "x86", value: 3 },
+  });
+  const phoff = Number(original.readBigUInt64LE(32));
+  let programAt = 0;
+  for (let index = 0; index < original.readUInt16LE(56); index += 1) {
+    const at = phoff + index * 56;
+    if (original.readUInt32LE(at) === 4) programAt = at;
+  }
+  const shoff = Number(original.readBigUInt64LE(40));
+  let sectionAt = 0;
+  for (let index = 0; index < original.readUInt16LE(60); index += 1) {
+    const at = shoff + index * 64;
+    if (original.readUInt32LE(at + 4) === 7) sectionAt = at;
+  }
+  expect(programAt).toBeGreaterThan(0);
+  expect(sectionAt).toBeGreaterThan(0);
+  const innerAt = Number(original.readBigUInt64LE(programAt + 8));
+  const innerBytes = Number(original.readBigUInt64LE(programAt + 32));
+  const inner = original.subarray(innerAt, innerAt + innerBytes);
+  // A non-GNU note whose descriptor is a complete GNU property note. The
+  // section walks only the outer note; the segment names the inner one.
+  const outer = Buffer.alloc(16);
+  outer.writeUInt32LE(4, 0);
+  outer.writeUInt32LE(innerBytes, 4);
+  outer.writeUInt32LE(1, 8);
+  outer.write("XYZ\0", 12, "latin1");
+  const padding = Buffer.alloc((8 - (original.length % 8)) % 8);
+  const outerAt = original.length + padding.length;
+  const bytes = Buffer.concat([original, padding, outer, inner]);
+  bytes.writeBigUInt64LE(BigInt(outerAt), sectionAt + 24);
+  bytes.writeBigUInt64LE(BigInt(16 + innerBytes), sectionAt + 32);
+  bytes.writeBigUInt64LE(BigInt(outerAt + 16), programAt + 8);
+  const image = readElfHardening(bytes);
+  expect(findRow(image.rows, "cet_ibt_shstk")).toMatchObject({
+    state: "unknown",
+    note: expect.stringContaining("inside another note table"),
+  });
+  expect(findRow(image.rows, "nx").state).toBe("enabled");
+  // A segment on the section's own boundaries walks the same notes once.
+  bytes.writeBigUInt64LE(BigInt(outerAt), programAt + 8);
+  bytes.writeBigUInt64LE(BigInt(16 + innerBytes), programAt + 32);
+  expect(findRow(readElfHardening(bytes).rows, "cet_ibt_shstk").state).toBe(
+    "disabled",
+  );
+});
+
 it.each([true, false])(
   "preserves sectionless imports with an empty GNU hash (SysV count: %s)",
   (withSysv) => {

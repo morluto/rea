@@ -754,23 +754,35 @@ const overlapIndex = (spans: readonly NoteSpan[]) => {
 const admitDisjointTables = (
   accepted: readonly ElfNoteTableWalk[],
   candidates: readonly ElfNoteTableWalk[],
-  unresolvedOverlap: () => void,
+  unresolvedOverlap: (covered: boolean) => void,
 ): ElfNoteTableWalk[] => {
   const overlapsAccepted = overlapIndex(accepted);
   const admitted = [...accepted];
+  // A table's first byte and its end are note boundaries of the stream walked
+  // from it. A byte inside a table need not be: a descriptor can hold bytes
+  // that parse as a complete note.
+  const starts = new Set(accepted.map(({ offset }) => offset));
+  const ends = new Set(accepted.map(({ offset, size }) => offset + size));
   let end = -1;
   for (const candidate of byOffset(candidates)) {
+    const candidateEnd = candidate.offset + candidate.size;
     const overlap = overlapsAccepted(candidate);
-    if (overlap !== "none" || candidate.offset < end) {
-      // Only fully covered aliases establish that no notes were omitted.
-      // A cut through a table need not be a note boundary; do not interpret it
-      // as an independent stream or claim that its uncovered notes are absent.
-      if (overlap !== "covered" && candidate.offset + candidate.size > end)
-        unresolvedOverlap();
+    if (overlap === "none" && candidate.offset >= end) {
+      admitted.push(candidate);
+      starts.add(candidate.offset);
+      ends.add(candidateEnd);
+      end = candidateEnd;
       continue;
     }
-    admitted.push(candidate);
-    end = candidate.offset + candidate.size;
+    // Only an alias that starts and ends on admitted table boundaries walks
+    // the notes already walked. A cut elsewhere need not be a note boundary;
+    // do not interpret it as an independent stream, and do not claim that the
+    // notes it frames are absent.
+    const covered =
+      overlap === "covered" || (overlap === "none" && candidateEnd <= end);
+    if (!covered) unresolvedOverlap(false);
+    else if (!starts.has(candidate.offset) || !ends.has(candidateEnd))
+      unresolvedOverlap(true);
   }
   return admitted;
 };
@@ -850,9 +862,10 @@ const readFeatureNotes = (
       ),
     );
   }
-  const unresolvedOverlap = (): void => {
-    incomplete ??=
-      "Overlapping ELF note tables leave uncovered bytes whose note boundaries were not resolved.";
+  const unresolvedOverlap = (covered: boolean): void => {
+    incomplete ??= covered
+      ? "An ELF note table starts or ends inside another note table, so its notes may not be notes of the covering stream."
+      : "Overlapping ELF note tables leave uncovered bytes whose note boundaries were not resolved.";
   };
   const tables = admitDisjointTables(
     admitDisjointTables(
