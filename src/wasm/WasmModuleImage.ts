@@ -25,6 +25,8 @@ export const WASM_MODULE_LIMITS = {
   elementSegments: 1 << 18,
   tableSlots: 1 << 21,
   linearMemoryBytes: 1 << 30,
+  /** Zero bytes the view may add between and after segments; real builds add a few KiB. */
+  linearMemoryGapBytes: 1 << 26,
 } as const;
 
 export const WASM_PAGE_BYTES = 65536;
@@ -216,6 +218,7 @@ export function* readWasmModuleImageSteps(
     const body = new Cursor(bytes, head.at, head.at + size);
     if (id === 2) {
       for (let count = body.u32(); count > 0; count--) {
+        if (tick()) yield;
         body.span(body.u32());
         body.span(body.u32());
         const kind = body.byte();
@@ -389,6 +392,15 @@ export const readInitialLinearMemory = (
     throw new WasmModuleFailure(
       "capacity",
       `data segments span ${high - low} bytes, above ${WASM_MODULE_LIMITS.linearMemoryBytes}`,
+    );
+  // Sparse segments would make a small file allocate (and searches walk) a
+  // large zero span, so the zero bytes the view adds are bounded too.
+  let stored = 0;
+  for (const s of filled) stored += s.bytes.length;
+  if (high - low - stored > WASM_MODULE_LIMITS.linearMemoryGapBytes)
+    throw new WasmModuleFailure(
+      "capacity",
+      `data segments leave ${high - low - stored} zero bytes in their span, above ${WASM_MODULE_LIMITS.linearMemoryGapBytes}`,
     );
   const memory = Buffer.alloc(high - low);
   for (const s of filled) s.bytes.copy(memory, s.offset - low);
