@@ -27,6 +27,11 @@ const eventsFor = (call: string) =>
     eventName,
   }));
 
+const eventsForSource = (source: string) =>
+  analyzeJavaScriptSemantics(source).eventOperations.map(
+    ({ kind, method, eventName }) => ({ kind, method, eventName }),
+  );
+
 it.each([
   ["a numeric listener", `e.on("x", 1)`],
   ["a string listener", `e.on("x", "fn")`],
@@ -107,6 +112,76 @@ it("keeps the event operation for a spread call with no fixed listener", () => {
       eventName: null,
     },
   ]);
+});
+
+it.each([
+  [
+    "a named import",
+    `import { EventEmitter } from "node:events";`,
+    "EventEmitter",
+  ],
+  ["a default import", `import EE from "node:events";`, "EE"],
+  [
+    "a destructured require",
+    `const { EventEmitter } = require("events");`,
+    "EventEmitter",
+  ],
+  [
+    "a member require",
+    `const events = require("node:events");`,
+    "events.EventEmitter",
+  ],
+] as const)(
+  "drops a missing listener on a receiver built from %s",
+  (_name, header, constructor) => {
+    expect(
+      eventsForSource(`${header}
+const e = new ${constructor}();
+e.on("x");`),
+    ).toEqual([]);
+  },
+);
+
+it("keeps a missing listener when the receiver was reassigned", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+e = other;
+e.on("x");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "x" });
+});
+
+/**
+ * `checkListener` is Node's own contract. An EventEmitter-style receiver that
+ * this module does not construct from `events.EventEmitter` may define a
+ * one-argument form: Socket.IO's `socket.off("x")` removes every listener for
+ * the event, so the operation must survive as an unresolved candidate.
+ */
+it("keeps a one-argument removal on a receiver with no proven Node emitter", () => {
+  expect(
+    eventsForSource(`function g(socket) { socket.off("x"); }`),
+  ).toContainEqual({ kind: "remove", method: "off", eventName: "x" });
+});
+
+/**
+ * A subclass may default the listener position, which makes `bus.on("ready")`
+ * a real registration even though the module never proves Node's rejection.
+ * Measured on Node 22.23.3: this class stores `"ready"` and does not throw.
+ */
+it("keeps the registration of a subclass that defaults its listener", () => {
+  const events = eventsForSource(
+    `import { EventEmitter } from "node:events";
+class Bus extends EventEmitter {
+  on(name, fn = () => {}) { return super.on(name, fn); }
+}
+const bus = new Bus();
+bus.on("ready");`,
+  );
+  expect(events).toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
 });
 
 /**

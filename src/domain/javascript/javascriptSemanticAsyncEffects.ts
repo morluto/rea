@@ -15,6 +15,7 @@ import {
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
@@ -23,6 +24,7 @@ import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
+  builtinDataEffectCallablePath,
   builtinDataEffectMethod,
   dataEffectArgumentBindingId,
   dataEffectLiteralString,
@@ -161,6 +163,57 @@ const rejectsEventListener = (listener: t.Node): boolean => {
   );
 };
 
+/**
+ * Node's `events` module, whose `EventEmitter` validates every listener
+ * argument before it registers or removes anything.
+ */
+const NODE_EVENTS_SPECIFIERS = ["events", "node:events"] as const;
+
+/**
+ * Report whether a constructor reference resolves to Node's `EventEmitter`.
+ * Named and default imports, destructured requires, and member requires all
+ * denote that class.
+ */
+const isNodeEventEmitterConstructor = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const value = unwrapJavaScriptExpression(node).node;
+  if (!t.isNewExpression(value)) return false;
+  const selected = builtinDataEffectCallablePath(
+    value.callee,
+    state,
+    NODE_EVENTS_SPECIFIERS,
+  );
+  // An empty selected path is the module's default export, which `events`
+  // defines as `EventEmitter`.
+  return (
+    selected !== null &&
+    (selected.length === 0 || selected.at(-1) === "EventEmitter")
+  );
+};
+
+/**
+ * Report whether the receiver is a value this module constructs from Node's
+ * `EventEmitter`. Only that class is bound by `checkListener`; other
+ * EventEmitter-style APIs define one-argument forms, such as Socket.IO's
+ * `socket.off("x")`, which removes every listener for the event. A receiver
+ * that is not proven this way keeps its operation as an unresolved candidate.
+ */
+const nodeEventEmitterReceiver = (
+  node: t.Expression | t.Super,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (!t.isIdentifier(node)) return false;
+  const binding = resolveSemanticBindingState(state, node, node.name);
+  const initializer = semanticStableInitializer(binding, state);
+  return (
+    initializer !== undefined &&
+    initializer.projection.length === 0 &&
+    isNodeEventEmitterConstructor(initializer.node, state)
+  );
+};
+
 const collectEvent = (
   node: t.CallExpression | t.OptionalCallExpression,
   ownerCallableId: string | null,
@@ -181,11 +234,13 @@ const collectEvent = (
   const listenerArgument = listenerMethod ? node.arguments[1] : undefined;
   // A listener method called without a listener argument passes `undefined` to
   // Node's `checkListener`, which throws before it registers or removes
-  // anything. Only a spread argument can still reach that position.
+  // anything. Only a spread argument can still reach that position, and only a
+  // receiver proven to be Node's `EventEmitter` is held to that contract.
   if (
     listenerMethod &&
     listenerArgument === undefined &&
-    !node.arguments.some((argument) => t.isSpreadElement(argument))
+    !node.arguments.some((argument) => t.isSpreadElement(argument)) &&
+    nodeEventEmitterReceiver(member.object, state)
   )
     return;
   // A leading spread shifts the runtime argument positions, so argument 1 is not
