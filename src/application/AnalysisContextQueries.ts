@@ -6,6 +6,7 @@ import type {
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
@@ -150,8 +151,12 @@ export const inspectAddressContext = async (
   const procedure: Facet = resolution?.ok
     ? { state: "available", value: resolution.value }
     : unavailableFacet(resolution?.error, operations[1]);
-  const comment = facet(results[2], operations[2]);
-  const inlineComment = facet(results[3], operations[3]);
+  const entry =
+    resolution?.ok && resolution.value.found
+      ? resolution.value.procedure.address
+      : undefined;
+  const comment = commentFacet(results[2], operations[2], entry);
+  const inlineComment = commentFacet(results[3], operations[3], entry);
   const bookmarks = facet(results[4], operations[4]);
   return ok({
     address: input.address,
@@ -168,6 +173,29 @@ export const inspectAddressContext = async (
           )
         : bookmarks,
   });
+};
+
+const commentFacet = (
+  result: Result<AnalysisExecution, AnalysisError> | undefined,
+  operation: "comment" | "inline_comment",
+  entry: string | undefined,
+): Facet => {
+  if (
+    result?.ok === false &&
+    result.error instanceof AnalysisCapabilityUnavailableError &&
+    !result.error.retryable &&
+    result.error.remediationAction === undefined
+  ) {
+    return {
+      state: "unavailable",
+      reason: result.error.message,
+      remediation:
+        entry === undefined
+          ? "Review provider availability in binary_session and select another supported provider if appropriate."
+          : `If analyze_function is available for this same document, call it with ${JSON.stringify({ procedure: entry })}; use its summary's parent_evidence_id with inspect_analysis_view's native comments facet. Check facet availability, pagination, and the exact requested address; an omitted comment does not establish absence.`,
+    };
+  }
+  return facet(result, operation);
 };
 
 const facet = (
