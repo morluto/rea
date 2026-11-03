@@ -88,6 +88,39 @@ describe("validateEmulationHarness", () => {
     ]);
   });
 
+  it("rejects a stack too small for the return sentinel", () => {
+    const issues = validateEmulationHarness({
+      ...baseInput(),
+      stack_size: 7,
+    });
+    expect(issues.map((issue) => issue.path)).toContainEqual(["stack_size"]);
+  });
+
+  it("keeps high stub addresses exact instead of wrapping to 32 bits", () => {
+    const issues = validateEmulationHarness({
+      ...baseInput(),
+      stubs: { "0x101000000": 0 },
+    });
+    expect(issues).toEqual([]);
+  });
+
+  it("rejects a code region covering the return sentinel page", () => {
+    const issues = validateEmulationHarness({
+      ...baseInput(),
+      code_address: 0x0badf000,
+    });
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues[0]?.message).toMatch(/sentinel/);
+  });
+
+  it("rejects a stub address on the return sentinel page", () => {
+    const issues = validateEmulationHarness({
+      ...baseInput(),
+      stubs: { "0x0badf000": 0 },
+    });
+    expect(issues.map((issue) => issue.path)).toContainEqual(["stubs"]);
+  });
+
   it("rejects a function digest mismatch", () => {
     const issues = validateEmulationHarness({
       ...baseInput(),
