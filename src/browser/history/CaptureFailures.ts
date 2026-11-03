@@ -1,6 +1,9 @@
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  selectedPathRefusal,
+} from "../../artifacts/ArtifactReader.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   bindArtifactFileCleanup,
@@ -168,7 +171,7 @@ export const historicalCaptureFailure = (
       cause.reason === "format" ||
       cause.reason === "path")
   )
-    return new AnalysisInputError(OPERATION, { cause }, [
+    return new AnalysisInputError(OPERATION, selectedPathRefusal(cause), [
       {
         path: inputPath,
         reason: cause.reason === "limit" ? "out_of_range" : "invalid_format",

@@ -1,4 +1,7 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  selectedPathRefusal,
+} from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
@@ -172,7 +175,7 @@ export const sqliteDatabaseFailure = (
       return new AnalysisCancelledError(operation, {
         cause: artifactFileCancellationCause(cause),
       });
-    return new AnalysisInputError(operation, { cause }, [
+    return new AnalysisInputError(operation, selectedPathRefusal(cause), [
       {
         path: ["path"],
         reason: "invalid_format",

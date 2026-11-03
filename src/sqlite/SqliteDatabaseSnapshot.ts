@@ -1,4 +1,4 @@
-import { lstat, open, writeFile } from "node:fs/promises";
+import { lstat, open, realpath, writeFile } from "node:fs/promises";
 import { constants, type BigIntStats } from "node:fs";
 import { join } from "node:path";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -24,6 +24,7 @@ import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 const fileSystem: StableArtifactFileSystem = {
   lstat: (path) => lstat(path, { bigint: true }),
   open,
+  realpath,
 };
 
 type SnapshotMemberRole = "database" | "wal";
@@ -171,8 +172,9 @@ const readObservedArtifact = (
   selectedFileSystem: StableArtifactFileSystem,
   resourceScope: ArtifactResourceScope,
   signal?: AbortSignal,
-) =>
-  duringAcquisition(path, () =>
+) => {
+  const resolveTarget = selectedFileSystem.realpath?.bind(selectedFileSystem);
+  return duringAcquisition(path, () =>
     readStableArtifact(
       path,
       maximumBytes,
@@ -180,6 +182,8 @@ const readObservedArtifact = (
       {
         open: (selectedPath, flags) =>
           selectedFileSystem.open(selectedPath, flags),
+        // Names a refused symlink's target; test doubles may omit it.
+        ...(resolveTarget === undefined ? {} : { realpath: resolveTarget }),
         lstat: async (selectedPath) => {
           const current = await selectedFileSystem.lstat(selectedPath);
           if (!sameState(observed, current))
@@ -193,6 +197,7 @@ const readObservedArtifact = (
       resourceScope,
     ),
   );
+};
 
 const verifyInactiveJournal = async (
   path: string,
