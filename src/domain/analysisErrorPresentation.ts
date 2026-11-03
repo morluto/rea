@@ -46,6 +46,10 @@ import {
 } from "./analysisErrorBase.js";
 import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 
+/** Explain how to preserve an observation the session could not retain. */
+export const UNRETAINED_EVIDENCE_EXPORT_GUIDANCE =
+  "Unretained Evidence is not included in the exported investigation; if present in this response, save it separately.";
+
 /** File export when one MCP frame cannot carry the retained session bundle. */
 export const MCP_TRANSPORT_EVIDENCE_EXPORT =
   "Export complete retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. The connection remains usable.";

@@ -1,6 +1,6 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
@@ -15,6 +15,9 @@ import { createServer } from "../../../src/server/createServer.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const validation = createMcpSchemaValidation();
+afterAll(() => validation.clear());
 
 it.each(
   ["full", "compact"].flatMap((profile) =>
@@ -98,7 +101,6 @@ it.each(
       },
     );
     const client = new Client({ name: "source-context", version: "1" });
-    const validation = createMcpSchemaValidation();
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);
@@ -167,7 +169,6 @@ it.each(
       await client.close();
       await server.close();
       await session.close();
-      validation.clear();
     }
   },
   120000,

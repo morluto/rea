@@ -9,6 +9,7 @@ import { isImmutableJsonSnapshot } from "./immutableJson.js";
 
 import {
   analysisErrorCategory,
+  UNRETAINED_EVIDENCE_EXPORT_GUIDANCE,
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
   assertKnownAnalysisErrorTag,
@@ -486,7 +487,7 @@ const projectError = (
     error instanceof AnalysisResourceConstraintError &&
     error.resource === "capacity" &&
     includesUnretainedEvidence
-      ? " Unretained Evidence is not included in the exported investigation; if present in this response, save it separately."
+      ? ` ${UNRETAINED_EVIDENCE_EXPORT_GUIDANCE}`
       : "";
   return {
     code,

@@ -10,6 +10,7 @@ import { BinarySession } from "../../../src/application/binary/BinarySession.js"
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../../src/domain/analysisObservation.js";
+import { UNRETAINED_EVIDENCE_EXPORT_GUIDANCE } from "../../../src/domain/analysisErrorPresentation.js";
 import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { safeParseEvidence } from "../../../src/domain/evidenceValidation.js";
 import { ok } from "../../../src/domain/result.js";
@@ -49,7 +50,7 @@ const assertPublication = ({
   );
   if (error.code === "resource_constraint") {
     expect(error.remediation.action).toContain(
-      "if present in this response, save it separately",
+      UNRETAINED_EVIDENCE_EXPORT_GUIDANCE,
     );
   }
   if (sourceKind === "small")

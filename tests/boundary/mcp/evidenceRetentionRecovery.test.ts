@@ -12,6 +12,7 @@ import { InvestigationRecords } from "../../../src/application/investigation/Inv
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { safeParseEvidence } from "../../../src/domain/evidenceValidation.js";
 import { recoveryOmissionRemediation } from "../../../src/domain/analysisErrorProjection.js";
+import { UNRETAINED_EVIDENCE_EXPORT_GUIDANCE } from "../../../src/domain/analysisErrorPresentation.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -100,10 +101,7 @@ it.each(["compact", "full"] as const)(
       expect(session.hasEvidence(authenticated.value.evidence_id)).toBe(false);
       expect(records.statistics().evidenceRecords).toBe(0);
       expect(error.remediation.action).toContain(
-        "Unretained Evidence is not included in the exported investigation",
-      );
-      expect(error.remediation.action).toContain(
-        "if present in this response, save it separately",
+        UNRETAINED_EVIDENCE_EXPORT_GUIDANCE,
       );
       expect(error.details).not.toHaveProperty("evidence_reference");
       const bundle = await client.callTool({
@@ -183,7 +181,7 @@ it("keeps an oversized unretained observation failure bounded and the connection
       recoveryOmissionRemediation("unretained"),
     );
     expect(error.remediation.action).toContain(
-      "if present in this response, save it separately",
+      UNRETAINED_EVIDENCE_EXPORT_GUIDANCE,
     );
     expect(error.details).not.toHaveProperty("partial_observation");
     expect(error.details).not.toHaveProperty("evidence_reference");
