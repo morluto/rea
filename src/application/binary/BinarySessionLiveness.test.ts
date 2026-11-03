@@ -642,7 +642,10 @@ const killableDeepProvider = (options: {
         },
         kill: (
           state:
-            "exited" | "unreachable" | "unknown" | "not_started" = "exited",
+            | "exited"
+            | "unreachable"
+            | "unknown"
+            | "not_started" = "exited",
         ) => {
           alive = false;
           deadState = state;
