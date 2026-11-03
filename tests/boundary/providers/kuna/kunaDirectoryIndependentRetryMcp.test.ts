@@ -18,6 +18,32 @@ const it = test.skipIf(process.platform === "win32");
 const schemas = createMcpSchemaValidation();
 afterAll(() => schemas.clear());
 
+const expectPriorFailureInJournal = async (output: string) => {
+  type Attempt = {
+    address?: string;
+    pseudocode_absence?: { kind: string; reason: string };
+    limitations?: string[];
+  };
+  const journal = (
+    await readFile(join(output, "decompile-journal.jsonl"), "utf8")
+  )
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Attempt);
+  const index = JSON.parse(
+    await readFile(join(output, "decompile-index.json"), "utf8"),
+  ) as { functions: Attempt[] };
+  const failed = journal.find(
+    (row) =>
+      row.address === "0x1080" &&
+      row.pseudocode_absence?.kind === "provider-failure",
+  );
+  const latest = index.functions.find((row) => row.address === "0x1080");
+  expect(failed?.pseudocode_absence?.reason).toEqual(expect.any(String));
+  expect(failed?.limitations).toContain(failed?.pseudocode_absence?.reason);
+  expect(latest?.limitations).not.toContain(failed?.pseudocode_absence?.reason);
+};
+
 it.each(["compact", "full"] as const)(
   "guides resume and retries only reported project failures (%s)",
   async (profile) => {
@@ -72,11 +98,11 @@ it.each(["compact", "full"] as const)(
         failures: expect.arrayContaining([
           expect.objectContaining({
             address: "0x1080",
-            message: expect.stringContaining("resume this export"),
+            message: expect.stringContaining("retry_failed"),
           }),
           expect.objectContaining({
             address: "0x2000",
-            message: "The provider returned null pseudocode for this function.",
+            code: "no_pseudocode",
           }),
         ]),
       });
@@ -113,9 +139,6 @@ it.each(["compact", "full"] as const)(
       ).toMatchObject({
         status: "failed",
         pseudocode_absence: { kind: "not-in-export" },
-        limitations: expect.arrayContaining([
-          "Independent retry was not attempted because the provider did not report a function failure for this observation.",
-        ]),
       });
       const journal = (
         await readFile(join(output, "decompile-journal.jsonl"), "utf8")
@@ -137,7 +160,7 @@ it.each(["compact", "full"] as const)(
             kind: "provider-failure",
           }),
           failure: expect.objectContaining({
-            message: expect.stringContaining("resume this export"),
+            message: expect.stringContaining("retry_failed"),
           }),
         }),
         expect.objectContaining({
@@ -158,6 +181,7 @@ it.each(["compact", "full"] as const)(
           },
         }),
       ]);
+      await expectPriorFailureInJournal(output);
       expect(
         (await fakeKunaCalls(kuna))
           .filter(({ argv }) => argv[0] === "decompile")

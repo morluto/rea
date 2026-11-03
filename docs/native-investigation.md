@@ -235,7 +235,9 @@ missing from an export are not retried. A null without a reported function
 failure carries a limitation explaining why no independent retry was attempted.
 A provider that does not report this distinction leaves the cause unknown.
 Each function's `decompile-index.json` record, whatever its status, keeps the
-complete limitations of the observations it used.
+complete limitations of the observations it used. The index keeps the latest
+record for each function; `decompile-journal.jsonl` keeps earlier attempts and
+their separate limitations.
 When available, `provider_source` records the source of that attempt's
 pseudocode observation: a file path, SHA-256 and byte range, or a
 single-function decompile. The latter describes the method, not a unique run. A file
