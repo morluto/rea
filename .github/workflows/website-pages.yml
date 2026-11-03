@@ -54,6 +54,10 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: website/requirements.txt
+      - name: Set up Node.js for the website Worker checks
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
       - name: Install sharing-image dependencies
         run: |
           sudo apt-get update
@@ -75,10 +79,21 @@ jobs:
           PY
       - name: Configure Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+      # upload-pages-artifact excludes dot directories, including .well-known.
+      - name: Package the website including agent discovery
+        run: |
+          tar --dereference --hard-dereference --directory website/_site \
+            --exclude=.git --exclude=.github -cf "$RUNNER_TEMP/artifact.tar" .
+          tar -tf "$RUNNER_TEMP/artifact.tar" \
+            ./.well-known/ard.json ./.well-known/ai-catalog.json \
+            ./.well-known/agent-skills/index.json > /dev/null
       - name: Upload the website
-        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          path: website/_site
+          name: github-pages
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 1
+          if-no-files-found: error
 
   deploy:
     needs: prepare
@@ -130,12 +145,13 @@ jobs:
           PUBLISH_TARGET: ${{ inputs.target }}
         run: |
           python3 -u - <<'PY'
+          import hashlib
           import json
           import os
           import sys
           import time
           from urllib.error import URLError
-          from urllib.parse import urljoin
+          from urllib.parse import urljoin, urlsplit
           from urllib.request import Request, urlopen
 
           expected = os.environ["GITHUB_SHA"]
@@ -172,6 +188,28 @@ jobs:
                   time.sleep(5)
           if pending:
               sys.exit("Could not verify published revision on: " + ", ".join(pending))
+          for name, base in hosts.items():
+              with urlopen(urljoin(base, ".well-known/agent-skills/index.json"), timeout=15) as response:
+                  skill, = json.load(response)["skills"]
+              # Fetch from each selected host, including the /rea/ mirror.
+              artifact_url = urljoin(base, urlsplit(skill["url"]).path.lstrip("/"))
+              with urlopen(artifact_url, timeout=15) as response:
+                  digest = "sha256:" + hashlib.sha256(response.read()).hexdigest()
+              if digest != skill["digest"]:
+                  sys.exit(name + " serves a skill archive with the wrong digest")
+              for manifest in ("ard.json", "ai-catalog.json"):
+                  with urlopen(urljoin(base, ".well-known/" + manifest), timeout=15) as response:
+                      if not json.load(response).get("entries"):
+                          sys.exit(name + " serves an empty discovery manifest")
+              if name == "Cloudflare":
+                  request = Request(base, headers={"Accept": "text/markdown"})
+                  with urlopen(request, timeout=15) as response:
+                      vary = {value.strip().lower() for value in response.headers.get("Vary", "").split(",")}
+                      if response.headers.get_content_type() != "text/markdown" or "accept" not in vary:
+                          sys.exit("Cloudflare did not negotiate Markdown with Vary: Accept")
+                      if 'rel="ard"' not in response.headers.get("Link", ""):
+                          sys.exit("Cloudflare is missing its discovery Link header")
+              print(name + " serves the discovery manifests and verified skill archive")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               links = " and ".join(f"[{name}]({url})" for name, url in hosts.items())
               summary.write(f"Published commit `{expected}` to {links}.\n")
