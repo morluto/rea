@@ -553,27 +553,35 @@ it("rejects oversized cached text before buffering while retaining its full expo
 });
 
 it("can recover a standalone output overflow from a completed project", async () => {
-  const { open } = await session("rea-kuna-overflow-project-", {
+  const { open, kuna } = await session("rea-kuna-overflow-project-", {
     delayMs: 3000,
+    decompileDelayMs: 200,
     decompilePadding: KUNA_FUNCTION_TEXT_BYTES + 1,
   });
   const client = open();
-  const first = await client.execute("procedure_pseudo_code", {
-    procedure: "main",
-  });
-  expect(first.ok).toBe(false);
-  if (first.ok) return;
-  expect(projectAnalysisError(first.error)).toMatchObject({
-    code: "resource_constraint",
-    retryable: true,
-    remediation: { action: expect.stringContaining("project export") },
-    details: {
-      reported_limits: { output_limit_bytes: KUNA_FUNCTION_TEXT_BYTES },
-    },
-  });
-  const invocation = projectAnalysisError(first.error, "invocation");
-  expect(invocation.remediation.action).toContain("rea function");
-  expect(invocation.remediation.action).not.toContain("procedure_assembly");
+  const failures = await Promise.all(
+    ["main", "0x1000"].map((procedure) =>
+      client.execute("procedure_pseudo_code", { procedure }),
+    ),
+  );
+  for (const failure of failures) {
+    expect(failure.ok).toBe(false);
+    if (failure.ok) continue;
+    expect(projectAnalysisError(failure.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: true,
+      remediation: { action: expect.stringContaining("project export") },
+      details: {
+        reported_limits: { output_limit_bytes: KUNA_FUNCTION_TEXT_BYTES },
+      },
+    });
+    const invocation = projectAnalysisError(failure.error, "invocation");
+    expect(invocation.remediation.action).toContain("rea function");
+    expect(invocation.remediation.action).not.toContain("procedure_assembly");
+  }
+  expect(
+    (await fakeKunaCalls(kuna)).filter(({ argv }) => argv[0] === "decompile"),
+  ).toHaveLength(1);
   await run(client, "procedure_assembly", { procedure: "main" });
   const later = await run(client, "procedure_pseudo_code", {
     procedure: "main",
@@ -601,6 +609,31 @@ it("can recover a standalone output overflow from a completed project", async ()
       remediation: { action: expect.stringContaining("Use another provider") },
     });
   await failedClient.close();
+
+  const unproven = unprovenCleanupLauncher("decompile");
+  const retained = await session(
+    "rea-kuna-overflow-retained-cleanup-",
+    { project: "hang", decompilePadding: KUNA_FUNCTION_TEXT_BYTES + 1 },
+    {},
+    unproven.launcher,
+  );
+  const retainedClient = retained.open();
+  try {
+    const result = await retainedClient.execute("procedure_pseudo_code", {
+      procedure: "main",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "cleanup_incomplete",
+        retryable: false,
+      });
+    }
+  } finally {
+    unproven.release();
+    expect(await retainedClient.close()).toEqual({ ok: true, value: null });
+  }
 });
 
 it("keeps answering pseudocode one function at a time when the export fails", async () => {
