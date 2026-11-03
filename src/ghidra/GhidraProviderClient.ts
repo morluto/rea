@@ -1236,7 +1236,7 @@ const projectPrimarySessionError = (
         ...context,
         userMessage: failure.message,
         remediationAction:
-          "Inspect the candidate analysis addresses and select an appropriate function entry or containing address. A file mapping alone does not establish a function; do not repeat the unchanged call.",
+          "Inspect candidates with resolve_containing_procedure or inspect_native_instruction (CLI: rea inspect-native-instruction), then select an appropriate function entry or containing address. A file mapping alone does not establish a function; do not repeat the unchanged call.",
         conformsToInputContract: true,
       },
       [{ path: [], reason: "invalid_value", message: failure.message }],
