@@ -14,7 +14,7 @@ export type ExecutableLookup =
   | {
       readonly status: "found";
       readonly path: string;
-      /** The path an explicitly selected command names, which its launch runs. */
+      /** The absolute path that an explicitly selected command names. */
       readonly selectedPath?: string;
     }
   /** The host refused to inspect an explicitly selected path. */
@@ -27,7 +27,7 @@ export type ExecutableLookup =
   | {
       readonly status: "missing";
       readonly checked: readonly string[];
-      /** The path an explicitly selected command names, which its launch runs. */
+      /** The absolute path that an explicitly selected command names. */
       readonly selectedPath?: string;
     }
   /** A relative command, or a match under a relative PATH entry, needed the working directory, which could not be read. */

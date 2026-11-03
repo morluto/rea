@@ -956,9 +956,10 @@ export class ReverseEngineeringService {
           { provider_executable_path: lookup.path },
         ),
       );
-    // The command launch reports an executable that cannot be selected. An
-    // explicitly selected path runs as the lookup resolved it, so a launch
-    // failure keeps where it looked.
+    // The command launch reports an executable that cannot be selected. It
+    // runs as the caller spelled it, which can launch where the absolute
+    // spelling of an explicit selection is too long to inspect, and a launch
+    // failure keeps where the lookup looked.
     if (lookup.status !== "found") {
       const selected =
         lookup.status === "missing" ? lookup.selectedPath : undefined;
@@ -967,7 +968,7 @@ export class ReverseEngineeringService {
           lookup.status === "no-working-directory"
             ? "the executable could not be located: its lookup needed the working directory, which could not be read"
             : "the executable could not be located",
-          selected,
+          profile.executable,
           selected === undefined
             ? undefined
             : { provider_executable_path: selected },

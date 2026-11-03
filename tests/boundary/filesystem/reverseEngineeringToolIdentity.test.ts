@@ -756,6 +756,7 @@ posix.each(["ENOENT", "EACCES"] as const)(
 posix.each([
   ["the host refuses to inspect", "stat"],
   ["lacks execute permission", "mode"],
+  ["names by an absolute path too long to inspect", "length"],
 ] as const)(
   "keeps the resolved path of a relative selection that %s when its launch fails",
   async (_description, refusal) => {
@@ -773,7 +774,8 @@ posix.each([
     const service = new TestReverseEngineeringService({
       run,
       // The relative selection resolves in the fixture's directory, where
-      // the host refuses to inspect it or it lacks execute permission.
+      // the host refuses to inspect it, it lacks execute permission, or its
+      // absolute spelling exceeds the host's path limit.
       lookup: (command, _directory, searchPath, bounds) =>
         lookupExecutable(command, () => dirname(executable), searchPath, {
           ...bounds,
@@ -781,6 +783,10 @@ posix.each([
             if (refusal === "stat" && target === executable)
               throw Object.assign(new Error("permission denied"), {
                 code: "EACCES",
+              });
+            if (refusal === "length" && target === executable)
+              throw Object.assign(new Error("name too long"), {
+                code: "ENAMETOOLONG",
               });
             return stat(target);
           },
@@ -795,7 +801,12 @@ posix.each([
       provider_identity: "assumed",
     });
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run.mock.calls[0]?.[0]).toBe(executable);
+    // A path the host refused to inspect launches as resolved; one the
+    // lookup did not accept launches as spelled, which a relative path can
+    // where its absolute spelling is too long.
+    expect(run.mock.calls[0]?.[0]).toBe(
+      refusal === "stat" ? executable : "./rizin",
+    );
   },
 );
 
