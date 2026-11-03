@@ -253,9 +253,7 @@ export class GodotPckArtifactReader implements ArtifactReader {
           );
       }
       const metadata = {
-        path: sourcePath.startsWith("res://")
-          ? sourcePath.slice(6)
-          : sourcePath,
+        path: normalizePckMemberPath(sourcePath),
         sourcePath,
         kind: "file" as const,
         declaredSize: Number(size),
@@ -405,9 +403,19 @@ const pckMemberPath = (raw: Buffer): string => {
       { cause },
     );
   }
-  if (path.length === 0 || path === "res://" || path.includes("\0"))
+  if (path.length === 0 || /^res:\/*$/u.test(path) || path.includes("\0"))
     throw formatFailure("empty or NUL-containing member path");
   return path;
+};
+
+const normalizePckMemberPath = (sourcePath: string): string => {
+  const stripped = sourcePath.startsWith("res://")
+    ? sourcePath.slice(6)
+    : sourcePath;
+  const normalized = stripped.replace(/^\/+/u, "").replace(/^(?:\.\/)+/u, "");
+  if (normalized.length === 0)
+    throw formatFailure(`empty member path: ${sourcePath}`);
+  return normalized;
 };
 
 /** One bounded read window; no whole-pack buffer or per-member source reopening. */
