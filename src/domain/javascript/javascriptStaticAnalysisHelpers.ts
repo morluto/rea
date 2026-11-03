@@ -49,6 +49,7 @@ export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
     sender_validations: [],
     utility_processes: [],
     native_addon_bindings: [],
+    protocols: [],
   },
   limitations: [
     "JavaScript source could not be parsed; absence of findings is not evidence of absence.",

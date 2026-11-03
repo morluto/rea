@@ -966,16 +966,22 @@ const inheritLoaderSourceContext = (
     ),
   }));
 
+// A later read site selects only the remaining path. This member selects its
+// own key when it is evaluated, so `o.k = o.k || d` reads o.k before the write.
 const loaderMemberSource = (
   current: ModuleObjectSource,
   member: t.MemberExpression | t.OptionalMemberExpression,
 ): ModuleObjectSource => ({
   node: member.object,
   readAt: current.readAt ?? member,
-  capturedSelections: semanticShiftCapturedSelections(
-    current.capturedSelections,
-    1,
-  ),
+  capturedSelections:
+    current.readAt === undefined
+      ? semanticShiftCapturedSelections(current.capturedSelections, 1)
+      : semanticNormalizeCapturedSelections([
+          { at: member, depth: 1 },
+          ...(semanticShiftCapturedSelections(current.capturedSelections, 1) ??
+            []),
+        ]),
   path: [
     semanticStaticPropertyKey(member.property, member.computed),
     ...current.path,
@@ -1052,13 +1058,10 @@ const hasCommonJsModuleSource = (
   readAt?: t.Node,
 ): boolean => {
   type Work = ModuleObjectSource & {
-    readonly ancestors: ReadonlySet<object>;
     /** Await occurs after this many requested outer property selections. */
     readonly awaitDepths: readonly number[];
   };
-  const pending: Work[] = [
-    { node, path: [], readAt, ancestors: new Set(), awaitDepths: [] },
-  ];
+  const pending: Work[] = [{ node, path: [], readAt, awaitDepths: [] }];
   // Keep depths separate and join finite key alternatives at each source read.
   const selections = new SemanticAliasSelections(() => {
     state.valueResourceLimits.add("alias-selections");
@@ -1104,13 +1107,10 @@ const hasCommonJsModuleSource = (
       identity = {};
       context.identities.set(pathKey, identity);
     }
-    if (next.ancestors.has(identity)) {
-      if (includeUnknown) return true;
-      continue;
-    }
+    // A revisited state adds no source. A cycle's other entries are expanded
+    // once each, so a cycle is not an unknown loader.
     if (examined.has(identity)) continue;
     examined.add(identity);
-    const ancestors = new Set([...next.ancestors, identity]);
     const enqueueAt = (
       depths: readonly number[],
       ...sources: ModuleObjectSource[]
@@ -1118,7 +1118,6 @@ const hasCommonJsModuleSource = (
       pending.push(
         ...inheritLoaderSourceContext(next, sources).map((source) => ({
           ...source,
-          ancestors,
           awaitDepths: depths,
         })),
       );

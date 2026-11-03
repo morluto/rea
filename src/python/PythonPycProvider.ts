@@ -1,3 +1,4 @@
+import { PYTHON_PYC_PROVIDER_IDENTITY } from "./PythonPycProviderIdentity.js";
 import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
@@ -33,13 +34,6 @@ import {
   PythonPycResourceFailure,
 } from "./PythonPyc.errors.js";
 import { parsePythonPyc } from "./PythonPycParser.js";
-
-/** Bundled reader identity. Header python_version is a separate observed mapping. */
-export const PYTHON_PYC_PROVIDER_IDENTITY = {
-  id: "rea-python-pyc",
-  name: "REA CPython pyc parser",
-  version: "1",
-} as const;
 
 const OPERATION = "inspect_python_pyc";
 

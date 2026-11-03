@@ -72,7 +72,15 @@ are rejected before materialization. Prototype-named members such as
 `__proto__` are preserved as ordinary own JSON members without prototype
 mutation. Original capture files remain unchanged.
 REA owns specific schema corrections because pinned upstream schemas omit
-object types and use the unrecognized `min` keyword. Following
+object types and use the unrecognized `min` keyword. The pinned schema also
+checks `request.url` as an RFC 3986 `uri`, while HAR 1.2 defines it only as the
+absolute request URL. REA additionally admits a URL that WHATWG URL
+serialization reproduces unchanged, which is how browsers record and send it,
+for example with an unescaped `|` or `{` in the query. Every URL the RFC 3986
+check accepts stays admitted, even when WHATWG would rewrite it, such as an
+uppercase host. Spellings that fail the RFC 3986 check and that WHATWG would
+rewrite, such as a backslash authority, a tab or a space, still fail.
+Following
 [HAR 1.2](https://github.com/ahmadnassri/har-spec/blob/81adb2fcf845e81ff3de728cf6829a0e6ad63e95/versions/1.2.md#timings),
 `timings` must be an object with nonnegative `send`, `wait` and `receive`;
 optional `blocked`, `dns`, `connect` and `ssl` may be absent, `-1`, or

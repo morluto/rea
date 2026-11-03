@@ -2,7 +2,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +25,8 @@ import {
   assertMipsProbe,
   assertMipsGlobal,
   assertMipsSoftFloatStorage,
+  assertMipsCarvedTargetRefusal,
+  carveMipsElfBeforeSectionTable,
 } from "../tests/conformance/ghidra/mips-checks.mjs";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
@@ -121,16 +130,6 @@ async function verifySoftFloat(call, symbols, byteOrder) {
       `Soft-float caller lost argument ${literal}`,
     );
   return { storage: boundaries };
-}
-function assertIncompleteMipsInspection(error) {
-  assert.equal(error.code, "capability_unavailable");
-  assert.equal(error.details.selection_reason, "target_unsupported");
-  const rejection = error.details.rejections.find(
-    (candidate) => candidate.provider_id === "ghidra",
-  );
-  assert.equal(rejection?.code, "architecture_unsupported");
-  assert.match(rejection.reason, /ABI declaration inspection is incomplete/u);
-  assert.match(rejection.reason, /section header table/u);
 }
 
 const reports = [];
@@ -617,45 +616,20 @@ try {
       // PSP keeps its independent Allegrex/A-B-A checks; carved PSP is not verified.
       let carved;
       if (!psp) {
-        // A program-header ABI record survives carving, but GNU declarations in
-        // uncaptured section headers remain unknown: both adapters must refuse.
-        const read16 = (offset) =>
-          byteOrder === "little"
-            ? sourceBytes.readUInt16LE(offset)
-            : sourceBytes.readUInt16BE(offset);
-        const read32 = (offset) =>
-          byteOrder === "little"
-            ? sourceBytes.readUInt32LE(offset)
-            : sourceBytes.readUInt32BE(offset);
-        const sectionOffset = read32(32);
-        const cut = sectionOffset - 1;
-        const programOffset = read32(28);
-        const programCount = read16(44);
-        assert.equal(read16(42), 32);
-        assert.ok(cut >= programOffset + programCount * 32);
-        for (let i = 0; i < programCount; i += 1) {
-          const offset = programOffset + i * 32;
-          assert.ok(read32(offset + 4) + read32(offset + 16) <= cut);
-        }
-        const carvedBytes = sourceBytes.subarray(0, cut);
+        // The carved copy keeps every program header and payload but declares
+        // a section table it did not capture. Both adapters refuse it when
+        // opening the target; it is not analyzed as a smaller program.
+        const carve = carveMipsElfBeforeSectionTable(sourceBytes, byteOrder);
         const carvedPath = join(
           workspace,
           `${byteOrder}-${floatAbi}-carved.elf`,
         );
         const carvedSha256 = createHash("sha256")
-          .update(carvedBytes)
+          .update(carve.bytes)
           .digest("hex");
-        await writeFile(carvedPath, carvedBytes);
-        const carvedResolved = await parseBinaryTarget(carvedPath);
-        if (!carvedResolved.ok) throw carvedResolved.error;
-        assert.deepEqual(
-          carvedResolved.value.mips.abiFlags,
-          independent.mips.abiFlags,
-        );
-        assert.match(
-          carvedResolved.value.mips.limitations.join(" "),
-          /section header table/u,
-        );
+        await writeFile(carvedPath, carve.bytes);
+        // Target errors name the canonical path that was opened.
+        const openedPath = await realpath(carvedPath);
         const carvedError = requireMcpToolError(
           await client.callTool(
             {
@@ -665,7 +639,7 @@ try {
             { timeout: 60000 },
           ),
         );
-        assertIncompleteMipsInspection(carvedError);
+        assertMipsCarvedTargetRefusal(carvedError, openedPath, carve.reason);
         let carvedCliError;
         try {
           await execute(
@@ -688,16 +662,20 @@ try {
           carvedCliError &&
             Number.isInteger(carvedCliError.code) &&
             carvedCliError.code !== 0,
-          "Expected an incomplete-ABI refusal, not a timeout or success",
+          "Expected a target-opening refusal, not a timeout or success",
         );
-        assertIncompleteMipsInspection(JSON.parse(carvedCliError.stdout));
-        assert.deepEqual(await readFile(carvedPath), carvedBytes);
+        assertMipsCarvedTargetRefusal(
+          JSON.parse(carvedCliError.stdout),
+          openedPath,
+          carve.reason,
+        );
+        assert.deepEqual(await readFile(carvedPath), carve.bytes);
         carved = {
           sha256: carvedSha256,
-          source_bytes: carvedBytes.length,
-          section_header_offset: sectionOffset,
-          status: "expected-incomplete-abi-refusal",
-          limitations: carvedResolved.value.mips.limitations,
+          source_bytes: carve.bytes.length,
+          section_header_offset: carve.sectionOffset,
+          status: "expected-target-refusal",
+          reason: carve.reason,
           cli_exit: carvedCliError.code,
           mcp_error: carvedError,
         };

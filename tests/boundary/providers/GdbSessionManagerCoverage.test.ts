@@ -991,7 +991,8 @@ it.each([
     const manager = managerWithFakeSpawner(fake.spawnProcess);
     const started = await expectGdbSessionStarted(manager);
     const stdin = fake.children[0]?.stdin;
-    if (stdin === null || stdin === undefined) return;
+    if (stdin === null || stdin === undefined)
+      throw new Error("Expected GDB stdin");
     const commandSent = new Promise<void>((resolve) =>
       stdin.once("data", () => resolve()),
     );
@@ -1039,7 +1040,8 @@ it("reports process exit rather than protocol failure when stdin closes afterwar
   const started = await expectGdbSessionStarted(manager);
   const child = fake.children[0];
   const stdin = child?.stdin;
-  if (child === undefined || stdin === null || stdin === undefined) return;
+  if (child === undefined || stdin === null || stdin === undefined)
+    throw new Error("Expected GDB child and stdin");
   const commandSent = new Promise<void>((resolve) =>
     stdin.once("data", () => resolve()),
   );
@@ -1101,9 +1103,11 @@ it("retains partial GDB command Evidence while an inherited writer remains", asy
   });
   const started = await expectGdbSessionStarted(manager);
   const child = fake.children[0];
-  if (child === undefined || child.stdin === null) return;
+  if (child === undefined || child.stdin === null)
+    throw new Error("Expected GDB child and stdin");
+  const stdin = child.stdin;
   const commandSent = new Promise<void>((resolve) =>
-    child.stdin!.once("data", () => resolve()),
+    stdin.once("data", () => resolve()),
   );
   const pending = manager.execute(
     started.value.session_id,
@@ -1299,7 +1303,7 @@ it("rejects a GDB leader exit without a verified sink and retains inherited outp
   const manager = managerWithFakeSpawner(fake.spawnProcess);
   const started = await expectGdbSessionStarted(manager);
   const child = fake.children[0];
-  if (child === undefined) return;
+  if (child === undefined) throw new Error("Expected GDB child");
   child.exitLeader(7);
 
   const closed = await manager.close(started.value.session_id);
@@ -1369,7 +1373,7 @@ it("retains the GDB session while an unknown descendant holds output after leade
     inferiorTty: tty,
   });
   const child = fake.children[0];
-  if (child === undefined) return;
+  if (child === undefined) throw new Error("Expected GDB child");
   expect(manager.status(started.value.session_id)?.inferior_tty_verified).toBe(
     true,
   );
@@ -1402,7 +1406,7 @@ it("retries close after an exited GDB's inherited output streams settle", async 
   const manager = managerWithFakeSpawner(fake.spawnProcess);
   const started = await expectGdbSessionStarted(manager);
   const child = fake.children[0];
-  if (child === undefined) return;
+  if (child === undefined) throw new Error("Expected GDB child");
 
   child.exitLeader(3);
   const firstClose = await manager.close(started.value.session_id);
@@ -2077,8 +2081,8 @@ it("preserves the protocol failure when owned-process stop is confirmed", async 
   });
   const started = await expectGdbSessionStarted(manager);
   const stdin = fake.children[0]?.stdin;
-  expect(stdin).not.toBeNull();
-  if (stdin === null || stdin === undefined) return;
+  if (stdin === null || stdin === undefined)
+    throw new Error("Expected GDB stdin");
   stdin.write = (() => {
     throw new Error("injected MI stdin write failure");
   }) as typeof stdin.write;
@@ -2120,8 +2124,8 @@ it("fails pending commands when the child closes stdin unexpectedly", async () =
   const started = await expectGdbSessionStarted(manager);
 
   const stdin = fake.children[0]?.stdin;
-  expect(stdin).toBeDefined();
-  if (stdin === null || stdin === undefined) return;
+  if (stdin === null || stdin === undefined)
+    throw new Error("Expected GDB stdin");
   const inputClosed = new Promise<void>((resolve) =>
     stdin.once("close", resolve),
   );
@@ -2145,8 +2149,8 @@ it.each([
     const manager = managerWithFakeSpawner(fake.spawnProcess);
     const started = await expectGdbSessionStarted(manager);
     const stdin = fake.children[0]?.stdin;
-    expect(stdin).toBeDefined();
-    if (stdin === null || stdin === undefined) return;
+    if (stdin === null || stdin === undefined)
+      throw new Error("Expected GDB stdin");
     const originalWrite = stdin.write.bind(stdin);
     Object.defineProperty(stdin, "write", {
       value: (...arguments_: unknown[]) => {
@@ -3017,7 +3021,8 @@ it("routes protocol failure cleanup through detach verification without direct s
   const manager = managerWithFakeSpawner(fake.spawnProcess);
   const started = await expectGdbSessionStarted(manager);
   const child = fake.children[0];
-  if (child?.stdin === null || child?.stdin === undefined) return;
+  if (child?.stdin === null || child?.stdin === undefined)
+    throw new Error("Expected GDB child and stdin");
   Object.defineProperty(child.stdin, "write", {
     value: (
       _chunk: string,
@@ -3549,7 +3554,7 @@ process.stdin.on('data', (chunk) => {
   }
 });
 
-it("stops the GDB session when a complete MI record exceeds the protocol limit", async () => {
+it("closes the GDB session when a complete MI record exceeds the protocol limit", async () => {
   const manager = await managerFor(`
 process.stdout.write('(gdb)\\n');
 let input = '';
@@ -3571,9 +3576,20 @@ process.stdin.on('data', (chunk) => {
 
   const failed = await manager.execute(started.value.session_id, "bad-record");
 
-  expect(failed.ok).toBe(false);
-  if (!failed.ok)
-    expect(failed.error._tag).toBe("AnalysisCapabilityUnavailableError");
+  expect(failed).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      reason: expect.stringContaining("MI line exceeding the 16777216 byte"),
+      cleanupIncomplete: true,
+      cleanup: { resources: [started.value.session_id] },
+      partialObservation: {
+        predicate_type: "rea.debugger.console-observation",
+        raw_result: { command: "bad-record", completion_status: "unknown" },
+      },
+    },
+  });
+  expect(manager.status(started.value.session_id)?.state).toBe("closed");
 });
 
 it("rejects a partial MI line that exceeds the protocol limit", async () => {
@@ -3601,9 +3617,20 @@ process.stdin.on('data', (chunk) => {
     "partial-line",
   );
 
-  expect(failed.ok).toBe(false);
-  if (!failed.ok)
-    expect(failed.error._tag).toBe("AnalysisCapabilityUnavailableError");
+  expect(failed).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      reason: expect.stringContaining("MI line exceeding the 16777216 byte"),
+      cleanupIncomplete: true,
+      cleanup: { resources: [started.value.session_id] },
+      partialObservation: {
+        predicate_type: "rea.debugger.console-observation",
+        raw_result: { command: "partial-line", completion_status: "unknown" },
+      },
+    },
+  });
+  expect(manager.status(started.value.session_id)?.state).toBe("closed");
 });
 
 it("caps the number of MI records retained for a single command", async () => {
@@ -3684,7 +3711,8 @@ it.each(["incomplete", "rejected"] as const)(
     });
     const started = await expectGdbSessionStarted(manager);
     const stdin = fake.children[0]?.stdin;
-    if (stdin === null || stdin === undefined) return;
+    if (stdin === null || stdin === undefined)
+      throw new Error("Expected GDB stdin");
     Object.defineProperty(stdin, "write", {
       value: (
         _chunk: string,

@@ -14,8 +14,6 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 
-export type { JavaScriptOpaqueScopeEffects } from "./javascriptSemanticState.js";
-
 export const indexSemanticOpaqueEffects = (
   candidates: readonly {
     node: t.CallExpression;

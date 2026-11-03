@@ -15,6 +15,7 @@ import type {
 
 import { DEFAULT_CDP_COMMAND_TIMEOUT_MS } from "../domain/browserDeadline.js";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
+import { PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS } from "./PlaywrightExecutionBoundary.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   attachedScenarioLeaseKey,
@@ -179,6 +180,35 @@ it("keeps Termux execution support when launching Chromium on Android", async ()
   });
 });
 
+it("waits for bounded event finalization and owned browser teardown", async () => {
+  vi.useFakeTimers();
+  try {
+    const closeBrowser = vi.fn(
+      () => new Promise<void>((resolve) => setTimeout(resolve, 1_500)),
+    );
+    const removeProfile = vi.fn(async () => undefined);
+    const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
+      closeBrowser,
+      removeProfile,
+    });
+    const finished = cleanup
+      .close(() => new Promise<void>((resolve) => setTimeout(resolve, 4_500)))
+      .then(
+        () => ({ ok: true }),
+        (cause: unknown) => ({ ok: false, cause }),
+      );
+    await vi.advanceTimersByTimeAsync(4_500);
+    expect(removeProfile).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(await finished).toEqual({ ok: true });
+    expect(cleanup.browserClosed).toBe(true);
+    expect(closeBrowser).toHaveBeenCalledOnce();
+    expect(removeProfile).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("keeps attached-target ownership after the cleanup response timeout", async () => {
   vi.useFakeTimers();
   try {
@@ -209,7 +239,9 @@ it("keeps attached-target ownership after the cleanup response timeout", async (
         responseSettled = true;
       })
       .catch(() => {});
-    await vi.advanceTimersByTimeAsync(29_999);
+    await vi.advanceTimersByTimeAsync(
+      PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS - 1,
+    );
     expect(responseSettled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     await timeoutExpectation;
