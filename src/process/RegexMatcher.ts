@@ -628,6 +628,8 @@ export const matchRegexValues = async (input: {
                   input.operation,
                   {
                     userMessage: `Invalid regex pattern: ${reply.data.reason}`,
+                    remediationAction:
+                      "Correct the pattern using the reported regex syntax error, or select mode literal to search for the text literally, then retry.",
                   },
                   [
                     {
