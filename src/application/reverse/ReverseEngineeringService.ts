@@ -708,10 +708,10 @@ export class ReverseEngineeringService {
     const limitations = [
       ...(absolutePath === undefined
         ? [
-            "The objdump version is not reported; the output lists BFD targets advertised by the installed tool and does not establish support for the selected artifact.",
+            "The objdump implementation and version are unknown. The captured output is the selected command's response and does not establish support for an artifact.",
           ]
         : [
-            "The executable version and supported formats are reported as unknown because no reliable version probe was performed.",
+            "The executable implementation, version and supported formats are unknown because no reliable identity probe was performed.",
           ]),
       "A non-zero process exit is preserved as an observed command result.",
       ...(operation === "inspect_with_objdump" &&
