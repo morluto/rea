@@ -752,6 +752,50 @@ it("names chained imports from the binary's import table when the symbol table o
   expect(JSON.stringify(execution.value.result)).not.toContain('"-gju"');
 });
 
+it("names each chained row by its ordinal when the table holds both spacing readings", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  outputs["nm:-gju"] = "_foo\n";
+  // Ordinal 1 names " _foo"; installed dyld_info prints two spaces before it.
+  outputs["dyld_info:-imports"] = [
+    "    -imports:",
+    "      0x0000  _foo  (from <weak-def-coalesce>)",
+    "      0x0001   _foo  (from <weak-def-coalesce>)",
+  ].join("\n");
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(await inventoryTarget(true, ["_foo", " _foo"]));
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: {
+      items: [
+        { name: "_foo", name_status: "exact" },
+        { name: " _foo", name_status: "exact" },
+      ],
+    },
+  });
+});
+
+it("keeps a chained row unknown when its ordinal is outside the import table", () => {
+  const output = "      0x0005  _foo  (from library)";
+  expect(parseDyldImports(output, true, undefined, ["_foo"]).items).toEqual([
+    {
+      name: null,
+      raw_name: output.slice(6),
+      name_status: "ambiguous",
+      addend: null,
+      address: null,
+      weak: null,
+      reexport: null,
+      source: "library",
+    },
+  ]);
+});
+
 it("keeps missing and competing undefined-name matches unknown", () => {
   const output = "      0x0000  _literal  (from library)";
   expect(parseDyldImports(output, true).needsNameInventory).toBe(true);

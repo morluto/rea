@@ -425,12 +425,14 @@ const chainedFixupsHeader = (
 };
 
 /**
- * Symbol names of one `LC_DYLD_CHAINED_FIXUPS` payload's import table, in
- * table order. Names without a lossless text projection are omitted.
+ * Symbol names of one `LC_DYLD_CHAINED_FIXUPS` payload's import table, indexed
+ * by import ordinal. A name without a lossless text projection is null.
  */
-export const chainedImportNames = (fixups: Buffer): readonly string[] => {
+export const chainedImportNames = (
+  fixups: Buffer,
+): readonly (string | null)[] => {
   const { imports } = chainedFixupsHeader(fixups, 0, fixups.length);
-  const names: string[] = [];
+  const names: (string | null)[] = [];
   for (let index = 0; index < imports.count; index++) {
     const entry = chainedImportEntry(fixups, 0, fixups.length, imports, index);
     const { symbol } = cString(
@@ -438,7 +440,7 @@ export const chainedImportNames = (fixups: Buffer): readonly string[] => {
       imports.symbols + entry.nameOffset,
       fixups.length,
     );
-    if (symbol !== null) names.push(symbol);
+    names.push(symbol);
   }
   return names;
 };
