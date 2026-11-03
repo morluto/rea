@@ -105,7 +105,8 @@ import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js"
 import {
   ghidraHealthLimitations,
   ghidraEmptyXrefsLimitation,
-  ghidraEmptyFunctionReferencesLimitation,
+  ghidraEmptyIncomingReferencesLimitation,
+  ghidraEmptyOutgoingReferencesLimitation,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
@@ -172,41 +173,59 @@ const isEmptyArray = (value: JsonValue | undefined | null): boolean =>
   Array.isArray(value) && value.length === 0;
 
 /**
- * Caveat for an empty ReferenceManager observation: the provider's empty
- * answer is unresolved, not proof of absence. xrefs reports per address;
- * procedure_references per requested direction; analyze_function only when
- * no reference facet observed anything actionable.
+ * Caveats for the empty reference directions observed in one record: each
+ * empty facet is qualified independently, because the provider's empty answer
+ * is unresolved, not proof of absence for that direction.
+ */
+const emptyReferenceDirectionCaveats = (
+  record: Readonly<Record<string, JsonValue>>,
+): readonly string[] => [
+  ...(isEmptyArray(record.incoming_references)
+    ? [ghidraEmptyIncomingReferencesLimitation]
+    : []),
+  ...(isEmptyArray(record.outgoing_references)
+    ? [ghidraEmptyOutgoingReferencesLimitation]
+    : []),
+];
+
+/** Caveat for a procedure_references result that resolved no references. */
+const emptyProcedureReferencesCaveat = (
+  record: Readonly<Record<string, JsonValue>>,
+): string | undefined => {
+  if (!isEmptyArray(record.references)) return undefined;
+  return record.direction === "outgoing"
+    ? ghidraEmptyOutgoingReferencesLimitation
+    : ghidraEmptyIncomingReferencesLimitation;
+};
+
+/**
+ * Caveats for an empty ReferenceManager observation, in limitation order:
+ * the provider's empty answer is unresolved, not proof of absence. xrefs
+ * reports per address; the function-reference facets per empty direction.
  */
 const emptyReferenceCaveat = (
   operation: GhidraFunctionOperation,
   normalized: JsonValue,
-): string | undefined => {
+): readonly string[] => {
   if (operation === "xrefs")
-    return isEmptyArray(normalized) ? ghidraEmptyXrefsLimitation : undefined;
+    return isEmptyArray(normalized) ? [ghidraEmptyXrefsLimitation] : [];
   const record = referenceObservationRecord(normalized);
-  if (record === undefined) return undefined;
-  if (operation === "procedure_references")
-    return isEmptyArray(record.references)
-      ? ghidraEmptyFunctionReferencesLimitation
-      : undefined;
+  if (record === undefined) return [];
+  if (operation === "procedure_references") {
+    const caveat = emptyProcedureReferencesCaveat(record);
+    return caveat === undefined ? [] : [caveat];
+  }
   if (operation === "analyze_function")
-    return isEmptyArray(record.incoming_references) &&
-      isEmptyArray(record.outgoing_references)
-      ? ghidraEmptyFunctionReferencesLimitation
-      : undefined;
+    return emptyReferenceDirectionCaveats(record);
   if (operation === "annotate_native_function") {
     const dossier = referenceObservationRecord(record.dossier ?? null);
-    return dossier !== undefined &&
-      isEmptyArray(dossier.incoming_references) &&
-      isEmptyArray(dossier.outgoing_references)
-      ? ghidraEmptyFunctionReferencesLimitation
-      : undefined;
+    return dossier === undefined ? [] : emptyReferenceDirectionCaveats(dossier);
   }
   if (operation === "inspect_native_instruction")
     return isEmptyArray(record.incoming_references)
-      ? ghidraEmptyXrefsLimitation
-      : undefined;
-  return undefined;
+      ? [ghidraEmptyXrefsLimitation]
+      : [];
+  return [];
 };
 
 /** Build one AnalysisClient for an admitted Ghidra target and profile. */
@@ -903,15 +922,15 @@ export const createGhidraProviderClient = (input: {
       let executionMetadata: GhidraExecutionMetadata = observation;
       const unresolvedReferences = isGhidraFunctionOperation(operation)
         ? emptyReferenceCaveat(operation, normalized)
-        : undefined;
-      if (unresolvedReferences !== undefined) {
+        : [];
+      if (unresolvedReferences.length > 0) {
         // An empty list is the provider's observation, not proof: distinguish
         // "no references were resolved" from "there are no references".
         executionMetadata = {
           ...executionMetadata,
           limitations: [
             ...(executionMetadata.limitations ?? []),
-            unresolvedReferences,
+            ...unresolvedReferences,
           ],
         };
       }
