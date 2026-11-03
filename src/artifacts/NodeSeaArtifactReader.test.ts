@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { writeFileSync } from "node:fs";
+import { utimesSync, writeFileSync } from "node:fs";
 import { buffer } from "node:stream/consumers";
 import { createReader } from "./inventory/reader.js";
 import { open, readFile, writeFile } from "node:fs/promises";
@@ -831,6 +831,8 @@ it.each(["valid replacement", "malformed blob"] as const)(
       scanCanonicalArtifactInventory(path, {}, (...args) => {
         expect(args[1]).toBe("node-sea");
         writeFileSync(args[0], replacement);
+        // Same-size rewrites can share coarse kernel timestamps; make the change observable.
+        utimesSync(args[0], new Date(1_000_000), new Date(1_000_000));
         const reader = createReader(...args);
         if (reader instanceof NodeSeaArtifactReader) created = reader;
         return reader;

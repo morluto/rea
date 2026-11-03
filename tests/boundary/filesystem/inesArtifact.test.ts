@@ -8,6 +8,7 @@ import {
   open,
   readFile,
   unlink,
+  utimes,
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
@@ -348,6 +349,7 @@ it.each(["truncated", "overwritten"])(
       initial: await handle.stat(),
     });
     const originalRead = handle.read.bind(handle);
+    let faultInjected = false;
     // Mutate the actual file after pre-read validation, at the read boundary.
     const read = vi
       .spyOn(handle, "read")
@@ -357,6 +359,8 @@ it.each(["truncated", "overwritten"])(
             ? Buffer.alloc(0)
             : Buffer.alloc(inesFixture().length);
         await writeFile(path, changed);
+        await utimes(path, new Date(1_000_000), new Date(1_000_000));
+        faultInjected = true;
         return originalRead(...args);
       });
     try {
@@ -365,6 +369,7 @@ it.each(["truncated", "overwritten"])(
       ).rejects.toMatchObject({
         reason: "integrity",
       });
+      expect(faultInjected).toBe(true);
     } finally {
       read.mockRestore();
       await reader.close();
@@ -383,6 +388,7 @@ it.each(["inventory", "target"])(
       await writeFile(path, bytes);
       const prototype = await fileReadPrototype(path);
       const originalRead = prototype.read;
+      let faultInjected = false;
       const read = vi
         .spyOn(prototype, "read")
         .mockImplementationOnce(async function (this: FileHandle, ...args) {
@@ -392,6 +398,8 @@ it.each(["inventory", "target"])(
           if (change === "counts") changed[4] = 255;
           if (change === "signature") changed.fill(0, 0, 4);
           await writeFile(path, changed);
+          await utimes(path, new Date(1_000_000), new Date(1_000_000));
+          faultInjected = true;
           return originalRead.call(this, ...args);
         });
       try {
@@ -405,6 +413,7 @@ it.each(["inventory", "target"])(
             error: { reason: expect.stringContaining("changed") },
           });
         }
+        expect(faultInjected).toBe(true);
       } finally {
         read.mockRestore();
       }

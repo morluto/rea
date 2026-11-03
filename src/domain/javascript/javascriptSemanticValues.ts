@@ -106,6 +106,11 @@ type ReadSnapshotValues = WeakMap<
 
 /** Read/provenance memos live for one query; whole values follow state effects. */
 interface EvaluationMemo {
+  /** Optional query-owned captures; presence consumers need not retain objects per read. */
+  readonly queryCapturedBindings?: WeakMap<
+    t.Node,
+    Map<string, JavaScriptSemanticValue>
+  >;
   snapshotValues?: ReadSnapshotValues;
   capturedSnapshotValues?: WeakMap<t.Node, ReadSnapshotValues>;
   readonly provenance: Map<
@@ -125,6 +130,7 @@ const dependencyProofsByState = new WeakMap<
 
 const createEvaluationMemo = (
   state: JavaScriptSemanticAnalysisState,
+  captureCacheScope: "state" | "query" = "state",
 ): EvaluationMemo => {
   let dependencies = dependencyProofsByState.get(state);
   if (dependencies === undefined) {
@@ -134,6 +140,14 @@ const createEvaluationMemo = (
     dependencyProofsByState.set(state, dependencies);
   }
   return {
+    ...(captureCacheScope === "query"
+      ? {
+          queryCapturedBindings: new WeakMap<
+            t.Node,
+            Map<string, JavaScriptSemanticValue>
+          >(),
+        }
+      : {}),
     provenance: new Map(),
     dependencyFrames: [],
     dependencies: dependencies.forQuery(),
@@ -254,6 +268,7 @@ export const evaluateSemanticExpression = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   capturePoint?: t.Node,
+  captureCacheScope: "state" | "query" = "state",
 ): JavaScriptSemanticValue => {
   const context: EvaluationContext = {
     state,
@@ -261,7 +276,7 @@ export const evaluateSemanticExpression = (
     expressionDepth: 0,
     primitiveBindingValues: primitiveBindingValuesFor(state),
     dependence: { lowest: CALLER_INDEPENDENT },
-    memo: createEvaluationMemo(state),
+    memo: createEvaluationMemo(state, captureCacheScope),
   };
   return capturePoint === undefined
     ? evaluateCapturedExpression(node, context)
@@ -1464,7 +1479,9 @@ const captureContextAt = (
     semanticCapturePosition(node, context.state.parentsByNode) === null
   )
     return undefined;
-  let captures = capturedBindingValuesByState.get(context.state);
+  let captures =
+    context.memo.queryCapturedBindings ??
+    capturedBindingValuesByState.get(context.state);
   if (captures === undefined) {
     captures = new WeakMap();
     capturedBindingValuesByState.set(context.state, captures);
