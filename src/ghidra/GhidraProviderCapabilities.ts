@@ -53,11 +53,11 @@ const searchLimitation =
 
 /** Attached to an empty xrefs result: absence of resolved references is not proof. */
 export const ghidraEmptyXrefsLimitation =
-  "Ghidra's ReferenceManager returned no actionable references to this address in this session. An empty list reflects what this analysis resolved, not proof that the address is unreferenced; synthetic entry-point references are omitted, so cross-check the disassembly at this address before concluding there are no xrefs.";
+  "Ghidra's ReferenceManager returned no actionable references to this address in this session. An empty list reflects what this analysis resolved, not proof that the address is unreferenced; synthetic entry-point references are omitted. No independent in-product cross-check exists for this empty result: surrounding disassembly can confirm direct references at a code address, and data or string addresses need an external disassembly scan (for example otool -tV, pairing adrp with add or ldr) before concluding there are no xrefs.";
 
 /** Attached to empty procedure_references or analyze_function reference facets. */
 export const ghidraEmptyFunctionReferencesLimitation =
-  "Ghidra's ReferenceManager returned no actionable references for this function in this session. An empty list reflects what this analysis resolved, not proof that none exist; synthetic entry-point references are omitted, so cross-check the disassembly before concluding there are no references.";
+  "Ghidra's ReferenceManager returned no actionable references for this function in this session. An empty list reflects what this analysis resolved, not proof that none exist; synthetic entry-point references are omitted. The function's own disassembly is an independent check for direct outgoing references; incoming references have no independent in-product check and require scanning other code (for example an external otool -tV adrp/add pairing) before concluding there are none.";
 
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
