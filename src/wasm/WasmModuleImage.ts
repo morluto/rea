@@ -64,6 +64,8 @@ const I32_CONST = 0x41;
 const END = 0x0b;
 /** Import, function, table, memory, element, data; others are skipped whole. */
 const PARSED_SECTIONS = new Set([2, 3, 4, 5, 9, 11]);
+/** Required order of non-custom section ids; tag (13) sits after memory, data count (12) before code. */
+const SECTION_ORDER = [1, 2, 3, 4, 5, 13, 6, 7, 8, 9, 12, 10, 11];
 
 const malformed = (message: string) =>
   new WasmModuleFailure("malformed", message);
@@ -99,6 +101,9 @@ class Cursor {
     do {
       if (shift >= 35n) throw malformed("i32 is longer than 5 bytes");
       byte = this.byte();
+      // The fifth byte holds bits 28 to 31; its upper bits must repeat the sign.
+      if (shift === 28n && (byte & 0x78) !== 0 && (byte & 0x78) !== 0x78)
+        throw malformed("i32 has unused bits set in its fifth byte");
       result |= BigInt(byte & 0x7f) << shift;
       shift += 7n;
     } while (byte & 0x80);
@@ -154,6 +159,7 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
   let definedFunctionCount = 0;
   let memory: WasmMemory | null = null;
   let tables = 0;
+  let tableMinimum: number | null = null;
   const elements: { base: number; functions: number[] }[] = [];
   const dataSegments: WasmDataSegment[] = [];
   let slots = 0;
@@ -165,17 +171,27 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
   };
   const addTable = (cursor: Cursor) => {
     cursor.byte();
-    cursor.limits("table");
+    const { min } = cursor.limits("table");
     if (++tables > 1) throw unsupported("module has more than one table");
+    tableMinimum = min;
   };
 
   let at = 8;
+  let lastOrder = -1;
   while (at < bytes.length) {
     const head = new Cursor(bytes, at, bytes.length);
     const id = head.byte();
     const size = head.u32();
     if (size > bytes.length - head.at)
       throw malformed(`section ${id} ends past the module`);
+    if (id !== 0) {
+      // A repeated or reordered section would make the counts read below ambiguous.
+      const order = SECTION_ORDER.indexOf(id);
+      if (order < 0) throw malformed(`section id ${id} is unknown`);
+      if (order <= lastOrder)
+        throw malformed(`section ${id} is repeated or out of order`);
+      lastOrder = order;
+    }
     const body = new Cursor(bytes, head.at, head.at + size);
     if (id === 2) {
       for (let count = body.u32(); count > 0; count--) {
@@ -244,7 +260,15 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
 
   const functionCount = importedFunctionCount + definedFunctionCount;
   const table = new Map<number, number>();
-  for (const { base, functions } of elements)
+  const minimum = tableMinimum as number | null;
+  if (elements.length > 0 && minimum === null)
+    throw malformed("element segments name a table the module does not have");
+  for (const { base, functions } of elements) {
+    // Instantiation traps when a segment ends past the initial table.
+    if (base + functions.length > minimum!)
+      throw malformed(
+        `element segment at slot ${base} ends past the ${minimum} initial table slots`,
+      );
     functions.forEach((index, slot) => {
       // The function and import sections state the count; a slot past it is damage.
       if (index >= functionCount)
@@ -253,6 +277,7 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
         );
       table.set(base + slot, index);
     });
+  }
 
   // Instantiation traps when a segment ends past the initial (or imported minimum) memory.
   const limit =

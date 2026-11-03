@@ -399,7 +399,7 @@ function* arm64PageReferences(
  * Find MetadataRegistration by its two TypeDefinitionIndex-sized counts:
  * fieldOffsetsCount and typeDefinitionsSizesCount (words 10 and 12) both equal
  * the metadata type-definition count and are followed by mapped pointers.
- * typesCount and types are words 6 and 7. Counts are int32 in 8-byte slots.
+ * typesCount and types are words 6 and 7. Counts are int32 in pointer-sized slots.
  * Linking reads only the type table, so when no static registration matches on
  * x86-64 or arm64 the table is inferred from code instead (field null).
  */

@@ -257,3 +257,37 @@ describe("readInitialLinearMemory", () => {
     expect(readInitialLinearMemory({ dataSegments: [] }).bytes.length).toBe(0);
   });
 });
+
+describe("checks that keep counts unambiguous", () => {
+  it("refuses unused bits in the fifth byte of an i32 offset", () => {
+    const bad = section(
+      11,
+      vec([[0x00, 0x41, 0x80, 0x80, 0x80, 0x80, 0x70, 0x0b, ...vec([[1]])]]),
+    );
+    expect(failure(module(memory(1), bad))).toEqual([
+      "malformed",
+      "i32 has unused bits set in its fifth byte",
+    ]);
+  });
+  it("refuses a repeated function section", () => {
+    expect(failure(module(functions(1), functions(2)))[1]).toBe(
+      "section 3 is repeated or out of order",
+    );
+  });
+  it("refuses a data section before memory and an unknown section id", () => {
+    expect(failure(module(data([0, [1]]), memory(1)))[1]).toBe(
+      "section 5 is repeated or out of order",
+    );
+    expect(failure(module(section(20, [])))[1]).toBe(
+      "section id 20 is unknown",
+    );
+  });
+  it("refuses element segments past the table or without one", () => {
+    expect(
+      failure(module(functions(1), table, elements(2, [0, 0, 0])))[1],
+    ).toBe("element segment at slot 2 ends past the 4 initial table slots");
+    expect(failure(module(functions(1), elements(0, [0])))[1]).toBe(
+      "element segments name a table the module does not have",
+    );
+  });
+});
