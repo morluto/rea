@@ -1308,10 +1308,45 @@ const hasNodeShebang = (prefix: Buffer): boolean => {
   const [line = ""] = prefix.toString("latin1", 2).split("\n", 1);
   const [interpreter = "", ...args] = line.trim().split(/[ \t]+/u);
   const program =
-    basename(interpreter) === "env"
-      ? args.find((arg) => !arg.startsWith("-") && !arg.includes("="))
-      : interpreter;
+    basename(interpreter) === "env" ? envProgram(args) : interpreter;
   return program !== undefined && /^node(?:js)?$/u.test(basename(program));
+};
+
+/** `env` options whose argument is the next field, as in `-u NODE_OPTIONS`. */
+const ENV_OPTION_WITH_ARGUMENT = new Set([
+  "-u",
+  "--unset",
+  "-C",
+  "--chdir",
+  "-P",
+]);
+
+/**
+ * The program an `env` shebang runs: the first field that is neither an
+ * option, an option's argument, nor a `NAME=value` setting. `-S` splits the
+ * rest of the line, so its attached text is read as the next fields.
+ */
+const envProgram = (args: string[]): string | undefined => {
+  const fields = [...args];
+  while (fields.length > 0) {
+    const field = fields.shift() ?? "";
+    if (field === "--") return fields[0];
+    if (ENV_OPTION_WITH_ARGUMENT.has(field)) {
+      fields.shift();
+      continue;
+    }
+    if (/^-[0iv]*S./u.test(field)) {
+      fields.unshift(field.slice(field.indexOf("S") + 1));
+      continue;
+    }
+    if (field.startsWith("--split-string=")) {
+      fields.unshift(field.slice("--split-string=".length));
+      continue;
+    }
+    if (field.startsWith("-") || field.includes("=")) continue;
+    return field;
+  }
+  return undefined;
 };
 
 /**
