@@ -341,31 +341,3 @@ describe("Electron protocol calls that register nothing", () => {
     ]);
   });
 });
-
-describe("Electron wrapped protocol.handle registrations", () => {
-  it.each([
-    ["protocol", "default-protocol"],
-    ["session.defaultSession.protocol", "default-session"],
-  ])(
-    "retains %s registrations before handler invocation",
-    (receiver, session) => {
-      const protocols = protocolsOf(`
-      const { protocol, session } = require("electron");
-      ${receiver}.handle("omitted");
-      ${receiver}.handle("null", null);
-      ${receiver}.handle("undefined", void 0);
-    `);
-      expect(protocols).toMatchObject([
-        { api: "handle", role: "handler", session, scheme: literal("omitted") },
-        { api: "handle", role: "handler", session, scheme: literal("null") },
-        {
-          api: "handle",
-          role: "handler",
-          session,
-          scheme: literal("undefined"),
-        },
-      ]);
-      expect(protocols).toHaveLength(3);
-    },
-  );
-});

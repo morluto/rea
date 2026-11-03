@@ -71,6 +71,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         api: "handle",
         role: "handler",
         resolution: "literal",
+        session: observation?.label?.startsWith("session-")
+          ? "default-session"
+          : "default-protocol",
       });
       expect(observation?.evidence).toMatchObject({
         authority: "ast-static-analysis",
