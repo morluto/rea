@@ -368,8 +368,63 @@ describe("table types and yielding", () => {
       "table element type 0x6f is not funcref",
     ]);
   });
+  it.each([
+    [
+      "element",
+      () =>
+        module(
+          table,
+          section(
+            9,
+            vec([[0x00, ...offset(0), ...vec(Array(5000).fill([0]))]]),
+          ),
+        ),
+    ],
+    [
+      "code",
+      () =>
+        Buffer.from([
+          0x00,
+          0x61,
+          0x73,
+          0x6d,
+          1,
+          0,
+          0,
+          0,
+          ...section(10, vec(Array(5000).fill([2, 0, 0x0b]))),
+        ]),
+    ],
+    [
+      "data",
+      () =>
+        module(
+          memory(1),
+          data(
+            ...Array.from({ length: 5000 }, (_, i): [number, number[]] => [
+              i,
+              [1],
+            ]),
+          ),
+        ),
+    ],
+  ] as const)("yields while reading a large %s section", (_, build) => {
+    expect(readWasmModuleImageSteps(build()).next().done).toBe(false);
+  });
+
   it("yields while reading a large function section", () => {
     const steps = readWasmModuleImageSteps(module(functions(5000)));
     expect(steps.next().done).toBe(false);
+  });
+});
+
+describe("table source", () => {
+  it("reports whether table 0 is imported", () => {
+    const imported = section(
+      2,
+      vec([[...name("env"), ...name("table"), 0x01, 0x70, 0x00, 4]]),
+    );
+    expect(readWasmModuleImage(module(imported)).tableImported).toBe(true);
+    expect(readWasmModuleImage(module(table)).tableImported).toBe(false);
   });
 });

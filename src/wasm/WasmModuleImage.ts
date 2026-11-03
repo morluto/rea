@@ -52,6 +52,8 @@ export interface WasmModuleImage {
   readonly memory: WasmMemory | null;
   /** Function index per slot of table 0. */
   readonly table: ReadonlyMap<number, number>;
+  /** Table 0 comes from an import, so the host may fill slots no element segment writes. */
+  readonly tableImported: boolean;
   readonly dataSegments: readonly WasmDataSegment[];
 }
 
@@ -171,6 +173,7 @@ export function* readWasmModuleImageSteps(
   let memory: WasmMemory | null = null;
   let tables = 0;
   let tableMinimum: number | null = null;
+  let tableImported = false;
   const elements: { base: number; functions: number[] }[] = [];
   const dataSegments: WasmDataSegment[] = [];
   let slots = 0;
@@ -181,7 +184,7 @@ export function* readWasmModuleImageSteps(
     if (memory) throw unsupported("module has more than one memory");
     memory = { initialPages: min, maximumPages: max, imported };
   };
-  const addTable = (cursor: Cursor) => {
+  const addTable = (cursor: Cursor, imported: boolean) => {
     // Element segments flags 0 fill a funcref table; any other table type is not read.
     const type = cursor.byte();
     if (type !== FUNCREF)
@@ -191,6 +194,7 @@ export function* readWasmModuleImageSteps(
     const { min } = cursor.limits("table");
     if (++tables > 1) throw unsupported("module has more than one table");
     tableMinimum = min;
+    tableImported = imported;
   };
 
   let at = 8;
@@ -218,7 +222,7 @@ export function* readWasmModuleImageSteps(
         if (kind === 0) {
           body.u32();
           importedFunctionCount++;
-        } else if (kind === 1) addTable(body);
+        } else if (kind === 1) addTable(body, true);
         else if (kind === 2) addMemory(body, true);
         else if (kind === 3) body.span(2);
         else if (kind === 4) throw unsupported("tag imports are not read");
@@ -231,7 +235,7 @@ export function* readWasmModuleImageSteps(
         if (tick()) yield;
       }
     } else if (id === 4) {
-      for (let count = body.u32(); count > 0; count--) addTable(body);
+      for (let count = body.u32(); count > 0; count--) addTable(body, false);
     } else if (id === 5) {
       for (let count = body.u32(); count > 0; count--) addMemory(body, false);
     } else if (id === 9) {
@@ -340,6 +344,7 @@ export function* readWasmModuleImageSteps(
     functionCount,
     memory,
     table,
+    tableImported,
     dataSegments,
   };
 }

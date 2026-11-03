@@ -2160,3 +2160,34 @@ it("refuses a wasm module that imports its memory", () => {
     kind: "unsupported",
   });
 });
+
+it("refuses a wasm module that imports its function table", () => {
+  // env.table, funcref, minimum 4; the host may fill slots no segment writes.
+  const name = (text: string) => [text.length, ...Buffer.from(text)];
+  const importTable = [
+    1,
+    ...name("env"),
+    ...name("table"),
+    0x01,
+    0x70,
+    0x00,
+    4,
+  ];
+  const bytes = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    2,
+    importTable.length,
+    ...importTable,
+  ]);
+  expect(failure(bytes)).toEqual({
+    reason: "unsupported-container",
+    kind: "unsupported",
+  });
+});
