@@ -246,7 +246,9 @@ describe("GodotPckArtifactReader", () => {
       });
     });
   });
+});
 
+describe("GodotPckArtifactReader format refusals", () => {
   it.each([
     [
       "a patch removal entry",
@@ -288,6 +290,16 @@ describe("GodotPckArtifactReader", () => {
       buildGodotPck(4, [{ path: "res:////", data: "" }]),
       "format",
     ],
+    [
+      "a dot root-only path",
+      buildGodotPck(4, [{ path: "res://.", data: "" }]),
+      "format",
+    ],
+    [
+      "a combined dot-slash root-only path",
+      buildGodotPck(4, [{ path: "res://.//", data: "" }]),
+      "format",
+    ],
   ])("refuses %s", async (_, bytes, reason) => {
     await withReader(bytes, async (reader) => {
       await expect(list(reader)).rejects.toMatchObject({ reason });
@@ -300,7 +312,8 @@ describe("GodotPckArtifactReader member paths and extraction", () => {
     const variedMembers: readonly GodotPckMember[] = [
       { path: "res:///scenes/main.gd", data: "extends Node\n" },
       { path: "res://./config.cfg", data: "[section]\nkey=1\n" },
-      { path: "res:////scripts/player.gd", data: "class_name Player\n" },
+      { path: "res://.//settings.cfg", data: "[settings]\nready=true\n" },
+      { path: "res:///.//scripts/player.gd", data: "class_name Player\n" },
       { path: "plain/resource.dat", data: "bytes" },
     ];
     await withReader(buildGodotPck(4, variedMembers), async (reader) => {
@@ -308,12 +321,14 @@ describe("GodotPckArtifactReader member paths and extraction", () => {
       expect(entries.map(({ sourcePath }) => sourcePath)).toEqual([
         "res:///scenes/main.gd",
         "res://./config.cfg",
-        "res:////scripts/player.gd",
+        "res://.//settings.cfg",
+        "res:///.//scripts/player.gd",
         "plain/resource.dat",
       ]);
       expect(entries.map(({ path }) => path)).toEqual([
         "scenes/main.gd",
         "config.cfg",
+        "settings.cfg",
         "scripts/player.gd",
         "plain/resource.dat",
       ]);
