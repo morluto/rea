@@ -503,9 +503,15 @@ describe("zeroing the view", () => {
     const steps = readInitialLinearMemorySteps({
       dataSegments: image.dataSegments,
     });
-    expect(steps.next().done).toBe(false);
+    // Two segments of one copy chunk each yield twice; a 2 MiB view zeroed in
+    // 1 MiB chunks yields at least twice more.
+    let yields = 0;
     let step = steps.next();
-    while (!step.done) step = steps.next();
+    while (!step.done) {
+      yields++;
+      step = steps.next();
+    }
+    expect(yields).toBeGreaterThanOrEqual(4);
     const view = step.value.bytes;
     expect(view[0]).toBe(1);
     expect(view[(1 << 21) + 8]).toBe(2);
