@@ -1,7 +1,7 @@
 import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { symlink, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
@@ -212,6 +212,38 @@ goMcpTest.skipIf(process.platform === "win32")(
     expect(retried.isError).not.toBe(true);
   },
 );
+
+for (const targetKind of ["dangling", "directory"] as const) {
+  goMcpTest.skipIf(process.platform === "win32")(
+    `keeps a ${targetKind} symlink rejection without a resolved-file hint`,
+    async ({ go: { client } }) => {
+      const root = await createTestTempDirectory("rea-go-mcp-symlink-");
+      const target = join(root, "target");
+      const selected = join(root, "selected");
+      if (targetKind === "directory") await mkdir(target);
+      await symlink(target, selected);
+
+      const rejected = await client.callTool({
+        name: "inspect_go_binary",
+        arguments: { path: selected },
+      });
+      const diagnostic = parseMcpToolError(rejected).error;
+      expect(diagnostic).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_format",
+              message: expect.stringContaining(selected),
+            },
+          ],
+        },
+      });
+      expect(diagnostic.remediation.action).not.toContain(target);
+    },
+  );
+}
 
 goMcpTest(
   "preserves invalid embedded Go text bytes through MCP",
