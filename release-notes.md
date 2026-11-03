@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **objdump:** preserve unknown executable identity ([#8824](https://github.com/morluto/rea/issues/8824))
 * **kuna:** separate verification policy from analysis identity ([#8699](https://github.com/morluto/rea/issues/8699))
 * Strict clients that cached the previous full inspect_address_context output schema must refresh tools/list and accept the typed error field on unavailable facets.
 * **evidence:** validate native view parent predicates ([#8451](https://github.com/morluto/rea/issues/8451))
@@ -569,6 +570,7 @@
 * **native:** stop value traces at unconfirmed child cleanup ([#8576](https://github.com/morluto/rea/issues/8576)) ([f95bdbc](https://github.com/morluto/rea/commit/f95bdbce76fa538d9383a36c7dde0468078b42f4)), closes [#8371](https://github.com/morluto/rea/issues/8371)
 * **native:** use owned address grammar for coordinates ([a529146](https://github.com/morluto/rea/commit/a52914649a5debce3694f81d4bf4bcf9f889d1e6))
 * **native:** validate plist target identity ([bae84d1](https://github.com/morluto/rea/commit/bae84d1b937c4b3c053b54ad3a422fc4b9ca0362))
+* **objdump:** preserve unknown executable identity ([#8824](https://github.com/morluto/rea/issues/8824)) ([c3647ad](https://github.com/morluto/rea/commit/c3647ade1e557c4179a8b825a37e0c2193cd2526))
 * **outputs:** use neutral destination diagnostics ([#7949](https://github.com/morluto/rea/issues/7949)) ([0448f31](https://github.com/morluto/rea/commit/0448f318e6f713a2b61fb226dd1e411568c84a61))
 * **paths:** preserve native selections across launch and publication ([f2b4468](https://github.com/morluto/rea/commit/f2b4468183e0c1fdc6dbf196283c580213cc7d73))
 * **paths:** preserve native selections through analysis and removal ([68f2d67](https://github.com/morluto/rea/commit/68f2d67c56f283a750371c65fcd536af71ad2313))
