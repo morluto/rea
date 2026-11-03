@@ -182,26 +182,16 @@ const commentFacet = (
 ): Facet => {
   if (
     result?.ok === false &&
-    result.error instanceof AnalysisCapabilityUnavailableError
+    result.error instanceof AnalysisCapabilityUnavailableError &&
+    !result.error.retryable &&
+    result.error.remediationAction === undefined &&
+    result.error.continuingCallerGuidance?.remediationAction === undefined &&
+    entry !== undefined
   ) {
-    if (
-      result.error.retryable ||
-      result.error.remediationAction !== undefined
-    ) {
-      const projected = projectAnalysisError(result.error);
-      return {
-        state: "unavailable",
-        reason: result.error.userMessage ?? result.error.message,
-        remediation: projected.remediation.action,
-      };
-    }
     return {
       state: "unavailable",
       reason: result.error.message,
-      remediation:
-        entry === undefined
-          ? "Review provider availability in binary_session and select another supported provider if appropriate."
-          : `If analyze_function is available for this same document, call it with ${JSON.stringify({ procedure: entry })}; use its summary's parent_evidence_id with inspect_analysis_view's native comments facet. Check facet availability, pagination, and the exact requested address; an omitted comment does not establish absence.`,
+      remediation: `If analyze_function is available for this same document, call it with ${JSON.stringify({ procedure: entry })}; use its summary's parent_evidence_id with inspect_analysis_view's native comments facet. Check facet availability, pagination, and the exact requested address; an omitted comment does not establish absence.`,
     };
   }
   return facet(result, operation);
@@ -219,6 +209,19 @@ const unavailableFacet = (
   error: AnalysisError | undefined,
   operation: AnalysisOperation,
 ): Facet => {
+  if (error instanceof AnalysisCapabilityUnavailableError) {
+    const projected = projectAnalysisError(error);
+    return {
+      state: "unavailable",
+      reason: error.userMessage ?? error.message,
+      remediation:
+        error.retryable ||
+        error.remediationAction !== undefined ||
+        error.continuingCallerGuidance?.remediationAction !== undefined
+          ? projected.remediation.action
+          : "Review provider availability in binary_session and select another supported provider if appropriate.",
+    };
+  }
   if (error instanceof AnalysisInputError) {
     const projected = projectAnalysisError(error);
     if (projected.code === "invalid_request")

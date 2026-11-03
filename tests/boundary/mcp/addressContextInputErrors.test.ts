@@ -25,6 +25,17 @@ it.each(["compact", "full"] as const)(
     await writeFile(target, Buffer.from([0xb8, 0x00, 0x4c, 0xcd, 0x21]));
     const session = createTestBinarySession(() => ({
       execute: async (operation, parameters) => {
+        if (
+          operation === "resolve_containing_procedure" &&
+          parameters.address === "0x404000"
+        )
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              operation,
+              "not supported",
+            ),
+          );
         if (operation === "comment" && parameters.address === "0x403000")
           return err(
             new AnalysisCapabilityUnavailableError(
@@ -139,6 +150,18 @@ it.each(["compact", "full"] as const)(
       expect(transientResult.comment).toMatchObject({
         state: "unavailable",
         remediation: "Wait for the fixture to become ready.",
+      });
+      const unsupportedProcedure = await client.callTool({
+        name: "inspect_address_context",
+        arguments: { address: "0x404000", document: "fixture" },
+      });
+      const unsupportedResult = contract.outputSchema.parse(
+        unsupportedProcedure.structuredContent,
+      ).result;
+      expect(unsupportedResult.procedure).toMatchObject({
+        state: "unavailable",
+        remediation:
+          "Review provider availability in binary_session and select another supported provider if appropriate.",
       });
     } finally {
       await client.close();
