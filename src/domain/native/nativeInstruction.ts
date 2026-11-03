@@ -72,7 +72,12 @@ export const nativeInstructionSchema = z.strictObject({
   containing_data: z
     .strictObject({
       address: z.string().min(1),
-      length: z.int().positive(),
+      length: z
+        .int()
+        .positive()
+        .describe(
+          "Observed object length in bytes; a dynamic type may not have a fixed size.",
+        ),
       type_id: z.string().min(1),
       provenance: z.string().min(1),
     })
