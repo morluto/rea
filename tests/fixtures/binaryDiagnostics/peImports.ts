@@ -31,6 +31,7 @@ export const peImportImage = (
     readonly dlls?: readonly PeImportFixtureDll[];
     readonly delayDlls?: readonly PeImportFixtureDll[];
     readonly delayAttributes?: number;
+    readonly delayVirtualAddresses?: boolean;
     readonly importDirectory?: boolean;
     readonly delayDirectory?: boolean;
     readonly sectionBytes?: number;
@@ -51,6 +52,9 @@ export const peImportImage = (
   const delayDlls = options.delayDlls ?? [];
   const bytes = Buffer.alloc(SECTION_OFFSET + sectionBytes);
   const wide = bits === 64;
+  if (wide && options.delayVirtualAddresses)
+    throw new Error("Legacy delay VAs require PE32");
+  const delayBase = options.delayVirtualAddresses ? 0x10000000 : 0;
   const thunkSize = wide ? 8 : 4;
   bytes.write("MZ", 0, "ascii");
   bytes.writeUInt32LE(128, 60);
@@ -108,6 +112,7 @@ export const peImportImage = (
 
   const writeFunctions = (
     functions: readonly PeImportFixtureFunction[],
+    addressBase = 0,
   ): { readonly ilt: number; readonly iat: number } => {
     const ilt = place((functions.length + 1) * thunkSize);
     const iat = place((functions.length + 1) * thunkSize);
@@ -120,7 +125,7 @@ export const peImportImage = (
         const hintName = place(2 + entry.name.length + 1);
         bytes.writeUInt16LE(entry.hint ?? 0, at(hintName));
         bytes.write(`${entry.name}\0`, at(hintName) + 2, "latin1");
-        thunk = BigInt(hintName);
+        thunk = BigInt(hintName + addressBase);
       }
       writeThunk(ilt + index * thunkSize, thunk);
       writeThunk(iat + index * thunkSize, thunk);
@@ -139,14 +144,17 @@ export const peImportImage = (
   });
 
   delayDlls.slice(0, delayCount).forEach((dll, index) => {
-    const { ilt, iat } = writeFunctions(dll.functions);
+    const { ilt, iat } = writeFunctions(dll.functions, delayBase);
     const nameRva = place(dll.name.length + 1);
     bytes.write(`${dll.name}\0`, at(nameRva), "latin1");
     const descriptor = at(delayTable + index * 32);
-    bytes.writeUInt32LE(options.delayAttributes ?? 1, descriptor);
-    bytes.writeUInt32LE(nameRva, descriptor + 4);
-    bytes.writeUInt32LE(iat, descriptor + 12);
-    bytes.writeUInt32LE(ilt, descriptor + 16);
+    bytes.writeUInt32LE(
+      options.delayAttributes ?? (options.delayVirtualAddresses ? 0 : 1),
+      descriptor,
+    );
+    bytes.writeUInt32LE(nameRva + delayBase, descriptor + 4);
+    bytes.writeUInt32LE(iat + delayBase, descriptor + 12);
+    bytes.writeUInt32LE(ilt + delayBase, descriptor + 16);
   });
 
   if (options.splitAt === undefined) return bytes;

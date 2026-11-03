@@ -530,7 +530,7 @@ it("computes a pefile import hash for oleaut32 ordinal names", async () => {
   expect(report.imphash.md5).toBe("3dc76082b322e4bf41120e4657c7f5c6");
 });
 
-it("records delay-load virtual-address descriptors as unsupported", async () => {
+it("records PE32+ delay-load virtual-address descriptors as unsupported", async () => {
   const bytes = peImportImage({
     delayDlls: [
       {
@@ -694,3 +694,112 @@ it.each(["function", "DLL"])(
     expect(report.imphash.reason).toMatch(/mapping|compatibility/u);
   },
 );
+
+const legacyDelayImage = () =>
+  peImportImage({
+    bits: 32,
+    delayVirtualAddresses: true,
+    delayDlls: [
+      {
+        name: "ADVAPI32.dll",
+        functions: [{ name: "RegOpenKeyExW", hint: 7 }, { ordinal: 12 }],
+      },
+    ],
+  });
+const legacyDescriptorOffset = (bytes: Buffer) =>
+  peImportFixtureOffset(bytes.readUInt32LE(152 + 96 + 13 * 8));
+
+it("decodes PE32 delay VAs into RVAs while preserving raw thunks and standard imports", async () => {
+  const bytes = legacyDelayImage();
+  const at = legacyDescriptorOffset(bytes);
+  const base = 0x10000000;
+  for (const offset of [8, 20, 24])
+    bytes.writeUInt32LE(base + 0x1700 + offset, at + offset);
+  const report = peImportsSchema.parse(await parse(bytes));
+  const dll = report.delay_imports[0];
+  expect(dll).toMatchObject({
+    name: "ADVAPI32.dll",
+    attributes: 0,
+    name_rva: bytes.readUInt32LE(at + 4) - base,
+    import_address_table_rva: bytes.readUInt32LE(at + 12) - base,
+    import_name_table_rva: bytes.readUInt32LE(at + 16) - base,
+    module_handle_rva: 0x1708,
+    bound_import_rva: 0x1714,
+    unload_information_table_rva: 0x1718,
+    location: { offset: at, bytes: 32 },
+  });
+  const intRva = bytes.readUInt32LE(at + 16) - base;
+  expect(dll?.functions).toMatchObject([
+    {
+      name: "RegOpenKeyExW",
+      hint: 7,
+      ordinal: null,
+      ilt_rva: intRva,
+      thunk_hex: bytes.readUInt32LE(peImportFixtureOffset(intRva)).toString(16),
+    },
+    { name: null, ordinal: 12, thunk_hex: "8000000c" },
+  ]);
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    imports: 2,
+    delay_imports: 2,
+  });
+  expect(report.imphash.md5).toBe("92cef6cc91a85825f3c8a0516517c66f");
+});
+
+it.each([4, 8, 12, 16, 20, 24])(
+  "does not wrap a legacy descriptor VA below the image base at field %s",
+  async (field) => {
+    const bytes = legacyDelayImage();
+    bytes.writeUInt32LE(0x1000, legacyDescriptorOffset(bytes) + field);
+    const report = await parse(bytes);
+    expect(report.delay_imports).toEqual([]);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_entry",
+        message: expect.stringContaining("below the image base"),
+      }),
+    );
+    expect(report.imphash.md5).toBe("92cef6cc91a85825f3c8a0516517c66f");
+  },
+);
+
+it("retains ordinal imports after an invalid legacy named thunk", async () => {
+  const bytes = legacyDelayImage();
+  const intRva =
+    bytes.readUInt32LE(legacyDescriptorOffset(bytes) + 16) - 0x10000000;
+  bytes.writeUInt32LE(0x1000, peImportFixtureOffset(intRva));
+  const report = await parse(bytes);
+  expect(report.delay_imports[0]?.functions).toMatchObject([{ ordinal: 12 }]);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.issues[0]).toMatchObject({
+    code: "malformed_entry",
+    location: "0x1000",
+  });
+});
+
+it.each([12, 16])(
+  "preserves missing legacy table fields at offset %s",
+  async (field) => {
+    const bytes = legacyDelayImage();
+    bytes.writeUInt32LE(0, legacyDescriptorOffset(bytes) + field);
+    const report = await parse(bytes);
+    expect(report.delay_imports[0]).toMatchObject({
+      name: "ADVAPI32.dll",
+      functions: [],
+      module_handle_rva: 0,
+      bound_import_rva: 0,
+      unload_information_table_rva: 0,
+    });
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues[0]?.code).toBe("malformed_entry");
+  },
+);
+
+it("charges decoded legacy thunks against the shared function budget", async () => {
+  const bytes = legacyDelayImage();
+  await expect(
+    parsePeImports(bytes, artifact(bytes), { ...input, max_functions: 3 }),
+  ).rejects.toThrow(PeImportLimitFailure);
+});
