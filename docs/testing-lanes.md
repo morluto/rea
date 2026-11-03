@@ -421,7 +421,10 @@ the first cold pseudocode answer comes from a single-function run or an export
 that already finished, assembly waits for and serves from that export, and
 pseudocode and both dossier facets match their recorded file spans and digests,
 a fresh server reuses the export without rebuilding it, staging is empty after
-a completed export, and no owned process survives. Pass
+a completed export, and no owned process survives. A separate forced 1 ms
+project deadline checks that a timed-out inventory recommends raising the
+project deadline without changing jobs; a fresh server retries with 60 seconds
+and the same two-worker setting. Pass
 `--targets DIR --functions a,b` to add caller-built binaries laid out as
 `DIR/<flavor>/<name>` beside `<name>.stripped`; addresses come from the
 symbol-bearing build. `--compare-ghidra` with `GHIDRA_INSTALL_DIR` runs those
@@ -1108,13 +1111,13 @@ coverage limits.
 ### Offline binary layout
 
 `npm run verify:binary:layout` requires Linux x64, GCC/binutils, the
-`i686-linux-gnu`, `arm-linux-gnueabi`, `mips-linux-gnu` and `mipsel-linux-gnu`
-cross `gcc`/`readelf` toolchains, absolute
+`aarch64-linux-gnu`, `i686-linux-gnu`, `arm-linux-gnueabi`, `mips-linux-gnu` and
+`mipsel-linux-gnu` cross `gcc`/`readelf` toolchains, absolute
 `REA_PWNTOOLS_PYTHON` with pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2 and
 absolute `REA_VERIFY_STRACE_COMMAND`. It compiles ephemeral source-owned ELF
 fixtures and checks public CLI/MCP, lossless addresses/names, file ranges,
 mitigation inferences, malformed/unsupported input, original file hashes and
-released process ownership. Cross-compiled ELF32 executables and relocatable
+released process ownership. Cross-compiled ELF64 AArch64 and ELF32 executables and relocatable
 objects check the reported class, machine and byte order, and every section
 name, address, offset and size against GNU `readelf`. Exec syscall tracing must identify only the declared
 Node/Python launchers; no target binary is executed. Core/debugger claims need

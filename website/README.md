@@ -486,10 +486,66 @@ The mask SVG is drawn from the seventh decoded mask. It selects zero-based
 position 21 and compares its character code with 55 (`7`). Keep the figure,
 solver constants and evidence notes aligned when changing this case.
 
+## Agent discovery and Markdown
+
+`scripts/website_agents.py` runs during asset preparation, after translations.
+It generates these public files in ignored `_site/`:
+
+- `.well-known/agent-skills/index.json`: the draft v0.2.0 skills discovery index.
+  Its archive contains the maintained
+  `.agents/skills/reverse-engineer-anything/SKILL.md` and Markdown references.
+  The name and description come from YAML frontmatter; SHA-256 covers the
+  complete, reproducible ZIP, so reference changes invalidate the digest too.
+- `.well-known/ard.json`: an ARD manifest with representative analyst queries.
+- `.well-known/ai-catalog.json`: an AI Catalog 1.0 document listing that same
+  downloadable skill. These advertise installation instructions for the local
+  tool, without claiming a hosted analysis endpoint.
+- `index.md` beside each indexable rendered reading page, including translations.
+  Markdown retains code, evidence disclosures and image descriptions, with
+  absolute resource links. Drafts, labeled English fallbacks and target example
+  applications retain their HTML and indexing policy.
+
+The [skills discovery draft](https://github.com/cloudflare/agent-skills-discovery-rfc),
+[ARD proposal](https://agenticresourcediscovery.org/spec/) and
+[AI Catalog proposal](https://ai-catalog.io/) are evolving formats. ARD v0.91
+uses `ard.json` and `rel="ard"`; AI Catalog uses its separate `ai-catalog.json`
+envelope. Both entries point to the same ZIP with the registered
+`application/zip` media type.
+
+Cloudflare's Worker selects Markdown when an explicit `Accept: text/markdown`
+has higher quality than HTML. HTML wins ties and remains the default. Successful
+reading-page responses include `Vary: Accept` and an alternate Markdown Link;
+Markdown uses `Content-Type: text/markdown; charset=utf-8`. Static `_headers`
+advertises discovery resources, sets discovery CORS to `*`, and supplies MIME
+types. Build-generated HTML `<link>` elements also advertise these resources.
+
+GitHub Pages and the Python preview serve the same files and HTML links, with
+direct Markdown URLs such as `guides/javascript/index.md`. They do not execute
+the Worker or apply Cloudflare's `_headers`: content negotiation, custom MIME
+overrides and discovery CORS headers are Cloudflare behavior. The publish
+workflow packages `.well-known` explicitly because `upload-pages-artifact`
+excludes dot directories by default.
+
+`python3 scripts/website.py check` includes artifact/content regressions and
+Worker request-contract tests. To check the actual local Cloudflare runtime
+after preparing assets, use the repository's pinned Node.js and Wrangler:
+
+```sh
+npx wrangler@4.149.0 dev --cwd website --env production --local
+curl -i -H 'Accept: text/markdown' http://localhost:8787/guides/javascript/
+curl -I http://localhost:8787/.well-known/agent-skills/index.json
+```
+
+The `production` environment here skips the preview build and uses the already
+verified artifact; `--local` runs on your machine. Check HTML and Markdown,
+GET and HEAD, discovery CORS, the downloaded ZIP digest, and unknown routes.
+Production remains published only by the manual website workflow.
+
 ## Cloudflare Workers
 
 `wrangler.toml` serves `website/_site/` through Workers Static Assets. There is
-no Worker script or frontend framework. Before a preview or deployment, Wrangler
+one small Worker (`worker.mjs`) for Markdown content negotiation and no frontend
+framework. Before a preview or deployment, Wrangler
 runs the Python scripts to build the language editions, prepare the example ZIP and verify the
 website. Node.js and Python 3 must be available; the commands below use a pinned
 Wrangler version without adding it to REA's package dependencies.

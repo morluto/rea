@@ -10,6 +10,7 @@ import {
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { NoBinaryOpenError } from "../domain/configurationErrors.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
@@ -104,10 +105,20 @@ export class ToolResultDelivery {
       selected?: JsonValue,
       viewSource?: JsonValue,
     ) => Readonly<Record<string, JsonValue>> = () => ({}),
+    private readonly noTargetRecovery?: string,
   ) {
     this.maximumResponseBytes = maximumResponseBytes;
     this.resultBudgetBytes = maximumResponseBytes - 1024;
     Object.freeze(this);
+  }
+
+  /** Bind scope-specific recovery without mutating a shared delivery policy. */
+  withNoTargetRecovery(recovery: string): ToolResultDelivery {
+    return new ToolResultDelivery(
+      this.maximumResponseBytes,
+      this.nativeContinuation,
+      recovery,
+    );
   }
 
   /** Serialize a plain application result or its actionable error. */
@@ -184,10 +195,20 @@ export class ToolResultDelivery {
     error: AnalysisError,
     targetContent: boolean,
   ): CallToolResult {
-    return this.projectedErrorResult(
-      projectAnalysisError(error),
-      targetContent,
-    );
+    const projected = projectAnalysisError(error);
+    if (
+      error instanceof NoBinaryOpenError &&
+      this.noTargetRecovery !== undefined
+    )
+      return this.projectedErrorResult(
+        {
+          ...projected,
+          message: this.noTargetRecovery,
+          remediation: { action: this.noTargetRecovery },
+        },
+        targetContent,
+      );
+    return this.projectedErrorResult(projected, targetContent);
   }
 
   /** Retain valid partial Evidence and reference it only after recording succeeds. */
