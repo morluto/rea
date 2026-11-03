@@ -133,9 +133,9 @@ it.skipIf(process.platform === "win32")(
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toBeInstanceOf(AnalysisInputError);
-      expect(projectAnalysisError(result.error).remediation.action).toContain(
-        original,
-      );
+      const projected = projectAnalysisError(result.error);
+      expect(projected.remediation.action).toContain(original);
+      expect(projected).not.toHaveProperty("recovery");
     }
   },
 );

@@ -197,13 +197,15 @@ goMcpTest.skipIf(process.platform === "win32")(
       name: "inspect_go_binary",
       arguments: { path: selected },
     });
-    expect(parseMcpToolError(rejected).error).toMatchObject({
+    const diagnostic = parseMcpToolError(rejected).error;
+    expect(diagnostic).toMatchObject({
       code: "invalid_request",
       details: {
         issues: [{ path: ["path"], reason: "invalid_format" }],
       },
       remediation: { action: expect.stringContaining(original) },
     });
+    expect(diagnostic).not.toHaveProperty("recovery");
 
     const retried = await client.callTool({
       name: "inspect_go_binary",

@@ -121,6 +121,7 @@ const failureForPrimary = (
             ? {}
             : {
                 remediationAction: `Retry with the resolved regular file path ${cause.resolvedPath}. The selected symlink is not admitted; the retry will validate the target again.`,
+                conformsToInputContract: true,
               }),
         },
         [{ path: ["path"], reason: "invalid_format", message: cause.message }],
