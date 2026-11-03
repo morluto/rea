@@ -1220,7 +1220,12 @@ const projectPrimarySessionError = (
   )
     return new AnalysisInputError(
       operation,
-      { ...context, userMessage: failure.message },
+      {
+        ...context,
+        userMessage: failure.message,
+        remediationAction:
+          "Correct the pattern using the reported Ghidra regex syntax error, or select mode literal to search for the text literally, then retry.",
+      },
       [
         {
           path: ["pattern"],

@@ -35,12 +35,20 @@ it.each(["compact", "full"] as const)(
           name: operation,
           arguments: { pattern: "[", mode: "regex" },
         });
-        expect(parseMcpToolError(rejected).error).toMatchObject({
+        const error = parseMcpToolError(rejected).error;
+        expect(error).toMatchObject({
           code: "invalid_request",
           message,
+          remediation: {
+            action: expect.stringMatching(/pattern.*mode literal/u),
+          },
           details: {
             issues: [{ path: ["pattern"], reason: "invalid_format", message }],
           },
+        });
+        expect(error.recovery).toMatchObject({
+          kind: "inspect_input_contract",
+          operation,
         });
         const corrected = await harness.mcp.callTool({
           name: operation,
