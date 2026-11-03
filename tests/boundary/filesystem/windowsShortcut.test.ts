@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createWindowsShortcutService } from "../../../src/composition/binaryDiagnostics.js";
 import { WindowsShortcutProvider } from "../../../src/native/windows/WindowsShortcutProvider.js";
-import { powershellHiddenIconSpoofShortcut } from "../../fixtures/binaryDiagnostics/windowsShortcut.js";
+import {
+  powershellHiddenIconSpoofShortcut,
+  windowsShortcutBytes,
+} from "../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 // The input schema admits Windows path forms only on a Windows host, so these
@@ -107,6 +110,21 @@ describe("Windows shortcut stable filesystem boundary", () => {
       expect(result.ok).toBe(true);
     },
   );
+
+  it("keeps a partial report when a LinkInfo offset points past the file", async () => {
+    const root = await createTestTempDirectory("rea-windows-shortcut-offset-");
+    const path = join(root, "shortcut.lnk");
+    const bytes = windowsShortcutBytes({ idList: null });
+    // LocalBasePathOffset sits 16 bytes into LinkInfo, which follows the header.
+    bytes.writeUInt32LE(0xffffffff, 76 + 16);
+    await writeFile(path, bytes);
+    const result = await createWindowsShortcutService().inspect({ path });
+    if (!result.ok) throw result.error;
+    expect(result.value.normalized_result).toMatchObject({
+      header: { header_size: 76 },
+      coverage: { status: "partial", failing_offset: 92 },
+    });
+  });
 
   it("returns typed resource and cancellation failures", async () => {
     const root = await createTestTempDirectory("rea-windows-shortcut-budget-");

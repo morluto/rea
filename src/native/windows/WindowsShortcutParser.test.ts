@@ -151,6 +151,27 @@ it("reports truncated StringData as partial coverage with a failing offset", asy
   expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
 });
 
+it.each([12, 16, 20, 24, 28, 32])(
+  "points an out-of-range LinkInfo offset at its field at byte %i",
+  async (field) => {
+    const bytes = windowsShortcutBytes({
+      idList: null,
+      linkInfo: {
+        localBasePath: "C:\\target.exe",
+        netName: "\\\\server\\share",
+      },
+    });
+    bytes.writeUInt32LE(0xffffffff, 76 + field);
+    const report = await parse(bytes);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.coverage.failing_offset).toBe(76 + field);
+    expect(report.issues.every((issue) => issue.offset < bytes.length)).toBe(
+      true,
+    );
+    expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
+  },
+);
+
 it("lists an unknown ExtraData signature instead of dropping it", async () => {
   const report = await parse(unknownExtraDataShortcut());
   expect(report.extra_data.blocks).toEqual(

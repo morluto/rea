@@ -470,6 +470,7 @@ const readAnsiAt = (
   view: Buffer,
   base: number,
   offset: number,
+  field: number,
   walk: Walk,
 ): string | null => {
   if (offset === 0) return null;
@@ -477,7 +478,7 @@ const readAnsiAt = (
     note(
       walk,
       "malformed_structure",
-      base + offset,
+      base + field,
       "ANSI string offset is outside LinkInfo",
     );
     return null;
@@ -501,6 +502,7 @@ const readUtf16At = (
   view: Buffer,
   base: number,
   offset: number,
+  field: number,
   walk: Walk,
 ): string | null => {
   if (offset === 0) return null;
@@ -508,7 +510,7 @@ const readUtf16At = (
     note(
       walk,
       "malformed_structure",
-      base + offset,
+      base + field,
       "Unicode string offset is outside LinkInfo",
     );
     return null;
@@ -532,11 +534,17 @@ const parseVolume = (
   view: Buffer,
   base: number,
   offset: number,
+  field: number,
   walk: Walk,
 ): NonNullable<WindowsShortcut["link_info"]>["volume"] => {
   if (offset === 0) return null;
   if (!fits(view, offset, 16)) {
-    note(walk, "truncated", base + offset, "VolumeID is truncated");
+    note(
+      walk,
+      "truncated",
+      offset < view.length ? base + offset : base + field,
+      "VolumeID is truncated",
+    );
     return null;
   }
   const size = view.readUInt32LE(offset);
@@ -566,10 +574,10 @@ const parseVolume = (
     serial: volume.readUInt32LE(8).toString(16).toUpperCase().padStart(8, "0"),
     label: hasUnicodeLabel
       ? null
-      : readAnsiAt(volume, base + offset, labelOffset, walk),
+      : readAnsiAt(volume, base + offset, labelOffset, 12, walk),
     label_unicode:
       hasUnicodeLabel && size >= 20
-        ? readUtf16At(volume, base + offset, volume.readUInt32LE(16), walk)
+        ? readUtf16At(volume, base + offset, volume.readUInt32LE(16), 16, walk)
         : null,
   };
 };
@@ -578,6 +586,7 @@ const parseNetwork = (
   view: Buffer,
   base: number,
   offset: number,
+  field: number,
   walk: Walk,
 ): NonNullable<
   WindowsShortcut["link_info"]
@@ -587,7 +596,7 @@ const parseNetwork = (
     note(
       walk,
       "truncated",
-      base + offset,
+      offset < view.length ? base + offset : base + field,
       "CommonNetworkRelativeLink is truncated",
     );
     return null;
@@ -609,18 +618,20 @@ const parseNetwork = (
   const netNameOffsetUnicode = unicode ? block.readUInt32LE(20) : 0;
   const deviceNameOffsetUnicode = unicode ? block.readUInt32LE(24) : 0;
   return {
-    net_name: readAnsiAt(block, base + offset, netNameOffset, walk),
+    net_name: readAnsiAt(block, base + offset, netNameOffset, 8, walk),
     net_name_unicode: readUtf16At(
       block,
       base + offset,
       netNameOffsetUnicode,
+      20,
       walk,
     ),
-    device_name: readAnsiAt(block, base + offset, deviceNameOffset, walk),
+    device_name: readAnsiAt(block, base + offset, deviceNameOffset, 12, walk),
     device_name_unicode: readUtf16At(
       block,
       base + offset,
       deviceNameOffsetUnicode,
+      24,
       walk,
     ),
     network_provider_type:
@@ -674,25 +685,26 @@ const parseLinkInfo = (
     },
     volume:
       (flags & 0x1) !== 0
-        ? parseVolume(view, walk.offset, volumeOffset, walk)
+        ? parseVolume(view, walk.offset, volumeOffset, 12, walk)
         : null,
     local_base_path:
       (flags & 0x1) !== 0
-        ? readAnsiAt(view, walk.offset, localOffset, walk)
+        ? readAnsiAt(view, walk.offset, localOffset, 16, walk)
         : null,
     local_base_path_unicode:
       (flags & 0x1) !== 0
-        ? readUtf16At(view, walk.offset, localUnicodeOffset, walk)
+        ? readUtf16At(view, walk.offset, localUnicodeOffset, 28, walk)
         : null,
     common_network_relative_link:
       (flags & 0x2) !== 0
-        ? parseNetwork(view, walk.offset, networkOffset, walk)
+        ? parseNetwork(view, walk.offset, networkOffset, 20, walk)
         : null,
-    common_path_suffix: readAnsiAt(view, walk.offset, suffixOffset, walk),
+    common_path_suffix: readAnsiAt(view, walk.offset, suffixOffset, 24, walk),
     common_path_suffix_unicode: readUtf16At(
       view,
       walk.offset,
       suffixUnicodeOffset,
+      32,
       walk,
     ),
   };
