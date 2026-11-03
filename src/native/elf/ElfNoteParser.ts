@@ -434,9 +434,9 @@ const decodeCoreFile = (
     const nullIdx = descriptor.indexOf(0, strPos);
     if (nullIdx < 0) return null;
     const pathBuf = descriptor.subarray(strPos, nullIdx);
+    chargeText(text, pathBuf.length * 3);
     const path = pathBuf.toString("latin1");
     const path_hex = pathBuf.toString("hex");
-    chargeText(text, pathBuf.length);
     strPos = nullIdx + 1;
     const raw = rawMappings[i];
     if (raw === undefined) return null;
@@ -514,6 +514,9 @@ const decodeCoreAuxv = (
     const aType = Number(readWord(off));
     if (aType === 0) {
       terminated = true;
+      for (let j = off + entrySize; j < descriptor.length; j++) {
+        if (descriptor[j] !== 0) return null;
+      }
       break;
     }
     const aVal = readWord(off + wordSize);

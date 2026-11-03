@@ -54,7 +54,7 @@ the image never carried notes in another container or overlay.
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 32 note entries are examined by default across every table. Retained note
-names, section names, and GNU descriptor text share a scan budget based on
+names, section names, GNU descriptor text, and core dump string representations share a scan budget based on
 the source bytes plus any decoded section-name table, capped at
 `max_file_bytes`. The raw source and decoded table must also fit together
 within that ceiling. If admission fails, the error reports the required
