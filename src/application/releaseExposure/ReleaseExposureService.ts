@@ -828,6 +828,11 @@ const GO_FLAG_PATH =
 const GO_COMPILER_SETTING = /^(?:CGO_[A-Z]+FLAGS|-gccgoflags)$/u;
 const GO_COMPILER_PATH_FLAG =
   /^-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT])=?\s*(.*)$/su;
+/**
+ * Linker options a C compiler forwards through `-Wl,a,b` or `-Xlinker a`. The
+ * linker reads its own letters: `-L` and `-T` take a path, `-Bstatic` does not.
+ */
+const LINKER_PATH_FLAG = /^(?:-[LT]|--(?:library-path|script)(?==|$))=?(.*)$/su;
 /** `go tool link` takes a library directory as `-L dir` or `-L=dir`, never attached. */
 const GO_LINKER_PATH_FLAG = /^-{1,2}L(?:=|\s+|$)(.*)$/su;
 /** The options `go tool compile -h` documents as taking a directory, path or file. */
@@ -902,10 +907,29 @@ const goRelativeFlagPaths = (flags: string[], pathFlag: RegExp): string[] =>
       : [argument];
   });
 
+/** A C compiler's own flags, apart from the options it forwards to the linker. */
+const splitForwardedLinkerFlags = (
+  flags: string[],
+): { compiler: string[]; linker: string[] } => {
+  const compiler: string[] = [];
+  const linker: string[] = [];
+  for (const [index, flag] of flags.entries()) {
+    if (index > 0 && flags[index - 1] === "-Xlinker") linker.push(flag);
+    else if (flag.startsWith("-Wl,")) linker.push(...flag.slice(4).split(","));
+    else compiler.push(flag);
+  }
+  return { compiler, linker };
+};
+
 /** Relative paths in the settings that take a path flag. */
 const goSettingRelativePaths = (key: string, value: string): string[] => {
-  if (GO_COMPILER_SETTING.test(key))
-    return goRelativeFlagPaths(goFlags(value), GO_COMPILER_PATH_FLAG);
+  if (GO_COMPILER_SETTING.test(key)) {
+    const { compiler, linker } = splitForwardedLinkerFlags(goFlags(value));
+    return [
+      ...goRelativeFlagPaths(compiler, GO_COMPILER_PATH_FLAG),
+      ...goRelativeFlagPaths(linker, LINKER_PATH_FLAG),
+    ];
+  }
   const pathFlag = GO_TOOL_PATH_FLAGS.get(key);
   return pathFlag === undefined
     ? []

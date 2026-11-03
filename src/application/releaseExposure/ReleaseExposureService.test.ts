@@ -1428,6 +1428,35 @@ describe("ReleaseExposureService Go relative flag paths", () => {
     ]);
   });
 
+  it.each([
+    ["-Wl,-L,private-sdk -lssl", "private-sdk"],
+    ["-Wl,-Lprivate-sdk", "private-sdk"],
+    ["-Wl,--library-path=private-sdk", "private-sdk"],
+    ["-Wl,-T,link.ld", "link.ld"],
+    ["-Xlinker -L -Xlinker private-sdk", "private-sdk"],
+  ])(
+    "keeps the relative path a compiler forwards in %s",
+    async (value, path) => {
+      const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.status).toBe("exposed");
+      expect(check?.observation.samples).toEqual([path]);
+    },
+  );
+
+  it("does not read forwarded linker switches as paths", async () => {
+    const report = await goReport(
+      goModule([
+        {
+          key: "CGO_LDFLAGS",
+          value: "-Wl,-Bstatic,-lssl,-Bdynamic -Xlinker -Bsymbolic",
+        },
+      ]),
+    );
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("not_observed");
+  });
+
   it("does not read Go linker arguments as relative paths", async () => {
     const report = await goReport(
       goModule([{ key: "-ldflags", value: "-B gobuildid -T 0x1000 -s -w" }]),
