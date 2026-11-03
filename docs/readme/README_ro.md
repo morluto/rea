@@ -20,6 +20,8 @@
 
 **[Site web](https://rea.tools/) · [Ghiduri](https://rea.tools/guides/) · [Studii de caz](https://rea.tools/showcase/)**
 
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Alătură-te comunității REA pe Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
 [Pornire rapidă](#pornire-rapidă) · [Cum funcționează REA](#cum-funcționează-rea) · [Ce poți analiza](#ce-poți-analiza) · [Studii de caz](#studii-de-caz) · [Construiește medii RL](#build-rl-environments) · [Întrebări frecvente](#întrebări-frecvente) · [Documentație](#documentație)
 
 <code>npx rea-agents setup</code>

@@ -19,6 +19,8 @@
 
 **[Ιστότοπος](https://rea.tools/) · [Οδηγοί](https://rea.tools/guides/) · [Μελέτες περίπτωσης](https://rea.tools/showcase/)**
 
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Έλα στην κοινότητα REA στο Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
 [Γρήγορη εκκίνηση](#γρήγορη-εκκίνηση) · [Πώς λειτουργεί το REA](#πώς-λειτουργεί-το-rea) · [Τι μπορείς να αναλύσεις](#τι-μπορείς-να-αναλύσεις) · [Μελέτες περίπτωσης](#μελέτες-περίπτωσης) · [Δημιουργία περιβαλλόντων RL](#build-rl-environments) · [Συχνές ερωτήσεις](#συχνές-ερωτήσεις) · [Τεκμηρίωση](#τεκμηρίωση)
 
 <code>npx rea-agents setup</code>
