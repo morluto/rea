@@ -8,6 +8,10 @@ import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.j
 import {
   compressedElfNoteFixture,
   compressedElfNoteSectionFixture,
+  coreAuxvNote,
+  coreFileNote,
+  corePrpsinfoNote,
+  coreSiginfoNote,
   elfNote,
   elfNoteFixture,
   elfNoteTablePastEnd,
@@ -702,3 +706,259 @@ it.each([
     }
   },
 );
+
+it("decodes Linux core dump notes (NT_PRPSINFO, NT_FILE, NT_SIGINFO, NT_AUXV) for 64-bit little-endian", () => {
+  const notes = Buffer.concat([
+    corePrpsinfoNote({
+      bits: 64,
+      little: true,
+      state: 0,
+      sname: "R",
+      pid: 4242,
+      ppid: 1,
+      pgrp: 4242,
+      sid: 4242,
+      uid: 1001,
+      gid: 1002,
+      fname: "test-proc",
+      psargs: "/usr/bin/test-proc --daemon -v",
+    }),
+    coreFileNote(
+      [
+        {
+          start: 0x400000n,
+          end: 0x405000n,
+          file_ofs: 0n,
+          path: "/usr/bin/test-proc",
+        },
+        {
+          start: 0x7fff0000n,
+          end: 0x7fff2000n,
+          file_ofs: 10n,
+          path: "/lib/x86_64-linux-gnu/libc.so.6",
+        },
+      ],
+      4096,
+      64,
+      true,
+    ),
+    coreSiginfoNote(11, 1, 0, true), // SIGSEGV, SEGV_MAPERR
+    coreAuxvNote(
+      [
+        [6, 4096n], // AT_PAGESZ
+        [3, 0x400040n], // AT_PHDR
+        [9, 0x401000n], // AT_ENTRY
+        [999, 0x1234n], // Unknown auxv tag
+      ],
+      64,
+      true,
+    ),
+  ]);
+
+  const bytes = elfNoteFixture({
+    bits: 64,
+    little: true,
+    type: 4, // ET_CORE
+    ownership: "program",
+    notes,
+  });
+
+  const report = parse(bytes);
+  expect(report.entries).toHaveLength(4);
+
+  // 1. NT_PRPSINFO
+  expect(report.entries[0]).toMatchObject({
+    owner: "CORE",
+    type: 3,
+    type_name: "core_prpsinfo",
+    gnu: null,
+    core: {
+      prpsinfo: {
+        state: 0,
+        pid: 4242,
+        ppid: 1,
+        pgrp: 4242,
+        sid: 4242,
+        uid: 1001,
+        gid: 1002,
+        filename: "test-proc",
+        psargs: "/usr/bin/test-proc --daemon -v",
+      },
+      file: null,
+      siginfo: null,
+      auxv: null,
+    },
+  });
+
+  // 2. NT_FILE
+  expect(report.entries[1]).toMatchObject({
+    owner: "CORE",
+    type: 0x46494c45,
+    type_name: "core_file",
+    gnu: null,
+    core: {
+      prpsinfo: null,
+      file: {
+        count: 2,
+        page_size: 4096,
+        mappings: [
+          {
+            start_address: "0x400000",
+            end_address: "0x405000",
+            file_offset_pages: "0x0",
+            path: "/usr/bin/test-proc",
+          },
+          {
+            start_address: "0x7fff0000",
+            end_address: "0x7fff2000",
+            file_offset_pages: "0xa",
+            path: "/lib/x86_64-linux-gnu/libc.so.6",
+          },
+        ],
+      },
+      siginfo: null,
+      auxv: null,
+    },
+  });
+
+  // 3. NT_SIGINFO
+  expect(report.entries[2]).toMatchObject({
+    owner: "CORE",
+    type: 0x53494749,
+    type_name: "core_siginfo",
+    gnu: null,
+    core: {
+      prpsinfo: null,
+      file: null,
+      siginfo: {
+        signo: 11,
+        errno: 0,
+        code: 1,
+      },
+      auxv: null,
+    },
+  });
+
+  // 4. NT_AUXV
+  expect(report.entries[3]).toMatchObject({
+    owner: "CORE",
+    type: 6,
+    type_name: "core_auxv",
+    gnu: null,
+    core: {
+      prpsinfo: null,
+      file: null,
+      siginfo: null,
+      auxv: [
+        { type: 6, type_name: "AT_PAGESZ", value: "0x1000" },
+        { type: 3, type_name: "AT_PHDR", value: "0x400040" },
+        { type: 9, type_name: "AT_ENTRY", value: "0x401000" },
+        { type: 999, type_name: null, value: "0x1234" },
+      ],
+    },
+  });
+});
+
+it("decodes Linux core dump notes for 32-bit big-endian", () => {
+  const notes = Buffer.concat([
+    corePrpsinfoNote({
+      bits: 32,
+      little: false,
+      state: 1,
+      pid: 123,
+      ppid: 1,
+      pgrp: 123,
+      sid: 123,
+      uid: 500,
+      gid: 500,
+      fname: "proc32",
+      psargs: "proc32 arg",
+    }),
+    coreFileNote(
+      [
+        {
+          start: 0x10000,
+          end: 0x12000,
+          file_ofs: 0,
+          path: "/bin/proc32",
+        },
+      ],
+      4096,
+      32,
+      false,
+    ),
+    coreAuxvNote(
+      [
+        [6, 4096],
+        [11, 500],
+      ],
+      32,
+      false,
+    ),
+  ]);
+
+  const bytes = elfNoteFixture({
+    bits: 32,
+    little: false,
+    type: 4,
+    ownership: "program",
+    notes,
+  });
+
+  const report = parse(bytes);
+  expect(report.entries).toHaveLength(3);
+  expect(report.entries[0]?.core?.prpsinfo).toMatchObject({
+    state: 1,
+    pid: 123,
+    uid: 500,
+    gid: 500,
+    filename: "proc32",
+    psargs: "proc32 arg",
+  });
+  expect(report.entries[1]?.core?.file).toMatchObject({
+    count: 1,
+    page_size: 4096,
+    mappings: [
+      {
+        start_address: "0x10000",
+        end_address: "0x12000",
+        file_offset_pages: "0x0",
+        path: "/bin/proc32",
+      },
+    ],
+  });
+  expect(report.entries[2]?.core?.auxv).toEqual([
+    { type: 6, type_name: "AT_PAGESZ", value: "0x1000" },
+    { type: 11, type_name: "AT_UID", value: "0x1f4" },
+  ]);
+});
+
+it("tolerates malformed core notes by returning null without throwing", () => {
+  const truncatedPrpsinfo = elfNote("CORE", 3, Buffer.alloc(20)); // requires 136 for 64-bit
+  const truncatedFile = elfNote(
+    "CORE",
+    0x46494c45,
+    Buffer.from("00000000000000010000000000001000", "hex"), // count 1, page_size 4096, but no map entries or filenames
+  );
+  const truncatedSiginfo = elfNote("CORE", 0x53494749, Buffer.alloc(4)); // requires 12 bytes
+  const notes = Buffer.concat([
+    truncatedPrpsinfo,
+    truncatedFile,
+    truncatedSiginfo,
+  ]);
+
+  const bytes = elfNoteFixture({
+    bits: 64,
+    ownership: "program",
+    notes,
+  });
+
+  const report = parse(bytes);
+  expect(report.entries).toHaveLength(3);
+  expect(report.entries[0]?.core).toBeNull();
+  expect(report.entries[0]?.type_name).toBe("core_prpsinfo");
+  expect(report.entries[1]?.core).toBeNull();
+  expect(report.entries[1]?.type_name).toBe("core_file");
+  expect(report.entries[2]?.core).toBeNull();
+  expect(report.entries[2]?.type_name).toBe("core_siginfo");
+});

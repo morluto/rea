@@ -19,6 +19,7 @@ import type {
   InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
 import {
+  coreNoteTypeName,
   elfObjectTypeName,
   gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
@@ -289,6 +290,255 @@ const decodeGnu = (
   };
 };
 
+const AUXV_TYPE_NAMES: Readonly<Record<number, string>> = {
+  0: "AT_NULL",
+  1: "AT_IGNORE",
+  2: "AT_EXECFD",
+  3: "AT_PHDR",
+  4: "AT_PHENT",
+  5: "AT_PHNUM",
+  6: "AT_PAGESZ",
+  7: "AT_BASE",
+  8: "AT_FLAGS",
+  9: "AT_ENTRY",
+  11: "AT_UID",
+  12: "AT_EUID",
+  13: "AT_GID",
+  14: "AT_EGID",
+  15: "AT_PLATFORM",
+  16: "AT_HWCAP",
+  17: "AT_CLKTCK",
+  23: "AT_SECURE",
+  25: "AT_RANDOM",
+  26: "AT_HWCAP2",
+  31: "AT_EXECFN",
+  33: "AT_SYSINFO_EHDR",
+};
+
+const hexWord = (val: bigint | number): string => `0x${val.toString(16)}`;
+
+const decodeCorePrpsinfo = (
+  descriptor: Buffer,
+  little: boolean,
+  wide: boolean,
+  text: TextBudget,
+): ElfNotes["entries"][number]["core"] => {
+  const minLen = wide ? 136 : 124;
+  if (descriptor.length < minLen) return null;
+  const u8 = (off: number) => descriptor.readUInt8(off);
+  const u16 = (off: number) =>
+    little ? descriptor.readUInt16LE(off) : descriptor.readUInt16BE(off);
+  const u32 = (off: number) =>
+    little ? descriptor.readUInt32LE(off) : descriptor.readUInt32BE(off);
+  const i32 = (off: number) =>
+    little ? descriptor.readInt32LE(off) : descriptor.readInt32BE(off);
+
+  const state = u8(0);
+  const uid = wide ? u32(16) : u16(8);
+  const gid = wide ? u32(20) : u16(10);
+  const pid = wide ? i32(24) : i32(12);
+  const ppid = wide ? i32(28) : i32(16);
+  const pgrp = wide ? i32(32) : i32(20);
+  const sid = wide ? i32(36) : i32(24);
+
+  const fnameOff = wide ? 40 : 28;
+  const fnameBytes = descriptor.subarray(fnameOff, fnameOff + 16);
+  const fnameEnd = fnameBytes.indexOf(0);
+  const fname = (
+    fnameEnd < 0 ? fnameBytes : fnameBytes.subarray(0, fnameEnd)
+  ).toString("latin1");
+  chargeText(text, fname.length);
+
+  const psargsOff = wide ? 56 : 44;
+  const psargsBytes = descriptor.subarray(psargsOff, psargsOff + 80);
+  const psargsEnd = psargsBytes.indexOf(0);
+  const psargs = (
+    psargsEnd < 0 ? psargsBytes : psargsBytes.subarray(0, psargsEnd)
+  ).toString("latin1");
+  chargeText(text, psargs.length);
+
+  return {
+    prpsinfo: {
+      state,
+      pid: pid >= 0 ? pid : 0,
+      ppid: ppid >= 0 ? ppid : 0,
+      pgrp: pgrp >= 0 ? pgrp : 0,
+      sid: sid >= 0 ? sid : 0,
+      uid,
+      gid,
+      filename: fname,
+      psargs,
+    },
+    file: null,
+    siginfo: null,
+    auxv: null,
+  };
+};
+
+const decodeCoreFile = (
+  descriptor: Buffer,
+  little: boolean,
+  wide: boolean,
+  text: TextBudget,
+): ElfNotes["entries"][number]["core"] => {
+  const wordSize = wide ? 8 : 4;
+  const headerSize = wordSize * 2;
+  if (descriptor.length < headerSize) return null;
+
+  const readWord = (off: number): bigint => {
+    if (wide) {
+      return little
+        ? descriptor.readBigUInt64LE(off)
+        : descriptor.readBigUInt64BE(off);
+    }
+    const val = little
+      ? descriptor.readUInt32LE(off)
+      : descriptor.readUInt32BE(off);
+    return BigInt(val);
+  };
+
+  const countBig = readWord(0);
+  const pageSizeBig = readWord(wordSize);
+  if (
+    countBig > BigInt(Number.MAX_SAFE_INTEGER) ||
+    pageSizeBig > BigInt(Number.MAX_SAFE_INTEGER)
+  )
+    return null;
+  const count = Number(countBig);
+  const pageSize = Number(pageSizeBig);
+  if (count < 0 || count > 4096) return null;
+
+  const entrySize = wordSize * 3;
+  const tableBytes = headerSize + count * entrySize;
+  if (descriptor.length < tableBytes) return null;
+
+  const rawMappings: { start: bigint; end: bigint; offsetPages: bigint }[] = [];
+  for (let i = 0; i < count; i++) {
+    const entryOff = headerSize + i * entrySize;
+    const start = readWord(entryOff);
+    const end = readWord(entryOff + wordSize);
+    const offsetPages = readWord(entryOff + wordSize * 2);
+    rawMappings.push({ start, end, offsetPages });
+  }
+
+  const mappings: {
+    start_address: string;
+    end_address: string;
+    file_offset_pages: string;
+    path: string;
+  }[] = [];
+  let strPos = tableBytes;
+  for (let i = 0; i < count; i++) {
+    if (strPos >= descriptor.length) return null;
+    const nullIdx = descriptor.indexOf(0, strPos);
+    if (nullIdx < 0) return null;
+    const pathBuf = descriptor.subarray(strPos, nullIdx);
+    const path = pathBuf.toString("utf8");
+    chargeText(text, pathBuf.length);
+    strPos = nullIdx + 1;
+    const raw = rawMappings[i];
+    if (raw === undefined) return null;
+    mappings.push({
+      start_address: hexWord(raw.start),
+      end_address: hexWord(raw.end),
+      file_offset_pages: hexWord(raw.offsetPages),
+      path,
+    });
+  }
+
+  return {
+    prpsinfo: null,
+    file: {
+      count,
+      page_size: pageSize,
+      mappings,
+    },
+    siginfo: null,
+    auxv: null,
+  };
+};
+
+const decodeCoreSiginfo = (
+  descriptor: Buffer,
+  little: boolean,
+): ElfNotes["entries"][number]["core"] => {
+  if (descriptor.length < 12) return null;
+  const i32 = (off: number) =>
+    little ? descriptor.readInt32LE(off) : descriptor.readInt32BE(off);
+  const signo = i32(0);
+  const errno = i32(4);
+  const code = i32(8);
+  return {
+    prpsinfo: null,
+    file: null,
+    siginfo: {
+      signo: signo >= 0 ? signo : 0,
+      errno,
+      code,
+    },
+    auxv: null,
+  };
+};
+
+const decodeCoreAuxv = (
+  descriptor: Buffer,
+  little: boolean,
+  wide: boolean,
+): ElfNotes["entries"][number]["core"] => {
+  const wordSize = wide ? 8 : 4;
+  const entrySize = wordSize * 2;
+  const auxv: { type: number; type_name: string | null; value: string }[] = [];
+  const maxEntries = Math.min(Math.floor(descriptor.length / entrySize), 128);
+
+  const readWord = (off: number): bigint => {
+    if (wide) {
+      return little
+        ? descriptor.readBigUInt64LE(off)
+        : descriptor.readBigUInt64BE(off);
+    }
+    return BigInt(
+      little ? descriptor.readUInt32LE(off) : descriptor.readUInt32BE(off),
+    );
+  };
+
+  for (let i = 0; i < maxEntries; i++) {
+    const off = i * entrySize;
+    if (off + entrySize > descriptor.length) break;
+    const aType = Number(readWord(off));
+    if (aType === 0) break;
+    const aVal = readWord(off + wordSize);
+    auxv.push({
+      type: aType,
+      type_name: AUXV_TYPE_NAMES[aType] ?? null,
+      value: hexWord(aVal),
+    });
+  }
+
+  return {
+    prpsinfo: null,
+    file: null,
+    siginfo: null,
+    auxv,
+  };
+};
+
+const decodeCore = (
+  owner: string,
+  type: number,
+  descriptor: Buffer,
+  little: boolean,
+  wide: boolean,
+  text: TextBudget,
+): ElfNotes["entries"][number]["core"] => {
+  if (owner !== "CORE") return null;
+  if (type === 3) return decodeCorePrpsinfo(descriptor, little, wide, text);
+  if (type === 0x46494c45)
+    return decodeCoreFile(descriptor, little, wide, text);
+  if (type === 0x53494749) return decodeCoreSiginfo(descriptor, little);
+  if (type === 6) return decodeCoreAuxv(descriptor, little, wide);
+  return null;
+};
+
 /** Decode PT_NOTE and SHT_NOTE tables from one in-memory ELF image. */
 export const parseElfNotes = (
   bytes: Buffer,
@@ -439,7 +689,7 @@ export const parseElfNotes = (
         examined,
         text,
       ))
-        parsed.push(toEntry(note, "program", index, reader.little, text));
+        parsed.push(toEntry(note, "program", index, reader.little, wide, text));
     }
   }
   if (shnum !== 0) {
@@ -494,7 +744,7 @@ export const parseElfNotes = (
         examined,
         text,
       ))
-        parsed.push(toEntry(note, "section", index, reader.little, text));
+        parsed.push(toEntry(note, "section", index, reader.little, wide, text));
     }
   }
   const absent = tables.length === 0;
@@ -524,9 +774,11 @@ const toEntry = (
   tableKind: "program" | "section",
   tableIndex: number,
   little: boolean,
+  wide: boolean,
   text: TextBudget,
 ): Omit<ElfNotes["entries"][number], "index"> => {
   const gnuOwner = note.owner === "GNU";
+  const coreOwner = note.owner === "CORE";
   const range = `${String(note.descriptor_offset)}:${String(note.descsz)}`;
   let digest = text.hashes.get(range);
   if (digest === undefined) {
@@ -541,7 +793,11 @@ const toEntry = (
     namesz: note.namesz,
     descsz: note.descsz,
     type: note.type,
-    type_name: gnuOwner ? gnuNoteTypeName(note.type) : "unknown",
+    type_name: gnuOwner
+      ? gnuNoteTypeName(note.type)
+      : coreOwner
+        ? coreNoteTypeName(note.type)
+        : "unknown",
     owner: note.owner,
     owner_bytes_hex: note.owner_bytes_hex,
     descriptor: {
@@ -554,5 +810,13 @@ const toEntry = (
           : null,
     },
     gnu: decodeGnu(note.owner, note.type, note.descriptor, little, text),
+    core: decodeCore(
+      note.owner,
+      note.type,
+      note.descriptor,
+      little,
+      wide,
+      text,
+    ),
   };
 };

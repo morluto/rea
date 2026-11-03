@@ -38,6 +38,12 @@ were examined; an unavailable section name does not erase those note facts.
 For GNU notes, `gnu.build_id_hex`, `gnu.abi_tag`, or `gnu.gold_version` are
 filled when the descriptor matches that type. Other owners keep `gnu` null.
 
+For Linux `CORE` notes, `core.prpsinfo`, `core.file`, `core.siginfo`, or
+`core.auxv` are decoded for process arguments and status (`NT_PRPSINFO`), mapped
+file memory regions and paths (`NT_FILE`), fault signal and code (`NT_SIGINFO`), and
+auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. Other owners or unparsed
+notes keep `core` null.
+
 `PT_NOTE` and `SHT_NOTE` are examined independently. The same file range may
 appear twice when both tables declare it.
 
