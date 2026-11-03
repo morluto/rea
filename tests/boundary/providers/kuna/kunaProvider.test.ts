@@ -662,6 +662,58 @@ it("keeps answering pseudocode one function at a time when the export fails", as
   await client.close();
 });
 
+it("keeps an overflow as the primary failure when cancellation arrives during final cleanup", async () => {
+  let enteredCleanup!: () => void;
+  let releaseCleanup!: () => void;
+  const entered = new Promise<void>((resolve) => (enteredCleanup = resolve));
+  const released = new Promise<void>((resolve) => (releaseCleanup = resolve));
+  const launcher: KunaProcessLauncher = async (options) => {
+    const spawned = await spawnOwnedProviderProcess(options);
+    if (options.arguments[0] !== "decompile") return spawned;
+    return {
+      ...spawned,
+      cleanup: async () => {
+        const result = await cleanupOwnedProcessGroup(spawned.ownership);
+        enteredCleanup();
+        await released;
+        return result;
+      },
+    };
+  };
+  const fixture = await session(
+    "rea-kuna-overflow-cancel-finalization-",
+    { project: "hang", decompilePadding: KUNA_FUNCTION_TEXT_BYTES + 1 },
+    {},
+    launcher,
+  );
+  const client = fixture.open();
+  const caller = new AbortController();
+  const pending = client.execute(
+    "procedure_pseudo_code",
+    { procedure: "main" },
+    { signal: caller.signal },
+  );
+  try {
+    await entered;
+    caller.abort("cancel during overflow cleanup");
+    releaseCleanup();
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          reported_limits: { output_limit_bytes: KUNA_FUNCTION_TEXT_BYTES },
+        },
+      });
+  } finally {
+    releaseCleanup();
+    caller.abort();
+    await pending;
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
 it("stops waiting for the export when the caller cancels, without abandoning it", async () => {
   const { open } = await session("rea-kuna-wait-cancel-", { delayMs: 1500 });
   const client = open();
