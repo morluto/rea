@@ -59,6 +59,7 @@ import {
   composedLimitationBudget,
   executeComposedWorkflow,
   createWorkflowEvidence,
+  retainPartialWorkflowEvidence,
   workflowSnapshotRecord,
   recordWorkflowUnknowns,
 } from "./WorkflowEvidence.js";
@@ -627,6 +628,12 @@ const executeAnalysisTool = async (input: {
         new EnhancedTools(observed).execute(tool, input.arguments, signal),
       composedLimitationBudget(tool),
     );
+    retainPartialWorkflowEvidence(result, {
+      target: input.openedTarget,
+      operation: tool,
+      parameters: input.evidenceParameters,
+      upstreamProfile: evidenceProfile,
+    });
     result = retainAnalysisResultSources(
       tool,
       (source) => session.recordEvidence(source),
