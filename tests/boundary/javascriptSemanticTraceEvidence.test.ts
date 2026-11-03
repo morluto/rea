@@ -273,6 +273,90 @@ it("traces exact empty property names through CLI and MCP", async () => {
   }
 });
 
+it("traces transformed operands through CLI and advertised MCP output", async () => {
+  const root = await createTestTempDirectory("rea-semantic-expression-trace-");
+  await writeFile(
+    join(root, "main.js"),
+    'const base = "https://example.test"; const url = base + "/x"; fetch(url); consume("only-direct"); const nested = "nested-token"; const box = { url: wrap(nested + "/x") };',
+  );
+  const cli = createCli({});
+  const analyzed = await serveCli(cli, [
+    "analyze-javascript-application",
+    root,
+    "--json",
+  ]);
+  expect(analyzed.exitCode, analyzed.stdout).toBe(0);
+  const application = parseEvidence(JSON.parse(analyzed.stdout));
+  const harness = await createApplicationMcpHarness();
+  try {
+    const result = await assertSuccessfulTraceParity(
+      cli,
+      harness,
+      application,
+      {
+        seed: { kind: "literal", value: "https://example.test" },
+        direction: "forward-influence",
+      },
+    );
+    expect(result.nodes.map((node) => node.label)).toContain("argument 0");
+    expect(
+      result.relations.some((edge) => edge.relation === "influences"),
+    ).toBe(true);
+    const direct = await assertSuccessfulTraceParity(
+      cli,
+      harness,
+      application,
+      {
+        seed: { kind: "literal", value: "only-direct" },
+        direction: "forward-influence",
+      },
+    );
+    expect(direct.summary.total_seed_matches).toBe(1);
+    expect(
+      direct.nodes.find((node) => node.node_id === direct.seed_node_ids[0])
+        ?.label,
+    ).toBe("argument 0");
+    const nested = await assertSuccessfulTraceParity(
+      cli,
+      harness,
+      application,
+      {
+        seed: { kind: "literal", value: "nested-token" },
+        direction: "forward-influence",
+      },
+    );
+    expect(nested.status).not.toBe("found");
+    expect(nested.unknowns.map((unknown) => unknown.detail)).toContain(
+      "The dynamic call's return dependency on this argument is unknown.",
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+it("reports offered semantic capacity when a large template exceeds it", async () => {
+  const root = await createTestTempDirectory("rea-semantic-expression-budget-");
+  const expressions = Array.from({ length: 500 }, () => "${base}").join("");
+  await writeFile(
+    join(root, "main.js"),
+    `const base = "token"; const value = \`${expressions}\`;`,
+  );
+  const analyzed = await serveCli(createCli({}), [
+    "analyze-javascript-application",
+    root,
+    "--max-semantic-nodes-per-file",
+    "4",
+    "--json",
+  ]);
+  expect(analyzed.exitCode, analyzed.stdout).toBe(0);
+  const application = parseEvidence(JSON.parse(analyzed.stdout));
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    application.normalized_result,
+  );
+  expect(result.semantic_graph.coverage.truncated).toBe(true);
+  expect(result.semantic_graph.coverage.status).toBe("partial");
+});
+
 const assertSuccessfulTraceParity = async (
   cli: ReturnType<typeof createCli>,
   harness: Awaited<ReturnType<typeof createApplicationMcpHarness>>,

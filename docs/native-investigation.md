@@ -68,7 +68,10 @@ function renamed to `dead` remains selectable by name. Use the names returned
 by the inventory, including their namespaces and any platform symbol prefix.
 Ghidra also accepts secondary symbols at a function entry, such as an imported
 `_main` label. A label inside a function is not a procedure-name selector; use
-its address when selecting the containing function.
+its address when selecting the containing function. `search_procedures` matches
+the same names, in leaf or qualified spelling: the function appears once with
+its primary name as `value`, and `matched_aliases` lists the qualified names of
+the secondary symbols that matched.
 Overloads can share a fully qualified name; ambiguity errors return every
 matching entry address so the caller can select the intended function directly.
 
@@ -185,11 +188,23 @@ observed entry label. An interior address therefore remains visible without
 being mistaken for the function entry. Identity failures are reported as
 `procedure.status: "unknown"`; label failures leave a null name and `name_error`.
 Neither failure discards usable pseudocode, and names are not parsed from it.
+A provider answer without pseudocode is an error item that keeps that
+observation's own `limitations`, so a reason the provider reported for that
+entry, such as a Kuna export failure or a missing body, stays with the item.
+Null pseudocode is `capability_unavailable`; empty or non-text pseudocode is
+`unreadable_output`. Provider failures keep their typed error. Successful items
+do not repeat limitations; the batch Evidence aggregates every observation's
+limitations by provider and operation.
 Resolved entries also appear in the composed Evidence locations. New batch
 Evidence commits the revised workflow profile; retained historical Evidence
 remains valid. This tool
 has no dedicated CLI command; the existing `decompile` command remains the
 single-procedure CLI operation.
+
+`detail: "summary"` retains the complete batch and returns only its counts,
+identities and sizes. `inspect_analysis_view` then reads rows or one body from
+the retained record, an Evidence file or a portable bundle without repeating
+decompilation: see [selected batch results](mcp-contracts.md#selected-batch-decompile-results).
 
 Each batch schedules one provider read at a time, but has no shared input-count
 or aggregate retained-output allowance. It retains every requested row and full
@@ -343,6 +358,27 @@ Hopper regex mode.
 
 ## Bounded static traces
 
+Hopper caller queries, incoming procedure references and function dossiers
+reconcile reported reverse relationships with forward call observations. Each
+standalone query or composed workflow scans the current document in pages of at
+most 64 procedures and retains at most 4 MiB of encoded scan results. A composed
+workflow reuses its own index and clears it when the workflow finishes. The
+default cooperative scan budget is
+2,000 ms; set `REA_HOPPER_CALLER_SCAN_BUDGET_MS` to a positive integer number of
+milliseconds before starting REA to change it. The default limits additional
+work on the serial Hopper bridge; larger documents may need a higher setting.
+Results report the examined procedure count and any budget interruption.
+An individual page, native caller list, and target instruction list each have
+a 512 KiB encoded allowance. Hitting one reports the incomplete observation.
+Cancellation is checked between pages, but cannot interrupt a Hopper API call
+already executing; Hopper's native API itself materializes its reference arrays
+before REA can bound their copies. Hopper exposes no document revision token, so scans are not
+reused across workflows and coverage and consistency during a live scan remain
+unknown even when every procedure was examined.
+Hopper observations are re-observed rather than replayed from snapshots because
+the provider has no document revision token. Safe observations may still be
+retained as Evidence.
+
 `trace_native_ui_action` / `rea trace-native-ui-action <target> <seed>` accepts
 one authored selector/object ID, native symbol or exact function address. It
 joins UI wiring to uniquely matched class/selector implementations and follows
@@ -351,6 +387,11 @@ ambiguous candidates, inferred untyped provider callees and targetless call
 sites remain distinct. A static route does not establish runtime reachability.
 Swift/closure dispatch requires resolved static references; unavailable ABI
 forms remain unknown.
+
+Encoded Objective-C method records retain their own locations in dispatch
+Evidence. A handler node uses the implementation address with an unknown file
+offset unless that function already has an independently located graph node;
+the method-record offset does not locate the handler's code.
 
 Incomplete reference kinds do not discard known typed calls or partial
 provider call references. A `provider_call` with `observed` resolution retains
@@ -397,9 +438,30 @@ Within one value trace, each exact procedure selector is attempted at most once,
 including failed analyses. A failed seed returns the provider's original typed
 failure and corrective guidance; it cannot establish a trace or target identity.
 Failures while expanding a validated seed remain unknown observations and do not
-establish canonical function identity. A successful seed without a native def-use
+establish canonical function identity. A cancelled expansion read returns the
+cancellation. An expansion read whose provider cannot confirm cleanup of
+resources it owns stops the trace: the result is that provider's own
+`cleanup_incomplete` failure with its resources and any bound cleanup retry, and the work
+admitted before the stop is retained as partial Evidence with a located unknown
+at the stopping read. A successful seed without a native def-use
 model still returns its procedure and an explicit coverage unknown. A new trace
 can retry failed selectors.
+
+Paging and traversal completeness are separate facts. `page_truncated` means the
+page omits retained nodes, and the edges they source, before `offset` or after
+`next_offset`. Every page repeats `traversal`: `complete`, or `truncated` with
+`reasons` naming each observed cause: the `max_depth`, `max_functions`,
+`max_call_sites`, `max_nodes` or `max_edges` budget, the fixed
+`node_payload_bytes` allowance, `provider_pcode_truncated`,
+`ambiguous_call_candidates`, or, only in a stopped trace's partial Evidence,
+`cleanup_incomplete`. Each cause also has a located unknown. A budget is
+reported only after it rejects work, so an exactly filled budget is not
+truncation; a depth or candidate limit is reported only when no other path
+analyzes or queues that destination. `total_nodes` and `total_edges` count
+retained rows. `truncated` remains true for either kind of omission. Failed
+analyses and unresolved calls stay in `unknowns` and do not truncate the
+traversal. Each page reruns analysis; pages are not pinned to one snapshot
+across session edits.
 
 The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.
@@ -491,8 +553,10 @@ output-budget omissions remain omissions.
 
 Source input is limited to 64 MiB. Binary and direct XML decoding reserve an
 estimated 64 MiB decode budget before parsing; this is not a hard process-memory
-bound. JSON decode memory has not been measured and has no equivalent decode
-estimate. A refused input reports non-retryable `resource_constraint` with
+bound. The XML estimate charges every element and every text, comment or CDATA
+node of the decoder's DOM at a measured upper bound, so a plist made of many
+small elements reaches it at a few MiB of source. JSON decode memory has not
+been measured and has no equivalent decode estimate. A refused input reports non-retryable `resource_constraint` with
 `reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
 Ordinary direct-source decoding has a ceiling of 998 source nesting levels,
 derived from the existing 1000-level JSON result capacity by reserving one level
@@ -638,6 +702,9 @@ complete observation.
   undecodable filenames and skipped symlinks, as partial coverage. Known
   executable roots remain available; unexamined names and symlink targets
   cannot establish an empty root set or the absence of other roots.
+  A dependency symlink whose target is not valid UTF-8 is undetermined, with
+  its stored target bytes in the limitation and partial coverage; a selected
+  root crossing such a symlink is refused with the same bytes in its diagnostic.
 - `inspect_asset_catalog` / `rea inspect-asset-catalog <app>` reads compiled
   `Assets.car` metadata through macOS `assetutil --info`. Catalog digests, raw
   rendition fields, pagination and exact UI resource-name matches are returned.
@@ -942,7 +1009,9 @@ with a path-specific gap and incomplete capture coverage. Null alone does not
 establish that an accessibility value was successfully read or absent.
 
 An initial PID or window mismatch is `invalid_request` on `pid` or
-`window_id` and leaves provider availability intact. An unavailable executable
+`window_id` and leaves provider availability intact. A selected window that
+exists off screen is not a mismatch: selection succeeds and the permission and
+capture checks report their own outcome. An unavailable executable
 URL or unresolved executable path leaves identity unknown and reports
 `capability_unavailable`. Identity or window loss
 after the initial capture remains an observation failure with collected facts.
@@ -1091,11 +1160,55 @@ unpaired Unicode surrogate; a rejection identifies the field and UTF-16 index
 and leaves every annotation unchanged. CRLF, supplementary Unicode characters,
 and combining characters are preserved. Windows P0 remains read-only. Ghidra has no
 GUI authority, and REA never falls back automatically to Hopper.
+For a before-and-after `compare_functions` in MCP, call `analyze_function`
+before and after the edit while the session remains open; the annotation Evidence
+itself is not an `analyze_function` input. If comparing after close, export the
+needed Evidence before closing and import it into the later session. A one-shot
+CLI annotation returns its edited dossier before its temporary session is
+discarded; a later CLI invocation with the same fresh-import settings starts from
+the original executable. Comparison preserves correspondence across renames
+when authenticated artifact identity, architecture and provider-owned mapping
+and slice commitments establish the same canonical entry. The result reports
+`matched`, `method: "same-entry"` and `entry_address`; name and exact-text changes
+remain separate dimensions. Equal numeric addresses without applicable coordinate
+commitments do not establish same-entry correspondence. Inspect the retained
+source Evidence and coverage when correspondence remains ambiguous.
+To aggregate already-retained comparison results, pass their exact IDs to
+`find_changed_behavior`, for example:
+
+```javascript
+await call("find_changed_behavior", {
+  comparisons: comparisons.map(({ evidence_id }) => ({
+    kind: "retained-evidence",
+    evidence_id,
+  })),
+});
+```
+
+These IDs select comparison Evidence, not function dossiers or summary views.
+Complete inline comparisons remain accepted and can be mixed with references.
+The current server must retain the comparisons and their original source closure;
+import the complete source bundle after a session handoff. Missing or damaged
+records are explicit failures. A missing required retained record reports its exact
+`evidence_id` with `details.reference_scope: "retained-closure"`. Import the
+originating bundle with its linked sources, or re-create those observations in the
+current investigation, before retrying; resending the inline comparison alone
+does not restore its closure. Aggregating static differences does not establish
+observed runtime change.
+
 `set_address_name` and `set_addresses_names` give Ghidra sessions the same
 compact naming results as Hopper: a local function entry renames that function,
 and any other mapped address, such as a global, receives a new or renamed primary
-label. A batch applies each address separately and reports one success boolean
-per address. Use them to name many globals and helpers cheaply; use
+label. A batch decides every address from the names held before it: addresses
+that request the same name in one namespace, or a name another selected address
+holds, are rejected without applying them, so JSON member order never selects a
+winner. Every other address applies separately, and each address reports one
+success boolean. `raw_result.failures` gives each failed address's canonical
+address and reason. A contested name appears once in `raw_result.conflicts`,
+with its namespace, requesting addresses and holding addresses, and conflict
+failures refer to it by index. To move a label between
+addresses, rename its holder first and assign the name in a later call. Use
+them to name many globals and helpers cheaply; use
 `annotate_native_function` when you also want comments and a refreshed dossier.
 Ghidra name edits preserve the existing namespace. Supply either a leaf name
 such as `renamed` or a fully qualified name in that namespace, such as

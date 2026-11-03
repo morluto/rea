@@ -85,9 +85,9 @@ node scripts/verify-real-ghidra-mips.mjs --psp-missing-extension
 npm run verify:ghidra:mips
 ```
 
-The generic verifier also exercises a section-truncated firmware fixture. That
-check uses generic MIPS symbols and language expectations and runs only in generic
-mode; the PSP report explicitly records carved-PSP coverage as not run.
+The generic verifier also checks that a section-truncated firmware copy is
+refused when the target is opened. That check runs only in generic mode; the
+PSP report explicitly records carved-PSP coverage as not run.
 
 The maintained PSP fixture builds from `tests/conformance/psp/`, never executes,
 and is independent of commercial game data. PSP GNU tools supply ELF/ABI,

@@ -145,9 +145,22 @@ const redactFailure = (
       ? {}
       : { observed: visit(issue.observed) }),
   });
+  const guidance = error.continuingCallerGuidance;
   const context = {
     cause: error,
     ...(error.limit === undefined ? {} : { limit: error.limit }),
+    ...(guidance === undefined
+      ? {}
+      : {
+          continuingCallerGuidance: {
+            ...(guidance.userMessage === undefined
+              ? {}
+              : { userMessage: text(guidance.userMessage) }),
+            ...(guidance.remediationAction === undefined
+              ? {}
+              : { remediationAction: text(guidance.remediationAction) }),
+          },
+        }),
     ...(error.cleanupPrimary === undefined
       ? {}
       : {
@@ -156,6 +169,9 @@ const redactFailure = (
     ...(error.diagnostics === undefined
       ? {}
       : { diagnostics: diagnostics(error.diagnostics) }),
+    ...(error.invocationDiagnostics === undefined
+      ? {}
+      : { invocationDiagnostics: diagnostics(error.invocationDiagnostics) }),
     ...(error.capturedOutput === undefined
       ? {}
       : {
@@ -189,6 +205,10 @@ const redactFailure = (
     const publishedPath = identity(error.published?.path);
     return new EvidenceFileError(error.operation, error.reason, {
       ...context,
+      ...(error.systemCode === undefined ||
+      text(error.systemCode) !== error.systemCode
+        ? {}
+        : { systemCode: error.systemCode }),
       ...(retainedPath === undefined ? {} : { path: retainedPath }),
       ...(error.userMessage === undefined
         ? {}

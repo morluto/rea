@@ -13,6 +13,7 @@ import { findApplicationFeatureSeeds } from "../../../src/domain/javascript/java
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   cliTest,
+  runFileCli,
   type SharedMcpCall,
   type TestCli,
 } from "../../support/cli/cliFixture.js";
@@ -166,9 +167,10 @@ const traceThroughCli = async (
     input,
     JSON.stringify({ application, seed: scenario.seed, direction: "both" }),
   );
-  const response = await cli.run({
+  const invocation = {
     arguments: ["trace-application-feature", input, "--json"],
-  });
+  };
+  const response = await runFileCli(cli, invocation);
   expect(response.exitCode, `${scenario.name} via CLI`).toBe(0);
   const evidence = toolContract("trace_application_feature").outputSchema.parse(
     response.json,
@@ -281,8 +283,19 @@ cliTest(
     const semanticEvidence = toolContract(
       "trace_javascript_semantics",
     ).outputSchema.parse(semantic.structuredContent);
+    const argument = result.semantic_graph.nodes.find(
+      (node) =>
+        node.kind === "expression" &&
+        node.properties.literal_argument_value === "proc_named" &&
+        node.properties.literal_argument_call_site_node_id === callSite.node_id,
+    );
+    if (argument === undefined)
+      throw new Error("Expected literal argument node");
     expect(semanticEvidence.normalized_result).toMatchObject({
-      seed_node_ids: expect.arrayContaining([callSite.node_id]),
+      seed_node_ids: expect.arrayContaining([argument.node_id]),
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ node_id: callSite.node_id }),
+      ]),
     });
   },
 );
