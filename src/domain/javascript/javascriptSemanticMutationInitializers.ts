@@ -61,8 +61,10 @@ interface InitializerPositionCache {
   readonly moduleFunctionReads: WeakMap<
     readonly t.Statement[],
     {
-      readonly opaqueGlobalSiteCount: number;
       readonly reads: WeakMap<t.FunctionDeclaration, number | null>;
+      readonly opaquePositions: WeakMap<t.Node, number | null>;
+      opaqueSitesIndexed: number;
+      firstOpaqueRead: number | null;
     }
   >;
   readonly evaluationChildren: WeakMap<
@@ -869,17 +871,16 @@ const moduleFunctionFirstRead = (
   state?: JavaScriptSemanticAnalysisState,
 ): number | null => {
   const cache = initializerPositionCache(parents).moduleFunctionReads;
-  const opaqueGlobalSiteCount = state?.opaqueEffects.globalSites.length ?? 0;
-  const cached = cache.get(body);
-  let reads = cached?.reads;
-  // Callee resolution can query timing while the ambient walk is still
-  // appending opaque global effects. Reuse only facts from the same prefix.
-  if (
-    reads === undefined ||
-    cached?.opaqueGlobalSiteCount !== opaqueGlobalSiteCount
-  ) {
-    reads = new WeakMap();
-    cache.set(body, { opaqueGlobalSiteCount, reads });
+  let retained = cache.get(body);
+  if (retained === undefined) {
+    const reads = new WeakMap<t.FunctionDeclaration, number | null>();
+    retained = {
+      reads,
+      opaquePositions: new WeakMap(),
+      opaqueSitesIndexed: 0,
+      firstOpaqueRead: Infinity,
+    };
+    cache.set(body, retained);
     const functions = new Map<string, t.FunctionDeclaration | null>();
     for (const statement of body) {
       const exported =
@@ -988,7 +989,7 @@ const moduleFunctionFirstRead = (
       return globalReceivers.get(input) ?? null;
     };
     const active = new Set<t.Function>();
-    const opaqueGlobalSites = new Set(state?.opaqueEffects.globalSites ?? []);
+    const opaquePositions = retained.opaquePositions;
     let unknownPropertyRead: number | null = Infinity;
     for (let index = 0; index < body.length; index++) {
       const statement = body[index];
@@ -998,11 +999,9 @@ const moduleFunctionFirstRead = (
           if (t.isFunction(node)) active.add(node);
           if (
             classicScript &&
-            opaqueGlobalSites.has(node as t.CallExpression)
+            (t.isCallExpression(node) || t.isOptionalCallExpression(node))
           ) {
-            if (unknownPropertyRead !== null)
-              unknownPropertyRead =
-                active.size > 0 ? null : Math.min(unknownPropertyRead, index);
+            opaquePositions.set(node, active.size > 0 ? null : index);
           }
           let name: string | null = null;
           if (
@@ -1105,7 +1104,22 @@ const moduleFunctionFirstRead = (
         );
     }
   }
-  const first = reads.get(declaration);
+  // Callee resolution can query timing during the ambient walk. Source reads
+  // stay fixed; consume each newly observed opaque call once without rescanning.
+  const sites = state?.opaqueEffects.globalSites ?? [];
+  while (retained.opaqueSitesIndexed < sites.length) {
+    const site = sites[retained.opaqueSitesIndexed++];
+    const position =
+      site === undefined ? undefined : retained.opaquePositions.get(site);
+    if (position === undefined || retained.firstOpaqueRead === null) continue;
+    retained.firstOpaqueRead =
+      position === null ? null : Math.min(retained.firstOpaqueRead, position);
+  }
+  const read = retained.reads.get(declaration);
+  const first =
+    read === undefined || read === null || retained.firstOpaqueRead === null
+      ? null
+      : Math.min(read, retained.firstOpaqueRead);
   return first !== undefined && Number.isFinite(first) ? first : null;
 };
 
