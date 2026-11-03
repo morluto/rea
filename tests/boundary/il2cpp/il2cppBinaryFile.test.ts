@@ -78,6 +78,17 @@ const failure = (bytes: Buffer, architecture?: string) => {
   }
   throw new Error("expected a link failure");
 };
+/** The typed reason and kind of a link refusal, for tests that start the link themselves. */
+const refusal = (run: () => unknown) => {
+  try {
+    run();
+  } catch (cause) {
+    if (cause instanceof Il2cppBinaryFormatFailure)
+      return { reason: cause.reason, kind: cause.kind };
+    throw cause;
+  }
+  throw new Error("expected a link refusal");
+};
 const addElfLoadAlias = (
   bytes: Buffer,
   fileOffset: number,
@@ -1951,15 +1962,17 @@ it("refuses a wasm method pointer whose table slot no element segment fills", ()
 it("refuses a CPU architecture, generic instances and gzip for a wasm module", () => {
   expect(failure(createWasmFixture(), "arm64").reason).toBe("slice-not-found");
   const generic = genericFacts(31);
-  expect(() =>
-    linkIl2cppBinary(
-      createWasmFixture(),
-      generic.metadata,
-      generic.link,
-      undefined,
-      { genericInstances: true },
+  expect(
+    refusal(() =>
+      linkIl2cppBinary(
+        createWasmFixture(),
+        generic.metadata,
+        generic.link,
+        undefined,
+        { genericInstances: true },
+      ),
     ),
-  ).toThrow("generic method instances are not decoded for wasm32 modules");
+  ).toEqual({ reason: "generic-methods-unsupported", kind: "unsupported" });
   expect(failure(gzipSync(createWasmFixture())).reason).toBe(
     "unsupported-container",
   );
@@ -2223,9 +2236,11 @@ it("refuses generic instances for a wasm module before opening it", () => {
     importMemory.length,
     ...importMemory,
   ]);
-  expect(() =>
-    linkIl2cppBinary(bytes, generic.metadata, generic.link, undefined, {
-      genericInstances: true,
-    }),
-  ).toThrow("generic method instances are not decoded for wasm32 modules");
+  expect(
+    refusal(() =>
+      linkIl2cppBinary(bytes, generic.metadata, generic.link, undefined, {
+        genericInstances: true,
+      }),
+    ),
+  ).toEqual({ reason: "generic-methods-unsupported", kind: "unsupported" });
 });
