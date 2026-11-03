@@ -80,9 +80,9 @@ export const prepareSessionExecution = (
           ...(capability?.userMessage === undefined
             ? {}
             : { userMessage: capability.userMessage }),
-          ...(capability?.remediationAction === undefined
+          ...(capability?.remediation === undefined
             ? {}
-            : { remediationAction: capability.remediationAction }),
+            : { remediationAction: capability.remediation }),
         },
       ),
     );

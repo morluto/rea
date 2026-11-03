@@ -2,6 +2,7 @@ import type { AnalysisWorkScope } from "./AnalysisWorkScope.js";
 import type { AnalysisObservation } from "../domain/analysisObservation.js";
 import type { ProviderInspectionScope } from "./ProviderInspectionScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type { TargetApplicability } from "../domain/targetApplicability.js";
 import type { OfficialToolName } from "../contracts/officialToolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
@@ -259,10 +260,16 @@ type CapabilityAvailability =
       readonly availabilityCode?: ProviderRejectionCode;
       /** Provider-owned explanation and recovery for an attempted operation. */
       readonly userMessage?: string;
-      readonly remediationAction?: string;
+      /**
+       * Recovery instruction from the owner that made this operation
+       * unavailable. Static capability facts omit it.
+       */
+      readonly remediation?: string;
     };
 
 export type CapabilityDescriptor = CapabilityAvailability & {
+  /** Provider-owned static target requirements, evaluated for an open target. */
+  readonly targetApplicability?: TargetApplicability;
   /**
    * Snapshot opts immutable, profile-bound reads into replay despite incidental
    * private filesystem writes. Live state must always be re-observed. Omitting
@@ -304,7 +311,10 @@ export type ProviderAvailability =
   | {
       readonly status: "unavailable";
       readonly code: ProviderRejectionCode;
+      /** What the owner observed; not a repair instruction. */
       readonly reason: string;
+      /** The owner's repair instruction for this exact failure. */
+      readonly remediation: string;
       readonly diagnostics: Readonly<Record<string, JsonValue>>;
     };
 

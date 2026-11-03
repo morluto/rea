@@ -1,6 +1,7 @@
 import type { ClientConfigurationWriteProblem } from "./ClientConfigurationPublication.js";
 import type { DoctorReport, DoctorScope, runDoctor } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
+import type { HopperRequestFailure } from "./HopperDownload.js";
 import type { HopperReleaseError } from "./HopperReleaseFeed.js";
 import type {
   SkillDestination,
@@ -159,6 +160,8 @@ export interface SetupResult {
   readonly clientStates: readonly SetupClientState[];
   readonly remediation?: string;
   readonly code?: SetupFailureCode;
+  /** The Hopper vendor request (stage, URL and observed outcome) whose failure stopped installation. */
+  readonly download?: HopperRequestFailure;
   /** Identified resources still retained after finalization; absent after confirmed release. */
   readonly cleanup?: AnalysisCleanupObservation | undefined;
 }
