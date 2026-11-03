@@ -2266,6 +2266,23 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
     ]);
   });
 
+  it.each(["payload.json", "payload.js.map"])(
+    "keeps a nested ASAR named %s unknown",
+    async (name) => {
+      const inner = asarArchive([
+        { name: "app.js.map", bytes: embeddedSourceMap() },
+      ]);
+      const root = await bundled([{ path: name, bytes: inner }]);
+      const scanned = await inspect(root);
+      expect(scanned.source_maps.embedded).toBe(0);
+      expect(scanned.coverage).toBe("unknown");
+      expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+      expect(scanned.limitations).toContain(
+        `Nested package ${join(root, "app.dll")}/${name} was not expanded.`,
+      );
+    },
+  );
+
   it("retains each compressed duplicate entry across PE reads", async () => {
     const root = await createTestTempDirectory("rea-release-duplicate-pe-");
     const paths = ["C:\\build\\first.pdb", "C:\\build\\second.pdb"];

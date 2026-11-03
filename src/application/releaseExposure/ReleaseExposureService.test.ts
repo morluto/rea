@@ -1501,7 +1501,6 @@ describe("ReleaseExposureService Go relative flag paths", () => {
     `-X 'main.usage=see -L level'`,
     `-X '-L level'`,
     `-X main.usage=-L level`,
-    `-X='main.usage=see -L level'`,
     `--X 'main.usage=-L level'`,
     `all=-X 'main.usage=-L level'`,
     `"-X main.usage=-L level"`,
@@ -1509,6 +1508,34 @@ describe("ReleaseExposureService Go relative flag paths", () => {
     const report = await goReport(goModule([{ key: "-ldflags", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");
     expect(check?.status).toBe("not_observed");
+  });
+
+  it.each([
+    ["-extldflags=-Lprivate-sdk -s -w", "private-sdk"],
+    ["-extldflags -Lprivate-sdk -s -w", "private-sdk"],
+    [`-extldflags "-L private-sdk -static"`, "private-sdk"],
+    [`all=-extldflags '-Wl,-L,private-sdk'`, "private-sdk"],
+    [`-extldflags "-Xlinker -L -Xlinker private-sdk"`, "private-sdk"],
+  ])(
+    "reads the external linker flags in %s as the compiler driver does",
+    async (value, path) => {
+      const report = await goReport(goModule([{ key: "-ldflags", value }]));
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.status).toBe("exposed");
+      expect(check?.observation.samples).toEqual([path]);
+    },
+  );
+
+  it.each([
+    ["CGO_CFLAGS", `-I"/home/O'Neil/include"`, `"/home/O'Neil/include"`],
+    ["CGO_CFLAGS", `"-I/home/O'Neil/include"`, "/home/O'Neil/include"],
+    ["CGO_CFLAGS", `'-I/home/O"Neil/include'`, `/home/O"Neil/include`],
+    ["-ldflags", `-X='main.usage=see -L level'`, "level'"],
+  ])("keeps the quotes Go passes on in %s %s", async (key, value, path) => {
+    const report = await goReport(goModule([{ key, value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual([path]);
   });
 
   it.each([
@@ -1535,7 +1562,7 @@ describe("ReleaseExposureService Go paths", () => {
           key: "CGO_CXXFLAGS",
           value: "-isystem/opt/isystem -iquote /opt/quote",
         },
-        { key: "CGO_LDFLAGS", value: `-L'/opt/my libs' -T/opt/link.ld` },
+        { key: "CGO_LDFLAGS", value: `"-L/opt/my libs" -T/opt/link.ld` },
         { key: "-ldflags", value: `-extldflags "-L/srv/ext lib -static"` },
         { key: "-gcflags", value: "all=-trimpath=/src/a=/b" },
         { key: "-pgo", value: "/srv/default.pgo" },

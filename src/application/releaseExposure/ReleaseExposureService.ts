@@ -814,8 +814,12 @@ const filesystemPath = (value: string | null | undefined): string | null => {
 /** Go build settings whose values are flags or a build input path. */
 const GO_FLAG_SETTING =
   /^(?:CGO_[A-Z]+FLAGS|-asmflags|-gccgoflags|-gcflags|-ldflags|-pgo)$/u;
-/** One whitespace-separated field. Quotes keep their spaces inside it. */
-const GO_FLAG_FIELD = /(?:[^\s"']|"[^"]*"|'[^']*')+/gu;
+/**
+ * One field as Go's `quoted.Split` reads a flag value: a field that begins with
+ * `"` or `'` runs to the matching quote, which it drops; any other field runs to
+ * whitespace and keeps every quote in it as a literal character.
+ */
+const GO_FLAG_FIELD = /"([^"]*)"|'([^']*)'|[^\s"'][^\s]*/gu;
 /** A path after a flag prefix, whitespace, `=`, or `,`, as in `-isystem/opt/x`. */
 const GO_FLAG_PATH =
   /(?:^|[\s=,])(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT]))?((?:\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\{2}[^\\\s=,]+\\)[^=,]+)/gu;
@@ -852,11 +856,16 @@ const GO_TOOL_PATH_FLAGS = new Map([
 const GO_PACKAGE_SELECTOR = /^[^\s=-][^\s=]*=(?=-)/u;
 /** `-X name=value` sets a string, which names no option. */
 const GO_LINKER_STRING_FLAG = /^-{1,2}X(?:[=\s]|$)/u;
+/**
+ * `go tool link -extldflags` passes its value, split like any Go flag value, to
+ * the external linker, which Go runs through the C compiler driver.
+ */
+const GO_EXTERNAL_LINKER_FLAGS = /^-{1,2}extldflags(?:=(.*))?$/su;
 
-/** Fields in one value, without their quotes. */
+/** Fields in one value, without their delimiting quotes. */
 const goFields = (value: string): string[] =>
-  [...value.matchAll(GO_FLAG_FIELD)].map(([field]) =>
-    field.replace(/["']/gu, ""),
+  [...value.matchAll(GO_FLAG_FIELD)].map(
+    ([field, double, single]) => double ?? single ?? field,
   );
 
 /** A field's flags, with a quoted path kept whole up to the next flag. */
@@ -866,23 +875,36 @@ const splitGoField = (field: string): string[] => field.split(/\s+(?=-)/u);
 const goFlags = (value: string): string[] =>
   goFields(value).flatMap(splitGoField);
 
-/** One Go tool's flags, each `-X` kept apart from the string it sets. */
-const goToolFlags = (value: string): string[] => {
+/**
+ * One Go tool's flags, each `-X` kept apart from the string it sets, and the
+ * values given to `-extldflags` kept apart for the external linker.
+ */
+const goToolFlags = (
+  value: string,
+): { flags: string[]; external: string[] } => {
   const flags: string[] = [];
-  let setsString = false;
+  const external: string[] = [];
+  let argument: "string" | "external" | null = null;
   for (const [index, field] of goFields(value).entries()) {
-    if (setsString) {
-      setsString = false;
+    if (argument !== null) {
+      if (argument === "external") external.push(field);
+      argument = null;
       continue;
     }
     const flag = index === 0 ? field.replace(GO_PACKAGE_SELECTOR, "") : field;
     if (GO_LINKER_STRING_FLAG.test(flag)) {
-      setsString = /^-{1,2}X$/u.test(flag);
+      if (/^-{1,2}X$/u.test(flag)) argument = "string";
+      continue;
+    }
+    const externalFlags = GO_EXTERNAL_LINKER_FLAGS.exec(flag);
+    if (externalFlags !== null) {
+      if (externalFlags[1] === undefined) argument = "external";
+      else external.push(externalFlags[1]);
       continue;
     }
     flags.push(...splitGoField(flag));
   }
-  return flags;
+  return { flags, external };
 };
 
 const goFlagPaths = (value: string): string[] =>
@@ -924,19 +946,25 @@ const splitForwardedLinkerFlags = (
   return { compiler, linker };
 };
 
+/** Relative paths in flags a C compiler driver reads. */
+const compilerRelativePaths = (value: string): string[] => {
+  const { compiler, linker } = splitForwardedLinkerFlags(goFlags(value));
+  return [
+    ...goRelativeFlagPaths(compiler, GO_COMPILER_PATH_FLAG),
+    ...goRelativeFlagPaths(linker, LINKER_PATH_FLAG),
+  ];
+};
+
 /** Relative paths in the settings that take a path flag. */
 const goSettingRelativePaths = (key: string, value: string): string[] => {
-  if (GO_COMPILER_SETTING.test(key)) {
-    const { compiler, linker } = splitForwardedLinkerFlags(goFlags(value));
-    return [
-      ...goRelativeFlagPaths(compiler, GO_COMPILER_PATH_FLAG),
-      ...goRelativeFlagPaths(linker, LINKER_PATH_FLAG),
-    ];
-  }
+  if (GO_COMPILER_SETTING.test(key)) return compilerRelativePaths(value);
   const pathFlag = GO_TOOL_PATH_FLAGS.get(key);
-  return pathFlag === undefined
-    ? []
-    : goRelativeFlagPaths(goToolFlags(value), pathFlag);
+  if (pathFlag === undefined) return [];
+  const { flags, external } = goToolFlags(value);
+  return [
+    ...goRelativeFlagPaths(flags, pathFlag),
+    ...external.flatMap(compilerRelativePaths),
+  ];
 };
 
 const goPaths = (

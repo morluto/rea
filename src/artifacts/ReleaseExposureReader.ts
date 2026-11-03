@@ -1015,10 +1015,18 @@ const examineMapMember = async (
     ? member
     : { ...member, logical: `${member.logical}.js.map` };
   const read = await readMap(state, declared);
-  const native =
-    read === null ? null : packagedNativeOfRead(member, read.loaded);
-  if (native !== null)
-    return examinePackagedBinary(state, { ...member, format: native }, context);
+  const packaged =
+    read === null ? null : packagedFormatOfRead(member, read.loaded);
+  if (packaged === "asar") {
+    noteNestedPackage(state, "asar", member.location);
+    return true;
+  }
+  if (packaged !== null)
+    return examinePackagedBinary(
+      state,
+      { ...member, format: packaged },
+      context,
+    );
   if (read !== null) settleMapRead(state, declared, read);
   const loaded = read?.loaded ?? null;
   if (loaded?.kind === "bytes")
@@ -1230,10 +1238,20 @@ const examineTextMember = async (
   const loaded = await member.read(
     Math.min(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES, remaining),
   );
-  const native = packagedNativeOfRead({ ...member, kind: listedKind }, loaded);
-  if (native !== null) {
+  const packaged = packagedFormatOfRead(
+    { ...member, kind: listedKind },
+    loaded,
+  );
+  if (packaged !== null) {
     state.textBytes += state.memberBytesRead - bytesReadBefore;
-    return examinePackagedBinary(state, { ...member, format: native }, context);
+    if (packaged !== "asar")
+      return examinePackagedBinary(
+        state,
+        { ...member, format: packaged },
+        context,
+      );
+    noteNestedPackage(state, "asar", member.location);
+    return true;
   }
   if (loaded.kind === "bytes") {
     const text = decodeMemberText(loaded.bytes);
@@ -1274,23 +1292,25 @@ const hasNodeShebang = (prefix: Buffer): boolean => {
 
 /**
  * A name is not a format: a package member called `payload.json` or
- * `payload.js.map` can be a PE, and a script or map declaration names whatever
- * is at its target. The route's own read decides, so real text and maps cost no
- * further read. A kind the owner stated is kept; a promoted member passes the
- * kind it was listed with.
+ * `payload.js.map` can be a PE or an ASAR, and a script or map declaration
+ * names whatever is at its target. The route's own read decides, so real text
+ * and maps cost no further read. A kind the owner stated is kept; a promoted
+ * member passes the kind it was listed with.
  */
-const packagedNativeOfRead = (
+const packagedFormatOfRead = (
   member: MemberView,
   loaded: MemberRead,
-): NativeFormat | null => {
+): NativeFormat | "asar" | null => {
   if (member.packageFormat === null || member.kind !== "file") return null;
   if (loaded.kind === "unread") return null;
   const header = loaded.kind === "bytes" ? loaded.bytes : loaded.prefix;
   if (header === null) return null;
-  return sniffNativeFormat(
+  const native = sniffNativeFormat(
     header,
     loaded.kind === "bytes" ? header.length : member.declaredSize,
   );
+  if (native !== null) return native;
+  return holdsAsarHeader(header) ? "asar" : null;
 };
 
 /**
