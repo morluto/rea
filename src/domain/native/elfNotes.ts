@@ -131,10 +131,10 @@ const coreFileSchema = z.strictObject({
 
 const corePrpsinfoSchema = z.strictObject({
   state: uint,
-  pid: uint,
-  ppid: uint,
-  pgrp: uint,
-  sid: uint,
+  pid: z.number().int(),
+  ppid: z.number().int(),
+  pgrp: z.number().int(),
+  sid: z.number().int(),
   uid: uint,
   gid: uint,
   filename: z.string(),
@@ -142,7 +142,7 @@ const corePrpsinfoSchema = z.strictObject({
 });
 
 const coreSiginfoSchema = z.strictObject({
-  signo: uint,
+  signo: z.number().int(),
   code: z.number().int(),
   errno: z.number().int(),
 });

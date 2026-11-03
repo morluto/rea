@@ -979,3 +979,98 @@ it("tolerates malformed core notes by returning null without throwing", () => {
   expect(report.entries[4]?.core).toBeNull();
   expect(report.entries[4]?.type_name).toBe("core_auxv");
 });
+
+it("decodes siginfo using target ABI for MIPS machines", () => {
+  const desc = Buffer.alloc(128);
+  desc.writeInt32LE(11, 0); // signo = SIGSEGV
+  desc.writeInt32LE(1, 4); // code = SEGV_MAPERR (offset 4 on MIPS)
+  desc.writeInt32LE(0, 8); // errno = 0 (offset 8 on MIPS)
+  const mipsSiginfo = elfNote("CORE", 0x53494749, desc, true);
+  const bytes = elfNoteFixture({
+    bits: 32,
+    machine: 8, // EM_MIPS
+    ownership: "program",
+    notes: mipsSiginfo,
+  });
+  const report = parse(bytes);
+  expect(report.entries[0]?.core?.siginfo).toEqual({
+    signo: 11,
+    code: 1,
+    errno: 0,
+  });
+});
+
+it("preserves negative process IDs and signal numbers without rewriting to zero", () => {
+  const prps = corePrpsinfoNote({
+    pid: -1,
+    ppid: -1,
+    pgrp: -1,
+    sid: -1,
+  });
+  const sig = coreSiginfoNote(-1, -2, -3);
+  const bytes = elfNoteFixture({
+    bits: 64,
+    ownership: "program",
+    notes: Buffer.concat([prps, sig]),
+  });
+  const report = parse(bytes);
+  expect(report.entries[0]?.core?.prpsinfo).toMatchObject({
+    pid: -1,
+    ppid: -1,
+    pgrp: -1,
+    sid: -1,
+  });
+  expect(report.entries[1]?.core?.siginfo).toMatchObject({
+    signo: -1,
+    code: -2,
+    errno: -3,
+  });
+});
+
+it("rejects 64-bit auxv tags and out-of-range page sizes with core: null without schema error", () => {
+  const wideTagAuxv = elfNote(
+    "CORE",
+    6,
+    Buffer.from(
+      "00000000000000010000000000001000" + "00000000000000000000000000000000",
+      "hex",
+    ),
+  );
+  // Set type to 0x100000000n in LE
+  wideTagAuxv.writeBigUInt64LE(0x100000000n, 12 + 8); // header (12) + name padded (8)
+  const widePageSizeFile = elfNote("CORE", 0x46494c45, Buffer.alloc(32));
+  // header (12) + name padded (8) -> desc starts at 20
+  widePageSizeFile.writeBigUInt64LE(1n, 20); // count = 1
+  widePageSizeFile.writeBigUInt64LE(0x100000000n, 28); // page_size = 0x100000000n
+  const bytes = elfNoteFixture({
+    bits: 64,
+    ownership: "program",
+    notes: Buffer.concat([wideTagAuxv, widePageSizeFile]),
+  });
+  const report = parse(bytes);
+  expect(report.entries[0]?.core).toBeNull();
+  expect(report.entries[1]?.core).toBeNull();
+});
+
+it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
+  const header = Buffer.alloc(16);
+  header.writeBigUInt64LE(2n, 0); // count = 2
+  header.writeBigUInt64LE(4096n, 8); // page_size = 4096
+  const mappings = Buffer.alloc(48); // 2 mappings * 24 bytes
+  const paths = Buffer.from(
+    "/bin/app\0unterminated_path_without_null",
+    "latin1",
+  );
+  const badFileNote = elfNote(
+    "CORE",
+    0x46494c45,
+    Buffer.concat([header, mappings, paths]),
+  );
+  const bytes = elfNoteFixture({
+    bits: 64,
+    ownership: "program",
+    notes: badFileNote,
+  });
+  const report = parse(bytes);
+  expect(report.entries[0]?.core).toBeNull();
+});

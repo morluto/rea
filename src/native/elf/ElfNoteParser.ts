@@ -360,10 +360,10 @@ const decodeCorePrpsinfo = (
   return {
     prpsinfo: {
       state,
-      pid: pid >= 0 ? pid : 0,
-      ppid: ppid >= 0 ? ppid : 0,
-      pgrp: pgrp >= 0 ? pgrp : 0,
-      sid: sid >= 0 ? sid : 0,
+      pid,
+      ppid,
+      pgrp,
+      sid,
       uid,
       gid,
       filename: fname,
@@ -399,27 +399,46 @@ const decodeCoreFile = (
 
   const countBig = readWord(0);
   const pageSizeBig = readWord(wordSize);
-  if (
-    countBig > BigInt(Number.MAX_SAFE_INTEGER) ||
-    pageSizeBig > BigInt(Number.MAX_SAFE_INTEGER)
-  )
+  if (countBig > 0xffffffffn || pageSizeBig > 0xffffffffn || pageSizeBig === 0n)
     return null;
   const count = Number(countBig);
   const pageSize = Number(pageSizeBig);
-  if (count < 0 || count > 4096) return null;
 
   const entrySize = wordSize * 3;
-  const tableBytes = headerSize + count * entrySize;
-  if (descriptor.length < tableBytes) return null;
+  const neededBytes = BigInt(headerSize) + countBig * BigInt(entrySize);
+  if (BigInt(descriptor.length) < neededBytes) return null;
+  const tableBytes = Number(neededBytes);
 
-  const rawMappings: { start: bigint; end: bigint; offsetPages: bigint }[] = [];
-  for (let i = 0; i < count; i++) {
-    const entryOff = headerSize + i * entrySize;
-    const start = readWord(entryOff);
-    const end = readWord(entryOff + wordSize);
-    const offsetPages = readWord(entryOff + wordSize * 2);
-    rawMappings.push({ start, end, offsetPages });
+  const scanKey = `file:${String(descriptor.byteOffset)}:${String(descriptor.length)}`;
+  const cachedScan = text.scans.get(scanKey);
+  if (cachedScan === -1) return null;
+  if (cachedScan === undefined) {
+    chargeText(text, descriptor.length - tableBytes, "scanned");
   }
+
+  const pathSlices: Buffer[] = [];
+  let strPos = tableBytes;
+  let totalPathBytes = 0;
+  for (let i = 0; i < count; i++) {
+    if (strPos >= descriptor.length) {
+      text.scans.set(scanKey, -1);
+      return null;
+    }
+    const nullIdx = descriptor.indexOf(0, strPos);
+    if (nullIdx < 0) {
+      text.scans.set(scanKey, -1);
+      return null;
+    }
+    const pathBuf = descriptor.subarray(strPos, nullIdx);
+    pathSlices.push(pathBuf);
+    totalPathBytes += pathBuf.length;
+    strPos = nullIdx + 1;
+  }
+  text.scans.set(scanKey, count);
+
+  const rowBytes = count * (wide ? 54 : 30);
+  const pathBytes = totalPathBytes * 3;
+  chargeText(text, rowBytes + pathBytes);
 
   const mappings: {
     start_address: string;
@@ -428,24 +447,19 @@ const decodeCoreFile = (
     path: string;
     path_hex: string;
   }[] = [];
-  let strPos = tableBytes;
+
   for (let i = 0; i < count; i++) {
-    if (strPos >= descriptor.length) return null;
-    const nullIdx = descriptor.indexOf(0, strPos);
-    if (nullIdx < 0) return null;
-    const pathBuf = descriptor.subarray(strPos, nullIdx);
-    chargeText(text, pathBuf.length * 3);
-    const path = pathBuf.toString("latin1");
-    const path_hex = pathBuf.toString("hex");
-    strPos = nullIdx + 1;
-    const raw = rawMappings[i];
-    if (raw === undefined) return null;
+    const entryOff = headerSize + i * entrySize;
+    const start = readWord(entryOff);
+    const end = readWord(entryOff + wordSize);
+    const offsetPages = readWord(entryOff + wordSize * 2);
+    const pathBuf = pathSlices[i]!;
     mappings.push({
-      start_address: hexWord(raw.start),
-      end_address: hexWord(raw.end),
-      file_offset_pages: hexWord(raw.offsetPages),
-      path,
-      path_hex,
+      start_address: hexWord(start),
+      end_address: hexWord(end),
+      file_offset_pages: hexWord(offsetPages),
+      path: pathBuf.toString("latin1"),
+      path_hex: pathBuf.toString("hex"),
     });
   }
 
@@ -464,18 +478,20 @@ const decodeCoreFile = (
 const decodeCoreSiginfo = (
   descriptor: Buffer,
   little: boolean,
+  machine: number,
 ): ElfNotes["entries"][number]["core"] => {
   if (descriptor.length < 12) return null;
   const i32 = (off: number) =>
     little ? descriptor.readInt32LE(off) : descriptor.readInt32BE(off);
+  const isMips = machine === 8 || machine === 10;
   const signo = i32(0);
-  const errno = i32(4);
-  const code = i32(8);
+  const errno = isMips ? i32(8) : i32(4);
+  const code = isMips ? i32(4) : i32(8);
   return {
     prpsinfo: null,
     file: null,
     siginfo: {
-      signo: signo >= 0 ? signo : 0,
+      signo,
       errno,
       code,
     },
@@ -487,14 +503,13 @@ const decodeCoreAuxv = (
   descriptor: Buffer,
   little: boolean,
   wide: boolean,
+  text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
   const wordSize = wide ? 8 : 4;
   const entrySize = wordSize * 2;
   if (descriptor.length < entrySize || descriptor.length % entrySize !== 0)
     return null;
   const totalPairs = descriptor.length / entrySize;
-  const MAX_AUXV_PAIRS = 512;
-  if (totalPairs > MAX_AUXV_PAIRS) return null;
 
   const readWord = (off: number): bigint => {
     if (wide) {
@@ -507,11 +522,13 @@ const decodeCoreAuxv = (
     );
   };
 
-  const auxv: { type: number; type_name: string | null; value: string }[] = [];
+  const rawPairs: { aType: number; aVal: bigint }[] = [];
   let terminated = false;
   for (let i = 0; i < totalPairs; i++) {
     const off = i * entrySize;
-    const aType = Number(readWord(off));
+    const aTypeBig = readWord(off);
+    if (aTypeBig > 0xffffffffn) return null;
+    const aType = Number(aTypeBig);
     if (aType === 0) {
       terminated = true;
       for (let j = off + entrySize; j < descriptor.length; j++) {
@@ -520,14 +537,19 @@ const decodeCoreAuxv = (
       break;
     }
     const aVal = readWord(off + wordSize);
-    auxv.push({
-      type: aType,
-      type_name: AUXV_TYPE_NAMES[aType] ?? null,
-      value: hexWord(aVal),
-    });
+    rawPairs.push({ aType, aVal });
   }
 
   if (!terminated) return null;
+
+  const rowBytes = rawPairs.length * (wide ? 38 : 30);
+  chargeText(text, rowBytes);
+
+  const auxv = rawPairs.map(({ aType, aVal }) => ({
+    type: aType,
+    type_name: AUXV_TYPE_NAMES[aType] ?? null,
+    value: hexWord(aVal),
+  }));
 
   return {
     prpsinfo: null,
@@ -543,14 +565,16 @@ const decodeCore = (
   descriptor: Buffer,
   little: boolean,
   wide: boolean,
+  machine: number,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
   if (owner !== "CORE") return null;
   if (type === 3) return decodeCorePrpsinfo(descriptor, little, wide, text);
   if (type === 0x46494c45)
     return decodeCoreFile(descriptor, little, wide, text);
-  if (type === 0x53494749) return decodeCoreSiginfo(descriptor, little);
-  if (type === 6) return decodeCoreAuxv(descriptor, little, wide);
+  if (type === 0x53494749)
+    return decodeCoreSiginfo(descriptor, little, machine);
+  if (type === 6) return decodeCoreAuxv(descriptor, little, wide, text);
   return null;
 };
 
@@ -704,7 +728,17 @@ export const parseElfNotes = (
         examined,
         text,
       ))
-        parsed.push(toEntry(note, "program", index, reader.little, wide, text));
+        parsed.push(
+          toEntry(
+            note,
+            "program",
+            index,
+            reader.little,
+            wide,
+            header.machine,
+            text,
+          ),
+        );
     }
   }
   if (shnum !== 0) {
@@ -759,7 +793,17 @@ export const parseElfNotes = (
         examined,
         text,
       ))
-        parsed.push(toEntry(note, "section", index, reader.little, wide, text));
+        parsed.push(
+          toEntry(
+            note,
+            "section",
+            index,
+            reader.little,
+            wide,
+            header.machine,
+            text,
+          ),
+        );
     }
   }
   const absent = tables.length === 0;
@@ -790,6 +834,7 @@ const toEntry = (
   tableIndex: number,
   little: boolean,
   wide: boolean,
+  machine: number,
   text: TextBudget,
 ): Omit<ElfNotes["entries"][number], "index"> => {
   const gnuOwner = note.owner === "GNU";
@@ -831,6 +876,7 @@ const toEntry = (
       note.descriptor,
       little,
       wide,
+      machine,
       text,
     ),
   };
