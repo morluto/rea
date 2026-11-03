@@ -59,7 +59,10 @@ interface InitializerPositionCache {
   readonly enclosingFunction: WeakMap<t.Node, t.Function | null>;
   readonly moduleFunctionReads: WeakMap<
     readonly t.Statement[],
-    WeakMap<t.FunctionDeclaration, number | null>
+    {
+      readonly opaqueGlobalSiteCount: number;
+      readonly reads: WeakMap<t.FunctionDeclaration, number | null>;
+    }
   >;
   readonly evaluationChildren: WeakMap<
     t.Node,
@@ -844,10 +847,17 @@ const moduleFunctionFirstRead = (
   state?: JavaScriptSemanticAnalysisState,
 ): number | null => {
   const cache = initializerPositionCache(parents).moduleFunctionReads;
-  let reads = cache.get(body);
-  if (reads === undefined) {
+  const opaqueGlobalSiteCount = state?.opaqueEffects.globalSites.length ?? 0;
+  const cached = cache.get(body);
+  let reads = cached?.reads;
+  // Callee resolution can query timing while the ambient walk is still
+  // appending opaque global effects. Reuse only facts from the same prefix.
+  if (
+    reads === undefined ||
+    cached?.opaqueGlobalSiteCount !== opaqueGlobalSiteCount
+  ) {
     reads = new WeakMap();
-    cache.set(body, reads);
+    cache.set(body, { opaqueGlobalSiteCount, reads });
     const functions = new Map<string, t.FunctionDeclaration | null>();
     for (const statement of body) {
       const exported =

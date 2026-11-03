@@ -358,6 +358,7 @@ describe("Classic-script global function activation", () => {
     "const root = { __proto__: globalThis }; root.createWindow();",
     "const root = { ...globalThis }; root.createWindow();",
     "(0, eval)('createWindow()');",
+    "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');",
   ])("keeps early global access unresolved: %s", (activation) => {
     const body = (early: boolean) => `
       const { BrowserWindow } = require("electron");
