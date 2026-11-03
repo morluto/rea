@@ -76,11 +76,11 @@ describe("writeJavaScriptAnalysisSourceTransfer", () => {
     expect(writeFileMock).not.toHaveBeenCalled();
   });
 
-  it("yields before the Windows write so a pending abort can fire", async () => {
+  it("yields through a timer phase so a pending deadline abort can fire", async () => {
     const controller = new AbortController();
-    queueMicrotask(() => {
+    setTimeout(() => {
       controller.abort("cancelled-during-yield");
-    });
+    }, 0);
 
     await expect(
       writeJavaScriptAnalysisSourceTransfer(

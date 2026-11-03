@@ -23,9 +23,12 @@ export const writeJavaScriptAnalysisSourceTransfer = async (
   const platform = options.platform ?? process.platform;
   options.signal?.throwIfAborted();
   if (platform === "win32") {
-    // Yield so deadline timers and abort listeners can run before the sync
+    // Yield through a timer phase so ProviderStartupDeadline setTimeout
+    // callbacks and other macrotasks can deliver abort before the sync
     // native create/write/flush/close; check again after it returns.
-    await Promise.resolve();
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
     options.signal?.throwIfAborted();
     windowsPrivateRuntime(win32.dirname(path)).writeTransientFile(
       win32.basename(path),
