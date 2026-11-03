@@ -204,7 +204,7 @@ const emptyReferenceCaveat = (
   }
   if (operation === "inspect_native_instruction")
     return isEmptyArray(record.incoming_references)
-      ? ghidraEmptyFunctionReferencesLimitation
+      ? ghidraEmptyXrefsLimitation
       : undefined;
   return undefined;
 };

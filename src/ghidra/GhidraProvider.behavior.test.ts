@@ -3326,9 +3326,7 @@ describe("Ghidra empty function-reference facets", () => {
         address: "0x401000",
       });
       if (!execution.ok) throw execution.error;
-      expect(execution.value.limitations).toContain(
-        ghidraEmptyFunctionReferencesLimitation,
-      );
+      expect(execution.value.limitations).toContain(ghidraEmptyXrefsLimitation);
     } finally {
       await client.close();
     }
@@ -3347,7 +3345,7 @@ describe("Ghidra empty function-reference facets", () => {
       });
       if (!execution.ok) throw execution.error;
       expect(execution.value.limitations).not.toContain(
-        ghidraEmptyFunctionReferencesLimitation,
+        ghidraEmptyXrefsLimitation,
       );
     } finally {
       await client.close();
