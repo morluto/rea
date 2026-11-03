@@ -96,6 +96,29 @@ describe("ESP partition tables", () => {
     ]);
   });
 
+  it("marks MD5 invalid and records a limitation when a partition follows the MD5 entry", () => {
+    const validPart = TWO_OTA_PARTITIONS[0]!;
+    const postMd5Part = TWO_OTA_PARTITIONS[1]!;
+    const validTable = partitionTable([validPart]);
+    const bytes = Buffer.concat([
+      validTable.subarray(0, 64),
+      partitionEntry(postMd5Part),
+      Buffer.alloc(0xc00 - 96, 0xff),
+    ]);
+    const decoded = table(bytes);
+    expect(decoded.md5.status).toBe("invalid");
+    expect(decoded.partitions).toHaveLength(2);
+    expect(decoded.partitions.map(({ label }) => label)).toEqual([
+      validPart.label,
+      postMd5Part.label,
+    ]);
+    expect(decoded.limitations).toEqual([
+      "The partition table has a partition entry at 0x40 after the MD5 entry; ESP-IDF requires all partitions to precede the MD5 entry and rejects the table.",
+    ]);
+  });
+});
+
+describe("ESP partition table structural validation", () => {
   it.each([
     ["erased flash", Buffer.alloc(0xc00, 0xff), "the first entry is empty"],
     [
