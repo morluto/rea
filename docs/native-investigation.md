@@ -201,6 +201,11 @@ remains valid. This tool
 has no dedicated CLI command; the existing `decompile` command remains the
 single-procedure CLI operation.
 
+`detail: "summary"` retains the complete batch and returns only its counts,
+identities and sizes. `inspect_analysis_view` then reads rows or one body from
+the retained record, an Evidence file or a portable bundle without repeating
+decompilation: see [selected batch results](mcp-contracts.md#selected-batch-decompile-results).
+
 Each batch schedules one provider read at a time, but has no shared input-count
 or aggregate retained-output allowance. It retains every requested row and full
 pseudocode body through Evidence construction. The MCP response budget checks
@@ -397,6 +402,11 @@ sites remain distinct. A static route does not establish runtime reachability.
 Swift/closure dispatch requires resolved static references; unavailable ABI
 forms remain unknown.
 
+Encoded Objective-C method records retain their own locations in dispatch
+Evidence. A handler node uses the implementation address with an unknown file
+offset unless that function already has an independently located graph node;
+the method-record offset does not locate the handler's code.
+
 Incomplete reference kinds do not discard known typed calls or partial
 provider call references. A `provider_call` with `observed` resolution retains
 the provider-reported call site and endpoint without claiming generic direct,
@@ -442,7 +452,12 @@ Within one value trace, each exact procedure selector is attempted at most once,
 including failed analyses. A failed seed returns the provider's original typed
 failure and corrective guidance; it cannot establish a trace or target identity.
 Failures while expanding a validated seed remain unknown observations and do not
-establish canonical function identity. A successful seed without a native def-use
+establish canonical function identity. A cancelled expansion read returns the
+cancellation. An expansion read whose provider cannot confirm cleanup of
+resources it owns stops the trace: the result is that provider's own
+`cleanup_incomplete` failure with its resources and any bound cleanup retry, and the work
+admitted before the stop is retained as partial Evidence with a located unknown
+at the stopping read. A successful seed without a native def-use
 model still returns its procedure and an explicit coverage unknown. A new trace
 can retry failed selectors.
 
@@ -451,8 +466,9 @@ page omits retained nodes, and the edges they source, before `offset` or after
 `next_offset`. Every page repeats `traversal`: `complete`, or `truncated` with
 `reasons` naming each observed cause: the `max_depth`, `max_functions`,
 `max_call_sites`, `max_nodes` or `max_edges` budget, the fixed
-`node_payload_bytes` allowance, `provider_pcode_truncated`, or
-`ambiguous_call_candidates`. Each cause also has a located unknown. A budget is
+`node_payload_bytes` allowance, `provider_pcode_truncated`,
+`ambiguous_call_candidates`, or, only in a stopped trace's partial Evidence,
+`cleanup_incomplete`. Each cause also has a located unknown. A budget is
 reported only after it rejects work, so an exactly filled budget is not
 truncation; a depth or candidate limit is reported only when no other path
 analyzes or queues that destination. `total_nodes` and `total_edges` count
@@ -1007,7 +1023,9 @@ with a path-specific gap and incomplete capture coverage. Null alone does not
 establish that an accessibility value was successfully read or absent.
 
 An initial PID or window mismatch is `invalid_request` on `pid` or
-`window_id` and leaves provider availability intact. An unavailable executable
+`window_id` and leaves provider availability intact. A selected window that
+exists off screen is not a mismatch: selection succeeds and the permission and
+capture checks report their own outcome. An unavailable executable
 URL or unresolved executable path leaves identity unknown and reports
 `capability_unavailable`. Identity or window loss
 after the initial capture remains an observation failure with collected facts.

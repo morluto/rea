@@ -15,6 +15,8 @@ struct ProcessIdentityObservation: Encodable {
   let effective_uid: UInt32?
   let lifecycle: String?
   let relation: ProcessRelationObservation?
+  /** Display-only kernel accounting name (p_comm, at most MAXCOMLEN bytes). */
+  let name: String?
   let reason: String?
 }
 
@@ -31,6 +33,7 @@ struct ProcessMetadata {
   let parentPid: Int32
   let processGroupId: Int32
   let pointerSize: Int
+  let name: String
 }
 
 struct ProcessSnapshot {
@@ -92,7 +95,8 @@ func readProcessSnapshot(
             lifecycle: process.kp_proc.p_stat == SZOMB ? "zombie" : "non-zombie",
             parentPid: process.kp_eproc.e_ppid,
             processGroupId: process.kp_eproc.e_pgid,
-            pointerSize: process.kp_proc.p_flag & P_LP64 != 0 ? 8 : 4
+            pointerSize: process.kp_proc.p_flag & P_LP64 != 0 ? 8 : 4,
+            name: processName(process)
           )
         )
       },
@@ -101,6 +105,13 @@ func readProcessSnapshot(
     return ProcessSnapshot(metadata: metadata, failure: nil)
   }
   return ProcessSnapshot(metadata: [:], failure: "process_table_failed_\(ENOMEM)")
+}
+
+/** Decode the NUL-terminated accounting name; invalid UTF-8 is replaced for display. */
+private func processName(_ process: kinfo_proc) -> String {
+  withUnsafeBytes(of: process.kp_proc.p_comm) { bytes in
+    String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+  }
 }
 
 func readProcessIdentities(pids: [Int32]) -> [ProcessIdentityObservation] {
@@ -130,6 +141,7 @@ func readProcessIdentities(
         effective_uid: nil,
         lifecycle: nil,
         relation: nil,
+        name: nil,
         reason: "not-in-snapshot"
       )
     }
@@ -144,6 +156,7 @@ func readProcessIdentities(
         parent_pid: metadata.parentPid,
         process_group_id: metadata.processGroupId
       ),
+      name: metadata.name,
       reason: nil
     )
   }
@@ -157,6 +170,7 @@ private func unavailableIdentity(pid: Int32, reason: String) -> ProcessIdentityO
     effective_uid: nil,
     lifecycle: nil,
     relation: nil,
+    name: nil,
     reason: reason
   )
 }
