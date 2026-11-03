@@ -577,11 +577,12 @@ and limit default to 0 and 64; pseudocode uses UTF-16 code units and never
 splits surrogate pairs, while other pages count rows. Unavailable facts and
 provider limitations remain explicit. Source is
 an exact same-session retained reference, portable inline Evidence, or an
-Evidence record or bundle file. When an inline Evidence record is supplied as
-source, the resulting view is retained in the active MCP session, but the inline
-parent remains caller-owned and is not added to session retention. Following
-`parent_evidence_id` in subsequent retained queries requires retaining or importing
-the parent record directly into the session via `import_evidence_bundle`. Native
+Evidence record or bundle file. When a caller-supplied source (portable inline
+Evidence or an Evidence file) is inspected, the resulting view is retained in the
+active MCP session, but the parent record remains caller-owned and is not added to
+session retention. Following `parent_evidence_id` in subsequent retained queries
+requires retaining or importing the parent record directly into the session via
+`import_evidence_bundle` (or re-specifying the file source). Native
 function, inventory, and observation
 views require the `rea.analysis` predicate; function-matching views require
 `rea.native-function-matching`. A mismatched predicate returns an
