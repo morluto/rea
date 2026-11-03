@@ -217,6 +217,34 @@ export const decideHardwareClaim = (
   }
 };
 
+/** Claims for one reconstruction: controller names, open parts, and driver strings. */
+export const hardwareClaimsForBlocks = (
+  blocks: readonly { readonly matched: boolean }[],
+  uncertainSubjects: readonly string[],
+  drivers: readonly { readonly linked: boolean }[],
+): readonly HardwareClaim[] => [
+  ...blocks.map((block) =>
+    decideHardwareClaim({
+      rule: "chip-manual-name",
+      addressHit: block.matched,
+    }),
+  ),
+  ...uncertainSubjects.map((subject) =>
+    decideHardwareClaim({
+      rule: "installed-part",
+      tableNames: [],
+      deviceName: subject,
+    }),
+  ),
+  ...drivers.map((driver) =>
+    decideHardwareClaim({
+      rule: "driver-linkage",
+      stringPresent: driver.linked,
+      usedAsBootProof: false,
+    }),
+  ),
+];
+
 /** Board records that stay open: no controller binding, or an explicit disagreement. */
 export const unsettledBoardFacts = (
   devices: readonly {

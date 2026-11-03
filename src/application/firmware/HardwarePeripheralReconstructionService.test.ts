@@ -249,6 +249,25 @@ describe("RT-Spark board annotation", () => {
     ]);
     expect(usart?.boardDrivers[0]?.linkage).toBe("linked_in_image");
     expect(usart?.socPeripheralNameBasis).toBe("chip_manual");
+    expect(report.hardwareClaims).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rule: "chip-manual-name",
+          basis: "chip_manual",
+          settled: true,
+        }),
+        expect.objectContaining({
+          rule: "installed-part",
+          basis: "unsettled",
+          settled: false,
+        }),
+        expect.objectContaining({
+          rule: "driver-linkage",
+          basis: "observed_address",
+          settled: true,
+        }),
+      ]),
+    );
     expect(
       report.attributions.find((item) => item.targetAddress === "0x40011000")
         ?.controllerBasis,

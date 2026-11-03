@@ -18,9 +18,13 @@ import {
 import {
   controllerNameBasis,
   CONTROLLER_NAME_BASES,
+  HARDWARE_CLAIM_BASES,
+  HARDWARE_CLAIM_RULES,
   REGISTER_NAME_BASES,
+  hardwareClaimsForBlocks,
   unsettledBoardFacts,
   type ControllerNameBasis,
+  type HardwareClaim,
   type UnsettledBoardFact,
 } from "../../domain/firmware/hardwareFactBasis.js";
 import {
@@ -116,6 +120,7 @@ export interface HardwarePeripheralReconstruction {
   readonly attributions: readonly HardwareAccessAttribution[];
   readonly detectedPlatforms: readonly SocPlatformMatchCandidate[];
   readonly unsettledFacts: readonly UnsettledBoardFact[];
+  readonly hardwareClaims: readonly HardwareClaim[];
   readonly limitations: readonly string[];
 }
 
@@ -193,6 +198,14 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
     z.strictObject({
       subject: z.string(),
       basis: z.literal("unsettled"),
+      reason: z.string(),
+    }),
+  ),
+  hardwareClaims: z.array(
+    z.strictObject({
+      rule: z.enum(HARDWARE_CLAIM_RULES),
+      basis: z.enum(HARDWARE_CLAIM_BASES),
+      settled: z.boolean(),
       reason: z.string(),
     }),
   ),
@@ -399,6 +412,11 @@ export const reconstructHardwareFromReferences = (
         }))
       : [];
 
+  const unsettledFacts =
+    boardApplies && boardProfile !== null
+      ? unsettledBoardFacts(boardProfile.devices)
+      : [];
+
   return {
     procedure,
     architecture,
@@ -418,10 +436,18 @@ export const reconstructHardwareFromReferences = (
     peripheralBlocks,
     attributions,
     detectedPlatforms,
-    unsettledFacts:
+    unsettledFacts,
+    hardwareClaims: hardwareClaimsForBlocks(
+      peripheralBlocks.map((block) => ({
+        matched: block.socPeripheralNameBasis === "chip_manual",
+      })),
+      unsettledFacts.map((fact) => fact.subject),
       boardApplies && boardProfile !== null
-        ? unsettledBoardFacts(boardProfile.devices)
+        ? boardProfile.drivers.map((driver) => ({
+            linked: driver.linkage === "linked_in_image",
+          }))
         : [],
+    ),
     limitations,
   };
 };
