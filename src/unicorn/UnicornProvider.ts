@@ -76,6 +76,7 @@ export class UnicornProvider implements AnalysisProviderCandidate {
         status: "unavailable",
         code: "runtime_unavailable",
         reason: "Availability inspection was cancelled.",
+        remediation: "Retry the availability inspection.",
         diagnostics: {},
       };
     if (!unicornHostSupported(this.#platform, this.#arch))
@@ -84,6 +85,7 @@ export class UnicornProvider implements AnalysisProviderCandidate {
         code: "unsupported_host",
         reason:
           "Unicorn emulation Phase 1 runs on Linux x64 hosts only, inheriting the pwntools lane's verified matrix.",
+        remediation: "Run on a Linux x64 host.",
         diagnostics: { platform: this.#platform, arch: this.#arch },
       };
     const pythonPath = this.#environment[UNICORN_PYTHON_ENV_VAR] ?? "";
@@ -91,14 +93,16 @@ export class UnicornProvider implements AnalysisProviderCandidate {
       return {
         status: "unavailable",
         code: "not_configured",
-        reason: `Set ${UNICORN_PYTHON_ENV_VAR} to an absolute caller-supplied Python executable with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2; REA never installs Python or packages.`,
+        reason: "No caller-supplied Python is configured.",
+        remediation: `Set ${UNICORN_PYTHON_ENV_VAR} to an absolute caller-supplied Python executable with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2; REA never installs Python or packages.`,
         diagnostics: {},
       };
     if (!isAbsolute(pythonPath))
       return {
         status: "unavailable",
         code: "not_configured",
-        reason: `${UNICORN_PYTHON_ENV_VAR} must be an absolute path.`,
+        reason: `${UNICORN_PYTHON_ENV_VAR} is not an absolute path.`,
+        remediation: `Set ${UNICORN_PYTHON_ENV_VAR} to an absolute path.`,
         diagnostics: { python_path: pythonPath },
       };
     try {
@@ -107,7 +111,8 @@ export class UnicornProvider implements AnalysisProviderCandidate {
         return {
           status: "unavailable",
           code: "executable_missing",
-          reason: `Selected Python executable must be a regular executable file, not a directory: ${pythonPath}`,
+          reason: `Selected Python path is not a regular file: ${pythonPath}`,
+          remediation: `Point ${UNICORN_PYTHON_ENV_VAR} at a regular executable Python file with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2.`,
           diagnostics: { python_path: pythonPath },
         };
     } catch {
@@ -115,6 +120,7 @@ export class UnicornProvider implements AnalysisProviderCandidate {
         status: "unavailable",
         code: "executable_missing",
         reason: `Selected Python executable is not executable: ${pythonPath}`,
+        remediation: `Point ${UNICORN_PYTHON_ENV_VAR} at a regular executable Python file with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2.`,
         diagnostics: { python_path: pythonPath },
       };
     }
