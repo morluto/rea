@@ -36,6 +36,22 @@ it.each(["compact", "full"] as const)(
         remediation: { action: expect.stringContaining("exact entry address") },
       });
       expect(error.recovery).toBeUndefined();
+      const malformed = await harness.mcp.callTool({
+        name: "analyze_function",
+        arguments: { procedure: 42 },
+      });
+      expect(parseMcpToolError(malformed).error).toMatchObject({
+        code: "invalid_request",
+        recovery: { kind: "inspect_input_contract" },
+        details: {
+          issues: [
+            expect.objectContaining({
+              path: ["procedure"],
+              reason: "invalid_type",
+            }),
+          ],
+        },
+      });
     } finally {
       await harness.close();
     }
