@@ -161,6 +161,31 @@ describe("Ghidra universal Mach-O import thinning", () => {
     },
   );
 
+  it("copies a selected slice spanning several read chunks exactly", async () => {
+    // 61440 is 4 KiB-aligned but 6400 bytes into a 64 KiB read; the end lands
+    // 4099 bytes into another chunk, so a boundary off-by-one would drop or
+    // repeat bytes the existing single-chunk selections cannot catch.
+    const arm64 = { cpu: 0x0100000c, offset: 61440, size: 139267 };
+    const bytes = largeUniversal([
+      { cpu: 0x01000007, offset: 4096, size: 8480 },
+      arm64,
+      { cpu: 0x00000007, offset: 204800, size: 33464 },
+    ]);
+    const { directory, target, slice } = await universalTarget(bytes, "arm64");
+    const snapshot = await createGhidraTargetSnapshot(
+      target.path,
+      directory,
+      target.sha256,
+      { platform: "linux", slice: target.universalSlice },
+    );
+    const copied = await readFile(snapshot.path);
+    expect(copied.length, "no byte before or after the slice is copied").toBe(
+      arm64.size,
+    );
+    expect(copied.equals(slice)).toBe(true);
+    expect(snapshot.sha256).toBe(sha256(slice));
+  });
+
   it("fails closed when the source changed or the slice leaves the file", async () => {
     const bytes = fat([0x01000007, 0x0100000c]);
     const { directory, target } = await universalTarget(bytes, "arm64");
