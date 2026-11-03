@@ -13,37 +13,33 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 describe.skipIf(process.platform !== "darwin")(
   "native plist CLI selection",
   () => {
-    cliTest("matches plutil for every octal byte", async ({ processes }) => {
-      const root = await createTestTempDirectory("rea-openstep-octal-");
-      const path = join(root, "Octal.plist");
-      const quotedByte = (byte: number) =>
-        '"\\' + byte.toString(8).padStart(3, "0") + '"';
-      const convert = async (source: string) => {
+    cliTest(
+      "matches plutil for defined NeXTSTEP octets",
+      async ({ processes }) => {
+        const root = await createTestTempDirectory("rea-openstep-octal-");
+        const path = join(root, "Octal.plist");
+        const quotedByte = (byte: number) =>
+          '"\\' + byte.toString(8).padStart(3, "0") + '"';
+        // Native releases disagree on undefined octets 0xfe and 0xff.
+        // The shared parser's refusal of those values is covered by its own tests.
+        const bytes = Array.from({ length: 254 }, (_, byte) =>
+          quotedByte(byte),
+        );
+        const source = "(" + bytes.join(",") + ")";
         await writeFile(path, source);
-        return processes.run("/usr/bin/plutil", [
+        const converted = await processes.run("/usr/bin/plutil", [
           "-convert",
           "json",
           "-o",
           "-",
           path,
         ]);
-      };
-      const bytes = Array.from({ length: 254 }, (_, byte) => quotedByte(byte));
-      const source = "(" + bytes.join(",") + ")";
-      const converted = await convert(source);
-      expect(converted.exitCode, converted.stderr).toBe(0);
-      const expected: unknown = JSON.parse(converted.stdout);
-      expect(expected).toHaveLength(bytes.length);
-      expect(decodeOpenStepPropertyList(source)).toEqual(expected);
-
-      for (const byte of [254, 255]) {
-        const invalid = "(" + quotedByte(byte) + ")";
-        expect((await convert(invalid)).exitCode).toBe(1);
-        expect(() => decodeOpenStepPropertyList(invalid)).toThrowError(
-          expect.objectContaining({ code: "invalid_octal_escape" }),
-        );
-      }
-    });
+        expect(converted.exitCode, converted.stderr).toBe(0);
+        const expected: unknown = JSON.parse(converted.stdout);
+        expect(expected).toHaveLength(bytes.length);
+        expect(decodeOpenStepPropertyList(source)).toEqual(expected);
+      },
+    );
 
     // Targets are app-relative: the bundle, its program file, or a plist file.
     cliTest.for([
