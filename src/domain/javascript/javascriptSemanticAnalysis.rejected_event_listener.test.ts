@@ -225,6 +225,64 @@ e.on("ready");`),
 });
 
 /**
+ * A namespace import constructs the class through a member expression, so the
+ * constructor has no binding of its own and the prototype write is recorded
+ * against the module instead. Measured on Node 22.22.2: rewriting `on` to
+ * delegate to the `addListener` captured before the rewrite stores `"ready"`
+ * for a one-argument call. Delegating to `this.addListener` instead overflows
+ * the stack, because Node defines `addListener` as the same function as `on`.
+ */
+it("keeps the registration of a receiver built from a namespace member", () => {
+  expect(
+    eventsForSource(`import * as events from "node:events";
+const original = events.EventEmitter.prototype.addListener;
+const e = new events.EventEmitter();
+events.EventEmitter.prototype.on = function (name, fn = () => {}) { return original.call(this, name, fn); };
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/** A member require reaches the same class through the same member expression. */
+it("keeps the registration of a receiver built from a member require", () => {
+  expect(
+    eventsForSource(`const events = require("node:events");
+const original = events.EventEmitter.prototype.addListener;
+const e = new events.EventEmitter();
+events.EventEmitter.prototype.on = function (name, fn = () => {}) { return original.call(this, name, fn); };
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
+ * Handing the instance to another call lets that call replace the method.
+ * Measured on Node 22.22.2: `configure(e)` replaces `on` with a form that
+ * defaults the listener, so `e.on("ready")` registers.
+ */
+it("keeps the registration of a receiver that was passed to a call", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+function configure(target) {
+  target.on = (name, fn = () => {}) => target.addListener(name, fn);
+}
+configure(e);
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
+ * The added checks must not withdraw the proof from an untouched namespace
+ * receiver, or the guard would never apply to the member-expression forms.
+ */
+it("still rejects a missing listener on an untouched namespace receiver", () => {
+  expect(
+    eventsForSource(`import * as events from "node:events";
+const e = new events.EventEmitter();
+e.on("ready");`),
+  ).toEqual([]);
+});
+
+/**
  * `emit` passes its remaining arguments to listeners that already exist, so it
  * does not validate them the way a registration does.
  */

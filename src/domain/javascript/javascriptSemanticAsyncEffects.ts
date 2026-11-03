@@ -17,7 +17,6 @@ import {
   semanticResolutionBlocked,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
-  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
   semanticBindingAtRead,
@@ -174,55 +173,99 @@ const rejectsEventListener = (listener: t.Node): boolean => {
 const NODE_EVENTS_SPECIFIERS = ["events", "node:events"] as const;
 
 /**
- * Report whether a constructor reference resolves to Node's `EventEmitter`.
- * Named and default imports, destructured requires, and member requires all
- * denote that class.
+ * Report whether a value is `new <events>.EventEmitter()`. Named and default
+ * imports, destructured requires, and member requires all denote that class.
+ * The construction is returned so the caller reads `callee` from the unwrapped
+ * `NewExpression` rather than from a wrapper around it.
  */
-const isNodeEventEmitterConstructor = (
+const nodeEventEmitterConstruction = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
+): t.NewExpression | null => {
   const value = unwrapJavaScriptExpression(node).node;
-  if (!t.isNewExpression(value)) return false;
+  if (!t.isNewExpression(value)) return null;
   const selected = builtinDataEffectCallablePath(
     value.callee,
     state,
     NODE_EVENTS_SPECIFIERS,
   );
+  if (selected === null) return null;
   // An empty selected path is the module's default export, which `events`
   // defines as `EventEmitter`.
-  return (
-    selected !== null &&
-    (selected.length === 0 || selected.at(-1) === "EventEmitter")
-  );
+  return selected.length === 0 || selected.at(-1) === "EventEmitter"
+    ? value
+    : null;
+};
+
+/**
+ * Report whether any binding in this module writes a `prototype.<method>` slot.
+ * A receiver cannot be held to the native contract once the method that answers
+ * the call may have been replaced on a shared prototype. The write is recorded
+ * on whichever binding owns the object, so a scan covers every spelling of it:
+ * the class itself, a namespace import, a member require, or an alias of any of
+ * them. A file that reassigns `prototype.<method>` for an unrelated class loses
+ * the proof as well, which keeps the guard narrow instead of guessing which
+ * definition answers the call.
+ */
+const writesPrototypeMethod = (
+  method: string,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  for (const binding of state.bindingsById.values())
+    if (
+      binding.memberWrites.some(
+        ({ path, node: write }) =>
+          path.at(-1) === method &&
+          path.at(-2) === "prototype" &&
+          !semanticTopLevelEffectFollowsCapture(
+            read,
+            write,
+            state.parentsByNode,
+          ),
+      )
+    )
+      return true;
+  return false;
 };
 
 /**
  * Report whether the receiver is a value this module constructs from Node's
- * `EventEmitter`. Only that class is bound by `checkListener`; other
- * EventEmitter-style APIs define one-argument forms, such as Socket.IO's
- * `socket.off("x")`, which removes every listener for the event. A receiver
- * that is not proven this way keeps its operation as an unresolved candidate.
+ * `EventEmitter` and still calls the native listener method. Only that class is
+ * bound by `checkListener`; other EventEmitter-style APIs define one-argument
+ * forms, such as Socket.IO's `socket.off("x")`, which removes every listener
+ * for the event. Any receiver whose selected method may have been replaced
+ * keeps its operation as an unresolved candidate.
  */
 const nodeEventEmitterReceiver = (
   node: t.Expression | t.Super,
   method: string,
   state: JavaScriptSemanticAnalysisState,
+  call: t.Node,
 ): boolean => {
   if (!t.isIdentifier(node)) return false;
   const binding = resolveSemanticBindingState(state, node, node.name);
   if (binding === undefined) return false;
   const initializer = semanticStableInitializer(binding, state);
-  if (
-    initializer === undefined ||
-    initializer.projection.length !== 0 ||
-    !isNodeEventEmitterConstructor(initializer.node, state)
-  )
+  if (initializer === undefined || initializer.projection.length !== 0)
+    return false;
+  if (nodeEventEmitterConstruction(initializer.node, state) === null)
     return false;
   // Constructing the class proves where the receiver came from, not which
-  // definition answers the call. A member write replaces the selected method,
-  // so it no longer keeps the native contract. An unrelated write such as
-  // `emitter.tag = 1` leaves the proof intact.
+  // definition answers the call. Passing the instance to another call lets that
+  // call replace the method first, so the proof no longer holds. Reading
+  // `emitter.on` in order to call it passes the function value rather than the
+  // instance, and the collector records the operation's own call as one of
+  // these escapes, so that call is not evidence against the receiver.
+  if (
+    binding.escapedPaths.some(
+      (escape) => escape.path.length === 0 && escape.node !== call,
+    )
+  )
+    return false;
+  // A member write replaces the selected method, so it no longer keeps the
+  // native contract. An unrelated write such as `emitter.tag = 1` leaves the
+  // proof intact.
   if (
     binding.memberWrites.some(
       ({ path, node: write }) =>
@@ -233,20 +276,7 @@ const nodeEventEmitterReceiver = (
     return false;
   // Every instance shares the constructor's prototype, so a write there
   // replaces the method for this receiver as well.
-  const constructed = (initializer.node as t.NewExpression).callee;
-  const structural = unwrapJavaScriptExpression(constructed).node;
-  if (!t.isIdentifier(structural)) return true;
-  const constructorBinding = resolveSemanticBindingState(
-    state,
-    structural,
-    structural.name,
-  );
-  if (constructorBinding === undefined) return false;
-  return !constructorBinding.memberWrites.some(
-    ({ path, node: write }) =>
-      affectsBuiltinPath(path, ["prototype", method]) &&
-      !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
-  );
+  return !writesPrototypeMethod(method, node, state);
 };
 
 const collectEvent = (
@@ -275,7 +305,7 @@ const collectEvent = (
     listenerMethod &&
     listenerArgument === undefined &&
     !node.arguments.some((argument) => t.isSpreadElement(argument)) &&
-    nodeEventEmitterReceiver(member.object, method, state)
+    nodeEventEmitterReceiver(member.object, method, state, node)
   )
     return;
   // A leading spread shifts the runtime argument positions, so argument 1 is not
