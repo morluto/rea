@@ -2203,3 +2203,29 @@ it("covers a wasm pointer array that runs from the last segment into zero fill",
   );
   expect(hasPointerArrayCoverage(image, 0x200n, 20)).toBe(true);
 });
+
+it("refuses generic instances for a wasm module before opening it", () => {
+  // The module imports its memory, which opening would refuse; the generic
+  // refusal comes first, from the module kind alone.
+  const generic = genericFacts(31);
+  const name = (text: string) => [text.length, ...Buffer.from(text)];
+  const importMemory = [1, ...name("env"), ...name("memory"), 0x02, 0x00, 1];
+  const bytes = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    2,
+    importMemory.length,
+    ...importMemory,
+  ]);
+  expect(() =>
+    linkIl2cppBinary(bytes, generic.metadata, generic.link, undefined, {
+      genericInstances: true,
+    }),
+  ).toThrow("generic method instances are not decoded for wasm32 modules");
+});
