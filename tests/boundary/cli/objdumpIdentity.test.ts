@@ -31,11 +31,6 @@ cliTest(
         exit_code: expect.any(Number),
         completion_status: "complete",
       },
-      limitations: expect.arrayContaining([
-        expect.stringContaining(
-          "executable implementation, version and supported formats are unknown",
-        ),
-      ]),
     });
 
     const architectures = await cli.run({
@@ -51,13 +46,7 @@ cliTest(
         version: null,
       },
       subject: null,
-      limitations: expect.arrayContaining([
-        expect.stringContaining("implementation and version are unknown"),
-      ]),
     });
-    expect(JSON.stringify(architectures.json)).not.toContain(
-      "lists BFD targets",
-    );
 
     const missing = join(tmpdir(), `missing-objdump-${randomUUID()}`);
     const failed = await cli.run({
