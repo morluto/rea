@@ -6,6 +6,7 @@ import {
   compressedElfNoteFixture,
   compressedElfNoteSectionFixture,
   elfExtendedSectionCountFixture,
+  elfNote,
   elfNoteFixture,
   elfNoteWithUnreadableSectionNameFixture,
 } from "../../src/native/elf/ElfNotes.fixture.js";
@@ -29,6 +30,44 @@ cliTest("reports a GNU build-id through the public CLI", async ({ cli }) => {
     )?.gnu?.build_id_hex,
   ).toBe("0123456789abcdef0123456789abcdef01234567");
 });
+
+cliTest(
+  "reports FDO packaging metadata through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-elf-notes-fdo-cli-");
+    const path = join(root, "program");
+    const metadata = {
+      type: "rpm",
+      name: "coreutils",
+      version: "9.10-5.fc44",
+      architecture: "x86_64",
+    };
+    await writeFile(
+      path,
+      elfNoteFixture({
+        ownership: "section",
+        sectionName: ".note.package",
+        notes: elfNote(
+          "FDO",
+          0xcafe1a7e,
+          Buffer.from(`${JSON.stringify(metadata)}\0\0`, "utf8"),
+        ),
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-elf-notes", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.entries[0]).toMatchObject({
+      owner: "FDO",
+      type_name: "fdo_packaging_metadata",
+      fdo: { metadata, issue: null },
+    });
+  },
+);
 
 cliTest(
   "resolves section note names from zlib and Zstandard string tables through the CLI",

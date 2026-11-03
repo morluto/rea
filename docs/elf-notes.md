@@ -2,8 +2,9 @@
 
 `inspect_elf_notes` / `inspect-elf-notes` answers whether one selected local
 ELF32/ELF64 image declares `PT_NOTE` program headers or `SHT_NOTE` sections,
-which note owners and types those tables store, and which GNU build-id or
-ABI-tag fields those notes carry. It reads the file without executing it and
+which note owners and types those tables store, which GNU build-id or ABI-tag
+fields those notes carry, and which package or dlopen dependencies FDO notes
+declare. It reads the file without executing it and
 does not require a disassembler, debug package, or package catalog.
 
 ```bash
@@ -38,6 +39,37 @@ were examined; an unavailable section name does not erase those note facts.
 For GNU notes, `gnu.build_id_hex`, `gnu.abi_tag`, or `gnu.gold_version` are
 filled when the descriptor matches that type. Other owners keep `gnu` null.
 
+For `FDO` notes, `fdo.metadata` holds the JSON from
+[package metadata](https://uapi-group.org/specifications/specs/package_metadata_for_executable_files/)
+(`fdo_packaging_metadata`, type `0xcafe1a7e`, usually `.note.package`) or
+[dlopen metadata](https://uapi-group.org/specifications/specs/elf_dlopen_metadata/)
+(`fdo_dlopen_metadata`, type `0x407c0c0a`, usually `.note.dlopen`) notes:
+
+```json
+{
+  "type_name": "fdo_packaging_metadata",
+  "fdo": {
+    "metadata": {
+      "type": "rpm",
+      "name": "coreutils",
+      "version": "9.10-5.fc44",
+      "architecture": "x86_64",
+      "osCpe": "cpe:/o:fedoraproject:fedora:44"
+    },
+    "issue": null
+  }
+}
+```
+
+Packaging metadata must be a JSON object and dlopen metadata a JSON array,
+stored as NUL-terminated UTF-8 followed only by NUL padding. A descriptor that
+breaks those rules keeps its entry, hash, and location, with `metadata` null
+and `issue` naming the rule. Descriptors beyond the report's 64 KiB FDO decode
+allowance are not decoded and report the allowance the same way. Keys are not checked against the specifications.
+This metadata is what the producer declared; it is not verified against a
+package database or the libraries a loader would open. Other FDO note types and
+other owners keep `fdo` null.
+
 `PT_NOTE` and `SHT_NOTE` are examined independently. The same file range may
 appear twice when both tables declare it.
 
@@ -55,8 +87,13 @@ within that ceiling. If admission fails, the error reports the required
 `max_file_bytes`; raising it can admit the decoded table up to the operation's
 512 MiB maximum. Once admitted, raising that setting does not increase the
 scan budget for the same source and decoded names. Repeated table ranges count again. Each descriptor range is hashed once,
-and each GNU version's trailing NUL run is scanned once; neither walk may
-exceed that byte ceiling. Malformed ELF headers, truncated header
+each GNU version's trailing NUL run is scanned once, and each FDO descriptor is
+decoded once; none of those walks may exceed that byte ceiling. Retained FDO
+JSON text counts against the shared budget for every entry that repeats it.
+FDO decoding shares a 64 KiB allowance across the report, because a decoded
+JSON tree can take about 50 times its source bytes in memory. Each distinct
+descriptor's full size counts once, in table order; a range repeated by
+another table reuses its decode. Malformed ELF headers, truncated header
 tables, declared note tables that extend past the file, and truncated
 note entries fail without partial success. ELF extended
 numbering (`PN_XNUM`, including a section count stored when `e_shnum` is 0) is

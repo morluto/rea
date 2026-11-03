@@ -1,20 +1,26 @@
 import { expect, it } from "vitest";
 import {
+  elfNoteTypeName,
   elfObjectTypeName,
-  gnuNoteTypeName,
   inspectElfNotesInputSchema,
   elfNotesSchema,
 } from "./elfNotes.js";
 
-it("maps ELF object and GNU note types without inventing unknown names", () => {
+it("maps ELF object and owner-scoped note types without inventing unknown names", () => {
   expect(elfObjectTypeName(1)).toBe("relocatable");
   expect(elfObjectTypeName(2)).toBe("executable");
   expect(elfObjectTypeName(3)).toBe("shared");
   expect(elfObjectTypeName(4)).toBe("core");
   expect(elfObjectTypeName(99)).toBe("unknown");
-  expect(gnuNoteTypeName(1)).toBe("gnu_abi_tag");
-  expect(gnuNoteTypeName(3)).toBe("gnu_build_id");
-  expect(gnuNoteTypeName(99)).toBe("unknown");
+  expect(elfNoteTypeName("GNU", 1)).toBe("gnu_abi_tag");
+  expect(elfNoteTypeName("GNU", 3)).toBe("gnu_build_id");
+  expect(elfNoteTypeName("GNU", 99)).toBe("unknown");
+  expect(elfNoteTypeName("FDO", 0xcafe1a7e)).toBe("fdo_packaging_metadata");
+  expect(elfNoteTypeName("FDO", 0x407c0c0a)).toBe("fdo_dlopen_metadata");
+  expect(elfNoteTypeName("FDO", 3)).toBe("unknown");
+  // A type number belongs to its owner's namespace.
+  expect(elfNoteTypeName("GNU", 0xcafe1a7e)).toBe("unknown");
+  expect(elfNoteTypeName("Go", 3)).toBe("unknown");
 });
 
 it("rejects extra caller arguments and admits an empty note inventory", () => {

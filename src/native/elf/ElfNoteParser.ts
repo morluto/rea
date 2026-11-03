@@ -19,9 +19,11 @@ import type {
   InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
 import {
+  elfNoteTypeName,
   elfObjectTypeName,
-  gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
+import { ownedJsonValueSchema } from "../../domain/jsonValue.js";
+import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
 
@@ -30,6 +32,12 @@ const SHT_NOTE = 7;
 const SHT_STRTAB = 3;
 const SHF_COMPRESSED = 0x800n;
 const HEX_DESCRIPTOR_LIMIT = 64;
+/**
+ * Source bytes of distinct FDO descriptors decoded per report. Decoded JSON
+ * trees grow about 50x beyond their source bytes, before the service and
+ * Evidence copy them. Real FDO notes are a few hundred bytes.
+ */
+const FDO_DECODE_ALLOWANCE = 65536;
 
 interface TextBudget {
   limit: number;
@@ -38,6 +46,16 @@ interface TextBudget {
   scanned: number;
   readonly hashes: Map<string, string>;
   readonly scans: Map<string, number>;
+  readonly fdo: Map<string, FdoDecode>;
+  fdoDecoded: number;
+}
+
+type FdoMetadata = NonNullable<ElfNotes["entries"][number]["fdo"]>;
+
+interface FdoDecode {
+  readonly value: FdoMetadata;
+  /** JSON text bytes retained for each entry that repeats this descriptor. */
+  readonly textBytes: number;
 }
 
 /** Caller can raise max_file_bytes to admit the decoded section-name table. */
@@ -94,6 +112,9 @@ const LIMITATIONS = [
   "This workflow does not execute the image, resolve runtime notes, or verify GNU build-id uniqueness against package catalogs.",
   "PT_NOTE and SHT_NOTE are examined independently; the same file range may appear twice when both tables declare it.",
 ] as const;
+
+const FDO_LIMITATION =
+  "FDO packaging and dlopen metadata are the producer's declarations; they are not verified against a package database or the libraries a loader would open.";
 
 const ABSENT_LIMITATIONS = [
   "No PT_NOTE program header or SHT_NOTE section was declared. That is not proof the image never carried notes in another container or overlay.",
@@ -289,6 +310,82 @@ const decodeGnu = (
   };
 };
 
+const invalid = (issue: string): FdoDecode => ({
+  value: { metadata: null, issue },
+  textBytes: issue.length,
+});
+
+/**
+ * UAPI package and dlopen notes store one NUL-terminated, NUL-padded UTF-8
+ * JSON string: an object for packaging metadata, an array for dlopen.
+ */
+const decodeFdoDescriptor = (
+  descriptor: Buffer,
+  shape: "object" | "array",
+): FdoDecode => {
+  const end = descriptor.indexOf(0);
+  if (end < 0) return invalid("FDO metadata is not NUL-terminated.");
+  if (descriptor.subarray(end).some((byte) => byte !== 0))
+    return invalid("FDO metadata has non-NUL bytes after its terminator.");
+  const parsed = safeParseUtf8Json(descriptor.subarray(0, end));
+  if (!parsed.ok)
+    return invalid(`FDO metadata is not UTF-8 JSON: ${parsed.error}`);
+  const value = ownedJsonValueSchema.safeParse(parsed.value);
+  if (!value.success)
+    return invalid(
+      `FDO metadata is not admissible JSON: ${value.error.issues[0]?.message ?? "invalid value"}`,
+    );
+  const metadata = value.data;
+  const matches =
+    shape === "array"
+      ? Array.isArray(metadata)
+      : typeof metadata === "object" &&
+        metadata !== null &&
+        !Array.isArray(metadata);
+  if (!matches)
+    return invalid(
+      shape === "array"
+        ? "FDO dlopen metadata is not a JSON array."
+        : "FDO packaging metadata is not a JSON object.",
+    );
+  return { value: { metadata, issue: null }, textBytes: end };
+};
+
+const decodeFdo = (
+  owner: string,
+  type: number,
+  descriptor: Buffer,
+  text: TextBudget,
+): FdoMetadata | null => {
+  const typeName = elfNoteTypeName(owner, type);
+  if (
+    typeName !== "fdo_packaging_metadata" &&
+    typeName !== "fdo_dlopen_metadata"
+  )
+    return null;
+  // Overlapping tables can give one descriptor range different FDO types, and
+  // the type selects the required JSON shape.
+  const key = `${typeName}:${String(descriptor.byteOffset)}:${String(descriptor.length)}`;
+  let decoded = text.fdo.get(key);
+  if (decoded === undefined) {
+    chargeText(text, descriptor.length, "scanned");
+    if (descriptor.length > FDO_DECODE_ALLOWANCE - text.fdoDecoded)
+      decoded = invalid(
+        `FDO metadata exceeds the ${String(FDO_DECODE_ALLOWANCE)}-byte decode allowance shared by this report.`,
+      );
+    else {
+      text.fdoDecoded += descriptor.length;
+      decoded = decodeFdoDescriptor(
+        descriptor,
+        typeName === "fdo_dlopen_metadata" ? "array" : "object",
+      );
+    }
+    text.fdo.set(key, decoded);
+  }
+  chargeText(text, decoded.textBytes);
+  return decoded.value;
+};
+
 /** Decode PT_NOTE and SHT_NOTE tables from one in-memory ELF image. */
 export const parseElfNotes = (
   bytes: Buffer,
@@ -345,6 +442,8 @@ export const parseElfNotes = (
     scanned: 0,
     hashes: new Map(),
     scans: new Map(),
+    fdo: new Map(),
+    fdoDecoded: 0,
   };
   let shstrtab: Buffer | null = null;
   const sectionNameLimitations = new Set<string>();
@@ -515,6 +614,11 @@ export const parseElfNotes = (
     limitations: [
       ...(absent ? ABSENT_LIMITATIONS : LIMITATIONS),
       ...sectionNameLimitations,
+      ...(parsed.some(
+        (entry) => entry.fdo !== null && entry.fdo.metadata !== null,
+      )
+        ? [FDO_LIMITATION]
+        : []),
     ],
   };
 };
@@ -526,7 +630,6 @@ const toEntry = (
   little: boolean,
   text: TextBudget,
 ): Omit<ElfNotes["entries"][number], "index"> => {
-  const gnuOwner = note.owner === "GNU";
   const range = `${String(note.descriptor_offset)}:${String(note.descsz)}`;
   let digest = text.hashes.get(range);
   if (digest === undefined) {
@@ -541,7 +644,7 @@ const toEntry = (
     namesz: note.namesz,
     descsz: note.descsz,
     type: note.type,
-    type_name: gnuOwner ? gnuNoteTypeName(note.type) : "unknown",
+    type_name: elfNoteTypeName(note.owner, note.type),
     owner: note.owner,
     owner_bytes_hex: note.owner_bytes_hex,
     descriptor: {
@@ -554,5 +657,6 @@ const toEntry = (
           : null,
     },
     gnu: decodeGnu(note.owner, note.type, note.descriptor, little, text),
+    fdo: decodeFdo(note.owner, note.type, note.descriptor, text),
   };
 };

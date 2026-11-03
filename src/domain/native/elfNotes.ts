@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
+import { jsonValueSchema } from "../jsonValue.js";
 import { localPathStringSchema } from "../localPath.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
@@ -17,9 +18,16 @@ export const ELF_NOTE_TYPE_NAMES = [
   "gnu_build_id",
   "gnu_gold_version",
   "gnu_property",
+  "fdo_packaging_metadata",
+  "fdo_dlopen_metadata",
   "unknown",
 ] as const;
 export type ElfNoteTypeName = (typeof ELF_NOTE_TYPE_NAMES)[number];
+
+/** UAPI package metadata for executable files (`.note.package`). */
+export const FDO_PACKAGING_METADATA = 0xcafe1a7e;
+/** UAPI ELF dlopen metadata (`.note.dlopen`). */
+export const FDO_DLOPEN_METADATA = 0x407c0c0a;
 
 export const ELF_OBJECT_TYPE_NAMES = [
   "relocatable",
@@ -46,8 +54,17 @@ export const elfObjectTypeName = (type: number): ElfObjectTypeName => {
   }
 };
 
-/** Map GNU n_type when the owner is GNU; other owners stay unknown. */
-export const gnuNoteTypeName = (type: number): ElfNoteTypeName => {
+/** Map n_type within its owner's namespace; other owners and types stay unknown. */
+export const elfNoteTypeName = (
+  owner: string,
+  type: number,
+): ElfNoteTypeName => {
+  if (owner === "FDO") {
+    if (type === FDO_PACKAGING_METADATA) return "fdo_packaging_metadata";
+    if (type === FDO_DLOPEN_METADATA) return "fdo_dlopen_metadata";
+    return "unknown";
+  }
+  if (owner !== "GNU") return "unknown";
   switch (type) {
     case 1:
       return "gnu_abi_tag";
@@ -123,6 +140,16 @@ const noteEntrySchema = z.strictObject({
         .nullable(),
       abi_tag: gnuAbiTagSchema.nullable(),
       gold_version: z.string().nullable(),
+    })
+    .nullable(),
+  /**
+   * Decoded FDO packaging or dlopen metadata. `metadata` is the descriptor's
+   * JSON object or array; `issue` explains why it is null.
+   */
+  fdo: z
+    .strictObject({
+      metadata: jsonValueSchema.nullable(),
+      issue: z.string().nullable(),
     })
     .nullable(),
 });
