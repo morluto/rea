@@ -15,6 +15,7 @@ export function* applyElfRelativeRelocationsSteps(
   elf: Extract<BinaryContainer, { format: "elf" }>["elf"],
   mappings: readonly FileMapping[],
   zeroFills: readonly ZeroFillMapping[],
+  bits: 32 | 64 = 64,
 ): Generator<
   void,
   {
@@ -27,7 +28,7 @@ export function* applyElfRelativeRelocationsSteps(
     const steps = readElfRelocationWritesSteps(
       image,
       {
-        bits: 64,
+        bits,
         little: true,
         machine: elf.machine,
         dynamicSegments: elf.dynamicSegments,
@@ -36,6 +37,14 @@ export function* applyElfRelativeRelocationsSteps(
       },
       { requireDynamic: true },
     );
+    // A pointer slot is 8 bytes, or 4 on 32-bit ARM.
+    const width = bits / 8;
+    const read = (at: number) =>
+      width === 8 ? bytes.readBigUInt64LE(at) : BigInt(bytes.readUInt32LE(at));
+    const store = (value: bigint, at: number) =>
+      width === 8
+        ? bytes.writeBigUInt64LE(value, at)
+        : bytes.writeUInt32LE(Number(value), at);
     const bytes = Buffer.from(image),
       zeroFillPointers = new Map<bigint, bigint>(),
       unresolved = new Map<bigint, number>();
@@ -70,26 +79,26 @@ export function* applyElfRelativeRelocationsSteps(
         unknown(write.address, write.width);
         if (at !== null) bytes.fill(0, at, at + write.width);
       } else if (at === null) {
-        for (let delta = -7; delta <= 7; delta++) {
+        for (let delta = 1 - width; delta < width; delta++) {
           const previous = zeroFillPointers.get(write.address + BigInt(delta));
           if (
             previous !== undefined &&
             (delta !== 0 || previous !== write.value)
           )
-            unknown(write.address, 8);
+            unknown(write.address, width);
         }
         if (!zeroFillPointers.has(write.address)) admitState();
         zeroFillPointers.set(write.address, write.value);
       } else {
-        for (let delta = -7; delta <= 7; delta++)
+        for (let delta = 1 - width; delta < width; delta++)
           if (
             wasWritten(at + delta) &&
-            (delta !== 0 || bytes.readBigUInt64LE(at) !== write.value)
+            (delta !== 0 || read(at) !== write.value)
           )
-            unknown(write.address, 8);
+            unknown(write.address, width);
         const byte = Math.floor(at / 8);
         starts[byte] = (starts[byte] ?? 0) | (1 << (at % 8));
-        bytes.writeBigUInt64LE(write.value, at);
+        store(write.value, at);
       }
       next = steps.next();
     }

@@ -222,10 +222,15 @@ export function* openImageSteps(
       );
     throw cause;
   }
-  if (container.bits !== 64 || container.byte_order !== "little")
+  // 32-bit coverage is the layout checked on a Unity armeabi-v7a build.
+  const arm32 =
+    container.format === "elf" &&
+    container.bits === 32 &&
+    container.architecture === "arm";
+  if (container.byte_order !== "little" || (container.bits !== 64 && !arm32))
     throw new Il2cppBinaryFormatFailure(
       "unsupported-container",
-      `only 64-bit little-endian images are supported, not ${container.bits}-bit ${container.byte_order}-endian`,
+      `only 64-bit little-endian images and 32-bit ARM ELF are supported, not ${container.bits}-bit ${container.byte_order}-endian ${container.format} ${container.architecture}`,
     );
   let relocated:
     | {
@@ -241,6 +246,7 @@ export function* openImageSteps(
         container.elf,
         container.mappings,
         container.zero_fills,
+        container.bits,
       );
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure)
@@ -305,7 +311,7 @@ export function* openImageSteps(
       container.zero_fills,
     ),
     imageBase,
-    pointerSize: 8,
+    pointerSize: arm32 ? 4 : 8,
     unresolvedPointerSlots: relocated?.unresolved ?? new Map<bigint, number>(),
     zeroFillPointers: relocated?.zeroFillPointers ?? new Map<bigint, bigint>(),
     ...(machoPointerFixups === undefined ? {} : { machoPointerFixups }),
@@ -431,10 +437,10 @@ export const isExecutable = (image: NativeImage, address: bigint): boolean => {
 const hasUnresolvedElfBytes = (
   image: NativeImage,
   address: bigint,
-  size = 8,
+  size: number = image.pointerSize,
 ): boolean => {
   if (image.unresolvedPointerSlots.size === 0) return false;
-  for (let delta = -7; delta < size; delta++) {
+  for (let delta = 1 - image.pointerSize; delta < size; delta++) {
     const width = image.unresolvedPointerSlots.get(address + BigInt(delta));
     if (width !== undefined && delta + width > 0) return true;
   }
