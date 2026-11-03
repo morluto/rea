@@ -367,6 +367,7 @@
 * **filesystem:** unify stable file identity checks ([160648c](https://github.com/morluto/rea/commit/160648cc60e5550e2faf410f5f5bd693fe8a8afc))
 * **firmware:** admit caller-selected source directly ([c1e0f53](https://github.com/morluto/rea/commit/c1e0f531e600c7899d51f675d6fa2fef6f3aebb9))
 * **firmware:** preserve report metadata before semantic validation ([a7aad91](https://github.com/morluto/rea/commit/a7aad91320213f136062668110bf5c1e63606d0d))
+* **firmware:** recommend the operation-specific engine ([#8668](https://github.com/morluto/rea/issues/8668)) ([510e83e](https://github.com/morluto/rea/commit/510e83eadc5251ee5cc9469b894c7895ffe36ef2))
 * **firmware:** retain completed command failures ([ecd22c4](https://github.com/morluto/rea/commit/ecd22c42ac55287bef0f3e70561773cd4b6ba74c))
 * **firmware:** retain nested dependency diagnostics ([b7be0d9](https://github.com/morluto/rea/commit/b7be0d90a907b5e66711df938ef092c59658ba09))
 * **firmware:** validate Intel HEX start-record offsets ([#7806](https://github.com/morluto/rea/issues/7806)) ([9ac9f91](https://github.com/morluto/rea/commit/9ac9f91ab579d562950cc3ac8590ea097fa6f121))
