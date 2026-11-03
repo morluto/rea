@@ -46,10 +46,7 @@ const chainedImportPayload = (names: readonly string[]): Buffer => {
   return Buffer.concat([header, starts, imports, pool]);
 };
 
-const inventoryTarget = async (
-  chained = false,
-  importNames?: readonly string[],
-) => {
+const inventoryTarget = async (chained = false, payload?: Buffer) => {
   const path = join(
     await createTestTempDirectory("rea-native-inventory-"),
     "fixture",
@@ -63,8 +60,6 @@ const inventoryTarget = async (
   segment.writeBigUInt64LE(0x4000n, 48);
   segment.writeUInt32LE(7, 56);
   segment.writeUInt32LE(5, 60);
-  const payload =
-    importNames === undefined ? undefined : chainedImportPayload(importNames);
   const payloadOffset = 0x2000;
   const fixups = Buffer.alloc(16);
   fixups.writeUInt32LE(0x80000034, 0);
@@ -728,7 +723,10 @@ it("names chained imports from the binary's import table when the symbol table o
     inventoryRunner(outputs),
     "darwin",
   ).createClient(
-    await inventoryTarget(true, ["__Z3inli", "_$s10AppIntents0A4EnumMp"]),
+    await inventoryTarget(
+      true,
+      chainedImportPayload(["__Z3inli", "_$s10AppIntents0A4EnumMp"]),
+    ),
   );
   const execution = await client.execute("inspect_macho", {});
   if (!execution.ok) throw execution.error;
@@ -767,7 +765,9 @@ it("names each chained row by its ordinal when the table holds both spacing read
     {},
     inventoryRunner(outputs),
     "darwin",
-  ).createClient(await inventoryTarget(true, ["_foo", " _foo"]));
+  ).createClient(
+    await inventoryTarget(true, chainedImportPayload(["_foo", " _foo"])),
+  );
   const execution = await client.execute("inspect_macho", {});
   if (!execution.ok) throw execution.error;
   expect(execution.value.result).toMatchObject({
@@ -778,6 +778,36 @@ it("names each chained row by its ordinal when the table holds both spacing read
       ],
     },
   });
+});
+
+it("records why an unusable chained import table falls back to the symbol table", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  outputs["nm:-gju"] = "__Z3inli\n";
+  outputs["dyld_info:-imports"] = [
+    "    -imports:",
+    "      0x0000  __Z3inli  (from libc++)",
+  ].join("\n");
+  // A compressed symbol pool has no decodable names.
+  const payload = chainedImportPayload(["__Z3inli"]);
+  payload.writeUInt32LE(1, 24);
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(await inventoryTarget(true, payload));
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: { items: [{ name: "__Z3inli", name_status: "exact" }] },
+    limitations: expect.arrayContaining([
+      expect.stringContaining(
+        "Compressed chained-fixup symbol names are not supported",
+      ),
+    ]),
+  });
+  expect(JSON.stringify(execution.value.result)).toContain('"-gju"');
 });
 
 it("keeps a chained row unknown when its ordinal is outside the import table", () => {

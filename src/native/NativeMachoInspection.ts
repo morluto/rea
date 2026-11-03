@@ -103,35 +103,36 @@ const LC_DYLD_CHAINED_FIXUPS = 0x80000034;
 
 /**
  * Exact names from the selected slice's chained-fixup import table by import
- * ordinal, or undefined when that table cannot be read within the native
- * output budget.
+ * ordinal, or why that table cannot stand in for the symbol-table inventory.
+ * Undefined when the context has no slice reader.
  */
 const readChainedImportNames = async (
   context: NativeMachoInspectionContext,
   binary: MachoCommandNames,
   offset: number,
   size: number | null,
-): Promise<readonly (string | null)[] | undefined> => {
+): Promise<Result<readonly (string | null)[], string> | undefined> => {
+  if (context.readSliceRange === undefined) return undefined;
   const fields = binary.commands.find(
     ({ command }) => command === LC_DYLD_CHAINED_FIXUPS,
   )?.fixedFields;
   const at = fields?.dataoff;
   const length = fields?.datasize;
-  if (
-    context.readSliceRange === undefined ||
-    at === undefined ||
-    length === undefined ||
-    length > NATIVE_COMMAND_OUTPUT_BUDGET_BYTES
-  )
-    return undefined;
+  if (at === undefined || length === undefined)
+    return err("its load command fields are not decoded");
+  if (length > NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)
+    return err(
+      `its ${length}-byte payload exceeds the ${NATIVE_COMMAND_OUTPUT_BUDGET_BYTES}-byte native read budget`,
+    );
   const bytes = await context.readSliceRange(offset, size, at, length);
   try {
-    return chainedImportNames(
-      Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    return ok(
+      chainedImportNames(
+        Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+      ),
     );
   } catch (cause) {
-    // A malformed payload leaves the symbol-table inventory in charge.
-    if (cause instanceof RangeError) return undefined;
+    if (cause instanceof RangeError) return err(cause.message);
     throw cause;
   }
 };
@@ -378,14 +379,18 @@ export const inspectNativeMacho = async (
     const chainedTable = hasChainedFixups
       ? await readChainedImportNames(context, binary, offset, size)
       : undefined;
-    if (chainedTable !== undefined)
+    if (chainedTable?.ok === true)
       parsedImports = parseDyldImports(
         sliceOutput(dyldImports),
         hasChainedFixups,
         undefined,
-        chainedTable,
+        chainedTable.value,
       );
     else {
+      if (chainedTable !== undefined)
+        limitations.push(
+          `The chained-fixup import table is unusable (${chainedTable.error}); chained import names are matched against the undefined symbol table instead.`,
+        );
       const importNames = await runSliceCommand(SYMBOL_TABLE_IMPORTS);
       if (!importNames.ok) return err(importNames.error);
       captures.push(importNames.value);
