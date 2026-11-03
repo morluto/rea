@@ -258,6 +258,7 @@ describe("native value parameter-use node membership", () => {
       {
         procedure: procedureAddress,
         address: null,
+        related_procedure: null,
         reason: "Node budget reached",
       },
     ]);
@@ -468,6 +469,7 @@ describe("native value failed-callee traversal", () => {
       expect(trace.unknowns).toContainEqual({
         procedure: "0x2000",
         address: null,
+        related_procedure: null,
         reason: expect.stringContaining("Callee unavailable"),
       });
       expect(
@@ -500,6 +502,7 @@ describe("native value failed-callee traversal", () => {
     expect(cappedTrace.unknowns).toContainEqual({
       procedure: "0x1000",
       address: null,
+      related_procedure: null,
       reason: "Edge budget reached",
     });
   });
@@ -1369,9 +1372,14 @@ describe("native value trace thunk targets", () => {
   const externalTargetUnknown = {
     procedure: "0xc000",
     address: null,
+    related_procedure: "EXTERNAL:0x1",
     reason:
       "Thunk target EXTERNAL:0x1 is not represented in this thunk's value-flow model and was not traced",
   };
+  const thunkTargetReasons = (unknowns: { reason: string }[]) =>
+    unknowns
+      .map(({ reason }) => reason)
+      .filter((reason) => reason.includes("Thunk target"));
 
   it("reports an external import target that the synthetic thunk model never reaches", async () => {
     const { port, attempted } = thunkPort(
@@ -1436,10 +1444,106 @@ describe("native value trace thunk targets", () => {
         }),
       ]),
     });
-    expect(parsed.unknowns.map(({ reason }) => reason)).not.toContainEqual(
-      expect.stringContaining("Thunk target"),
-    );
+    expect(thunkTargetReasons(parsed.unknowns)).toEqual([]);
     expect(graph.analyzed).toEqual(["0x2000"]);
+  });
+
+  it("keeps a thunk whose target another path analyzes after the thunk", async () => {
+    const graph = staticValueGraph(
+      {
+        "0x1000": {
+          operations: [
+            node("call-thunk", "0x1000", "CALL"),
+            node("call-target", "0x1004", "CALL"),
+            node("return", "0x1008", "RETURN"),
+          ],
+        },
+        "0x2000": { operations: [node("return", "0x2000", "RETURN")] },
+      },
+      {
+        "0x1000": [{ destination: "0xc000", status: "direct" }],
+        "0x1004": [{ destination: "0x2000", status: "direct" }],
+      },
+    );
+    // The thunk's own model neither contains nor calls its target.
+    const thunk = thunkDossier("0x2000", [node("return", "0xc000", "RETURN")]);
+    const port: AnalysisOperationPort = {
+      execute: (operation, parameters) =>
+        operation === "analyze_function" && parameters.procedure === "0xc000"
+          ? Promise.resolve(
+              ok(createAnalysisExecution(thunk, provider, { subject })),
+            )
+          : graph.port.execute(operation, parameters),
+    };
+    const result = await traceNativeValues(port, { procedure: "0x1000" });
+    if (!result.ok) throw result.error;
+    const parsed = nativeValueTraceSchema.parse(result.value);
+    expect(parsed.procedures.map(({ address }) => address)).toEqual([
+      "0x1000",
+      "0xc000",
+      "0x2000",
+    ]);
+    expect(parsed.traversal).toEqual({ status: "complete" });
+    expect(thunkTargetReasons(parsed.unknowns)).toEqual([]);
+  });
+
+  it("reports a thunk target whose call edge an exactly filled edge budget rejects", async () => {
+    const graph = staticValueGraph(
+      {},
+      { "0xc008": [{ destination: "0x2000", status: "direct" }] },
+    );
+    const dossier = functionDossierSchema.parse(
+      thunkDossier("0x2000", [
+        node("copy", "0xc000", "COPY"),
+        node("use", "0xc004", "COPY"),
+        node("call", "0xc008", "CALL"),
+        node("return", "0xc00c", "RETURN"),
+      ]),
+    );
+    if (!dossier.native_value_flow?.available)
+      throw new Error("Invalid fixture");
+    dossier.native_value_flow.def_use = [
+      { definition: "copy", use: "use", input_index: 0 },
+    ];
+    const thunk = jsonValueSchema.parse(dossier);
+    const port: AnalysisOperationPort = {
+      execute: (operation, parameters) =>
+        operation === "analyze_function"
+          ? parameters.procedure === "0xc000"
+            ? Promise.resolve(
+                ok(createAnalysisExecution(thunk, provider, { subject })),
+              )
+            : Promise.reject(
+                new Error(`Unexpected ${String(parameters.procedure)}`),
+              )
+          : graph.port.execute(operation, parameters),
+    };
+    // The def-use edge fills the budget exactly, so the call is resolved and
+    // then rejected: the target is neither an edge nor queued, so it stays unexamined.
+    const result = await traceNativeValues(port, {
+      procedure: "0xc000",
+      max_edges: 1,
+    });
+    if (!result.ok) throw result.error;
+    const parsed = nativeValueTraceSchema.parse(result.value);
+    expect(parsed).toMatchObject({
+      decompilations: 1,
+      traversal: { status: "truncated", reasons: ["max_edges"] },
+    });
+    expect(parsed.edges.map(({ kind }) => kind)).toEqual(["def-use"]);
+    expect(parsed.unknowns).toContainEqual({
+      procedure: "0xc000",
+      address: null,
+      related_procedure: null,
+      reason: "Edge budget reached",
+    });
+    expect(parsed.unknowns).toContainEqual({
+      procedure: "0xc000",
+      address: null,
+      related_procedure: "0x2000",
+      reason: expect.stringContaining("Thunk target 0x2000"),
+    });
+    expect(graph.resolved).toEqual(["0xc008"]);
   });
 
   it("reports the thunk target alongside a missing def-use model", async () => {
@@ -1455,6 +1559,7 @@ describe("native value trace thunk targets", () => {
       {
         procedure: "0xc000",
         address: null,
+        related_procedure: null,
         reason: "Provider has no native def-use model",
       },
       externalTargetUnknown,
