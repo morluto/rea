@@ -26,7 +26,7 @@ export const resolveXrefsAddress = async (
           {
             conformsToInputContract: true,
             remediationAction:
-              "Inspect the selected target's symbol inventory, then use an exact analyzed name or a verified address with xrefs.",
+              "If available, inspect analyzed names with MCP list_names or target exports with CLI inspect-macho (Mach-O) or inspect-native-exports (PE/ELF). Then use an exact analyzed name or a verified address with xrefs; exports may omit local symbols.",
           },
           [
             {
