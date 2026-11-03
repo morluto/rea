@@ -1316,7 +1316,8 @@ try {
       }
     }
   }
-  unsupported.writeUInt16LE(183, 18);
+  // EM_RISCV: AArch64 (183) is now an admitted profile.
+  unsupported.writeUInt16LE(243, 18);
   const core = Buffer.from(object);
   core.writeUInt16LE(4, 16);
   for (const [name, bytes, category] of [
@@ -1341,7 +1342,7 @@ try {
       "invalid_input",
     ],
     ["undersized-program-header", undersizedProgramHeader, "invalid_input"],
-    ["arm64", unsupported, "unsupported_target"],
+    ["riscv64", unsupported, "unsupported_target"],
     ["core", core, "unsupported_target"],
   ]) {
     const path = join(root.path, name);
