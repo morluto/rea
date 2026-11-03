@@ -71,6 +71,26 @@ Hopper and IDA refuse raw-binary targets. Windows Ghidra P0 admits headerless
 raw-binary images, including Cortex-M, and remains read-only. PE admission is
 unchanged.
 
+## Hardware claims
+
+A hardware statement uses one rule and one basis. The same rules cover
+controller names, architectural registers, board windows, values computed by
+the image, installed parts, and driver strings.
+
+| Rule                    | Settled basis         | Stays unsettled when                                                            |
+| ----------------------- | --------------------- | ------------------------------------------------------------------------------- |
+| `observed-address`      | `observed_address`    | the address comes from rounding a page the instruction did not access           |
+| `chip-manual-name`      | `chip_manual`         | no observed address falls inside a controller window of the active chip map     |
+| `architecture-register` | `architecture_manual` | the register address is chosen by the board, such as a GIC, CLINT, or PLIC base |
+| `explicit-profile`      | `explicit_profile`    | the CPU family alone would assign a board memory window or register placement   |
+| `instruction-decode`    | `instruction`         | the image's own bit operations do not compute the split                         |
+| `installed-part`        | `observed_address`    | a probe table names more than one part, or the only text is a device name       |
+| `driver-linkage`        | `observed_address`    | a string's presence is treated as proof that the driver runs during boot        |
+
+Only a settled basis may be stated as fact. An unsettled claim keeps its subject
+and reason, and it is not a constructable value. `decideHardwareClaim` applies
+these rules.
+
 ## Limitations
 
 - Headers are not discovered from file bytes. The caller still supplies the

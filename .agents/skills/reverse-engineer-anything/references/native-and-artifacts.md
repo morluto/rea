@@ -178,7 +178,7 @@ vector-table base, such as `0x08000000` for STM32 internal flash; REA reads
 the reset vector there and disassembles Thumb at `reset_handler`. Hopper and
 IDA refuse this interpretation. Ghidra uses `BinaryLoader`. `cortex-m` selects
 `ARM:LE:32:Cortex`. Big-endian ARM and other Thumb-only variants remain
-unsupported. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/raw-binary.md).
+unsupported. A hardware name follows one claim rule: an observed address, a chip-map hit, an architectural register, a caller-selected board profile, or a value the image itself computes. Probe tables with more than one part, device-name strings, and driver-string presence stay unsettled. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/raw-binary.md).
 
 ### Function annotations in Ghidra
 
