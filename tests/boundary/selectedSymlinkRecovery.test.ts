@@ -6,6 +6,7 @@ import { AnalysisInputError } from "../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { PythonPycProvider } from "../../src/python/PythonPycProvider.js";
 import { RustBinaryProvider } from "../../src/rust/RustBinaryProvider.js";
+import { pwntoolsDecoderFailure } from "../../src/native/pwntools/PwntoolsFailures.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
 import { readStableArtifact } from "../../src/artifacts/readStableArtifact.js";
@@ -62,5 +63,17 @@ it.skipIf(process.platform === "win32")(
     } finally {
       await provider.close();
     }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps the resolved-target recovery for a pwntools artifact-read symlink refusal (#8714)",
+  async () => {
+    const { selected, target } = await selectedSymlink("rea-pwntools-symlink-");
+    const refusal: unknown = await readStableArtifact(selected, 1024).catch(
+      (cause: unknown) => cause,
+    );
+    const error = pwntoolsDecoderFailure(refusal, "artifact-read", selected);
+    await expectResolvedTargetRemediation(error, selected, target);
   },
 );
