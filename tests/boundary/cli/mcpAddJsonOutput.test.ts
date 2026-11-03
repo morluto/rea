@@ -119,6 +119,71 @@ cliTest(
 );
 
 cliTest(
+  "JSON registration applies the selected output filter",
+  async ({ cli }) => {
+    const fixture = await registrationFixture();
+    const filtered = await cli.run({
+      arguments: [
+        "mcp",
+        "add",
+        "--agent",
+        "amp",
+        "--command",
+        "fixture-server",
+        "--json",
+        "--filter-output",
+        "agents",
+      ],
+      cwd: fixture.home,
+      environment: fixture.environment,
+      timeoutMs: 20_000,
+    });
+    expect(filtered.exitCode, filtered.stderr).toBe(0);
+    expect(JSON.parse(filtered.stdout)).toEqual({ agents: ["Amp"] });
+    expect(
+      JSON.parse(await readFile(fixture.settings, "utf8"))["amp.mcpServers"].rea
+        .command,
+    ).toBe("fixture-server");
+
+    const name = await cli.run({
+      arguments: [
+        "mcp",
+        "add",
+        "--agent",
+        "claude-code",
+        "--command",
+        "fixture-server",
+        "--json",
+        "--filter-output",
+        "name",
+      ],
+      cwd: fixture.home,
+      environment: fixture.environment,
+      timeoutMs: 20_000,
+    });
+    expect(name.exitCode, name.stderr).toBe(0);
+    expect(JSON.parse(name.stdout)).toBe("rea");
+
+    const failed = await cli.run({
+      arguments: [
+        "mcp",
+        "add",
+        "--agent",
+        "claude-code",
+        "--json",
+        "--filter-output",
+        "agents",
+      ],
+      cwd: fixture.home,
+      environment: { ...fixture.environment, REA_TEST_RUNNER_FAIL: "1" },
+      timeoutMs: 20_000,
+    });
+    expect(failed.exitCode).toBe(1);
+    expect(JSON.parse(failed.stdout)).toMatchObject({ code: "MCP_ADD_FAILED" });
+  },
+);
+
+cliTest(
   "JSON runner registration preserves options, results, and failure status",
   async ({ cli }) => {
     const fixture = await registrationFixture();

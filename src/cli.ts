@@ -24,7 +24,7 @@ import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
 import { registerFridaCommands } from "./cli/fridaCommands.js";
 import type { FridaInstrumentationPort } from "./application/frida/FridaInstrumentationPort.js";
-import { Cli, SyncMcp, z } from "incur";
+import { Cli, Filter, SyncMcp, z } from "incur";
 import {
   adaptCliOutputArgumentsForIncur,
   normalizeCliArguments,
@@ -347,9 +347,19 @@ export const createCli = (
           global: !rest.includes("--no-global"),
         }).then(
           (result) => {
+            const registered = {
+              name: PRODUCT_IDENTITY.cliBinary,
+              ...result,
+            };
             // Amp verification must finish before a success document is sent.
+            // Incur filters successful data before formatting; keep that
+            // selection on this direct JSON document.
+            const filtered =
+              output.filterOutput === undefined
+                ? registered
+                : Filter.apply(registered, Filter.parse(output.filterOutput));
             registrationDocument = renderCliDocument(
-              { name: PRODUCT_IDENTITY.cliBinary, ...result },
+              filtered === undefined ? {} : filtered,
               "json",
               process.stdout.isTTY === true,
             );
