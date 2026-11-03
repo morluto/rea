@@ -29,6 +29,7 @@ import { createDesktopApplicationService } from "./desktop.js";
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
+import { createUnityAssetsService } from "./unityAssets.js";
 import { createModelArtifactService } from "./model.js";
 import { createIl2cppMetadataService } from "./il2cpp.js";
 import { createElectronFuseService } from "./electronFuses.js";
@@ -336,6 +337,7 @@ const modules = {
   devicetree: service(() => createDevicetreeService()),
   elfNotes: service(() => createElfNotesService()),
   appleIps: service(() => createAppleIpsService()),
+  unityAssets: service(() => createUnityAssetsService()),
   kernelModule: service(() => createKernelModuleService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
   peCertificates: service(() => createPeCertificatesService()),

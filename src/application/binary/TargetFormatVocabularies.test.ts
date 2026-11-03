@@ -120,6 +120,7 @@ const TARGETS: TargetFixtures = {
   ines: { ...archive, format: "ines" },
   "godot-pck": { ...archive, format: "godot-pck" },
   unityfs: { ...archive, format: "unityfs" },
+  "unity-web-data": { ...archive, format: "unity-web-data" },
   uimage: { ...archive, format: "uimage" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },

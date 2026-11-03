@@ -268,7 +268,10 @@ rea extract-artifact content.bundle --json
 
 Format versions 6 through 8 retain header, block and directory facts with
 none/LZ4/LZ4HC block decompression. See [UnityFS](unityfs.md) for encryption
-and LZMA coverage boundaries.
+and LZMA coverage boundaries. Unity WebGL `.data` containers use the same
+commands; inventory an extracted SerializedFile with
+`rea inspect-unity-assets level0 --json`. See
+[Unity WebGL data and SerializedFiles](unity-assets.md).
 
 Inspect an ESP32-family app or bootloader image without esptool:
 
