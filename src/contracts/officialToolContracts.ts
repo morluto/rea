@@ -23,6 +23,13 @@ import { nativeSearchInput } from "../domain/native/nativeSearch.js";
 const hopperRegexDeadline =
   "Hopper regex mode uses ECMAScript Unicode syntax in a cancellable worker. The matching deadline is REA_REGEX_MATCHING_DEADLINE_MS (a positive decimal integer of milliseconds from 1 to 2147483647, default 5000). Unset keeps the default. A deadline failure names the effective milliseconds, source (default or setting), the default, and the maximum, and leaves the API usable. The worker old-generation request is REA_REGEX_WORKER_HEAP_REQUEST_MIB (a decimal integer of mebibytes from 7 to 16384, default 128). Unset keeps the default. A positive Node --max-old-space-size, including NODE_OPTIONS, overrides that request and is not limited by the setting's floor or maximum. A heap failure names the effective request, its source (default or setting), the default, the floor, and the maximum.";
 
+export const decompileAnalysisSelection = z
+  .enum(["independent_fresh"])
+  .optional()
+  .describe(
+    "Request a new independent decompile, bypassing project and snapshot results. Use only when the routed provider's procedure_pseudo_code capability declares independent_decompile; otherwise the request is refused. This may use different analysis context.",
+  );
+
 const official = <
   Name extends keyof typeof officialOutputSchemas,
   Schema extends z.ZodObject,
@@ -211,12 +218,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
     z.object({
       procedure,
       document,
-      analysis: z
-        .literal("independent_fresh")
-        .optional()
-        .describe(
-          "Request a new independent decompile, bypassing project and snapshot results. Use only when the routed provider's procedure_pseudo_code capability declares independent_decompile; otherwise the request is refused. This may use different analysis context.",
-        ),
+      analysis: decompileAnalysisSelection,
     }),
   ),
   official(

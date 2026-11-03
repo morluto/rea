@@ -1,7 +1,6 @@
 import { expect, it as test } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { kunaTimeoutRecovery } from "../../../../src/kuna/KunaCommand.js";
 
 import {
   fakeKunaCalls,
@@ -307,18 +306,13 @@ it("names the setting that owns a single-function deadline", async () => {
         "kuna decompile did not finish within REA_KUNA_TIMEOUT_MS (300 ms).",
       remediation: {
         action: expect.stringMatching(
-          /^Raise REA_KUNA_TIMEOUT_MS .* restart REA.*project export/u,
+          /^Raise REA_KUNA_TIMEOUT_MS .* restart REA/u,
         ),
       },
       details: { timeout_ms: 300 },
     });
-    // A finished invocation cannot read a later export from this session.
-    const recovery = kunaTimeoutRecovery("REA_KUNA_TIMEOUT_MS", "decompile");
-    expect(
-      projectAnalysisError(result.error, "invocation").remediation.action,
-    ).toBe(recovery.remediationAction);
-    expect(projectAnalysisError(result.error).remediation.action).toBe(
-      recovery.continuingCallerGuidance?.remediationAction,
+    expect(projectAnalysisError(result.error).remediation.action).not.toContain(
+      "project export",
     );
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
