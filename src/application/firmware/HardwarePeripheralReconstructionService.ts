@@ -203,6 +203,8 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
   ),
   hardwareClaims: z.array(
     z.strictObject({
+      subject: z.string(),
+      source: z.string(),
       rule: z.enum(HARDWARE_CLAIM_RULES),
       basis: z.enum(HARDWARE_CLAIM_BASES),
       settled: z.boolean(),
@@ -437,17 +439,23 @@ export const reconstructHardwareFromReferences = (
     attributions,
     detectedPlatforms,
     unsettledFacts,
-    hardwareClaims: hardwareClaimsForBlocks(
-      peripheralBlocks.map((block) => ({
+    hardwareClaims: hardwareClaimsForBlocks({
+      blocks: peripheralBlocks.map((block) => ({
+        blockBase: block.blockBase,
         matched: block.socPeripheralNameBasis === "chip_manual",
+        addresses: block.uniqueAddresses,
       })),
-      unsettledFacts.map((fact) => fact.subject),
-      boardApplies && boardProfile !== null
-        ? boardProfile.drivers.map((driver) => ({
-            linked: driver.linkage === "linked_in_image",
-          }))
-        : [],
-    ),
+      devices:
+        boardApplies && boardProfile !== null ? boardProfile.devices : [],
+      drivers:
+        boardApplies && boardProfile !== null
+          ? boardProfile.drivers.map((driver) => ({
+              id: driver.id,
+              evidence: driver.evidence,
+              linked: driver.linkage === "linked_in_image",
+            }))
+          : [],
+    }),
     limitations,
   };
 };

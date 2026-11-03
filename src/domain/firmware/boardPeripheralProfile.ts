@@ -49,6 +49,8 @@ export interface BoardDeviceAttachment {
   readonly pins: readonly string[];
   readonly evidence: string;
   readonly uncertainty?: string;
+  /** Part names the board records disagree about. Absent unless that is the open question. */
+  readonly partNames?: readonly string[];
 }
 
 /** Facts for one known board. Optional devices stay optional. */
@@ -73,6 +75,7 @@ export const boardDeviceAttachmentSchema = z.strictObject({
   pins: z.array(z.string()),
   evidence: z.string(),
   uncertainty: z.string().optional(),
+  partNames: z.array(z.string()).optional(),
 });
 
 export const boardMemoryWindowSchema = z.strictObject({
@@ -213,6 +216,7 @@ const RT_SPARK_PROFILE: BoardPeripheralProfile = {
         "README lists an external SPI flash. Kconfig BSP_USING_SPI_FLASH selects SPI2 and defaults off. spi_flash_init.c attaches bus spi2 as device spi20 with chip select GET_PIN(B, 12) and probes SFUD name W25Q64.",
       uncertainty:
         "README calls the part W25Q128 and 16MB. The BSP port probes W25Q64. These sources do not settle the installed part.",
+      partNames: ["W25Q128", "W25Q64"],
     },
     {
       id: "rw007",

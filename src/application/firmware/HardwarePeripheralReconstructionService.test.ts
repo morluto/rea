@@ -15,6 +15,7 @@ import {
   ghidraFunctionIdentity,
   ghidraReferenceEdge,
 } from "../../domain/ghidraValues.fixture.js";
+import { RT_SPARK_FLASH_IMAGE_SHA256 } from "../../domain/firmware/boardDriverLayer.js";
 
 describe("Hardware peripheral reconstruction from offline instruction references", () => {
   it("reconstructs peripheral blocks and identifies standard architectural registers", () => {
@@ -249,25 +250,6 @@ describe("RT-Spark board annotation", () => {
     ]);
     expect(usart?.boardDrivers[0]?.linkage).toBe("linked_in_image");
     expect(usart?.socPeripheralNameBasis).toBe("chip_manual");
-    expect(report.hardwareClaims).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          rule: "chip-manual-name",
-          basis: "chip_manual",
-          settled: true,
-        }),
-        expect.objectContaining({
-          rule: "installed-part",
-          basis: "unsettled",
-          settled: false,
-        }),
-        expect.objectContaining({
-          rule: "driver-linkage",
-          basis: "observed_address",
-          settled: true,
-        }),
-      ]),
-    );
     expect(
       report.attributions.find((item) => item.targetAddress === "0x40011000")
         ?.controllerBasis,
@@ -364,6 +346,57 @@ describe("RT-Spark board annotation", () => {
       report.peripheralBlocks.every((block) => block.boardDevices.length === 0),
     ).toBe(true);
     expect(report.limitations[0]).toContain("does not match");
+  });
+});
+
+describe("hardware claim identity", () => {
+  it("keeps each hardware claim's subject, rule, and source", () => {
+    const report = reconstructHardwareFromReferences(
+      [{ target_address: "0x40011000", write: true }],
+      "arm",
+      "rt_spark_init",
+      null,
+      "stm32f407-rt-spark",
+    );
+    const usart = report.peripheralBlocks.find(
+      (block) => block.socPeripheralName === "USART1",
+    );
+
+    expect(report.hardwareClaims).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subject: usart?.blockBase,
+          rule: "chip-manual-name",
+          basis: "chip_manual",
+          settled: true,
+          source: "0x40011000",
+        }),
+        expect.objectContaining({
+          subject: "spi-flash",
+          rule: "installed-part",
+          basis: "unsettled",
+          settled: false,
+          reason: expect.stringContaining("W25Q128"),
+        }),
+        expect.objectContaining({
+          subject: "led-b",
+          rule: "board-record",
+          basis: "unsettled",
+          settled: false,
+          reason: expect.stringContaining("green"),
+        }),
+        expect.objectContaining({
+          subject: "serial-usart1",
+          rule: "driver-linkage",
+          basis: "observed_address",
+          settled: true,
+          source: expect.stringContaining(RT_SPARK_FLASH_IMAGE_SHA256),
+        }),
+      ]),
+    );
+    expect(
+      hardwarePeripheralReconstructionSchema.safeParse(report).success,
+    ).toBe(true);
   });
 });
 

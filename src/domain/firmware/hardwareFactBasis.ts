@@ -52,10 +52,13 @@ export const HARDWARE_CLAIM_RULES = [
   "instruction-decode",
   "installed-part",
   "driver-linkage",
+  "board-record",
 ] as const;
 export type HardwareClaimRule = (typeof HARDWARE_CLAIM_RULES)[number];
 
 export interface HardwareClaim {
+  readonly subject: string;
+  readonly source: string;
   readonly rule: HardwareClaimRule;
   readonly basis: HardwareClaimBasis;
   readonly settled: boolean;
@@ -88,13 +91,22 @@ export type HardwareClaimInput =
       readonly rule: "driver-linkage";
       readonly stringPresent: boolean;
       readonly usedAsBootProof: boolean;
-    };
+    }
+  | { readonly rule: "board-record"; readonly statement: string };
+
+/** Rule result before a subject and source are attached. */
+interface HardwareClaimDecision {
+  readonly rule: HardwareClaimRule;
+  readonly basis: HardwareClaimBasis;
+  readonly settled: boolean;
+  readonly reason: string;
+}
 
 const claim = (
   rule: HardwareClaimRule,
   basis: HardwareClaimBasis,
   reason: string,
-): HardwareClaim => ({
+): HardwareClaimDecision => ({
   rule,
   basis,
   settled: basis !== "unsettled",
@@ -103,7 +115,7 @@ const claim = (
 
 const observedAddressClaim = (
   input: Extract<HardwareClaimInput, { rule: "observed-address" }>,
-): HardwareClaim =>
+): HardwareClaimDecision =>
   input.addressSeen && !input.fromRoundedPage
     ? claim(
         input.rule,
@@ -118,7 +130,7 @@ const observedAddressClaim = (
 
 const installedPartClaim = (
   input: Extract<HardwareClaimInput, { rule: "installed-part" }>,
-): HardwareClaim => {
+): HardwareClaimDecision => {
   const single =
     input.tableNames.length === 1 ? input.tableNames[0] : undefined;
   if (input.tableNames.length > 1) {
@@ -146,7 +158,7 @@ const installedPartClaim = (
 /** Apply one hardware rule. Unsettled claims stay open and are not definite values. */
 export const decideHardwareClaim = (
   input: HardwareClaimInput,
-): HardwareClaim => {
+): HardwareClaimDecision => {
   switch (input.rule) {
     case "observed-address":
       return observedAddressClaim(input);
@@ -214,34 +226,112 @@ export const decideHardwareClaim = (
               ? "The image contains the driver string."
               : "The image does not contain the driver string.",
           );
+    case "board-record":
+      return claim(input.rule, "unsettled", input.statement);
   }
 };
 
-/** Claims for one reconstruction: controller names, open parts, and driver strings. */
-export const hardwareClaimsForBlocks = (
-  blocks: readonly { readonly matched: boolean }[],
-  uncertainSubjects: readonly string[],
-  drivers: readonly { readonly linked: boolean }[],
-): readonly HardwareClaim[] => [
-  ...blocks.map((block) =>
-    decideHardwareClaim({
-      rule: "chip-manual-name",
-      addressHit: block.matched,
-    }),
+const claimWithSource = (
+  decision: HardwareClaimDecision,
+  subject: string,
+  source: string,
+  reason = decision.reason,
+): HardwareClaim => ({
+  subject,
+  source,
+  rule: decision.rule,
+  basis: decision.basis,
+  settled: decision.settled,
+  reason,
+});
+
+/** One board device, kept whole enough to choose its own claim rule. */
+interface ClaimDevice {
+  readonly id: string;
+  readonly name: string;
+  readonly evidence: string;
+  readonly peripheralName: string | null;
+  readonly uncertainty?: string;
+  readonly partNames?: readonly string[];
+}
+
+const deviceClaims = (device: ClaimDevice): HardwareClaim[] => {
+  const claims: HardwareClaim[] = [];
+  if (device.peripheralName === null) {
+    claims.push(
+      claimWithSource(
+        decideHardwareClaim({
+          rule: "board-record",
+          statement: `${device.name} is named by the board profile and is not bound to a controller in the chip map.`,
+        }),
+        device.id,
+        device.evidence,
+      ),
+    );
+  }
+  if (device.uncertainty !== undefined && device.partNames !== undefined) {
+    claims.push(
+      claimWithSource(
+        decideHardwareClaim({
+          rule: "installed-part",
+          tableNames: device.partNames,
+          deviceName: null,
+        }),
+        device.id,
+        device.evidence,
+        device.uncertainty,
+      ),
+    );
+  } else if (device.uncertainty !== undefined) {
+    claims.push(
+      claimWithSource(
+        decideHardwareClaim({
+          rule: "board-record",
+          statement: device.uncertainty,
+        }),
+        device.id,
+        device.evidence,
+      ),
+    );
+  }
+  return claims;
+};
+
+/** Claims for one reconstruction. Each claim keeps the fact it was built from. */
+export const hardwareClaimsForBlocks = (input: {
+  readonly blocks: readonly {
+    readonly blockBase: string;
+    readonly matched: boolean;
+    readonly addresses: readonly string[];
+  }[];
+  readonly devices: readonly ClaimDevice[];
+  readonly drivers: readonly {
+    readonly id: string;
+    readonly evidence: string;
+    readonly linked: boolean;
+  }[];
+}): readonly HardwareClaim[] => [
+  ...input.blocks.map((block) =>
+    claimWithSource(
+      decideHardwareClaim({
+        rule: "chip-manual-name",
+        addressHit: block.matched,
+      }),
+      block.blockBase,
+      block.addresses.join(", "),
+    ),
   ),
-  ...uncertainSubjects.map((subject) =>
-    decideHardwareClaim({
-      rule: "installed-part",
-      tableNames: [],
-      deviceName: subject,
-    }),
-  ),
-  ...drivers.map((driver) =>
-    decideHardwareClaim({
-      rule: "driver-linkage",
-      stringPresent: driver.linked,
-      usedAsBootProof: false,
-    }),
+  ...input.devices.flatMap(deviceClaims),
+  ...input.drivers.map((driver) =>
+    claimWithSource(
+      decideHardwareClaim({
+        rule: "driver-linkage",
+        stringPresent: driver.linked,
+        usedAsBootProof: false,
+      }),
+      driver.id,
+      driver.evidence,
+    ),
   ),
 ];
 
