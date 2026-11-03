@@ -70,24 +70,24 @@ const codeSignArchitectureName = (
 
 /**
  * Return the codesign selector that names exactly the FAT slice at `index`.
- * codesign resolves a name to the first slice in table order that carries it,
- * so a later slice sharing that name has no exact selector.
+ * codesign resolves a name to the first slice in table order with that CPU
+ * type and base subtype, whatever its capability bits. A later slice sharing
+ * them has no exact selector, even behind an earlier variant whose own name
+ * is unknown.
  */
 export const machoKnownCodeSignSelector = (
   slices: readonly { readonly cpuType: number; readonly cpuSubtype: number }[],
   index: number,
 ): string | undefined => {
   const slice = slices[index];
-  const name =
-    slice === undefined
-      ? undefined
-      : codeSignArchitectureName(slice.cpuType, slice.cpuSubtype);
-  return name !== undefined &&
-    slices.findIndex(
-      (other) =>
-        codeSignArchitectureName(other.cpuType, other.cpuSubtype) === name,
-    ) === index
-    ? name
+  if (slice === undefined) return undefined;
+  const base = machoCpuSubtypeBase(slice.cpuSubtype);
+  return slices.findIndex(
+    (other) =>
+      other.cpuType === slice.cpuType &&
+      machoCpuSubtypeBase(other.cpuSubtype) === base,
+  ) === index
+    ? codeSignArchitectureName(slice.cpuType, slice.cpuSubtype)
     : undefined;
 };
 
