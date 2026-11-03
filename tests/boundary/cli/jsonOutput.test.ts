@@ -139,11 +139,43 @@ describe("SDK output completion", () => {
       destination,
     );
     if (output === undefined) throw new Error("Expected valid output controls");
+    expect(
+      output.sdkArguments(["--llms-full", "--format", "json", "--token-count"]),
+    ).toEqual(expect.any(Array));
     expect(output.captureSdkOutput(indented)).toBe(true);
     await output.finishSdkOutput(0);
     expect(Buffer.concat(chunks).toString("utf8")).toBe(
       `${estimateTokenCount(compact)}\n`,
     );
+  });
+
+  it("preserves non-JSON piped --json output under --token-count (completion hooks)", async () => {
+    const hook = "# bash completion hook\ncomplete -F _rea rea\n";
+    const chunks: Buffer[] = [];
+    const destination = new Writable({
+      write(chunk: unknown, _encoding, callback) {
+        if (!Buffer.isBuffer(chunk)) {
+          callback(new TypeError("Expected a UTF-8 output buffer"));
+          return;
+        }
+        chunks.push(chunk);
+        callback();
+      },
+    });
+    const output = createCliResultOutput(
+      parseCliOutputArguments([
+        "completions",
+        "bash",
+        "--json",
+        "--token-count",
+      ]),
+      destination,
+    );
+    if (output === undefined) throw new Error("Expected valid output controls");
+    output.sdkArguments(["completions", "bash", "--json", "--token-count"]);
+    expect(output.captureSdkOutput(hook)).toBe(true);
+    await output.finishSdkOutput(0);
+    expect(Buffer.concat(chunks).toString("utf8")).toBe(hook);
   });
 });
 

@@ -336,8 +336,9 @@ export const createCliResultOutput = (
             try {
               result = JSON.parse(text);
             } catch {
-              // Preserve non-JSON SDK diagnostics verbatim.
-              if (exitCode === 0 && options.tokenCount) {
+              // Preserve non-JSON SDK output (e.g. completion hooks). Token-count
+              // only for SDK documents that opted into sdkDocumentControls.
+              if (exitCode === 0 && options.tokenCount && sdkDocumentControls) {
                 await writeOutputText(
                   destination,
                   `${estimateTokenCount(text)}\n`,
