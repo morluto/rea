@@ -76,6 +76,7 @@ const PATH_SCOPES = {
     "src/frida/frida-bindings.d.ts",
     "src/objdump/**",
     "src/cli/reverseEngineeringCommands.ts",
+    "src/process/ownedDebuggerCleanupError.ts",
     "src/process/ownedDebuggerSession.ts",
     "src/rizin/**",
     "src/contracts/*ToolContracts.ts",
@@ -103,6 +104,7 @@ const PATH_SCOPES = {
     "tests/boundary/providers/RizinInferiorTty.test.ts",
     "tests/boundary/providers/RizinTestInferiorTty.ts",
     "tests/boundary/process/ownedDebuggerSession.test.ts",
+    "tests/boundary/cli/debuggerOneShotExit.test.ts",
     "tests/boundary/cli/gdbStartupCleanupCli.test.ts",
     "tests/boundary/cli/reverseEngineeringCommands.test.ts",
     "tests/boundary/mcp/cutter*.test.ts",
@@ -163,6 +165,9 @@ const PATH_SCOPES = {
     "tests/boundary/mcp/nativeDemangleMcp.test.ts",
     "tests/boundary/mcp/nativeMachoSummaryMcp.test.ts",
     "tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts",
+    "tests/boundary/providers/native/nativeUiOffscreenWindow.test.ts",
+    "tests/boundary/process/nativeUiVerifierLane.test.ts",
+    "tests/conformance/native/ui-offscreen.swift",
     "tests/boundary/cli/nativeSignatureCli.test.ts",
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
     "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
@@ -699,7 +704,9 @@ export const CI_LANES = {
   agentenv: sameJobs(PATH_SCOPES.agentenv, ["agentenv"]),
   nativeaot: sameJobs(PATH_SCOPES.nativeaot, ["nativeaot"]),
   ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"]),
-  website: sameJobs(PATH_SCOPES.website, ["website"]),
+  website: sameJobs(PATH_SCOPES.website, ["website"], {
+    earlyInputs: [".agents/skills/reverse-engineer-anything/**"],
+  }),
 };
 // An input owner omitted from the registry must never silently lose a lane.
 for (const [name, paths] of Object.entries(PATH_SCOPES))

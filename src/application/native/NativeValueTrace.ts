@@ -11,12 +11,21 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
 import type { AnalysisOperationPort } from "../AnalysisProvider.js";
-import type { EnhancedResult } from "../EnhancedToolTypes.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { stopsTraversal } from "../CallRelationshipTraversal.js";
+import {
+  failedWithPartialResult,
+  type EnhancedResult,
+} from "../EnhancedToolTypes.js";
 import {
   renderSourceLimitations,
   type SourceLimitation,
 } from "../SourceLimitations.js";
 import { createValueTraceBudget } from "./NativeValueTraceBudget.js";
+
+/** The located unknown where unconfirmed provider cleanup stopped a trace. */
+export const CLEANUP_STOPPED_VALUE_TRACE =
+  "Trace stopped because the provider did not confirm cleanup of resources it owns";
 
 /** Compose bounded high-p-code def-use graphs across exactly referenced call destinations. */
 export const traceNativeValues = async (
@@ -52,6 +61,27 @@ export const traceNativeValues = async (
   let targetSha256: string | undefined;
   let decompilations = 0;
   let callSites = 0;
+  // A provider that cannot confirm cleanup of resources it owns stops the
+  // trace; its own failure becomes the outcome, holding the admitted work.
+  let stopped: AnalysisError | undefined;
+  /** Record a failed read after the validated seed; true when it ends the trace. */
+  const endsTrace = (
+    error: AnalysisError,
+    procedure: string,
+    address: string | null,
+  ): boolean => {
+    if (!stopsTraversal(error)) {
+      unknowns.push({ procedure, address, reason: error.message });
+      return false;
+    }
+    if (error.cleanupIncomplete)
+      budget.narrow("cleanup_incomplete", {
+        procedure,
+        address,
+        reason: CLEANUP_STOPPED_VALUE_TRACE,
+      });
+    return true;
+  };
   while (pending.length > 0) {
     if (signal?.aborted)
       return err(
@@ -91,14 +121,12 @@ export const traceNativeValues = async (
     decompilations++;
     if (!execution.ok) {
       // A seed failure has no trace to qualify. Preserve the provider's typed
-      // refusal; failures after a validated seed remain partial observations.
-      if (next.depth === 0 || execution.error._tag === "AnalysisCancelledError")
-        return err(execution.error);
-      unknowns.push({
-        procedure: next.procedure,
-        address: null,
-        reason: execution.error.message,
-      });
+      // refusal; later failures are unknowns unless they end the trace.
+      if (next.depth === 0) return err(execution.error);
+      if (endsTrace(execution.error, next.procedure, null)) {
+        stopped = execution.error;
+        break;
+      }
       continue;
     }
     const evidence = createAnalysisExecutionEvidence(
@@ -252,13 +280,10 @@ export const traceNativeValues = async (
         signal === undefined ? {} : { signal },
       );
       if (!resolved.ok) {
-        if (resolved.error._tag === "AnalysisCancelledError")
-          return err(resolved.error);
-        unknowns.push({
-          procedure: address,
-          address: operation.address,
-          reason: resolved.error.message,
-        });
+        if (endsTrace(resolved.error, address, operation.address)) {
+          stopped = resolved.error;
+          break;
+        }
         continue;
       }
       const targets = nativeCallTargetsSchema.safeParse(resolved.value.result);
@@ -330,8 +355,10 @@ export const traceNativeValues = async (
       }
     }
     // Remaining work is attributed to the rejecting budget recorded above.
-    if (budget.exhausted()) break;
+    if (stopped !== undefined || budget.exhausted()) break;
   }
+  // Cancellation leaves no outcome to qualify; unconfirmed cleanup keeps one.
+  if (stopped !== undefined && !stopped.cleanupIncomplete) return err(stopped);
   if (targetSha256 === undefined)
     return err(
       new AnalysisOutputError(
@@ -456,7 +483,12 @@ export const traceNativeValues = async (
       ...renderSourceLimitations(sourceLimitations),
     ],
   });
-  if (Buffer.byteLength(JSON.stringify(result)) > 32 * 1024 * 1024)
+  const oversized =
+    Buffer.byteLength(JSON.stringify(result)) > 32 * 1024 * 1024;
+  // The stopping failure stays primary over output size and a later abort.
+  if (stopped !== undefined)
+    return oversized ? err(stopped) : failedWithPartialResult(stopped, result);
+  if (oversized)
     return err(
       new AnalysisOutputError(
         "trace_native_values",

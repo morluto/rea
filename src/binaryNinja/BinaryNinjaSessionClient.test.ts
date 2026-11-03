@@ -497,6 +497,32 @@ describe("Binary Ninja relationships, strings and dossiers", () => {
 });
 
 describe("Binary Ninja long strings", () => {
+  it.each(["Utf8String", "Utf16String", "Utf32String"])(
+    "preserves a leading U+FEFF when listing and searching %s values",
+    async (type) => {
+      const { client, producer } = await fixture();
+      const text = "\uFEFFAB" + "x".repeat(300);
+      const bytes =
+        type === "Utf32String"
+          ? Buffer.alloc(text.length * 4)
+          : Buffer.from(text, type === "Utf8String" ? "utf8" : "utf16le");
+      if (type === "Utf32String")
+        for (let index = 0; index < text.length; index++)
+          bytes.writeUInt32LE(text.charCodeAt(index), index * 4);
+      producer.strings = [{ address: "0x500000", type, bytes }];
+      const expected = [{ address: "0x500000", value: text }];
+      try {
+        expect((await value(client, "list_strings")).result).toEqual(expected);
+        expect(
+          (await value(client, "search_strings", { pattern: "\uFEFFAB" }))
+            .result,
+        ).toEqual(expected);
+      } finally {
+        expect((await client.close()).ok).toBe(true);
+      }
+    },
+  );
+
   it.each(["AsciiString", "Utf8String", "Utf16String"])(
     "reads complete %s values across memory-read boundaries",
     async (type) => {

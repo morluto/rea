@@ -788,14 +788,20 @@ const decodeString = (
       return bytes.toString("latin1");
     case "Utf8String":
       try {
-        return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        return new TextDecoder("utf-8", {
+          fatal: true,
+          ignoreBOM: true,
+        }).decode(bytes);
       } catch {
         return undefined;
       }
     case "Utf16String":
       if (!littleEndian || bytes.length % 2 !== 0) return undefined;
       try {
-        return new TextDecoder("utf-16le", { fatal: true }).decode(bytes);
+        return new TextDecoder("utf-16le", {
+          fatal: true,
+          ignoreBOM: true,
+        }).decode(bytes);
       } catch {
         return undefined;
       }
