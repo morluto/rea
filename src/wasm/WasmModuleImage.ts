@@ -416,7 +416,12 @@ export function* readInitialLinearMemorySteps(
       "capacity",
       `data segments leave ${high - low - stored} zero bytes in their span, above ${WASM_MODULE_LIMITS.linearMemoryGapBytes}`,
     );
-  const memory = Buffer.alloc(high - low);
+  // Zero the view in bounded chunks too, so allocation does not block cancellation.
+  const memory = Buffer.allocUnsafe(high - low);
+  for (let at = 0; at < memory.length; at += LINEAR_MEMORY_COPY_BYTES) {
+    memory.fill(0, at, Math.min(at + LINEAR_MEMORY_COPY_BYTES, memory.length));
+    yield;
+  }
   // Copy in bounded chunks so one large segment does not block cancellation.
   for (const s of filled)
     for (let at = 0; at < s.bytes.length; at += LINEAR_MEMORY_COPY_BYTES) {
