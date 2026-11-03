@@ -217,6 +217,10 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
 export const EXISTING_PROJECT_WINDOWS_UNAVAILABLE =
   "An existing Ghidra project cannot be opened on the Windows launch path.";
 
+/** Windows P0 imports targets into ephemeral projects only. */
+export const EXISTING_PROJECT_WINDOWS_REMEDIATION =
+  "Unset REA_GHIDRA_PROJECT_PATH in the environment that starts REA to import targets into an ephemeral project, or open the existing project on a supported Linux or macOS host; restart REA after changing the environment.";
+
 /** Read-only project mode retains precise unavailable mutation capabilities. */
 export const existingProjectCapabilities = (
   platform: NodeJS.Platform,
@@ -235,6 +239,7 @@ export const existingProjectCapabilities = (
         available: false,
         reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
         availabilityCode: "unsupported_host",
+        remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
       };
     if (capability.effects.mutatesArtifact)
       return {
@@ -271,6 +276,7 @@ export const windowsP0Capabilities = (
             available: false,
             reason: readiness.reason,
             availabilityCode: readiness.code,
+            remediation: readiness.remediation,
             limitations,
           });
     }),

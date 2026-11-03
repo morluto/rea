@@ -2,6 +2,10 @@ import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+import {
+  pwntoolsHostRequirement,
+  pwntoolsHostSupported,
+} from "./PwntoolsDecoder.js";
 import { pwntoolsDecoderFailure } from "./PwntoolsFailures.js";
 
 it.each([undefined, null, false, 0, "stop", { stop: true }, new Error("stop")])(
@@ -148,4 +152,12 @@ it("retains legacy owner causes without guessing cancellation from error text", 
   expect(pwntoolsDecoderFailure(physical, "decoder", "/selected")._tag).toBe(
     "ProviderAdapterError",
   );
+});
+
+it("names the refused host instead of implying the target was refused", () => {
+  expect(pwntoolsHostSupported("linux", "arm64")).toBe(false);
+  const message = pwntoolsHostRequirement("linux", "arm64");
+  expect(message).toContain("Linux x64 host");
+  expect(message).toContain("this host is linux/arm64");
+  expect(message).toContain("The selected target was not read.");
 });
