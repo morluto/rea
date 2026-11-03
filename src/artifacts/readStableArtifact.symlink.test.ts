@@ -59,3 +59,33 @@ it.skipIf(process.platform === "win32")(
     });
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "keeps a failed target lookup distinct from a dangling symlink",
+  async () => {
+    const root = await createTestTempDirectory("rea-stable-lookup-error-");
+    const target = join(root, "target.bin");
+    const selected = join(root, "selected.bin");
+    await writeFile(target, "bytes");
+    await symlink(target, selected);
+    const lookupError = Object.assign(new Error("permission denied"), {
+      code: "EACCES",
+    });
+    const failure: unknown = await readStableArtifact(
+      selected,
+      1024,
+      undefined,
+      {
+        lstat: (path) => lstat(path, { bigint: true }),
+        open,
+        realpath: () => Promise.reject(lookupError),
+      },
+    ).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      reason: "path",
+      message: `Expected a regular file without a symlink: ${selected} (its target could not be resolved: EACCES)`,
+      userMessage: `The selected path is a symlink whose target could not be resolved (EACCES): ${selected}. Check access to the link's target, or select the intended regular file directly, then retry.`,
+    });
+    expect((failure as Error).cause).toBe(lookupError);
+  },
+);

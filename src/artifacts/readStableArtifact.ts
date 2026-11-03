@@ -65,12 +65,30 @@ const selectedPathFailure = async (
   let target: string;
   try {
     target = await fileSystem.realpath(path);
-  } catch {
+  } catch (cause) {
+    if (artifactSelectedPathErrno(cause) !== undefined)
+      return new ArtifactReaderFailure(
+        "path",
+        `${message} (its target does not currently resolve)`,
+        {
+          cause,
+          userMessage: `The selected path is a symlink whose target does not currently resolve: ${path}. Select an existing regular file directly, then retry.`,
+        },
+      );
+    // The target may exist but be unreachable (EACCES, EIO, ...): keep the
+    // refusal, but report the lookup failure instead of calling it dangling.
+    const code =
+      cause instanceof Error &&
+      "code" in cause &&
+      typeof cause.code === "string"
+        ? cause.code
+        : "unknown error";
     return new ArtifactReaderFailure(
       "path",
-      `${message} (its target does not currently resolve)`,
+      `${message} (its target could not be resolved: ${code})`,
       {
-        userMessage: `The selected path is a symlink whose target does not currently resolve: ${path}. Select an existing regular file directly, then retry.`,
+        cause,
+        userMessage: `The selected path is a symlink whose target could not be resolved (${code}): ${path}. Check access to the link's target, or select the intended regular file directly, then retry.`,
       },
     );
   }
