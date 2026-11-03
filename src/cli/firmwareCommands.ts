@@ -1,3 +1,4 @@
+import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
@@ -36,7 +37,7 @@ export const registerFirmwareCommands = (
           callerPath,
           () => service.execute(operation, input, { signal }),
           service,
-          operation === "inspect_firmware_regions" ? "binwalk" : "unblob",
+          FIRMWARE_OPERATION_ENGINES[operation],
           operation,
           signal,
         ).then(projectCliAnalysisResult),

@@ -48,6 +48,10 @@ completes. Cleanup retries keep both the observations and the exact file owner.
 | `REA_KUNA_TIMEOUT_MS`         | 120 s                                                                                                                                   | Deadline for one single-function decompile, and for the inventory run REA makes when the export ends without one.                                                                        |
 | `REA_KUNA_JOBS`               | 1                                                                                                                                       | `decompile-project --jobs`. 1 is Kuna's reference answer; more jobs finish sooner but lose callee-first prototypes, and change about 40–60% of function bodies on the measured binaries. |
 
+Pseudocode read from a parallel project export includes a prototype-context
+limitation in its Evidence, including in function dossiers and composed
+workflows. Early single-function results have their own source limitation.
+
 A single-function decompile, inventory, string, graph or xref run that exceeds its deadline fails as `provider_timeout`, naming the setting that owns the deadline and that raising it takes a restart. A project export that exceeds `REA_KUNA_PROJECT_TIMEOUT_MS` is an export failure instead: requests that need the export report `capability_unavailable` with the export's own retry guidance.
 
 Windows is not supported yet. Supported targets are ELF and thin Mach-O executables for x86-64, AArch64 and ARM; PE and universal Mach-O are rejected with a typed reason.

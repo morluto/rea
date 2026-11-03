@@ -704,7 +704,9 @@ export const CI_LANES = {
   agentenv: sameJobs(PATH_SCOPES.agentenv, ["agentenv"]),
   nativeaot: sameJobs(PATH_SCOPES.nativeaot, ["nativeaot"]),
   ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"]),
-  website: sameJobs(PATH_SCOPES.website, ["website"]),
+  website: sameJobs(PATH_SCOPES.website, ["website"], {
+    earlyInputs: [".agents/skills/reverse-engineer-anything/**"],
+  }),
 };
 // An input owner omitted from the registry must never silently lose a lane.
 for (const [name, paths] of Object.entries(PATH_SCOPES))

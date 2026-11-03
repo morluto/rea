@@ -235,6 +235,39 @@ it("lists the selected document without starting target analysis", async () => {
   }
 });
 
+it("qualifies only parallel project pseudocode, including dossier results", async () => {
+  const { open } = await session(
+    "rea-kuna-parallel-context-",
+    { delayMs: 300 },
+    { REA_KUNA_JOBS: "2" },
+  );
+  const client = open();
+  const caveat =
+    "Parallel Kuna project export does not propagate callee-first prototypes";
+  const cold = await run(client, "procedure_pseudo_code", {
+    procedure: "main",
+  });
+  expect(cold.rawResult).toMatchObject({ source: { kind: "single-function" } });
+  expect(cold.limitations.join("\n")).not.toContain(caveat);
+  await run(client, "procedure_assembly", { procedure: "main" });
+  const warm = await run(client, "procedure_pseudo_code", {
+    procedure: "main",
+  });
+  expect(warm.rawResult).toMatchObject({ source: { kind: "project-export" } });
+  expect(warm.limitations.join("\n")).toContain(caveat);
+  const dossier = await run(client, "analyze_function", { procedure: "main" });
+  expect(dossier.limitations.join("\n")).toContain(caveat);
+  expect(
+    (dossier.result as { limitations: string[] }).limitations.join("\n"),
+  ).toContain(caveat);
+  const missing = await run(client, "procedure_pseudo_code", {
+    procedure: "broken",
+  });
+  expect(missing.result).toBeNull();
+  expect(missing.limitations.join("\n")).not.toContain(caveat);
+  await client.close();
+});
+
 it("answers a cold request from one function, then serves the finished export", async () => {
   const { kuna, cacheRoot, open } = await session("rea-kuna-cold-", {
     delayMs: 300,
@@ -866,7 +899,7 @@ it.each([
     behavior: { project: "hang" } as const,
     environment: { REA_KUNA_PROJECT_TIMEOUT_MS: "300" },
     cause: "AnalysisTimeoutError",
-    next: "To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above 300 ms or raise REA_KUNA_JOBS in the environment that starts REA. REA reads Kuna settings when it starts, so restart REA, then reopen the target.",
+    next: "To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above 300 ms in the environment that starts REA. REA reads Kuna settings when it starts, so restart REA, then reopen the target.",
     details: {
       timeout_ms: 300,
       captured_output: { truncated: expect.any(Boolean) },
