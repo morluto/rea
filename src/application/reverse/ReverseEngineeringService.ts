@@ -549,7 +549,7 @@ export class ReverseEngineeringService {
               ? "REA_OBJDUMP_COMMAND"
               : "REA_RIZIN_COMMAND";
           earlyFailure = new AnalysisCapabilityUnavailableError(
-            provider,
+            profile.identity.id,
             operation,
             `Unable to run configured command (${String(code ?? "unknown error")})`,
             {

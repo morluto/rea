@@ -1,4 +1,7 @@
 import { expect } from "vitest";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -55,5 +58,25 @@ cliTest(
     expect(JSON.stringify(architectures.json)).not.toContain(
       "lists BFD targets",
     );
+
+    const missing = join(tmpdir(), `missing-objdump-${randomUUID()}`);
+    const failed = await cli.run({
+      arguments: [
+        "inspect-with-objdump",
+        process.execPath,
+        "file_headers",
+        "--format",
+        "json",
+      ],
+      environment: { REA_OBJDUMP_COMMAND: missing },
+    });
+    expect(failed.exitCode).toBe(1);
+    expect(failed.json).toMatchObject({
+      code: "capability_unavailable",
+      details: {
+        provider_id: "objdump.command",
+        diagnostics: { command: missing },
+      },
+    });
   },
 );
