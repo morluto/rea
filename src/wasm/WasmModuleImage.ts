@@ -1,0 +1,301 @@
+/**
+ * Static image of an uncompressed wasm32 module: function counts, the one
+ * memory, the one funcref table as active MVP element segments fill it, and
+ * the active data segments that form initial linear memory. Anything a
+ * reader would have to evaluate or relocate is refused as unsupported.
+ */
+
+export class WasmModuleFailure extends Error {
+  constructor(
+    readonly kind: "unsupported" | "malformed" | "capacity",
+    message: string,
+  ) {
+    super(message);
+    this.name = "WasmModuleFailure";
+  }
+}
+
+/**
+ * Bounds on what one read retains. A Unity 2022.3 release build has 6,535
+ * data segments and 27,081 table slots; the limits leave wide headroom.
+ */
+export const WASM_MODULE_LIMITS = {
+  inputBytes: 1 << 30,
+  dataSegments: 1 << 18,
+  tableSlots: 1 << 21,
+  linearMemoryBytes: 1 << 30,
+} as const;
+
+export const WASM_PAGE_BYTES = 65536;
+
+export interface WasmMemory {
+  readonly initialPages: number;
+  readonly maximumPages: number | null;
+  /** True when the memory comes from the import section. */
+  readonly imported: boolean;
+}
+
+export interface WasmDataSegment {
+  /** Linear memory address of the first byte. */
+  readonly offset: number;
+  /** A view into the module bytes; it is not copied. */
+  readonly bytes: Buffer;
+}
+
+export interface WasmModuleImage {
+  readonly importedFunctionCount: number;
+  /** Imported plus defined functions. */
+  readonly functionCount: number;
+  readonly memory: WasmMemory | null;
+  /** Function index per slot of table 0. */
+  readonly table: ReadonlyMap<number, number>;
+  readonly dataSegments: readonly WasmDataSegment[];
+}
+
+export interface WasmInitialLinearMemory {
+  /** Address of `bytes[0]`: the lowest data segment start. */
+  readonly address: number;
+  readonly bytes: Buffer;
+}
+
+const WASM_MAGIC = Buffer.from([0x00, 0x61, 0x73, 0x6d]);
+const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
+const I32_CONST = 0x41;
+const END = 0x0b;
+/** Import, function, table, memory, element, data; others are skipped whole. */
+const PARSED_SECTIONS = new Set([2, 3, 4, 5, 9, 11]);
+
+const malformed = (message: string) =>
+  new WasmModuleFailure("malformed", message);
+const unsupported = (message: string) =>
+  new WasmModuleFailure("unsupported", message);
+
+class Cursor {
+  constructor(
+    readonly bytes: Buffer,
+    public at: number,
+    readonly end: number,
+  ) {}
+  byte(): number {
+    if (this.at >= this.end) throw malformed(`truncated at byte ${this.at}`);
+    return this.bytes[this.at++]!;
+  }
+  u32(): number {
+    let result = 0;
+    for (let shift = 0; shift < 35; shift += 7) {
+      const byte = this.byte();
+      result += (byte & 0x7f) * 2 ** shift;
+      if ((byte & 0x80) === 0) {
+        if (result > 0xffffffff) throw malformed("u32 overflows");
+        return result;
+      }
+    }
+    throw malformed("u32 is longer than 5 bytes");
+  }
+  i32(): number {
+    let result = 0n;
+    let shift = 0n;
+    let byte: number;
+    do {
+      if (shift >= 35n) throw malformed("i32 is longer than 5 bytes");
+      byte = this.byte();
+      result |= BigInt(byte & 0x7f) << shift;
+      shift += 7n;
+    } while (byte & 0x80);
+    if (byte & 0x40) result -= 1n << shift;
+    return Number(BigInt.asIntN(32, result));
+  }
+  span(size: number): number {
+    if (size > this.end - this.at)
+      throw malformed(`truncated at byte ${this.at}`);
+    const start = this.at;
+    this.at += size;
+    return start;
+  }
+  limits(label: string): { min: number; max: number | null } {
+    const flags = this.byte();
+    // 0x02 shared, 0x04 memory64, 0x08 custom page size.
+    if (flags > 1)
+      throw unsupported(
+        `${label} limits flags 0x${flags.toString(16)} are not read`,
+      );
+    const min = this.u32();
+    return { min, max: flags === 1 ? this.u32() : null };
+  }
+  /** Only `i32.const n end`; global.get or extended forms need evaluation. */
+  constOffset(label: string): number {
+    const opcode = this.byte();
+    if (opcode !== I32_CONST)
+      throw unsupported(
+        `${label} offset uses opcode 0x${opcode.toString(16)}, not i32.const`,
+      );
+    const value = this.i32();
+    if (this.byte() !== END)
+      throw unsupported(`${label} offset is an extended constant expression`);
+    return value >>> 0;
+  }
+}
+
+/** Read the static image; the result shares `bytes` for segment views. */
+export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
+  if (bytes.length >= 2 && bytes.subarray(0, 2).equals(GZIP_MAGIC))
+    throw unsupported("module is gzip compressed; decompress the .wasm first");
+  if (bytes.length > WASM_MODULE_LIMITS.inputBytes)
+    throw new WasmModuleFailure(
+      "capacity",
+      `module has ${bytes.length} bytes, above ${WASM_MODULE_LIMITS.inputBytes}`,
+    );
+  if (bytes.length < 8 || !bytes.subarray(0, 4).equals(WASM_MAGIC))
+    throw malformed("not a WebAssembly module");
+  if (bytes.readUInt32LE(4) !== 1)
+    throw malformed(`WebAssembly version ${bytes.readUInt32LE(4)} is not 1`);
+
+  let importedFunctionCount = 0;
+  let definedFunctionCount = 0;
+  let memory: WasmMemory | null = null;
+  let tables = 0;
+  const elements: { base: number; functions: number[] }[] = [];
+  const dataSegments: WasmDataSegment[] = [];
+  let slots = 0;
+
+  const addMemory = (cursor: Cursor, imported: boolean) => {
+    const { min, max } = cursor.limits("memory");
+    if (memory) throw unsupported("module has more than one memory");
+    memory = { initialPages: min, maximumPages: max, imported };
+  };
+  const addTable = (cursor: Cursor) => {
+    cursor.byte();
+    cursor.limits("table");
+    if (++tables > 1) throw unsupported("module has more than one table");
+  };
+
+  let at = 8;
+  while (at < bytes.length) {
+    const head = new Cursor(bytes, at, bytes.length);
+    const id = head.byte();
+    const size = head.u32();
+    if (size > bytes.length - head.at)
+      throw malformed(`section ${id} ends past the module`);
+    const body = new Cursor(bytes, head.at, head.at + size);
+    if (id === 2) {
+      for (let count = body.u32(); count > 0; count--) {
+        body.span(body.u32());
+        body.span(body.u32());
+        const kind = body.byte();
+        if (kind === 0) {
+          body.u32();
+          importedFunctionCount++;
+        } else if (kind === 1) addTable(body);
+        else if (kind === 2) addMemory(body, true);
+        else if (kind === 3) body.span(2);
+        else if (kind === 4) throw unsupported("tag imports are not read");
+        else throw malformed(`import kind ${kind} is unknown`);
+      }
+    } else if (id === 3) {
+      definedFunctionCount = body.u32();
+      for (let count = definedFunctionCount; count > 0; count--) body.u32();
+    } else if (id === 4) {
+      for (let count = body.u32(); count > 0; count--) addTable(body);
+    } else if (id === 5) {
+      for (let count = body.u32(); count > 0; count--) addMemory(body, false);
+    } else if (id === 9) {
+      for (let count = body.u32(); count > 0; count--) {
+        const flags = body.u32();
+        if (flags !== 0)
+          throw unsupported(`element segment flags ${flags} are not read`);
+        const base = body.constOffset("element segment");
+        const length = body.u32();
+        slots += length;
+        if (slots > WASM_MODULE_LIMITS.tableSlots)
+          throw new WasmModuleFailure(
+            "capacity",
+            `element segments fill more than ${WASM_MODULE_LIMITS.tableSlots} slots`,
+          );
+        const functions: number[] = [];
+        for (let slot = 0; slot < length; slot++) functions.push(body.u32());
+        elements.push({ base, functions });
+      }
+    } else if (id === 11) {
+      const count = body.u32();
+      if (count > WASM_MODULE_LIMITS.dataSegments)
+        throw new WasmModuleFailure(
+          "capacity",
+          `module has ${count} data segments, above ${WASM_MODULE_LIMITS.dataSegments}`,
+        );
+      for (let index = 0; index < count; index++) {
+        const flags = body.u32();
+        if (flags !== 0)
+          throw unsupported(
+            `data segment flags ${flags} (passive or explicit memory) are not read`,
+          );
+        const offset = body.constOffset("data segment");
+        const length = body.u32();
+        const start = body.span(length);
+        dataSegments.push({
+          offset,
+          bytes: bytes.subarray(start, start + length),
+        });
+      }
+    }
+    if (PARSED_SECTIONS.has(id) && body.at !== body.end)
+      throw malformed(`section ${id} has trailing bytes`);
+    at = body.end;
+  }
+
+  const functionCount = importedFunctionCount + definedFunctionCount;
+  const table = new Map<number, number>();
+  for (const { base, functions } of elements)
+    functions.forEach((index, slot) => {
+      // The function and import sections state the count; a slot past it is damage.
+      if (index >= functionCount)
+        throw malformed(
+          `table slot ${base + slot} names function ${index}, but the module has ${functionCount}`,
+        );
+      table.set(base + slot, index);
+    });
+
+  // Instantiation traps when a segment ends past the initial (or imported minimum) memory.
+  const limit =
+    ((memory as WasmMemory | null)?.initialPages ?? 0) * WASM_PAGE_BYTES;
+  for (const segment of dataSegments) {
+    const end = segment.offset + segment.bytes.length;
+    if (end > limit)
+      throw malformed(
+        `data segment at ${segment.offset} ends at ${end}, past the initial memory of ${limit} bytes`,
+      );
+  }
+
+  return {
+    importedFunctionCount,
+    functionCount,
+    memory,
+    table,
+    dataSegments,
+  };
+};
+
+/**
+ * Copy active data segments into one buffer spanning the lowest start to the
+ * highest end. Later segments overwrite earlier ones, as instantiation does;
+ * bytes no segment covers are zero.
+ */
+export const readInitialLinearMemory = (
+  image: Pick<WasmModuleImage, "dataSegments">,
+): WasmInitialLinearMemory => {
+  const filled = image.dataSegments.filter((s) => s.bytes.length > 0);
+  if (filled.length === 0) return { address: 0, bytes: Buffer.alloc(0) };
+  let low = Infinity;
+  let high = 0;
+  for (const s of filled) {
+    low = Math.min(low, s.offset);
+    high = Math.max(high, s.offset + s.bytes.length);
+  }
+  if (high - low > WASM_MODULE_LIMITS.linearMemoryBytes)
+    throw new WasmModuleFailure(
+      "capacity",
+      `data segments span ${high - low} bytes, above ${WASM_MODULE_LIMITS.linearMemoryBytes}`,
+    );
+  const memory = Buffer.alloc(high - low);
+  for (const s of filled) s.bytes.copy(memory, s.offset - low);
+  return { address: low, bytes: memory };
+};
