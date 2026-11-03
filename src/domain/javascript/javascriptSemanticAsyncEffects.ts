@@ -19,11 +19,15 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
+  affectsBuiltinPath,
   builtinDataEffectCallablePath,
   builtinDataEffectMethod,
   dataEffectArgumentBindingId,
@@ -202,15 +206,46 @@ const isNodeEventEmitterConstructor = (
  */
 const nodeEventEmitterReceiver = (
   node: t.Expression | t.Super,
+  method: string,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   if (!t.isIdentifier(node)) return false;
   const binding = resolveSemanticBindingState(state, node, node.name);
+  if (binding === undefined) return false;
   const initializer = semanticStableInitializer(binding, state);
-  return (
-    initializer !== undefined &&
-    initializer.projection.length === 0 &&
-    isNodeEventEmitterConstructor(initializer.node, state)
+  if (
+    initializer === undefined ||
+    initializer.projection.length !== 0 ||
+    !isNodeEventEmitterConstructor(initializer.node, state)
+  )
+    return false;
+  // Constructing the class proves where the receiver came from, not which
+  // definition answers the call. A member write replaces the selected method,
+  // so it no longer keeps the native contract. An unrelated write such as
+  // `emitter.tag = 1` leaves the proof intact.
+  if (
+    binding.memberWrites.some(
+      ({ path, node: write }) =>
+        affectsBuiltinPath(path, [method]) &&
+        !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
+    )
+  )
+    return false;
+  // Every instance shares the constructor's prototype, so a write there
+  // replaces the method for this receiver as well.
+  const constructed = (initializer.node as t.NewExpression).callee;
+  const structural = unwrapJavaScriptExpression(constructed).node;
+  if (!t.isIdentifier(structural)) return true;
+  const constructorBinding = resolveSemanticBindingState(
+    state,
+    structural,
+    structural.name,
+  );
+  if (constructorBinding === undefined) return false;
+  return !constructorBinding.memberWrites.some(
+    ({ path, node: write }) =>
+      affectsBuiltinPath(path, ["prototype", method]) &&
+      !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
   );
 };
 
@@ -240,7 +275,7 @@ const collectEvent = (
     listenerMethod &&
     listenerArgument === undefined &&
     !node.arguments.some((argument) => t.isSpreadElement(argument)) &&
-    nodeEventEmitterReceiver(member.object, state)
+    nodeEventEmitterReceiver(member.object, method, state)
   )
     return;
   // A leading spread shifts the runtime argument positions, so argument 1 is not

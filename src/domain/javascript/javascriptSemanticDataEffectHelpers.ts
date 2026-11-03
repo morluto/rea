@@ -580,7 +580,7 @@ const builtinNamespaceOrigin = (
     : { ...origin, specifier, importedPath };
 };
 
-const affectsBuiltinPath = (
+export const affectsBuiltinPath = (
   path: JavaScriptSemanticPropertyPath,
   selected: readonly string[],
 ): boolean =>

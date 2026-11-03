@@ -185,6 +185,46 @@ bus.on("ready");`,
 });
 
 /**
+ * A member write replaces the method the native contract belongs to. Measured
+ * on Node 22.23.3: `e.on = (name, fn = () => {}) => ...` stores `"ready"`, so
+ * `checkListener` never runs and the one-argument call is a real registration.
+ */
+it("keeps the registration of a receiver whose method was replaced", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+e.on = (name, fn = () => {}) => EventEmitter.prototype.on.call(e, name, fn);
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
+ * Every instance shares the constructor's prototype, so replacing the method
+ * there replaces it for this receiver too.
+ */
+it("keeps the registration of a receiver whose prototype was replaced", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+EventEmitter.prototype.on = function (name, fn = () => {}) { return this; };
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
+ * The proof is keyed on the selected method, so a write to an unrelated member
+ * must not weaken it: `tag` never answers `on`.
+ */
+it("still rejects a missing listener beside an unrelated member write", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+e.tag = 1;
+e.on("ready");`),
+  ).toEqual([]);
+});
+
+/**
  * `emit` passes its remaining arguments to listeners that already exist, so it
  * does not validate them the way a registration does.
  */
