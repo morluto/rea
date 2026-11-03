@@ -61,10 +61,11 @@ export const ghidraEmptyIncomingReferencesLimitation =
 
 /**
  * Attached to an empty incoming-reference facet of an analyzed-function
- * dossier, which excludes sources inside the function's own body.
+ * dossier, which omits synthetic entry-point references and excludes sources
+ * inside the function's own body.
  */
 export const ghidraEmptyDossierIncomingLimitation =
-  "Ghidra's ReferenceManager observed no incoming references from outside this function's body in this session. The dossier's incoming list excludes sources inside the body (a self-recursive call is one), so an empty list can also mean the only observed sources are in-body; those edges remain visible in the outgoing references and disassembly, and procedure_references(incoming) reads the same ReferenceManager stream without the in-body exclusion to distinguish the two cases. Sources outside the program's observed references still require an external scan (for example otool -tV, pairing adrp with add or ldr) before concluding there are none.";
+  "Ghidra's ReferenceManager returned no actionable incoming references from outside this function's body in this session. An empty incoming list reflects what this analysis resolved, not proof that nothing references this function: synthetic entry-point references are omitted before the dossier's body filter, and sources inside the body are excluded (a self-recursive call is one), so the list can be empty even when such edges exist. In-body edges remain visible in the outgoing references and disassembly, and procedure_references(incoming) reads the same ReferenceManager stream without the in-body exclusion (it omits synthetic entry-point references as well) to separate the cases. Sources outside the program's observed references still require an external scan (for example otool -tV, pairing adrp with add or ldr) before concluding there are none.";
 
 /** Attached to an empty outgoing-reference facet of an external function. */
 export const ghidraEmptyExternalOutgoingLimitation =
