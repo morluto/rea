@@ -30,6 +30,20 @@ import type {
 import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 export type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 
+/** Selection observed at the end of one serialized open attempt. */
+export type OpenSelectionReceipt =
+  | { readonly kind: "binary"; readonly path: string; readonly sha256: string }
+  | { readonly kind: "resources"; readonly path: string }
+  | { readonly kind: "none" };
+
+export type BinaryOpenResult =
+  | { readonly ok: true; readonly value: BinaryTarget }
+  | {
+      readonly ok: false;
+      readonly error: AnalysisError;
+      readonly selection: OpenSelectionReceipt;
+    };
+
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
 export interface BinarySessionPort
   extends AnalysisOperationPort, InvestigationRecordPort {
@@ -72,7 +86,7 @@ export interface BinarySessionPort
       readonly loadSnapshot?: AnalysisSnapshotLoader;
       readonly providerId?: AnalysisProviderSelector;
     },
-  ): Promise<Result<BinaryTarget, AnalysisError>>;
+  ): Promise<BinaryOpenResult>;
   /** Open a resource-only app root without selecting or inventing an executable target. */
   openBundleResources(
     path: string,

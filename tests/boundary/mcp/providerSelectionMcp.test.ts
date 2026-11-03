@@ -549,6 +549,42 @@ describe("binary_session detail over MCP", () => {
   });
 });
 
+const expectedOpenSelection = (path: string, sha256: string) => ({
+  kind: "binary",
+  path,
+  sha256,
+});
+
+const expectQueuedOpenReceipt = async (
+  mcp: Client,
+  first: string,
+  second: string,
+  snapshotPath: string,
+) => {
+  const call = (name: string, args: Record<string, unknown>) =>
+    mcp.callTool({ name, arguments: args });
+  const failedSwitch = call("open_binary", {
+    path: second,
+    provider_id: "beta",
+    snapshot_path: snapshotPath,
+  });
+  const nextSwitch = call("open_binary", { path: second, provider_id: "beta" });
+  const [failedReply, nextReply] = await Promise.all([
+    failedSwitch,
+    nextSwitch,
+  ]);
+  expect(failedReply.isError).toBe(true);
+  expect(nextReply.isError).not.toBe(true);
+  const sha = (value: string) =>
+    createHash("sha256").update(value).digest("hex");
+  expect(
+    parseMcpToolError(failedReply).error.details?.selection_at_failure,
+  ).toEqual(expectedOpenSelection(first, sha("first fixture")));
+  expect((await call("binary_session", {})).structuredContent).toMatchObject({
+    result: { path: second, sha256: sha("second fixture") },
+  });
+};
+
 it("reports confirmed snapshot binding differences and keeps the active session", async () => {
   const testDirectory = await createTestTempDirectory(
     "rea-snapshot-mismatch-mcp-",
@@ -612,9 +648,11 @@ it("reports confirmed snapshot binding differences and keeps the active session"
       provider_id: provider,
       snapshot_path: snapshotPath,
     });
-    expect(result.isError).toBe(true);
     const error = parseMcpToolError(result).error;
     expect(error.code).toBe("evidence_integrity_mismatch");
+    expect(error.details?.selection_at_failure).toEqual(
+      expectedOpenSelection(first, sha("first fixture")),
+    );
     expect(error.remediation.action).toBe(
       analysisErrorRemediationAction(new AnalysisSnapshotMismatchError("")),
     );
@@ -665,6 +703,8 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   expect((await call("address_name", { address: "0x10" })).isError).not.toBe(
     true,
   );
+
+  await expectQueuedOpenReceipt(mcp, first, second, snapshotPath);
 
   revision = 1;
   const raw = join(testDirectory, "raw.bin");

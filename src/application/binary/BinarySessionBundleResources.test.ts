@@ -157,6 +157,12 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
     session_kind: "bundle_resources",
     resource_root: { canonical_path: opened.value.canonicalPath },
   });
+  const rejectedBinary = await session.open(join(rootPath, "missing-binary"));
+  if (rejectedBinary.ok) throw new Error("Expected a missing binary refusal");
+  expect(rejectedBinary.selection).toEqual({
+    kind: "resources",
+    path: opened.value.canonicalPath,
+  });
   const snapshot = session.exportAnalysisSnapshot();
   if (snapshot.ok)
     throw new Error("resource session exported a binary snapshot");
@@ -652,6 +658,7 @@ it("keeps an earlier resource close failure primary when binary candidate cleanu
   const result = await opening;
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed binary open");
+  expect(result.selection).toEqual({ kind: "none" });
   expect(result.error).toBe(originalFailure);
   expect(result.error.cleanupPrimary).toBeUndefined();
   expect(binaryCloseAttempts).toBe(1);

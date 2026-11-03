@@ -944,6 +944,13 @@ concrete version, selection source, and complete analysis profile through
 choices return typed selection details. A selected provider is never replaced
 automatically after a runtime failure.
 
+When an admitted `open_binary` attempt fails, `error.details.selection_at_failure`
+records the binary path and SHA-256, resource root, or absence of selection at
+the end of that serialized attempt. This is a past observation: a queued or
+later operation may already have changed the selection. Call `binary_session`
+for current state. Validation failures that do not enter the session have no
+such receipt. The original error and any cleanup recovery remain authoritative.
+
 `open_binary` resolves an Apple bundle directory (`.app`, `.appex`,
 `.framework`, `.xpc`, `.systemextension`, `.bundle` or `.plugin`, compared
 case-insensitively) to the program file its `Info.plist` names in
