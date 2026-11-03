@@ -18,6 +18,10 @@ import {
 } from "../domain/jsonValue.js";
 import type { BinaryNinjaConfiguration } from "./BinaryNinjaConfiguration.js";
 import { binaryNinjaToolErrorSchema } from "./BinaryNinjaProtocolValues.js";
+import {
+  McpHttpUtf8Error,
+  validateMcpHttpResponse,
+} from "../providers/Utf8McpResponse.js";
 
 /** One decoded tool reply: rendered text, structured content, or both. */
 export interface BinaryNinjaToolReply {
@@ -143,8 +147,15 @@ export const createBinaryNinjaMcpConnection = (
   });
   const headers = new Headers(config.headers);
   const redact = createBinaryNinjaRedactor(headers);
+  let httpUtf8Failure: McpHttpUtf8Error | undefined;
   const transport = new StreamableHTTPClientTransport(new URL(config.url), {
     requestInit: { headers, redirect: "error" },
+    fetch: async (input, init) =>
+      validateMcpHttpResponse(await fetch(input, init), (failure) => {
+        httpUtf8Failure ??= failure;
+        // Closing the actual transport also settles other pending SSE calls.
+        void transport.close().catch(() => undefined);
+      }),
   });
   const throwIfCancelled = (
     operation: string,
@@ -159,6 +170,13 @@ export const createBinaryNinjaMcpConnection = (
     signal: AbortSignal | undefined,
   ): never => {
     throwIfCancelled(operation, signal);
+    if (cause instanceof McpHttpUtf8Error) throw cause;
+    if (
+      httpUtf8Failure !== undefined &&
+      cause instanceof SdkError &&
+      cause.code === SdkErrorCode.ConnectionClosed
+    )
+      throw httpUtf8Failure;
     const reason = redact(
       cause instanceof Error
         ? cause.message

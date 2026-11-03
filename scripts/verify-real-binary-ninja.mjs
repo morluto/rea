@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
+import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -187,7 +188,8 @@ const mcp = async (cliDossier) => {
   transport.stderr?.on("data", () => undefined);
   const call = async (name, args) => {
     phase = `production MCP ${name}`;
-    const result = await client.callTool(
+    const result = await artifactMcpCall(
+      client,
       { name, arguments: args },
       { timeout: config.timeoutMs * 2 },
     );
@@ -339,7 +341,7 @@ const mcp = async (cliDossier) => {
       report.unverified.push(
         "Function switching: no second procedure and marker supplied.",
       );
-    const invalid = await client.callTool({
+    const invalid = await artifactMcpCall(client, {
       name: "xrefs",
       arguments: { address: "not-an-address" },
     });
