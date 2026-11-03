@@ -50,3 +50,36 @@ it.each(["compact", "full"] as const)(
     }
   },
 );
+
+it.each(["missing", "unexpected"] as const)(
+  "rejects a %s containing instruction at the Ghidra boundary",
+  async (condition) => {
+    const observed = {
+      ...compactInstruction(),
+      status: condition === "missing" ? "not-instruction-boundary" : "decoded",
+      ...(condition === "unexpected"
+        ? {
+            containing_instruction: {
+              address: "0x1000",
+              length: 4,
+              mnemonic: "sub",
+              raw_disassembly: "sub sp,sp,#0x10",
+              provenance: "ghidra-listing",
+            },
+          }
+        : {}),
+    };
+    const harness = await connectGhidraMcp("ghidra-invalid-containment", () =>
+      Promise.resolve(ok(observed)),
+    );
+    try {
+      const result = await harness.mcp.callTool({
+        name: "inspect_native_instruction",
+        arguments: { address: "0x1001" },
+      });
+      expect(result.isError).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  },
+);

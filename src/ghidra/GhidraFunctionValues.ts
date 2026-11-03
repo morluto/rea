@@ -288,6 +288,23 @@ const ghidraFunctionInstructionWindow = functionInstructionWindowSchema
   .extend({ procedure: procedureIdentity })
   .strict();
 
+// Current Ghidra profiles commit to emitting containment exactly for an interior
+// listing address. The shared Evidence schema remains optional for older records.
+const ghidraInstruction = nativeInstructionSchema.superRefine(
+  (value, context) => {
+    if (
+      (value.status === "not-instruction-boundary") !==
+      (value.containing_instruction !== undefined)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["containing_instruction"],
+        message:
+          "Ghidra instruction containment must match the reported status",
+      });
+  },
+);
+
 const resultSchemas = {
   annotate_native_function: nativeFunctionAnnotationsSchema.safeExtend({
     dossier: ghidraFunctionDossier,
@@ -299,7 +316,7 @@ const resultSchemas = {
   procedure_info: procedureInfo,
   procedure_pseudo_code: z.string().nullable(),
   read_function_instructions: ghidraFunctionInstructionWindow,
-  inspect_native_instruction: nativeInstructionSchema,
+  inspect_native_instruction: ghidraInstruction,
   inspect_native_data_type: nativeDataTypeSchema,
   resolve_native_call_targets: nativeCallTargetsSchema,
   procedure_references: procedureReferences,
