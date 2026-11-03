@@ -108,20 +108,6 @@ export const projectAnalysisErrorWithoutPartialObservation = (
     "continuing",
   );
 
-/** Cleanup diagnostics reference facts carried by the enclosing error. */
-export const projectAnalysisErrorForCleanupHistory = (
-  error: AnalysisError,
-): AnalysisErrorProjection =>
-  projectError(
-    error,
-    {
-      capturedOutput: false,
-      partialObservation: false,
-      secondary: false,
-    },
-    "continuing",
-  );
-
 export interface UnretainedEvidenceCandidate {
   readonly field: "partial_observation" | "completed_observation";
   readonly secondaryPath: readonly number[];

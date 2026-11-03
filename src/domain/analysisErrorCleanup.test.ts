@@ -9,7 +9,6 @@ import {
 import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import {
   projectAnalysisError,
-  projectAnalysisErrorForCleanupHistory,
   projectAnalysisErrorWithoutCapturedOutput,
 } from "./analysisErrorProjection.js";
 import {
@@ -196,9 +195,15 @@ it.each([
   const projected = projectAnalysisError(composed);
   expect(projected).toMatchObject(original);
   expect(projected.details?.cleanup_history).toMatchObject({
-    primary_error: projectAnalysisErrorForCleanupHistory(primary),
+    primary_error: { code: original.code, message: original.message },
     cleanup_error: { code: "cleanup_incomplete" },
   });
+  expect(projected.details?.cleanup_history).not.toHaveProperty(
+    "primary_error.details.partial_observation",
+  );
+  expect(projected.details?.cleanup_history).not.toHaveProperty(
+    "primary_error.details.captured_output",
+  );
   expect(projected.details).not.toHaveProperty("cleanup", "incomplete");
   expect(projected.details).not.toHaveProperty("resources");
   expect(analysisErrorCategory(composed)).toBe(original.category);
