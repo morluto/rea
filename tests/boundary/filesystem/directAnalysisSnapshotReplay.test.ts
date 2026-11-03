@@ -1671,3 +1671,160 @@ it("retains a native dispatch workflow snapshot without a deep provider profile"
     saved.value,
   );
 });
+
+it.each([false, true])(
+  "does not replay a fresh decompile from a selected snapshot (document supplied: %s)",
+  async (withDocument) => {
+    const fixture = await createSnapshotReplayFixture(
+      "rea-fresh-decompile-snapshot-",
+    );
+    const original = fixture.createProvider({
+      supportedOperations: ["procedure_pseudo_code"],
+    });
+    const provider: AnalysisProvider = {
+      ...original,
+      capabilities: () =>
+        original.capabilities().map((descriptor) => ({
+          ...descriptor,
+          independentDecompile: true as const,
+        })),
+    };
+    const args = {
+      procedure: "fixture",
+      analysis: "independent_fresh",
+      ...(withDocument ? { document: fixture.path } : {}),
+    };
+    const first = await runDirectAnalysis(
+      fixture.dependencies(provider),
+      fixture.path,
+      "procedure_pseudo_code",
+      args,
+      { snapshotPath: fixture.snapshotPath },
+    );
+    const second = await runDirectAnalysis(
+      fixture.dependencies(provider),
+      fixture.path,
+      "procedure_pseudo_code",
+      args,
+      { snapshotPath: fixture.snapshotPath },
+    );
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(
+      fixture.calls.filter(
+        (operation) => operation === "procedure_pseudo_code",
+      ),
+    ).toHaveLength(2);
+    const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+    if (!saved.ok) throw saved.error;
+    expect(
+      saved.value.entries.some(
+        (entry) => entry.operation === "procedure_pseudo_code",
+      ),
+    ).toBe(false);
+  },
+);
+
+it.each([true, false])(
+  "does not replay an imported fresh decompile (provider declares support: %s)",
+  async (declared) => {
+    const fixture = await createSnapshotReplayFixture(
+      "rea-fresh-imported-snapshot-",
+    );
+    const original = fixture.createProvider({
+      supportedOperations: ["procedure_pseudo_code"],
+    });
+    const provider: AnalysisProvider = {
+      ...original,
+      capabilities: () =>
+        original.capabilities().map((descriptor) => ({
+          ...descriptor,
+          ...(declared ? { independentDecompile: true as const } : {}),
+        })),
+    };
+    const parameters = { procedure: "fixture", document: fixture.path };
+    const dependencies = fixture.dependencies(provider);
+    const first = await runDirectAnalysis(
+      dependencies,
+      fixture.path,
+      "procedure_pseudo_code",
+      parameters,
+      { snapshotPath: fixture.snapshotPath },
+    );
+    if (!first.ok) throw first.error;
+    const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+    if (!saved.ok) throw saved.error;
+    const entry = saved.value.entries.find(
+      (item) => item.operation === "procedure_pseudo_code",
+    );
+    const evidence = saved.value.evidence_bundle.records.find(
+      (item) => item.operation === "procedure_pseudo_code",
+    );
+    if (
+      entry === undefined ||
+      evidence === undefined ||
+      evidence.analysis_profile === null
+    )
+      throw new Error("Missing saved decompile");
+    const freshParameters = { ...parameters, analysis: "independent_fresh" };
+    const historical = createEvidence(
+      {
+        path: fixture.path,
+        sha256: saved.value.target.sha256,
+        format: saved.value.target.format,
+      },
+      evidence.provider,
+      {
+        operation: evidence.operation,
+        parameters: freshParameters,
+        result: evidence.normalized_result,
+        rawResult: evidence.raw_result,
+        analysisProfile: evidence.analysis_profile,
+        confidence: evidence.confidence,
+        limitations: evidence.limitations,
+        locations: evidence.locations,
+      },
+    );
+    const written = await withArtifactResourceScope((resources) =>
+      writeAnalysisSnapshot(
+        {
+          ...saved.value,
+          entries: [
+            {
+              ...entry,
+              parameters: freshParameters,
+              query_id: analysisQueryId(
+                saved.value.target,
+                saved.value.binding,
+                entry.operation,
+                freshParameters,
+              ),
+            },
+          ],
+          evidence_bundle: createEvidenceBundle([historical]),
+        },
+        fixture.snapshotPath,
+        true,
+        resources,
+      ),
+    );
+    if (!written.ok) throw written.error;
+    const fresh = await runDirectAnalysis(
+      dependencies,
+      fixture.path,
+      "procedure_pseudo_code",
+      freshParameters,
+      { snapshotPath: fixture.snapshotPath },
+    );
+    expect(fresh.ok).toBe(declared);
+    if (!fresh.ok)
+      expect(fresh.error, JSON.stringify(fresh.error)).toMatchObject({
+        code: "capability_unavailable",
+      });
+    expect(
+      fixture.calls.filter(
+        (operation) => operation === "procedure_pseudo_code",
+      ),
+    ).toHaveLength(declared ? 2 : 1);
+  },
+);

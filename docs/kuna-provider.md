@@ -147,6 +147,7 @@ that rollback is resolved; a clean rollback permits another setup attempt.
 
 ## Provenance and limitations
 
+- If a completed project export reports a failed function, `procedure_pseudo_code` with `analysis: "independent_fresh"` or `rea decompile --analysis independent_fresh` requests a new single-function attempt. It bypasses the project result and prior single-function and snapshot results; it does not replace the original observation. On a cold session it obtains an inventory without starting a project export. The independent attempt can use different analysis context and may also fail. Identical results can share an Evidence ID because Evidence is content-addressed.
 - Addresses and bytes are Kuna's observations of the image. Procedure entries and extents are its derivations: extents are upper bounds clipped at the next entry, and Kuna can split one function at an entry its own analysis infers. Pseudocode is its reconstruction, never original source.
 - Pseudocode and assembly are exact Kuna text; text from Kuna and from another provider is not comparable as equal or different.
 - Results are re-read rather than replayed from REA's analysis snapshots, because a cold answer can differ from the export's.

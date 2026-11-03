@@ -221,6 +221,12 @@ const registerDecompileCommand = (
         .describe(
           `Ghidra source-file byte offset; mapped internally to an analysis address. ${decompileSelectorGuidance}`,
         ),
+      analysis: z
+        .enum(["independent_fresh"])
+        .optional()
+        .describe(
+          "Request a fresh independent decompile when the selected provider supports it.",
+        ),
       snapshot: snapshotSelectionOption,
       ...nativeOpenOptionFields,
     }),
@@ -245,6 +251,9 @@ const registerDecompileCommand = (
                 : "file-offset",
               "procedure_pseudo_code",
             ),
+            ...(options.analysis === undefined
+              ? {}
+              : { analysis: options.analysis }),
           },
           directAnalysisOptionsFromCli(logger, options),
         ).then(projectCliAnalysisResult),
