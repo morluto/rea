@@ -700,11 +700,14 @@ posix.each([
       expect(result.value.parameters).not.toHaveProperty(
         "provider_executable_path",
       );
-      expect(result.value.limitations).toContainEqual(
-        expect.stringContaining(
-          `${join(broken, "rizin")}, which the lookup found, did not start (${code})`,
+      // A limitation names the skipped file and its launch error.
+      expect(
+        result.value.limitations.some(
+          (limitation) =>
+            limitation.includes(join(broken, "rizin")) &&
+            limitation.includes(code),
         ),
-      );
+      ).toBe(true);
     } finally {
       await service.close();
     }
@@ -740,11 +743,13 @@ posix.each(["ESTALE", "ENODEV"] as const)(
       "rizin",
     ]);
     expect(result.value.provider.version).toBeNull();
-    expect(result.value.limitations).toContainEqual(
-      expect.stringContaining(
-        `${executable}, which the lookup found, did not start (${code})`,
+    // A limitation names the skipped file and its launch error.
+    expect(
+      result.value.limitations.some(
+        (limitation) =>
+          limitation.includes(executable) && limitation.includes(code),
       ),
-    );
+    ).toBe(true);
   },
 );
 

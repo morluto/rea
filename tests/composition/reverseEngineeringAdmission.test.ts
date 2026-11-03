@@ -4,7 +4,6 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
 
 it("bounds concurrent reverse-engineering provider calls", async () => {
@@ -114,10 +113,10 @@ it("keeps a call's place while a file its hash gave up on stays open", async () 
   let abandon = true;
   const service = new TestReverseEngineeringService({
     run: async () => ({ stdout: "", stderr: "" }),
-    // As a hash that reached its deadline while a stalled mount held its file.
-    digest: async (target, signal, stat, timeoutMs, open, onAbandoned) => {
-      if (!abandon)
-        return digestFile(target, signal, stat, timeoutMs, open, onAbandoned);
+    // As a hash that reached its deadline while a stalled mount held its
+    // file; once the file closes, hashes complete without reading the disk.
+    digest: async (_target, _signal, _stat, _timeoutMs, _open, onAbandoned) => {
+      if (!abandon) return "0".repeat(64);
       onAbandoned?.(closed);
       throw Object.assign(new Error("Artifact digest timed out"), {
         code: "ETIMEDOUT",
