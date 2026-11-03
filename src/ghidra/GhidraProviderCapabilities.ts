@@ -53,7 +53,7 @@ const searchLimitation =
 
 /** Attached to an empty xrefs result: absence of resolved references is not proof. */
 export const ghidraEmptyXrefsLimitation =
-  "Ghidra's ReferenceManager resolved no references to this address in this session. An empty list reflects what this analysis resolved, not proof that the address is unreferenced; before concluding the address has no xrefs, cross-check the disassembly or use trace_feature on a known string.";
+  "Ghidra's ReferenceManager resolved no references to this address in this session. An empty list reflects what this analysis resolved, not proof that the address is unreferenced; before concluding the address has no xrefs, cross-check the disassembly at this address.";
 
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
