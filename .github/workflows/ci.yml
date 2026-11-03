@@ -810,6 +810,7 @@ jobs:
           tests/boundary/providers/native/nativeUiOffscreenWindow.test.ts
           tests/boundary/process/nativeUiVerifierLane.test.ts
           tests/boundary/cli/nativeSignatureCli.test.ts
+          tests/boundary/cli/nativeMachoImportNamesCli.test.ts
           tests/boundary/cli/nativeMachoArm64_32Cli.test.ts
           tests/boundary/cli/nativeMachoEncryptionCli.test.ts
           tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts
