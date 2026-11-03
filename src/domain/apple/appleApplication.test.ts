@@ -199,6 +199,7 @@ describe("macOS application roots and bundle roles", () => {
         ),
         { path: "Contents/PlugIns/Preview.qlgenerator", kind: "directory" },
         macho("Contents/PlugIns/Bridge.bundle/Contents/MacOS/Bridge"),
+        macho("Contents/PlugIns/Reverb.vst3/Contents/MacOS/Reverb"),
         { path: "Contents/Resources/Strings.bundle/Info.plist" },
         { path: "Contents/SharedSupport/Data.bundle", kind: "directory" },
         macho("Contents/Resources/Embedded.app/Contents/MacOS/Embedded"),
@@ -246,6 +247,12 @@ describe("macOS application roots and bundle roles", () => {
         path: "Contents/PlugIns/Preview.qlgenerator",
         role: "plug-in",
         layout: "shallow",
+        parent: ".",
+      },
+      {
+        path: "Contents/PlugIns/Reverb.vst3",
+        role: "plug-in",
+        layout: "macos-deep",
         parent: ".",
       },
       {

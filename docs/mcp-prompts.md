@@ -85,9 +85,10 @@ is already retained, it suggests `inspect_analysis_view` before tracing a
 feature seed. The CLI equivalent is `rea analyze <directory>`.
 `open_binary` and the doctor target check admit files and Apple bundle
 directories (`.app`, `.appex`, `.framework`, `.xpc`, `.systemextension`,
-`.bundle` and `.plugin`). Another Apple bundle type is refused as unsupported,
-and another directory is reported with an available analysis action; this does
-not establish support for every directory format.
+`.bundle` and `.plugin`) and audio plug-in bundles (`.component`, `.vst`,
+`.vst3`, `.aaxplugin` and `.clap`). Another Apple bundle type is refused as
+unsupported, and another directory is reported with an available analysis
+action; this does not establish support for every directory format.
 
 For target paths in `compare_application_versions`, the prompt suggests
 opening each target before calling `inspect_artifact`; inspection operates on

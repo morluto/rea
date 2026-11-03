@@ -132,6 +132,9 @@ Roles are path conventions (`role_basis: "path-convention"`):
 | `helper-application` | `Contents/Helpers/*.app`                                        |
 | `nested-application` | Any other nested `*.app`                                        |
 
+Audio plug-in bundles (`*.component`, `*.vst`, `*.vst3`, `*.aaxplugin` and
+`*.clap`) also have the `plug-in` role.
+
 The components also list:
 
 - `privileged_helpers`: files directly in `Contents/Library/LaunchServices/`,

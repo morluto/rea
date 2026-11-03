@@ -140,11 +140,11 @@ export const resolveAppBundleExecutable = async (
 };
 
 /**
- * Resolve an extension, framework, XPC service, system extension or loadable
- * bundle directory to its declared program file. An app keeps its own
- * resolution, including the iOS-on-Mac Wrapper. Other types read the macOS
- * Contents layout or the flat root layout, and frameworks also read the
- * versioned layout. Exactly one layout may declare the bundle, and its
+ * Resolve an extension, framework, XPC service, system extension, loadable
+ * bundle or audio plug-in bundle directory to its declared program file. An
+ * app keeps its own resolution, including the iOS-on-Mac Wrapper. Other types
+ * read the macOS Contents layout or the flat root layout, and frameworks also
+ * read the versioned layout. Exactly one layout may declare the bundle, and its
  * Info.plist must stay inside the bundle; the program file is never guessed.
  */
 export const resolveAppleBundleExecutable = async (
