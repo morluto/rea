@@ -142,7 +142,7 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
   }),
 ]);
 
-const traceImportResultSchema = z.strictObject({
+export const traceImportResultSchema = z.strictObject({
   trace: z.string().min(1),
   min_snap: z.number(),
   max_snap: z.number(),
@@ -153,7 +153,7 @@ const traceImportResultSchema = z.strictObject({
   image_base: z.string().min(1),
   imported: z.boolean(),
 });
-const traceInfoResultSchema = z.strictObject({
+export const traceInfoResultSchema = z.strictObject({
   trace: z.string().min(1),
   min_snap: z.number(),
   max_snap: z.number(),
@@ -162,7 +162,7 @@ const traceInfoResultSchema = z.strictObject({
   threads: z.number(),
   language: z.string().min(1),
 });
-const traceSnapResultSchema = z.strictObject({
+export const traceSnapResultSchema = z.strictObject({
   snap: z.number(),
   registers: z.array(
     z.strictObject({
@@ -172,7 +172,7 @@ const traceSnapResultSchema = z.strictObject({
     }),
   ),
 });
-const traceByteSearchResultSchema = z.strictObject({
+export const traceByteSearchResultSchema = z.strictObject({
   pattern: z.string(),
   matches: z.number(),
   hits: z.array(
@@ -183,7 +183,7 @@ const traceByteSearchResultSchema = z.strictObject({
     }),
   ),
 });
-const traceModulesResultSchema = z.strictObject({
+export const traceModulesResultSchema = z.strictObject({
   count: z.number(),
   modules: z.array(
     z.strictObject({
@@ -192,7 +192,7 @@ const traceModulesResultSchema = z.strictObject({
     }),
   ),
 });
-const traceThreadsResultSchema = z.strictObject({
+export const traceThreadsResultSchema = z.strictObject({
   count: z.number(),
   threads: z.array(z.strictObject({ name: z.string() })),
 });
