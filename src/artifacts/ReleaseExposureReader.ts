@@ -2461,7 +2461,7 @@ const scanSiblings = async (
       throw new AnalysisCancelledError(OPERATION, {
         cause: input.signal.reason,
       });
-    if (entry.name === own || entry.isSymbolicLink()) continue;
+    if (entry.name === own) continue;
     const sibling = appendCallerPath(directory, entry.name);
     if (hasCompanionName(entry.name)) {
       state.companionPaths.add(sibling);

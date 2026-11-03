@@ -1037,6 +1037,24 @@ describe("ReleaseExposureReader mixed maps and sibling paths", () => {
       expect(scanned.debug_companions.paths).toHaveLength(2);
     },
   );
+
+  it.skipIf(process.platform === "win32")(
+    "names a symlinked sibling companion without following it",
+    async () => {
+      const root = await createTestTempDirectory("rea-release-sibling-link-");
+      await writeFile(join(root, "app"), "plain file");
+      await writeFile(join(root, "symbols"), "debug companion");
+      await symlink(join(root, "symbols"), join(root, "app.pdb"));
+      await symlink(join(root, "missing"), join(root, "app.debug"));
+      await symlink(join(root, "app"), join(root, "plain-link"));
+      const expected = [join(root, "app.debug"), join(root, "app.pdb")];
+      const selected = await inspect(join(root, "app"));
+      expect([...selected.debug_companions.paths].sort()).toEqual(expected);
+      expect(selected.debug_companions.skipped).toBe(0);
+      const directory = await inspect(root);
+      expect([...directory.debug_companions.paths].sort()).toEqual(expected);
+    },
+  );
 });
 
 describe("ReleaseExposureReader acquisition and sibling review regressions", () => {
