@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
 import {
@@ -739,6 +739,31 @@ it.each([
     }
   },
 );
+
+it("lets hashes of the same path read at the same time", async () => {
+  const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
+  const opened: Readable[] = [];
+  const open = () => {
+    const stream = new Readable({ read() {} });
+    opened.push(stream);
+    return stream as unknown as ReturnType<
+      typeof import("node:fs").createReadStream
+    >;
+  };
+  const path = "/tmp/rea-concurrent-digest";
+  const digests = Promise.all([
+    digestFile(path, undefined, stat, 1_000, open),
+    digestFile(path, undefined, stat, 1_000, open),
+  ]);
+  // Neither hash waits for the other: both open the file before either reads.
+  await vi.waitFor(() => expect(opened).toHaveLength(2));
+  for (const stream of opened) {
+    stream.push("x");
+    stream.push(null);
+  }
+  const expected = createHash("sha256").update("x").digest("hex");
+  await expect(digests).resolves.toEqual([expected, expected]);
+});
 
 it("shares a stalled stat between hashes of the same path", async () => {
   let stats = 0;
