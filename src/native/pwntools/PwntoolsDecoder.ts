@@ -69,8 +69,12 @@ import { PWNTOOLS_LIMITS } from "./PwntoolsRelease.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
 
-const HOST_REQUIREMENT =
-  "The initial real-verified pwntools artifact profile supports Linux x64 only.";
+/** Names the detected host so a host refusal is not read as a target refusal. */
+export const pwntoolsHostRequirement = (
+  platform: NodeJS.Platform,
+  arch: string,
+): string =>
+  `The real-verified pwntools artifact profile runs only on a Linux x64 host; this host is ${platform}/${arch}. The selected target was not read.`;
 
 /** The pwntools profile runs only on Linux x64; discovery and execution share this check. */
 export const pwntoolsHostSupported = (
@@ -290,13 +294,18 @@ export class PwntoolsDecoder<
         throw new AnalysisCancelledError(OPERATION, {
           cause: options.signal.reason,
         });
-      if (!pwntoolsHostSupported(process.platform, process.arch))
+      if (!pwntoolsHostSupported(process.platform, process.arch)) {
+        const requirement = pwntoolsHostRequirement(
+          process.platform,
+          process.arch,
+        );
         throw new AnalysisCapabilityUnavailableError(
           this.identity.id,
           OPERATION,
-          HOST_REQUIREMENT,
-          { userMessage: HOST_REQUIREMENT },
+          requirement,
+          { userMessage: requirement },
         );
+      }
       if (!isAbsolute(selectedPath))
         throw pwntoolsUnavailable(
           "Set REA_PWNTOOLS_PYTHON to an absolute caller-supplied Python executable with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2; REA never installs Python or packages.",

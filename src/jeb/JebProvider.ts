@@ -214,11 +214,13 @@ export class JebProvider implements JebAnalysisPort {
     } catch (cause) {
       if (signal?.aborted === true) throw cause;
       if (cause instanceof AnalysisError) {
+        // The failure's owner, such as the discovery deadline, also owns the repair.
         const projected = projectAnalysisError(cause);
         return {
           status: "unavailable",
           code: "runtime_unavailable",
           reason: projected.message,
+          remediation: projected.remediation.action,
           diagnostics: {
             ...cause.diagnostics,
             endpoint: this.#selectedEndpoint,
@@ -228,7 +230,8 @@ export class JebProvider implements JebAnalysisPort {
       return {
         status: "unavailable",
         code: "not_configured",
-        reason: `${cause instanceof Error ? cause.message : "The JEB MCP endpoint did not respond"}. ${JEB_CONNECTION_REMEDIATION}`,
+        reason: `${cause instanceof Error ? cause.message : "The JEB MCP endpoint did not respond"}.`,
+        remediation: JEB_CONNECTION_REMEDIATION,
         diagnostics: { endpoint: this.#selectedEndpoint },
       };
     }
