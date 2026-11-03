@@ -106,6 +106,8 @@ import {
   ghidraHealthLimitations,
   ghidraEmptyXrefsLimitation,
   ghidraEmptyIncomingReferencesLimitation,
+  ghidraEmptyDossierIncomingLimitation,
+  ghidraEmptyExternalOutgoingLimitation,
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
   windowsP0Limitations,
@@ -176,18 +178,44 @@ const isEmptyArray = (value: JsonValue | undefined | null): boolean =>
 /**
  * Caveats for the empty reference directions observed in one record: each
  * empty facet is qualified independently, because the provider's empty answer
- * is unresolved, not proof of absence for that direction.
+ * is unresolved, not proof of absence for that direction. External functions
+ * (no local body) and the in-body-filtered dossier incoming list get wording
+ * that matches what was actually observed.
  */
+const isExternalProcedureRecord = (
+  record: Readonly<Record<string, JsonValue>>,
+): boolean => {
+  const procedure = referenceObservationRecord(record.procedure ?? null);
+  const classification =
+    procedure === undefined
+      ? undefined
+      : referenceObservationRecord(procedure.classification ?? null);
+  return classification?.external === true;
+};
+
+const incomingCaveat = (external: boolean): string =>
+  external
+    ? ghidraEmptyIncomingReferencesLimitation
+    : ghidraEmptyDossierIncomingLimitation;
+
+const outgoingCaveat = (external: boolean): string =>
+  external
+    ? ghidraEmptyExternalOutgoingLimitation
+    : ghidraEmptyOutgoingReferencesLimitation;
+
 const emptyReferenceDirectionCaveats = (
   record: Readonly<Record<string, JsonValue>>,
-): readonly string[] => [
-  ...(isEmptyArray(record.incoming_references)
-    ? [ghidraEmptyIncomingReferencesLimitation]
-    : []),
-  ...(isEmptyArray(record.outgoing_references)
-    ? [ghidraEmptyOutgoingReferencesLimitation]
-    : []),
-];
+): readonly string[] => {
+  const external = isExternalProcedureRecord(record);
+  return [
+    ...(isEmptyArray(record.incoming_references)
+      ? [incomingCaveat(external)]
+      : []),
+    ...(isEmptyArray(record.outgoing_references)
+      ? [outgoingCaveat(external)]
+      : []),
+  ];
+};
 
 /** Caveat for a procedure_references result that resolved no references. */
 const emptyProcedureReferencesCaveat = (
@@ -195,7 +223,7 @@ const emptyProcedureReferencesCaveat = (
 ): string | undefined => {
   if (!isEmptyArray(record.references)) return undefined;
   return record.direction === "outgoing"
-    ? ghidraEmptyOutgoingReferencesLimitation
+    ? outgoingCaveat(isExternalProcedureRecord(record))
     : ghidraEmptyIncomingReferencesLimitation;
 };
 

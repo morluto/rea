@@ -59,6 +59,17 @@ export const ghidraEmptyXrefsLimitation =
 export const ghidraEmptyIncomingReferencesLimitation =
   "Ghidra's ReferenceManager returned no actionable incoming references for this function in this session. An empty incoming list reflects what this analysis resolved, not proof that nothing references this function; synthetic entry-point references are omitted. Incoming references have no independent in-product check and require scanning other code (for example an external otool -tV adrp/add pairing) before concluding there are none.";
 
+/**
+ * Attached to an empty incoming-reference facet of an analyzed-function
+ * dossier, which excludes sources inside the function's own body.
+ */
+export const ghidraEmptyDossierIncomingLimitation =
+  "Ghidra's ReferenceManager observed no incoming references from outside this function's body in this session. The dossier's incoming list excludes sources inside the body (a self-recursive call is one), so an empty list can also mean the only observed sources are in-body; those edges remain visible in the outgoing references and disassembly, and procedure_references(incoming) reads the same ReferenceManager stream without the in-body exclusion to distinguish the two cases. Sources outside the program's observed references still require an external scan (for example otool -tV, pairing adrp with add or ldr) before concluding there are none.";
+
+/** Attached to an empty outgoing-reference facet of an external function. */
+export const ghidraEmptyExternalOutgoingLimitation =
+  "Ghidra's ReferenceManager returned no actionable outgoing references for this external function in this session. An external function's defining body is not part of this program database, so its outgoing list cannot describe what the function references: this program's call sites (its incoming references and callers) and the defining artifact are the checks before concluding anything about its behavior.";
+
 /** Attached to an empty outgoing-reference facet of a function result. */
 export const ghidraEmptyOutgoingReferencesLimitation =
   "Ghidra's ReferenceManager returned no actionable outgoing references for this function in this session. An empty outgoing list reflects what this analysis resolved, not proof that the function references nothing; synthetic entry-point references are omitted. The function's own disassembly is an independent check for direct outgoing references before concluding there are none.";

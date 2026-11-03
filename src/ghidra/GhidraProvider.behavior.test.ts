@@ -4,6 +4,8 @@ import {
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   existingProjectCapabilities,
   ghidraEmptyIncomingReferencesLimitation,
+  ghidraEmptyDossierIncomingLimitation,
+  ghidraEmptyExternalOutgoingLimitation,
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
   ghidraEmptyXrefsLimitation,
@@ -3241,6 +3243,38 @@ describe("Ghidra empty reference diagnostics", () => {
       await client.close();
     }
   });
+
+  it("names the external-specific outgoing caveat for an external procedure_references result", async () => {
+    const identity = ghidraFunctionIdentity();
+    const ghidra = emptyReferenceProvider(
+      observation({
+        procedure: {
+          ...identity,
+          classification: { ...identity.classification, external: true },
+        },
+        direction: "outgoing",
+        references: [],
+        reference_kinds_available: true,
+        unresolved_calls: [],
+      }),
+    );
+    const client = await createElfClient(ghidra);
+    try {
+      const execution = await client.execute("procedure_references", {
+        procedure: "0x401000",
+        direction: "outgoing",
+      });
+      if (!execution.ok) throw execution.error;
+      expect(execution.value.limitations).toContain(
+        ghidraEmptyExternalOutgoingLimitation,
+      );
+      expect(execution.value.limitations).not.toContain(
+        ghidraEmptyOutgoingReferencesLimitation,
+      );
+    } finally {
+      await client.close();
+    }
+  });
 });
 
 describe("Ghidra empty function-reference facets", () => {
@@ -3269,6 +3303,9 @@ describe("Ghidra empty function-reference facets", () => {
       });
       if (!execution.ok) throw execution.error;
       expect(execution.value.limitations).toContain(
+        ghidraEmptyDossierIncomingLimitation,
+      );
+      expect(execution.value.limitations).not.toContain(
         ghidraEmptyIncomingReferencesLimitation,
       );
       expect(execution.value.limitations).toContain(
@@ -3291,6 +3328,9 @@ describe("Ghidra empty function-reference facets", () => {
       });
       if (!execution.ok) throw execution.error;
       expect(execution.value.limitations).toContain(
+        ghidraEmptyDossierIncomingLimitation,
+      );
+      expect(execution.value.limitations).not.toContain(
         ghidraEmptyIncomingReferencesLimitation,
       );
       expect(execution.value.limitations).not.toContain(
@@ -3320,7 +3360,46 @@ describe("Ghidra empty function-reference facets", () => {
         ghidraEmptyOutgoingReferencesLimitation,
       );
       expect(execution.value.limitations).not.toContain(
+        ghidraEmptyDossierIncomingLimitation,
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("qualifies an external function's empty facets without local-disassembly guidance", async () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    const ghidra = emptyReferenceProvider(
+      observation({
+        ...dossier,
+        procedure: {
+          ...dossier.procedure,
+          classification: {
+            ...dossier.procedure.classification,
+            external: true,
+          },
+        },
+        incoming_references: [],
+        outgoing_references: [],
+      }),
+    );
+    const client = await createElfClient(ghidra);
+    try {
+      const execution = await client.execute("analyze_function", {
+        procedure: "0x401000",
+      });
+      if (!execution.ok) throw execution.error;
+      expect(execution.value.limitations).toContain(
         ghidraEmptyIncomingReferencesLimitation,
+      );
+      expect(execution.value.limitations).toContain(
+        ghidraEmptyExternalOutgoingLimitation,
+      );
+      expect(execution.value.limitations).not.toContain(
+        ghidraEmptyDossierIncomingLimitation,
+      );
+      expect(execution.value.limitations).not.toContain(
+        ghidraEmptyOutgoingReferencesLimitation,
       );
     } finally {
       await client.close();
@@ -3360,7 +3439,7 @@ describe("Ghidra empty annotation reference facets", () => {
       });
       if (!execution.ok) throw execution.error;
       expect(execution.value.limitations).toContain(
-        ghidraEmptyIncomingReferencesLimitation,
+        ghidraEmptyDossierIncomingLimitation,
       );
       expect(execution.value.limitations).toContain(
         ghidraEmptyOutgoingReferencesLimitation,
