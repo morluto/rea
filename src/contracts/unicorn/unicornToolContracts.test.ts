@@ -6,7 +6,15 @@ import {
   emulateFunctionOutputSchema,
   UNICORN_TOOL_CONTRACTS,
 } from "./unicornToolContracts.js";
-import { UNICORN_PROVIDER_IDENTITY } from "../../unicorn/UnicornRelease.js";
+
+// Mirrors the provider identity; the contract layer must not import the
+// provider layer (pure-layer boundary), and this test only needs the
+// Evidence envelope shape, not the identity itself.
+const UNICORN_PROVIDER = {
+  id: "unicorn",
+  name: "Unicorn Engine",
+  version: "2.1.2",
+};
 
 const CODE = 0x1000000;
 const STACK = 0x7f000000;
@@ -62,7 +70,7 @@ describe("emulate_function contract", () => {
     // MCP clients validate structuredContent against it, and the tool
     // returns a complete Evidence record.
     expect(() => contract.outputSchema.parse(raw)).toThrow();
-    const evidence = createEvidence(undefined, UNICORN_PROVIDER_IDENTITY, {
+    const evidence = createEvidence(undefined, UNICORN_PROVIDER, {
       operation: "emulate_function",
       parameters: {},
       result: raw,
