@@ -21,7 +21,7 @@ export const importMapForTrustedResolver = (
   )
     return map;
   const importer = importerModuleIdentity(importerUrl, baseUrl);
-  const nextIntegrity: { [key: string]: JsonValue } = {};
+  const nextIntegrity: { [key: string]: JsonValue } = Object.create(null);
   let removed = false;
   for (const [key, value] of Object.entries(integrity)) {
     if (integrityKeyMatchesImporter(key, baseUrl, importer)) {

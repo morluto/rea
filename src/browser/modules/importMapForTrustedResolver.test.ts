@@ -78,4 +78,21 @@ describe("importMapForTrustedResolver", () => {
       importMapForTrustedResolver(dependencyOnly, importerUrl, baseUrl),
     ).toBe(dependencyOnly);
   });
+
+  it("preserves a dependency integrity key named __proto__ without prototype pollution", () => {
+    const integrity = Object.assign(Object.create(null), {
+      "https://app.test/main.js": "sha256-importer",
+      "https://app.test/dep.js": "sha256-dep",
+    });
+    integrity["__proto__"] = "sha256-proto-dep";
+    const map = { imports: { dep: "/dep.js" }, integrity };
+    const next = importMapForTrustedResolver(map, importerUrl, baseUrl);
+    const nextIntegrity = next.integrity as { readonly [key: string]: string };
+    expect(nextIntegrity["https://app.test/dep.js"]).toBe("sha256-dep");
+    expect(
+      Object.getOwnPropertyDescriptor(nextIntegrity, "__proto__")?.value,
+    ).toBe("sha256-proto-dep");
+    expect(Object.getPrototypeOf(nextIntegrity)).toBe(null);
+    expect(Object.prototype.hasOwnProperty.call({}, "__proto__")).toBe(false);
+  });
 });
