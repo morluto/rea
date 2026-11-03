@@ -660,6 +660,35 @@ const stalledRead = () => {
   return { stream, answer, release };
 };
 
+/**
+ * A stream that reads its content and then holds its close, as an
+ * unresponsive mount can, until the test answers it. `release` answers the
+ * close, even after a failed assertion, and joins it within a bound.
+ */
+const stalledClose = () => {
+  let held: (() => void) | undefined;
+  const stream = new Readable({
+    read() {
+      this.push(Buffer.from("x"));
+      this.push(null);
+    },
+    destroy(error, callback) {
+      held = () => callback(error);
+    },
+  });
+  const answer = (): void => {
+    const callback = held;
+    held = undefined;
+    callback?.();
+  };
+  const release = async (): Promise<void> => {
+    stream.destroy();
+    answer();
+    await joinClose(stream);
+  };
+  return { stream, answer, release };
+};
+
 it.each(["deadline", "cancellation"] as const)(
   "ends a digest on its %s while the file's open is still pending",
   async (interruption) => {
@@ -705,6 +734,7 @@ it.each(["deadline", "cancellation"] as const)(
 it.each([
   ["open", stalledOpen],
   ["read", stalledRead],
+  ["close", stalledClose],
 ] as const)(
   "makes a hash wait for an earlier %s of the same path that has not returned",
   async (operation, stall) => {

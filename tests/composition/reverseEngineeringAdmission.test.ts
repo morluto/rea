@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
 
 it("bounds concurrent reverse-engineering provider calls", async () => {
@@ -97,6 +98,62 @@ it("bounds concurrent reverse-engineering provider calls", async () => {
     ).resolves.toMatchObject({ ok: true });
   } finally {
     release();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("keeps a call's place while a file its hash gave up on stays open", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-abandoned-"));
+  const path = join(directory, "fixture.bin");
+  await writeFile(path, "fixture");
+  let answer!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  let abandon = true;
+  const service = new TestReverseEngineeringService({
+    run: async () => ({ stdout: "", stderr: "" }),
+    // As a hash that reached its deadline while a stalled mount held its file.
+    digest: async (target, signal, stat, timeoutMs, open, onAbandoned) => {
+      if (!abandon)
+        return digestFile(target, signal, stat, timeoutMs, open, onAbandoned);
+      onAbandoned?.(closed);
+      throw Object.assign(new Error("Artifact digest timed out"), {
+        code: "ETIMEDOUT",
+      });
+    },
+  });
+  try {
+    const returned = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        service.inspectWithObjdump({ path, operation: "file_headers" }),
+      ),
+    );
+    expect(returned.every((result) => !result.ok)).toBe(true);
+    // Each call returned, but its file is still open.
+    await expect(
+      service.inspectWithObjdump({ path, operation: "file_headers" }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        reportedLimits: {
+          max_concurrent_operations: 8,
+          active_operations: 8,
+          operations_awaiting_file_close: 8,
+        },
+      },
+    });
+    abandon = false;
+    answer();
+    await closed;
+    await new Promise((resolve) => setImmediate(resolve));
+    await expect(
+      service.inspectWithObjdump({ path, operation: "file_headers" }),
+    ).resolves.toMatchObject({ ok: true });
+  } finally {
+    answer();
     await service.close();
     await rm(directory, { recursive: true, force: true });
   }

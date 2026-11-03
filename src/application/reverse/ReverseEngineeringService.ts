@@ -158,6 +158,8 @@ export class ReverseEngineeringService {
     AbortController,
     Promise<Result<Evidence, AnalysisError>>
   >();
+  /** Calls that returned while a stream their hash gave up on stayed open. */
+  readonly #awaitingClose = new Set<AbortController>();
   #closing = false;
   #closePromise: Promise<void> | undefined;
 
@@ -352,9 +354,10 @@ export class ReverseEngineeringService {
               max_concurrent_operations:
                 MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS,
               active_operations: this.#activeOperations.size,
+              operations_awaiting_file_close: this.#awaitingClose.size,
             },
             {
-              remediationAction: `Wait for an active objdump or rizin command to finish, then retry. This capacity of ${String(MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS)} operations has no runtime override, and command_timeout_ms does not raise it.`,
+              remediationAction: `Wait for an active objdump or rizin command to finish, then retry. A call that returned while a file it was hashing stayed open, as on an unresponsive mount, keeps its place until that file closes. This capacity of ${String(MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS)} operations has no runtime override, and command_timeout_ms does not raise it.`,
             },
           ),
         ),
@@ -369,6 +372,9 @@ export class ReverseEngineeringService {
       signal === undefined || signal instanceof AbortSignal
         ? controller.signal
         : signal;
+    // A stalled mount can hold a stream that a hash gave up on past the
+    // call's result, so the call keeps its place until those streams close.
+    const abandoned = new Set<Promise<void>>();
     const running = this.#observeProvider(
       operation,
       profile,
@@ -376,10 +382,21 @@ export class ReverseEngineeringService {
       parameters,
       operationSignal,
       timeoutMs,
+      (closed) => {
+        abandoned.add(closed);
+      },
     );
     const tracked = running.finally(() => {
       signal?.removeEventListener("abort", relayAbort);
-      this.#activeOperations.delete(controller);
+      if (abandoned.size === 0) {
+        this.#activeOperations.delete(controller);
+        return;
+      }
+      this.#awaitingClose.add(controller);
+      void Promise.all(abandoned).then(() => {
+        this.#awaitingClose.delete(controller);
+        this.#activeOperations.delete(controller);
+      });
     });
     this.#activeOperations.set(controller, tracked);
     return tracked;
@@ -392,8 +409,11 @@ export class ReverseEngineeringService {
     parameters: Readonly<Record<string, JsonValue>>,
     signal: AbortSignal | undefined,
     timeoutMs: number,
+    onAbandoned: (closed: Promise<void>) => void,
   ): Promise<Result<Evidence, AnalysisError>> {
     const { executable: command, arguments: args } = profile;
+    const hash = (file: string): Promise<string> =>
+      this.#digest(file, signal, this.#stat, timeoutMs, undefined, onAbandoned);
     if (signal?.aborted)
       return err(
         new AnalysisCancelledError(operation, { cause: signal.reason }),
@@ -404,13 +424,7 @@ export class ReverseEngineeringService {
       path === undefined ? undefined : absoluteCallerPath(path);
     let digest: string | undefined;
     try {
-      if (absolutePath !== undefined)
-        digest = await this.#digest(
-          absolutePath,
-          signal,
-          this.#stat,
-          timeoutMs,
-        );
+      if (absolutePath !== undefined) digest = await hash(absolutePath);
     } catch (cause) {
       const code = commandFailureCode(cause);
       if (preflightCancelled(signal, cause, code))
@@ -487,6 +501,7 @@ export class ReverseEngineeringService {
       environment,
       signal,
       timeoutMs,
+      hash,
     );
     // An error before Evidence exists keeps the executable the caller
     // selected and the target it already resolved and hashed.
@@ -730,12 +745,7 @@ export class ReverseEngineeringService {
       if (!cleanupOnlyFailure) completionStatus = "unknown";
     } else {
       try {
-        digestAfter = await this.#digest(
-          absolutePath,
-          signal,
-          this.#stat,
-          timeoutMs,
-        );
+        digestAfter = await hash(absolutePath);
       } catch {
         // Preserve the provider's collected observations if the artifact vanished or became unreadable.
       }
@@ -896,6 +906,7 @@ export class ReverseEngineeringService {
     environment: NodeJS.ProcessEnv,
     signal: AbortSignal | undefined,
     timeoutMs: number,
+    hash: (file: string) => Promise<string>,
   ): Promise<Result<ProviderIdentification, AnalysisError>> {
     const probe = profile.versionProbe;
     // Without an identifying banner, a probed provider's name is assumed.
@@ -978,7 +989,7 @@ export class ReverseEngineeringService {
     }
     let sha256: string;
     try {
-      sha256 = await this.#digest(lookup.path, signal, this.#stat, timeoutMs);
+      sha256 = await hash(lookup.path);
     } catch (cause) {
       const code = commandFailureCode(cause);
       // A hash that ends the call keeps the path the lookup found.
@@ -1504,16 +1515,22 @@ const reverseCommandTimeoutGuidance = (
 });
 
 /**
- * Streams whose hash gave up while their open or a read was still pending, by
- * stream factory and path. Destroying a stream cancels neither, which a
- * stalled mount can hold, with a libuv worker, indefinitely; the stream closes
- * only after that operation returns. A later hash of the same path waits for
- * those streams to close instead of starting another, so abandoned opens and
- * reads stay bounded by the paths, while hashes that have not given up never
- * wait for each other.
+ * Streams whose hash gave up while their open, a read or their close was
+ * still pending, by stream factory and path. Destroying a stream cancels none
+ * of these, which a stalled mount can hold, with a libuv worker,
+ * indefinitely; the stream closes only after that operation returns. A later
+ * hash of the same path waits for those streams to close instead of starting
+ * another, so abandoned file work stays bounded by the paths, while hashes
+ * that have not given up never wait for each other.
  */
 const abandonedStreams = new WeakMap<object, Map<string, Set<Promise<void>>>>();
 
+/**
+ * Hash a regular file within one deadline. The hash completes once its stream
+ * has closed, so the caller owns the file until then. `onAbandoned` receives
+ * the close of a stream the hash gave up on, which a stalled mount can delay
+ * past the hash's result.
+ */
 export const digestFile = async (
   path: string,
   signal?: AbortSignal,
@@ -1522,6 +1539,7 @@ export const digestFile = async (
   open: (
     path: string,
   ) => ReturnType<typeof createReadStream> = createReadStream,
+  onAbandoned?: (closed: Promise<void>) => void,
 ): Promise<string> => {
   const startedAt = performance.now();
   const remaining = (): number =>
@@ -1574,6 +1592,7 @@ export const digestFile = async (
         if (held.size === 0 && abandoned.get(path) === held)
           abandoned.delete(path);
       });
+      onAbandoned?.(closed);
     };
     const stop = (cause: Error): void => {
       abandon(cause);
@@ -1614,9 +1633,21 @@ export const digestFile = async (
       cleanup();
       rejectDigest(cause);
     });
+    // The hash completes when the stream closes after its end, so a close
+    // that a stalled mount holds reaches the deadline as a stalled read does.
+    let digest: string | undefined;
     stream.once("end", () => {
+      digest = hash.digest("hex");
+    });
+    stream.once("close", () => {
       cleanup();
-      resolveDigest(hash.digest("hex"));
+      if (digest !== undefined) resolveDigest(digest);
+      else
+        rejectDigest(
+          Object.assign(new Error("Artifact stream closed before its end"), {
+            code: "ERR_STREAM_PREMATURE_CLOSE",
+          }),
+        );
     });
   });
 };

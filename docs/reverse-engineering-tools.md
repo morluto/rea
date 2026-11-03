@@ -169,7 +169,12 @@ lookup or hash that stops waiting for a stalled
 path waits for it instead of starting another. A hash also ends at the deadline
 or on cancellation while the file's open or a read is still pending; a later
 hash of the same path then waits until that stream closes before it opens the
-file again. Hashes that have not given up do not wait for each other.
+file again. Hashes that have not given up do not wait for each other. A hash
+completes only after its file closes, so a close that a stalled mount holds
+also reaches the deadline. A call that returns while a file its hash gave up
+on is still open keeps its place among the eight concurrent objdump and rizin
+operations until that file closes; the capacity error counts such calls as
+`operations_awaiting_file_close`.
 
 Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override. A typed failure's `captured_output` marks a stream that held invalid UTF-8 with `stdout_invalid_utf8` or `stderr_invalid_utf8`.
 
