@@ -119,6 +119,10 @@ export interface NativeImage {
 }
 
 const WASM_MAGIC = Buffer.from([0x00, 0x61, 0x73, 0x6d]);
+
+/** Whether the binary is a WebAssembly module, from its magic alone. */
+export const isWasmModule = (bytes: Buffer): boolean =>
+  bytes.subarray(0, 4).equals(WASM_MAGIC);
 const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
 
 /**

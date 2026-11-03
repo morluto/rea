@@ -1,6 +1,11 @@
 import type { Il2cppLinkedMethod } from "../domain/il2cpp/il2cppMetadata.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
-import { openImageSteps, readSlot, isExecutable } from "./Il2cppBinaryImage.js";
+import {
+  isExecutable,
+  isWasmModule,
+  openImageSteps,
+  readSlot,
+} from "./Il2cppBinaryImage.js";
 import {
   findModules,
   findCodeRegistration,
@@ -94,13 +99,14 @@ export function* linkIl2cppBinarySteps(
   const version = metadata.metadata_version;
   // Refuse an undecoded version before any table is read.
   if (options.genericInstances === true) genericMethodLayouts(version);
-  yield;
-  const image = yield* openImageSteps(bytes, architecture);
-  if (options.genericInstances === true && image.wasmTable !== undefined)
+  // The module kind alone refuses this, before its memory is rebuilt.
+  if (options.genericInstances === true && isWasmModule(bytes))
     throw new Il2cppBinaryFormatFailure(
       "generic-methods-unsupported",
       "generic method instances are not decoded for wasm32 modules",
     );
+  yield;
+  const image = yield* openImageSteps(bytes, architecture);
   const modules = yield* findModules(image, metadata);
   const registration_ = yield* findCodeRegistration(image, modules);
   const methodImage = new Int32Array(metadata.methods.length).fill(-1);
