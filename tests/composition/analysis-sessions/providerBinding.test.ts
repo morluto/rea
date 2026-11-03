@@ -307,6 +307,7 @@ const deepProvider = (id: string): DeepProviderFixture => {
             status: "unavailable",
             code: "runtime_missing",
             reason: `${id} runtime is unavailable`,
+            remediation: "Repair the fixture provider.",
             diagnostics: { executable_path: `/opt/${id}/bin/analyze` },
           },
     inspectTargetSupport: () => ({

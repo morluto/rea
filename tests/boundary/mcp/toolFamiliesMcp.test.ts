@@ -191,6 +191,7 @@ describe("MCP tool family advertising", () => {
           status: "unavailable",
           code: "runtime_missing",
           reason: `${name} runtime is unavailable`,
+          remediation: "Repair the fixture provider.",
           diagnostics: {},
         } as const;
       };
@@ -231,6 +232,7 @@ describe("MCP tool family advertising", () => {
         status: "unavailable",
         code: "runtime_missing",
         reason: "android runtime is unavailable",
+        remediation: "Repair the fixture provider.",
         diagnostics: {},
       }),
     });

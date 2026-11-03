@@ -2,7 +2,7 @@ import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import { expect, it } from "vitest";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -178,7 +178,8 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
   const parent = await createTestTempDirectory(
     "rea-bundle-resource-production-mcp-",
   );
-  const bundle = join(parent, "Fixture.app");
+  const bundle = join(parent, "Fixture");
+  const alias = join(parent, "Caller");
   const resourceDirectory = join(bundle, "Resources");
   await mkdir(resourceDirectory, { recursive: true });
   await writeFile(join(bundle, "Info.plist"), "<plist><dict/></plist>");
@@ -192,6 +193,9 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     }),
   );
 
+  await symlink(bundle, alias, "junction");
+  const canonical = await realpath(bundle);
+
   const session = await createArtifactBinarySession({}, process.platform);
   const { client } = await createApplicationMcpHarness({
     session,
@@ -200,7 +204,7 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
 
   const opened = await client.callTool({
     name: "open_bundle_resources",
-    arguments: { path: bundle },
+    arguments: { path: alias },
   });
   expect(opened.isError).not.toBe(true);
   expect(
@@ -208,7 +212,11 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
       opened.structuredContent,
     ),
   ).toMatchObject({
-    result: { canonical_path: bundle, executable_sha256: null },
+    result: {
+      caller_path: alias,
+      canonical_path: canonical,
+      executable_sha256: null,
+    },
   });
 
   const decoded = await client.callTool({
@@ -223,7 +231,11 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     subject: null,
     normalized_result: {
       target_sha256: null,
-      resource_root: { canonical_path: bundle, executable_sha256: null },
+      resource_root: {
+        caller_path: alias,
+        canonical_path: canonical,
+        executable_sha256: null,
+      },
     },
   });
   const decodedEvidenceId = z
@@ -252,10 +264,10 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
       ),
     ).toMatchObject({
       normalized_result: {
-        artifact: { path: bundle, sha256: null },
+        artifact: { path: canonical, sha256: null },
         resource_root: {
-          caller_path: bundle,
-          canonical_path: bundle,
+          caller_path: alias,
+          canonical_path: canonical,
           executable_sha256: null,
         },
       },
@@ -275,7 +287,11 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     normalized_result: {
       archive_path: "Resources/Archive.plist",
       target_sha256: null,
-      resource_root: { canonical_path: bundle, executable_sha256: null },
+      resource_root: {
+        caller_path: alias,
+        canonical_path: canonical,
+        executable_sha256: null,
+      },
       objects: expect.arrayContaining([
         expect.objectContaining({ value: "resource-only-value" }),
       ]),
@@ -288,9 +304,24 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     subject: null,
     operation: "inspect_keyed_archive",
     normalized_result: {
-      resource_root: { canonical_path: bundle, executable_sha256: null },
+      resource_root: {
+        caller_path: alias,
+        canonical_path: canonical,
+        executable_sha256: null,
+      },
     },
   });
+  const closed = await client.callTool({ name: "close_binary", arguments: {} });
+  expect(closed.isError).not.toBe(true);
+  const statusAfterClose = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  expect(
+    toolContract("binary_session").outputSchema.parse(
+      statusAfterClose.structuredContent,
+    ),
+  ).toMatchObject({ result: { open: false } });
 });
 
 const expectResourceSchemaBranches = async (client: Client): Promise<void> => {

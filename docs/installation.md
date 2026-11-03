@@ -390,6 +390,20 @@ A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
 
+Provider checks read the terminal running doctor. A client-started server may
+receive a different environment, and doctor cannot observe it. When an available
+provider relies on a setting that a registration's file does not record, or
+records with other text, doctor adds a non-blocking
+`registration_environment:<client>` check with `classification: "unknown"`. The
+setting names appear in that registration's `provider_settings`. Selecting the
+client or an affected provider places the check in `scope_checks`; it never
+changes `healthy`, because the client may still pass the setting on. Preview
+`rea setup --client <client-id> --skill=false --dry-run` from that terminal and
+approve it to record the settings, then restart the client. To see what the
+running server can use, call `binary_session` in the client and read
+`result.tool_availability`. For Hopper, only an explicit `HOPPER_LAUNCHER_PATH`
+is compared.
+
 An invalid `REA_LOG_LEVEL` fails every scope, including one client or the
 installed skill, because the executable rejects it before any command. A
 selected client also fails for every other setting that MCP startup rejects,
@@ -666,7 +680,8 @@ Hopper is separate commercial software with its own license. Its free demo has
 vendor-defined limits, and a paid license is optional. REA reuses any detected
 installation and preserves Hopper during uninstall.
 
-The automated Hopper installer supports macOS 12+ and x86_64 hosts running
+The automated Hopper installer supports macOS 12+, subject to the minimum
+macOS version of the current Hopper release, and x86_64 hosts running
 Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy. The
 official Linux packages are x86_64-only, so setup does not offer Hopper on other
 Linux architectures; configure [Ghidra](#ghidra) there instead. REA itself runs on any
@@ -689,18 +704,34 @@ for installation. Setup cannot prompt when its output is redirected or during a
 container image build. To approve Hopper installation without prompts, run
 `rea setup --yes --install-hopper`.
 
-If the Linux package download receives an HTTP failure, setup includes the
-observed HTTP status in its `download_failed` diagnostic. The status does not
-establish the underlying cause or guarantee that retrying will succeed.
+If a Hopper request fails on macOS or Linux, the setup result's `download`
+field names the request (`release_feed`, `package` or `public_key`), its `url`,
+and the observed outcome `kind`: `http_status` with `httpStatus`, `timeout`,
+`network`, `response_too_large`, or `url_refused`. The remediation names the
+same URL and outcome. HTTP 404 or 410 means the file is missing, so an
+immediate retry is unlikely to help; 5xx, 408 and 429 indicate a temporary
+service failure. The status does not establish the underlying cause or guarantee
+that retrying will succeed. Doctor and Linux launches report the same request
+and status when publisher verification cannot download the current package.
 
 Hopper metadata and package downloads require HTTPS throughout the redirect
-chain; a redirect to HTTP is refused before that destination is requested.
+chain; a redirect to HTTP or to a URL carrying credentials is refused before
+that destination is requested, and those credentials are not reported.
 
 On macOS, approved setup downloads the official DMG, checks its published size
 and digest, validates the application bundle, and atomically installs it to
 `~/Applications/Hopper Disassembler.app`. REA then opens Hopper so the
 operator can choose its demo mode or activate an existing license. Homebrew and
 administrator access are not used.
+
+Each Hopper release declares its own minimum macOS version, so the setup plan
+cannot confirm support before approval. Setup compares this Mac's version with
+the release metadata's `deployment_target` before downloading the DMG, and with
+the signed application's `LSMinimumSystemVersion` before copying it. If this Mac
+is older, setup fails with `incompatible_host_version`, names both versions, and
+installs nothing. Update macOS, or install a Hopper release that supports this
+macOS version yourself and set `HOPPER_LAUNCHER_PATH`. An existing Hopper
+installation is not checked against the current release's minimum.
 
 The Hopper launcher action used by REA creates a document from an executable;
 its supported command-line interface does not attach to an already-open
@@ -1314,7 +1345,8 @@ fails with `provider_timeout` and that message; other Ghidra tools stay
 available. If the caller also cancels while the timeout settles, the session
 still closes and the message says so. Session reuse concerns an active MCP or
 library session; a standalone CLI command still closes its own session when it
-finishes. In MCP, `ghidra.decompile_timeout_seconds` can override the launch
+finishes, so its timeout names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` for a new
+invocation instead. In MCP, `ghidra.decompile_timeout_seconds` can override the launch
 value for newly accepted operations on the existing Program; explicit `null`
 removes the deadline. A transient timeout remains uncached so the same function
 can be retried after an update. See the

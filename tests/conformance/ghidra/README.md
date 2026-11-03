@@ -25,7 +25,8 @@ binaries and Ghidra projects are never committed.
   multi-block branch.
 - `entry-aliases.c` preserves secondary imported entry labels, a bare-hex
   alias, and an interior label. The native CLI/MCP lane verifies entry selection,
-  annotation, interior-label rejection, and unchanged source bytes.
+  procedure search and feature tracing by the secondary name, annotation,
+  interior-label rejection, and unchanged source bytes.
 - `cross-format.c` is freestanding so the verifier can produce AArch64 ELF,
   x86-64 PE, and x86-64 Mach-O targets from the same semantics. It preserves an
   exported entry, direct and indirect calls, a volatile string reference, and a

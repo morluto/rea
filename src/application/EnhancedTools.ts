@@ -1,8 +1,15 @@
 import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import { withOverviewInventoryCoverage } from "../domain/native/inventoryCoverage.js";
 import type { NativeCallGraph } from "../domain/native/nativeCallGraph.js";
+import type {
+  BatchDecompileItem,
+  BatchProcedureIdentity,
+} from "../domain/native/batchDecompile.js";
 import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
-import { CALL_RELATIONSHIP_TRAVERSALS } from "./CallRelationshipTraversal.js";
+import {
+  cleanupStoppedTraversal,
+  readCallRelationships,
+} from "./CallRelationshipTraversal.js";
 import { z } from "zod";
 
 import type {
@@ -28,7 +35,6 @@ import {
   parseNativeInventoryCount,
   addressedValueSchema,
 } from "../domain/native/nativeInventory.js";
-import { parseRelatedAddresses } from "../domain/native/nativeObservation.js";
 import {
   parseSegments,
   projectBinaryOverview,
@@ -59,6 +65,7 @@ import {
 } from "../domain/apple/machoTargetSelection.js";
 
 import {
+  failedWithPartialResult,
   invalidEnhancedInput,
   type EnhancedResult,
   type ValidatedEnhancedCall,
@@ -73,18 +80,6 @@ import {
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 
-type BatchProcedureIdentity =
-  | {
-      readonly status: "resolved";
-      readonly address: string;
-      readonly name: string | null;
-      readonly name_error?: ReturnType<typeof projectAnalysisError>;
-    }
-  | {
-      readonly status: "unknown";
-      readonly error: ReturnType<typeof projectAnalysisError>;
-    };
-
 type BatchResolution = {
   readonly address: string;
   readonly result: Result<string, AnalysisError>;
@@ -94,16 +89,6 @@ type BatchReadyItem = {
   readonly address: string;
   readonly procedure: BatchProcedureIdentity;
   readonly providerProcedure: string;
-};
-
-type BatchDecompileItem = {
-  readonly address: string;
-  readonly procedure: BatchProcedureIdentity;
-  readonly status: "ok" | "error";
-  readonly pseudocode?: string;
-  readonly error?: ReturnType<typeof projectAnalysisError>;
-  /** Caveats of this item's own observation when it supplied no pseudocode. */
-  readonly limitations?: string[];
 };
 
 /**
@@ -615,8 +600,6 @@ export class EnhancedTools {
     },
     signal?: AbortSignal,
   ): EnhancedResult {
-    const { relation, operation: tool } =
-      CALL_RELATIONSHIP_TRAVERSALS[input.direction];
     const limitations = new Set<string>();
     const resolved = await this.#observe(
       "procedure_address",
@@ -635,40 +618,41 @@ export class EnhancedTools {
     ];
     let queueIndex = 0;
     const graph: Record<string, JsonValue[]> = {};
+    const sortedLimitations = () =>
+      [...limitations].sort(compareUnicodeCodePoints);
 
     while (queueIndex < queue.length) {
       const current = queue[queueIndex++];
       if (current === undefined) continue;
-      const level = String(current.depth);
-      graph[level] ??= [];
-
-      const result = await this.#observe(
-        tool,
-        { procedure: current.address },
+      const read = await readCallRelationships(
+        this.#observe.bind(this),
+        input.direction,
+        current.address,
         signal,
-        "provider",
       );
-      if (!result.ok) {
-        if (isAnalysisCancellation(result.error)) return result;
-        graph[level].push({
+      if (read.status === "stopped") {
+        if (!read.error.cleanupIncomplete) return err(read.error);
+        limitations.add(
+          cleanupStoppedTraversal(current.address, queue.length - queueIndex),
+        );
+        return failedWithPartialResult(read.error, {
+          graph,
+          limitations: sortedLimitations(),
+        });
+      }
+      const nodes = (graph[String(current.depth)] ??= []);
+      if (read.status !== "observed") {
+        nodes.push({
           address: current.address,
           status: "error",
-          error: projectAnalysisError(result.error),
+          error: projectAnalysisError(read.error),
         } satisfies NativeCallGraph["graph"][string][number]);
         continue;
       }
-      const related = parseRelatedAddresses(result.value.result, relation);
-      if (!related.ok) {
-        graph[level].push({
-          address: current.address,
-          status: "error",
-          error: projectAnalysisError(related.error),
-        } satisfies NativeCallGraph["graph"][string][number]);
-        continue;
-      }
-      for (const limitation of result.value.limitations)
+      const { execution, related } = read;
+      for (const limitation of execution.limitations)
         limitations.add(limitation);
-      const reportedCoverage = result.value.relationshipCoverage;
+      const reportedCoverage = execution.relationshipCoverage;
       const coverage = reportedCoverage ?? {
         status: "unknown" as const,
         reason: "Provider did not report relationship coverage.",
@@ -676,7 +660,7 @@ export class EnhancedTools {
       const relationshipLimitations =
         reportedCoverage === undefined
           ? [
-              ...result.value.limitations,
+              ...execution.limitations,
               "Provider did not report relationship coverage.",
             ]
           : [
@@ -692,26 +676,23 @@ export class EnhancedTools {
       const nodeLimitations = [...new Set(relationshipLimitations)].sort(
         compareUnicodeCodePoints,
       );
-      graph[level].push({
+      nodes.push({
         address: current.address,
         status: "ok",
-        calls: [...related.value],
+        calls: [...related],
         relationship_coverage: coverage,
         ...(nodeLimitations.length === 0
           ? {}
           : { limitations: nodeLimitations }),
       } satisfies NativeCallGraph["graph"][string][number]);
-      for (const address of related.value) {
+      for (const address of related) {
         if (!discovered.has(address)) {
           discovered.add(address);
           queue.push({ address, depth: current.depth + 1 });
         }
       }
     }
-    return ok({
-      graph,
-      limitations: [...limitations].sort(compareUnicodeCodePoints),
-    });
+    return ok({ graph, limitations: sortedLimitations() });
   }
 
   async #analyzeSwiftTypes(
