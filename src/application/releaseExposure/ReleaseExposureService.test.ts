@@ -1500,6 +1500,8 @@ describe("ReleaseExposureService Go relative flag paths", () => {
     ["-L private-sdk -s -w", "private-sdk"],
     [`"-L private-sdk -s -w"`, "private-sdk"],
     ["-L=private-sdk -s -w", "private-sdk"],
+    [`-L "private - sdk" -s -w`, "private - sdk"],
+    [`-L "/tmp/private - sdk" -s -w`, "/tmp/private - sdk"],
     ["-X main.version=1 -L private-sdk", "private-sdk"],
   ])("keeps the relative linker directory in %s", async (value, path) => {
     const report = await goReport(
@@ -1543,6 +1545,7 @@ describe("ReleaseExposureService Go relative flag paths", () => {
     [`all=-extldflags '-Wl,-L,private-sdk'`, "private-sdk"],
     [`-extldflags "-Xlinker -L -Xlinker private-sdk"`, "private-sdk"],
     [`-extldflags '-L "/srv/private sdk"'`, "/srv/private sdk"],
+    [`-extldflags '-L "/tmp/private - sdk"'`, "/tmp/private - sdk"],
   ])(
     "reads the external linker flags in %s as the compiler driver does",
     async (value, path) => {
@@ -1568,6 +1571,7 @@ describe("ReleaseExposureService Go relative flag paths", () => {
   it.each([
     [`"-isystem /opt/my sdk/include"`, "/opt/my sdk/include"],
     [`"-I private sdk/include"`, "private sdk/include"],
+    [`-I "/opt/private - sdk"`, "/opt/private - sdk"],
   ])("reports %s once, without the separating space", async (value, path) => {
     const report = await goReport(goModule([{ key: "CGO_CFLAGS", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");

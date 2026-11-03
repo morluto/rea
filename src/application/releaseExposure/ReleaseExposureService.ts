@@ -879,8 +879,16 @@ const goFields = (value: string): string[] =>
     ([field, double, single]) => double ?? single ?? field,
   );
 
-/** A field's flags, with a quoted path kept whole up to the next flag. */
-const splitGoField = (field: string): string[] => field.split(/\s+(?=-)/u);
+/**
+ * A field's flags. A quoted field that begins with a flag, after any package
+ * selector, can hold several, so it splits before each later one. Any other
+ * field is one argument, such as the directory in `-L "/tmp/a - b"`, and is
+ * kept whole.
+ */
+const splitGoField = (field: string): string[] =>
+  field.replace(GO_PACKAGE_SELECTOR, "").startsWith("-")
+    ? field.split(/\s+(?=-)/u)
+    : [field];
 
 /** Flags in one value. */
 const goFlags = (value: string): string[] =>
