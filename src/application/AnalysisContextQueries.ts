@@ -219,7 +219,7 @@ const unavailableFacet = (
         error.remediationAction !== undefined ||
         error.continuingCallerGuidance?.remediationAction !== undefined
           ? projected.remediation.action
-          : "Review provider availability in binary_session and select another supported provider if appropriate.",
+          : "Review provider availability in binary_session with detail complete and select another supported provider if appropriate.",
     };
   }
   if (error instanceof AnalysisInputError) {
