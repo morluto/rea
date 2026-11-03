@@ -135,7 +135,7 @@ export const registerCoreNativeCommands = (
   });
   cli.command(CLI_COMMANDS.readBytes, {
     description:
-      "Read provider memory bytes; Ghidra includes loader fixups that may differ from file bytes",
+      "Read provider memory bytes; Ghidra memory may include loader fixups and differ from file bytes",
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
       address: z.string().describe("Exact provider memory address"),

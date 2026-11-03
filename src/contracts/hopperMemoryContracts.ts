@@ -26,7 +26,7 @@ export const HOPPER_MEMORY_TOOL_DEFINITIONS = [
   {
     name: "read_bytes",
     description:
-      "Read analyzed bytes from one provider-normalized virtual address. Ghidra reads initialized memory after loader fixups; these bytes can differ from the original file. The hexadecimal payload reports the exact returned length; incomplete reads remain explicit and unsupported provider APIs return typed capability unavailability.",
+      "Read analyzed bytes from one provider-normalized virtual address. Ghidra reads initialized memory, which can include loader fixups; these bytes can differ from the original file. The hexadecimal payload reports the exact returned length; incomplete reads remain explicit and unsupported provider APIs return typed capability unavailability.",
     inputSchema: z.object({
       address,
       length: z.int().min(1).default(256),
