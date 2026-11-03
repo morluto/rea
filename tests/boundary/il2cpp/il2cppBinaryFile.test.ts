@@ -2131,17 +2131,19 @@ it.each([
 
 it("refuses generic instances for a 32-bit ARM image", () => {
   const generic = genericFacts(31);
-  expect(() =>
-    linkIl2cppBinary(
-      createArmElfFixture(),
-      generic.metadata,
-      generic.link,
-      undefined,
-      {
-        genericInstances: true,
-      },
+  expect(
+    refusal(() =>
+      linkIl2cppBinary(
+        createArmElfFixture(),
+        generic.metadata,
+        generic.link,
+        undefined,
+        {
+          genericInstances: true,
+        },
+      ),
     ),
-  ).toThrow("generic method instances are not decoded for 32-bit images");
+  ).toEqual({ reason: "generic-methods-unsupported", kind: "unsupported" });
 });
 
 it("refuses a wasm module that imports its memory", () => {
