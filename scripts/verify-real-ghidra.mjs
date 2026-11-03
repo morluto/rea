@@ -32,6 +32,7 @@ import {
 } from "./verify-real-ghidra-inventory.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { hasTypedSwitchEvidence } from "./verify-real-ghidra-switch-assertions.mjs";
+import { verifyGhidraRelocationSymbols } from "./lib/real-ghidra-relocation-symbols.mjs";
 
 import {
   verifyDenseDefaultReturn,
@@ -281,6 +282,14 @@ try {
   }
   await writeFile(malformedPath, Buffer.from("not-a-binary\n", "utf8"));
 
+  const relocationSymbols = crossFormat
+    ? await verifyGhidraRelocationSymbols({
+        clang,
+        lld,
+        env: process.env,
+      })
+    : null;
+
   const debug = await verifyTarget(debugPath, "debug", expectedNativeTarget);
   assertDebugFixture(debug);
   const layout = await verifyTarget(
@@ -331,6 +340,7 @@ try {
       ? (crossResults[0]?.native_api_cli ?? null)
       : jumpTable.native_api_cli,
     native_value_e2e: debug.native_values,
+    relocation_symbols: relocationSymbols,
     custom_target: custom === null ? null : summary(custom),
     cleanup: "complete",
   };

@@ -1035,7 +1035,7 @@ posix(
       "provider_executable_sha256",
     );
     expect(result.value.limitations).toContain(
-      "The executable version and supported formats are reported as unknown because the executable could not be read (EACCES).",
+      "The executable implementation, version and supported formats are unknown because the executable could not be read (EACCES).",
     );
     // Without a digest or banner there is no timing to qualify.
     expect(result.value.limitations).not.toContain(

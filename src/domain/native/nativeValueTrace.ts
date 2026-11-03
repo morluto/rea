@@ -16,6 +16,8 @@ export const nativeValueTraceInputSchema = z.strictObject({
 /**
  * Observed causes of a narrowed traversal. Budget codes name the input field a
  * caller can raise; the remaining codes are fixed or provider-owned limits.
+ * `cleanup_incomplete` appears only in the partial trace a `cleanup_incomplete`
+ * failure retains, because unconfirmed provider cleanup stops the trace.
  */
 export const nativeValueTraceTruncationReasonSchema = z.enum([
   "max_depth",
@@ -26,6 +28,7 @@ export const nativeValueTraceTruncationReasonSchema = z.enum([
   "node_payload_bytes",
   "provider_pcode_truncated",
   "ambiguous_call_candidates",
+  "cleanup_incomplete",
 ]);
 export type NativeValueTraceTruncationReason = z.output<
   typeof nativeValueTraceTruncationReasonSchema
@@ -41,7 +44,7 @@ const nativeValueTraceTraversalSchema = z
     }),
   ])
   .describe(
-    "complete: no trace budget, fixed node-payload allowance, provider p-code limit or ambiguous-candidate policy stopped or narrowed the traversal; failed analyses and unresolved calls remain in unknowns. truncated: reasons lists each observed cause in schema order.",
+    "complete: no trace budget, fixed node-payload allowance, provider p-code limit, ambiguous-candidate policy or unconfirmed provider cleanup stopped or narrowed the traversal; failed analyses and unresolved calls remain in unknowns. truncated: reasons lists each observed cause in schema order.",
   );
 
 /** Def-use observations and call relationships retain separate authority. */

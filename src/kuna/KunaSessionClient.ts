@@ -31,6 +31,7 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import {
   analysisSearchPredicate,
   analysisSearchQuerySchema,
+  matchProcedureNames,
 } from "../domain/analysisSearch.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
@@ -88,7 +89,7 @@ import {
   kunaLimitations,
   type KunaOperation,
 } from "./KunaProviderCapabilities.js";
-import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import { KUNA_PROVIDER_ID, KUNA_VERIFIED_VERSION } from "./KunaRelease.js";
 import { KunaTargetCommands } from "./KunaTargetCommands.js";
 import { KunaReferenceQueries } from "./KunaReferenceQueries.js";
 import { KunaQueryWork } from "./KunaQueryWork.js";
@@ -257,7 +258,7 @@ const exportUnavailable = (
     "REA reads Kuna settings when it starts, so restart REA, then reopen the target.";
   const next =
     failure instanceof AnalysisTimeoutError
-      ? `To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above ${String(failure.timeoutMs)} ms or raise REA_KUNA_JOBS in the environment that starts REA. ${restart}`
+      ? `To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above ${String(failure.timeoutMs)} ms in the environment that starts REA. ${restart}`
       : failure instanceof AnalysisResourceConstraintError &&
           failure.remediationAction !== undefined
         ? // A fixed buffer (`memory`) is no setting, so a restart cannot help.
@@ -283,6 +284,16 @@ const exportUnavailable = (
     },
   );
 };
+
+/** Version verification is observation context, not an analysis input. */
+const kunaVerificationLimitations = (
+  installation: KunaInstallation,
+): readonly string[] =>
+  installation.verified
+    ? []
+    : [
+        `Kuna ${installation.version} is not REA's verified ${KUNA_VERIFIED_VERSION} release; its project layout is unverified. Version matching does not authenticate the executable.`,
+      ];
 
 /** Kuna names a procedure by its inventory entry or by an exact entry address. */
 const procedureSelectorSchema = z.string().min(1);
@@ -651,7 +662,11 @@ export class KunaSessionClient implements AnalysisClient {
                   : { strings: answer.stringSource }),
               },
             }),
-        limitations: [...operationLimitations, ...answer.limitations],
+        limitations: [
+          ...operationLimitations,
+          ...kunaVerificationLimitations(installation),
+          ...answer.limitations,
+        ],
         ...(answer.relationshipCoverage === undefined
           ? {}
           : { relationshipCoverage: answer.relationshipCoverage }),
@@ -844,37 +859,56 @@ export class KunaSessionClient implements AnalysisClient {
     const index = await this.#ensureIndex(installation, options);
     if (!index.ok) return index;
     const { inventory, data, unplaced } = index.value;
-    let selected = inventory;
+    let matches: ((name: string) => boolean) | undefined;
     if (query?.success === true) {
       if (query.data.mode === "regex") {
-        const matches = await this.#queryWork.match({
+        // Each distinct spelling is matched once, however many entries share it.
+        let names: readonly string[] = [];
+        const matched = await this.#queryWork.match({
           operation,
           pattern: query.data.pattern,
           caseSensitive: query.data.case_sensitive,
-          values: () => inventory.map(({ name }) => name),
+          values: () =>
+            (names = [
+              ...new Set(
+                inventory.flatMap(({ name, aliases }) => [name, ...aliases]),
+              ),
+            ]),
           signal: options.signal,
         });
-        if (!matches.ok) return matches;
-        selected = matches.value.map((position) => inventory[position]!);
-      } else {
-        const matches = analysisSearchPredicate(query.data);
-        selected = inventory.filter(({ name }) => matches(name));
-      }
+        if (!matched.ok) return matched;
+        const accepted = new Set(
+          matched.value.map((position) => names[position]!),
+        );
+        matches = (name) => accepted.has(name);
+      } else matches = analysisSearchPredicate(query.data);
     }
-    const procedures: KunaInventoryFunction[] = [];
+    // Search matches every name exact lookup accepts: the primary name and
+    // Kuna's aliases. Each entry stays one row under its primary name.
+    const procedures: {
+      readonly address: string;
+      readonly value: string;
+      readonly matched_aliases?: string[];
+    }[] = [];
     const omitted: string[] = [];
     let unclassified = 0;
-    for (const entry of selected) {
+    for (const entry of inventory) {
+      const row = { address: entry.address, value: entry.name };
+      const selected =
+        matches === undefined
+          ? row
+          : matchProcedureNames(row, entry.aliases, matches);
+      if (selected === undefined) continue;
       const region = data.get(entry);
       if (region !== undefined) {
         omitted.push(region);
         continue;
       }
       if (unplaced.has(entry)) unclassified += 1;
-      procedures.push(entry);
+      procedures.push(selected);
     }
     return ok({
-      result: procedures.map(({ address, name }) => ({ address, value: name })),
+      result: procedures,
       source: null,
       locations: [],
       limitations: kunaInventoryLimitations(
@@ -1023,6 +1057,9 @@ export class KunaSessionClient implements AnalysisClient {
       err(
         new AnalysisInputError(operation, {
           userMessage: kunaDataEntryMessage(entry, index.data.get(entry)!),
+          conformsToInputContract: true,
+          remediationAction:
+            "Inspect the data address with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call.",
         }),
       );
     const selected = (entry: KunaInventoryFunction) => {
@@ -1042,6 +1079,9 @@ export class KunaSessionClient implements AnalysisClient {
         return err(
           new AnalysisInputError(operation, {
             userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
+            conformsToInputContract: true,
+            remediationAction:
+              "Inspect list_procedures and select a discovered entry if it answers your question. An unlisted address is not proof of a function; REA cannot use it as a Kuna procedure in this session. Do not repeat the unchanged call.",
           }),
         );
       return refused(entry) ? dataRefusal(entry) : selected(entry);
@@ -1054,9 +1094,20 @@ export class KunaSessionClient implements AnalysisClient {
       return dataRefusal(named[0]);
     return err(
       new AnalysisInputError(operation, {
+        conformsToInputContract: true,
+        remediationAction:
+          matches.length === 0 && named.length === 0
+            ? field === "procedure"
+              ? "Use search_procedures or list_procedures to inspect Kuna's discovered entries, then select a matching entry. Do not repeat the unchanged call."
+              : "Inspect the selected target for the intended address and use that address explicitly. Do not repeat the unchanged call."
+            : matches.length === 0
+              ? "Inspect the data addresses with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call."
+              : "Select the intended entry by its exact address. Do not repeat the unchanged call.",
         userMessage:
           matches.length === 0 && named.length === 0
-            ? `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
+            ? field === "procedure"
+              ? `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
+              : `Kuna found no inventory entry named ${selector}.`
             : matches.length === 0
               ? `${selector} names ${String(named.length)} Kuna entries that lie in Mach-O data regions (${named.map(({ address }) => address).join(", ")}); they are data, not procedures.`
               : `${selector} names ${String(matches.length)} Kuna entries (${matches.map(({ address }) => address).join(", ")}); select one by address.`,
@@ -1449,6 +1500,7 @@ export class KunaSessionClient implements AnalysisClient {
           this.#deadline,
           this.#heapRequest,
         ),
+        ...kunaVerificationLimitations(installation),
         ...pseudocode.value.limitations,
         KUNA_RELATIONSHIP_LIMITATION,
         ...(relationships.ok

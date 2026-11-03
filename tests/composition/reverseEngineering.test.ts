@@ -76,7 +76,7 @@ describe("reverse engineering command services", () => {
         exit_code: 0,
         output_truncated: false,
       });
-      expect(result.value.provider.id).toBe("gnu.objdump");
+      expect(result.value.provider.id).toBe("objdump.command");
       expect(result.value.subject?.local_path).toBe(path);
     } finally {
       await rm(directory, { recursive: true, force: true });
