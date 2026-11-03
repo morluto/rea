@@ -598,6 +598,7 @@
 * preserve feature traces when owner lookup is unavailable ([#8368](https://github.com/morluto/rea/issues/8368)) ([6e9ee97](https://github.com/morluto/rea/commit/6e9ee97a69cb16c7150d8b550e705cba055ee4f0))
 * preserve nullable source-map facts and streamline model tests ([#8018](https://github.com/morluto/rea/issues/8018)) ([b3d31ed](https://github.com/morluto/rea/commit/b3d31ed106c6f3baef1dc778ea688c23323879ba))
 * **process:** await Swift frontend lifetime pipe ([#7948](https://github.com/morluto/rea/issues/7948)) ([c92322b](https://github.com/morluto/rea/commit/c92322b473742628eecb4d13bd467a195fa3126e))
+* **process:** classify withheld Darwin environments before parser failures ([26b033d](https://github.com/morluto/rea/commit/26b033d51fd627af0cfdf47efcbdb346484e1c85))
 * **process:** close lease peers during release ([a116f2a](https://github.com/morluto/rea/commit/a116f2a7ae8e7ae18b6d0a24211abdb2b920a7db))
 * **process:** corroborate exiting Linux ownership candidates ([#7958](https://github.com/morluto/rea/issues/7958)) ([01e00da](https://github.com/morluto/rea/commit/01e00dae72e1dbac91b2f5d9997d5e0b8091ad3a))
 * **process:** distinguish omitted byte filenames ([e152349](https://github.com/morluto/rea/commit/e152349c5d3fbea1247502240ea597d0793f97db))
