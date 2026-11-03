@@ -303,8 +303,8 @@ it.each(["full", "compact"] as const)(
       { index: 3, address: "emoji" },
       {
         index: 4,
-        status: "error",
-        error: { code: "capability_unavailable" },
+        status: "unavailable",
+        reason: "no_pseudocode",
         limitations: expect.arrayContaining([NO_BODY_REASON]),
       },
       { index: 5, procedure: { status: "unknown" } },
@@ -316,7 +316,8 @@ it.each(["full", "compact"] as const)(
       [{ procedure_addresses: ["0x401000"] }, [0, 1, 2]],
       // A selector never matches as an observed entry, including an unknown one.
       [{ procedure_addresses: ["missing"] }, []],
-      [{ statuses: ["error"] }, [4, 5]],
+      [{ statuses: ["unavailable"] }, [4, 5]],
+      [{ statuses: ["error"] }, []],
       [{ indices: [5, 3, 3] }, [3, 5]],
       [{ statuses: ["ok"], procedure_addresses: ["0x402000"] }, [3]],
       [{ indices: [] }, []],
@@ -355,7 +356,7 @@ it.each(["full", "compact"] as const)(
     });
     expect(selected.items).toMatchObject([
       { index: 3, pseudocode: EMOJI_BODY },
-      { index: 4, status: "error" },
+      { index: 4, status: "unavailable" },
     ]);
     expect(JSON.stringify(selected.items)).not.toContain('"pseudocode":null');
 
@@ -435,7 +436,7 @@ it("pages one body exactly without splitting a Unicode character", async () => {
       }),
     ).error;
   expect(await refused({ index: 4 })).toMatchObject(
-    invalidIssue("Item 4 has status error"),
+    invalidIssue("Item 4 has status unavailable"),
   );
   expect(await refused({ index: 6 })).toMatchObject(
     invalidIssue("outside this batch of 6"),
@@ -571,6 +572,57 @@ it("reads the same rows from a bundle and an Evidence file without a provider", 
     });
     expect(viewOf(parseEvidence(reply.structuredContent)).items).toEqual(items);
   }
+});
+
+it("reads historical batch Evidence with the prior null-pseudocode error", async () => {
+  const harness = await connect("full");
+  const historical = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "batch_decompile",
+      parameters: { addresses: ["bodyless"] },
+      result: {
+        items: [
+          {
+            address: "bodyless",
+            procedure: {
+              status: "resolved",
+              address: "0x403000",
+              name: "bodyless",
+            },
+            status: "error",
+            error: {
+              code: "capability_unavailable",
+              category: "unsupported_provider",
+              message: "The provider returned no pseudocode.",
+              retryable: false,
+              remediation: { action: "Inspect the provider observation." },
+            },
+          },
+        ],
+        total: 1,
+        succeeded: 0,
+        failed: 1,
+      },
+      confidence: "derived",
+    },
+  );
+  const result = await harness.call("inspect_analysis_view", {
+    source: { kind: "inline", evidence: historical },
+    view: {
+      kind: "batch-decompile",
+      collection: "items",
+      where: { statuses: ["error"] },
+    },
+  });
+  expect(viewOf(result.evidence).items).toMatchObject([
+    {
+      address: "bodyless",
+      status: "error",
+      error: { code: "capability_unavailable" },
+    },
+  ]);
 });
 
 it("keeps the caller's own source when a page cannot fit, without retaining its parent", async () => {
