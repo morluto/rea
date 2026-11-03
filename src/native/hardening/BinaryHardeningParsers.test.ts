@@ -568,6 +568,45 @@ it.each([0, 1, 2])(
   },
 );
 
+it("keeps same-span note tables with different alignments unknown", () => {
+  const bytes = elfHardeningFixture({
+    propertyCarrier: "pt-note",
+    property: { arch: "x86", value: 3 },
+  });
+  const phoff = Number(bytes.readBigUInt64LE(32));
+  let programAt = 0;
+  for (let index = 0; index < bytes.readUInt16LE(56); index += 1) {
+    const at = phoff + index * 56;
+    if (bytes.readUInt32LE(at) === 4) programAt = at;
+  }
+  const shoff = Number(bytes.readBigUInt64LE(40));
+  let sectionAt = 0;
+  for (let index = 0; index < bytes.readUInt16LE(60); index += 1) {
+    const at = shoff + index * 64;
+    if (bytes.readUInt32LE(at + 4) === 7) sectionAt = at;
+  }
+  expect(programAt).toBeGreaterThan(0);
+  expect(sectionAt).toBeGreaterThan(0);
+  expect(bytes.readBigUInt64LE(sectionAt + 24)).toBe(
+    bytes.readBigUInt64LE(programAt + 8),
+  );
+  expect(bytes.readBigUInt64LE(sectionAt + 32)).toBe(
+    bytes.readBigUInt64LE(programAt + 32),
+  );
+  expect(findRow(readElfHardening(bytes).rows, "cet_ibt_shstk").state).toBe(
+    "enabled",
+  );
+  // Matching endpoints with a 4-aligned section and an 8-aligned segment do
+  // not show that both frame the same notes.
+  bytes.writeBigUInt64LE(4n, sectionAt + 48);
+  const image = readElfHardening(bytes);
+  expect(findRow(image.rows, "cet_ibt_shstk")).toMatchObject({
+    state: "unknown",
+    note: expect.stringContaining("different note alignments"),
+  });
+  expect(findRow(image.rows, "nx").state).toBe("enabled");
+});
+
 it("keeps a PT_NOTE that frames a note inside a section descriptor unknown", () => {
   const original = elfHardeningFixture({
     propertyCarrier: "pt-note",

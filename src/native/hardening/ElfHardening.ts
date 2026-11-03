@@ -20,6 +20,7 @@ import {
   MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES,
   MAX_BINARY_HARDENING_TABLE_ENTRIES,
 } from "../../domain/native/binaryHardening.js";
+import { elfNoteAlignment } from "../../domain/native/elfNoteLayout.js";
 import { MAX_INSPECT_ELF_NOTE_ENTRIES } from "../../domain/native/elfNotes.js";
 import {
   elfStringTableText,
@@ -759,31 +760,84 @@ const overlapIndex = (spans: readonly NoteSpan[]) => {
   };
 };
 
+type NoteOverlap = "uncovered" | "cut" | "framing";
+
+/** Effective alignment at a table boundary, or `null` when tables there disagree. */
+const recordBoundary = (
+  boundaries: Map<number, number | null>,
+  at: number,
+  alignment: number,
+): void => {
+  const known = boundaries.get(at);
+  boundaries.set(
+    at,
+    known === undefined || known === alignment ? alignment : null,
+  );
+};
+
 /**
- * A section and a program header often name the same bytes with different
- * alignment, and walking both charges every note twice. Earlier tiers win, and
- * the lowest offset wins within a tier.
+ * Offsets inside the accepted streams where the effective note alignment
+ * changes. A candidate that spans one of them cannot frame every note the way
+ * the accepted tables do.
+ */
+const alignmentChanges = (accepted: readonly ElfNoteTableWalk[]): number[] => {
+  const changes: number[] = [];
+  let previous: number | null = null;
+  for (const table of byOffset(accepted)) {
+    const alignment = elfNoteAlignment(table.alignment);
+    if (previous !== null && previous !== alignment) changes.push(table.offset);
+    previous = alignment;
+  }
+  return changes;
+};
+
+const changesInside = (
+  changes: readonly number[],
+  offset: number,
+  end: number,
+): boolean => {
+  let low = 0;
+  let high = changes.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((changes[middle] ?? 0) <= offset) low = middle + 1;
+    else high = middle;
+  }
+  return (changes[low] ?? end) < end;
+};
+
+/**
+ * A section and a program header often name the same bytes, and walking both
+ * charges every note twice. Earlier tiers win, and the lowest offset wins
+ * within a tier. Matching endpoints establish an alias only when both tables
+ * frame notes with the same effective alignment.
  */
 const admitDisjointTables = (
   accepted: readonly ElfNoteTableWalk[],
   candidates: readonly ElfNoteTableWalk[],
-  unresolvedOverlap: (covered: boolean) => void,
+  unresolvedOverlap: (overlap: NoteOverlap) => void,
 ): ElfNoteTableWalk[] => {
   const overlapsAccepted = overlapIndex(accepted);
+  const changes = alignmentChanges(accepted);
   const admitted = [...accepted];
   // A table's first byte and its end are note boundaries of the stream walked
   // from it. A byte inside a table need not be: a descriptor can hold bytes
   // that parse as a complete note.
-  const starts = new Set(accepted.map(({ offset }) => offset));
-  const ends = new Set(accepted.map(({ offset, size }) => offset + size));
+  const starts = new Map<number, number | null>();
+  const ends = new Map<number, number | null>();
+  for (const { offset, size, alignment } of accepted) {
+    recordBoundary(starts, offset, elfNoteAlignment(alignment));
+    recordBoundary(ends, offset + size, elfNoteAlignment(alignment));
+  }
   let end = -1;
   for (const candidate of byOffset(candidates)) {
     const candidateEnd = candidate.offset + candidate.size;
+    const alignment = elfNoteAlignment(candidate.alignment);
     const overlap = overlapsAccepted(candidate);
     if (overlap === "none" && candidate.offset >= end) {
       admitted.push(candidate);
-      starts.add(candidate.offset);
-      ends.add(candidateEnd);
+      recordBoundary(starts, candidate.offset, alignment);
+      recordBoundary(ends, candidateEnd, alignment);
       end = candidateEnd;
       continue;
     }
@@ -793,9 +847,17 @@ const admitDisjointTables = (
     // notes it frames are absent.
     const covered =
       overlap === "covered" || (overlap === "none" && candidateEnd <= end);
-    if (!covered) unresolvedOverlap(false);
+    if (!covered) unresolvedOverlap("uncovered");
     else if (!starts.has(candidate.offset) || !ends.has(candidateEnd))
-      unresolvedOverlap(true);
+      unresolvedOverlap("cut");
+    // The same span walked with another alignment can frame different notes.
+    else if (
+      starts.get(candidate.offset) !== alignment ||
+      ends.get(candidateEnd) !== alignment ||
+      (overlap === "covered" &&
+        changesInside(changes, candidate.offset, candidateEnd))
+    )
+      unresolvedOverlap("framing");
   }
   return admitted;
 };
@@ -875,10 +937,14 @@ const readFeatureNotes = (
       ),
     );
   }
-  const unresolvedOverlap = (covered: boolean): void => {
-    incomplete ??= covered
-      ? "An ELF note table starts or ends inside another note table, so its notes may not be notes of the covering stream."
-      : "Overlapping ELF note tables leave uncovered bytes whose note boundaries were not resolved.";
+  const unresolvedOverlap = (overlap: NoteOverlap): void => {
+    incomplete ??= {
+      cut: "An ELF note table starts or ends inside another note table, so its notes may not be notes of the covering stream.",
+      framing:
+        "ELF note tables name the same bytes with different note alignments, so they may frame different notes.",
+      uncovered:
+        "Overlapping ELF note tables leave uncovered bytes whose note boundaries were not resolved.",
+    }[overlap];
   };
   const tables = admitDisjointTables(
     admitDisjointTables(

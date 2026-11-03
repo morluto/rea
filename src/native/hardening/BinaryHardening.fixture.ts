@@ -492,6 +492,7 @@ const elfSectionTable = (
       size: facts.note.length,
       link: 0,
       entry: 0,
+      align: facts.propertyAlign,
       ...(facts.compressedPropertyNote ? { flags: SHF_COMPRESSED } : {}),
     });
   for (let index = 0; index < facts.disjointNoteSections; index += 1)
