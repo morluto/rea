@@ -227,7 +227,16 @@ caveats. Failure details retain at most 32 rows within 2,048 JSON-encoded
 UTF-8 bytes; names may be omitted to keep complete addresses and reasons. The
 index retains every failure and its complete observed name.
 Each function's `decompile-index.json` record, whatever its status, keeps the
-complete limitations of the observations it used. The returned Evidence keeps
+complete limitations of the observations it used.
+When available, `provider_source` records the source of that attempt's
+pseudocode observation: a file path, SHA-256 and byte range, or a
+single-function decompile. The latter describes the method, not a unique run. A file
+descriptor identifies the observed source but does not keep the file from
+being removed or authenticate the journal. `status: "unknown"` distinguishes
+an unavailable source from an existing matching output whose original producer
+is unknown. Older journal records can omit this field; omission is unknown.
+Failed attempts retain their source in the append-only journal when the
+provider supplied one, even if a later attempt succeeds. The returned Evidence keeps
 at most eight first-observed distinct per-function provider limitations within an 8,000-byte JSON-encoded UTF-8 text budget and counts omitted observations. Repeated omitted text is counted per observation, not as a distinct caveat. This summary does not retain every omitted string in memory. A fresh output directory must not already exist. `--resume`
 continues an export for the same target SHA-256, provider, analysis profile,
 and layout; it requires the directory to exist, and an export without a known
