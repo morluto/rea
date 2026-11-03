@@ -566,6 +566,37 @@ describe("Classic-script global receiver identity", () => {
     });
   });
 
+  it.each([
+    "function unused() { other.createWindow; }",
+    "for (const value of [1,2]) { other.createWindow; }",
+    "const alias = other; function unused() { alias.createWindow; }",
+  ])(
+    "preserves no-effect receiver identity across deferred reads: %s",
+    (read) => {
+      const source = `const { BrowserWindow } = require("electron");
+      const other = { createWindow() {} }; ${read}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({webPreferences}); }
+      createWindow();`;
+      expect(() =>
+        runInNewContext(source, {
+          require: () => ({ BrowserWindow: class {} }),
+        }),
+      ).not.toThrow();
+      expect(
+        analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+      ).toMatchObject({
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          {
+            name: "nodeIntegration",
+            value: { status: "literal", value: true },
+          },
+        ],
+      });
+    },
+  );
+
   it("keeps unrelated same-named member calls independent", () => {
     const source = `
       const { BrowserWindow } = require("electron");

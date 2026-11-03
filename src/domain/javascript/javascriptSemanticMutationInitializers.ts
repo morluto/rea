@@ -1127,6 +1127,7 @@ const moduleFunctionFirstRead = (
       if (binding === undefined) return null;
       const bound = receiverBound(binding);
       if (bound === null) return null;
+      if (bound.index === Infinity) return identity;
       const position = bindingReadPosition(read, parents);
       if (
         position.position === null ||

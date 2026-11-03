@@ -158,6 +158,9 @@ cliTest.for([
       ${alias === "erased-type" ? "import type { T } from './types';" : alias === "module-eval" ? "export {};" : ""}
       ${alias === "module-eval" ? 'import { BrowserWindow } from "electron";' : 'const { BrowserWindow } = require("electron");'}
       ${alias ? "const root = globalThis;" : ""}
+      const unrelated = { createWindow() {} };
+      function unusedReceiverRead() { unrelated.createWindow; }
+      for (const ignored of [1, 2]) { unrelated.createWindow; }
       ${early ? activation : ""}
       const webPreferences = { nodeIntegration: true };
       function createWindow() { return new BrowserWindow({ webPreferences }); }
