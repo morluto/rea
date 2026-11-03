@@ -173,7 +173,10 @@ for (const missingSource of [false, true])
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
       const replayed = parseEvidence(response.structuredContent);
       expect(replayed.normalized_result).toEqual(parent.normalized_result);
-      expect(replayed.evidence_links).toEqual([source.evidence_id]);
+      expect(replayed.evidence_links).toEqual([
+        source.evidence_id,
+        parent.evidence_id,
+      ]);
       expect(replayed.evidence_links).not.toContain(ancestor.evidence_id);
       expect(session.evidenceById(replayed.evidence_id)).toEqual(replayed);
       expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
@@ -182,12 +185,24 @@ for (const missingSource of [false, true])
       expect(session.evidenceById(source.evidence_id)?.evidence_links).toEqual([
         ancestor.evidence_id,
       ]);
+      const savedAgain = session.exportAnalysisSnapshot();
+      expect(savedAgain.ok).toBe(true);
+      if (!savedAgain.ok) throw savedAgain.error;
+      expect(savedAgain.value.evidence_bundle.records).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ evidence_id: parent.evidence_id }),
+          expect.objectContaining({ evidence_id: replayed.evidence_id }),
+        ]),
+      );
       const firstReplay = await session.execute("inspect_managed_artifact", {});
       if (!firstReplay.ok) throw firstReplay.error;
       expect(firstReplay.value.sourceEvidence?.[0]).toBe(
         session.evidenceForAnalysis(source.evidence_id),
       );
       expect(Object.isFrozen(firstReplay.value.sourceEvidence?.[0])).toBe(true);
+      expect(firstReplay.value.sourceEvidence?.[1]).toBe(
+        session.evidenceForAnalysis(parent.evidence_id),
+      );
 
       if (source.subject === null)
         throw new Error("Expected a file-backed source");
@@ -222,7 +237,7 @@ for (const missingSource of [false, true])
       ).not.toBe(true);
       expect(
         parseEvidence(refreshedResponse.structuredContent).evidence_links,
-      ).toEqual([source.evidence_id]);
+      ).toEqual([source.evidence_id, parent.evidence_id]);
       expect(session.evidenceById(source.evidence_id)).toEqual(relocated);
       expect((await readFile(snapshotPath)).equals(historicalBytes)).toBe(true);
     },

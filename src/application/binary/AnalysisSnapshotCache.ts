@@ -541,6 +541,7 @@ export class AnalysisSnapshotCache {
     readonly operation: AnalysisOperation;
     readonly parameters: Readonly<Record<string, JsonValue>>;
     readonly execution: AnalysisExecution;
+    readonly evidence?: Evidence;
   }): void {
     const { target, profile, operation, parameters, execution } = input;
     this.select(target, profile);
@@ -583,6 +584,9 @@ export class AnalysisSnapshotCache {
     else
       this.#replayBindings.set(entry.query_id, {
         evidenceId: execution.evidenceId,
+        ...(input.evidence === undefined
+          ? {}
+          : { sourceEvidence: Object.freeze([input.evidence]) }),
       });
   }
 

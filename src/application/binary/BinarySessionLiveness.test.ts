@@ -118,6 +118,12 @@ it("keeps unbound observations out of persisted target snapshots", async () => {
   expect(bound.ok).toBe(true);
   const child = deep.created[0];
   if (child === undefined || !bound.ok) throw new Error("Expected bound read");
+  const liveReplay = await session.execute("address_name", parameters);
+  expect(liveReplay.ok).toBe(true);
+  if (!liveReplay.ok) return;
+  expect(
+    liveReplay.value.sourceEvidence?.map((source) => source.evidence_id),
+  ).toEqual([bound.value.evidenceId]);
   child.execute = () =>
     Promise.resolve(
       ok(
@@ -172,6 +178,9 @@ it("keeps unbound observations out of persisted target snapshots", async () => {
   expect(replay.ok).toBe(true);
   if (replay.ok) {
     expect(replay.value.evidenceId).toBe(bound.value.evidenceId);
+    expect(
+      replay.value.sourceEvidence?.map((source) => source.evidence_id),
+    ).toEqual([bound.value.evidenceId]);
     expect(replay.value.limitations).toContain(
       "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
     );
@@ -633,10 +642,7 @@ const killableDeepProvider = (options: {
         },
         kill: (
           state:
-            | "exited"
-            | "unreachable"
-            | "unknown"
-            | "not_started" = "exited",
+            "exited" | "unreachable" | "unknown" | "not_started" = "exited",
         ) => {
           alive = false;
           deadState = state;
