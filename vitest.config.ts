@@ -19,7 +19,7 @@ if (
   process.env.PLAYWRIGHT_BROWSERS_PATH === undefined
 ) {
   const cacheRoot =
-    process.env.XDG_CACHE_HOME ?? join(process.env.HOME ?? ".", ".cache");
+    process.env.XDG_CACHE_HOME || join(process.env.HOME ?? ".", ".cache");
   process.env.PLAYWRIGHT_BROWSERS_PATH = join(cacheRoot, "ms-playwright");
 }
 
