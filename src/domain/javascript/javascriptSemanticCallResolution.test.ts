@@ -186,6 +186,44 @@ it("bounds shared partial callback alias expansion by AST size", () => {
   expect(large.referenceReads).toBeLessThan(3 * small.referenceReads);
 });
 
+it("reuses the immutable enclosing-function position across distinct captured reads", () => {
+  const { state } = indexed(
+    `const make=()=>1; ${"0;".repeat(64)} function use(){${"make();".repeat(64)}} use();`,
+  );
+  const binding = [...state.bindingsById.values()].find(
+    (b) => b.name === "make",
+  );
+  const fn = state.program.body.find(
+    (n) => t.isFunctionDeclaration(n) && n.id?.name === "use",
+  );
+  if (binding === undefined || fn === undefined)
+    throw Error("Missing fixture binding");
+  const lookup = vi.spyOn(state.program.body, "indexOf");
+  let reads = 0;
+  try {
+    traverseJavaScriptAst(fn, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "make" })
+        ) {
+          reads++;
+          expect(
+            semanticBindingAtRead(binding, node.callee, state)
+              .hasDefiniteInitializer,
+          ).toBe(true);
+        }
+      },
+    });
+    expect(reads).toBe(64);
+    expect(
+      lookup.mock.calls.filter(([node]) => node === fn).length,
+    ).toBeLessThanOrEqual(1);
+  } finally {
+    lookup.mockRestore();
+  }
+});
+
 it.each([true, false])(
   "orders a module direct-eval activation with early=%s",
   (early) => {

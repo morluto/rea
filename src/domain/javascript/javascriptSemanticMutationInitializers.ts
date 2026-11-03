@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
+import { semanticPropertyReadSources } from "./javascriptSemanticIterationSources.js";
 
 import {
   delayedInstanceFieldValue,
@@ -59,6 +60,7 @@ interface InitializerPositionCache {
   readonly reference: WeakMap<t.Node, StatementPosition | null>;
   readonly read: WeakMap<t.Node, BindingReadPosition>;
   readonly enclosingFunction: WeakMap<t.Node, t.Function | null>;
+  readonly functionPosition: WeakMap<t.Function, StatementPosition | null>;
   readonly moduleFunctionReads: WeakMap<
     readonly t.Statement[],
     {
@@ -94,6 +96,7 @@ const initializerPositionCache = (
     reference: new WeakMap(),
     read: new WeakMap(),
     enclosingFunction: new WeakMap(),
+    functionPosition: new WeakMap(),
     moduleFunctionReads: new WeakMap(),
     evaluationChildren: new WeakMap(),
     expressionAncestry: undefined,
@@ -1000,6 +1003,23 @@ const moduleFunctionFirstRead = (
       return globalReceivers.get(input) ?? null;
     };
     const active = new Set<t.Function>();
+    const retainNamedRead = (
+      name: string,
+      parent: t.Node | null,
+      index: number,
+    ): void => {
+      const fn = functions.get(name);
+      if (fn == null || active.has(fn)) return;
+      const current = indexedReads.get(fn);
+      if (current === null || current === undefined) return;
+      // Indirect activations and live exports have no proven module timing.
+      indexedReads.set(
+        fn,
+        active.size > 0 || t.isExportSpecifier(parent)
+          ? null
+          : Math.min(current, index),
+      );
+    };
     const opaquePositions = retained.opaquePositions;
     let unknownPropertyRead: number | null = Infinity;
     for (let index = 0; index < body.length; index++) {
@@ -1025,6 +1045,20 @@ const moduleFunctionFirstRead = (
               t.isNewExpression(node))
           ) {
             opaquePositions.set(node, active.size > 0 ? null : index);
+          }
+          if (classicScript) {
+            for (const source of semanticPropertyReadSources(node, parent)) {
+              const projected =
+                source.iterationSources !== undefined ||
+                source.projection.length > 1;
+              if (!projected && globalReceiver(source.node) === false) continue;
+              const key = source.projection[0];
+              if (!projected && typeof key === "string")
+                retainNamedRead(key, parent, index);
+              else if (unknownPropertyRead !== null)
+                unknownPropertyRead =
+                  active.size > 0 ? null : Math.min(unknownPropertyRead, index);
+            }
           }
           let name: string | null = null;
           if (
@@ -1063,22 +1097,6 @@ const moduleFunctionFirstRead = (
               name = node.name;
           } else if (
             classicScript &&
-            t.isObjectProperty(node) &&
-            t.isObjectPattern(parent)
-          ) {
-            const declaration = parents.get(parent);
-            if (
-              t.isVariableDeclarator(declaration) &&
-              declaration.init != null &&
-              globalReceiver(declaration.init) !== false
-            ) {
-              name = semanticStaticPropertyKey(node.key, node.computed);
-              if (name === null && unknownPropertyRead !== null)
-                unknownPropertyRead =
-                  active.size > 0 ? null : Math.min(unknownPropertyRead, index);
-            }
-          } else if (
-            classicScript &&
             (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
           ) {
             const receiver = unwrapJavaScriptExpression(node.object).node;
@@ -1096,18 +1114,7 @@ const moduleFunctionFirstRead = (
               }
             }
           }
-          if (name === null) return;
-          const fn = functions.get(name);
-          if (fn == null || active.has(fn)) return;
-          const current = indexedReads.get(fn);
-          if (current === null || current === undefined) return;
-          // Indirect activations and live exports have no proven module timing.
-          indexedReads.set(
-            fn,
-            active.size > 0 || t.isExportSpecifier(parent)
-              ? null
-              : Math.min(current, index),
-          );
+          if (name !== null) retainNamedRead(name, parent, index);
         },
         exit(node) {
           if (t.isFunction(node)) active.delete(node);
@@ -1258,23 +1265,29 @@ export const semanticBindingAtRead = (
   const enclosingFunction = moduleConstBinding
     ? bindingEnclosingFunction(read, parents)
     : undefined;
-  const functionStatementPosition = (): StatementPosition | null => {
-    if (enclosingFunction === undefined) return null;
-    if (t.isStatement(enclosingFunction))
-      return statementPosition(enclosingFunction, parents);
-    for (
-      let owner = parents.get(enclosingFunction);
-      owner !== undefined;
-      owner = parents.get(owner)
-    ) {
-      if (t.isFunction(owner)) return null;
-      if (t.isStatement(owner)) return statementPosition(owner, parents);
+  let functionPosition: StatementPosition | null = null;
+  if (enclosingFunction !== undefined) {
+    const positions = initializerPositionCache(parents).functionPosition;
+    const cached = positions.get(enclosingFunction);
+    if (cached !== undefined) functionPosition = cached;
+    else {
+      const compute = (): StatementPosition | null => {
+        if (t.isStatement(enclosingFunction))
+          return statementPosition(enclosingFunction, parents);
+        for (
+          let owner = parents.get(enclosingFunction);
+          owner !== undefined;
+          owner = parents.get(owner)
+        ) {
+          if (t.isFunction(owner)) return null;
+          if (t.isStatement(owner)) return statementPosition(owner, parents);
+        }
+        return null;
+      };
+      functionPosition = compute();
+      positions.set(enclosingFunction, functionPosition);
     }
-    return null;
-  };
-  const functionPosition = moduleConstBinding
-    ? functionStatementPosition()
-    : null;
+  }
   const firstFunctionRead =
     moduleConstBinding &&
     sourcePosition !== null &&

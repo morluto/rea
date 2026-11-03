@@ -100,6 +100,10 @@ cliTest.for([
   ["stdio MCP", "erased-type"],
   ["CLI", "module-eval"],
   ["stdio MCP", "module-eval"],
+  ["CLI", "assignment-pattern"],
+  ["stdio MCP", "assignment-pattern"],
+  ["CLI", "iteration-pattern"],
+  ["stdio MCP", "iteration-pattern"],
 ] as const)(
   "preserves classic global initialization uncertainty through %s",
   async ([surface, alias], { cli }) => {
@@ -107,17 +111,21 @@ cliTest.for([
       "rea-electron-global-initialization-",
     );
     const activation =
-      alias === "module-eval"
-        ? "eval('createWindow()');"
-        : alias === "erased-type"
-          ? "globalThis.createWindow();"
-          : alias === "constructed-function"
-            ? "new Function('createWindow()')();"
-            : alias === "cached-eval"
-              ? "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');"
-              : alias
-                ? "root.createWindow();"
-                : "globalThis.createWindow();";
+      alias === "assignment-pattern"
+        ? "let start; ({createWindow:start}=globalThis); start();"
+        : alias === "iteration-pattern"
+          ? "for(const {createWindow:start} of [globalThis]) start();"
+          : alias === "module-eval"
+            ? "eval('createWindow()');"
+            : alias === "erased-type"
+              ? "globalThis.createWindow();"
+              : alias === "constructed-function"
+                ? "new Function('createWindow()')();"
+                : alias === "cached-eval"
+                  ? "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');"
+                  : alias
+                    ? "root.createWindow();"
+                    : "globalThis.createWindow();";
     const source = (early: boolean) => `
       ${alias === "erased-type" ? "import type { T } from './types';" : alias === "module-eval" ? "export {};" : ""}
       ${alias === "module-eval" ? 'import { BrowserWindow } from "electron";' : 'const { BrowserWindow } = require("electron");'}
