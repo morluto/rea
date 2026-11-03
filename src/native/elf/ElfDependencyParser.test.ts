@@ -409,6 +409,38 @@ it("reports GNU version tables with an unsupported revision as unreadable", () =
   });
 });
 
+it.each([
+  {
+    label: "declares no auxiliary records",
+    auxiliary: { count: 0, next: 0 },
+    message: "GNU version definition has no name entry",
+  },
+  {
+    label: "declares more auxiliary records than it holds",
+    auxiliary: { count: 2, next: 8 },
+    message: "GNU version definition auxiliary chain leaves its table",
+  },
+  {
+    label: "links past its declared auxiliary count",
+    auxiliary: { count: 1, next: 8 },
+    message:
+      "GNU version definition auxiliary chain continues past its declared count",
+  },
+])("reports a GNU version definition that $label", ({ auxiliary, message }) => {
+  const report = parse(elfDependencyFixture({ verdefAuxiliary: auxiliary }));
+  expect(report.coverage.status).toBe("partial");
+  expect(report.version_definitions).toMatchObject({
+    status: "unreadable",
+    names: [],
+  });
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "version_unresolved",
+      message: expect.stringContaining(message),
+    }),
+  );
+});
+
 it("reports a GNU version chain that continues past its declared count", () => {
   const verneed = parse(
     elfDependencyFixture({ danglingVersionLink: "verneed" }),

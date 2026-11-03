@@ -101,6 +101,8 @@ export interface ElfDependencyFixtureOptions {
   readonly danglingVersionLink?: "verneed" | "vernaux" | "verdef";
   /** Writes revision 0 into the first record of this table. */
   readonly unsupportedVersionRevision?: "verneed" | "verdef";
+  /** Overrides vd_cnt and vda_next of the first version definition. */
+  readonly verdefAuxiliary?: { readonly count: number; readonly next: number };
   readonly truncateDynstr?: boolean;
   readonly duplicateSoname?: boolean;
   /** Declares this section's size past the end of the file. */
@@ -240,17 +242,18 @@ const verdefRecord = (
   next: number,
   little: boolean,
   revision = 1,
+  auxiliary = { count: 1, next: 0 },
 ): Buffer => {
   const bytes = Buffer.alloc(28);
   write16(bytes, 0, revision, little);
   write16(bytes, 2, flags, little);
   write16(bytes, 4, index, little);
-  write16(bytes, 6, 1, little);
+  write16(bytes, 6, auxiliary.count, little);
   write32(bytes, 8, hash, little);
   write32(bytes, 12, 20, little);
   write32(bytes, 16, next, little);
   write32(bytes, 20, nameOffset, little);
-  write32(bytes, 24, 0, little);
+  write32(bytes, 24, auxiliary.next, little);
   return bytes;
 };
 
@@ -373,6 +376,7 @@ interface FixtureConfig {
   readonly cyclicVernaux: boolean;
   readonly danglingVersionLink: ElfDependencyFixtureOptions["danglingVersionLink"];
   readonly unsupportedVersionRevision: ElfDependencyFixtureOptions["unsupportedVersionRevision"];
+  readonly verdefAuxiliary: ElfDependencyFixtureOptions["verdefAuxiliary"];
   readonly truncateDynstr: boolean;
   readonly duplicateSoname: boolean;
   readonly wideNameOffset: number | undefined;
@@ -464,6 +468,7 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     cyclicVernaux: options.cyclicVernaux === true,
     danglingVersionLink: options.danglingVersionLink,
     unsupportedVersionRevision: options.unsupportedVersionRevision,
+    verdefAuxiliary: options.verdefAuxiliary,
     truncateDynstr: options.truncateDynstr === true,
     duplicateSoname: options.duplicateSoname === true,
     wideNameOffset: options.wideNameOffset,
@@ -560,6 +565,7 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
             : 0,
           little,
           index === 0 && config.unsupportedVersionRevision === "verdef" ? 0 : 1,
+          index === 0 ? config.verdefAuxiliary : undefined,
         ),
       ),
     ),

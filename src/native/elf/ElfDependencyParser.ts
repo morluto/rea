@@ -1403,11 +1403,33 @@ const parseVerdef = (
         );
       const flags = reader.u16(at + 2);
       const index = reader.u16(at + 4) & 0x7fff;
+      const auxiliaryCount = reader.u16(at + 6);
       const aux = reader.u32(at + 12);
       const next = reader.u32(at + 16);
+      if (auxiliaryCount === 0)
+        fail("GNU version definition has no name entry");
       if (aux < 20 || offset + aux + 8 > table.size)
         fail("GNU version definition name entry leaves its table");
       const nameOffset = reader.u32(table.offset + offset + aux);
+      // The first auxiliary record names the definition; the rest name its
+      // parents. Walk them all so a count and link mismatch is reported.
+      let auxiliary = offset + aux;
+      const auxSeen = new Set<number>();
+      for (let item = 0; item < auxiliaryCount; item += 1) {
+        if (auxSeen.has(auxiliary))
+          fail("GNU version definition auxiliary chain is cyclic");
+        auxSeen.add(auxiliary);
+        if (auxiliary + 8 > table.size)
+          fail("GNU version definition auxiliary chain leaves its table");
+        if (item > 0) chargeVersion();
+        auxiliary = followVersionLink(
+          "GNU version definition auxiliary",
+          auxiliary,
+          reader.u32(table.offset + auxiliary + 4),
+          8,
+          item + 1 < auxiliaryCount,
+        );
+      }
       names.push({
         name: namedString(dynstr, nameOffset, issues, "vda_name"),
         index,
