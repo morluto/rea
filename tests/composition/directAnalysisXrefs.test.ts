@@ -211,8 +211,12 @@ describe("direct CLI cross-reference name resolution", () => {
     ).then(projectCliAnalysisResult);
     expect(missing).toMatchObject({
       code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("symbol inventory"),
+      },
       details: { operation: "xrefs", issues: [{ path: ["address"] }] },
     });
+    expect(missing).not.toHaveProperty("recovery");
     expect(JSON.stringify(missing)).toContain("missing_symbol");
     expect(provider.closed()).toBe(2);
   });

@@ -21,13 +21,21 @@ export const resolveXrefsAddress = async (
   return named.value !== null
     ? ok(named.value)
     : err(
-        new AnalysisInputError("xrefs", undefined, [
+        new AnalysisInputError(
+          "xrefs",
           {
-            path: ["address"],
-            reason: "invalid_value",
-            message: `Unknown analyzed symbol name ${JSON.stringify(selector)}. Use an exact analyzed name or a hexadecimal address.`,
+            conformsToInputContract: true,
+            remediationAction:
+              "Inspect the selected target's symbol inventory, then use an exact analyzed name or a verified address with xrefs.",
           },
-        ]),
+          [
+            {
+              path: ["address"],
+              reason: "invalid_value",
+              message: `Unknown analyzed symbol name ${JSON.stringify(selector)}. Use an exact analyzed name or a hexadecimal address.`,
+            },
+          ],
+        ),
       );
 };
 
