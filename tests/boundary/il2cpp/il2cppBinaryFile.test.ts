@@ -3,6 +3,7 @@ import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import { Il2cppBinaryFormatFailure } from "../../../src/il2cpp/Il2cppBinaryFormat.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import {
+  hasPointerArrayCoverage,
   openImageSteps,
   readPointer,
   readUInt32,
@@ -2015,10 +2016,10 @@ const wasmMemoryModule = (
     0,
     0,
     5,
-    memory.length,
+    ...leb128(memory.length),
     ...memory,
     11,
-    data.length,
+    ...leb128(data.length),
     ...data,
   ]);
 };
@@ -2190,4 +2191,15 @@ it("refuses a wasm module that imports its function table", () => {
     reason: "unsupported-container",
     kind: "unsupported",
   });
+});
+
+it("covers a wasm pointer array that runs from the last segment into zero fill", () => {
+  // The only segment ends at 0x201 (16 + 497 bytes); 20 slots from 0x200 reach 0x250.
+  const image = drain(
+    openImageSteps(
+      wasmMemoryModule(1, Array<number>(0x1f1).fill(1)),
+      undefined,
+    ),
+  );
+  expect(hasPointerArrayCoverage(image, 0x200n, 20)).toBe(true);
 });

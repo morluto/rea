@@ -289,7 +289,8 @@ describe("readInitialLinearMemory", () => {
     const image = readWasmModuleImage(module(memory(1), data([16, [1, 2]])));
     const linear = readInitialLinearMemory(image);
     expect(linear.address).toBe(16);
-    expect(linear.bytes.length).toBe(2 + 64);
+    // 16 + 2 + 64 rounds up to the 8-byte boundary at 88.
+    expect(linear.bytes.length).toBe(88 - 16);
     expect([...linear.bytes.subarray(0, 3)]).toEqual([1, 2, 0]);
     const full = readWasmModuleImage(module(memory(1), data([65530, [1, 2]])));
     expect(readInitialLinearMemory(full).bytes.length).toBe(6);
