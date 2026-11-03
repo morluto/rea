@@ -241,19 +241,33 @@ const providerRow = (
 };
 
 /** ContentCatalogData.ExpandInternalId: "N#rest" names prefix N when prefixes exist. */
-const expandInternalId = (prefixes: string[], value: string): string => {
-  if (prefixes.length === 0) return value;
+/** Charges the expanded text once, before a prefix and suffix are joined. */
+const expandInternalId = (
+  prefixes: string[],
+  value: string,
+  options: UnityAddressablesReadOptions,
+): string => {
+  const kept = () => {
+    options.beforeText?.(jsonStringByteLength(value));
+    return value;
+  };
+  if (prefixes.length === 0) return kept();
   const hash = value.lastIndexOf("#");
-  if (hash < 0) return value;
+  if (hash < 0) return kept();
   const number = value.slice(0, hash);
-  if (!/^\d+$/u.test(number)) return value;
+  if (!/^\d+$/u.test(number)) return kept();
   const prefix = prefixes[Number(number)];
   if (prefix === undefined)
     throw new UnityAddressablesFormatFailure(
       "index-out-of-range",
       `internal id names prefix ${number} of ${prefixes.length}`,
     );
-  return prefix + value.slice(hash + 1);
+  const suffix = value.slice(hash + 1);
+  // Two quoted pieces share one pair of quotes once joined.
+  options.beforeText?.(
+    jsonStringByteLength(prefix) + jsonStringByteLength(suffix) - 2,
+  );
+  return prefix + suffix;
 };
 
 const indexIn = (
@@ -477,8 +491,8 @@ const jsonLocation = (
   const internal = expandInternalId(
     tables.prefixes,
     tables.internalIds[internalId]!,
+    options,
   );
-  options.beforeText?.(jsonStringByteLength(internal));
   return {
     primary_key: key.value ?? key.type_name ?? "",
     internal_id: internal,

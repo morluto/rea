@@ -742,3 +742,24 @@ it("yields while walking a large JSON provider table", () => {
   // The sample has fewer key and location rows than one yield interval.
   expect(steps.next().done).toBe(false);
 });
+
+it("charges each expanded internal id once at its joined size", () => {
+  const prefixes = ["Assets/Samples/"];
+  const compressed = jsonCatalog(sampleCatalog(), { prefixes });
+  const expected = decode(jsonCatalog()).locations.map((row) =>
+    Buffer.byteLength(JSON.stringify(row.internal_id)),
+  );
+  const charged: number[] = [];
+  decode(compressed, { beforeText: (bytes) => charged.push(bytes) });
+  for (const size of expected) expect(charged).toContain(size);
+  const crate = Buffer.byteLength(
+    JSON.stringify("Assets/Samples/Crate.prefab"),
+  );
+  expect(() =>
+    decode(compressed, {
+      beforeText: (bytes) => {
+        if (bytes === crate) throw new RangeError("text budget");
+      },
+    }),
+  ).toThrow("text budget");
+});
