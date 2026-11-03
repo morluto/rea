@@ -386,7 +386,9 @@ export function* readInitialLinearMemorySteps(
     high = Math.max(
       high,
       Math.min(
-        high + LINEAR_MEMORY_TAIL_BYTES,
+        // Ending on an 8-byte boundary keeps the zero fill that follows from
+        // splitting a pointer slot or an array of them.
+        Math.ceil((high + LINEAR_MEMORY_TAIL_BYTES) / 8) * 8,
         image.memory.initialPages * WASM_PAGE_BYTES,
       ),
     );
