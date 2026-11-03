@@ -52,6 +52,7 @@ import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js
 import { boundedUtf8Text } from "../../process/boundedUtf8Text.js";
 import {
   lookupExecutable,
+  searchesDiffer,
   searchMovesPast,
 } from "../../process/ExecutableLookup.js";
 import { shareFileCall } from "../../process/SharedFileCall.js";
@@ -1179,8 +1180,13 @@ export class ReverseEngineeringService {
           ),
         );
       // The file did not start, with an error a native PATH search moves
-      // past, as when a script's interpreter is missing or not executable.
-      if (typeof code === "string" && searchMovesPast(code))
+      // past, as when a script's interpreter is missing or not executable,
+      // or one at which native searches differ. ETIMEDOUT stays the probe's
+      // deadline, which both runners report with that code.
+      if (
+        typeof code === "string" &&
+        (searchMovesPast(code) || searchesDiffer(code))
+      )
         return ok({ status: "not-started", code });
       // Both runners report the call's deadline as ETIMEDOUT, even when the
       // stop signal also ended the process.

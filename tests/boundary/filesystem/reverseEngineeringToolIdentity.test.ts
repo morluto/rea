@@ -711,6 +711,43 @@ posix.each([
   },
 );
 
+posix.each(["ESTALE", "ENODEV"] as const)(
+  "runs the command by name when the file the lookup found does not start with %s, where native searches differ",
+  async (code) => {
+    const { executable, path } = await rizinExecutableFixture();
+    const run = vi.fn(
+      async (
+        _command: string,
+        args: readonly string[],
+        _options?: ExecFileOutputOptions,
+      ) => {
+        if (args[0] === "-v")
+          throw Object.assign(new Error(`spawn ${code}`), { code });
+        return { stdout: "host-selected output", stderr: "" };
+      },
+    );
+    const service = new TestReverseEngineeringService({
+      run,
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: "rizin", PATH: dirname(executable) },
+    });
+    const result = await service.executeRizinCommand({ path, command: "iI" });
+    if (!result.ok) throw result.error;
+    // The probe ran the file the lookup found; the command ran by name, so
+    // the host's search decides what answers.
+    expect(run.mock.calls.map(([command]) => command)).toEqual([
+      executable,
+      "rizin",
+    ]);
+    expect(result.value.provider.version).toBeNull();
+    expect(result.value.limitations).toContainEqual(
+      expect.stringContaining(
+        `${executable}, which the lookup found, did not start (${code})`,
+      ),
+    );
+  },
+);
+
 posix.each(["ENOENT", "EACCES"] as const)(
   "keeps the resolved path and digest of a relative selection that does not start with %s",
   async (code) => {

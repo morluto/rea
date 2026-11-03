@@ -228,6 +228,14 @@ export const searchMovesPast = (code: string | undefined): boolean =>
   code === "ENOENT" || code === "ENOTDIR" || code === "EACCES";
 
 /**
+ * Launch errors at which native PATH searches differ: glibc's execvp moves
+ * past a stale NFS handle and a missing device, while musl's stops there. A
+ * launch by name lets the host's search decide.
+ */
+export const searchesDiffer = (code: string | undefined): boolean =>
+  code === "ESTALE" || code === "ENODEV";
+
+/**
  * The PATH entry length, in bytes, from which the host's native search skips
  * an entry its path buffer cannot hold: execvp on Linux (glibc and musl) and
  * libuv on macOS. A shorter entry with an over-long component still fails

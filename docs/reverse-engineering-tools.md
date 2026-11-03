@@ -154,8 +154,9 @@ there. The
 command then runs by name, with the version unknown, and the host's own search
 decides what runs. A found file that does not start with `ENOENT` or `EACCES`,
 as when a script's interpreter is missing or not executable, is one a native
-search moves past. The command then also runs as selected, with the version
-unknown, and a limitation names that file. An explicitly selected path has no
+search moves past. At `ESTALE` or `ENODEV`, glibc's search moves past it and
+musl's stops, so the host decides. The command then also runs as selected,
+with the version unknown, and a limitation names that file. An explicitly selected path has no
 later candidate, so the command runs that path, and Evidence or the launch
 failure keeps its path and SHA-256. When the host refuses to inspect an
 explicitly selected path (`EACCES` or `EPERM`), the command runs that path with
