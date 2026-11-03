@@ -59,18 +59,17 @@ const source = fileURLToPath(
 const literalSource = fileURLToPath(
   new URL("../tests/conformance/swift/string-literals.swift", import.meta.url),
 );
-const unresolvedJumpSource = fileURLToPath(
-  new URL(
-    "../tests/conformance/swift/unresolved-string-jump.s",
-    import.meta.url,
-  ),
-);
 const binary = join(root, "swift-inventory");
 const literalBinary = join(root, "swift-literals");
-const literalAssembly = fileURLToPath(
-  new URL("../tests/conformance/swift/decoder-safeguards.S", import.meta.url),
+// swiftc rejects assembly inputs, so each source is assembled to an object first.
+const literalObjects = ["decoder-safeguards.S", "unresolved-string-jump.s"].map(
+  (name) => ({
+    source: fileURLToPath(
+      new URL(`../tests/conformance/swift/${name}`, import.meta.url),
+    ),
+    object: join(root, name.replace(/\.[sS]$/u, ".o")),
+  }),
 );
-const literalObject = join(root, "decoder-safeguards.o");
 const reports = [];
 let literalReport;
 let decoderCleaned = true;
@@ -81,20 +80,21 @@ try {
   await mkdir(join(root, "copied"));
   const copied = join(root, "copied", "swift-inventory");
   await copyFile(binary, copied);
-  await execute(
-    "xcrun",
-    [
-      "clang",
-      "-target",
-      "arm64-apple-macosx13.0",
-      "-c",
-      literalAssembly,
-      "-o",
-      literalObject,
-    ],
-    { timeout: 60_000 },
-  );
   // Decoding covers AArch64 register pairs, so build that slice on any Mac host.
+  for (const { source: assembly, object } of literalObjects)
+    await execute(
+      "xcrun",
+      [
+        "clang",
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-c",
+        assembly,
+        "-o",
+        object,
+      ],
+      { timeout: 60_000 },
+    );
   await execute(
     "swiftc",
     [
@@ -102,8 +102,7 @@ try {
       "-target",
       "arm64-apple-macosx13.0",
       literalSource,
-      literalObject,
-      unresolvedJumpSource,
+      ...literalObjects.map(({ object }) => object),
       "-o",
       literalBinary,
     ],

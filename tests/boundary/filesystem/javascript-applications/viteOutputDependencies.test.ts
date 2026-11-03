@@ -75,6 +75,9 @@ describe("Vite dependency table candidates", () => {
   it("does not classify a table value as an external package when selecting the assets directory", async () => {
     const root = await viteBuild();
     const result = await reconstructJavaScriptFixture(join(root, "assets"));
+    expect(JSON.stringify(result.graph)).not.toContain(
+      '"resolution_status":"external"',
+    );
     expect(tableCandidates(result.graph)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

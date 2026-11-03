@@ -113,11 +113,15 @@ it("preserves cleanup failure authority and resources while excluding diagnostic
   const projected = projectAnalysisError(
     redactExplicitFailure(error, ["private", "REDACTED"]),
   );
-  expect(projected.code).toBe("cleanup_incomplete");
+  expect(projected).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      resources: expect.arrayContaining(["pid:123"]),
+      diagnostics: { exit_code: 2 },
+    },
+  });
   expect(JSON.stringify(projected)).not.toContain("private");
   expect(JSON.stringify(projected)).not.toContain("REDACTED");
-  expect(JSON.stringify(projected)).toContain("pid:123");
-  expect(JSON.stringify(projected)).toContain('"exit_code":2');
 });
 
 it("redacts cleanup primaries and mirrors the source error's live status", () => {

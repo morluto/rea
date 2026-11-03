@@ -669,7 +669,13 @@ identity. This static check does
 not evaluate arbitrary call side effects or runtime registration. Missing findings
 do not establish that an application has no Electron boundary usage.
 
-IPC pairing is an inference, not an observation. A renderer `invoke` pairs only
+IPC pairing is an inference, not an observation. A main handler registered on an
+unresolved channel may receive any literal channel, so a compatible renderer send
+or `invoke` beside it is ambiguous, not unpaired. A wrapper's registration is
+exempt only when every invocation is a traced direct call supplying a literal
+channel, each recorded as its own finding. A guarded invocation keeps its
+predicate on a call path instead, so its channel still competes without pairing.
+A renderer `invoke` pairs only
 with one unique `ipcMain.handle`/`handleOnce` candidate on the same exact literal
 channel; a renderer send pairs only with one unique `ipcMain.on`/`once`/`addListener`
 candidate. Dynamic channels are never paired, and multiple compatible handlers
@@ -897,8 +903,22 @@ and Evidence. If that expansion does not fit, the file node retains
 `static_analysis` and any admitted `semantic_module_analysis` observations,
 including their exact values and source locations. Use the public modules item
 view to read them. The graph marks those unexpanded relationships as unknown.
-If cumulative result capacity is exhausted, analysis stops; inventoried but
-unexamined files remain present with explicit unknown scopes.
+
+The parent charges everything it retains against the heap that was free when
+analysis started, less a transfer reserve. Semantic facts and expanded
+relationships stop at half of that capacity, and a source refused there keeps
+its static facts with the refusal reported. Static facts can continue to three
+quarters of it while the live heap also has room for another copy of what it
+holds, so results charged for earlier sources do not cost later sources their
+static facts when the heap can still hold them. When that share runs short,
+relationships that were reserved but not yet expanded are given up before any
+static facts, and each affected file reports the omission.
+
+If static facts themselves exhaust that share, or the parent's live heap cannot
+hold the next checkpoint, analysis stops; inventoried but unexamined files remain
+present with explicit unknown scopes. The failure reports the limit that applied
+in bytes, what was still available, the live heap in use and what the checkpoint
+needed.
 
 ### Large local JSON inputs
 
@@ -1023,7 +1043,12 @@ reason in the renderer observations.
 HTML script source ranges follow the HTML parser across LF, CRLF, and bare CR
 line endings, preserving UTF-16 columns.
 Inline JavaScript in local HTML, meaning classic or module `<script>` bodies
-without a `src` attribute, is not analyzed. Each HTML file that has one gets an
+without a `src` attribute, is not analyzed. Embedded SVG scripts use `href`
+(or `xlink:href` when `href` is absent) instead: an existing reference, even
+an empty one, suppresses the inline body. SVG's `src` and HTML-only `language`
+attributes do not suppress its JavaScript body. SVG references and inline
+bodies share the same inert parsing and source coordinates as HTML scripts;
+template content stays inert. Each HTML file that has an inline body gets an
 unknown `parse-html-inline-scripts` scope with the exact body count and the
 script type and source range of the first 100 bodies; beyond that, coverage is
 truncated under the `html_inline_script_locations_per_file` limit, and the

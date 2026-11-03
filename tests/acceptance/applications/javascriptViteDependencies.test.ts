@@ -3001,6 +3001,57 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: ["first.js"],
     unknown: false,
   },
+  ...(
+    [
+      [
+        "default-hidden-scalar",
+        'Object.defineProperty(Array.prototype, "tag", {value: 1}); const copy = {...Array.prototype};',
+        true,
+      ],
+      [
+        "explicit-hidden-unknown",
+        'Object.defineProperty(Array.prototype, "tag", {value: runtimeValue, enumerable: false}); const copy = {...Array.prototype};',
+        true,
+      ],
+      [
+        "visible-scalar",
+        "Array.prototype.tag = 1; const copy = {...Array.prototype};",
+        true,
+      ],
+      [
+        "visible-reference",
+        'Object.defineProperty(Array.prototype, "tag", {value: Array.prototype, enumerable: true}); const copy = {...Array.prototype};',
+        false,
+      ],
+      [
+        "preserved-enumerability",
+        'Array.prototype.tag = 1; Object.defineProperty(Array.prototype, "tag", {value: runtimeValue}); const copy = {...Array.prototype};',
+        false,
+      ],
+      [
+        "rest-hidden-unknown",
+        'Object.defineProperty(Array.prototype, "tag", {value: runtimeValue, enumerable: false}); const {...copy} = Array.prototype;',
+        true,
+      ],
+      [
+        "iteration-hidden-index",
+        'Object.defineProperty(Array.prototype, "0", {value: Array.prototype, enumerable: false}); const copy = [...Array.prototype];',
+        false,
+      ],
+      [
+        "reflect-hidden-unknown",
+        'Reflect.defineProperty(Array.prototype, "tag", {value: runtimeValue, enumerable: false}); const copy = {...Array.prototype};',
+        true,
+      ],
+    ] as const
+  ).map(([name, effect, kept]) => ({
+    file: `prototype-copy-descriptor-${name}.js`,
+    source: mapDependenciesWithEffects(
+      effect + " opaque(copy); __vite__mapDeps([0]);",
+    ),
+    resolved: kept ? ["first.js"] : [],
+    unknown: !kept,
+  })),
 ];
 
 const batches = Array.from(

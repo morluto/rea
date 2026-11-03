@@ -46,6 +46,35 @@ export const machoSubtypeRank = (
   return rank < 0 ? policy.subtypes.length : rank;
 };
 
+/** Return a tool selector only for an explicitly supported CPU subtype. */
+export const machoKnownCodeSignSelector = (
+  cpuType: number,
+  cpuSubtype: number,
+): string | undefined => {
+  const capabilities = (cpuSubtype >>> 24) & 0xff;
+  // arm64e pointer authentication and x86_64 LIB64 have known tool selectors.
+  // Other capability variants may have distinct names; do not collapse them.
+  if (
+    capabilities !== 0 &&
+    !(
+      cpuType === 0x0100000c &&
+      machoCpuSubtypeBase(cpuSubtype) === 2 &&
+      capabilities === 0x80
+    ) &&
+    !(
+      cpuType === 0x01000007 &&
+      machoCpuSubtypeBase(cpuSubtype) === 3 &&
+      capabilities === 0x80
+    )
+  )
+    return undefined;
+  return Object.values(MACHO_ARCHITECTURE_POLICIES)
+    .find((policy) => policy.cpuType === cpuType)
+    ?.subtypes.find(
+      ({ subtype }) => subtype === machoCpuSubtypeBase(cpuSubtype),
+    )?.name;
+};
+
 /** Keep the selected lipo record, including its container coordinates. */
 export const selectMachoArchitecture = (
   policy: MachoArchitecturePolicy,

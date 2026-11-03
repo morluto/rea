@@ -4,6 +4,7 @@ import { utcDateTimeSchema } from "./offsetDateTime.js";
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import {
   cdpDomSnapshotSchema,
+  cdpResourceColumnSchema,
   cdpScriptSourceSchema,
   cdpScriptMetadataSchema,
 } from "./cdpObservationSchemas.js";
@@ -125,7 +126,7 @@ const browserNetworkRequestSchema = z.object({
     type: z.string(),
     url: z.string().nullable(),
     line: z.int().min(0).nullable(),
-    column: z.int().min(0).nullable(),
+    column: cdpResourceColumnSchema.nullable(),
   }),
   body_shapes: z.object({
     status: z.enum(["not_approved", "included", "partial", "unavailable"]),
@@ -149,7 +150,7 @@ const browserConsoleEventSchema = z.object({
     ),
   url: z.string().nullable(),
   line: z.int().min(0).nullable(),
-  column: z.int().min(0).nullable(),
+  column: cdpResourceColumnSchema.nullable(),
   text_capture: z.object({
     status: z.enum(["not_approved", "included", "unavailable"]),
     values: z.array(

@@ -9,8 +9,12 @@ export const executableFormatHintSchema = z.enum([
   "dos-com",
   "raw-binary",
   "gamecube-dol",
+  "esp-flash-image",
 ]);
-/** Explicit executable interpretation for formats with no identifying header. */
+/**
+ * Explicit interpretation for formats with no identifying header, or, for
+ * esp-flash-image, a dump read with caller inputs.
+ */
 export type ExecutableFormatHint = z.infer<typeof executableFormatHintSchema>;
 
 /** Validate the single 64 KiB COM segment, excluding its 256-byte PSP prefix. */

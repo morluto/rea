@@ -62,7 +62,7 @@ cliTest(
           candidate_left_node_ids: [],
           candidate_right_node_ids: [],
         },
-        status: expect.not.stringMatching(/^(added|removed)$/u),
+        status: "unchanged",
       }),
     ]);
 

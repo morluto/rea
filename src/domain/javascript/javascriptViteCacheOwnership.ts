@@ -27,7 +27,7 @@ import type {
   ViteCacheExposure as CacheExposure,
   ViteCacheValue,
 } from "./javascriptViteCacheIdentityTypes.js";
-import { semanticObjectPropertyReferencesSteps } from "./javascriptSemanticObjectReferences.js";
+import { readViteCacheDataDescriptorSteps } from "./javascriptViteCacheProperties.js";
 import {
   hasJavaScriptViteInheritedProperty,
   type JavaScriptViteCacheTable,
@@ -113,7 +113,6 @@ export function* invalidateJavaScriptViteCachesSteps(
   );
   const dataDefinitions = yield* retainObjectWritesSteps(calls, writes, {
     interop,
-    state,
     objectPrototypeUncertain,
   });
   const context: CacheEffectContext = {
@@ -529,7 +528,6 @@ function* retainObjectWritesSteps(
   writes: ViteCacheWrite[],
   context: {
     readonly interop: Interop;
-    readonly state: JavaScriptSemanticAnalysisState;
     readonly objectPrototypeUncertain: boolean;
   },
 ): Generator<void, ReadonlySet<Call>> {
@@ -562,12 +560,21 @@ function* retainObjectWritesSteps(
     ) {
       const target = invocation.arguments?.[0];
       const key = interop.staticString(invocation.arguments?.[1]);
-      const value = yield* dataDescriptorValueSteps(
-        invocation.arguments?.[2],
-        context,
-      );
-      if (t.isExpression(target) && key !== undefined && value !== undefined) {
-        writes.push({ node: call, receiver: target, key, value });
+      const descriptor = context.objectPrototypeUncertain
+        ? undefined
+        : yield* readViteCacheDataDescriptorSteps(invocation.arguments?.[2]);
+      if (
+        t.isExpression(target) &&
+        key !== undefined &&
+        descriptor?.value !== undefined
+      ) {
+        writes.push({
+          node: call,
+          receiver: target,
+          key,
+          value: descriptor.value,
+          enumerable: descriptor.enumerable,
+        });
         dataDefinitions.add(call);
       }
       continue;
@@ -600,43 +607,6 @@ function* retainObjectWritesSteps(
   return dataDefinitions;
 }
 
-function* dataDescriptorValueSteps(
-  node: t.Node | undefined,
-  context: {
-    readonly state: JavaScriptSemanticAnalysisState;
-    readonly objectPrototypeUncertain: boolean;
-  },
-): Generator<void, t.Node | undefined> {
-  if (node === undefined || context.objectPrototypeUncertain) return undefined;
-  const descriptor = unwrapJavaScriptExpression(node).node;
-  if (
-    !t.isObjectExpression(descriptor) ||
-    !(yield* ordinaryObjectLiteralSteps(descriptor))
-  )
-    return undefined;
-  let examined = 0;
-  for (const property of descriptor.properties) {
-    if (examined++ % 1024 === 0) yield;
-    if (!t.isObjectProperty(property)) return undefined;
-    const key = semanticStaticPropertyKey(property.key, property.computed);
-    if (
-      key !== "value" &&
-      key !== "writable" &&
-      key !== "enumerable" &&
-      key !== "configurable"
-    )
-      return undefined;
-  }
-  const references = yield* semanticObjectPropertyReferencesSteps(
-    descriptor,
-    ["value"],
-    context.state,
-  );
-  const reference = references[0];
-  return references.length === 1 && reference?.path.length === 0
-    ? reference.node
-    : undefined;
-}
 interface CacheEffectContext {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly identities: ViteCacheIdentities;

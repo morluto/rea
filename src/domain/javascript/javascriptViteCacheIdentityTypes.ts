@@ -77,6 +77,12 @@ export type Input =
         | "iteration-family";
       readonly source: Vertex;
       readonly read?: t.Node;
+      readonly enumerableOnly?: boolean;
+    }
+  | {
+      readonly kind: "copy-property";
+      readonly source: Vertex;
+      readonly receiver: Vertex;
     }
   | {
       readonly kind: "prototype";
@@ -110,6 +116,8 @@ export interface ViteCacheWrite {
   readonly key: Key;
   readonly value?: t.Node;
   readonly propertySource?: t.ObjectExpression;
+  /** undefined preserves the descriptor's unproven or existing enumerability. */
+  readonly enumerable?: boolean | undefined;
 }
 
 export const FOREIGN: ViteCacheIdentity = {

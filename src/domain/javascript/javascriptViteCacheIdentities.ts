@@ -46,6 +46,16 @@ import {
   viteCacheObjectOperation,
 } from "./javascriptViteCacheProperties.js";
 type Key = string | null;
+type CopyMode = "enumerable" | "iteration";
+interface CopyEffectIndex {
+  readonly size: number;
+  readonly count: number;
+  readonly tree: readonly (Vertex | undefined)[];
+  readonly groups: Map<
+    readonly t.Statement[],
+    { start: number; end: number; positions: readonly StatementPosition[] }
+  >;
+}
 type DefaultInput = Extract<Input, { kind: "default" }>;
 
 const providedDefaultInput = (
@@ -194,16 +204,16 @@ export class ViteCacheIdentities {
 
   private readonly properties: ViteCacheProperties;
   private unknownInheritedRead: boolean | undefined;
-  private readonly copyMutationHazards = new Map<t.Node | undefined, Vertex>();
-  private readonly copyEffects: { node: t.Node; source: Vertex }[] = [];
-  private copyEffectIndex?: {
-    readonly size: number;
-    readonly tree: readonly (Vertex | undefined)[];
-    readonly groups: Map<
-      readonly t.Statement[],
-      { start: number; end: number; positions: readonly StatementPosition[] }
-    >;
+  private readonly copyMutationHazards = {
+    enumerable: new Map<t.Node | undefined, Vertex>(),
+    iteration: new Map<t.Node | undefined, Vertex>(),
   };
+  private readonly copyEffects: {
+    node: t.Node;
+    source: Vertex;
+    write?: ViteCacheWrite;
+  }[] = [];
+  private readonly copyEffectIndexes = new Map<CopyMode, CopyEffectIndex>();
   constructor(
     private readonly state: JavaScriptSemanticAnalysisState,
     private readonly invocation: (
@@ -536,6 +546,7 @@ export class ViteCacheIdentities {
               kind: "copy-family",
               source: beforeCopy,
               read: initializer.node,
+              enumerableOnly: initializer.copyKind === "object-rest",
             });
             this.connect(target, {
               kind: "alias",
@@ -563,7 +574,7 @@ export class ViteCacheIdentities {
       // literal slots; it is not a later replacement of the helper's f property.
       if (this.cacheInitializations.has(write.node)) continue;
       const receiver = this.normalize(write.receiver);
-      this.copyEffects.push({ node: write.node, source: receiver });
+      this.copyEffects.push({ node: write.node, source: receiver, write });
       const receivers = this.writeReceivers.get(receiver) ?? [];
       receivers.push(write);
       this.writeReceivers.set(receiver, receivers);
@@ -756,6 +767,17 @@ export class ViteCacheIdentities {
       (input.kind === "default" && unresolvedDefaults.has(input)
         ? UNKNOWN
         : undefined);
+    if (input.kind === "copy-property") {
+      // a known value carries its own identities; an unresolved value keeps
+      // the existing conservative receiver hazard as well as known children.
+      if (
+        source !== undefined &&
+        (source.allocation !== null || source.exactPrototype === true)
+      )
+        return source;
+      const receiver = input.receiver.fact;
+      return receiver === undefined ? source : joinIdentity(source, receiver);
+    }
     if (source === undefined) return undefined;
     if (input.kind === "default")
       return providedDefaultInput(input, source)
@@ -861,8 +883,17 @@ export class ViteCacheIdentities {
         source.allocation === null)
     ) {
       let unsafe = false;
-      if ((inherited || intrinsic) && this.snapshots) {
-        const hazard = yield* this.copyMutationHazardSteps(input.read);
+      if (
+        (inherited || intrinsic) &&
+        this.snapshots &&
+        source.exactPrototype === true
+      ) {
+        const hazard = yield* this.copyMutationHazardSteps(
+          input.read,
+          input.kind === "copy-family" && input.enumerableOnly === true
+            ? "enumerable"
+            : "iteration",
+        );
         hazard.listeners.add(vertex);
         unsafe =
           hazard.fact?.inheritedArrayPrototype === true ||
@@ -895,12 +926,14 @@ export class ViteCacheIdentities {
   /** Only effects that may precede a copy can add enumerable values to it. */
   private *copyMutationHazardSteps(
     read: t.Node | undefined,
+    mode: CopyMode,
   ): Generator<void, Vertex> {
-    const previous = this.copyMutationHazards.get(read);
+    const hazards = this.copyMutationHazards[mode];
+    const previous = hazards.get(read);
     if (previous !== undefined) return previous;
     const hazard = this.vertex({});
-    this.copyMutationHazards.set(read, hazard);
-    const index = yield* this.copyEffectIndexSteps();
+    hazards.set(read, hazard);
+    const index = yield* this.copyEffectIndexSteps(mode);
     const addRange = (start: number, end: number): void => {
       for (
         let left = start + index.size, right = end + index.size;
@@ -925,8 +958,7 @@ export class ViteCacheIdentities {
         : semanticReadStatementPosition(read, this.state.parentsByNode);
     const group =
       position === null ? undefined : index.groups.get(position.body);
-    if (position === null || group === undefined)
-      addRange(0, this.copyEffects.length);
+    if (position === null || group === undefined) addRange(0, index.count);
     else {
       let left = 0;
       let right = group.positions.length;
@@ -941,22 +973,39 @@ export class ViteCacheIdentities {
         else right = middle;
       }
       addRange(0, group.start + left);
-      addRange(group.end, this.copyEffects.length);
+      addRange(group.end, index.count);
     }
     return hazard;
   }
 
   /** Share effect families across copy positions without quadratic edges. */
-  private *copyEffectIndexSteps(): Generator<
-    void,
-    NonNullable<typeof this.copyEffectIndex>
-  > {
-    if (this.copyEffectIndex !== undefined) return this.copyEffectIndex;
+  private *copyEffectIndexSteps(
+    mode: CopyMode,
+  ): Generator<void, CopyEffectIndex> {
+    const cached = this.copyEffectIndexes.get(mode);
+    if (cached !== undefined) return cached;
     type Entry = { source: Vertex; position: StatementPosition | null };
     const grouped = new Map<readonly t.Statement[] | null, Entry[]>();
     let examined = 0;
     for (const effect of this.copyEffects) {
       if (examined++ % 1024 === 0) yield;
+      let source = effect.source;
+      if (mode === "enumerable") {
+        const write = effect.write;
+        if (write?.enumerable === false) continue;
+        if (
+          write?.value !== undefined &&
+          write.key !== null &&
+          write.key !== "__proto__"
+        ) {
+          source = this.vertex({});
+          this.connect(source, {
+            kind: "copy-property",
+            source: this.normalize(write.value),
+            receiver: effect.source,
+          });
+        }
+      }
       const position = semanticEffectStatementPosition(
         effect.node,
         this.state.parentsByNode,
@@ -964,7 +1013,7 @@ export class ViteCacheIdentities {
       const key = position?.body ?? null;
       const entries = grouped.get(key) ?? [];
       if (!grouped.has(key)) grouped.set(key, entries);
-      entries.push({ source: effect.source, position });
+      entries.push({ source, position });
     }
     const entries: Entry[] = [];
     const groups = new Map<
@@ -1032,8 +1081,8 @@ export class ViteCacheIdentities {
         tree[i] = family;
       }
     }
-    const result = { size, tree, groups };
-    this.copyEffectIndex = result;
+    const result = { size, count: entries.length, tree, groups };
+    this.copyEffectIndexes.set(mode, result);
     return result;
   }
 
@@ -1271,6 +1320,7 @@ export class ViteCacheIdentities {
   private connect(target: Vertex, input: Input): void {
     target.inputs.push(input);
     input.source.listeners.add(target);
+    if (input.kind === "copy-property") input.receiver.listeners.add(target);
     if (input.kind === "default") {
       input.fallback.listeners.add(target);
       this.defaultChoices.push({ target, input });
@@ -1535,6 +1585,7 @@ export class ViteCacheIdentities {
               : "family",
         source: normalized,
         read: t.isSpreadElement(child) ? child : expression,
+        enumerableOnly: shallowCopy || t.isObjectExpression(expression),
       });
       if (elementFamily !== undefined)
         this.connect(elementFamily, {

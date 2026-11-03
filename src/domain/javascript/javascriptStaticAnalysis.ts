@@ -437,6 +437,10 @@ const finalizeStaticAnalysis = (
         accumulator.nativeAddonBindings,
         accumulator.moduleRangeIndex,
       ),
+      protocols: finalizeLocatedFindings(
+        accumulator.protocols,
+        accumulator.moduleRangeIndex,
+      ),
     },
     limitations,
   };

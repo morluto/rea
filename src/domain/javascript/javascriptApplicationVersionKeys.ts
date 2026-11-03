@@ -337,6 +337,11 @@ const semanticKey = (node: ApplicationNode): string | null => {
   return value === null ? null : `semantic\0${node.kind}\0${value}`;
 };
 
+/** Kinds keyed by one literal name, unless that name is a dynamic expression. */
+const LITERAL_NAME_PROPERTIES: Partial<
+  Record<ApplicationNode["kind"], string>
+> = { "ipc-channel": "channel", "url-scheme": "scheme" };
+
 const semanticValue = (
   node: ApplicationNode,
   properties: Readonly<Record<string, JsonValue>>,
@@ -348,10 +353,13 @@ const semanticValue = (
       properties.storage_kind,
       properties.name ?? properties.mechanism,
     );
-  if (node.kind === "ipc-channel")
-    return properties.resolution === "dynamic"
+  const literalKey = LITERAL_NAME_PROPERTIES[node.kind];
+  if (literalKey !== undefined)
+    return ["dynamic", "invalid-literal"].includes(
+      String(properties.resolution),
+    )
       ? null
-      : (exactString(properties.channel) ?? firstLabel(node));
+      : (exactString(properties[literalKey]) ?? firstLabel(node));
   if (node.kind === "context-bridge-api")
     return (
       firstLabel(node) ??

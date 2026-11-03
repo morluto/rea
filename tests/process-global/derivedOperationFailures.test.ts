@@ -686,6 +686,7 @@ it.each(["missing", "invalid", "cleanup"])(
     });
     if (leftFailure === "cleanup")
       expect(result.error.cleanupResources).toContain(leftPath);
+    expect(owners.size).toBe(leftFailure === "cleanup" ? 2 : 1);
     expect([...owners].every((owner) => owner.handle.fd >= 0)).toBe(true);
 
     close.mockRestore();

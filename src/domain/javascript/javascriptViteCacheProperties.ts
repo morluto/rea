@@ -3,6 +3,7 @@ import * as t from "@babel/types";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
 import {
@@ -167,7 +168,8 @@ export class ViteCacheProperties {
       if (target === undefined || t.isSpreadElement(target)) continue;
       if (
         method === "defineProperty" &&
-        (yield* writableDataDescriptorSteps(invocation.arguments?.[2]))
+        (yield* readViteCacheDataDescriptorSteps(invocation.arguments?.[2]))
+          ?.writable === true
       )
         continue;
       const keyNode = invocation.arguments?.[1];
@@ -845,28 +847,57 @@ export class ViteCacheProperties {
   }
 }
 
-/** Explicit writable data descriptors preserve subsequent ordinary assignment. */
-function* writableDataDescriptorSteps(
+interface ViteCacheDataDescriptor {
+  readonly value: t.Node | undefined;
+  readonly writable: boolean | undefined;
+  readonly enumerable: boolean | undefined;
+}
+
+const dataDescriptors = new WeakMap<
+  t.ObjectExpression,
+  ViteCacheDataDescriptor | null
+>();
+
+/** normalize own data descriptor fields for both copy and write restrictions. */
+export function* readViteCacheDataDescriptorSteps(
   node: t.Node | undefined,
-): Generator<void, boolean> {
-  if (!t.isObjectExpression(node)) return false;
-  let writable = false;
+): Generator<void, ViteCacheDataDescriptor | undefined> {
+  if (node === undefined) return undefined;
+  const descriptor = unwrapJavaScriptExpression(node).node;
+  if (!t.isObjectExpression(descriptor)) return undefined;
+  const cached = dataDescriptors.get(descriptor);
+  if (cached !== undefined) return cached ?? undefined;
+  let value: t.Node | undefined;
+  let writable: boolean | undefined;
+  let enumerable: boolean | undefined;
   let examined = 0;
-  for (const property of node.properties) {
+  for (const property of descriptor.properties) {
     if (examined++ % 1024 === 0) yield;
-    if (!t.isObjectProperty(property)) return false;
-    const key = semanticStaticPropertyKey(property.key, property.computed);
+    const key = t.isObjectProperty(property)
+      ? semanticStaticPropertyKey(property.key, property.computed)
+      : null;
     if (
-      key !== "value" &&
-      key !== "writable" &&
-      key !== "enumerable" &&
-      key !== "configurable"
-    )
-      return false;
-    if (key === "writable")
-      writable = t.isBooleanLiteral(property.value, { value: true });
+      !t.isObjectProperty(property) ||
+      (key !== "value" &&
+        key !== "writable" &&
+        key !== "enumerable" &&
+        key !== "configurable")
+    ) {
+      dataDescriptors.set(descriptor, null);
+      return undefined;
+    }
+    if (key === "value") value = property.value;
+    if (key === "writable" || key === "enumerable") {
+      const exact = readExactJavaScriptLiteral(property.value);
+      const flag = exact.found ? Boolean(exact.value) : undefined;
+      if (key === "writable") writable = flag;
+      else enumerable = flag;
+    }
   }
-  return writable;
+  // omission preserves an existing property's flag; it is not a proof of false.
+  const result = { value, writable, enumerable };
+  dataDescriptors.set(descriptor, result);
+  return result;
 }
 
 export const viteCacheObjectOperation = (

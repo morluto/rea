@@ -171,3 +171,74 @@ cliTest.skipIf(process.versions.bun !== undefined).for([
     expect(response.stderr).not.toMatch(/FATAL ERROR:.*heap/iu);
   },
 );
+
+cliTest.skipIf(process.versions.bun !== undefined)(
+  "keeps every source's static facts after semantic results use the parent result budget",
+  { timeout: 90_000 },
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-static-capacity-");
+    // Plain functions produce semantic graphs large enough to use the result
+    // budget of this heap. The later sources' storage findings then produce
+    // static checkpoints that exceed its reserve for the next checkpoint.
+    const vendors = Array.from({ length: 12 }, (_, vendor) => [
+      `a-vendor-${String(vendor)}.mjs`,
+      Array.from(
+        { length: 100 },
+        (_, index) =>
+          `export function v${String(vendor)}_${String(index)}(input) { const value = input + ${String(index)}; const pair = { value }; return pair.value; }`,
+      ).join("\n"),
+    ]);
+    const callsPerSource = 12_000;
+    const sources = Array.from({ length: 5 }, (_, source) => [
+      `z-source-${String(source)}.mjs`,
+      Array.from(
+        { length: callsPerSource },
+        (_, index) =>
+          `localStorage.getItem("k${String(source)}_${String(index)}");`,
+      ).join("\n"),
+    ]);
+    for (const [name, text] of [...vendors, ...sources])
+      await writeFile(join(root, name!), text!);
+    const response = await cli.run({
+      arguments: ["analyze", root, "--format", "json"],
+      environment: {
+        NODE_OPTIONS: "--max-old-space-size=640 --max-semi-space-size=8",
+      },
+      timeoutMs: 75_000,
+    });
+    expect(response.stderr).not.toMatch(/FATAL ERROR:.*heap/iu);
+    expect(
+      response.exitCode,
+      JSON.stringify(response.json)?.slice(0, 2000),
+    ).toBe(0);
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(response.json).normalized_result,
+    );
+    expect(result.statistics).toMatchObject({
+      parsed_javascript_files: vendors.length + sources.length,
+      skipped_javascript_files: 0,
+      parse_failures: 0,
+    });
+    // The omission is reported where a reader finds the retained facts.
+    for (const [name, text] of sources) {
+      const digest = createHash("sha256").update(text!).digest("hex");
+      const node = result.graph.nodes.find(
+        ({ kind, identity }) =>
+          kind === "javascript-asset" &&
+          identity.strategy === "content-digest" &&
+          identity.sha256 === digest,
+      );
+      const observation = node?.observations.find(
+        ({ properties }) =>
+          properties.application_projection_failure !== undefined,
+      );
+      expect(observation?.label, name).toBe(name);
+      expect(
+        z
+          .object({ storage: z.array(z.unknown()) })
+          .parse(observation?.properties.static_analysis).storage,
+      ).toHaveLength(callsPerSource);
+    }
+    expect(result.graph.coverage.status).toBe("partial");
+  },
+);

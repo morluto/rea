@@ -9,24 +9,34 @@ import type { JavaScriptApplicationAnalysisResult } from "../javascript/javascri
 import type { ApplicationNode } from "../javascript/javascriptApplicationGraphSchemas.js";
 import { applicationNodeContentDigest } from "../javascript/javascriptApplicationFileIdentity.js";
 import { err, ok, type Result } from "../result.js";
+import { z } from "zod";
 import type { JavaScriptModuleReference } from "./javascriptModuleReferences.js";
+import {
+  javascriptFactBasis,
+  javascriptModuleReferencesRequestSchema,
+} from "./javascriptModuleReferences.js";
 import {
   javascriptApplicationSourceCoverage,
   javascriptStaticSourceCoverageSummary,
   type JavaScriptApplicationSourceCoverage,
 } from "./javascriptApplicationCoverage.js";
-import { projectJavaScriptFacts } from "./javascriptFactsView.js";
+import {
+  projectJavaScriptFacts,
+  javascriptFactsViewRequestSchema,
+} from "./javascriptFactsView.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage as completeCoverage,
   pageViewCoverage as pageCoverage,
 } from "./analysisViewCoverage.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-  GroupingViewKind,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type ItemAnalysisView,
+  type PageAnalysisView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 
 const OPERATION = "inspect_analysis_view";
 
@@ -97,9 +107,8 @@ const modulePage = (
   view: {
     readonly offset: number;
     readonly limit: number;
-    readonly where?: Extract<
-      AnalysisViewRequest,
-      { kind: "javascript" }
+    readonly where?: z.output<
+      typeof javascriptModuleReferencesRequestSchema
     >["where"];
   },
 ): { entries: ModuleEntry[]; total: number } => {
@@ -196,27 +205,21 @@ const moduleReference = ({
   path,
 }: ModuleEntry): JavaScriptModuleReference => {
   let ranges = 0;
-  const support = new Map<string, JavaScriptModuleReference["basis"][number]>();
-  for (const { evidence } of node.observations) {
+  for (const { evidence } of node.observations)
     if (
       evidence.location.available &&
       evidence.location.value.kind === "source-range"
     )
       ranges += 1;
-    const { authority, state, confidence } = evidence;
-    support.set(`${authority}:${state}:${confidence}`, {
-      authority,
-      state,
-      confidence,
-    });
-  }
   return {
     node_id: node.node_id,
     kind: node.kind,
     path,
     identity: node.identity,
     retained_source_range_count: ranges,
-    basis: [...support.values()],
+    basis: javascriptFactBasis(
+      node.observations.map(({ evidence }) => evidence),
+    ),
   };
 };
 
@@ -283,7 +286,7 @@ const parentFields = (
 
 const selectModule = (
   modules: readonly ModuleEntry[],
-  selector: Extract<AnalysisViewRequest, { readonly kind: "item" }>["selector"],
+  selector: ItemAnalysisView["selector"],
 ): Result<ModuleEntry, AnalysisError> => {
   if ("node_id" in selector) {
     const matches = modules.filter(
@@ -344,8 +347,8 @@ const selectModule = (
 export const projectJavaScriptApplicationView = (
   parent: AnalysisViewParent,
   analysis: JavaScriptApplicationAnalysisResult,
-  view: Exclude<AnalysisViewRequest, { kind: GroupingViewKind }>,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (
     view.kind !== "summary" &&
     view.kind !== "item" &&
@@ -358,6 +361,13 @@ export const projectJavaScriptApplicationView = (
         "JavaScript application Evidence supports summary, module item/page, typed module references or selected JavaScript facts.",
       ),
     );
+  assertOwnedView<
+    | SummaryAnalysisView
+    | ItemAnalysisView
+    | PageAnalysisView
+    | z.output<typeof javascriptModuleReferencesRequestSchema>
+    | z.output<typeof javascriptFactsViewRequestSchema>
+  >(view, "summary", "item", "page", "javascript", "javascript-facts");
   const sourceCoverage = javascriptApplicationSourceCoverage(analysis);
   const { fields: shared, limitationCount } = parentFields(
     parent,
@@ -368,7 +378,7 @@ export const projectJavaScriptApplicationView = (
     const { rows, total } = projectJavaScriptFacts(analysis.graph.nodes, view);
     return ok({
       ...shared,
-      kind: "javascript-facts",
+      kind: "javascript-facts" as const,
       view,
       rows,
       source_coverage: sourceCoverage,
@@ -380,7 +390,7 @@ export const projectJavaScriptApplicationView = (
     const rows = entries.map(moduleReference);
     return ok({
       ...shared,
-      kind: "javascript",
+      kind: "javascript" as const,
       view,
       rows,
       source_coverage: sourceCoverage,
@@ -395,7 +405,7 @@ export const projectJavaScriptApplicationView = (
       0,
     );
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary: {
         input_path: analysis.input_path,
@@ -440,7 +450,7 @@ export const projectJavaScriptApplicationView = (
     const selected = selectModule(modules, view.selector);
     if (!selected.ok) return selected;
     return ok({
-      kind: "item",
+      kind: "item" as const,
       view,
       item: moduleItem(selected.value.node, selected.value.path),
       coverage: completeCoverage(1, modules.length),
@@ -460,7 +470,7 @@ export const projectJavaScriptApplicationView = (
     path,
   }));
   return ok({
-    kind: "page",
+    kind: "page" as const,
     view,
     items,
     coverage: pageCoverage(view.offset, items.length, total),

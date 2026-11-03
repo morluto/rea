@@ -67,9 +67,20 @@ it("matches an unchanged URL-backed source map in its occurrence across versions
     expect.objectContaining({
       left_node_id: leftOriginal.node_id,
       right_node_id: rightOriginal.node_id,
-      status: expect.not.stringMatching(/^(added|removed)$/u),
+      status: "unchanged",
     }),
   ]);
+
+  for (const [result, original] of [
+    [left, leftOriginal],
+    [right, rightOriginal],
+  ] as const)
+    expect(
+      original.observations[0]?.properties.map_file_occurrence,
+    ).toMatchObject({
+      container_sha256: result.root_artifact_sha256,
+      path: "main.js.map",
+    });
 
   if (leftOriginal.identity.strategy !== "source-map-original")
     throw new Error("Expected original identity");
