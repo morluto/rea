@@ -485,6 +485,15 @@ it("recovers oversized batches and pages through smaller selections of the paren
   });
   const rows = await harness.call(first.name, first.arguments);
   expect(rowIndices(viewOf(rows.evidence))).toEqual([0, 1, 2]);
+  expect(viewOf(rows.evidence).items).toMatchObject([
+    { status: "ok" },
+    { status: "ok" },
+    {
+      status: "unavailable",
+      reason: "no_pseudocode",
+      limitations: expect.arrayContaining([NO_BODY_REASON]),
+    },
+  ]);
   expect(Buffer.byteLength(JSON.stringify(rows.result))).toBeLessThan(budget);
 
   // Several bodies that cannot fit continue with fewer rows from the same parent.
