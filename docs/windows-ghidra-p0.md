@@ -17,8 +17,8 @@ additional permission flag or degraded mode is required.
 - Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+;
 - an operator-installed Ghidra 12.1.x distribution (verified with 12.1.4);
 - a 64-bit full JDK inside that installation's declared Java range (JDK 21 or newer, with no maximum, for current 12.1 releases);
-- an explicit native, non-managed x86 or x86-64 PE application or DLL; and
-- the 25 read-only Ghidra inventory, memory, and function-analysis operations.
+- an explicit native, non-managed x86 or x86-64 PE application or DLL, or a headerless raw-binary image with a caller-supplied architecture and entry, including Cortex-M; and
+- the 25 read-only Ghidra inventory, memory, and function-analysis operations. Raw-binary sessions stay read-only.
 
 Loaded memory reads and file offsets preserve Ghidra's observed source mappings.
 PE load-image inspection returns an explicit unsupported attestation status;
@@ -28,7 +28,8 @@ NativeAOT RTR 9.1, the read-only snapshot parser can report metadata through
 database mutation. A real Windows-host NativeAOT Ghidra run is still required
 to establish the complete host workflow.
 
-This boundary does not establish general Windows feature parity. Ghidra GUI
+This boundary does not establish general Windows feature parity. Headerless
+raw-binary images, including Cortex-M, are admitted read-only. Ghidra GUI
 state, annotations, other target architectures and formats, and Hopper-only
 operations remain unavailable through this provider. Managed PE/CLI inspection
 uses its separate execution-free provider.
@@ -110,7 +111,7 @@ and artifact SHA-256 before loading the package-owned addon. Native failure
 reasons remain distinct from a valid installation and an unsupported target.
 
 PE header classification and SHA-256 come from the same open file. The Windows
-provider admits native x86 and x86-64 PE applications and DLLs and rejects unsupported roles,
+provider admits native x86 and x86-64 PE applications and DLLs, and headerless raw-binary images including Cortex-M, and rejects unsupported roles,
 architectures, managed images, and malformed headers. The original selected
 source coordinate is preserved for native admission.
 

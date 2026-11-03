@@ -172,10 +172,13 @@ context. PSP/stack/device state remains unmodeled. See [DOS guide](https://githu
 
 For other headerless images (embedded firmware without ELF/Mach-O/PE/MZ
 headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,
-`arm`, or `arm64`), and `entry_point` (`0x` hex). File offset 0 is mapped at
-that address. Hopper and IDA refuse this interpretation; Ghidra uses
-`BinaryLoader` with a little-endian generic language. Big-endian, Thumb-only,
-and Cortex-M variants are unsupported. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/raw-binary.md).
+`arm`, `arm64`, or `cortex-m`), and `entry_point` (`0x` hex). File offset 0 is
+mapped at that address. Use `cortex-m` for a Cortex-M flash image and pass the
+vector-table base, such as `0x08000000` for STM32 internal flash; REA reads
+the reset vector there and disassembles Thumb at `reset_handler`. Hopper and
+IDA refuse this interpretation. Ghidra uses `BinaryLoader`. `cortex-m` selects
+`ARM:LE:32:Cortex`. Big-endian ARM and other Thumb-only variants remain
+unsupported. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/raw-binary.md).
 
 ### Function annotations in Ghidra
 

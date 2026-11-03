@@ -7,10 +7,10 @@ export interface GhidraRawBinaryLanguage {
 }
 
 /**
- * Map the four caller-visible CPU families to little-endian generic Ghidra
- * languages with a supported generic compiler specification. These are
- * analysis conventions, not evidence of the target's original compiler.
- * Big-endian, Thumb-only, and Cortex-M variants are out of scope.
+ * Map caller-visible CPU families to little-endian Ghidra languages with a
+ * supported generic compiler specification. These are analysis conventions,
+ * not evidence of the target's original compiler. Big-endian ARM and
+ * Thumb-only variants other than Cortex-M remain out of scope.
  */
 export const ghidraRawBinaryLanguage = (
   architecture: Exclude<BinaryArchitecture, "mips">,
@@ -24,5 +24,7 @@ export const ghidraRawBinaryLanguage = (
       return { languageId: "ARM:LE:32:v7", compilerSpecId: "default" };
     case "arm64":
       return { languageId: "AARCH64:LE:64:v8A", compilerSpecId: "default" };
+    case "cortex-m":
+      return { languageId: "ARM:LE:32:Cortex", compilerSpecId: "default" };
   }
 };

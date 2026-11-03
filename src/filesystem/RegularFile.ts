@@ -85,15 +85,43 @@ export const openRegularFile = async (
   }
 };
 
-/** Compare one regular file's identity and mutable metadata across a read. */
+const deviceIdentity = (value: number | bigint): bigint =>
+  typeof value === "bigint" ? value : BigInt(value);
+
+/**
+ * Windows path stat reports device 0 while an open handle reports the volume
+ * serial. A zero device is not a second volume.
+ */
+export const sameDeviceIdentity = (
+  expected: number | bigint,
+  observed: number | bigint,
+): boolean => {
+  const expectedDevice = deviceIdentity(expected);
+  const observedDevice = deviceIdentity(observed);
+  return (
+    expectedDevice === observedDevice ||
+    (process.platform === "win32" &&
+      (expectedDevice === 0n || observedDevice === 0n))
+  );
+};
+
+/**
+ * Compare one regular file's identity and mutable metadata across a read.
+ * Windows path stat reports device 0 while the open handle reports the volume
+ * serial. A zero device is not a second volume, so it does not by itself mean
+ * the file was replaced.
+ */
 export const sameRegularFileState = (
   expected: Stats | BigIntStats,
   observed: Stats | BigIntStats,
-): boolean =>
-  observed.isFile() &&
-  expected.dev === observed.dev &&
-  expected.ino === observed.ino &&
-  expected.size === observed.size &&
-  expected.mode === observed.mode &&
-  expected.mtimeMs === observed.mtimeMs &&
-  expected.ctimeMs === observed.ctimeMs;
+): boolean => {
+  return (
+    observed.isFile() &&
+    sameDeviceIdentity(expected.dev, observed.dev) &&
+    expected.ino === observed.ino &&
+    expected.size === observed.size &&
+    expected.mode === observed.mode &&
+    expected.mtimeMs === observed.mtimeMs &&
+    expected.ctimeMs === observed.ctimeMs
+  );
+};

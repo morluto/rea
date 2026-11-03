@@ -121,6 +121,14 @@ export const hopperLoaderArgsForTarget = (
         "REA's Hopper adapter does not admit MIPS targets. Select a verified Ghidra MIPS profile instead.",
       ),
     );
+  if (architecture === "cortex-m")
+    return err(
+      new AnalysisCapabilityUnavailableError(
+        "hopper",
+        "resolve_analysis_profile",
+        "REA's Hopper adapter does not admit Cortex-M targets. Select the Ghidra raw-binary profile instead.",
+      ),
+    );
   const flag = hopperArchitectureFlag(architecture);
   if (isMachOFormat(target.format)) {
     if (machoContainer === undefined)
@@ -163,6 +171,8 @@ const hopperArchitectureFlag = (
       return "--armv7";
     case "arm64":
       return "--aarch64";
+    case "cortex-m":
+      return "--armv7";
   }
 };
 

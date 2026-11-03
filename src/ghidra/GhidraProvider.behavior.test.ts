@@ -227,8 +227,34 @@ describe("Ghidra raw-binary profile", () => {
     expect(shifted.value.profile?.digest).not.toBe(
       resolved.value.profile.digest,
     );
+    const cortex = await ghidra.resolveAnalysisProfile({
+      ...target,
+      architecture: "cortex-m",
+      availableArchitectures: ["cortex-m"],
+    });
+    expect(cortex.ok && cortex.value).toMatchObject({
+      profile: {
+        parameters: {
+          architecture: "cortex-m",
+          language_id: "ARM:LE:32:Cortex",
+          compiler_spec_id: "default",
+          loader: "BinaryLoader",
+          entry_point: "0x8000000",
+        },
+      },
+    });
     const windows = provider({ ...installationHost(), platform: "win32" });
-    expect(windows.inspectTargetSupport(target).status).toBe("unsupported");
+    expect(windows.inspectTargetSupport(target).status).toBe("supported");
+    expect(
+      windows.inspectTargetSupport({
+        ...target,
+        architecture: "cortex-m",
+        availableArchitectures: ["cortex-m"],
+      }).status,
+    ).toBe("supported");
+    expect(
+      windows.inspectTargetSupport(executableTarget("elf", "x86_64")).status,
+    ).toBe("unsupported");
   });
 });
 

@@ -13,6 +13,7 @@ export type PeripheralBusKind =
   | "AHB"
   | "AHB1"
   | "AHB2"
+  | "AHB3"
   | "DPort"
   | "RTC"
   | "System";
@@ -40,6 +41,7 @@ export const socPeripheralDefinitionSchema = z.strictObject({
     "AHB",
     "AHB1",
     "AHB2",
+    "AHB3",
     "DPort",
     "RTC",
     "System",
@@ -413,7 +415,8 @@ const GD32F1_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   },
 ];
 
-// STMicroelectronics STM32F4xx series peripheral memory map (RM0090).
+// STM32F405/407 peripheral windows from RM0090. RT-Spark uses STM32F407ZGT6.
+// Blocks present only on other F4 lines (DMA2D, FMC-as-F429, JPEG) are omitted.
 const STM32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   // APB1
   {
@@ -445,11 +448,88 @@ const STM32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     description: "General purpose timer 5",
   },
   {
+    name: "TIM6",
+    base: 0x40001000n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Basic timer 6",
+  },
+  {
+    name: "TIM7",
+    base: 0x40001400n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Basic timer 7",
+  },
+  {
+    name: "TIM12",
+    base: 0x40001800n,
+    size: 0x400,
+    bus: "APB1",
+    description: "General purpose timer 12",
+  },
+  {
+    name: "TIM13",
+    base: 0x40001c00n,
+    size: 0x400,
+    bus: "APB1",
+    description: "General purpose timer 13",
+  },
+  {
+    name: "TIM14",
+    base: 0x40002000n,
+    size: 0x400,
+    bus: "APB1",
+    description: "General purpose timer 14",
+  },
+  {
     name: "RTC",
     base: 0x40002800n,
     size: 0x400,
     bus: "APB1",
     description: "Real-time clock",
+  },
+  {
+    name: "WWDG",
+    base: 0x40002c00n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Window watchdog",
+  },
+  {
+    name: "IWDG",
+    base: 0x40003000n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Independent watchdog",
+  },
+  {
+    name: "I2S2ext",
+    base: 0x40003400n,
+    size: 0x400,
+    bus: "APB1",
+    description: "I2S2 full-duplex extension",
+  },
+  {
+    name: "SPI2",
+    base: 0x40003800n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Serial peripheral interface 2 / I2S2",
+  },
+  {
+    name: "SPI3",
+    base: 0x40003c00n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Serial peripheral interface 3 / I2S3",
+  },
+  {
+    name: "I2S3ext",
+    base: 0x40004000n,
+    size: 0x400,
+    bus: "APB1",
+    description: "I2S3 full-duplex extension",
   },
   {
     name: "USART2",
@@ -466,6 +546,20 @@ const STM32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     description: "Universal synchronous asynchronous receiver transmitter 3",
   },
   {
+    name: "UART4",
+    base: 0x40004c00n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Universal asynchronous receiver transmitter 4",
+  },
+  {
+    name: "UART5",
+    base: 0x40005000n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Universal asynchronous receiver transmitter 5",
+  },
+  {
     name: "I2C1",
     base: 0x40005400n,
     size: 0x400,
@@ -480,11 +574,39 @@ const STM32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     description: "Inter-integrated circuit 2",
   },
   {
+    name: "I2C3",
+    base: 0x40005c00n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Inter-integrated circuit 3",
+  },
+  {
+    name: "CAN1",
+    base: 0x40006400n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Controller area network 1",
+  },
+  {
+    name: "CAN2",
+    base: 0x40006800n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Controller area network 2",
+  },
+  {
     name: "PWR",
     base: 0x40007000n,
     size: 0x400,
     bus: "APB1",
     description: "Power controller",
+  },
+  {
+    name: "DAC",
+    base: 0x40007400n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Digital-to-analog converter",
   },
   // APB2
   {
@@ -523,6 +645,13 @@ const STM32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     description: "Analog-to-digital converters 1, 2, and 3",
   },
   {
+    name: "SDIO",
+    base: 0x40012c00n,
+    size: 0x400,
+    bus: "APB2",
+    description: "Secure digital input/output interface",
+  },
+  {
     name: "SPI1",
     base: 0x40013000n,
     size: 0x400,
@@ -542,6 +671,27 @@ const STM32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     size: 0x400,
     bus: "APB2",
     description: "External interrupt/event controller",
+  },
+  {
+    name: "TIM9",
+    base: 0x40014000n,
+    size: 0x400,
+    bus: "APB2",
+    description: "General purpose timer 9",
+  },
+  {
+    name: "TIM10",
+    base: 0x40014400n,
+    size: 0x400,
+    bus: "APB2",
+    description: "General purpose timer 10",
+  },
+  {
+    name: "TIM11",
+    base: 0x40014800n,
+    size: 0x400,
+    bus: "APB2",
+    description: "General purpose timer 11",
   },
   // AHB1
   {
@@ -580,6 +730,41 @@ const STM32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     description: "General purpose I/O port E",
   },
   {
+    name: "GPIOF",
+    base: 0x40021400n,
+    size: 0x400,
+    bus: "AHB1",
+    description: "General purpose I/O port F",
+  },
+  {
+    name: "GPIOG",
+    base: 0x40021800n,
+    size: 0x400,
+    bus: "AHB1",
+    description: "General purpose I/O port G",
+  },
+  {
+    name: "GPIOH",
+    base: 0x40021c00n,
+    size: 0x400,
+    bus: "AHB1",
+    description: "General purpose I/O port H",
+  },
+  {
+    name: "GPIOI",
+    base: 0x40022000n,
+    size: 0x400,
+    bus: "AHB1",
+    description: "General purpose I/O port I",
+  },
+  {
+    name: "CRC",
+    base: 0x40023000n,
+    size: 0x400,
+    bus: "AHB1",
+    description: "CRC calculation unit",
+  },
+  {
     name: "RCC",
     base: 0x40023800n,
     size: 0x400,
@@ -606,6 +791,48 @@ const STM32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     size: 0x400,
     bus: "AHB1",
     description: "Direct memory access controller 2",
+  },
+  {
+    name: "ETH",
+    base: 0x40028000n,
+    size: 0x1400,
+    bus: "AHB1",
+    description: "Ethernet MAC, MMC, PTP, and DMA",
+  },
+  {
+    name: "USB_OTG_HS",
+    base: 0x40040000n,
+    size: 0x40000,
+    bus: "AHB1",
+    description: "USB on-the-go high-speed controller",
+  },
+  {
+    name: "USB_OTG_FS",
+    base: 0x50000000n,
+    size: 0x40000,
+    bus: "AHB2",
+    description: "USB on-the-go full-speed controller",
+  },
+  {
+    name: "DCMI",
+    base: 0x50050000n,
+    size: 0x400,
+    bus: "AHB2",
+    description: "Digital camera interface",
+  },
+  {
+    name: "RNG",
+    base: 0x50060800n,
+    size: 0x400,
+    bus: "AHB2",
+    description: "Random number generator",
+  },
+  {
+    name: "FSMC",
+    base: 0xa0000000n,
+    size: 0x1000,
+    bus: "AHB3",
+    description: "Flexible static memory controller registers",
   },
 ];
 
@@ -822,9 +1049,9 @@ const PLATFORM_PERIPHERALS: Record<
 
 /** CPU families whose memory maps can contain each catalog. */
 const PLATFORM_CPU: Record<SocPlatform, readonly HardwareArchitecture[]> = {
-  stm32f1: ["arm"],
-  stm32f4: ["arm"],
-  gd32f1: ["arm"],
+  stm32f1: ["arm", "cortex-m"],
+  stm32f4: ["arm", "cortex-m"],
+  gd32f1: ["arm", "cortex-m"],
   esp32: ["riscv"],
 };
 

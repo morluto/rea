@@ -407,6 +407,7 @@ const ARM64_GIC_REGISTERS: readonly RegisterEntry[] = [
 
 const ARCH_REGISTERS: Record<HardwareArchitecture, readonly RegisterEntry[]> = {
   arm: ARM_SCS_REGISTERS,
+  "cortex-m": ARM_SCS_REGISTERS,
   riscv: RISCV_STANDARD_REGISTERS,
   x86: X86_APIC_REGISTERS,
   arm64: ARM64_GIC_REGISTERS,

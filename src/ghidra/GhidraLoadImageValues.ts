@@ -429,7 +429,9 @@ export const attestGhidraRawBinaryLoadImage = (
         "Raw binary is a headerless interpretation explicitly selected by the caller, not format identification from file bytes.",
         "Verification covers complete original/modified source identity, mapped file bytes, the caller-supplied entry, and the bound little-endian Ghidra language. File offset 0 is mapped at the entry address.",
         "Ghidra may report additional language-defined external entries outside the mapped image. They are preserved as observations; verification requires the caller-supplied entry and does not attest other entries.",
-        "Reset vectors, memory-mapped I/O, big-endian and Thumb-only variants, and runtime boot behavior are not modeled or verified. No original executable bytes are changed.",
+        target.architecture === "cortex-m"
+          ? "cortex-m treats the image base as a little-endian vector table. The reset vector's low bit is the Thumb marker. REA names the decoded reset function reset_handler; that name is not recovered from the image. Other in-image Thumb vectors are seeded. Memory-mapped I/O and boot-time register state are not emulated. No original executable bytes are changed."
+          : "Reset vectors, memory-mapped I/O, big-endian and Thumb-only variants, and runtime boot behavior are not modeled or verified. No original executable bytes are changed.",
         "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte.",
       ],
     }),

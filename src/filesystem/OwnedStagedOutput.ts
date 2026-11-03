@@ -2,6 +2,7 @@ import { lstat, readdir, rmdir, unlink } from "node:fs/promises";
 import type { Stats } from "node:fs";
 
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
+import { sameDeviceIdentity } from "./RegularFile.js";
 
 interface Identity {
   readonly dev: number;
@@ -14,7 +15,7 @@ const identityOf = (stats: Stats): Identity => ({
 });
 
 const sameIdentity = (stats: Stats, identity: Identity): boolean =>
-  stats.dev === identity.dev && stats.ino === identity.ino;
+  sameDeviceIdentity(stats.dev, identity.dev) && stats.ino === identity.ino;
 
 /** One atomically staged file and directory retained through verified cleanup. */
 export class OwnedStagedOutput {

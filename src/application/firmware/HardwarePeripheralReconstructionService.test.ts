@@ -142,8 +142,13 @@ describe("Hardware peripheral reconstruction from offline instruction references
     expect(report.detectedPlatforms.length).toBeGreaterThanOrEqual(1);
     expect(report.detectedPlatforms[0]?.platform).toBe("stm32f1");
     expect(report.detectedPlatforms[0]?.confidence).toBe(1.0);
+    expect(report.board).toBeNull();
+    expect(report.boardMemory).toEqual([]);
     expect(
       report.peripheralBlocks.every((block) => block.socPeripheralName == null),
+    ).toBe(true);
+    expect(
+      report.peripheralBlocks.every((block) => block.boardDevices.length === 0),
     ).toBe(true);
     expect(report.limitations[0]).toContain("stm32f1, gd32f1");
   });
@@ -207,6 +212,128 @@ describe("SoC catalog selection", () => {
     ).toBe(false);
     expect(report.attributions[0]?.regionName).toBe("System RAM");
     expect(report.attributions[0]?.isMmio).toBe(false);
+  });
+});
+
+describe("RT-Spark board annotation", () => {
+  it("annotates RT-Spark controllers and corrects CCM to data RAM", () => {
+    const references: AnalyzedInstructionReference[] = [
+      { target_address: "0x40011000", write: true },
+      { target_address: "0x40003800", write: true },
+      { target_address: "0x40021400", write: true },
+      { target_address: "0x40005400", read: true },
+      { target_address: "0x10000000", write: true },
+      { target_address: "0x08000100", read: true },
+    ];
+
+    const report = reconstructHardwareFromReferences(
+      references,
+      "arm",
+      "rt_spark_init",
+      null,
+      "stm32f407-rt-spark",
+    );
+
+    expect(report.board).toBe("stm32f407-rt-spark");
+    expect(report.boardMcu).toBe("STM32F407ZGT6");
+    expect(report.platform).toBeNull();
+
+    const usart = report.peripheralBlocks.find(
+      (block) => block.socPeripheralName === "USART1",
+    );
+    expect(usart?.boardDevices.map((device) => device.id)).toEqual([
+      "usb-uart-com1",
+    ]);
+    expect(usart?.boardDrivers.map((driver) => driver.id)).toEqual([
+      "serial-usart1",
+    ]);
+    expect(usart?.boardDrivers[0]?.linkage).toBe("linked_in_image");
+
+    const spi = report.peripheralBlocks.find(
+      (block) => block.socPeripheralName === "SPI2",
+    );
+    expect(spi?.boardDevices.map((device) => device.id)).toEqual([
+      "rw007",
+      "spi-flash",
+    ]);
+    expect(
+      spi?.boardDevices.find((device) => device.id === "spi-flash")
+        ?.uncertainty,
+    ).toContain("W25Q128");
+
+    const gpiof = report.peripheralBlocks.find(
+      (block) => block.socPeripheralName === "GPIOF",
+    );
+    expect(gpiof?.boardDevices.map((device) => device.id)).toEqual([
+      "ap3216c",
+      "audio",
+      "icm20608",
+      "led-b",
+      "led-r",
+    ]);
+
+    const i2c = report.peripheralBlocks.find(
+      (block) => block.socPeripheralName === "I2C1",
+    );
+    expect(i2c?.boardDevices).toEqual([]);
+
+    const ccm = report.attributions.find(
+      (item) => item.targetAddress === "0x10000000",
+    );
+    expect(ccm).toMatchObject({
+      regionName: "STM32F407 CCM data RAM",
+      regionKind: "sram",
+      isMmio: false,
+    });
+    expect(
+      report.boardMemory.find((item) => item.id === "ccm")?.accessCount,
+    ).toBe(1);
+    expect(
+      report.boardMemory.find((item) => item.id === "internal-flash")
+        ?.accessCount,
+    ).toBe(1);
+    expect(report.boardUnboundDevices.map((device) => device.id)).toEqual([
+      "usb-device",
+      "usb-host",
+    ]);
+    expect(
+      report.boardDrivers.find((driver) => driver.id === "rw007"),
+    ).toMatchObject({ linkage: "linked_in_image", controllers: ["SPI2"] });
+    expect(
+      report.boardDrivers.find((driver) => driver.id === "esp8266")?.linkage,
+    ).toBe("not_observed");
+    const cortex = reconstructHardwareFromReferences(
+      references,
+      "cortex-m",
+      "rt_spark_init",
+      null,
+      "stm32f407-rt-spark",
+    );
+    expect(
+      cortex.peripheralBlocks.find(
+        (block) => block.socPeripheralName === "USART1",
+      )?.boardDrivers[0]?.id,
+    ).toBe("serial-usart1");
+    expect(cortex.architecture).toBe("cortex-m");
+    expect(report.limitations.join("\n")).toContain("software I2C");
+    expect(
+      hardwarePeripheralReconstructionSchema.safeParse(report).success,
+    ).toBe(true);
+  });
+
+  it("does not apply RT-Spark devices when the caller platform is a different family", () => {
+    const report = reconstructHardwareFromReferences(
+      [{ target_address: "0x40011000", write: true }],
+      "arm",
+      "mismatch",
+      "stm32f1",
+      "stm32f407-rt-spark",
+    );
+    expect(report.boardMcu).toBeNull();
+    expect(
+      report.peripheralBlocks.every((block) => block.boardDevices.length === 0),
+    ).toBe(true);
+    expect(report.limitations[0]).toContain("does not match");
   });
 });
 
@@ -335,7 +462,9 @@ describe("Hardware peripheral reconstruction through analysis operation port", (
     );
     expect(nvicBlock?.knownRegisters).toContain("NVIC_ISER0");
   });
+});
 
+describe("Hardware peripheral reconstruction input failures", () => {
   it("propagates cancellation and input validation errors", async () => {
     const mockPort: AnalysisOperationPort = {
       execute: () =>
@@ -361,6 +490,19 @@ describe("Hardware peripheral reconstruction through analysis operation port", (
     expect(invalidInput.ok).toBe(false);
     if (invalidInput.ok) return;
     expect(invalidInput.error._tag).toBe("AnalysisInputError");
+
+    const mismatchedBoard = await reconstructProcedureHardwareInteractions(
+      mockPort,
+      {
+        procedure: "test_fn",
+        architecture: "arm",
+        platform: "stm32f1",
+        board: "stm32f407-rt-spark",
+      },
+    );
+    expect(mismatchedBoard.ok).toBe(false);
+    if (mismatchedBoard.ok) return;
+    expect(mismatchedBoard.error._tag).toBe("AnalysisInputError");
   });
 });
 

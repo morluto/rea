@@ -5,7 +5,7 @@ import { fixtureRawBinaryLoadImage } from "./GhidraRawBinaryLoadImage.fixture.js
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 
 describe("raw-binary Ghidra language binding", () => {
-  it("maps the four admitted families to little-endian generic languages", () => {
+  it("maps admitted families to little-endian Ghidra languages", () => {
     expect(ghidraRawBinaryLanguage("x86")).toEqual({
       languageId: "x86:LE:32:default",
       compilerSpecId: "gcc",
@@ -20,6 +20,10 @@ describe("raw-binary Ghidra language binding", () => {
     });
     expect(ghidraRawBinaryLanguage("arm64")).toEqual({
       languageId: "AARCH64:LE:64:v8A",
+      compilerSpecId: "default",
+    });
+    expect(ghidraRawBinaryLanguage("cortex-m")).toEqual({
+      languageId: "ARM:LE:32:Cortex",
       compilerSpecId: "default",
     });
   });

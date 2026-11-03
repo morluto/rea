@@ -279,6 +279,22 @@ describe("hardware memory map address parsing and overflow boundaries", () => {
     expect(parseAddressValue(-1n).ok).toBe(false);
   });
 
+  it("classifies a Cortex-M flash vector and peripheral as the ARM map", () => {
+    const reset = classifyHardwareMemoryAddress("0x0800c6b4", "cortex-m");
+    const usart = classifyHardwareMemoryAddress("0x40011000", "cortex-m");
+    expect(reset.ok && reset.value).toMatchObject({
+      regionKind: "code",
+      isMmio: false,
+    });
+    expect(usart.ok && usart.value).toMatchObject({
+      regionKind: "peripheral_mmio",
+      isMmio: true,
+    });
+    expect(classifyHardwareMemoryAddress("0x100000000", "cortex-m").ok).toBe(
+      false,
+    );
+  });
+
   it("handles BigInt address inputs directly", () => {
     const result = classifyHardwareMemoryAddress(0x40001000n, "arm");
     expect(result.ok).toBe(true);

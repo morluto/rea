@@ -112,7 +112,7 @@ export const nativeLoadImageSchema = z.union([
     status: z.enum(["verified", "mismatch"]),
     format: z.literal("raw-binary"),
     target_sha256: digest,
-    architecture: z.enum(["x86", "x86_64", "arm", "arm64"]),
+    architecture: z.enum(["x86", "x86_64", "arm", "arm64", "cortex-m"]),
     language_id: z.string().min(1),
     compiler_spec_id: z.string().min(1),
     base_address: address,

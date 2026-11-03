@@ -47,6 +47,10 @@ export const resolveHopperMachOImage = async (
       ),
     );
   if (signal?.aborted) return err(new AnalysisCancelledError("open_binary"));
+  if (target.architecture === "cortex-m")
+    return invalid(
+      "Hopper does not admit Cortex-M images. Select the Ghidra raw-binary profile.",
+    );
   if (!isMachOFormat(target.format) || target.architecture === "mips")
     return invalid("Hopper FAT64 image preparation requires a Mach-O target");
   let file: FileHandle;

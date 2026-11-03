@@ -4,6 +4,7 @@ export const BINARY_ARCHITECTURES = [
   "x86_64",
   "arm",
   "arm64",
+  "cortex-m",
   "mips",
 ] as const;
 export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];

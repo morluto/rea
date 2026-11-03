@@ -47,6 +47,36 @@ describe("STM32 and GD32 peripheral lookup", () => {
     const usart1 = lookupSocPeripheral("0x40011000", "stm32f4");
     expect(usart1?.name).toBe("USART1");
   });
+
+  it("resolves STM32F407 controllers used by RT-Spark firmware", () => {
+    expect(lookupSocPeripheral("0x4000380c", "stm32f4")?.name).toBe("SPI2");
+    expect(lookupSocPeripheral("0x40012c00", "stm32f4")?.name).toBe("SDIO");
+    expect(lookupSocPeripheral("0x40021414", "stm32f4")).toMatchObject({
+      name: "GPIOF",
+      bus: "AHB1",
+    });
+    expect(lookupSocPeripheral("0x40002000", "stm32f4")?.name).toBe("TIM14");
+    expect(lookupSocPeripheral("0x50000000", "stm32f4")).toMatchObject({
+      name: "USB_OTG_FS",
+      bus: "AHB2",
+    });
+    expect(lookupSocPeripheral("0x40040004", "stm32f4")?.name).toBe(
+      "USB_OTG_HS",
+    );
+    expect(lookupSocPeripheral("0xa0000000", "stm32f4")).toMatchObject({
+      name: "FSMC",
+      bus: "AHB3",
+    });
+    expect(lookupSocPeripheral("0x40028010", "stm32f4")?.name).toBe("ETH");
+
+    const candidates = detectSocPlatform([
+      "0x40023800",
+      "0x40021400",
+      "0x50000000",
+    ]);
+    expect(candidates[0]?.platform).toBe("stm32f4");
+    expect(candidates[0]?.confidence).toBe(1);
+  });
 });
 
 describe("ESP32 peripheral lookup and automated platform detection", () => {

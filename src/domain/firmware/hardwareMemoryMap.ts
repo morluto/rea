@@ -5,6 +5,7 @@ import { err, ok, type Result } from "../result.js";
 export const HARDWARE_ARCHITECTURES = [
   "arm",
   "arm64",
+  "cortex-m",
   "riscv",
   "mips",
   "x86",
@@ -321,6 +322,7 @@ const getArchitectureRegions = (
 ): readonly HardwareMemoryRegionDefinition[] => {
   switch (arch) {
     case "arm":
+    case "cortex-m":
       return ARM_REGIONS;
     case "riscv":
       return RISCV_REGIONS;

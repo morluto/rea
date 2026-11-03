@@ -303,11 +303,19 @@ const inspectWindowsP0TargetSupport = (
   target: BinaryTarget,
   diagnostics: Readonly<Record<string, JsonValue>>,
 ): ProviderTargetSupport => {
+  if (target.format === "raw-binary")
+    return {
+      status: "supported",
+      code: null,
+      reason: null,
+      diagnostics,
+    };
   if (target.format !== "pe")
     return {
       status: "unsupported",
       code: "target_format_unsupported",
-      reason: "Windows Ghidra P0 accepts PE targets only.",
+      reason:
+        "Windows Ghidra P0 accepts PE targets and headerless raw-binary images.",
       diagnostics,
     };
   if (target.architecture !== "x86" && target.architecture !== "x86_64")

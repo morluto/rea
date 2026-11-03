@@ -16,6 +16,22 @@ import {
   hardwareMemoryRegionKindSchema,
 } from "../../domain/firmware/hardwareMemoryMap.js";
 import {
+  boardDriversForControllers,
+  boardDriverSchema,
+  type BoardDriver,
+} from "../../domain/firmware/boardDriverLayer.js";
+import {
+  boardDeviceAttachmentSchema,
+  boardDevicesForPeripheral,
+  boardIdSchema,
+  lookupBoardMemoryWindow,
+  lookupBoardProfile,
+  unboundBoardDevices,
+  type BoardDeviceAttachment,
+  type BoardId,
+  type BoardPeripheralProfile,
+} from "../../domain/firmware/boardPeripheralProfile.js";
+import {
   detectSocPlatform,
   lookupSocPeripheral,
   type SocPlatform,
@@ -45,6 +61,11 @@ export const reconstructProcedureHardwareInputSchema = z.strictObject({
     .describe(
       "Optional explicit target SoC family (stm32f1, stm32f4, gd32f1, esp32) for device-specific register mapping",
     ),
+  board: boardIdSchema
+    .optional()
+    .describe(
+      "Optional known board. stm32f407-rt-spark selects the STM32F407 map and annotates on-board devices. It must agree with platform when both are set.",
+    ),
 });
 export type ReconstructProcedureHardwareInput = z.infer<
   typeof reconstructProcedureHardwareInputSchema
@@ -54,6 +75,19 @@ export type ReconstructProcedureHardwareInput = z.infer<
 export interface ReconstructedPeripheralBlock extends HardwarePeripheralBlockSummary {
   readonly socPeripheralName?: string | null;
   readonly socPeripheralBus?: string | null;
+  readonly boardDevices: readonly BoardDeviceAttachment[];
+  readonly boardDrivers: readonly BoardDriver[];
+}
+
+/** One recorded board memory window and how many examined references fell inside it. */
+export interface BoardMemoryAccess {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: HardwarePeripheralBlockSummary["regionKind"];
+  readonly baseAddress: string;
+  readonly sizeBytes: number;
+  readonly accessCount: number;
+  readonly evidence: string;
 }
 
 /** Output result detailing reconstructed hardware peripheral interactions for a procedure. */
@@ -61,6 +95,11 @@ export interface HardwarePeripheralReconstruction {
   readonly procedure: string;
   readonly architecture: HardwareArchitecture;
   readonly platform: SocPlatform | null;
+  readonly board: BoardId | null;
+  readonly boardMcu: string | null;
+  readonly boardMemory: readonly BoardMemoryAccess[];
+  readonly boardUnboundDevices: readonly BoardDeviceAttachment[];
+  readonly boardDrivers: readonly BoardDriver[];
   readonly totalReferencesExamined: number;
   readonly mmioAccessCount: number;
   readonly nonMmioAccessCount: number;
@@ -74,6 +113,21 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
   procedure: z.string(),
   architecture: hardwareArchitectureSchema,
   platform: socPlatformSchema.nullable().optional(),
+  board: boardIdSchema.nullable(),
+  boardMcu: z.string().nullable(),
+  boardMemory: z.array(
+    z.strictObject({
+      id: z.string(),
+      name: z.string(),
+      kind: hardwareMemoryRegionKindSchema,
+      baseAddress: z.string(),
+      sizeBytes: z.number().int().positive(),
+      accessCount: z.number().int().min(0),
+      evidence: z.string(),
+    }),
+  ),
+  boardUnboundDevices: z.array(boardDeviceAttachmentSchema),
+  boardDrivers: z.array(boardDriverSchema),
   totalReferencesExamined: z.number().int().min(0),
   mmioAccessCount: z.number().int().min(0),
   nonMmioAccessCount: z.number().int().min(0),
@@ -90,6 +144,8 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
       knownRegisters: z.array(z.string()),
       socPeripheralName: z.string().nullable().optional(),
       socPeripheralBus: z.string().nullable().optional(),
+      boardDevices: z.array(boardDeviceAttachmentSchema),
+      boardDrivers: z.array(boardDriverSchema),
     }),
   ),
   attributions: z.array(
@@ -151,42 +207,117 @@ const unresolvedSocPlatformLimitation = (
   return `SoC platform is unresolved because ${names} share the highest peripheral match count`;
 };
 
+const applyBoardMemoryWindow = (
+  attribution: HardwareAccessAttribution,
+  profile: BoardPeripheralProfile,
+): HardwareAccessAttribution => {
+  const matched = lookupBoardMemoryWindow(profile, attribution.addressValue);
+  if (matched === null) return attribution;
+  return {
+    ...attribution,
+    regionKind: matched.kind,
+    regionName: matched.name,
+    isMmio: false,
+  };
+};
+
+const devicesForBlock = (
+  profile: BoardPeripheralProfile,
+  peripheralNames: ReadonlySet<string>,
+): BoardDeviceAttachment[] => {
+  const attached = Array.from(peripheralNames).flatMap((name) =>
+    boardDevicesForPeripheral(profile, name),
+  );
+  return attached.sort((left, right) => {
+    if (left.id < right.id) return -1;
+    if (left.id > right.id) return 1;
+    return 0;
+  });
+};
+
 /**
  * Reconstruct hardware peripheral interactions from a set of analyzed instruction references.
  * Pure deterministic domain workflow for offline and provider-decoupled analysis.
+ * A known board refines memory windows and annotates controllers with that board's devices.
  */
 export const reconstructHardwareFromReferences = (
   references: readonly AnalyzedInstructionReference[],
   architecture: HardwareArchitecture,
   procedure = "detached",
   platform: SocPlatform | null = null,
+  board: BoardId | null = null,
 ): HardwarePeripheralReconstruction => {
-  const attributions: HardwareAccessAttribution[] = [];
   const limitations: string[] = [];
+  const boardProfile = board === null ? null : lookupBoardProfile(board);
+  const boardApplies =
+    boardProfile !== null &&
+    (platform === null || platform === boardProfile.soc);
+
+  if (
+    boardProfile !== null &&
+    platform !== null &&
+    platform !== boardProfile.soc
+  ) {
+    limitations.push(
+      `Board ${boardProfile.id} targets ${boardProfile.soc}; platform ${platform} does not match, so board devices were not applied.`,
+    );
+  }
 
   const candidateAddresses = references.map((r) => r.target_address);
   const detectedPlatforms =
     platform === null
       ? detectSocPlatform(candidateAddresses, architecture)
       : [];
-  const activePlatform =
-    platform ?? chooseDetectedSocPlatform(detectedPlatforms);
   const tie = unresolvedSocPlatformLimitation(detectedPlatforms);
   if (tie !== null) limitations.push(tie);
 
+  const boardDetection =
+    boardProfile === null
+      ? undefined
+      : detectedPlatforms.find(
+          (candidate) => candidate.platform === boardProfile.soc,
+        );
+  const leadingDetection = detectedPlatforms[0];
+  if (
+    boardApplies &&
+    boardProfile !== null &&
+    leadingDetection !== undefined &&
+    leadingDetection.platform !== boardProfile.soc &&
+    leadingDetection.matchedCount > (boardDetection?.matchedCount ?? 0)
+  ) {
+    limitations.push(
+      `Observed addresses prefer ${leadingDetection.platform} (${leadingDetection.matchedCount} of ${leadingDetection.totalAddresses}). Board ${boardProfile.id} still uses ${boardProfile.soc}.`,
+    );
+  }
+
+  const activePlatform =
+    platform ??
+    (boardApplies && boardProfile !== null
+      ? boardProfile.soc
+      : chooseDetectedSocPlatform(detectedPlatforms));
+
+  const attributions: HardwareAccessAttribution[] = [];
   for (const ref of references) {
     const attributed = attributeHardwareAccess(
       ref,
       architecture,
       activePlatform,
     );
-    if (attributed.ok) {
-      attributions.push(attributed.value);
-    } else {
+    if (!attributed.ok) {
       limitations.push(
         `Failed to attribute reference to ${ref.target_address}: ${attributed.error}`,
       );
+      continue;
     }
+    attributions.push(
+      boardApplies && boardProfile !== null
+        ? applyBoardMemoryWindow(attributed.value, boardProfile)
+        : attributed.value,
+    );
+  }
+
+  if (boardApplies && boardProfile !== null) {
+    limitations.push(...boardProfile.limitations);
   }
 
   const summary = summarizeHardwarePeripheralInteractions(
@@ -221,13 +352,49 @@ export const reconstructHardwareFromReferences = (
             ? Array.from(matchedNames).sort().join(", ")
             : null,
         socPeripheralBus: primaryBus,
+        boardDevices:
+          boardApplies && boardProfile !== null
+            ? devicesForBlock(boardProfile, matchedNames)
+            : [],
+        boardDrivers:
+          boardApplies && boardProfile !== null
+            ? boardDriversForControllers(boardProfile.drivers, matchedNames)
+            : [],
       };
     });
+
+  const boardMemory: BoardMemoryAccess[] =
+    boardApplies && boardProfile !== null
+      ? boardProfile.memory.map((item) => ({
+          id: item.id,
+          name: item.name,
+          kind: item.kind,
+          baseAddress: item.baseAddress,
+          sizeBytes: item.sizeBytes,
+          accessCount: attributions.filter(
+            (itemAttribution) =>
+              lookupBoardMemoryWindow(
+                boardProfile,
+                itemAttribution.addressValue,
+              )?.id === item.id,
+          ).length,
+          evidence: item.evidence,
+        }))
+      : [];
 
   return {
     procedure,
     architecture,
     platform,
+    board: boardProfile?.id ?? null,
+    boardMcu: boardApplies && boardProfile !== null ? boardProfile.mcu : null,
+    boardMemory,
+    boardUnboundDevices:
+      boardApplies && boardProfile !== null
+        ? [...unboundBoardDevices(boardProfile)]
+        : [],
+    boardDrivers:
+      boardApplies && boardProfile !== null ? [...boardProfile.drivers] : [],
     totalReferencesExamined: summary.totalReferencesExamined,
     mmioAccessCount: summary.mmioAccessCount,
     nonMmioAccessCount: summary.nonMmioAccessCount,
@@ -263,7 +430,25 @@ export const reconstructProcedureHardwareInteractions = async (
     );
   }
 
-  const { procedure, architecture, platform } = parsed.data;
+  const { procedure, architecture, platform, board } = parsed.data;
+  if (board !== undefined && platform !== undefined) {
+    const selectedBoard = lookupBoardProfile(board);
+    if (selectedBoard !== null && selectedBoard.soc !== platform) {
+      return err(
+        new AnalysisInputError(
+          "reconstruct_procedure_hardware_interactions",
+          undefined,
+          [
+            {
+              path: ["board"],
+              reason: "invalid_value",
+              message: `Board ${board} targets ${selectedBoard.soc}, which does not match platform ${platform}.`,
+            },
+          ],
+        ),
+      );
+    }
+  }
 
   const execution = await analysis.execute(
     "procedure_references",
@@ -319,6 +504,7 @@ export const reconstructProcedureHardwareInteractions = async (
     architecture,
     procedure,
     platform ?? null,
+    board ?? null,
   );
 
   return ok({

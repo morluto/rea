@@ -740,7 +740,7 @@ and `set_addresses_names` name a function entry or any other mapped address
 session metadata edits leave executable bytes unchanged and are discarded on close. GUI controls
 require Hopper; Windows P0 remains read-only.
 
-Windows P0 admits native x86 and x86-64 PE applications and DLLs on fixed local NTFS volumes.
+Windows P0 admits native x86 and x86-64 PE applications and DLLs, and headerless raw-binary images including Cortex-M, on fixed local NTFS volumes. Raw-binary sessions stay read-only.
 The npm package bundles native Job Object ownership, protected private runtime
 DACLs, and handle-based path admission; no separate addon installation is needed.
 See the [Windows Ghidra P0 guide](windows-ghidra-p0.md) for verified scope and

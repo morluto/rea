@@ -55,6 +55,11 @@ describe("ARM Cortex-M architectural register lookup", () => {
       );
     },
   );
+
+  it("resolves the same SCS register for a Cortex-M target", () => {
+    const reg = lookupHardwareRegister("0xe000ed08", "cortex-m");
+    expect(reg).toMatchObject({ mnemonic: "VTOR", architecture: "cortex-m" });
+  });
 });
 
 describe("RISC-V and x86 standard architectural register lookup", () => {
