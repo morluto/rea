@@ -839,6 +839,36 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
 );
 
 cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
+  "refuses a one-byte file instead of reporting a complete empty schema",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-sqlite-one-byte-");
+    const selected = join(root, "truncated.db");
+    await writeFile(selected, "S");
+    const expectedError = {
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: `Selected SQLite database is invalid (file is not a database): ${selected}`,
+          },
+        ],
+      },
+    };
+    const refused = await runFileCli(cli, {
+      arguments: ["inspect-sqlite-database", selected, "--json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject(expectedError);
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("inspect_sqlite_database", { path: selected });
+    expect(parseMcpToolError(response).error).toMatchObject(expectedError);
+  },
+);
+
+cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   "returns actionable public errors for corrupt input, unknown or ambiguous tables and invalid record choices",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-sqlite-errors-public-");
