@@ -409,6 +409,15 @@ const decodeCoreFile = (
   if (BigInt(descriptor.length) < neededBytes) return null;
   const tableBytes = Number(neededBytes);
 
+  const rowBytes = count * (wide ? 54 : 30);
+  if (rowBytes > text.limit - text.used) {
+    throw new ArtifactReaderFailure(
+      "limit",
+      `ELF note text exceeds the ${String(text.limit)}-byte budget.`,
+      { boundary: "memory" },
+    );
+  }
+
   const scanKey = `file:${String(descriptor.byteOffset)}:${String(descriptor.length)}`;
   const cachedScan = text.scans.get(scanKey);
   if (cachedScan === -1) return null;
@@ -416,7 +425,6 @@ const decodeCoreFile = (
     chargeText(text, descriptor.length - tableBytes, "scanned");
   }
 
-  const pathSlices: Buffer[] = [];
   let strPos = tableBytes;
   let totalPathBytes = 0;
   for (let i = 0; i < count; i++) {
@@ -429,14 +437,11 @@ const decodeCoreFile = (
       text.scans.set(scanKey, -1);
       return null;
     }
-    const pathBuf = descriptor.subarray(strPos, nullIdx);
-    pathSlices.push(pathBuf);
-    totalPathBytes += pathBuf.length;
+    totalPathBytes += nullIdx - strPos;
     strPos = nullIdx + 1;
   }
   text.scans.set(scanKey, count);
 
-  const rowBytes = count * (wide ? 54 : 30);
   const pathBytes = totalPathBytes * 3;
   chargeText(text, rowBytes + pathBytes);
 
@@ -446,21 +451,24 @@ const decodeCoreFile = (
     file_offset_pages: string;
     path: string;
     path_hex: string;
-  }[] = [];
+  }[] = new Array(count);
 
+  strPos = tableBytes;
   for (let i = 0; i < count; i++) {
     const entryOff = headerSize + i * entrySize;
     const start = readWord(entryOff);
     const end = readWord(entryOff + wordSize);
     const offsetPages = readWord(entryOff + wordSize * 2);
-    const pathBuf = pathSlices[i]!;
-    mappings.push({
+    const nullIdx = descriptor.indexOf(0, strPos);
+    const pathBuf = descriptor.subarray(strPos, nullIdx);
+    strPos = nullIdx + 1;
+    mappings[i] = {
       start_address: hexWord(start),
       end_address: hexWord(end),
       file_offset_pages: hexWord(offsetPages),
       path: pathBuf.toString("latin1"),
       path_hex: pathBuf.toString("hex"),
-    });
+    };
   }
 
   return {
@@ -511,6 +519,10 @@ const decodeCoreAuxv = (
     return null;
   const totalPairs = descriptor.length / entrySize;
 
+  const scanKey = `auxv:${String(descriptor.byteOffset)}:${String(descriptor.length)}`;
+  let nullIndex = text.scans.get(scanKey);
+  if (nullIndex === -1) return null;
+
   const readWord = (off: number): bigint => {
     if (wide) {
       return little
@@ -522,34 +534,50 @@ const decodeCoreAuxv = (
     );
   };
 
-  const rawPairs: { aType: number; aVal: bigint }[] = [];
-  let terminated = false;
-  for (let i = 0; i < totalPairs; i++) {
-    const off = i * entrySize;
-    const aTypeBig = readWord(off);
-    if (aTypeBig > 0xffffffffn) return null;
-    const aType = Number(aTypeBig);
-    if (aType === 0) {
-      terminated = true;
-      for (let j = off + entrySize; j < descriptor.length; j++) {
-        if (descriptor[j] !== 0) return null;
+  if (nullIndex === undefined) {
+    chargeText(text, descriptor.length, "scanned");
+    let found = false;
+    for (let i = 0; i < totalPairs; i++) {
+      const off = i * entrySize;
+      const aTypeBig = readWord(off);
+      if (aTypeBig > 0xffffffffn) {
+        text.scans.set(scanKey, -1);
+        return null;
       }
-      break;
+      if (aTypeBig === 0n) {
+        found = true;
+        nullIndex = i;
+        for (let j = off + entrySize; j < descriptor.length; j++) {
+          if (descriptor[j] !== 0) {
+            text.scans.set(scanKey, -1);
+            return null;
+          }
+        }
+        break;
+      }
     }
-    const aVal = readWord(off + wordSize);
-    rawPairs.push({ aType, aVal });
+    if (!found || nullIndex === undefined) {
+      text.scans.set(scanKey, -1);
+      return null;
+    }
+    text.scans.set(scanKey, nullIndex);
   }
 
-  if (!terminated) return null;
-
-  const rowBytes = rawPairs.length * (wide ? 38 : 30);
+  const rowBytes = nullIndex * (wide ? 38 : 30);
   chargeText(text, rowBytes);
 
-  const auxv = rawPairs.map(({ aType, aVal }) => ({
-    type: aType,
-    type_name: AUXV_TYPE_NAMES[aType] ?? null,
-    value: hexWord(aVal),
-  }));
+  const auxv: { type: number; type_name: string | null; value: string }[] =
+    new Array(nullIndex);
+  for (let i = 0; i < nullIndex; i++) {
+    const off = i * entrySize;
+    const aType = Number(readWord(off));
+    const aVal = readWord(off + wordSize);
+    auxv[i] = {
+      type: aType,
+      type_name: AUXV_TYPE_NAMES[aType] ?? null,
+      value: hexWord(aVal),
+    };
+  }
 
   return {
     prpsinfo: null,

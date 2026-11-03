@@ -1028,20 +1028,26 @@ it("preserves negative process IDs and signal numbers without rewriting to zero"
 });
 
 it("rejects 64-bit auxv tags and out-of-range page sizes with core: null without schema error", () => {
-  const wideTagAuxv = elfNote(
-    "CORE",
-    6,
-    Buffer.from(
-      "00000000000000010000000000001000" + "00000000000000000000000000000000",
-      "hex",
-    ),
+  const validAuxv = coreAuxvNote([[6, 4096n]], 64, true);
+  const wideTagAuxv = Buffer.from(validAuxv);
+  wideTagAuxv.writeBigUInt64LE(0x100000000n, 20);
+
+  const validFile = coreFileNote(
+    [
+      {
+        start: 0x400000n,
+        end: 0x401000n,
+        file_ofs: 0n,
+        path: "/bin/app",
+      },
+    ],
+    4096,
+    64,
+    true,
   );
-  // Set type to 0x100000000n in LE
-  wideTagAuxv.writeBigUInt64LE(0x100000000n, 12 + 8); // header (12) + name padded (8)
-  const widePageSizeFile = elfNote("CORE", 0x46494c45, Buffer.alloc(32));
-  // header (12) + name padded (8) -> desc starts at 20
-  widePageSizeFile.writeBigUInt64LE(1n, 20); // count = 1
-  widePageSizeFile.writeBigUInt64LE(0x100000000n, 28); // page_size = 0x100000000n
+  const widePageSizeFile = Buffer.from(validFile);
+  widePageSizeFile.writeBigUInt64LE(0x100000000n, 28);
+
   const bytes = elfNoteFixture({
     bits: 64,
     ownership: "program",
