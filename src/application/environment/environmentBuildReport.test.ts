@@ -225,6 +225,74 @@ describe("scanCredentialNames body formats", () => {
     });
   });
 
+  it("charges every body and name/value list to one budget before reading it", () => {
+    const named = (
+      ordinal: number,
+      request: Record<string, unknown>,
+    ): WebNetworkCaptureRecord => {
+      const scanned = record(ordinal, undefined, undefined);
+      Object.assign(
+        (scanned.reported as { request: Record<string, unknown> }).request,
+        request,
+      );
+      return scanned;
+    };
+    // Each body bounds to 300003 values: the first fits, the second would pass the budget.
+    const body = `[${"1,".repeat(300_000)}{"token":"t"}]`;
+    const post = { mimeType: "application/json", text: body };
+    expect(
+      scanCredentialNames([
+        named(3, { postData: post }),
+        named(4, { postData: post }),
+      ]),
+    ).toEqual({
+      count: 1,
+      pointers: ["record 3 request /300000/token"],
+      skipped: { count: 1, pointers: ["record 4 request"] },
+    });
+    // A list is charged by its length before it is read; one past the budget is skipped unread and charges nothing.
+    const list = (name: string, length: number) => {
+      const entry = { name, value: "v" };
+      return Array.from({ length }, () => entry);
+    };
+    const one = named(6, { headers: list("X-Demo-Token", 1) });
+    expect(
+      scanCredentialNames([
+        named(5, {
+          headers: list("X-Demo-Token", 524_289),
+          queryString: list("token", 524_289),
+          postData: {
+            mimeType: "multipart/form-data",
+            params: list("api_key", 524_289),
+          },
+        }),
+        one,
+      ]),
+    ).toEqual({
+      count: 1,
+      pointers: ["record 6 request header X-Demo-Token"],
+      skipped: {
+        count: 3,
+        pointers: [
+          "record 5 request headers",
+          "record 5 request query",
+          "record 5 request",
+        ],
+      },
+    });
+    // Once the budget is spent, one more header is skipped rather than read.
+    expect(
+      scanCredentialNames([
+        named(7, { headers: list("Accept", 524_288) }),
+        one,
+      ]),
+    ).toEqual({
+      count: 0,
+      pointers: [],
+      skipped: { count: 1, pointers: ["record 6 request headers"] },
+    });
+  });
+
   it("finds nothing in plain text that is not a form", () => {
     for (const mimeType of ["text/plain", ""])
       for (const text of ["token=abc to sign in", "Use token=abc", ""])

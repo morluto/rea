@@ -318,7 +318,7 @@ const listedPointers = (tally: ScanTally): string => {
 /**
  * The credential-name scan environment-build runs over selected HAR records,
  * as limitations: counts and pointers to names that hold a retained value,
- * never the values, and the bodies too large to scan.
+ * never the values, and what the scan did not read.
  */
 const credentialNameLimitations = (
   scan: ReturnType<typeof scanCredentialNames>,
@@ -330,7 +330,7 @@ const credentialNameLimitations = (
     : []),
   ...(scan.skipped.count > 0
     ? [
-        `${String(scan.skipped.count)} recorded bodies exceed the credential-name scan's limits (4 MiB of text, or 524288 JSON values or form fields) and were not scanned (${listedPointers(scan.skipped)}).`,
+        `${String(scan.skipped.count)} recorded bodies, header lists or query strings were not scanned: each is cut, over 4 MiB of text, or past the 524288 values the credential-name scan reads in all (${listedPointers(scan.skipped)}).`,
       ]
     : []),
 ];

@@ -202,9 +202,11 @@ scanned by event (`event 4 response /token` names
 `normalized_result.events.items[4]`): every retained request and response
 content event, including a response whose request began before the browser was
 attached and a transaction no record represents, and each transaction URL's
-query once. Bodies larger than 4 MiB of UTF-8 text, or holding more than
-524288 JSON values or form fields (bounded from the text before it is parsed),
-are not scanned; `credential-scan-incomplete` counts them and lists up to 20 record or
+query once. The scan reads at most 524288 values in all: a body's values are
+bounded from its text before it is parsed, and a header list or query string
+is charged by its length before it is read, so a body larger than 4 MiB of
+UTF-8 text, or any body, header list or query string that would take the scan
+past its budget, is not scanned; `credential-scan-incomplete` counts them and lists up to 20 record or
 event pointers, including base64 bodies whose decoded scan was cut. An empty name
 warning does not establish that these bodies were checked. A browser scenario's
 saved values (`save` and `save_response`) named like credentials but not marked

@@ -752,6 +752,47 @@ it("reports a body whose values would expand past the credential-name scan's bou
   expect(skipped[0]).toContain("record 0 response");
 });
 
+it("shares the credential-name scan's value budget across the selected records", async () => {
+  const expansive = (path: string) => ({
+    request: { method: "GET", url: `https://example.test/${path}` },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: `[${"1,".repeat(300_000)}{"password":"x"}]`,
+      },
+    },
+  });
+  const base = credentialNamedReport();
+  const first = { ...base.records[0]!, reported: expansive("first") };
+  const report: WebNetworkCapture = {
+    ...base,
+    total_records: 2,
+    records: [
+      first,
+      {
+        ...first,
+        ordinal: 1,
+        location: { kind: "json-pointer", pointer: "/log/entries/1" },
+        reported: expansive("second"),
+      },
+    ],
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  const [found] = credentialNameLimitation(result.value.limitations);
+  expect(found).toMatch(/^1 /);
+  expect(found).toContain("record 0 response /300000/password");
+  const skipped = result.value.limitations.filter((text) =>
+    text.includes("were not scanned"),
+  );
+  expect(skipped).toHaveLength(1);
+  expect(skipped[0]).toMatch(/^1 /);
+  expect(skipped[0]).toContain("record 1 response");
+});
+
 it("reports bodies the credential-name scan could not read", async () => {
   const report = credentialNamedReport();
   report.records[0]!.reported = {

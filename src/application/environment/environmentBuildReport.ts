@@ -80,8 +80,8 @@ export const credentialNamed = (name: string): boolean => {
 
 /** Bodies larger than this are not scanned. */
 const SCAN_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
-/** Values a body may hold before it is not scanned, bounded before the parse allocates them. */
-const SCAN_BODY_VALUE_LIMIT = 524_288;
+/** Values one scan reads in all, over every body and name/value list; each is charged before it is parsed or read. */
+const SCAN_VALUE_BUDGET = 524_288;
 /** Pointers the report lists; the count covers every match. */
 const REPORTED_POINTERS = 20;
 
@@ -99,10 +99,9 @@ const member = (value: unknown, name: string): unknown =>
     ? Reflect.get(value, name)
     : undefined;
 
-/** A recorded body: a JSON value to walk, form fields in order with every occurrence kept, as headers and query strings are, or text too large to scan. */
+/** A recorded body: text the scan parses as JSON or as form fields (in order, every occurrence kept, as headers and query strings are) once it fits the budget, or text too large or cut to scan. */
 type ScannedBody =
-  | { readonly kind: "json"; readonly value: unknown }
-  | { readonly kind: "form"; readonly fields: readonly [string, string][] }
+  | { readonly kind: "json" | "form"; readonly text: string }
   | { readonly kind: "skipped" };
 
 const FORM_MEDIA_TYPE = "application/x-www-form-urlencoded";
@@ -122,28 +121,30 @@ const bodyFormat = (
 };
 
 /**
- * Whether the text can hold more values than the scan reads. Each `[`, `{`
- * and `,` starts at most one JSON value and each `&` at most one form field,
- * so counting them bounds the parse before it allocates; one inside a string
- * only lowers the bound.
+ * An upper bound on the values the text holds, counted no further than one
+ * past `limit`. Each `[`, `{` and `,` starts at most one JSON value and each
+ * `&` at most one form field, so the count bounds the parse before it
+ * allocates; one inside a string only loosens the bound.
  */
-const exceedsValueLimit = (text: string, format: "json" | "form"): boolean => {
+const valueBound = (
+  text: string,
+  format: "json" | "form",
+  limit: number,
+): number => {
   let values = 1;
-  for (let index = 0; index < text.length; index++) {
+  for (let index = 0; index < text.length && values <= limit; index++) {
     const code = text.charCodeAt(index);
     const starts =
       format === "json"
         ? code === 0x5b || code === 0x7b || code === 0x2c
         : code === 0x26;
-    if (!starts) continue;
-    values++;
-    if (values > SCAN_BODY_VALUE_LIMIT) return true;
+    if (starts) values++;
   }
-  return false;
+  return values;
 };
 
-/** A recorded body as JSON or form fields, skipped when it is cut or over a limit, or undefined when it is neither. */
-const parsedBody = (
+/** A recorded body the scan may parse, skipped when it is cut or over the text limit, or undefined when it is neither JSON nor a form. */
+const scannableBody = (
   text: unknown,
   mediaType: unknown,
   cut = false,
@@ -151,16 +152,8 @@ const parsedBody = (
   if (typeof text !== "string") return undefined;
   if (cut || Buffer.byteLength(text, "utf8") > SCAN_BODY_LIMIT_BYTES)
     return { kind: "skipped" };
-  const format = bodyFormat(text, mediaType);
-  if (format === undefined) return undefined;
-  if (exceedsValueLimit(text, format)) return { kind: "skipped" };
-  if (format === "form")
-    return { kind: "form", fields: [...new URLSearchParams(text)] };
-  try {
-    return { kind: "json", value: JSON.parse(text) };
-  } catch {
-    return undefined;
-  }
+  const kind = bodyFormat(text, mediaType);
+  return kind === undefined ? undefined : { kind, text };
 };
 
 /** Decoded body text as the scan reads it; binary bytes hold no JSON or form text. */
@@ -170,18 +163,7 @@ const decodedBody = (
 ): ScannedBody | undefined =>
   body.bodyEncoding === "base64"
     ? undefined
-    : parsedBody(body.bodyText, mediaType, body.bodyCut === true);
-
-/** Name/value pairs such as HAR headers and query strings. */
-const namedValues = (value: unknown): (readonly [string, unknown])[] =>
-  Array.isArray(value)
-    ? value.flatMap((entry: unknown) => {
-        const name = member(entry, "name");
-        return typeof name === "string"
-          ? [[name, member(entry, "value")] as const]
-          : [];
-      })
-    : [];
+    : scannableBody(body.bodyText, mediaType, body.bodyCut === true);
 
 /** A count of matches and the first of their pointers. */
 interface ScanTally {
@@ -200,14 +182,49 @@ const tallied = (tally: ScanTally, pointer: string): void => {
 
 /**
  * The tallies both capture readers fill: a named value counts when its name
- * looks like a credential and it holds a value. The body walk keeps its own
- * stack, so nesting depth cannot overflow it.
+ * looks like a credential and it holds a value. One value budget covers the
+ * whole scan: every body and name/value list is charged to it before it is
+ * parsed or read, so the scan's work stays bounded however many records are
+ * selected, and what does not fit is tallied as skipped. The body walk keeps
+ * its own stack, so nesting depth cannot overflow it.
  */
 const credentialTally = () => {
   const matches: ScanTally = { count: 0, pointers: [] };
   const skipped: ScanTally = { count: 0, pointers: [] };
+  let remaining = SCAN_VALUE_BUDGET;
+  /** Whether `values` more fit the budget, charging them; otherwise the label is tallied as skipped. */
+  const charge = (values: number, label: string): boolean => {
+    if (values > remaining) {
+      tallied(skipped, label);
+      return false;
+    }
+    remaining -= values;
+    return true;
+  };
   const field = (pointer: string, name: string, value: unknown): void => {
     if (credentialNamed(name) && holdsValue(value)) tallied(matches, pointer);
+  };
+  /** Name/value entries such as HAR headers, query strings and form params, read in place once their count fits the budget. */
+  const entries = (
+    items: unknown,
+    label: string,
+    each: (name: string, value: unknown) => void,
+  ): void => {
+    if (!Array.isArray(items) || !charge(items.length, label)) return;
+    for (const entry of items as unknown[]) {
+      const name = member(entry, "name");
+      if (typeof name === "string") each(name, member(entry, "value"));
+    }
+  };
+  /** Form-encoded text such as a transaction URL's query, read field by field once its bound fits the budget. */
+  const query = (
+    text: string,
+    label: string,
+    each: (name: string, value: string) => void,
+  ): void => {
+    if (!charge(valueBound(text, "form", remaining), label)) return;
+    for (const [name, value] of iterateUrlQueryParameters(text))
+      each(name, value);
   };
   const walk = (root: unknown, label: string): void => {
     const stack: [unknown, string][] = [[root, ""]];
@@ -229,14 +246,28 @@ const credentialTally = () => {
     }
   };
   const body = (scanned: ScannedBody | undefined, label: string): void => {
-    if (scanned?.kind === "skipped") tallied(skipped, label);
-    else if (scanned?.kind === "json") walk(scanned.value, label);
-    else if (scanned?.kind === "form")
-      for (const [name, value] of scanned.fields)
+    if (scanned === undefined) return;
+    if (scanned.kind === "skipped") {
+      tallied(skipped, label);
+      return;
+    }
+    if (!charge(valueBound(scanned.text, scanned.kind, remaining), label))
+      return;
+    if (scanned.kind === "form") {
+      for (const [name, value] of new URLSearchParams(scanned.text))
         field(`${label} /${pointerToken(name)}`, name, value);
+      return;
+    }
+    try {
+      walk(JSON.parse(scanned.text), label);
+    } catch {
+      // Text that does not parse as JSON holds no members to scan.
+    }
   };
   return {
     field,
+    entries,
+    query,
     body,
     result: (): CredentialScan => ({ ...matches, skipped }),
   };
@@ -245,7 +276,8 @@ const credentialTally = () => {
 /**
  * Credential-named members that hold a value in recorded JSON and form
  * bodies, headers and query strings: a count and the first pointers, never
- * values, and the bodies too large to scan by record and side.
+ * values, and the bodies, header lists and query strings it did not read,
+ * by record and side.
  */
 export const scanCredentialNames = (
   records: readonly WebNetworkCaptureRecord[],
@@ -259,27 +291,28 @@ export const scanCredentialNames = (
       ["request", request],
       ["response", response],
     ] as const)
-      for (const [name, value] of namedValues(member(message, "headers")))
-        scan.field(`record ${ordinal} ${side} header ${name}`, name, value);
-    for (const [name, value] of namedValues(member(request, "queryString")))
-      scan.field(`record ${ordinal} request query ${name}`, name, value);
+      scan.entries(
+        member(message, "headers"),
+        `record ${ordinal} ${side} headers`,
+        (name, value) =>
+          scan.field(`record ${ordinal} ${side} header ${name}`, name, value),
+      );
+    scan.entries(
+      member(request, "queryString"),
+      `record ${ordinal} request query`,
+      (name, value) =>
+        scan.field(`record ${ordinal} request query ${name}`, name, value),
+    );
     const postData = member(request, "postData");
     const text = member(postData, "text");
+    const label = `record ${ordinal} request`;
     // A HAR may record form fields only as structured params; each occurrence counts, as in a form body.
-    scan.body(
-      typeof text !== "string"
-        ? {
-            kind: "form",
-            fields: namedValues(member(postData, "params")).flatMap(
-              ([name, value]) =>
-                typeof value === "string"
-                  ? [[name, value] as [string, string]]
-                  : [],
-            ),
-          }
-        : parsedBody(text, member(postData, "mimeType")),
-      `record ${ordinal} request`,
-    );
+    if (typeof text !== "string")
+      scan.entries(member(postData, "params"), label, (name, value) => {
+        if (typeof value === "string")
+          scan.field(`${label} /${pointerToken(name)}`, name, value);
+      });
+    else scan.body(scannableBody(text, member(postData, "mimeType")), label);
     scan.body(
       decodedBody(
         readRecordedResponseBody(record, SCAN_BODY_LIMIT_BYTES),
@@ -307,8 +340,9 @@ export const scanScenarioCredentialNames = (
     if (event.kind === "network-content") {
       const side = `${label} ${event.phase}`;
       if (event.headers.state === "captured")
-        for (const { name, value } of event.headers.items)
-          scan.field(`${side} header ${name}`, name, value);
+        scan.entries(event.headers.items, `${side} headers`, (name, value) =>
+          scan.field(`${side} header ${name}`, name, value),
+        );
       if (event.body.state === "captured")
         scan.body(
           decodedBody(
@@ -325,14 +359,16 @@ export const scanScenarioCredentialNames = (
       const { query } = parseRecordedTransportUrl(event.url.url, {
         includeQuery: true,
       });
-      for (const [name, value] of iterateUrlQueryParameters(query ?? ""))
-        scan.field(`${label} ${event.kind} query ${name}`, name, value);
+      if (typeof query === "string")
+        scan.query(query, `${label} ${event.kind} query`, (name, value) =>
+          scan.field(`${label} ${event.kind} query ${name}`, name, value),
+        );
     }
   }
   return scan.result();
 };
 
-/** The credential-name scan's warnings: what it found, and the bodies it could not scan. */
+/** The credential-name scan's warnings: what it found, and what it could not read. */
 export const credentialScanWarnings = (capture: {
   readonly records: readonly WebNetworkCaptureRecord[];
   readonly scenarioEvents: readonly BrowserScenarioEvent[] | null;
@@ -351,7 +387,7 @@ export const credentialScanWarnings = (capture: {
   if (scanned.skipped.count > 0)
     warnings.push({
       code: "credential-scan-incomplete",
-      message: `${String(scanned.skipped.count)} recorded bodies exceed the credential-name scan's limits (4 MiB of text, or 524288 JSON values or form fields) and were not scanned; evidence.json ships them, so review them before sharing.`,
+      message: `${String(scanned.skipped.count)} recorded bodies, header lists or query strings were not scanned: each is cut, over 4 MiB of text, or past the 524288 values the credential-name scan reads in all; evidence.json ships them, so review them before sharing.`,
       pointers: scanned.skipped.pointers,
     });
   return warnings;
