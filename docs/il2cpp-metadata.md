@@ -206,8 +206,9 @@ unneeded rows out of agent context without discarding the source Evidence.
 ## Native method addresses
 
 `binary_path` names the native binary built with the metadata: macOS
-`GameAssembly.dylib` (Mach-O), Windows `GameAssembly.dll` (64-bit PE) or
-Android `libil2cpp.so` (64-bit ELF, AArch64 or x86-64). A
+`GameAssembly.dylib` (Mach-O), Windows `GameAssembly.dll` (64-bit PE),
+Android `libil2cpp.so` (64-bit ELF, AArch64 or x86-64) or an uncompressed Unity
+WebGL module (wasm32, below). A
 universal Mach-O needs `binary_architecture` (`arm64` or `amd64`); a thin binary
 rejects it. The file is read, never loaded or executed.
 
@@ -333,6 +334,36 @@ Dyld pointer ownership comes from the parsed bind stream, as in Apple's
 [dyld analyzer](https://github.com/apple-oss-distributions/dyld/blob/dyld-1165.3/common/MachOAnalyzer.cpp#L1508-L1511), rather than the slot's placeholder word.
 The padding, zero-fill-tail and unresolved-type cases have authored regression
 fixtures; they do not add real Unity-build verification to the checks above.
+
+### Unity WebGL (wasm32)
+
+An uncompressed Unity WebGL `Build/*.wasm` module links the same way at
+four-byte pointer width. The metadata is the `global-metadata.dat` that Unity
+packs into `Build/*.data`; pass it as `path` after extracting it. Compressed
+builds (`.wasm.br`, `.wasm.gz`) are refused; a gzip module is named as
+compressed. `binary_architecture` is refused for a module.
+
+The reader takes the module's initial linear memory from its active data
+segments (`i32.const` offsets), mapped from the lowest segment start to the
+highest end, with the rest of the initial memory as zero. Bytes below the lowest
+segment are not mapped. A method pointer in a WebGL build is a slot in function
+table 0, so a code row has `address` and `rva` null, `table_index` (the slot,
+which Il2CppDumper reports as `Address`) and `function_index` (the module
+function that table 0 holds there, counting imports). A slot that no active
+element segment fills is refused; a slot naming an imported function is
+`unknown`. Several slots can hold one function; the reason is not established.
+`binary.format` is `wasm`, `architecture` `wasm32` and `image_base` `0x0`.
+
+Passive or explicit-memory data segments, non-constant offsets, shared or
+64-bit memory, several memories or tables, and reordered or repeated sections
+are refused. Linking does not use WABT, so the `inspect_wasm_artifact` input
+cap does not apply. `generic_instances` and Ghidra seeds are refused for a
+wasm32 module. Checked on two uncompressed Unity 2022.3.62f3 WebGL builds
+(metadata version 31, release and development, built for this check): every
+linked code row matched Il2CppDumper's slot and `Type$$Method` name (9,557 and
+9,643 rows), and in the development build each function index's name-section
+entry starts with the IL2CPP method name. Other Unity and Emscripten versions
+are unchecked.
 
 Without `binary_path`, `binary` is `null` and the four binary collections are
 empty in the complete producer report to indicate unrequested observations. Their summary counts, including state counts, are `null`, and native page requests report unavailable observations. This does not establish an empty native inventory. Missing native fields in historical Evidence remain unknown too.

@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import { Il2cppBinaryFormatFailure } from "../../../src/il2cpp/Il2cppBinaryFormat.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
@@ -33,6 +34,8 @@ import {
   type GenericMethodFixtureOptions,
   FIXTURE_RETURN_TYPE_NAME,
   type Il2cppBinaryFixtureOptions,
+  createWasmFixture,
+  FIXTURE_WASM_METHODS,
 } from "../../fixtures/il2cpp/binary.js";
 import {
   createIl2cppMetadataFixture,
@@ -1902,3 +1905,58 @@ it.each([183, 62])(
     expect(link(bytes)).toEqual(link(createElfFixture(image, { machine })));
   },
 );
+
+it("links a wasm32 module through table slots to function indices", () => {
+  const linked = link(createWasmFixture());
+  expect(linked).toMatchObject({
+    format: "wasm",
+    architecture: "wasm32",
+    image_base: 0n,
+    code_gen_modules_field: 0x600n,
+    code_gen_modules_array: 0x500n,
+    code_gen_modules: [
+      { image: 0, address: 0x400n, method_pointer_count: 3 },
+      { image: 1, address: 0x440n, method_pointer_count: 2 },
+    ],
+    types_field: 0x818n,
+    types_count: 4,
+  });
+  expect(linked.method_addresses).toEqual(
+    FIXTURE_WASM_METHODS.map((row) =>
+      row === "no-body"
+        ? { state: "no-body", address: null, rva: null }
+        : { state: "code", address: null, rva: null, ...row },
+    ),
+  );
+  expect(linked.return_types).toEqual(
+    Array.from({ length: 5 }, () => ({
+      type: 0,
+      name: FIXTURE_RETURN_TYPE_NAME,
+    })),
+  );
+});
+
+it("refuses a wasm method pointer whose table slot no element segment fills", () => {
+  // Slot 4 holds mscorlib.dll's first method pointer.
+  expect(failure(createWasmFixture(3))).toEqual({
+    reason: "invalid-method-pointer",
+    kind: "malformed",
+  });
+});
+
+it("refuses a CPU architecture, generic instances and gzip for a wasm module", () => {
+  expect(failure(createWasmFixture(), "arm64").reason).toBe("slice-not-found");
+  const generic = genericFacts(31);
+  expect(() =>
+    linkIl2cppBinary(
+      createWasmFixture(),
+      generic.metadata,
+      generic.link,
+      undefined,
+      { genericInstances: true },
+    ),
+  ).toThrow("generic method instances are not decoded for wasm32 modules");
+  expect(failure(gzipSync(createWasmFixture())).reason).toBe(
+    "unsupported-container",
+  );
+});

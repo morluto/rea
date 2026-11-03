@@ -21,6 +21,12 @@ import {
   parseMachoLayout,
   UnsupportedMachoMetadataFormatError,
 } from "../native/AppleMachoSelection.js";
+import {
+  WASM_PAGE_BYTES,
+  WasmModuleFailure,
+  readInitialLinearMemory,
+  readWasmModuleImage,
+} from "../wasm/WasmModuleImage.js";
 import { applyElfRelativeRelocationsSteps } from "./ElfRelocations.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 const MACHO_CPU = new Map([
@@ -77,9 +83,28 @@ const selectImage = (
   return selected.value;
 };
 
+/** A wasm32 module's initial linear memory, read as one image. */
+export interface WasmImageContainer {
+  readonly format: "wasm";
+  readonly architecture: "wasm32";
+  readonly bits: 32;
+  readonly byte_order: "little";
+  readonly mappings: BinaryContainer["mappings"];
+  readonly zero_fills: BinaryContainer["zero_fills"];
+  readonly executable_mappings: BinaryContainer["mappings"];
+  /** A module has no native sections. */
+  readonly sections: BinaryContainer["sections"];
+}
+
+/** Table 0 of a wasm32 module: slot to function index, and how many functions are imports. */
+export interface WasmFunctionTable {
+  readonly slots: ReadonlyMap<number, number>;
+  readonly importedFunctionCount: number;
+}
+
 export interface NativeImage {
   readonly bytes: Buffer;
-  readonly container: BinaryContainer;
+  readonly container: BinaryContainer | WasmImageContainer;
   /** One image's immutable load mappings, shared by stored and loader-aware reads. */
   readonly fileMappings: FileMappingIndex;
   readonly imageBase: bigint;
@@ -89,12 +114,83 @@ export interface NativeImage {
   readonly zeroFillPointers: ReadonlyMap<bigint, bigint>;
   /** Mach-O loader fixups shared by every native pointer consumer. */
   readonly machoPointerFixups?: PointerFixups;
+  /** Present only for wasm32: method pointers are slots in this table. */
+  readonly wasmTable?: WasmFunctionTable;
 }
+
+const WASM_MAGIC = Buffer.from([0x00, 0x61, 0x73, 0x6d]);
+const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
+
+/**
+ * Initial linear memory from active data segments, mapped from the lowest
+ * segment start to the highest end; the rest of the initial memory is zero.
+ * Bytes below the lowest segment stay unmapped, so a pointer into them is not
+ * read as zero.
+ */
+const openWasmImage = (bytes: Buffer): NativeImage => {
+  let module;
+  try {
+    module = readWasmModuleImage(bytes);
+  } catch (cause) {
+    if (cause instanceof WasmModuleFailure)
+      throw new Il2cppBinaryFormatFailure(
+        cause.kind === "capacity"
+          ? "native-index-capacity"
+          : cause.kind === "unsupported"
+            ? "unsupported-container"
+            : "malformed-container",
+        cause.message,
+      );
+    throw cause;
+  }
+  const memory = readInitialLinearMemory(module);
+  const start = BigInt(memory.address);
+  const end = start + BigInt(memory.bytes.length);
+  const initial =
+    BigInt(module.memory?.initialPages ?? 0) * BigInt(WASM_PAGE_BYTES);
+  const mappings =
+    memory.bytes.length === 0
+      ? []
+      : [{ address: start, offset: 0, size: memory.bytes.length }];
+  const zero_fills =
+    initial > end ? [{ address: end, size: initial - end }] : [];
+  return {
+    bytes: memory.bytes,
+    container: {
+      format: "wasm",
+      architecture: "wasm32",
+      bits: 32,
+      byte_order: "little",
+      mappings,
+      zero_fills,
+      executable_mappings: [],
+      sections: [],
+    },
+    fileMappings: createFileMappingIndex(mappings, zero_fills),
+    imageBase: 0n,
+    pointerSize: 4,
+    unresolvedPointerSlots: new Map<bigint, number>(),
+    zeroFillPointers: new Map<bigint, bigint>(),
+    wasmTable: {
+      slots: module.table,
+      importedFunctionCount: module.importedFunctionCount,
+    },
+  };
+};
 
 export function* openImageSteps(
   bytes: Buffer,
   architecture: string | undefined,
 ): Generator<void, NativeImage> {
+  const head = bytes.subarray(0, 4);
+  if (head.equals(WASM_MAGIC) || head.subarray(0, 2).equals(GZIP_MAGIC)) {
+    if (architecture !== undefined)
+      throw new Il2cppBinaryFormatFailure(
+        "slice-not-found",
+        `architecture ${architecture} was requested but the binary is a WebAssembly module`,
+      );
+    return openWasmImage(bytes);
+  }
   let image = selectImage(bytes, architecture);
   let container: BinaryContainer;
   try {

@@ -211,6 +211,24 @@ export const il2cppMethodAddressSchema = z.strictObject({
   rva: il2cppAddressSchema.nullable(),
 });
 
+/**
+ * A wasm32 code row: the method pointer is a function table slot, not an
+ * address, so address and rva stay null.
+ */
+export const il2cppWasmMethodCodeSchema = z.strictObject({
+  state: z.literal("code"),
+  address: z.null(),
+  rva: z.null(),
+  table_index: count,
+  function_index: count,
+});
+
+/** A native or wasm32 method row. */
+export const il2cppLinkedMethodSchema = z.union([
+  il2cppMethodAddressSchema,
+  il2cppWasmMethodCodeSchema,
+]);
+
 /** Index into the binary Il2CppType table and its C#-like display name. */
 export const il2cppTypeReferenceSchema = z.strictObject({
   type: optionalIndex,
@@ -277,7 +295,7 @@ export const il2cppBinaryLinkSchema = z.strictObject({
     sha256: digestSchema,
     bytes: count,
   }),
-  format: z.enum(["elf", "macho", "pe"]),
+  format: z.enum(["elf", "macho", "pe", "wasm"]),
   architecture: z.string(),
   image_base: il2cppAddressSchema,
   /**
@@ -334,7 +352,7 @@ export const il2cppMetadataObjectSchema = z.strictObject({
   /** Null unless binary_path was selected. */
   binary: il2cppBinaryLinkSchema.nullable(),
   /** One row per method index when binary is linked, otherwise empty. */
-  method_addresses: z.array(il2cppMethodAddressSchema),
+  method_addresses: z.array(il2cppLinkedMethodSchema),
   /** Per method, field and parameter index when binary is linked, otherwise empty. */
   return_types: z.array(il2cppTypeReferenceSchema),
   field_types: z.array(il2cppTypeReferenceSchema),
@@ -387,6 +405,18 @@ const il2cppMetadataParentObjectSchema = il2cppMetadataObjectSchema
   });
 
 /** code rows carry both an address and an RVA that agree with the image base; other rows neither. */
+/** A native report has no wasm rows; a wasm32 report has no address-bearing rows. */
+const linkedRowContradicts = (
+  row: z.infer<typeof il2cppLinkedMethodSchema>,
+  imageBase: string | undefined,
+  wasm: boolean,
+) =>
+  "table_index" in row
+    ? !wasm
+    : wasm
+      ? row.state === "code" || row.address !== null || row.rva !== null
+      : codeRowContradicts(row, imageBase);
+
 const codeRowContradicts = (
   row: { state: string; address: string | null; rva: string | null },
   imageBase: string | undefined,
@@ -445,12 +475,18 @@ const validateMetadataFacts = (
           });
       });
   report.method_addresses?.forEach((row, index) => {
-    if (codeRowContradicts(row, report.binary?.image_base))
+    if (
+      linkedRowContradicts(
+        row,
+        report.binary?.image_base,
+        report.binary?.format === "wasm",
+      )
+    )
       context.addIssue({
         code: "custom",
         path: ["method_addresses", index],
         message:
-          "Only a code row carries an address and RVA; both are then present.",
+          "Only a code row carries an address and RVA (native) or a table and function index (wasm32); both are then present.",
       });
   });
   report.types.forEach((row, index) => {
@@ -626,7 +662,7 @@ export type Il2cppMetadataProviderInput = Omit<
 export type Il2cppMetadataSection = z.infer<typeof il2cppMetadataSectionSchema>;
 export type Il2cppMetadata = z.infer<typeof il2cppMetadataSchema>;
 
-export type Il2cppMethodAddress = z.infer<typeof il2cppMethodAddressSchema>;
+export type Il2cppLinkedMethod = z.infer<typeof il2cppLinkedMethodSchema>;
 export type Il2cppGenericMethodInstance = z.infer<
   typeof il2cppGenericMethodInstanceSchema
 >;

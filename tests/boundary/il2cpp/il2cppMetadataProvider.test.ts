@@ -19,6 +19,7 @@ import {
   createElfFixture,
   createIl2cppBinaryFixture,
   FIXTURE_GENERIC_INSTANCES,
+  createWasmFixture,
 } from "../../fixtures/il2cpp/binary.js";
 import {
   createIl2cppMetadataFixture,
@@ -887,6 +888,42 @@ it("refuses generic rows that exceed the report budget and keeps the requested p
       parameters: { binary_path, generic_instances: true },
       normalized_result: { selected_binary: { path: binary_path } },
     });
+  } finally {
+    await provider.close();
+  }
+});
+
+it("returns schema-valid wasm32 rows with table and function indices and no addresses", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-wasm-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "build.wasm");
+  await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+  await writeFile(binaryPath, createWasmFixture());
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const result = await provider.inspect({ path, binary_path: binaryPath });
+    if (!result.ok) throw result.error;
+    const report = il2cppMetadataSchema.parse(result.value);
+    expect(report.binary).toMatchObject({ format: "wasm", image_base: "0x0" });
+    expect(report.method_addresses?.[0]).toEqual({
+      state: "code",
+      address: null,
+      rva: null,
+      table_index: 1,
+      function_index: 10,
+    });
+    // A native report may not carry wasm rows, nor a wasm report addresses.
+    const native = { ...report, binary: { ...report.binary!, format: "elf" } };
+    expect(il2cppMetadataSchema.safeParse(native).success).toBe(false);
+    const addressed = {
+      ...report,
+      method_addresses: report.method_addresses!.map(() => ({
+        state: "code",
+        address: "0x1",
+        rva: "0x1",
+      })),
+    };
+    expect(il2cppMetadataSchema.safeParse(addressed).success).toBe(false);
   } finally {
     await provider.close();
   }

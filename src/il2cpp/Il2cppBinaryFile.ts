@@ -1,4 +1,4 @@
-import type { Il2cppMethodAddress } from "../domain/il2cpp/il2cppMetadata.js";
+import type { Il2cppLinkedMethod } from "../domain/il2cpp/il2cppMetadata.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 import { openImageSteps, readSlot, isExecutable } from "./Il2cppBinaryImage.js";
 import {
@@ -25,10 +25,16 @@ export interface Il2cppCodeGenModule {
   readonly method_pointers: bigint;
 }
 
-type Il2cppMethodCode = bigint | "no-body" | "unknown";
+/** A wasm32 method pointer: its table slot and the function that slot holds. */
+interface Il2cppWasmMethodCode {
+  readonly table_index: number;
+  readonly function_index: number;
+}
+
+type Il2cppMethodCode = bigint | Il2cppWasmMethodCode | "no-body" | "unknown";
 
 export interface Il2cppBinaryLink {
-  readonly format: "elf" | "macho" | "pe";
+  readonly format: "elf" | "macho" | "pe" | "wasm";
   readonly architecture: string;
   readonly image_base: bigint;
   /**
@@ -44,7 +50,7 @@ export interface Il2cppBinaryLink {
    * Native code address per metadata method index; "no-body" when its module
    * slot is zero, "unknown" when its owner or relocated pointer is unresolved.
    */
-  readonly method_addresses: Il2cppMethodAddress[];
+  readonly method_addresses: Il2cppLinkedMethod[];
   /**
    * Address of MetadataRegistration's typesCount field, or null when no static
    * registration matched and an executable byte-pattern candidate identified
@@ -90,6 +96,11 @@ export function* linkIl2cppBinarySteps(
   if (options.genericInstances === true) genericMethodLayouts(version);
   yield;
   const image = yield* openImageSteps(bytes, architecture);
+  if (options.genericInstances === true && image.wasmTable !== undefined)
+    throw new Il2cppBinaryFormatFailure(
+      "generic-methods-unsupported",
+      "generic method instances are not decoded for wasm32 modules",
+    );
   const modules = yield* findModules(image, metadata);
   const registration_ = yield* findCodeRegistration(image, modules);
   const methodImage = new Int32Array(metadata.methods.length).fill(-1);
@@ -145,6 +156,19 @@ export function* linkIl2cppBinarySteps(
       );
     if (address === "unknown") return "unknown";
     if (address === 0n) return "no-body";
+    if (image.wasmTable !== undefined) {
+      // Function pointers are table slots; only a filled slot names code.
+      const slot = Number(address);
+      const fn = image.wasmTable.slots.get(slot);
+      if (fn === undefined)
+        throw new Il2cppBinaryFormatFailure(
+          "invalid-method-pointer",
+          `method ${index} names table slot ${slot}, which no element segment fills`,
+        );
+      // An imported function has no body in this module.
+      if (fn < image.wasmTable.importedFunctionCount) return "unknown";
+      return { table_index: slot, function_index: fn };
+    }
     if (!isExecutable(image, address))
       throw new Il2cppBinaryFormatFailure(
         "invalid-method-pointer",
@@ -152,7 +176,7 @@ export function* linkIl2cppBinarySteps(
       );
     return address;
   };
-  const method_addresses: Il2cppMethodAddress[] = [];
+  const method_addresses: Il2cppLinkedMethod[] = [];
   for (let index = 0; index < metadata.methods.length; index++) {
     if (index % LINK_BATCH === 0) yield;
     const code = methodAddress(index);
@@ -161,14 +185,22 @@ export function* linkIl2cppBinarySteps(
         "invalid-method-pointer",
         "method address precedes the link image base",
       );
-    const row: Il2cppMethodAddress =
+    const row: Il2cppLinkedMethod =
       typeof code === "bigint"
         ? {
             state: "code",
             address: `0x${code.toString(16)}`,
             rva: `0x${(code - image.imageBase).toString(16)}`,
           }
-        : { state: code, address: null, rva: null };
+        : typeof code === "object"
+          ? {
+              state: "code",
+              address: null,
+              rva: null,
+              table_index: code.table_index,
+              function_index: code.function_index,
+            }
+          : { state: code, address: null, rva: null };
     options.onRow?.(row);
     method_addresses.push(row);
   }
