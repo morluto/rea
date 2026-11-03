@@ -16,81 +16,85 @@ import { err, ok } from "../../../src/domain/result.js";
 import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 
+const createContextRecoverySession = () => {
+  const identity = { id: "fixture", name: "Fixture", version: "1" };
+  return createTestBinarySession(() => ({
+    execute: async (operation, parameters) => {
+      if (operation === "comment" && parameters.address === "0x405000")
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "configuration unavailable",
+            {
+              remediationAction: "Restart REA.",
+              continuingCallerGuidance: {
+                remediationAction: "Refresh the current session.",
+              },
+            },
+          ),
+        );
+      if (
+        operation === "resolve_containing_procedure" &&
+        parameters.address === "0x404000"
+      )
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "not supported",
+          ),
+        );
+      if (operation === "comment" && parameters.address === "0x403000")
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "temporarily unavailable",
+            {
+              retryable: true,
+              remediationAction: "Wait for the fixture to become ready.",
+            },
+          ),
+        );
+      if (operation === "comment" || operation === "inline_comment")
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "not supported",
+          ),
+        );
+      const result =
+        operation === "resolve_containing_procedure"
+          ? parameters.address === "0x402000"
+            ? { query_address: "0x402000", found: false }
+            : {
+                query_address: parameters.address,
+                found: true,
+                procedure: {
+                  address: "0x401000",
+                  name: "entry",
+                  classification: null,
+                  body: { available: false, reason: "not recorded" },
+                },
+              }
+          : operation === "address_name"
+            ? "entry"
+            : [];
+      return ok(createAnalysisExecution(result, identity));
+    },
+    close: async () => ok(null),
+  }));
+};
+
 it.each(["compact", "full"] as const)(
   "offers a conditional containing-function comment route (%s)",
   async (profile) => {
-    const identity = { id: "fixture", name: "Fixture", version: "1" };
     const directory = await createTestTempDirectory("rea-context-comment-");
     const target = join(directory, "fixture.com");
     await writeFile(target, Buffer.from([0xb8, 0x00, 0x4c, 0xcd, 0x21]));
-    const session = createTestBinarySession(() => ({
-      execute: async (operation, parameters) => {
-        if (operation === "comment" && parameters.address === "0x405000")
-          return err(
-            new AnalysisCapabilityUnavailableError(
-              "fixture",
-              operation,
-              "configuration unavailable",
-              {
-                remediationAction: "Restart REA.",
-                continuingCallerGuidance: {
-                  remediationAction: "Refresh the current session.",
-                },
-              },
-            ),
-          );
-        if (
-          operation === "resolve_containing_procedure" &&
-          parameters.address === "0x404000"
-        )
-          return err(
-            new AnalysisCapabilityUnavailableError(
-              "fixture",
-              operation,
-              "not supported",
-            ),
-          );
-        if (operation === "comment" && parameters.address === "0x403000")
-          return err(
-            new AnalysisCapabilityUnavailableError(
-              "fixture",
-              operation,
-              "temporarily unavailable",
-              {
-                retryable: true,
-                remediationAction: "Wait for the fixture to become ready.",
-              },
-            ),
-          );
-        if (operation === "comment" || operation === "inline_comment")
-          return err(
-            new AnalysisCapabilityUnavailableError(
-              "fixture",
-              operation,
-              "not supported",
-            ),
-          );
-        const result =
-          operation === "resolve_containing_procedure"
-            ? parameters.address === "0x402000"
-              ? { query_address: "0x402000", found: false }
-              : {
-                  query_address: parameters.address,
-                  found: true,
-                  procedure: {
-                    address: "0x401000",
-                    name: "entry",
-                    classification: null,
-                    body: { available: false, reason: "not recorded" },
-                  },
-                }
-            : operation === "address_name"
-              ? "entry"
-              : [];
-        return ok(createAnalysisExecution(result, identity));
-      },
-      close: async () => ok(null),
-    }));
+    const session = createContextRecoverySession();
     const server = createServer(
       { kind: "session", session },
       {
