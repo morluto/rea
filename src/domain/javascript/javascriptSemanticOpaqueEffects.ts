@@ -60,37 +60,52 @@ export const createSemanticOpaqueGlobalObserver = (
         intrinsicPath: (node: t.Node) => readonly string[] | undefined;
       },
     ) => {
+      intrinsicPath: (node: t.Node) => readonly string[] | undefined;
       intrinsicInvocation: (
         node: t.CallExpression | t.OptionalCallExpression,
       ) => { readonly path: readonly string[] } | undefined;
     };
   },
 ): ((node: t.Node) => void) | undefined => {
-  if (!state.opaqueEffects.mayReferenceGlobalEval) return undefined;
+  if (!state.opaqueEffects.mayReferenceGlobalCode) return undefined;
   const ambientPaths = dependencies.createAmbientPathResolver(state, true);
   let invocationSite: t.Node | undefined;
   const interop = dependencies.createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {
       const paths = ambientPaths(node, invocationSite).paths;
-      const path = paths.find((path) => path[1] === "eval") ?? paths[0];
+      const path =
+        paths.find((path) => path[1] === "eval" || path[1] === "Function") ??
+        paths[0];
       if (path?.[0] !== "global" || path.some((key) => key === null))
         return undefined;
       // Keep the global callable owner for generic call/apply/bind resolution.
-      return path[1] === "eval"
+      return path[1] === "eval" || path[1] === "Function"
         ? ["intrinsic", ...(path as readonly string[])]
         : ["intrinsic", ...(path.slice(1) as readonly string[])];
     },
   });
   return (node) => {
-    if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
+    if (
+      !t.isCallExpression(node) &&
+      !t.isOptionalCallExpression(node) &&
+      !t.isNewExpression(node)
+    )
+      return;
     invocationSite = node;
-    const invocation = interop.intrinsicInvocation(node);
-    if (invocation?.path.join(".") === "intrinsic.global.eval")
+    const path = t.isNewExpression(node)
+      ? interop.intrinsicPath(node.callee)
+      : interop.intrinsicInvocation(node)?.path;
+    // Constructed code may escape and activate a classic-script global. Keep
+    // its creation as a conservative timing bound, not proof of execution.
+    if (
+      path?.join(".") === "intrinsic.global.eval" ||
+      path?.join(".") === "intrinsic.global.Function"
+    )
       state.opaqueEffects.globalSites.push(node);
   };
 };
 
-/** Indirect eval can change globals, but cannot rebind its caller's locals. */
+/** Global code can affect globals, but cannot rebind its caller's locals. */
 export const semanticOpaqueGlobalMayHaveChanged = (
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,

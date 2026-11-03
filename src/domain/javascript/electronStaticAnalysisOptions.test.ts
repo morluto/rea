@@ -339,6 +339,24 @@ it.each([
 );
 
 describe("Classic-script global function activation", () => {
+  it("keeps a shadowed Function constructor independent of global activation", () => {
+    const source = `const { BrowserWindow } = require('electron');
+      const Function = () => () => {}; Function('createWindow()')();
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();`;
+    expect(() =>
+      runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) }),
+    ).not.toThrow();
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  });
   it.each([
     "globalThis.createWindow();",
     'globalThis["createWindow"]();',
@@ -358,6 +376,13 @@ describe("Classic-script global function activation", () => {
     "const root = { __proto__: globalThis }; root.createWindow();",
     "const root = { ...globalThis }; root.createWindow();",
     "(0, eval)('createWindow()');",
+    "Function('createWindow()')();",
+    "new Function('createWindow()')();",
+    "const F = Function; F('createWindow()')();",
+    "Function.call(null, 'createWindow()')();",
+    "Function.apply(null, ['createWindow()'])();",
+    "globalThis.Function('createWindow()')();",
+    "const F = Function.bind(null); F('createWindow()')();",
     "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');",
     "const noop = () => {}; (0, eval)(''); function unused() { noop(); } (0, eval)('createWindow()');",
   ])("keeps early global access unresolved: %s", (activation) => {

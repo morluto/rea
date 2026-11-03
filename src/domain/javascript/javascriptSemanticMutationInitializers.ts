@@ -999,7 +999,9 @@ const moduleFunctionFirstRead = (
           if (t.isFunction(node)) active.add(node);
           if (
             classicScript &&
-            (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+            (t.isCallExpression(node) ||
+              t.isOptionalCallExpression(node) ||
+              t.isNewExpression(node))
           ) {
             opaquePositions.set(node, active.size > 0 ? null : index);
           }

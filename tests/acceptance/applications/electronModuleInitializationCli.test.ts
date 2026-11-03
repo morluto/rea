@@ -94,6 +94,8 @@ cliTest.for([
   ["stdio MCP", true],
   ["CLI", "cached-eval"],
   ["stdio MCP", "cached-eval"],
+  ["CLI", "constructed-function"],
+  ["stdio MCP", "constructed-function"],
 ] as const)(
   "preserves classic global initialization uncertainty through %s",
   async ([surface, alias], { cli }) => {
@@ -101,11 +103,13 @@ cliTest.for([
       "rea-electron-global-initialization-",
     );
     const activation =
-      alias === "cached-eval"
-        ? "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');"
-        : alias
-          ? "root.createWindow();"
-          : "globalThis.createWindow();";
+      alias === "constructed-function"
+        ? "new Function('createWindow()')();"
+        : alias === "cached-eval"
+          ? "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');"
+          : alias
+            ? "root.createWindow();"
+            : "globalThis.createWindow();";
     const source = (early: boolean) => `
       const { BrowserWindow } = require("electron");
       ${alias ? "const root = globalThis;" : ""}
