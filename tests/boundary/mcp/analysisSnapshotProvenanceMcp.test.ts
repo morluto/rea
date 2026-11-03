@@ -227,6 +227,30 @@ for (const missingSource of [false, true])
         ancestor.evidence_id,
       ]);
       expect(Object.isFrozen(refreshed.value.sourceEvidence?.[0])).toBe(true);
+      if (parent.subject === null)
+        throw new Error("Expected a file-backed parent");
+      const relocatedParent = {
+        ...parent,
+        subject: {
+          ...parent.subject,
+          local_path: join(directory, "relocated-parent.exe"),
+        },
+      };
+      const importedParent = session.importEvidenceBundle(
+        createEvidenceBundle([relocatedParent]),
+      );
+      if (!importedParent.ok) throw importedParent.error;
+      const refreshedParent = await session.execute(
+        "inspect_managed_artifact",
+        {},
+      );
+      if (!refreshedParent.ok) throw refreshedParent.error;
+      expect(refreshedParent.value.sourceEvidence?.[1]).toBe(
+        session.evidenceForAnalysis(parent.evidence_id),
+      );
+      expect(refreshedParent.value.sourceEvidence?.[1]).toEqual(
+        relocatedParent,
+      );
       const refreshedResponse = await client.callTool({
         name: "inspect_managed_artifact",
         arguments: {},
