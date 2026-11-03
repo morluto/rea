@@ -135,11 +135,13 @@ observations, not an atomic directory snapshot. Unread bytes remain unknown.
 ## Resource bounds and reuse
 
 Defaults are 20,000 examined entries and 8 MiB of total probe reads. Callers may
-select up to 100,000 entries and 64 MiB. A separate 32 MiB conservative
-representation budget bounds retained paths and facts before growth. Limits
-and failed probes produce partial coverage. Traversal and reads are serial.
-Each reader admits one inspection at a time; overlapping requests receive a
-retryable capacity refusal without cancelling the admitted caller.
+select up to 100,000 entries and 64 MiB. A separate 32 MiB representation
+budget bounds retained rows, paths and facts before growth. Each retained path
+is charged at the larger of its UTF-16 heap size and its escaped JSON size, so
+typical macOS bundle paths fit about 20,000 rows, and control-character paths
+fewer. Limits and failed probes produce partial coverage. Traversal and reads
+are serial. Each reader admits one inspection at a time; overlapping requests
+receive a retryable capacity refusal without cancelling the admitted caller.
 
 Unity reference decoding stops after a witness in each `Data/Managed` directory;
 other assemblies' references remain unexamined, while their headers are still

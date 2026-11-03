@@ -1,6 +1,7 @@
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { readFile, symlink, writeFile } from "node:fs/promises";
@@ -43,14 +44,11 @@ import {
 } from "../../fixtures/binarySession.js";
 import { routeProviderIdentity } from "../../../src/application/binary/SessionProviderPolicy.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
-import { isProfilelessNativeDispatchSnapshot } from "../../../src/application/binary/ProfilelessNativeWorkflowSnapshot.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  CAPABILITIES as GHIDRA_CAPABILITIES,
-  GHIDRA_PROVIDER_IDENTITY,
-} from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { CAPABILITIES as GHIDRA_CAPABILITIES } from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderMetadata.js";
 import { nativeInventoryRowsSchemas } from "../../../src/domain/native/nativeInventory.js";
 import { APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE } from "../../../src/native/NativeMacOSProviderMetadata.js";
 
@@ -591,6 +589,8 @@ const verifyWindowsSnapshotAdmission = async (
 };
 
 it.each([
+  { tool: "binary_overview", arguments: {}, priorRevision: 5 },
+  // Revision 4 overviews predate inventory_coverage and must not replay.
   { tool: "binary_overview", arguments: {}, priorRevision: 4 },
   {
     tool: "inspect_native_api",
@@ -647,6 +647,7 @@ it.each([
     expect(refreshed.limitations).toEqual(
       expect.arrayContaining(first.limitations),
     );
+    expect(refreshed.analysis_profile?.digest).toEqual(expect.any(String));
     expect(refreshed.analysis_profile?.digest).not.toBe(priorProfile.digest);
     expect(refreshed.normalized_result).toEqual(first.normalized_result);
     const starts = [...fixture.starts];
@@ -1193,6 +1194,18 @@ describe("snapshot replay provider identity", () => {
     expect(changedProfileResult).not.toEqual(first);
     expect(changedProfileResult).toMatchObject({
       code: "evidence_integrity_mismatch",
+      details: {
+        binding_mismatch: {
+          provider: {
+            snapshot: { version: "launcher-sha256:fixture" },
+            selected: { version: "launcher-sha256:changed" },
+          },
+          profile_digest: {
+            snapshot: expect.any(String),
+            selected: expect.any(String),
+          },
+        },
+      },
     });
     expect(fixture.starts).toEqual(startsAfterFirst);
     expect(fixture.calls).toEqual(callsAfterFirst);
@@ -1220,6 +1233,38 @@ describe("snapshot replay provider identity", () => {
     expect(changedProviderResult).not.toEqual(first);
     expect(changedProviderResult).toMatchObject({
       code: "evidence_integrity_mismatch",
+      details: {
+        binding_mismatch: {
+          provider: {
+            snapshot: { id: IDENTITY.id },
+            selected: { id: "other-provider" },
+          },
+        },
+      },
+    });
+    expect(fixture.starts).toEqual(startsAfterFirst);
+    expect(fixture.calls).toEqual(callsAfterFirst);
+
+    const changedTarget = join(dirname(fixture.path), "changed.hop");
+    await writeFile(changedTarget, "different target");
+    const changedTargetResult = await runDirectAnalysis(
+      dependencies,
+      changedTarget,
+      "search_strings",
+      { pattern: "fixture", document: "fixture" },
+      { snapshotPath: fixture.snapshotPath },
+    ).then(projectCliAnalysisResult);
+    expect(changedTargetResult).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      details: {
+        binding_mismatch: {
+          target: {
+            snapshot: { sha256: firstSnapshot.value.target.sha256 },
+            selected: { sha256: expect.any(String) },
+          },
+          profile_comparison: "not_compared",
+        },
+      },
     });
     expect(fixture.starts).toEqual(startsAfterFirst);
     expect(fixture.calls).toEqual(callsAfterFirst);
@@ -1355,6 +1400,42 @@ describe("workflow snapshot profile and cancellation binding", () => {
   });
 });
 
+const expectReaderBindingMismatch = (
+  error: AnalysisError,
+  selectedVersion: string,
+  snapshotDigest: string,
+): void => {
+  expect(projectAnalysisError(error).details).toMatchObject({
+    binding_mismatch: {
+      provider: {
+        snapshot: { version: "apple-metadata-reader-older" },
+        selected: { version: selectedVersion },
+      },
+      profile_digest: { snapshot: snapshotDigest },
+    },
+  });
+};
+
+const expectProfilelessOperationMismatch = (
+  session: BinarySession,
+  snapshot: AnalysisSnapshot,
+): void => {
+  const wrongOperation = structuredClone(snapshot);
+  wrongOperation.workflow_entries[0]!.operation = "inspect_native_api";
+  wrongOperation.workflow_entries[0]!.query_id = analysisQueryId(
+    wrongOperation.target,
+    wrongOperation.binding,
+    "inspect_native_api",
+    wrongOperation.workflow_entries[0]!.parameters,
+  );
+  const rejected = session.importAnalysisSnapshot(wrongOperation);
+  expect(rejected.ok).toBe(false);
+  if (!rejected.ok)
+    expect(projectAnalysisError(rejected.error).details).toMatchObject({
+      binding_mismatch: { workflow_scope: "incompatible" },
+    });
+};
+
 const expectProfilelessWorkflowSnapshotRejections = async (
   path: string,
   provider: AnalysisProvider,
@@ -1377,37 +1458,17 @@ const expectProfilelessWorkflowSnapshotRejections = async (
     provider: otherReaderProfile.provider,
     analysis_profile: otherReaderProfile,
   };
-  expect(
-    isProfilelessNativeDispatchSnapshot(
-      wrongReader,
-      opened.value,
-      APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
-    ),
-  ).toBe(false);
   const rejectedReader = session.importAnalysisSnapshot(wrongReader);
   expect(rejectedReader.ok).toBe(false);
-  if (!rejectedReader.ok)
-    expect(rejectedReader.error.message).toContain("profile_mismatch");
+  if (!rejectedReader.ok) {
+    expectReaderBindingMismatch(
+      rejectedReader.error,
+      readerIdentity.version,
+      otherReaderProfile.digest,
+    );
+  }
 
-  const wrongOperation = structuredClone(snapshot);
-  wrongOperation.workflow_entries[0]!.operation = "inspect_native_api";
-  wrongOperation.workflow_entries[0]!.query_id = analysisQueryId(
-    wrongOperation.target,
-    wrongOperation.binding,
-    "inspect_native_api",
-    wrongOperation.workflow_entries[0]!.parameters,
-  );
-  expect(
-    isProfilelessNativeDispatchSnapshot(
-      wrongOperation,
-      opened.value,
-      APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
-    ),
-  ).toBe(false);
-  const rejectedOperation = session.importAnalysisSnapshot(wrongOperation);
-  expect(rejectedOperation.ok).toBe(false);
-  if (!rejectedOperation.ok)
-    expect(rejectedOperation.error.message).toContain("profile_mismatch");
+  expectProfilelessOperationMismatch(session, snapshot);
 
   const mixedOperation = "inspect_native_api";
   const mixedProfile = workflowAnalysisProfile(
@@ -1436,16 +1497,11 @@ const expectProfilelessWorkflowSnapshotRejections = async (
     ],
   };
   const rejectedMixed = session.importAnalysisSnapshot(mixedSnapshot);
-  expect(
-    isProfilelessNativeDispatchSnapshot(
-      mixedSnapshot as AnalysisSnapshot,
-      opened.value,
-      APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
-    ),
-  ).toBe(false);
   expect(rejectedMixed.ok).toBe(false);
   if (!rejectedMixed.ok)
-    expect(rejectedMixed.error.message).toContain("profile_mismatch");
+    expect(projectAnalysisError(rejectedMixed.error).details).toMatchObject({
+      binding_mismatch: { workflow_scope: "incompatible" },
+    });
 
   const deepProfile = createAnalysisProfile(
     { id: "ghidra", name: "Ghidra", version: "fixture-version" },
@@ -1505,7 +1561,12 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   const rejectedDeepOnly = session.importAnalysisSnapshot(deepSnapshot);
   expect(rejectedDeepOnly.ok).toBe(false);
   if (!rejectedDeepOnly.ok)
-    expect(rejectedDeepOnly.error.message).toContain("profile_mismatch");
+    expect(projectAnalysisError(rejectedDeepOnly.error).details).toMatchObject({
+      binding_mismatch: {
+        provider: { snapshot: { id: "ghidra" } },
+        profile_digest: { snapshot: deepProfile.digest },
+      },
+    });
 };
 
 it("retains a native dispatch workflow snapshot without a deep provider profile", async () => {

@@ -45,6 +45,10 @@ the client's configured command or reproduce the client's environment. If doctor
 passes but the client disconnects, inspect the client's startup error and registered
 launcher; see [verification scope](client-verification.md#launch-environment-verification).
 
+`rea doctor` has the same limit for provider checks, and reports a provider setting
+the registration's file does not carry as a
+[non-blocking unknown](installation.md#check-readiness-for-your-task).
+
 ## Runtime settings and client deadlines
 
 `update_analysis_settings` changes curated defaults inside the running REA
@@ -283,8 +287,9 @@ patterns. A provider being unavailable does not discard its selected paths;
 doctor reports its readiness separately. Explicit selections override discovered
 defaults, including when setup runs again with a changed selection. Unrelated
 environment variables, process ownership tokens and one-shot target paths are not
-copied. Existing client environment overrides remain intact unless setup supplies
-the same key.
+copied. For an explicitly configured startup target, see the
+[initial-target settings](mcp-contracts.md#initial-target-at-startup). Existing
+client environment overrides remain intact unless setup supplies the same key.
 You can edit `startupTimeoutMs` and `toolTimeoutMs` there; doctor keeps positive
 caller-selected values aligned and reports a non-blocking advisory when a tool
 timeout is shorter than the known provider allowance.

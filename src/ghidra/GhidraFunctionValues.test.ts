@@ -803,6 +803,15 @@ const malformedOutputs = (): Array<
         length: 1,
         signature: null,
         locals: [],
+        body: {
+          available: true,
+          provenance: "ghidra-function-body-address-set",
+          ranges: [{ start: "0x401000", end: "0x401000" }],
+          total_bytes: 1,
+          span_bytes: 1,
+          non_contiguous: false,
+          contains_entry: true,
+        },
       },
     ],
     [
@@ -814,6 +823,8 @@ const malformedOutputs = (): Array<
         references: [
           { ...edge, kind: { available: false, reason: "unknown" } },
         ],
+        reference_kinds_available: true,
+        unresolved_calls: [],
       },
     ],
     [

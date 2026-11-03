@@ -1,40 +1,23 @@
-import type {
-  CapabilityDescriptor,
-  ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
+import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
 import {
   inspectWindowsNativeReadiness,
   type WindowsNativeReadiness,
 } from "../process/WindowsAuthority.js";
-import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
-import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryValues.js";
+import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
+import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormats.js";
 
 /** Target architectures admitted by the Windows P0 native PE boundary. */
 export const WINDOWS_P0_NATIVE_PE_ARCHITECTURES: readonly string[] =
   Object.freeze(["x86", "x86_64", "arm", "arm64"]);
-
-/** Public identity committed by every Ghidra-backed observation. */
-export const GHIDRA_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
-  id: "ghidra",
-  name: "Ghidra",
-  version: null,
-});
 
 /** Provider observations, including internal aggregates consumed by workflows. */
 const providerOperations = Object.freeze([
   ...GHIDRA_INVENTORY_OPERATIONS,
   ...GHIDRA_FUNCTION_OPERATIONS,
 ]);
-
-/** Public analyst tools backed by these observations; aggregates stay internal. */
-export const GHIDRA_OPERATIONS = Object.freeze(
-  providerOperations.map((operation) =>
-    operation === "read_binary_inventory_summary"
-      ? "binary_overview"
-      : operation,
-  ),
-);
 
 /** Health limitations shared by every Ghidra-backed capability. */
 export const healthLimitations = Object.freeze([
@@ -97,14 +80,13 @@ export const limitationsFor = (
       return [
         ...common,
         "Names use Ghidra USER_DEFINED source. A local function entry renames that function; any other mapped address receives a new or renamed primary label. Existing symbols retain their namespace and accept leaf names or qualified names within that namespace; qualified readback can be reused without adding namespace prefixes. Readback compares the primary symbol name.",
-        "set_addresses_names applies each address in its own transaction and reports per-address success; invalid names, unmapped addresses, and readback mismatches roll back only that address.",
+        operation === "set_address_name"
+          ? "A name held by another address in the destination namespace is not moved; a false result reports its reason in raw_result.failures."
+          : "set_addresses_names decides every address from the names held before the batch: addresses requesting one destination name, or a name another selected address holds, are rejected rather than ordered. Others apply in their own transactions. raw_result.failures gives each failure's reason; raw_result.conflicts lists each contested name once with its requesting and holding addresses.",
         "Metadata edits invalidate immutable analysis snapshots and are discarded on close; this is not a saved Ghidra project.",
       ];
     case "inspect_native_load_image":
-      return [
-        ...common,
-        "Independent verification covers admitted DOS MZ, explicitly selected COM with measured entry context, and caller-supplied raw-binary imports. Measured source mappings use inclusive end addresses and complete region digests; no target execution or project mutation occurs.",
-      ];
+      return [...common, ghidraLoadImageVerificationNote()];
     case "read_bytes":
       return [
         ...common,
@@ -235,6 +217,10 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
 export const EXISTING_PROJECT_WINDOWS_UNAVAILABLE =
   "An existing Ghidra project cannot be opened on the Windows launch path.";
 
+/** Windows P0 imports targets into ephemeral projects only. */
+export const EXISTING_PROJECT_WINDOWS_REMEDIATION =
+  "Unset REA_GHIDRA_PROJECT_PATH in the environment that starts REA to import targets into an ephemeral project, or open the existing project on a supported Linux or macOS host; restart REA after changing the environment.";
+
 /** Read-only project mode retains precise unavailable mutation capabilities. */
 export const existingProjectCapabilities = (
   platform: NodeJS.Platform,
@@ -253,6 +239,7 @@ export const existingProjectCapabilities = (
         available: false,
         reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
         availabilityCode: "unsupported_host",
+        remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
       };
     if (capability.effects.mutatesArtifact)
       return {
@@ -289,6 +276,7 @@ export const windowsP0Capabilities = (
             available: false,
             reason: readiness.reason,
             availabilityCode: readiness.code,
+            remediation: readiness.remediation,
             limitations,
           });
     }),

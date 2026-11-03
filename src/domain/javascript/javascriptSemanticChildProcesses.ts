@@ -20,16 +20,18 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
-  isUnshadowedGlobal,
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
+import {
+  isUnshadowedGlobal,
+  semanticBindingAtRead,
+} from "./javascriptSemanticMutationInitializers.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   builtinDataEffectMethod,
   dataEffectLiteralString,

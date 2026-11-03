@@ -30,6 +30,7 @@ import {
   defaultKunaCacheDirectory,
   sameLexicalDirectory,
 } from "../config/kunaCacheDirectory.js";
+import { defaultDarwinHelperCacheDirectory } from "../process/DarwinHelperCache.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
@@ -1281,6 +1282,9 @@ const purgeSelectedData = async (
         ),
       );
   }
+  // The ownership helper cache has no caller-selected location to retain.
+  if (platform === "darwin")
+    directories.push(defaultDarwinHelperCacheDirectory(home));
   if (platform === "linux") {
     const hopper = linuxHopperReleaseCacheDirectory(environment, home);
     if (hopper.ok) directories.push(hopper.value);

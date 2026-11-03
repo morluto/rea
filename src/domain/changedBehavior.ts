@@ -10,7 +10,9 @@ import {
   readComparisonResult,
   type ParsedComparisonEvidence,
 } from "./comparisonEvidenceResult.js";
-import { evidenceSchema, type Evidence } from "./evidence.js";
+import type { Evidence } from "./evidence.js";
+import { evidenceInputSchema } from "./evidenceReference.js";
+import { err, ok, type Result } from "./result.js";
 import type { AnalysisInputError } from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
@@ -29,8 +31,27 @@ const evidenceIdSchema = prefixedDigestSchema("ev");
 
 /** Input for aggregating existing comparison Evidence. */
 export const changedBehaviorInputSchema = z.strictObject({
-  comparisons: z.array(evidenceSchema).min(1),
+  comparisons: z.array(evidenceInputSchema).min(1),
 });
+
+const comparisonSelectionSchema = z.strictObject({
+  comparisons: z.array(z.unknown()).min(1),
+});
+
+/** Admit the selection envelope without copying or authenticating full records. */
+export const readChangedBehaviorSelection = (
+  input: unknown,
+): Result<readonly unknown[], AnalysisInputError> => {
+  const envelope = comparisonSelectionSchema.safeParse(input);
+  return envelope.success
+    ? ok(envelope.data.comparisons)
+    : err(
+        analysisInputErrorFromIssues(OPERATION, envelope.error.issues, input, {
+          cause: envelope.error,
+          userMessage: "Provide at least one comparison Evidence item.",
+        }),
+      );
+};
 
 const findingSchema = z.object({
   scope: z.enum(["runtime", "protocol", "resource", "static_candidate"]),
@@ -107,20 +128,9 @@ export const findChangedBehavior = (input: unknown): FoundChangedBehavior => {
   // The public input schema remains available to clients; this internal
   // admission only checks the list shape because readEvidence below owns
   // validation and authentication of each retained Evidence item.
-  const envelope = z
-    .strictObject({ comparisons: z.array(z.unknown()).min(1) })
-    .safeParse(input);
-  if (!envelope.success)
-    throw analysisInputErrorFromIssues(
-      OPERATION,
-      envelope.error.issues,
-      input,
-      {
-        cause: envelope.error,
-        userMessage: "Provide at least one comparison Evidence item.",
-      },
-    );
-  const { comparisons } = envelope.data;
+  const selection = readChangedBehaviorSelection(input);
+  if (!selection.ok) throw selection.error;
+  const comparisons = selection.value;
   const evidence = comparisons.map((item, index) =>
     parseComparisonEvidence(item, input, index),
   );

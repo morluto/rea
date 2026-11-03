@@ -6,17 +6,20 @@ import {
   androidJniDeclarationSchema,
   androidJniLibrarySchema,
 } from "../android/androidJniBindings.js";
-import { androidJniViewItemsSchema } from "../android/androidJniQuery.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
+import {
+  androidJniViewItemsSchema,
+  androidJniViewRequestSchema,
+} from "../android/androidJniQuery.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import type { JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
   analysisViewInputError,
@@ -63,8 +66,8 @@ export const androidJniSummarySchema = reportSchema
 /** Source facts are already parsed; views never reopen the APK or rerun either reader. */
 export const projectAndroidJniView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (
     parent.operation !== "inspect_android_jni_bindings" ||
     (view.kind !== "summary" && view.kind !== "android-jni")
@@ -79,6 +82,9 @@ export const projectAndroidJniView = (
         },
       ]),
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof androidJniViewRequestSchema>
+  >(view, "summary", "android-jni");
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
@@ -98,7 +104,19 @@ export const projectAndroidJniView = (
       "unknowns",
     ),
   };
-  let result: UnsignedAnalysisView;
+  const overBudget = (value: object): boolean =>
+    jsonValueByteLength(value as unknown as JsonValue, 1024 * 1024 - 128) >
+    1024 * 1024 - 128;
+  const budgetError = () =>
+    err(
+      new AnalysisResourceConstraintError(
+        "inspect_analysis_view",
+        "transport",
+        "JNI view exceeds its 1 MiB serialized allowance.",
+        { parent_evidence_id: parent.evidenceId, limit_bytes: 1024 * 1024 },
+        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+      ),
+    );
   if (view.kind === "summary") {
     const bindings = report.bindings.slice(0, 64);
     const candidateIds = new Set(
@@ -124,9 +142,9 @@ export const projectAndroidJniView = (
       unknown: 0,
     };
     for (const binding of report.bindings) counts[binding.status]++;
-    result = {
+    const summary = {
       ...shared,
-      kind: "summary",
+      kind: "summary" as const,
       view,
       coverage: pageViewCoverage(0, bindings.length, report.bindings.length),
       summary: {
@@ -152,6 +170,8 @@ export const projectAndroidJniView = (
         ),
       },
     };
+    if (overBudget(summary)) return budgetError();
+    return ok(summary);
   } else {
     const indices =
       view.indices === undefined ? undefined : new Set(view.indices);
@@ -240,9 +260,9 @@ export const projectAndroidJniView = (
       library_inventory: report.library_inventory,
       selection: report.selection,
     };
-    result = {
+    const page = {
       ...shared,
-      kind: "android-jni",
+      kind: "android-jni" as const,
       view,
       source,
       items: androidJniViewItemsSchema.parse(selected.rows),
@@ -252,19 +272,7 @@ export const projectAndroidJniView = (
         selected.total,
       ),
     };
+    if (overBudget(page)) return budgetError();
+    return ok(page);
   }
-  if (
-    jsonValueByteLength(result as unknown as JsonValue, 1024 * 1024 - 128) >
-    1024 * 1024 - 128
-  )
-    return err(
-      new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
-        "transport",
-        "JNI view exceeds its 1 MiB serialized allowance.",
-        { parent_evidence_id: parent.evidenceId, limit_bytes: 1024 * 1024 },
-        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-      ),
-    );
-  return ok(result);
 };

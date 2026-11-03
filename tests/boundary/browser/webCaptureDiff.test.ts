@@ -1155,6 +1155,54 @@ describe("web capture diff partial script metadata", () => {
 });
 
 describe("web capture diff repeated source-map declarations", () => {
+  it("keeps empty and absent declarations distinct during partial matching", async () => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const captured = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!captured.ok) throw captured.error;
+    const template = captured.value.scripts.items[0];
+    if (template === undefined) throw new Error("Missing captured script");
+    const script = (hash: string, declaration: string | null) => ({
+      ...structuredClone(template),
+      cdp_hash: hash,
+      source_map_url: declaration,
+    });
+    const partial = structuredClone(captured.value);
+    const complete = structuredClone(captured.value);
+    for (const value of [partial, complete])
+      markSectionsComplete(value, ["scripts", "source_maps"]);
+    partial.completeness.policy_filtered_sections.push("source_maps");
+    partial.scripts.items = [
+      script("hash-a", ""),
+      script("hash-b", null),
+      script("hash-a", null),
+    ];
+    complete.scripts.items = [
+      script("hash-a", null),
+      script("hash-a", ""),
+      script("hash-b", "https://cdn.example.test/b.js.map"),
+    ];
+    for (const [before, after] of [
+      [partial, complete],
+      [complete, partial],
+    ] as const)
+      expect(
+        compareWebCaptures(
+          compareWebCapturesInputSchema.parse({
+            before: { inspection: before },
+            after: { inspection: after },
+          }),
+        ).dimensions.scripts,
+      ).toMatchObject({ status: "unknown", total_changes: 0 });
+  });
+
   it("proves differences that declaration counts cannot explain", async () => {
     const browser = await startFakeCdpBrowser();
     browsers.push(browser);

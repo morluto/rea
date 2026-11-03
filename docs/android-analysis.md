@@ -252,6 +252,35 @@ queries accept the same `overload_index`; the bridge resolves the selected
 method node and the result reports its index and displayed signature. These
 indices are tied to the current artifact and engine, not stable across builds.
 
+Method reference queries also accept an external class, such as
+`android.app.NotificationManager --method-name notify`, when the APK directly
+invokes that exact DEX class and method name. If multiple prototypes are observed,
+the input error lists their exact DEX descriptors and local overload indices;
+repeat with an explicit `--overload-index`. These are the prototypes observed in
+the APK, not the complete method inventory of an Android framework or library.
+
+Such results report `target_definition: "external"` and
+`reference_scope: "direct_dex_invokes"`. Each using method has `source_selector`
+with `class_name`, `method_name` and `overload_index`; pass those fields with the
+same APK path to `inspect_android_method` to inspect the caller. Repeated direct
+invokes in one method remain one using node with multiple instruction offsets.
+This scans raw invoke instructions in JADX's admitted APK methods without
+generating their source. It does not resolve reflection, JNI, method handles,
+inherited method lookup or possible runtime dispatch. Class-only queries and
+class/method inspection still require an APK definition; an external target has
+no invented body. Unknown class/method names remain input errors.
+
+External prototype and caller metadata use a bridge-frame-derived representation
+allowance that reserves space for retained raw calls and CLI/MCP copies. Exhausting
+it returns a typed `resource_constraint`, rather than a truncated caller list
+reported as complete. Direct instruction offsets have their separate explicit
+`direct_invokes_exhaustive` coverage. Older retained Evidence may omit the new
+definition, scope and caller-selector fields; omission does not establish them.
+The bridge checks prototype expansion before copying descriptors or joining
+displayed signatures. It reuses one bounded prototype inventory for the exact
+class/method selection in the current APK session; replacing the session or
+selection invalidates that retained result.
+
 `inspect_android_class` also reports `dex_static_value` for each `static final`
 field whose class definition encodes a value in its DEX static values, so
 compile-time constants are readable even when the class has no `<clinit>`.
@@ -736,3 +765,7 @@ containing node's unknown `dex_offset`. `direct_invokes_exhaustive: false`
 means instruction rows were bounded by the local bridge frame budget; `null`
 means the producer did not establish instruction coverage. Using-node totals
 and coverage do not imply complete instruction evidence.
+`direct_invokes_coverage` reports counts of using nodes with complete, partial,
+or unknown positions, plus the number of retained instruction sites. This
+aggregate makes position truncation visible without scanning every caller;
+older retained Evidence may omit it, which means the aggregate was unexamined.

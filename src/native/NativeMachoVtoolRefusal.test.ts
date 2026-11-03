@@ -6,7 +6,10 @@ import {
   NativeFixtureRunner,
   nativeMachoTarget,
 } from "../../tests/fixtures/nativeCommands.js";
-import { inspectNativeMacho } from "./NativeMachoInspection.js";
+import {
+  inspectNativeMacho,
+  VTOOL_CONTAINER_REFUSAL_LIMITATION,
+} from "./NativeMachoInspection.js";
 import {
   inspectionReader,
   unreadEncryption,
@@ -63,7 +66,7 @@ it("retains required facts and failed vtool provenance for its universal-contain
   const result = await inspect({ diagnostic: refusal });
   if (!result.ok) throw result.error;
   expect(result.value.limitations).toContain(
-    "vtool declined the universal container as not Mach-O; build metadata is normalized from binary load commands.",
+    VTOOL_CONTAINER_REFUSAL_LIMITATION,
   );
   expect(result.value.result).toMatchObject({
     format: "mach-o-universal",

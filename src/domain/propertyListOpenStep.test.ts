@@ -4,6 +4,7 @@ import { parseOpenStep } from "plist";
 import { plistNestingLimitMessage } from "./apple/plistValue.js";
 import {
   decodeOpenStepPropertyList,
+  OpenStepPropertyListError,
   startsOpenStepPropertyList,
 } from "./propertyListOpenStep.js";
 
@@ -30,28 +31,53 @@ const syntaxFailure = (read: () => unknown): Error => {
   throw new Error("Expected syntax failure");
 };
 
+const containerRefusal = (
+  code: OpenStepPropertyListError["code"],
+  position: number,
+) => ({ code, position });
+
+const containerRefusals = [
+  ["(}", containerRefusal("unexpected_character", 1)],
+  ["{)", containerRefusal("unexpected_character", 1)],
+  ["(@", containerRefusal("unexpected_character", 1)],
+  ["{key @", containerRefusal("expected_equals", 5)],
+  ["(x @", containerRefusal("expected_separator", 3)],
+  [
+    "(x ",
+    containerRefusal("unterminated_array", 3),
+    containerRefusal("expected_separator", 3),
+  ],
+  ["{key ", containerRefusal("expected_equals", 5)],
+  ["{key = x,", containerRefusal("unexpected_character", 8)],
+  ["{ /* unterminated", containerRefusal("unterminated_block_comment", 2)],
+  ["(x, /* unterminated", containerRefusal("unterminated_block_comment", 4)],
+  ["{ { toString = text; } @", containerRefusal("expected_equals", 23)],
+] as const;
+
+it.each(containerRefusals)(
+  "reports %s before and after a deep suffix",
+  (text, diagnosis, deep = diagnosis) => {
+    expect(syntaxFailure(() => decodeOpenStepPropertyList(text))).toMatchObject(
+      { _tag: "OpenStepPropertyListError", ...diagnosis },
+    );
+    expect(
+      syntaxFailure(() => decodeOpenStepPropertyList(text + "(".repeat(130))),
+    ).toMatchObject({ _tag: "OpenStepPropertyListError", ...deep });
+  },
+);
+
 it.each([
-  "(}",
-  "{)",
-  "(@",
-  "{key @",
-  "(x @",
-  "(x ",
-  "{key ",
-  "{key = x,",
   '{ key = "unterminated',
   '{ key = "escape\\',
   "{ key = <01",
-  "{ /* unterminated",
-  "(x, /* unterminated",
-  "{ { toString = text; } @",
   "{ { toString = text; } = value; }",
 ])(
-  "preserves pinned syntax diagnosis before later deep input after %s",
+  "keeps the pinned scalar decoder's diagnosis for %s before a deep suffix",
   (prefix) => {
     for (const text of [prefix, prefix + "(".repeat(130)]) {
       const pinned = syntaxFailure(() => parseOpenStep(text));
       const owned = syntaxFailure(() => decodeOpenStepPropertyList(text));
+      expect(owned).not.toBeInstanceOf(OpenStepPropertyListError);
       expect(owned.constructor).toBe(pinned.constructor);
       expect(owned.message).toBe(pinned.message);
     }
@@ -89,14 +115,16 @@ it("bounds compound keys and later siblings at their owning parse", () => {
   );
 });
 
-it.each(["(x,", "{ key ="])(
-  "retains incomplete-value syntax for %s",
-  (text) => {
-    expect(syntaxFailure(() => decodeOpenStepPropertyList(text)).message).toBe(
-      syntaxFailure(() => parseOpenStep(text)).message,
-    );
-  },
-);
+it.each([
+  ["(x,", "unexpected_end", 3],
+  ["{ key =", "unexpected_end", 7],
+] as const)("reports incomplete %s as %s at %s", (text, code, position) => {
+  expect(syntaxFailure(() => decodeOpenStepPropertyList(text))).toMatchObject({
+    _tag: "OpenStepPropertyListError",
+    code,
+    position,
+  });
+});
 
 it.each(["\n", "\r\n", "\r", "\u2028", "\u2029"])(
   "ends OpenStep line comments at %j without dropping following values",
@@ -134,5 +162,10 @@ it("does not treat nonterminating whitespace or quoted comment text as line ends
   );
   expect(() =>
     decodeOpenStepPropertyList("// comment without a line end"),
-  ).toThrow("Unexpected end of input");
+  ).toThrow(OpenStepPropertyListError);
+  expect(
+    syntaxFailure(() =>
+      decodeOpenStepPropertyList("// comment without a line end"),
+    ),
+  ).toMatchObject({ code: "unexpected_end" });
 });
