@@ -2612,7 +2612,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String signature = function.getPrototypeString(false, true);
         int count = prototype.getNumParams();
         if (count == 0) {
-            FrameRead read = framedStackRead(instructions, monitor);
+            FrameRead read = framedStackRead(function.getEntryPoint(), instructions, monitor);
             if (read != null) {
                 JsonObject conflict = prototypeConflict(
                     "stack-argument-read", signature, signatureSource, count, read.instruction());
@@ -2678,21 +2678,26 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     /** Follow only decoded, reachable instruction edges while the entry EBP frame survives. */
-    static FrameRead framedStackRead(List<Instruction> instructions, TaskMonitor monitor)
-        throws Exception {
-        if (instructions.size() < 3 ||
-            !instructions.get(0).getMnemonicString().equalsIgnoreCase("PUSH") ||
-            !registerOperand(instructions.get(0), 0, "EBP") ||
-            !instructions.get(1).getMnemonicString().equalsIgnoreCase("MOV") ||
-            !registerOperand(instructions.get(1), 0, "EBP") ||
-            !registerOperand(instructions.get(1), 1, "ESP") ||
-            !instructions.get(1).getAddress().equals(instructions.get(0).getFallThrough()))
-            return null;
+    static FrameRead framedStackRead(
+        Address entry,
+        List<Instruction> instructions,
+        TaskMonitor monitor
+    ) throws Exception {
         Map<Address, Instruction> decoded = new HashMap<>();
         for (Instruction instruction : instructions) decoded.put(instruction.getAddress(), instruction);
+        // An owned block below the entry can precede it in the scan, so the
+        // prologue is located by address instead of list position.
+        Instruction push = decoded.get(entry);
+        Instruction frame = push == null ? null : decoded.get(push.getFallThrough());
+        if (push == null || frame == null ||
+            !push.getMnemonicString().equalsIgnoreCase("PUSH") ||
+            !registerOperand(push, 0, "EBP") ||
+            !frame.getMnemonicString().equalsIgnoreCase("MOV") ||
+            !registerOperand(frame, 0, "EBP") ||
+            !registerOperand(frame, 1, "ESP"))
+            return null;
         ArrayDeque<Address> pending = new ArrayDeque<>();
-        if (instructions.get(1).getFallThrough() != null)
-            pending.add(instructions.get(1).getFallThrough());
+        if (frame.getFallThrough() != null) pending.add(frame.getFallThrough());
         Set<Address> visited = new HashSet<>();
         while (!pending.isEmpty()) {
             monitor.checkCancelled();
