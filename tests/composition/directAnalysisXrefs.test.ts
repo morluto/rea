@@ -212,7 +212,7 @@ describe("direct CLI cross-reference name resolution", () => {
     expect(missing).toMatchObject({
       code: "invalid_request",
       remediation: {
-        action: expect.stringContaining("exports may omit local symbols"),
+        action: expect.stringContaining("use different address coordinates"),
       },
       details: { operation: "xrefs", issues: [{ path: ["address"] }] },
     });
