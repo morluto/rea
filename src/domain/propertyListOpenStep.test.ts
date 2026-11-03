@@ -180,6 +180,12 @@ it.each([
     { escapes: '\n\r\t\0"\\q_A' },
   ],
   ['{ controls = "\\a\\b\\f\\v"; }', { controls: "\u0007\b\f\v" }],
+  ['{ surrogatePair = "\\Ud83d\\Ude00"; }', { surrogatePair: "😀" }],
+  ['{ loneHighSurrogate = "\\Ud800"; }', { loneHighSurrogate: "\ufffd" }],
+  ['{ loneLowSurrogate = "\\Udc00"; }', { loneLowSurrogate: "\ufffd" }],
+  ['{ octalBoundary376 = "\\376"; }', { octalBoundary376: "\ufffd" }],
+  ['{ octalBoundary377 = "\\377"; }', { octalBoundary377: "\ufffd" }],
+  ['{ octalWrap400 = "\\400"; }', { octalWrap400: "\0" }],
 ])(
   "decodes OpenStep quoted escape sequences in keys and values for %s",
   (text, expected) => {

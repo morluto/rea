@@ -100,7 +100,33 @@ export const decodeOpenStepQuotedString = (token: string): string => {
             break;
           }
         }
-        result += String.fromCharCode(num);
+        if (num >= 0xd800 && num <= 0xdbff) {
+          if (content[i] === "\\" && content[i + 1] === "U") {
+            let lowNum = 0;
+            let lowDigits = 0;
+            let j = i + 2;
+            while (lowDigits < 4 && j < content.length) {
+              const hexChar = content[j]!;
+              if (/^[0-9a-fA-F]$/.test(hexChar)) {
+                lowNum = (lowNum << 4) | parseInt(hexChar, 16);
+                j += 1;
+                lowDigits += 1;
+              } else {
+                break;
+              }
+            }
+            if (lowDigits === 4 && lowNum >= 0xdc00 && lowNum <= 0xdfff) {
+              i = j;
+              result += String.fromCharCode(num, lowNum);
+              break;
+            }
+          }
+          result += "\ufffd";
+        } else if (num >= 0xdc00 && num <= 0xdfff) {
+          result += "\ufffd";
+        } else {
+          result += String.fromCharCode(num);
+        }
         break;
       }
       case "0":
@@ -116,7 +142,7 @@ export const decodeOpenStepQuotedString = (token: string): string => {
           if (i < content.length) {
             const octChar = content[i]!;
             if (octChar >= "0" && octChar <= "7") {
-              num = (num << 3) + (octChar.charCodeAt(0) - 48);
+              num = ((num << 3) + (octChar.charCodeAt(0) - 48)) & 0xff;
               i += 1;
             } else {
               break;
@@ -128,9 +154,7 @@ export const decodeOpenStepQuotedString = (token: string): string => {
         } else {
           const codePoint = NEXT_STEP_LATIN_TABLE[num - 0x80];
           result +=
-            codePoint !== undefined && codePoint !== 0xfffd
-              ? String.fromCharCode(codePoint)
-              : "";
+            codePoint !== undefined ? String.fromCharCode(codePoint) : "\ufffd";
         }
         break;
       }
