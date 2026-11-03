@@ -2351,6 +2351,7 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
       expect(scanned.limitations).toContain(
         "Did not probe app.asar/native.node for an embedded package.",
       );
+      expect(scanned.extractable.unreadable_members).toBe(1);
     } finally {
       createdReaders.wrap = undefined;
     }
