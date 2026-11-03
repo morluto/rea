@@ -118,3 +118,88 @@ it.each([
     }
   },
 );
+
+it.each(["compact", "full"] as const)(
+  "retains a containing data identity without selecting a field (%s)",
+  async (profile) => {
+    const observed = {
+      ...compactInstruction(),
+      address: "overlay:0x1002",
+      status: "data",
+      procedure: null,
+      bytes: null,
+      length: null,
+      mnemonic: null,
+      raw_disassembly: null,
+      containing_data: {
+        address: "overlay:0x1000",
+        length: 5,
+        type_id: "/Record",
+        provenance: "ghidra-listing",
+      },
+    };
+    const harness = await connectGhidraMcp(
+      "ghidra-containing-data",
+      () => Promise.resolve(ok(observed)),
+      { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile } },
+    );
+    try {
+      const result = await harness.mcp.callTool({
+        name: "inspect_native_instruction",
+        arguments: { address: observed.address },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, result.structuredContent)
+          .normalized_result,
+      ).toMatchObject({
+        address: observed.address,
+        status: "data",
+        containing_data: observed.containing_data,
+      });
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+it.each([
+  ["missing", undefined],
+  [
+    "wrong space",
+    {
+      address: "other:0x1000",
+      length: 5,
+      type_id: "/Record",
+      provenance: "ghidra-listing",
+    },
+  ],
+  [
+    "outside extent",
+    {
+      address: "overlay:0x1000",
+      length: 2,
+      type_id: "/Record",
+      provenance: "ghidra-listing",
+    },
+  ],
+] as const)("rejects %s data containment", async (_name, containing_data) => {
+  const observed = {
+    ...compactInstruction(),
+    address: "overlay:0x1002",
+    status: "data",
+    ...(containing_data === undefined ? {} : { containing_data }),
+  };
+  const harness = await connectGhidraMcp("ghidra-invalid-data", () =>
+    Promise.resolve(ok(observed)),
+  );
+  try {
+    const result = await harness.mcp.callTool({
+      name: "inspect_native_instruction",
+      arguments: { address: observed.address },
+    });
+    expect(result.isError).toBe(true);
+  } finally {
+    await harness.close();
+  }
+});

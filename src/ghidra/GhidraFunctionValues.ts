@@ -303,6 +303,23 @@ const ghidraInstruction = nativeInstructionSchema.superRefine(
         message:
           "Ghidra instruction containment must match the reported status",
       });
+    if ((value.status === "data") !== (value.containing_data !== undefined))
+      context.addIssue({
+        code: "custom",
+        path: ["containing_data"],
+        message: "Ghidra data containment must match the reported status",
+      });
+    const data = value.containing_data;
+    if (data !== undefined) {
+      const distance = addressDistance(data.address, value.address);
+      if (distance === null || distance >= data.length)
+        context.addIssue({
+          code: "custom",
+          path: ["containing_data", "address"],
+          message:
+            "Ghidra containing data must enclose the queried byte in the same address space",
+        });
+    }
     const containing = value.containing_instruction;
     if (containing !== undefined) {
       const distance = addressDistance(containing.address, value.address);

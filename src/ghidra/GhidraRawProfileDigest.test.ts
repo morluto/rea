@@ -10,9 +10,9 @@ import { GhidraProvider } from "./GhidraProvider.js";
 // status, load-image relocation-symbol and procedure search revisions that
 // prevent reuse of snapshots with earlier results.
 const RAW_DIGESTS = {
-  "6502": "6586a80aa84507422d709e1f5abbc1b3d33a7ce9c14a4c124a0e83e7949524da",
+  "6502": "9bfb2af8b5a137349019f23d09b9e817bfe1566cf832ff96c2edf528fb6af063",
   "x86-disabled-analyzer":
-    "1cf03115491ace971ace8f855e8262959fed68382d4ee2be1672465a2d65be10",
+    "c3376f877c19f4a47ca691c0e51da293f144b707111e5f31edf0d1d9fb4e4058",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
@@ -47,7 +47,7 @@ describe("raw-binary analysis profile digest", () => {
       load_image_evidence: "independent-raw-mapping-context-v4",
       load_image_observations:
         "source-mappings-entry-context-relocation-symbol-v3",
-      instruction_status: "unlisted-address-and-containing-listing-v2",
+      instruction_status: "unlisted-and-containing-code-data-v3",
       analyzer_preset: "ghidra-default",
     });
   });
