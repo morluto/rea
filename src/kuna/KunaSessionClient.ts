@@ -1473,7 +1473,12 @@ export class KunaSessionClient implements AnalysisClient {
       referenced_names: [],
       basic_blocks: [],
       native_api: null,
-      native_value_flow: null,
+      native_value_flow: {
+        available: false,
+        reason:
+          "REA's Kuna provider does not report native def-use observations.",
+        limitations: [],
+      },
       facet_availability: {
         pseudocode:
           text === null

@@ -509,6 +509,11 @@ it("builds a dossier with text and call relationships, leaving unsupported facet
     },
     pseudocode: "int main(void)\n{\n  return 0;\n}",
     assembly: ["main:  ; 0x1000", "  00001000: c3     RET"],
+    native_value_flow: {
+      available: false,
+      reason:
+        "REA's Kuna provider does not report native def-use observations.",
+    },
     facet_availability: {
       pseudocode: { available: true },
       assembly: { available: true },

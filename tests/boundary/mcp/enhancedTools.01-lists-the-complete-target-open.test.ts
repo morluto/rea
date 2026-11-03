@@ -445,7 +445,7 @@ describe("enhanced MCP tools", () => {
       decompilations: 1,
       unknowns: [
         expect.objectContaining({
-          reason: "Provider has no native def-use model",
+          reason: "Native def-use was not recorded for this procedure.",
         }),
       ],
     });

@@ -170,7 +170,8 @@ export const traceNativeValues = async (
       unknowns.push({
         procedure: address,
         address: null,
-        reason: flow?.reason ?? "Provider has no native def-use model",
+        reason:
+          flow?.reason ?? "Native def-use was not recorded for this procedure.",
       });
       continue;
     }
