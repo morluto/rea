@@ -117,3 +117,21 @@ it("emits neither acquisition nor release for a port that throws", () => {
     ).resourceOperations,
   ).toEqual([]);
 });
+
+it("records the expression-depth budget when a unary port spelling exceeds it", () => {
+  const nested = (count: number) =>
+    analyzeJavaScriptSemantics(
+      `import net from "node:net";\nfunction g() { net.connect(${"~".repeat(count)}65536); }`,
+    );
+  const exact = nested(200);
+  expect(exact.resourceOperations).toEqual([]);
+  expect(exact.coverage).toEqual({ status: "complete", omittedCount: 0 });
+  const bounded = nested(300);
+  expect(
+    bounded.resourceOperations.map(({ kind, method }) => ({ kind, method })),
+  ).toEqual([{ kind: "acquire", method: "connect" }]);
+  expect(bounded.coverage).toMatchObject({
+    status: "partial",
+    resourceLimits: ["expression-depth"],
+  });
+});

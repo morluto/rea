@@ -327,7 +327,10 @@ const exactSocketArgument = (
 ): ExactSocketArgument | undefined => {
   const unwrapped = unwrapJavaScriptExpression(node);
   const remaining = depth - unwrapped.depth - 1;
-  if (remaining < 0) return undefined;
+  if (remaining < 0) {
+    context.state.valueResourceLimits.add("expression-depth");
+    return undefined;
+  }
   const value = unwrapped.node;
   if (t.isStringLiteral(value)) return { kind: "string", value: value.value };
   if (t.isNumericLiteral(value)) return { kind: "number", value: value.value };
