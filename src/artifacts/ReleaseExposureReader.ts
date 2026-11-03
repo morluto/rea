@@ -772,6 +772,11 @@ interface ScanState {
   /** Bytes of resolved path offered to `scriptTargets`, kept or refused. */
   scriptTargetBytes: number;
   mapTargetBytes: number;
+  /**
+   * A declared map target was refused by the allowance. A later `.map` may be
+   * that target, so it can no longer settle as a linker map.
+   */
+  mapTargetsDiscarded: boolean;
   /** Members already examined as a script. */
   examinedScripts: Set<string>;
   visitText: ReleaseExposureTextVisitor;
@@ -817,6 +822,7 @@ const createState = (visitText: ReleaseExposureTextVisitor): ScanState => ({
   scriptTargets: new Set(),
   scriptTargetBytes: 0,
   mapTargetBytes: 0,
+  mapTargetsDiscarded: false,
   examinedScripts: new Set(),
   visitText,
 });
@@ -1526,9 +1532,10 @@ const noteMapTarget = (state: ScanState, location: string): void => {
     return;
   }
   state.mapTargetBytes += Buffer.byteLength(target);
-  if (state.mapTargetBytes > MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES)
+  if (state.mapTargetBytes > MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES) {
     state.skippedMaps += 1;
-  else state.mapTargets.add(target);
+    state.mapTargetsDiscarded = true;
+  } else state.mapTargets.add(target);
 };
 
 /**
@@ -1540,6 +1547,11 @@ const memberLocationKey = (location: string): string =>
   logicalPathNfc(resolve(location));
 
 const noteLinkerMapGuess = (state: ScanState, location: string): void => {
+  // Once a declaration was discarded, this map may be its target.
+  if (state.mapTargetsDiscarded) {
+    state.skippedMaps += 1;
+    return;
+  }
   const key = memberLocationKey(location);
   const paths = state.linkerMapGuesses.get(key) ?? new Set();
   state.linkerMapGuesses.set(key, paths.add(location));

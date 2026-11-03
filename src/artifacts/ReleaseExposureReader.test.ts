@@ -3223,6 +3223,27 @@ describe("ReleaseExposureReader map target allowance", () => {
     expect(scanned.source_maps.embedded).toBe(0);
     expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
   });
+
+  it("does not read a .map past the target allowance as a linker map", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-maps-");
+    const folder = join(
+      root,
+      ...Array.from({ length: 4 }, () => "d".repeat(200)),
+    );
+    await mkdir(folder, { recursive: true });
+    const declarations = Array.from(
+      { length: Math.ceil(MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES / 800) + 1 },
+      (_, index) => `//# sourceMappingURL=m${String(index)}`,
+    );
+    await writeFile(
+      join(folder, "a.js"),
+      `${declarations.join("\n")}\n//# sourceMappingURL=z.map\n`,
+    );
+    await writeFile(join(folder, "z.map"), "not a map\n");
+    const scanned = await inspect(root);
+    expect(scanned.debug_companions.paths).toEqual([]);
+    expect(scanned.source_maps.skipped).toBeGreaterThan(0);
+  });
 });
 
 describe("ReleaseExposureReader HTML script references", () => {
