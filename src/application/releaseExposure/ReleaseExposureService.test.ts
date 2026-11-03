@@ -1465,6 +1465,40 @@ describe("ReleaseExposureService Go trimpath rewrites", () => {
   });
 });
 
+describe("ReleaseExposureService Go forwarded linker search paths", () => {
+  it.each([
+    ["-Wl,-rpath,private-runtime", "private-runtime"],
+    ["-Wl,-rpath=private-runtime", "private-runtime"],
+    ["-Wl,--rpath=private-runtime", "private-runtime"],
+    ["-Xlinker -rpath -Xlinker private-runtime", "private-runtime"],
+    ["-Wl,-rpath-link,private-runtime", "private-runtime"],
+    ["-Wl,-rpath-link=private-runtime", "private-runtime"],
+    ["-Wl,--rpath-link,private-runtime", "private-runtime"],
+  ])(
+    "keeps the relative search path a compiler forwards in %s",
+    async (value, path) => {
+      const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.status).toBe("exposed");
+      expect(check?.observation.samples).toEqual([path]);
+    },
+  );
+
+  it("does not read loader-expanded runtime search paths as build paths", async () => {
+    const report = await goReport(
+      goModule([
+        {
+          key: "CGO_LDFLAGS",
+          value:
+            "-Wl,-rpath,$ORIGIN/../lib -Wl,-rpath=${ORIGIN}/lib -Wl,-rpath,@loader_path/Frameworks -Xlinker -rpath -Xlinker @executable_path",
+        },
+      ]),
+    );
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("not_observed");
+  });
+});
+
 describe("ReleaseExposureService Go relative flag paths", () => {
   it("keeps relative paths given to compiler path flags, attached or not", async () => {
     const report = await goReport(

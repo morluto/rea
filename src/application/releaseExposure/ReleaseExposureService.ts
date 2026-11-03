@@ -842,10 +842,17 @@ const GO_COMPILER_PATH_FLAG =
  * Linker options a C compiler forwards through `-Wl,a,b` or `-Xlinker a`. The
  * linker reads its own letters: `-L`, `-T` and `-I` (the ELF interpreter) take
  * a path, `-Bstatic` does not, and `-Ttext=0x400000` and its siblings set a
- * section or segment address.
+ * section or segment address. `-rpath` and `-rpath-link` take a runtime or
+ * link-time library search directory.
  */
 const LINKER_PATH_FLAG =
-  /^(?:-(?!T(?:bss|data|text|(?:ldata|rodata|text)-segment)(?:=|$))[ILT]|-{1,2}(?:dynamic-linker|library-path|script)(?==|$))=?(.*)$/su;
+  /^(?:-(?!T(?:bss|data|text|(?:ldata|rodata|text)-segment)(?:=|$))[ILT]|-{1,2}(?:dynamic-linker|library-path|rpath|rpath-link|script)(?==|$))=?(.*)$/su;
+/**
+ * A runtime search path the loader expands, such as `$ORIGIN/../lib` or
+ * `@loader_path/Frameworks`, which names no directory on the build host.
+ */
+const LINKER_RUNTIME_TOKEN =
+  /^(?:\$(?:ORIGIN|LIB|PLATFORM)\b|\$\{(?:ORIGIN|LIB|PLATFORM)\}|@(?:executable_path|loader_path|rpath)(?:\/|$))/u;
 /**
  * The options `go tool link -h` documents as taking a directory, path or file,
  * as `-L dir` or `-L=dir`, never attached. `-extld`, `-extar` and `-libgcc`
@@ -1015,7 +1022,9 @@ const compilerPaths = (value: string): string[] => {
   return [
     ...flagPaths(flags),
     ...goRelativeFlagPaths(compiler, GO_COMPILER_PATH_FLAG),
-    ...goRelativeFlagPaths(linker, LINKER_PATH_FLAG),
+    ...goRelativeFlagPaths(linker, LINKER_PATH_FLAG).filter(
+      (path) => !LINKER_RUNTIME_TOKEN.test(path),
+    ),
   ];
 };
 
