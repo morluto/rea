@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
 import {
   valueTraceDiamond,
@@ -14,6 +14,10 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 it.each([
   { profile: "compact", state: "supported" },
@@ -97,6 +101,7 @@ it.each([
     const session = createTestBinarySession(provider);
     const { client } = await createApplicationMcpHarness({
       session,
+      schemaValidator: schemaValidation,
       serverOptions: {
         environment: {
           ...process.env,
@@ -106,7 +111,11 @@ it.each([
       },
     });
     const call = async (name: string, args: Record<string, unknown>) => {
-      const schema = await advertisedMcpToolSchemas(client, name);
+      const schema = await advertisedMcpToolSchemas(
+        client,
+        name,
+        schemaValidation.assertions,
+      );
       const reply = await client.callTool(
         { name, arguments: args },
         { toolDefinition: schema.toolDefinition },
@@ -137,14 +146,12 @@ it.each([
     expect(traceStatus).toMatchObject({
       available: false,
       value_flow_support: { status: state, provider_id: "fixture" },
-      remediation: expect.stringContaining(
-        state === "supported"
-          ? "local value-flow observations"
-          : state === "unknown"
-            ? "support is undeclared"
-            : "Fixture has no value flow.",
-      ),
+      remediation: expect.any(String),
     });
+    if (state === "unavailable")
+      expect(traceStatus?.remediation).toContain("Fixture has no value flow.");
+    else
+      expect(traceStatus?.remediation).toContain("resolve_native_call_targets");
     const trace = parseEvidence(
       await call("trace_native_values", { procedure: "0x1000", max_depth: 0 }),
     );
