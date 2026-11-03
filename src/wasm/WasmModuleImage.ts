@@ -28,6 +28,8 @@ export const WASM_MODULE_LIMITS = {
 } as const;
 
 export const WASM_PAGE_BYTES = 65536;
+/** Zero bytes kept after the last data segment; wider than any record read across it. */
+const LINEAR_MEMORY_TAIL_BYTES = 64;
 
 export interface WasmMemory {
   readonly initialPages: number;
@@ -333,10 +335,17 @@ export const readInitialLinearMemory = (
     low = Math.min(low, s.offset);
     high = Math.max(high, s.offset + s.bytes.length);
   }
-  // With the memory known, the view runs to its initial end, so a value that
-  // straddles the last segment's end reads its zero bytes like any other.
+  // With the memory known, a short zero tail lets a value that straddles the
+  // last segment's end read whole; the rest of the initial memory stays out
+  // of the view so searches do not walk the unused heap.
   if (image.memory)
-    high = Math.max(high, image.memory.initialPages * WASM_PAGE_BYTES);
+    high = Math.max(
+      high,
+      Math.min(
+        high + LINEAR_MEMORY_TAIL_BYTES,
+        image.memory.initialPages * WASM_PAGE_BYTES,
+      ),
+    );
   if (high - low > WASM_MODULE_LIMITS.linearMemoryBytes)
     throw new WasmModuleFailure(
       "capacity",

@@ -22,6 +22,7 @@ import {
   UnsupportedMachoMetadataFormatError,
 } from "../native/AppleMachoSelection.js";
 import {
+  WASM_PAGE_BYTES,
   WasmModuleFailure,
   readInitialLinearMemory,
   readWasmModuleImage,
@@ -122,7 +123,8 @@ const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
 
 /**
  * Initial linear memory from active data segments, mapped from the lowest
- * segment start to the end of the initial memory, gaps and tail as zero.
+ * segment start to a short zero tail past the highest end; the rest of the
+ * initial memory is zero fill.
  * Bytes below the lowest segment stay unmapped, so a pointer into them is not
  * read as zero.
  */
@@ -144,8 +146,9 @@ const openWasmImage = (bytes: Buffer): NativeImage => {
       );
     throw cause;
   }
-  // The view already runs to the initial memory end, so no zero-fill range
-  // splits a value at the last segment boundary.
+  // The view carries a short zero tail past the last segment, so a value that
+  // straddles that boundary reads whole; the rest of the initial memory is a
+  // zero-fill range that reads resolve but searches skip.
   const mappings =
     memory.bytes.length === 0
       ? []
@@ -156,7 +159,13 @@ const openWasmImage = (bytes: Buffer): NativeImage => {
             size: memory.bytes.length,
           },
         ];
-  const zero_fills: BinaryContainer["zero_fills"] = [];
+  const end = BigInt(memory.address + memory.bytes.length);
+  const initial =
+    BigInt(module.memory?.initialPages ?? 0) * BigInt(WASM_PAGE_BYTES);
+  const zero_fills: BinaryContainer["zero_fills"] =
+    memory.bytes.length > 0 && initial > end
+      ? [{ address: end, size: initial - end }]
+      : [];
   return {
     bytes: memory.bytes,
     container: {

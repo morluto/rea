@@ -284,12 +284,14 @@ describe("readInitialLinearMemory", () => {
     expect([...linear.bytes]).toEqual([3, 0, 0, 0, 1, 2, 2, 1]);
   });
 
-  it("runs to the end of the initial memory when the memory is known", () => {
+  it("keeps a short zero tail, not the whole initial memory", () => {
     const image = readWasmModuleImage(module(memory(1), data([16, [1, 2]])));
     const linear = readInitialLinearMemory(image);
     expect(linear.address).toBe(16);
-    expect(linear.bytes.length).toBe(65536 - 16);
+    expect(linear.bytes.length).toBe(2 + 64);
     expect([...linear.bytes.subarray(0, 3)]).toEqual([1, 2, 0]);
+    const full = readWasmModuleImage(module(memory(1), data([65530, [1, 2]])));
+    expect(readInitialLinearMemory(full).bytes.length).toBe(6);
   });
 
   it("is empty without data", () => {

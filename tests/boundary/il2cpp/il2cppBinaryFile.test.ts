@@ -1972,10 +1972,37 @@ const leb128 = (value: number): number[] => {
   } while (value !== 0);
   return out;
 };
-/** A module with `pages` of memory and one data segment, `bytes` at offset 16. */
-const wasmMemoryModule = (pages: number, bytes: number[]) => {
+const sleb128 = (value: number): number[] => {
+  const out: number[] = [];
+  for (;;) {
+    const byte = value & 0x7f;
+    value >>= 7;
+    const done =
+      (value === 0 && (byte & 0x40) === 0) ||
+      (value === -1 && (byte & 0x40) !== 0);
+    out.push(done ? byte : byte | 0x80);
+    if (done) return out;
+  }
+};
+/** A module with `pages` of memory and one-byte-or-more data segments at the given offsets. */
+const wasmMemoryModule = (
+  pages: number,
+  bytes: number[],
+  ...more: [offset: number, bytes: number[]][]
+) => {
   const memory = [1, 0, ...leb128(pages)];
-  const data = [1, 0, 0x41, 16, 0x0b, bytes.length, ...bytes];
+  const segments: [number, number[]][] = [[16, bytes], ...more];
+  const data = [
+    ...leb128(segments.length),
+    ...segments.flatMap(([offset, content]) => [
+      0,
+      0x41,
+      ...sleb128(offset | 0),
+      0x0b,
+      ...leb128(content.length),
+      ...content,
+    ]),
+  ];
   return Buffer.from([
     0x00,
     0x61,
@@ -2000,8 +2027,9 @@ it("reads a wasm pointer whose zero high bytes lie past the last data segment", 
   expect(readPointer(image, 16n)).toBe(0x0102n);
 });
 
-it("reports a wasm initial memory over the reconstruction allowance as capacity", () => {
-  expect(failure(wasmMemoryModule(16385, [1]))).toEqual({
+it("reports wasm data spread over more than the reconstruction allowance as capacity", () => {
+  // Two one-byte segments 1 GiB apart in a 1 GiB + 64 KiB memory.
+  expect(failure(wasmMemoryModule(16385, [1], [0x40000010, [1]]))).toEqual({
     reason: "native-index-capacity",
     kind: "capacity",
   });
