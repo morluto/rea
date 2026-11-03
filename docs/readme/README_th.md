@@ -18,9 +18,9 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
-<a href="https://discord.com/invite/GkcryMnJDM"><img alt="เข้าร่วมชุมชน REA บน Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
-
 **[เว็บไซต์](https://rea.tools/th/) · [คู่มือ](https://rea.tools/th/guides/) · [ตัวอย่างการใช้งาน](https://rea.tools/th/showcase/)**
+
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="เข้าร่วมชุมชน REA บน Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
 
 [เริ่มต้นอย่างรวดเร็ว](#เริ่มต้นอย่างรวดเร็ว) · [REA ทำงานอย่างไร](#rea-ทำงานอย่างไร) · [สิ่งที่วิเคราะห์ได้](#สิ่งที่วิเคราะห์ได้) · [ตัวอย่างการใช้งาน](#ตัวอย่างการใช้งาน) · [สร้างสภาพแวดล้อม RL](#build-rl-environments) · [คำถามที่พบบ่อย](#คำถามที่พบบ่อย) · [เอกสาร](#เอกสาร)
 
