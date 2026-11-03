@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  readInitialLinearMemorySteps,
   readWasmModuleImageSteps,
   WASM_MODULE_LIMITS,
   WasmModuleFailure,
@@ -466,5 +467,30 @@ describe("source and view share one allowance", () => {
       readInitialLinearMemory({ dataSegments: image.dataSegments }, 0).bytes
         .length,
     ).toBe(4);
+  });
+});
+
+describe("overlap and copy batching", () => {
+  it("counts overlapping segments once against the zero-gap allowance", () => {
+    const gap = WASM_MODULE_LIMITS.linearMemoryGapBytes;
+    // Four 64-byte copies of one range: summing them would hide 192 zero bytes.
+    const repeated = Array.from({ length: 4 }, (): [number, number[]] => [
+      0,
+      Array<number>(64).fill(1),
+    ]);
+    const image = readWasmModuleImage(
+      module(memory(2048), data(...repeated, [gap + 100, [1]])),
+    );
+    expect(() =>
+      readInitialLinearMemory({ dataSegments: image.dataSegments }),
+    ).toThrow(/zero bytes in their span/u);
+  });
+  it("yields while copying a segment larger than one copy batch", () => {
+    const big = Array<number>((1 << 20) + 16).fill(1);
+    const image = readWasmModuleImage(module(memory(32), data([0, big])));
+    const steps = readInitialLinearMemorySteps({
+      dataSegments: image.dataSegments,
+    });
+    expect(steps.next().done).toBe(false);
   });
 });
