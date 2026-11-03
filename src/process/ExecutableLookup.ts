@@ -19,7 +19,12 @@ export type ExecutableLookup =
       readonly code: "EACCES" | "EPERM";
       readonly cause: unknown;
     }
-  | { readonly status: "missing"; readonly checked: readonly string[] }
+  | {
+      readonly status: "missing";
+      readonly checked: readonly string[];
+      /** The path an explicitly selected command names, which its launch runs. */
+      readonly selectedPath?: string;
+    }
   /** A relative command, or a match under a relative PATH entry, needed the working directory, which could not be read. */
   | { readonly status: "no-working-directory"; readonly cause: unknown }
   /** The caller's signal or deadline ended the lookup before it finished. */
@@ -88,6 +93,12 @@ export const lookupExecutable = async (
   const interruption = lookupInterruption(signal, timeoutMs);
   try {
     const checked: string[] = [];
+    let selectedPath: string | undefined;
+    const missing = (): ExecutableLookup => ({
+      status: "missing",
+      checked,
+      ...(selectedPath === undefined ? {} : { selectedPath }),
+    });
     for (const entry of entries) {
       const entryBytes = Buffer.byteLength(entry);
       if (!explicit && PATH_MAX !== undefined && entryBytes >= PATH_MAX) {
@@ -110,6 +121,7 @@ export const lookupExecutable = async (
         candidate = appendCallerPath(entry === "" ? "." : entry, command);
         unnamed = { cause };
       }
+      if (explicit) selectedPath = candidate;
       const metadata = await interruption.race(
         shareFileCall(stat, candidate, () => stat(candidate)),
       );
@@ -125,7 +137,7 @@ export const lookupExecutable = async (
           };
         checked.push(`${candidate}${systemErrorSuffix(code)}`);
         if (searchMovesPast(code)) continue;
-        return { status: "missing", checked };
+        return missing();
       }
       if (!metadata.value.isFile()) {
         checked.push(`${candidate} (not a regular file)`);
@@ -146,9 +158,9 @@ export const lookupExecutable = async (
           : { status: "no-working-directory", cause: unnamed.cause };
       const code = systemErrorCode(executable.cause);
       checked.push(`${candidate}${systemErrorSuffix(code)}`);
-      if (!searchMovesPast(code)) return { status: "missing", checked };
+      if (!searchMovesPast(code)) return missing();
     }
-    return { status: "missing", checked };
+    return missing();
   } finally {
     interruption.release();
   }

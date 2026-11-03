@@ -956,15 +956,24 @@ export class ReverseEngineeringService {
           { provider_executable_path: lookup.path },
         ),
       );
-    // The command launch reports an executable that cannot be selected.
-    if (lookup.status !== "found")
+    // The command launch reports an executable that cannot be selected. An
+    // explicitly selected path runs as the lookup resolved it, so a launch
+    // failure keeps where it looked.
+    if (lookup.status !== "found") {
+      const selected =
+        lookup.status === "missing" ? lookup.selectedPath : undefined;
       return ok(
         unidentified(
           lookup.status === "no-working-directory"
             ? "the executable could not be located: its lookup needed the working directory, which could not be read"
             : "the executable could not be located",
+          selected,
+          selected === undefined
+            ? undefined
+            : { provider_executable_path: selected },
         ),
       );
+    }
     let sha256: string;
     try {
       sha256 = await this.#digest(lookup.path, signal, this.#stat, timeoutMs);

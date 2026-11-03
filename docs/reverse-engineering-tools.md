@@ -156,8 +156,9 @@ decides what runs. A found file that does not start with `ENOENT` or `EACCES`,
 as when a script's interpreter is missing or not executable, is one a native
 search moves past. The command then also runs as selected, with the version
 unknown, and a limitation names that file. When the host refuses to inspect an
-explicitly selected path (`EACCES` or `EPERM`), the command runs that path with
-the version unknown, and Evidence or the launch failure keeps it as
+explicitly selected path (`EACCES` or `EPERM`), or the lookup does not accept
+it, for example because it lacks execute permission, the command runs that
+path with the version unknown, and Evidence or the launch failure keeps it as
 `provider_executable_path`. A lookup or hash that stops waiting for a stalled
 `stat` or `access` leaves that call running; a later lookup or hash of the same
 path waits for it instead of starting another. A hash also ends at the deadline

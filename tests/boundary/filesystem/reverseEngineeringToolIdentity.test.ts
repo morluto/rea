@@ -711,10 +711,14 @@ posix.each([
   },
 );
 
-posix(
-  "keeps the resolved path of a relative selection the host refuses to inspect when its launch fails",
-  async () => {
+posix.each([
+  ["the host refuses to inspect", "stat"],
+  ["lacks execute permission", "mode"],
+] as const)(
+  "keeps the resolved path of a relative selection that %s when its launch fails",
+  async (_description, refusal) => {
     const { executable, path } = await rizinExecutableFixture();
+    if (refusal === "mode") await chmod(executable, 0o644);
     const run = vi.fn(
       async (
         _command: string,
@@ -727,12 +731,12 @@ posix(
     const service = new TestReverseEngineeringService({
       run,
       // The relative selection resolves in the fixture's directory, where
-      // the host refuses to inspect it.
+      // the host refuses to inspect it or it lacks execute permission.
       lookup: (command, _directory, searchPath, bounds) =>
         lookupExecutable(command, () => dirname(executable), searchPath, {
           ...bounds,
           stat: async (target) => {
-            if (target === executable)
+            if (refusal === "stat" && target === executable)
               throw Object.assign(new Error("permission denied"), {
                 code: "EACCES",
               });
