@@ -229,6 +229,7 @@
 * **certificates:** disclose undecoded unsigned attributes ([#7920](https://github.com/morluto/rea/issues/7920)) ([33d6975](https://github.com/morluto/rea/commit/33d697574928fa8ce225b094fea69a791ba4ee18))
 * **certificates:** unify OID decoding and validate reports ([79b8219](https://github.com/morluto/rea/commit/79b8219f290ef6304e469d9b8c40dc2af30edba9))
 * **ci:** align static checks and regression fixtures with current contracts ([#7349](https://github.com/morluto/rea/issues/7349)) ([1201c25](https://github.com/morluto/rea/commit/1201c25542bc1e6233265fb220b334f81886550c))
+* **ci:** await website worker tests and format Wrangler config ([9ebbe67](https://github.com/morluto/rea/commit/9ebbe67e05af08b567e215340da993c08dae378f))
 * **ci:** consolidate shared timer limit export ([ebfef27](https://github.com/morluto/rea/commit/ebfef27b4682ed6ed47843bad641a6200bc1942b))
 * **ci:** enforce architecture guards before dependency setup ([#8027](https://github.com/morluto/rea/issues/8027)) ([cac6e06](https://github.com/morluto/rea/commit/cac6e0613e314238999ce4cc0249107ae936e8d3))
 * **ci:** include hidden VitePress configuration in CodeQL ([#8486](https://github.com/morluto/rea/issues/8486)) ([e5e0dc5](https://github.com/morluto/rea/commit/e5e0dc5542f6a63b790881ac906dc9fcd6d46659))
