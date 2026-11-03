@@ -4,6 +4,7 @@ import { Il2cppBinaryFormatFailure } from "../../../src/il2cpp/Il2cppBinaryForma
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import {
   openImageSteps,
+  readPointer,
   readUInt32,
 } from "../../../src/il2cpp/Il2cppBinaryImage.js";
 import { expect, it } from "vitest";
@@ -1959,4 +1960,59 @@ it("refuses a CPU architecture, generic instances and gzip for a wasm module", (
   expect(failure(gzipSync(createWasmFixture())).reason).toBe(
     "unsupported-container",
   );
+});
+
+const leb128 = (value: number): number[] => {
+  const out: number[] = [];
+  do {
+    let byte = value & 0x7f;
+    value >>>= 7;
+    if (value !== 0) byte |= 0x80;
+    out.push(byte);
+  } while (value !== 0);
+  return out;
+};
+/** A module with `pages` of memory and one data segment, `bytes` at offset 16. */
+const wasmMemoryModule = (pages: number, bytes: number[]) => {
+  const memory = [1, 0, ...leb128(pages)];
+  const data = [1, 0, 0x41, 16, 0x0b, bytes.length, ...bytes];
+  return Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    5,
+    memory.length,
+    ...memory,
+    11,
+    data.length,
+    ...data,
+  ]);
+};
+
+it("reads a wasm pointer whose zero high bytes lie past the last data segment", () => {
+  // A trimmed segment stores 0x0102 and leaves the pointer's high bytes zero.
+  const image = drain(openImageSteps(wasmMemoryModule(1, [2, 1]), undefined));
+  expect(readPointer(image, 16n)).toBe(0x0102n);
+});
+
+it("reports a wasm initial memory over the reconstruction allowance as capacity", () => {
+  expect(failure(wasmMemoryModule(16385, [1]))).toEqual({
+    reason: "native-index-capacity",
+    kind: "capacity",
+  });
+});
+
+it("builds a wasm fixture that the engine itself accepts", () => {
+  // The type library has no WebAssembly global; Node provides it at runtime.
+  const engine = (
+    globalThis as unknown as {
+      WebAssembly: { validate: (bytes: Uint8Array) => boolean };
+    }
+  ).WebAssembly;
+  expect(engine.validate(createWasmFixture())).toBe(true);
 });

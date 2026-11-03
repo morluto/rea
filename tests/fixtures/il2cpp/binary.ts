@@ -910,6 +910,8 @@ export const createWasmFixture = (
     0,
     0,
     0,
+    // One function type, () -> (), shared by every defined function.
+    ...wasmSection(1, [1, 0x60, 0, 0]),
     // 41 defined functions, so the slots below name existing functions.
     ...wasmSection(3, [41, ...Array<number>(41).fill(0)]),
     // One funcref table with five initial slots.
@@ -924,6 +926,11 @@ export const createWasmFixture = (
       0x0b,
       filledSlots,
       ...[10, 20, 30, 40].slice(0, filledSlots),
+    ]),
+    // One empty body (no locals, end) per defined function.
+    ...wasmSection(10, [
+      41,
+      ...Array.from({ length: 41 }, () => [2, 0, 0x0b]).flat(),
     ]),
     ...wasmSection(11, [
       2,

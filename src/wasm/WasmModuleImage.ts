@@ -22,6 +22,7 @@ export class WasmModuleFailure extends Error {
 export const WASM_MODULE_LIMITS = {
   inputBytes: 1 << 30,
   dataSegments: 1 << 18,
+  elementSegments: 1 << 18,
   tableSlots: 1 << 21,
   linearMemoryBytes: 1 << 30,
 } as const;
@@ -63,7 +64,7 @@ const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
 const I32_CONST = 0x41;
 const END = 0x0b;
 /** Import, function, table, memory, element, data; others are skipped whole. */
-const PARSED_SECTIONS = new Set([2, 3, 4, 5, 9, 11]);
+const PARSED_SECTIONS = new Set([2, 3, 4, 5, 9, 10, 11]);
 /** Required order of non-custom section ids; tag (13) sits after memory, data count (12) before code. */
 const SECTION_ORDER = [1, 2, 3, 4, 5, 13, 6, 7, 8, 9, 12, 10, 11];
 
@@ -163,6 +164,7 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
   const elements: { base: number; functions: number[] }[] = [];
   const dataSegments: WasmDataSegment[] = [];
   let slots = 0;
+  let codeBodies: number | null = null;
 
   const addMemory = (cursor: Cursor, imported: boolean) => {
     const { min, max } = cursor.limits("memory");
@@ -215,7 +217,13 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
     } else if (id === 5) {
       for (let count = body.u32(); count > 0; count--) addMemory(body, false);
     } else if (id === 9) {
-      for (let count = body.u32(); count > 0; count--) {
+      const count = body.u32();
+      if (count > WASM_MODULE_LIMITS.elementSegments)
+        throw new WasmModuleFailure(
+          "capacity",
+          `module has ${count} element segments, above ${WASM_MODULE_LIMITS.elementSegments}`,
+        );
+      for (let index = 0; index < count; index++) {
         const flags = body.u32();
         if (flags !== 0)
           throw unsupported(`element segment flags ${flags} are not read`);
@@ -229,8 +237,13 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
           );
         const functions: number[] = [];
         for (let slot = 0; slot < length; slot++) functions.push(body.u32());
+        // An empty segment still traps past the table, so its base is kept.
         elements.push({ base, functions });
       }
+    } else if (id === 10) {
+      // Each declared function needs a body; without one there is no code to link.
+      codeBodies = body.u32();
+      for (let count = codeBodies; count > 0; count--) body.span(body.u32());
     } else if (id === 11) {
       const count = body.u32();
       if (count > WASM_MODULE_LIMITS.dataSegments)
@@ -258,6 +271,10 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
     at = body.end;
   }
 
+  if ((codeBodies ?? 0) !== definedFunctionCount)
+    throw malformed(
+      `module declares ${definedFunctionCount} functions but has ${codeBodies ?? 0} code bodies`,
+    );
   const functionCount = importedFunctionCount + definedFunctionCount;
   const table = new Map<number, number>();
   const minimum = tableMinimum as number | null;
@@ -305,7 +322,8 @@ export const readWasmModuleImage = (bytes: Buffer): WasmModuleImage => {
  * bytes no segment covers are zero.
  */
 export const readInitialLinearMemory = (
-  image: Pick<WasmModuleImage, "dataSegments">,
+  image: Pick<WasmModuleImage, "dataSegments"> &
+    Partial<Pick<WasmModuleImage, "memory">>,
 ): WasmInitialLinearMemory => {
   const filled = image.dataSegments.filter((s) => s.bytes.length > 0);
   if (filled.length === 0) return { address: 0, bytes: Buffer.alloc(0) };
@@ -315,6 +333,10 @@ export const readInitialLinearMemory = (
     low = Math.min(low, s.offset);
     high = Math.max(high, s.offset + s.bytes.length);
   }
+  // With the memory known, the view runs to its initial end, so a value that
+  // straddles the last segment's end reads its zero bytes like any other.
+  if (image.memory)
+    high = Math.max(high, image.memory.initialPages * WASM_PAGE_BYTES);
   if (high - low > WASM_MODULE_LIMITS.linearMemoryBytes)
     throw new WasmModuleFailure(
       "capacity",

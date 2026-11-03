@@ -36,8 +36,35 @@ const section = (id: number, body: number[]) => [
   ...body,
 ];
 const offset = (value: number) => [0x41, ...i32(value), 0x0b];
-const module = (...sections: number[][]) =>
-  Buffer.from([0x00, 0x61, 0x73, 0x6d, 1, 0, 0, 0, ...sections.flat()]);
+const code = (count: number) =>
+  section(10, vec(Array(count).fill([2, 0, 0x0b])));
+/** Adds one empty body per declared function, in section order, unless a test gives its own. */
+const module = (...sections: number[][]) => {
+  const declared = sections.find((part) => part[0] === 3);
+  const withCode =
+    declared === undefined || sections.some((part) => part[0] === 10)
+      ? sections
+      : (() => {
+          const count = readWasmModuleImageCount(declared);
+          const at = sections.findIndex((part) => part[0] === 11);
+          const list = [...sections];
+          list.splice(at < 0 ? list.length : at, 0, code(count));
+          return list;
+        })();
+  return Buffer.from([0x00, 0x61, 0x73, 0x6d, 1, 0, 0, 0, ...withCode.flat()]);
+};
+/** Function count from a function section built by `functions` (single-byte LEB sizes). */
+const readWasmModuleImageCount = (part: number[]) => {
+  let at = 1;
+  while (part[at]! & 0x80) at++;
+  let count = 0;
+  let shift = 0;
+  for (at++; ; at++) {
+    count |= (part[at]! & 0x7f) << shift;
+    shift += 7;
+    if (!(part[at]! & 0x80)) return count;
+  }
+};
 
 const importFunction = (field: string) => [
   ...name("env"),
@@ -239,7 +266,9 @@ describe("readInitialLinearMemory", () => {
     const image = readWasmModuleImage(
       module(memory(1), data([16, [1, 2]], [20, [3]])),
     );
-    const linear = readInitialLinearMemory(image);
+    const linear = readInitialLinearMemory({
+      dataSegments: image.dataSegments,
+    });
     expect(linear.address).toBe(16);
     expect([...linear.bytes]).toEqual([1, 2, 0, 0, 3]);
   });
@@ -248,9 +277,19 @@ describe("readInitialLinearMemory", () => {
     const image = readWasmModuleImage(
       module(memory(1), data([8, [1, 1, 1, 1]], [9, [2, 2]], [4, [3]])),
     );
-    const linear = readInitialLinearMemory(image);
+    const linear = readInitialLinearMemory({
+      dataSegments: image.dataSegments,
+    });
     expect(linear.address).toBe(4);
     expect([...linear.bytes]).toEqual([3, 0, 0, 0, 1, 2, 2, 1]);
+  });
+
+  it("runs to the end of the initial memory when the memory is known", () => {
+    const image = readWasmModuleImage(module(memory(1), data([16, [1, 2]])));
+    const linear = readInitialLinearMemory(image);
+    expect(linear.address).toBe(16);
+    expect(linear.bytes.length).toBe(65536 - 16);
+    expect([...linear.bytes.subarray(0, 3)]).toEqual([1, 2, 0]);
   });
 
   it("is empty without data", () => {
@@ -289,5 +328,31 @@ describe("checks that keep counts unambiguous", () => {
     expect(failure(module(functions(1), elements(0, [0])))[1]).toBe(
       "element segments name a table the module does not have",
     );
+  });
+});
+
+describe("code bodies and segment counts", () => {
+  it("refuses declared functions without code bodies", () => {
+    const bytes = Buffer.from([
+      0x00,
+      0x61,
+      0x73,
+      0x6d,
+      1,
+      0,
+      0,
+      0,
+      ...functions(2),
+      ...code(1),
+    ]);
+    expect(failure(bytes)).toEqual([
+      "malformed",
+      "module declares 2 functions but has 1 code bodies",
+    ]);
+  });
+  it("bounds element segment records before reading them", () => {
+    const count = WASM_MODULE_LIMITS.elementSegments + 1;
+    const bytes = module(table, section(9, [...u32(count)]));
+    expect(failure(bytes)[0]).toBe("capacity");
   });
 });
