@@ -83,3 +83,38 @@ it.each(["missing", "unexpected"] as const)(
     }
   },
 );
+
+it.each([
+  ["different space", "other:0x1000"],
+  ["instruction start", "overlay:0x1001"],
+  ["past instruction", "overlay:0xff0"],
+  ["invalid coordinate", "not-an-address"],
+] as const)(
+  "rejects a containing instruction with %s",
+  async (_description, address) => {
+    const observed = {
+      ...compactInstruction(),
+      address: "overlay:0x1001",
+      status: "not-instruction-boundary",
+      containing_instruction: {
+        address,
+        length: 4,
+        mnemonic: "sub",
+        raw_disassembly: "sub sp,sp,#0x10",
+        provenance: "ghidra-listing",
+      },
+    };
+    const harness = await connectGhidraMcp("ghidra-invalid-coordinate", () =>
+      Promise.resolve(ok(observed)),
+    );
+    try {
+      const result = await harness.mcp.callTool({
+        name: "inspect_native_instruction",
+        arguments: { address: observed.address },
+      });
+      expect(result.isError).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  },
+);

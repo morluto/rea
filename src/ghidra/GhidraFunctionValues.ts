@@ -1,5 +1,6 @@
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
+import { addressDistance } from "../domain/native/addressCoordinate.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
 import {
@@ -302,6 +303,17 @@ const ghidraInstruction = nativeInstructionSchema.superRefine(
         message:
           "Ghidra instruction containment must match the reported status",
       });
+    const containing = value.containing_instruction;
+    if (containing !== undefined) {
+      const distance = addressDistance(containing.address, value.address);
+      if (distance === null || distance === 0 || distance >= containing.length)
+        context.addIssue({
+          code: "custom",
+          path: ["containing_instruction", "address"],
+          message:
+            "Ghidra containing instruction must enclose the queried byte in the same address space",
+        });
+    }
   },
 );
 
