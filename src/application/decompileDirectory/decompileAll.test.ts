@@ -329,11 +329,6 @@ describe("decompile_all manifest", () => {
     ).toBe(true);
     expect(text).toContain("// range: 0x1000-0x1000 inclusive");
     expect(text).toContain("// limitations: terminal call may cut the body");
-    expect(text).toContain("// language: unavailable");
-    expect(text).toContain("// representation: unavailable");
-    expect(text).toContain("// source: unavailable");
-    expect(text).toMatch(/\/\/ path_extension: \.c\b/);
-    expect(text).toMatch(/does not establish C syntax/i);
     expect(text.slice(text.indexOf("\n\n") + 2)).toBe(
       `int fn(void) { ${sentinel} }`,
     );
@@ -369,6 +364,52 @@ describe("decompile_all manifest", () => {
       toolContract("decompile_all").outputSchema.safeParse(evidence).success,
     ).toBe(true);
     expect(JSON.stringify(evidence)).not.toContain(sentinel);
+  });
+
+  it("records one decompiler failure without aborting or writing that file", async () => {
+    const { tools } = harness({
+      fail: { "0x2000": "error", "0x3000": "timeout" },
+    });
+    const result = await run(tools, directory());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toMatchObject({
+      counts: { written: 1, failed: 2, requested: 3 },
+    });
+    const failures = (
+      result.value as { failures: { address: string; code: string }[] }
+    ).failures;
+    expect(failures.map((failure) => failure.code).sort()).toEqual(
+      ["deadline", "invalid_request"].sort(),
+    );
+    await expect(
+      readFile(join(directory(), "functions/0x2000.c")),
+    ).rejects.toThrow();
+    await expect(
+      readFile(join(directory(), "functions/0x1000.c"), "utf8"),
+    ).resolves.toContain(sentinel);
+  });
+});
+
+describe("decompile_all pseudocode language facts", () => {
+  const directory = useOutputDirectory();
+
+  it("records unavailable language facts and a non-C path-extension note", async () => {
+    const { tools } = harness({
+      procedures: [{ address: "0x1000", name: "main" }],
+    });
+    const result = await run(tools, directory());
+    if (!result.ok) throw result.error;
+    const text = await readFile(
+      join(directory(), "functions/0x1000.c"),
+      "utf8",
+    );
+    expect(text).toContain("// language: unavailable");
+    expect(text).toContain("// representation: unavailable");
+    expect(text).toContain("// source: unavailable");
+    expect(text).toMatch(/\/\/ path_extension: \.c\b/);
+    expect(text).toMatch(/does not establish C syntax/i);
   });
 
   it("preserves observation language, representation, and source on the file and index", async () => {
@@ -434,31 +475,6 @@ describe("decompile_all manifest", () => {
         source: "single-function",
       }),
     ]);
-  });
-
-  it("records one decompiler failure without aborting or writing that file", async () => {
-    const { tools } = harness({
-      fail: { "0x2000": "error", "0x3000": "timeout" },
-    });
-    const result = await run(tools, directory());
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value).toMatchObject({
-      counts: { written: 1, failed: 2, requested: 3 },
-    });
-    const failures = (
-      result.value as { failures: { address: string; code: string }[] }
-    ).failures;
-    expect(failures.map((failure) => failure.code).sort()).toEqual(
-      ["deadline", "invalid_request"].sort(),
-    );
-    await expect(
-      readFile(join(directory(), "functions/0x2000.c")),
-    ).rejects.toThrow();
-    await expect(
-      readFile(join(directory(), "functions/0x1000.c"), "utf8"),
-    ).resolves.toContain(sentinel);
   });
 });
 
