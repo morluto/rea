@@ -839,6 +839,13 @@ const STM32F4_PERIPHERALS: readonly InternalPeripheralEntry[] = [
 // Espressif ESP32 series peripheral memory map (ESP32 Technical Reference Manual).
 const ESP32_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   {
+    name: "DPORT",
+    base: 0x3ff00000n,
+    size: 0x1000,
+    bus: "DPort",
+    description: "System control registers, clock gating, and peripheral reset",
+  },
+  {
     name: "UART0",
     base: 0x3ff40000n,
     size: 0x1000,
@@ -881,11 +888,11 @@ const ESP32_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     description: "Pin multiplexer and drive capability control",
   },
   {
-    name: "DPORT",
+    name: "UHCI0",
     base: 0x3ff4c000n,
     size: 0x1000,
     bus: "DPort",
-    description: "System control registers, clock gating, and peripheral reset",
+    description: "UART host controller interface 0",
   },
   {
     name: "I2C0",
@@ -938,14 +945,14 @@ const ESP32_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   },
   {
     name: "UART1",
-    base: 0x3ff6e000n,
+    base: 0x3ff50000n,
     size: 0x1000,
     bus: "DPort",
     description: "Universal asynchronous receiver transmitter 1",
   },
   {
     name: "UART2",
-    base: 0x3ff6f000n,
+    base: 0x3ff6e000n,
     size: 0x1000,
     bus: "DPort",
     description: "Universal asynchronous receiver transmitter 2",

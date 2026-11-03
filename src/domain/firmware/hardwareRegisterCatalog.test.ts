@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   hardwareRegisterDefinitionSchema,
+  lookupExplicitRegister,
   lookupHardwareRegister,
 } from "./hardwareRegisterCatalog.js";
 
@@ -63,12 +64,19 @@ describe("ARM Cortex-M architectural register lookup", () => {
 });
 
 describe("RISC-V and x86 standard architectural register lookup", () => {
-  it("resolves standard RISC-V CLINT and PLIC registers", () => {
-    const msip = lookupHardwareRegister("0x02000000", "riscv");
+  it("names SiFive CLINT and PLIC registers only from that profile", () => {
+    expect(lookupHardwareRegister("0x02000000", "riscv")).toBeNull();
+    const msip = lookupExplicitRegister(
+      "0x02000000",
+      "riscv-sifive-clint-plic",
+    );
     expect(msip?.mnemonic).toBe("msip0");
     expect(msip?.blockName).toBe("CLINT");
 
-    const plicClaim = lookupHardwareRegister("0x0c200004", "riscv");
+    const plicClaim = lookupExplicitRegister(
+      "0x0c200004",
+      "riscv-sifive-clint-plic",
+    );
     expect(plicClaim?.mnemonic).toBe("PLIC_CLAIM");
     expect(plicClaim?.blockName).toBe("PLIC");
   });
@@ -82,12 +90,19 @@ describe("RISC-V and x86 standard architectural register lookup", () => {
     expect(icr?.mnemonic).toBe("LAPIC_ICR_LOW");
   });
 
-  it("resolves standard ARM64 GIC Distributor and CPU Interface registers", () => {
-    const gicd = lookupHardwareRegister("0x08000000", "arm64");
+  it("names a GIC register only when its placement profile is selected", () => {
+    expect(lookupHardwareRegister("0x08000000", "arm64")).toBeNull();
+    const gicd = lookupExplicitRegister(
+      "0x08000000",
+      "arm-gic-v2-base-0x08000000",
+    );
     expect(gicd?.mnemonic).toBe("GICD_CTLR");
     expect(gicd?.blockName).toBe("GIC Distributor");
 
-    const gicc = lookupHardwareRegister("0x08010000", "arm64");
+    const gicc = lookupExplicitRegister(
+      "0x08010000",
+      "arm-gic-v2-base-0x08000000",
+    );
     expect(gicc?.mnemonic).toBe("GICC_CTLR");
     expect(gicc?.blockName).toBe("GIC CPU Interface");
   });

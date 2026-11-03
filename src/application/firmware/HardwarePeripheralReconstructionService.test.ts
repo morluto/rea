@@ -460,8 +460,7 @@ describe("Hardware peripheral reconstruction through analysis operation port", (
       architecture: "arm",
     });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
 
     expect(result.value.procedure).toBe("gpio_setup");
     expect(result.value.totalReferencesExamined).toBe(2);
@@ -472,6 +471,29 @@ describe("Hardware peripheral reconstruction through analysis operation port", (
       (b) => b.blockBase === "0xe000e000",
     );
     expect(nvicBlock?.knownRegisters).toContain("NVIC_ISER0");
+  });
+});
+
+describe("controller names come from observed addresses", () => {
+  it("does not label a missed page base as the neighboring controller", () => {
+    const report = reconstructHardwareFromReferences(
+      [
+        { target_address: "0x40011800", read: true },
+        { target_address: "0x40011000", write: true },
+      ],
+      "arm",
+      "gpio_touch",
+      "stm32f1",
+    );
+    const gpioc = report.peripheralBlocks.find(
+      (block) => block.socPeripheralName === "GPIOC",
+    );
+    const missed = report.peripheralBlocks.find((block) =>
+      block.uniqueAddresses.includes("0x40011800"),
+    );
+    expect(gpioc?.uniqueAddresses).toEqual(["0x40011000"]);
+    expect(missed?.socPeripheralName ?? null).toBeNull();
+    expect(missed?.socPeripheralNameBasis).toBe("observed_address");
   });
 });
 
@@ -544,8 +566,7 @@ describe("Ghidra procedure reference shape", () => {
       { procedure: "fixture_main", architecture: "arm", platform: "stm32f4" },
     );
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.totalReferencesExamined).toBe(1);
     expect(result.value.attributions[0]?.targetAddress).toBe("0x40011000");
   });
@@ -580,8 +601,7 @@ describe("Ghidra procedure reference shape", () => {
       { procedure: "fixture_main", architecture: "arm" },
     );
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.limitations[0]).toBe(providerLimitation);
     expect(result.value.limitations.at(-1)).toContain(
       "Failed to attribute reference to not-an-address",

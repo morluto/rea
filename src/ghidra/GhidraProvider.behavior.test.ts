@@ -227,11 +227,15 @@ describe("Ghidra raw-binary profile", () => {
     expect(shifted.value.profile?.digest).not.toBe(
       resolved.value.profile.digest,
     );
-    const cortex = await ghidra.resolveAnalysisProfile({
+    const cortexTarget: BinaryTarget = {
       ...target,
       architecture: "cortex-m",
       availableArchitectures: ["cortex-m"],
-    });
+    };
+    expect(ghidra.inspectTargetSupport(cortexTarget).status).toBe("supported");
+    const darwin = provider({ ...installationHost(), platform: "darwin" });
+    expect(darwin.inspectTargetSupport(cortexTarget).status).toBe("supported");
+    const cortex = await ghidra.resolveAnalysisProfile(cortexTarget);
     expect(cortex.ok && cortex.value).toMatchObject({
       profile: {
         parameters: {

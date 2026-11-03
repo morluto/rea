@@ -132,23 +132,6 @@ const RISCV_REGIONS: readonly HardwareMemoryRegionDefinition[] = [
     description: "On-chip Debug module, mask ROM, and boot execution space",
   },
   {
-    name: "Core Local Interruptor (CLINT)",
-    kind: "system_control",
-    start: 0x02000000n,
-    end: 0x0bffffffn,
-    isMmio: true,
-    description: "RISC-V timer and software interrupt control registers",
-  },
-  {
-    name: "Platform-Level Interrupt Controller (PLIC)",
-    kind: "system_control",
-    start: 0x0c000000n,
-    end: 0x0fffffffn,
-    isMmio: true,
-    description:
-      "RISC-V external interrupt controller priority and enable registers",
-  },
-  {
     name: "Peripheral MMIO",
     kind: "peripheral_mmio",
     start: 0x10000000n,
@@ -272,50 +255,54 @@ const X86_REGIONS: readonly HardwareMemoryRegionDefinition[] = [
   },
 ];
 
-// Generic 64-bit ARM64 / AArch64 hardware layout.
-const ARM64_REGIONS: readonly HardwareMemoryRegionDefinition[] = [
-  {
-    name: "Flash / Firmware Code",
-    kind: "code",
-    start: 0x0000000000000000n,
-    end: 0x0000000007ffffffn,
-    isMmio: false,
-    description: "Primary system firmware and boot code",
-  },
-  {
-    name: "Interrupt Controller (GIC) MMIO",
-    kind: "system_control",
-    start: 0x0000000008000000n,
-    end: 0x0000000008ffffffn,
-    isMmio: true,
-    description:
-      "ARM Generic Interrupt Controller (GIC) distributor and CPU interfaces",
-  },
-  {
-    name: "Peripheral MMIO Space",
-    kind: "peripheral_mmio",
-    start: 0x0000000009000000n,
-    end: 0x000000003fffffffn,
-    isMmio: true,
-    description: "Memory-mapped I/O peripherals and PCIe configuration ECAM",
-  },
-  {
-    name: "System RAM / DRAM",
-    kind: "sram",
-    start: 0x0000000040000000n,
-    end: 0x000000ffffffffffn,
-    isMmio: false,
-    description: "Main physical memory space",
-  },
-  {
-    name: "Extended Hardware Space",
-    kind: "reserved",
-    start: 0x0000010000000000n,
-    end: 0xffffffffffffffffn,
-    isMmio: false,
-    description: "Upper 64-bit physical address space",
-  },
-];
+/**
+ * One caller-selected AArch64 window list. The CPU family does not place GIC,
+ * peripherals, or DRAM at these addresses.
+ */
+export const ARM64_EXPLICIT_BOARD_REGIONS: readonly HardwareMemoryRegionDefinition[] =
+  [
+    {
+      name: "Flash / Firmware Code",
+      kind: "code",
+      start: 0x0000000000000000n,
+      end: 0x0000000007ffffffn,
+      isMmio: false,
+      description: "Primary system firmware and boot code",
+    },
+    {
+      name: "Interrupt Controller (GIC) MMIO",
+      kind: "system_control",
+      start: 0x0000000008000000n,
+      end: 0x0000000008ffffffn,
+      isMmio: true,
+      description:
+        "ARM Generic Interrupt Controller (GIC) distributor and CPU interfaces",
+    },
+    {
+      name: "Peripheral MMIO Space",
+      kind: "peripheral_mmio",
+      start: 0x0000000009000000n,
+      end: 0x000000003fffffffn,
+      isMmio: true,
+      description: "Memory-mapped I/O peripherals and PCIe configuration ECAM",
+    },
+    {
+      name: "System RAM / DRAM",
+      kind: "sram",
+      start: 0x0000000040000000n,
+      end: 0x000000ffffffffffn,
+      isMmio: false,
+      description: "Main physical memory space",
+    },
+    {
+      name: "Extended Hardware Space",
+      kind: "reserved",
+      start: 0x0000010000000000n,
+      end: 0xffffffffffffffffn,
+      isMmio: false,
+      description: "Upper 64-bit physical address space",
+    },
+  ];
 
 const getArchitectureRegions = (
   arch: HardwareArchitecture,
@@ -331,9 +318,31 @@ const getArchitectureRegions = (
     case "x86":
       return X86_REGIONS;
     case "arm64":
-      return ARM64_REGIONS;
+      return [];
   }
 };
+
+/** SiFive-style interrupt windows. A RISC-V CPU does not place CLINT or PLIC here. */
+export const RISCV_SIFIVE_INTERRUPT_REGIONS: readonly HardwareMemoryRegionDefinition[] =
+  [
+    {
+      name: "Core Local Interruptor (CLINT)",
+      kind: "system_control",
+      start: 0x02000000n,
+      end: 0x0bffffffn,
+      isMmio: true,
+      description: "RISC-V timer and software interrupt control registers",
+    },
+    {
+      name: "Platform-Level Interrupt Controller (PLIC)",
+      kind: "system_control",
+      start: 0x0c000000n,
+      end: 0x0fffffffn,
+      isMmio: true,
+      description:
+        "RISC-V external interrupt controller priority and enable registers",
+    },
+  ];
 
 /** Parse and canonicalize an address input into a safe BigInt representation. */
 export const parseAddressValue = (
@@ -363,6 +372,7 @@ export const parseAddressValue = (
 export const classifyHardwareMemoryAddress = (
   address: bigint | string,
   architecture: HardwareArchitecture,
+  profile?: readonly HardwareMemoryRegionDefinition[],
 ): Result<HardwareMemoryClassification, string> => {
   const parsed = parseAddressValue(address);
   if (!parsed.ok) return parsed;
@@ -374,7 +384,7 @@ export const classifyHardwareMemoryAddress = (
     );
   }
 
-  const regions = getArchitectureRegions(architecture);
+  const regions = profile ?? getArchitectureRegions(architecture);
   const matched = regions.find(
     (region) => value >= region.start && value <= region.end,
   );

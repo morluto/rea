@@ -26,7 +26,7 @@ describe("regular file identity across stat APIs", () => {
 
   it("keeps a Windows path stat with device 0 identical to the open handle", () => {
     const opened = fileState(486465838);
-    expect(sameDeviceIdentity(0, 486465838)).toBe(process.platform === "win32");
+    expect(sameDeviceIdentity(0, 486465838)).toBe(false);
     expect(sameRegularFileState(fileState(0), opened)).toBe(
       process.platform === "win32",
     );

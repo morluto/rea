@@ -88,9 +88,12 @@ export const openRegularFile = async (
 const deviceIdentity = (value: number | bigint): bigint =>
   typeof value === "bigint" ? value : BigInt(value);
 
+const windowsDeviceUnreported = (value: bigint): boolean =>
+  process.platform === "win32" && value === 0n;
+
 /**
- * Windows path stat reports device 0 while an open handle reports the volume
- * serial. A zero device is not a second volume.
+ * Volume identity. Windows path stat uses 0 when it did not report a volume.
+ * An unreported device matches nothing, including another unreported device.
  */
 export const sameDeviceIdentity = (
   expected: number | bigint,
@@ -98,26 +101,32 @@ export const sameDeviceIdentity = (
 ): boolean => {
   const expectedDevice = deviceIdentity(expected);
   const observedDevice = deviceIdentity(observed);
-  return (
-    expectedDevice === observedDevice ||
-    (process.platform === "win32" &&
-      (expectedDevice === 0n || observedDevice === 0n))
-  );
+  if (
+    windowsDeviceUnreported(expectedDevice) ||
+    windowsDeviceUnreported(observedDevice)
+  )
+    return false;
+  return expectedDevice === observedDevice;
 };
 
 /**
- * Compare one regular file's identity and mutable metadata across a read.
- * Windows path stat reports device 0 while the open handle reports the volume
- * serial. A zero device is not a second volume, so it does not by itself mean
- * the file was replaced.
+ * Compare one regular file's metadata across a read. A Windows path stat that
+ * omits the volume does not by itself show that the file was replaced. Ownership
+ * checks use sameDeviceIdentity and an open handle instead.
  */
 export const sameRegularFileState = (
   expected: Stats | BigIntStats,
   observed: Stats | BigIntStats,
 ): boolean => {
+  const expectedDevice = deviceIdentity(expected.dev);
+  const observedDevice = deviceIdentity(observed.dev);
+  const deviceAgrees =
+    windowsDeviceUnreported(expectedDevice) ||
+    windowsDeviceUnreported(observedDevice) ||
+    expectedDevice === observedDevice;
   return (
     observed.isFile() &&
-    sameDeviceIdentity(expected.dev, observed.dev) &&
+    deviceAgrees &&
     expected.ino === observed.ino &&
     expected.size === observed.size &&
     expected.mode === observed.mode &&

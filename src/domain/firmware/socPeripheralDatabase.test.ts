@@ -88,8 +88,11 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
     const gpio = lookupSocPeripheral("0x3ff44000", "esp32");
     expect(gpio?.name).toBe("GPIO");
 
-    const dport = lookupSocPeripheral("0x3ff4c000", "esp32");
+    const dport = lookupSocPeripheral("0x3ff00000", "esp32");
     expect(dport?.name).toBe("DPORT");
+    expect(lookupSocPeripheral("0x3ff4c000", "esp32")?.name).toBe("UHCI0");
+    expect(lookupSocPeripheral("0x3ff50000", "esp32")?.name).toBe("UART1");
+    expect(lookupSocPeripheral("0x3ff6e000", "esp32")?.name).toBe("UART2");
 
     const timg0 = lookupSocPeripheral("0x3ff5f000", "esp32");
     expect(timg0?.name).toBe("TIMG0");
@@ -116,8 +119,7 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
       "USART1",
     ]);
 
-    // Typical ESP32 firmware accesses: UART0, GPIO, DPORT
-    const esp32Addresses = ["0x3ff40000", "0x3ff44000", "0x3ff4c000"];
+    const esp32Addresses = ["0x3ff40000", "0x3ff44000", "0x3ff00000"];
     const esp32Candidates = detectSocPlatform(esp32Addresses);
     expect(esp32Candidates).toHaveLength(1);
     expect(esp32Candidates[0]?.platform).toBe("esp32");

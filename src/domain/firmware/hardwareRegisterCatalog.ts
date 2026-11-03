@@ -408,11 +408,23 @@ const ARM64_GIC_REGISTERS: readonly RegisterEntry[] = [
 const ARCH_REGISTERS: Record<HardwareArchitecture, readonly RegisterEntry[]> = {
   arm: ARM_SCS_REGISTERS,
   "cortex-m": ARM_SCS_REGISTERS,
-  riscv: RISCV_STANDARD_REGISTERS,
+  riscv: [],
   x86: X86_APIC_REGISTERS,
-  arm64: ARM64_GIC_REGISTERS,
+  arm64: [],
   mips: [], // MIPS uses CP0 coprocessor registers (mtc0/mfc0) rather than standard MMIO
 };
+
+/** Register maps whose addresses are chosen by a board, not by the CPU family. */
+export const EXPLICIT_REGISTER_PROFILES = {
+  "arm-gic-v2-base-0x08000000": ARM64_GIC_REGISTERS,
+  "riscv-sifive-clint-plic": RISCV_STANDARD_REGISTERS,
+} as const;
+export type ExplicitRegisterProfile = keyof typeof EXPLICIT_REGISTER_PROFILES;
+
+const PROFILE_ARCHITECTURE = {
+  "arm-gic-v2-base-0x08000000": "arm64",
+  "riscv-sifive-clint-plic": "riscv",
+} as const satisfies Record<ExplicitRegisterProfile, HardwareArchitecture>;
 
 /**
  * Resolve an architectural hardware register by its exact physical memory address.
@@ -420,9 +432,10 @@ const ARCH_REGISTERS: Record<HardwareArchitecture, readonly RegisterEntry[]> = {
  * Returns null when the address does not map to an architecturally defined register,
  * explicitly preserving unknown facts rather than fabricating hypothetical definitions.
  */
-export const lookupHardwareRegister = (
+const lookupInCatalog = (
   rawAddress: string,
   architecture: HardwareArchitecture,
+  catalog: readonly RegisterEntry[],
 ): HardwareRegisterDefinition | null => {
   if (typeof rawAddress !== "string" || !HEX_ADDRESS_PATTERN.test(rawAddress))
     return null;
@@ -433,9 +446,6 @@ export const lookupHardwareRegister = (
   } catch {
     return null;
   }
-
-  const catalog = ARCH_REGISTERS[architecture];
-  if (!catalog || catalog.length === 0) return null;
 
   const match = catalog.find((entry) => entry.address === addressBigInt);
   if (!match) return null;
@@ -451,3 +461,20 @@ export const lookupHardwareRegister = (
     standard: match.standard,
   };
 };
+
+export const lookupHardwareRegister = (
+  rawAddress: string,
+  architecture: HardwareArchitecture,
+): HardwareRegisterDefinition | null =>
+  lookupInCatalog(rawAddress, architecture, ARCH_REGISTERS[architecture]);
+
+/** Name a register only from a caller-selected placement, not from the CPU family. */
+export const lookupExplicitRegister = (
+  rawAddress: string,
+  profile: ExplicitRegisterProfile,
+): HardwareRegisterDefinition | null =>
+  lookupInCatalog(
+    rawAddress,
+    PROFILE_ARCHITECTURE[profile],
+    EXPLICIT_REGISTER_PROFILES[profile],
+  );

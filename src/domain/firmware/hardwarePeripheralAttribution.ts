@@ -119,9 +119,12 @@ export const attributeHardwareAccess = (
     blockBaseValue = socPeripheral.baseAddressValue;
     blockOffsetValue = addressValue - socPeripheral.baseAddressValue;
   } else {
-    // Group into standard 4 KiB (0x1000) hardware peripheral register pages.
-    blockBaseValue = addressValue & ~0xfffn;
-    blockOffsetValue = addressValue & 0xfffn;
+    const page = addressValue & ~0xfffn;
+    const pageNamesAnotherController =
+      platform != null && lookupSocPeripheral(page, platform) != null;
+    // A rounded page can land on a catalogued controller the access never touched.
+    blockBaseValue = pageNamesAnotherController ? addressValue : page;
+    blockOffsetValue = pageNamesAnotherController ? 0n : addressValue & 0xfffn;
   }
 
   const accessKind = deriveAccessKind(reference.read, reference.write);

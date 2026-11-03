@@ -1,5 +1,6 @@
-import { lstat, readdir, rmdir, unlink } from "node:fs/promises";
+import { constants } from "node:fs";
 import type { Stats } from "node:fs";
+import { lstat, open, readdir, rmdir, unlink } from "node:fs/promises";
 
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
 import { sameDeviceIdentity } from "./RegularFile.js";
@@ -14,8 +15,18 @@ const identityOf = (stats: Stats): Identity => ({
   ino: stats.ino,
 });
 
-const sameIdentity = (stats: Stats, identity: Identity): boolean =>
+const sameIdentity = (stats: Identity, identity: Identity): boolean =>
   sameDeviceIdentity(stats.dev, identity.dev) && stats.ino === identity.ino;
+
+/** Volume and file index from the open handle. Path stat on Windows omits the volume. */
+const identityFromHandle = async (path: string): Promise<Identity> => {
+  const handle = await open(path, constants.O_RDONLY);
+  try {
+    return identityOf(await handle.stat());
+  } finally {
+    await handle.close();
+  }
+};
 
 /** One atomically staged file and directory retained through verified cleanup. */
 export class OwnedStagedOutput {
@@ -37,7 +48,10 @@ export class OwnedStagedOutput {
       const stats = await lstat(directory);
       if (!stats.isDirectory() || stats.isSymbolicLink())
         return new OwnedStagedOutput(directory, undefined);
-      return new OwnedStagedOutput(directory, identityOf(stats));
+      return new OwnedStagedOutput(
+        directory,
+        await identityFromHandle(directory),
+      );
     } catch (cause: unknown) {
       // Keep an owner that refuses deletion when creation identity is unknown.
       const owner = new OwnedStagedOutput(directory, undefined);
@@ -66,11 +80,10 @@ export class OwnedStagedOutput {
         cause: this.#identityFailure,
       });
     const stagedFile = await lstat(content);
-    if (
-      !stagedFile.isFile() ||
-      stagedFile.isSymbolicLink() ||
-      !sameIdentity(stagedFile, this.#fileIdentity)
-    )
+    if (!stagedFile.isFile() || stagedFile.isSymbolicLink())
+      throw new Error(`Staged file identity changed: ${content}`);
+    const stagedIdentity = await identityFromHandle(content);
+    if (!sameIdentity(stagedIdentity, this.#fileIdentity))
       throw new Error(`Staged file identity changed: ${content}`);
   }
 
@@ -129,9 +142,11 @@ export class OwnedStagedOutput {
       if (
         !stagedFile.isFile() ||
         stagedFile.isSymbolicLink() ||
-        this.#fileIdentity === undefined ||
-        !sameIdentity(stagedFile, this.#fileIdentity)
+        this.#fileIdentity === undefined
       )
+        throw new Error(`Staged file identity changed: ${content}`);
+      const stagedIdentity = await identityFromHandle(content);
+      if (!sameIdentity(stagedIdentity, this.#fileIdentity))
         throw new Error(`Staged file identity changed: ${content}`);
       await unlink(content);
       this.#fileRemovedByOwner = true;
@@ -155,11 +170,10 @@ export class OwnedStagedOutput {
         },
       );
     const directory = await lstat(this.directory);
-    if (
-      !directory.isDirectory() ||
-      directory.isSymbolicLink() ||
-      !sameIdentity(directory, this.directoryIdentity)
-    )
+    if (!directory.isDirectory() || directory.isSymbolicLink())
+      throw new Error(`Staging directory identity changed: ${this.directory}`);
+    const directoryIdentity = await identityFromHandle(this.directory);
+    if (!sameIdentity(directoryIdentity, this.directoryIdentity))
       throw new Error(`Staging directory identity changed: ${this.directory}`);
   }
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  ARM64_EXPLICIT_BOARD_REGIONS,
+  RISCV_SIFIVE_INTERRUPT_REGIONS,
   classifyHardwareMemoryAddress,
   isHardwareMmio,
   parseAddressValue,
@@ -91,15 +93,15 @@ describe("RISC-V and MIPS hardware memory map classification", () => {
     },
     {
       address: "0x02000000",
-      kind: "system_control",
-      name: "Core Local Interruptor (CLINT)",
-      isMmio: true,
+      kind: "reserved",
+      name: "Unknown / Unmapped Region",
+      isMmio: false,
     },
     {
       address: "0x0c000000",
-      kind: "system_control",
-      name: "Platform-Level Interrupt Controller (PLIC)",
-      isMmio: true,
+      kind: "reserved",
+      name: "Unknown / Unmapped Region",
+      isMmio: false,
     },
     {
       address: "0x10012000",
@@ -238,13 +240,39 @@ describe("x86 and ARM64 hardware memory map classification", () => {
       name: "System RAM / DRAM",
       isMmio: false,
     },
-  ])("classifies ARM64 address $address", ({ address, kind, name, isMmio }) => {
-    const result = classifyHardwareMemoryAddress(address, "arm64");
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.regionKind).toBe(kind);
-    expect(result.value.regionName).toBe(name);
-    expect(result.value.isMmio).toBe(isMmio);
+  ])(
+    "classifies an explicit ARM64 board profile at $address",
+    ({ address, kind, name, isMmio }) => {
+      const result = classifyHardwareMemoryAddress(
+        address,
+        "arm64",
+        ARM64_EXPLICIT_BOARD_REGIONS,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw result.error;
+      expect(result.value.regionKind).toBe(kind);
+      expect(result.value.regionName).toBe(name);
+      expect(result.value.isMmio).toBe(isMmio);
+    },
+  );
+
+  it("leaves arm64 and SiFive interrupt windows unnamed until a profile is selected", () => {
+    const uart = classifyHardwareMemoryAddress("0xfe201000", "arm64");
+    if (!uart.ok) throw uart.error;
+    expect(uart.value.regionName).toBe("Unknown / Unmapped Region");
+    expect(uart.value.isMmio).toBe(false);
+
+    const gic = classifyHardwareMemoryAddress("0x08000000", "arm64");
+    if (!gic.ok) throw gic.error;
+    expect(gic.value.regionName).toBe("Unknown / Unmapped Region");
+
+    const clint = classifyHardwareMemoryAddress(
+      "0x02000000",
+      "riscv",
+      RISCV_SIFIVE_INTERRUPT_REGIONS,
+    );
+    if (!clint.ok) throw clint.error;
+    expect(clint.value.regionName).toBe("Core Local Interruptor (CLINT)");
   });
 });
 

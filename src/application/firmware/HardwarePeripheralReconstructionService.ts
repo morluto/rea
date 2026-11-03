@@ -352,11 +352,6 @@ export const reconstructHardwareFromReferences = (
       let primaryBus: string | null = null;
 
       if (activePlatform) {
-        const baseDef = lookupSocPeripheral(block.blockBase, activePlatform);
-        if (baseDef) {
-          matchedNames.add(baseDef.name);
-          primaryBus = baseDef.bus;
-        }
         for (const addr of block.uniqueAddresses) {
           const def = lookupSocPeripheral(addr, activePlatform);
           if (def) {
