@@ -1214,6 +1214,21 @@ const projectPrimarySessionError = (
       },
     );
   }
+  if (
+    failure.kind === "remote" &&
+    failure.remoteCode === "invalid_regex_pattern"
+  )
+    return new AnalysisInputError(
+      operation,
+      { ...context, userMessage: failure.message },
+      [
+        {
+          path: ["pattern"],
+          reason: "invalid_format",
+          message: failure.message,
+        },
+      ],
+    );
   if (failure.kind === "remote" && isGhidraInputFailureCode(failure.remoteCode))
     return new AnalysisInputError(operation, context, [
       { path: [], reason: "invalid_value", message: failure.message },
