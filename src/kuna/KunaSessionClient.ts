@@ -86,6 +86,7 @@ import {
   isKunaOperation,
   KUNA_RELATIONSHIP_LIMITATION,
   KUNA_SINGLE_FUNCTION_LIMITATION,
+  KUNA_VALUE_FLOW_UNAVAILABLE,
   kunaLimitations,
   type KunaOperation,
 } from "./KunaProviderCapabilities.js";
@@ -1475,8 +1476,7 @@ export class KunaSessionClient implements AnalysisClient {
       native_api: null,
       native_value_flow: {
         available: false,
-        reason:
-          "REA's Kuna provider does not report native def-use observations.",
+        reason: KUNA_VALUE_FLOW_UNAVAILABLE,
         limitations: [],
       },
       facet_availability: {

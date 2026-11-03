@@ -10,6 +10,7 @@ import {
   analysisProviderCandidate,
   analysisProviderCandidateSummary,
   expandProviderCapabilities,
+  expandToolAvailability,
   sessionProviderFacts,
   type ProviderCapabilitySet,
 } from "../../contracts/toolOutputSchemaPrimitives.js";
@@ -30,6 +31,7 @@ import {
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../native/NativeMacosProviderIdentity.js";
 import {
   buildCapabilityInventory,
+  compactToolAvailability,
   MULTI_MODE_REMEDIATION,
 } from "../CapabilityInventory.js";
 
@@ -74,7 +76,9 @@ type DescriptorOptions = {
   | {
       readonly available: false;
       readonly reason?: string;
-      readonly availabilityCode?: "architecture_unsupported";
+      readonly availabilityCode?:
+        | "architecture_unsupported"
+        | "unsupported_host";
     }
 );
 
@@ -847,4 +851,92 @@ it("groups readiness repairs exactly and drops one replaced by a runtime observa
       remediation: "Correct REA_FIXTURE_CONFIG.",
     }),
   ]);
+});
+
+it.each([
+  { detail: "summary", supported: true },
+  { detail: "complete", supported: true },
+  { detail: "summary", supported: false },
+  { detail: "complete", supported: false },
+] as const)(
+  "retains routed value-flow ownership and runtime failures in $detail discovery when supported=$supported",
+  async ({ detail, supported }) => {
+    const source = {
+      ...descriptor(providerA, "analyze_function", []),
+      nativeValueFlow: supported
+        ? { status: "supported" as const }
+        : { status: "unavailable" as const, reason: "No value flow." },
+    };
+    const resolver = descriptor(providerB, "resolve_native_call_targets", []);
+    const providerC = { id: "provider-c", name: "Provider C", version: "3" };
+    const unselected = {
+      ...descriptor(providerC, "analyze_function", []),
+      nativeValueFlow: { status: "unavailable" as const, reason: "Unselected" },
+    };
+    const status = await projectStatus(
+      [source, resolver],
+      [{ ...candidate(providerC, [unselected]), selected: false }],
+      {
+        target: dispatchTarget("elf"),
+        detail,
+        runtimeUnavailability: new Map([
+          ["resolve_native_call_targets", { reason: "Resolver failed." }],
+        ]),
+      },
+    );
+    const projected = z
+      .object({ capabilities: sessionProviderFacts.shape.capabilities })
+      .parse(status);
+    const route = expandProviderCapabilities(projected.capabilities);
+    expect(
+      route.find((item) => item.operation === "analyze_function"),
+    ).toMatchObject({
+      provider: providerA,
+      native_value_flow: { status: supported ? "supported" : "unavailable" },
+    });
+    const inventory = buildCapabilityInventory(status, {
+      processCaptureEnabled: false,
+    });
+    const item = expandToolAvailability(
+      compactToolAvailability(inventory, detail),
+    ).find((candidate) => candidate.name === "trace_native_values");
+    expect(item).toMatchObject({
+      available: false,
+      reason: "provider_unavailable",
+      remediation: expect.stringContaining("Resolver failed."),
+      value_flow_support: {
+        status: supported ? "supported" : "unavailable",
+        provider_id: providerA.id,
+      },
+    });
+    if (!supported) expect(item?.remediation).toContain("No value flow.");
+  },
+);
+
+it("preserves an unsupported resolver host alongside unavailable value flow", async () => {
+  const source = {
+    ...descriptor(providerA, "analyze_function", []),
+    nativeValueFlow: {
+      status: "unavailable" as const,
+      reason: "No value flow.",
+    },
+  };
+  const resolver = {
+    ...descriptor(providerB, "resolve_native_call_targets", [], {
+      available: false,
+      reason: "Resolver host is unsupported.",
+      availabilityCode: "unsupported_host",
+    }),
+    remediation: "Use a supported resolver host.",
+  };
+  const status = await projectStatus([source, resolver], [], {
+    target: dispatchTarget("elf"),
+    detail: "summary",
+  });
+  const item = buildCapabilityInventory(status, {
+    processCaptureEnabled: false,
+  }).find((entry) => entry.name === "trace_native_values");
+  expect(item).toMatchObject({ available: false, reason: "unsupported_host" });
+  expect(item?.remediation).toContain("No value flow.");
+  expect(item?.remediation).toContain("Use a supported resolver host.");
 });

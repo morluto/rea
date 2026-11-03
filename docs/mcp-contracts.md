@@ -889,6 +889,18 @@ finish without reading relationships, even when neither traversal mode is
 available. Discovery does not block that direct invocation or replace its typed
 partial/error outcomes.
 
+`trace_native_values` includes `value_flow_support` for the provider routed to
+`analyze_function`. `supported` declares that the provider may supply value flow;
+it does not guarantee a model for the selected function. `unavailable` includes
+the provider's reason, and `unknown` means no declaration. The provider ID is
+preserved, or null if no analysis provider is routed. This declaration is separate
+from operation readiness and the availability of call-target resolution. When
+call-target resolution is missing, a direct trace may still return a local graph
+with call-resolution unknowns; even `max_depth: 0` attempts to resolve call sites.
+When support is unknown but the declared operation prerequisites are ready,
+availability can still be true; it does not promise that value flow is present.
+The trace's returned observations and unknowns remain authoritative for that call.
+
 `trace_native_ui_action` reports authored-UI and native-seed modes separately.
 Apple dispatch metadata requires a Mach-O target; another provider may supply
 the symbol-only alternative on other formats. If neither mode is available,

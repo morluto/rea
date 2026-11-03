@@ -281,6 +281,10 @@ export type CapabilityDescriptor = CapabilityAvailability & {
   readonly operation: Exclude<AnalysisOperation, "health">;
   readonly effects: CapabilityEffects;
   readonly limitations: readonly string[];
+  /** Whether analyze_function can supply value flow for some procedures. */
+  readonly nativeValueFlow?:
+    | { readonly status: "supported" }
+    | { readonly status: "unavailable"; readonly reason: string };
 };
 
 /** Factory and capability declaration for an analysis implementation. */

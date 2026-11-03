@@ -191,6 +191,9 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
     return Object.freeze({
       provider: GHIDRA_PROVIDER_IDENTITY,
       operation,
+      ...(operation === "analyze_function"
+        ? { nativeValueFlow: { status: "supported" as const } }
+        : {}),
       available: true,
       reason: null,
       // Project writes are private import machinery. Analysis reads are bound

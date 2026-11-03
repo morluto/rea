@@ -414,6 +414,7 @@ export const providerCapabilitySets = (
       const key = JSON.stringify([
         effects,
         limitations,
+        descriptor.nativeValueFlow ?? null,
         status.available,
         status.reason,
         status.availability_code,
@@ -425,6 +426,9 @@ export const providerCapabilitySets = (
           operations: [descriptor.operation],
           effects,
           limitations,
+          ...(descriptor.nativeValueFlow === undefined
+            ? {}
+            : { native_value_flow: descriptor.nativeValueFlow }),
           ...status,
         });
       else group.operations.push(descriptor.operation);
