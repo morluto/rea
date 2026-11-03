@@ -1484,6 +1484,21 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
     },
   );
 
+  it.each([
+    ["-Wl,-rpath,$ORIGIN:/opt/private-runtime", ["/opt/private-runtime"]],
+    ["-Wl,-rpath=${ORIGIN}/lib:private-runtime", ["private-runtime"]],
+    [
+      "-Xlinker -rpath -Xlinker /opt/a:$ORIGIN/lib:/opt/b",
+      ["/opt/a", "/opt/b"],
+    ],
+    ["-Wl,-rpath-link,/opt/a:vendor/lib", ["/opt/a", "vendor/lib"]],
+  ])("reads each entry of the search list in %s", async (value, paths) => {
+    const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual(paths);
+  });
+
   it("does not read loader-expanded runtime search paths as build paths", async () => {
     const report = await goReport(
       goModule([

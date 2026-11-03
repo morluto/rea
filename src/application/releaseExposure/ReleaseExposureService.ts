@@ -853,6 +853,13 @@ const LINKER_PATH_FLAG =
  */
 const LINKER_RUNTIME_TOKEN =
   /^(?:\$(?:ORIGIN|LIB|PLATFORM)\b|\$\{(?:ORIGIN|LIB|PLATFORM)\}|@(?:executable_path|loader_path|rpath)(?:\/|$))/u;
+/** `-rpath` and `-rpath-link` take a search list, not one directory. */
+const LINKER_SEARCH_LIST_FLAG = /^-{1,2}(?:rpath|rpath-link)(?==|$)/u;
+/**
+ * The `:` between search list entries. A `:` after a lone drive letter, as in
+ * `C:\lib`, is part of the entry.
+ */
+const LINKER_SEARCH_LIST_SEPARATOR = /(?<!(?:^|:)[A-Za-z]):/u;
 /**
  * The options `go tool link -h` documents as taking a directory, path or file,
  * as `-L dir` or `-L=dir`, never attached. `-extld`, `-extar` and `-libgcc`
@@ -1015,16 +1022,41 @@ const splitForwardedLinkerFlags = (
   return { compiler, linker };
 };
 
-/** Rooted and relative paths in flags a C compiler driver reads. */
+/** Each search list given to `-rpath` or `-rpath-link`, attached or in the next field. */
+const linkerSearchLists = (flags: string[]): string[] =>
+  flags.flatMap((flag, index) => {
+    const match = LINKER_SEARCH_LIST_FLAG.exec(flag);
+    if (match === null) return [];
+    const attached = flag.slice(match[0].length).replace(/^=/u, "").trimEnd();
+    const next = flags[index + 1];
+    const argument =
+      attached.length > 0 || next?.startsWith("-") === true ? attached : next;
+    return argument === undefined || argument.length === 0 ? [] : [argument];
+  });
+
+/**
+ * Rooted and relative paths in flags a C compiler driver reads. A forwarded
+ * search list is read entry by entry, so a loader-expanded entry such as
+ * `$ORIGIN` drops only itself.
+ */
 const compilerPaths = (value: string): string[] => {
   const flags = goFlags(value);
   const { compiler, linker } = splitForwardedLinkerFlags(flags);
+  const lists = linkerSearchLists(linker);
+  const whole = new Set(lists);
+  const entries = lists.flatMap((list) =>
+    list
+      .split(LINKER_SEARCH_LIST_SEPARATOR)
+      .map((entry) => entry.trimEnd())
+      .filter((entry) => entry.length > 0 && !LINKER_RUNTIME_TOKEN.test(entry)),
+  );
   return [
-    ...flagPaths(flags),
+    ...flagPaths(flags).filter((path) => !whole.has(path)),
     ...goRelativeFlagPaths(compiler, GO_COMPILER_PATH_FLAG),
     ...goRelativeFlagPaths(linker, LINKER_PATH_FLAG).filter(
-      (path) => !LINKER_RUNTIME_TOKEN.test(path),
+      (path) => !whole.has(path) && !LINKER_RUNTIME_TOKEN.test(path),
     ),
+    ...entries,
   ];
 };
 
