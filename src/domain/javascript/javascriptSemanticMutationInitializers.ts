@@ -10,6 +10,7 @@ import {
 
 import {
   semanticStaticPropertyKey,
+  semanticWriteSiteReadsFirst,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -872,27 +873,47 @@ const moduleFunctionFirstRead = (
       t.isProgram(program) && program.sourceType === "script";
     const globalReceivers = new WeakMap<t.Node, boolean | null>();
     const globalReceiver = (input: t.Node): boolean | null => {
-      if (globalReceivers.has(input)) return globalReceivers.get(input) ?? null;
-      const pending = [input];
-      const seen = new Set<t.Node>();
-      let unknown = false;
-      let global = false;
+      const pending: { node: t.Node; finish: boolean }[] = [
+        { node: input, finish: false },
+      ];
+      const visiting = new Set<t.Node>();
+      const origins = new WeakMap<
+        t.Node,
+        { dependencies: t.Node[]; unknown: boolean; global: boolean }
+      >();
       while (pending.length > 0) {
-        const current = pending.pop();
-        if (current === undefined) continue;
-        if (seen.has(current)) {
-          unknown = true;
+        const frame = pending.pop();
+        if (frame === undefined) continue;
+        const current = frame.node;
+        if (frame.finish) {
+          const fact = origins.get(current);
+          if (fact === undefined) continue;
+          let global = fact.global;
+          let unknown = fact.unknown;
+          for (const dependency of fact.dependencies) {
+            const answer = globalReceivers.get(dependency);
+            if (answer === true) global = true;
+            if (answer === null || answer === undefined) unknown = true;
+          }
+          globalReceivers.set(current, global ? true : unknown ? null : false);
+          visiting.delete(current);
           continue;
         }
-        seen.add(current);
-        if (globalReceivers.has(current)) {
-          const cached = globalReceivers.get(current);
-          if (cached === true) global = true;
-          if (cached === null) unknown = true;
+        if (globalReceivers.has(current)) continue;
+        if (visiting.has(current)) {
+          // A back edge has no finite identity proof; retain uncertainty.
+          globalReceivers.set(current, null);
           continue;
         }
+        visiting.add(current);
+        const fact = {
+          dependencies: [] as t.Node[],
+          unknown: false,
+          global: false,
+        };
         const node = unwrapJavaScriptExpression(current).node;
-        if (t.isThisExpression(node)) global = true;
+        if (node !== current) fact.dependencies.push(node);
+        else if (t.isThisExpression(node)) fact.global = true;
         else if (t.isIdentifier(node)) {
           const binding =
             state === undefined
@@ -900,33 +921,42 @@ const moduleFunctionFirstRead = (
               : resolveSemanticBindingState(state, node, node.name);
           if (binding === undefined) {
             if (["globalThis", "window", "self"].includes(node.name))
-              global = true;
-            else unknown = true;
+              fact.global = true;
+            else fact.unknown = true;
           } else {
             if (
               binding.initializers.length === 0 ||
               binding.referenceInitializers.length > 0
             )
-              unknown = true;
+              fact.unknown = true;
             for (const initializer of binding.initializers) {
-              if (initializer.projection.length > 0) unknown = true;
-              else pending.push(initializer.node);
+              if (initializer.projection.length > 0) fact.unknown = true;
+              else fact.dependencies.push(initializer.node);
             }
           }
+        } else if (t.isObjectExpression(node)) {
+          fact.unknown = node.properties.some(
+            (property) =>
+              t.isSpreadElement(property) ||
+              (t.isObjectProperty(property) &&
+                semanticStaticPropertyKey(property.key, property.computed) ===
+                  "__proto__"),
+          );
         } else if (
-          !t.isObjectExpression(node) &&
           !t.isArrayExpression(node) &&
           !t.isLiteral(node) &&
           !t.isFunction(node)
         )
-          unknown = true;
+          fact.unknown = true;
+        origins.set(current, fact);
+        pending.push({ node: current, finish: true });
+        for (const dependency of fact.dependencies)
+          pending.push({ node: dependency, finish: false });
       }
-      const result = global ? true : unknown ? null : false;
-      // The union belongs to this receiver, not each of its possible origins.
-      globalReceivers.set(input, result);
-      return result;
+      return globalReceivers.get(input) ?? null;
     };
     const active = new Set<t.Function>();
+    const opaqueGlobalSites = new Set(state?.opaqueEffects.globalSites ?? []);
     let unknownPropertyRead: number | null = Infinity;
     for (let index = 0; index < body.length; index++) {
       const statement = body[index];
@@ -934,11 +964,22 @@ const moduleFunctionFirstRead = (
       traverseJavaScriptAst(statement, {
         enter(node, parent) {
           if (t.isFunction(node)) active.add(node);
+          if (
+            classicScript &&
+            opaqueGlobalSites.has(node as t.CallExpression)
+          ) {
+            if (unknownPropertyRead !== null)
+              unknownPropertyRead =
+                active.size > 0 ? null : Math.min(unknownPropertyRead, index);
+          }
           let name: string | null = null;
           if (
             t.isIdentifier(node) &&
             parent !== null &&
-            t.isReferenced(node, parent)
+            (t.isReferenced(node, parent) ||
+              (t.isAssignmentExpression(parent) &&
+                parent.left === node &&
+                semanticWriteSiteReadsFirst(parent)))
           ) {
             const candidate = functions.get(node.name);
             const binding =
@@ -966,6 +1007,22 @@ const moduleFunctionFirstRead = (
                 ))
             )
               name = node.name;
+          } else if (
+            classicScript &&
+            t.isObjectProperty(node) &&
+            t.isObjectPattern(parent)
+          ) {
+            const declaration = parents.get(parent);
+            if (
+              t.isVariableDeclarator(declaration) &&
+              declaration.init != null &&
+              globalReceiver(declaration.init) !== false
+            ) {
+              name = semanticStaticPropertyKey(node.key, node.computed);
+              if (name === null && unknownPropertyRead !== null)
+                unknownPropertyRead =
+                  active.size > 0 ? null : Math.min(unknownPropertyRead, index);
+            }
           } else if (
             classicScript &&
             (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))

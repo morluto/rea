@@ -353,6 +353,11 @@ describe("Classic-script global function activation", () => {
     "const { root } = { root: globalThis }; root.createWindow();",
     "const key = 'createWindow'; globalThis[key]();",
     "with ({}) { createWindow(); }",
+    "const { createWindow: start } = globalThis; start();",
+    "const start = (createWindow ||= null); start();",
+    "const root = { __proto__: globalThis }; root.createWindow();",
+    "const root = { ...globalThis }; root.createWindow();",
+    "(0, eval)('createWindow()');",
   ])("keeps early global access unresolved: %s", (activation) => {
     const body = (early: boolean) => `
       const { BrowserWindow } = require("electron");
@@ -407,11 +412,21 @@ describe("Classic-script global function activation", () => {
       analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
     ).toMatchObject({ web_preferences_status: "dynamic", web_preferences: [] });
   });
+});
 
+describe("Classic-script global receiver identity", () => {
   it("keeps a long flat global alias chain stack safe", () => {
     const aliases = ["const root0 = globalThis;"];
     for (let index = 1; index < 6000; index++)
-      aliases.push("const root" + index + " = root" + (index - 1) + ";");
+      aliases.push(
+        "const root" +
+          index +
+          " = root" +
+          (index - 1) +
+          "; root" +
+          index +
+          ".document;",
+      );
     const source = `
       const { BrowserWindow } = require("electron");
       ${aliases.join("\n")}
