@@ -6,7 +6,7 @@ import {
   emulateFunctionOutputSchema,
   UNICORN_TOOL_CONTRACTS,
 } from "./unicornToolContracts.js";
-import { UNICORN_PROVIDER_IDENTITY } from "../UnicornRelease.js";
+import { UNICORN_PROVIDER_IDENTITY } from "../../unicorn/UnicornRelease.js";
 
 const CODE = 0x1000000;
 const STACK = 0x7f000000;
