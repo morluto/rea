@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { z } from "zod";
-import type { functionBodySchema } from "../hopperValues.js";
+import type { functionBodySchema } from "../native/functionBody.js";
 import type { nativeByteReadSchema } from "./nativeByteRead.js";
 import { addressCoordinate } from "./addressCoordinate.js";
 

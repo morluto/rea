@@ -22,6 +22,7 @@ import {
   canonicalSkillNeedsInstall,
   existingSkillDestinations,
   installCanonicalSkill,
+  readSkillFile,
   readInstalledSkillIdentity,
   skillDestinations,
   type SkillInstallFileOperations,
@@ -36,6 +37,21 @@ import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { SkillFilePublication } from "../../../src/application/SkillFilePublication.js";
 import { z } from "zod";
 import { skillReferenceIssues } from "../../../scripts/lib/docs-facts.mjs";
+
+describe("managed skill file read boundary", () => {
+  it("rejects linked and oversized managed guide files", async () => {
+    const root = await createTestTempDirectory("rea-guidance-file-boundary-");
+    const target = join(root, "guide.md");
+    const link = join(root, "linked-guide.md");
+    const oversized = join(root, "oversized-guide.md");
+    await writeFile(target, "safe guide content");
+    await symlink(target, link);
+    await writeFile(oversized, "larger than limit");
+
+    await expect(readSkillFile(link)).rejects.toThrow();
+    await expect(readSkillFile(oversized, undefined, 4)).rejects.toThrow();
+  });
+});
 
 const expectPermissionMode = async (
   path: string,
@@ -719,4 +735,27 @@ it("doctor verifies installed instructions and references even when metadata is 
       "aligned",
     );
   }
+});
+
+it("reads installed frontmatter metadata without treating body examples as identity", async () => {
+  const home = await createTestTempDirectory("rea-installed-metadata-");
+  const installed = await installCanonicalSkill(home, ["claude_code"]);
+  expect(installed.ok).toBe(true);
+  const destination = skillDestinations(home, ["claude_code"])[0];
+  if (destination === undefined) throw new Error("Missing skill destination");
+  const manifest = join(destination.path, "SKILL.md");
+  await writeFile(
+    manifest,
+    "---\nname: reverse-engineer-anything\nmetadata:\n  version: '49'\n  tool_count: -1\n---\n\n```yaml\nmetadata:\n  version: \"counterfeit\"\n  tool_count: 42\n```\n",
+  );
+  expect(await readInstalledSkillIdentity(home, ["claude_code"])).toMatchObject(
+    { version: "49", toolCount: null, canonical: false },
+  );
+  await writeFile(
+    manifest,
+    '---\nname: reverse-engineer-anything\n---\n\n```yaml\nmetadata:\n  version: "counterfeit"\n  tool_count: 42\n```\n',
+  );
+  expect(await readInstalledSkillIdentity(home, ["claude_code"])).toMatchObject(
+    { version: null, toolCount: null, canonical: false },
+  );
 });

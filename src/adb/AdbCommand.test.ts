@@ -16,7 +16,7 @@ const probe = (signal?: AbortSignal) =>
     "push_adb_file",
     "device",
     "/device/path",
-    "/host/adb",
+    { binary: "/host/adb", pathSource: "environment", environment: {} },
     {
       timeoutMs: 100,
       maxOutputBytes: 1024,
@@ -40,7 +40,7 @@ it("classifies the complete diagnostic before shortening its displayed reason", 
     runAdbCapture(
       "pull_adb_file",
       { device: "device", path: "/remote/file", localPath },
-      "/host/adb",
+      { binary: "/host/adb", pathSource: "environment", environment: {} },
       [],
       { timeoutMs: 100, maxOutputBytes: 2048 },
       undefined,
@@ -200,7 +200,7 @@ it.each([true, false])(
     const result = await runAdbCapture(
       volatileOutput ? "read_adb_logcat" : "install_adb_package",
       { device: "device" },
-      "/host/adb",
+      { binary: "/host/adb", pathSource: "environment", environment: {} },
       volatileOutput ? ["logcat", "-d"] : ["install", "app.apk"],
       { timeoutMs: 100, maxOutputBytes: 1024, volatileOutput },
       undefined,
@@ -230,7 +230,7 @@ it("reports the effective fixed adb deadline", async () => {
   const result = await runAdbCapture(
     "pull_adb_file",
     { device: "device" },
-    "/host/adb",
+    { binary: "/host/adb", pathSource: "environment", environment: {} },
     ["pull", "/remote"],
     { timeoutMs: 600_000, maxOutputBytes: 1024 },
     undefined,
@@ -255,7 +255,7 @@ it("keeps a physical failure even when the later abort reason is that same error
   const result = await runAdbCapture(
     "inspect_adb_device",
     { device: "device" },
-    "/host/adb",
+    { binary: "/host/adb", pathSource: "environment", environment: {} },
     [],
     { timeoutMs: 100, maxOutputBytes: 1024 },
     controller.signal,

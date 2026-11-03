@@ -8,7 +8,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { toolContract } from "../dist/contracts/toolContracts.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import {
   closeVerifierResources,
   withVerifierCleanup,
@@ -79,7 +79,9 @@ await withVerifierCleanup(async () => {
         (entry) =>
           entry.response_address_count > entry.response_addresses.length,
       );
-    assert.equal(result.coverage, partial ? "partial" : "complete");
+    // Count discrepancies prove partial coverage, but matching counts do not
+    // rule out unresolved HTTP targets or unavailable DNS identity extraction.
+    if (partial) assert.equal(result.coverage, "partial");
     assert.deepEqual(
       await hashVerifierFile(path, resources),
       identity,
@@ -123,8 +125,7 @@ async function run(name, input) {
     { name, arguments: input },
     { timeout: 360_000 },
   );
-  assert.notEqual(response.isError, true, mcpTextValue(response));
-  const mcp = contract.outputSchema.parse(JSON.parse(mcpTextValue(response)));
+  const mcp = requireMcpOutput(response, name, contract);
   assert.deepEqual(mcp.normalized_result, cli.normalized_result);
   assert.deepEqual(mcp.subject, cli.subject);
   if (input.path !== undefined) {

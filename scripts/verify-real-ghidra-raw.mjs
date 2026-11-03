@@ -12,7 +12,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpLifecycleResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 if (process.argv.length !== 2)
@@ -351,15 +354,9 @@ async function call(name, args = {}, targetSha256 = sha256) {
     { name, arguments: args },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
-  const projected = requireMcpOperationResult(result, name);
-  if (
-    name === "open_binary" ||
-    name === "close_binary" ||
-    name === "binary_session"
-  )
-    return projected;
-  const evidence = parseEvidence(result.structuredContent);
+  if (["open_binary", "close_binary", "binary_session"].includes(name))
+    return requireMcpLifecycleResult(result, name);
+  const evidence = parseEvidence(requireMcpOutput(result, name));
   assert.equal(evidence.subject.digest.sha256, targetSha256);
   assert.equal(evidence.subject.format, "raw-binary");
   return evidence;

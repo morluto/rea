@@ -82,7 +82,7 @@
     <!-- prettier-ignore -->
     <meta
       property="og:image:alt"
-      content="REA — Find out how software works. Reverse engineering with your coding agent."
+      content="REA: Find out how software works. Reverse engineering with your coding agent."
     />
     <!-- prettier-ignore -->
     <meta name="twitter:card" content="summary_large_image" />
@@ -95,7 +95,7 @@
     <!-- prettier-ignore -->
     <meta
       name="twitter:image:alt"
-      content="REA — Find out how software works. Reverse engineering with your coding agent."
+      content="REA: Find out how software works. Reverse engineering with your coding agent."
     />
     <!-- website:sharing:end -->
     <!-- website:theme:start -->
@@ -122,8 +122,6 @@
           <a href="../showcase/">Showcases</a>
           <a href="../blog/">Blog</a>
           <a href="../guides/">Guides</a>
-          <a href="../faq/">FAQ</a>
-          <a href="../contributors/">Contributors</a>
         </nav>
         <div class="header-social">
           <details class="language-picker" data-i18n-skip><summary><span aria-hidden="true">文 / A</span> <span>English</span></summary><nav aria-label="English"><a href="../get-started/" lang="en" dir="ltr" data-language="en" aria-current="true">English</a><a href="../zh-CN/get-started/" lang="zh-CN" dir="ltr" data-language="zh-CN">简体中文</a><a href="../zh-TW/get-started/" lang="zh-TW" dir="ltr" data-language="zh-TW">繁體中文</a><a href="../ja/get-started/" lang="ja" dir="ltr" data-language="ja">日本語</a><a href="../ko/get-started/" lang="ko" dir="ltr" data-language="ko">한국어</a><a href="../tr/get-started/" lang="tr" dir="ltr" data-language="tr">Türkçe</a><a href="../ru/get-started/" lang="ru" dir="ltr" data-language="ru">Русский</a><a href="../vi/get-started/" lang="vi" dir="ltr" data-language="vi">Tiếng Việt</a><a href="../th/get-started/" lang="th" dir="ltr" data-language="th">ไทย</a><a href="../de/get-started/" lang="de" dir="ltr" data-language="de">Deutsch</a><a href="../es/get-started/" lang="es" dir="ltr" data-language="es">Español</a><a href="../fr/get-started/" lang="fr" dir="ltr" data-language="fr">Français</a><a href="../uk/get-started/" lang="uk" dir="ltr" data-language="uk">Українська</a><a href="../pl/get-started/" lang="pl" dir="ltr" data-language="pl">Polski</a><a href="../pt-BR/get-started/" lang="pt-BR" dir="ltr" data-language="pt-BR">Português (Brasil)</a><a href="../ar/get-started/" lang="ar" dir="rtl" data-language="ar">العربية</a><a href="../fa/get-started/" lang="fa" dir="rtl" data-language="fa">فارسی</a><a href="../id/get-started/" lang="id" dir="ltr" data-language="id">Bahasa Indonesia</a><a href="../it/get-started/" lang="it" dir="ltr" data-language="it">Italiano</a><a href="../el/get-started/" lang="el" dir="ltr" data-language="el">Ελληνικά</a><a href="../ml/get-started/" lang="ml" dir="ltr" data-language="ml">മലയാളം</a><a href="../ur-Latn/get-started/" lang="ur-Latn" dir="ltr" data-language="ur-Latn">Roman Urdu</a><a href="../ro/get-started/" lang="ro" dir="ltr" data-language="ro">Română</a></nav></details>
@@ -635,8 +633,8 @@ cd rea-work</code></pre>
             <details class="evidence-details" id="supported-clients">
               <summary>All supported clients and setup IDs</summary>
               <p>
-                The npm 6.4.0 release supports the clients below. Use the ID
-                with <code>--client</code> when choosing a client explicitly.
+                Use the ID with <code>--client</code> when choosing a client
+                explicitly. These clients are supported in npm 6.8.0 and later.
               </p>
               <div class="evidence-table-wrap">
                 <table class="evidence-table">
@@ -696,6 +694,10 @@ cd rea-work</code></pre>
                       <td><code>qwen_code</code></td>
                     </tr>
                     <tr>
+                      <td translate="no">Kimi Code</td>
+                      <td><code>kimi</code></td>
+                    </tr>
+                    <tr>
                       <td translate="no">VS Code</td>
                       <td><code>vscode</code></td>
                     </tr>
@@ -715,15 +717,42 @@ cd rea-work</code></pre>
                       <td translate="no">Hermes</td>
                       <td><code>hermes</code></td>
                     </tr>
+                    <tr>
+                      <td translate="no">Qoder</td>
+                      <td><code>qoder</code></td>
+                    </tr>
+                    <tr>
+                      <td translate="no">Factory Droid</td>
+                      <td><code>droid</code></td>
+                    </tr>
+                    <tr>
+                      <td translate="no">Trae</td>
+                      <td><code>trae</code></td>
+                    </tr>
+                    <tr>
+                      <td translate="no">WorkBuddy</td>
+                      <td><code>workbuddy</code></td>
+                    </tr>
+                    <tr>
+                      <td translate="no">ZCode</td>
+                      <td><code>zcode</code></td>
+                    </tr>
+                    <tr>
+                      <td translate="no">DeepSeek Harness</td>
+                      <td><code>dsh</code></td>
+                    </tr>
+                    <tr>
+                      <td translate="no">FreeBuff</td>
+                      <td><code>freebuff</code></td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
               <p>
-                Qoder (<code>qoder</code>), Factory Droid (<code>droid</code>),
-                Trae (<code>trae</code>), ZCode (<code>zcode</code>) and
-                DeepSeek Harness (<code>dsh</code>) are available on repository
-                main; use a source build or a release containing those
-                integrations.
+                <code>droid</code>, <code>dsh</code>, <code>kimi</code>,
+                <code>qoder</code>, <code>trae</code>,
+                <code>workbuddy</code> and <code>zcode</code> require npm 6.5.0
+                or later. <code>freebuff</code> requires npm 6.8.0 or later.
               </p>
               <p>
                 <a
@@ -1010,7 +1039,7 @@ cd rea-work</code></pre>
                       <td translate="no">Hopper</td>
                       <td>Unavailable</td>
                       <td>12+</td>
-                      <td>Supported distributions</td>
+                      <td>x86_64 installer on supported distributions</td>
                     </tr>
                     <tr>
                       <td translate="no">Ghidra</td>
@@ -1041,9 +1070,12 @@ cd rea-work</code></pre>
                   demo and its private display.
                 </p>
                 <p>
-                  Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch
-                  Linux, CachyOS or Omarchy. Hopper is commercial software; its
-                  demo has vendor-defined limits.
+                  Automated Linux setup requires an x86_64 host running Ubuntu
+                  24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or
+                  Omarchy. An existing Hopper launcher can also be configured on
+                  other supported Linux distributions. On Linux arm64, use
+                  Ghidra. Hopper is commercial software; its demo has
+                  vendor-defined limits.
                 </p>
                 <div class="code-block">
                   <div class="code-header">
@@ -1815,7 +1847,8 @@ npx rea-agents@latest setup</code></pre>
       <div class="container footer-inner">
         <p>REA · Reverse Engineer Anything</p>
         <div class="footer-links">
-          <a href="../contributors/">Contributors</a
+          <a href="../faq/">FAQ</a
+          ><a href="../contributors/">Contributors</a
           ><a href="https://github.com/morluto/rea">Source</a
           ><a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a
           ><a href="https://discord.gg/GkcryMnJDM">Join the community</a

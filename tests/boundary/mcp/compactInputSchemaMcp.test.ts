@@ -1,7 +1,6 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import {
@@ -25,8 +24,10 @@ import { processScenarioSchema } from "../../../src/domain/process/processScenar
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 import {
   arrayItemSchemaError,
+  strictGatewayItemSchemaErrors,
   unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
 
@@ -79,52 +80,16 @@ const unsupportedDependencyKeywords = (
   });
 };
 
-const untypedUnionItems = (schema: unknown, path = "$"): readonly string[] => {
-  if (typeof schema !== "object" || schema === null || Array.isArray(schema))
-    return [];
-  const node = schema as Record<string, unknown>;
-  const items = node.items;
-  const here =
-    node.type === "array" &&
-    typeof items === "object" &&
-    items !== null &&
-    !Array.isArray(items) &&
-    (Array.isArray((items as Record<string, unknown>).oneOf) ||
-      Array.isArray((items as Record<string, unknown>).anyOf)) &&
-    (items as Record<string, unknown>).type === undefined
-      ? [`${path}.items`]
-      : [];
-  return [
-    ...here,
-    ...Object.entries(node).flatMap(([key, value]) => {
-      if (schemaMaps.has(key) && typeof value === "object" && value !== null)
-        return Object.entries(value).flatMap(([name, child]) =>
-          untypedUnionItems(child, `${path}.${key}.${name}`),
-        );
-      if (schemaArrays.has(key) && Array.isArray(value))
-        return value.flatMap((child, index) =>
-          untypedUnionItems(child, `${path}.${key}[${index}]`),
-        );
-      if (schemaChildren.has(key))
-        return untypedUnionItems(value, `${path}.${key}`);
-      return [];
-    }),
-  ];
-};
-
 const listToolsThroughTransport = async (
   server: EvidenceMcpServer,
 ): Promise<readonly AdvertisedTool[]> => {
-  const client = new Client({ name: "compact-profile", version: "0" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    return (await client.listTools()).tools;
-  } finally {
-    await Promise.allSettled([client.close(), server.close()]);
-  }
+  const mcp = createTestMcp();
+  onTestFinished(() => mcp.close());
+  const client = await mcp.connect(server, {
+    name: "compact-profile",
+    version: "0",
+  });
+  return (await client.listTools()).tools;
 };
 
 const registerCatalog = (server: EvidenceMcpServer): void => {
@@ -235,7 +200,7 @@ it("advertises every tool input schema within the provider budget", async () => 
   ).toEqual([]);
   expect(
     tools.flatMap(({ name, inputSchema }) =>
-      untypedUnionItems(inputSchema).map((path) => `${name}${path.slice(1)}`),
+      strictGatewayItemSchemaErrors(inputSchema, name),
     ),
   ).toEqual([]);
 });
@@ -277,6 +242,41 @@ it("detects missing client-required items in nested array alternatives", () => {
   expect(arrayItemSchemaError({ type: "array", items: false }, "closed")).toBe(
     "closed: tool parameters array type must have items",
   );
+});
+
+it("detects item schemas Gemini declarations reject in schema positions only", () => {
+  // The #5201 report: `properties[functions].items.items: field predicate
+  // failed: $type == Type.ARRAY` for an any-value element type list.
+  expect(
+    strictGatewayItemSchemaErrors(
+      {
+        type: "object",
+        properties: {
+          functions: {
+            type: "array",
+            items: {
+              type: ["null", "boolean", "object", "array", "number", "string"],
+              items: {},
+            },
+          },
+          actions: {
+            type: "array",
+            items: { oneOf: [{ type: "object" }, { type: "string" }] },
+          },
+          nested: {
+            type: "array",
+            items: { type: "array", items: { type: "string" } },
+          },
+        },
+        default: { items: {} },
+        examples: [{ items: {} }],
+      },
+      "injected",
+    ),
+  ).toEqual([
+    'injected.properties.functions.items.items is beside type ["null","boolean","object","array","number","string"]',
+    "injected.properties.actions.items is an untyped union",
+  ]);
 });
 
 it("preserves arbitrary nested JSON values at the converted SDK boundary", async () => {
@@ -510,36 +510,33 @@ describe("MCP compact input schema canonical enforcement", () => {
         };
       },
     );
-    const client = new Client({ name: "compact-validation", version: "0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const advertised = (await client.listTools()).tools.find(
-        ({ name }) => name === contract.name,
-      );
-      if (advertised === undefined)
-        throw new Error("Process capture tool was not advertised");
-      const ajv = new Ajv2020({ strict: false, validateFormats: false });
-      const validate = ajv.compile(advertised.inputSchema);
-      const valid = { executable: "node", environment: { APP_MODE: "test" } };
-      const reserved = {
-        executable: "node",
-        environment: { REA_PROCESS_RUN_ID: "caller-value" },
-      };
-      expect(validate(valid)).toBe(true);
-      expect(processScenarioSchema.safeParse(valid).success).toBe(true);
-      expect(processScenarioSchema.safeParse(reserved).success).toBe(false);
-      const result = await client.callTool({
-        name: contract.name,
-        arguments: reserved,
-      });
-      expect(result.isError).toBe(true);
-      expect(handlerCalled).toBe(false);
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-    }
+    const mcp = createTestMcp();
+    onTestFinished(() => mcp.close());
+    const client = await mcp.connect(server, {
+      name: "compact-validation",
+      version: "0",
+    });
+    const advertised = (await client.listTools()).tools.find(
+      ({ name }) => name === contract.name,
+    );
+    if (advertised === undefined)
+      throw new Error("Process capture tool was not advertised");
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validate = ajv.compile(advertised.inputSchema);
+    const valid = { executable: "node", environment: { APP_MODE: "test" } };
+    const reserved = {
+      executable: "node",
+      environment: { REA_PROCESS_RUN_ID: "caller-value" },
+    };
+    expect(validate(valid)).toBe(true);
+    expect(processScenarioSchema.safeParse(valid).success).toBe(true);
+    expect(processScenarioSchema.safeParse(reserved).success).toBe(false);
+    const result = await client.callTool({
+      name: contract.name,
+      arguments: reserved,
+    });
+    expect(result.isError).toBe(true);
+    expect(handlerCalled).toBe(false);
   });
 
   it("compacts plain standard schemas that are not Zod instances", async () => {
@@ -622,30 +619,28 @@ it.each(["full", "compact"] as const)(
       calls++;
       return { content: [{ type: "text", text: "accepted" }] };
     });
-    const client = new Client({ name: "resource-scope", version: "1" });
-    const [ct, st] = InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(st);
-      await client.connect(ct);
-      const definition = (await client.listTools()).tools.find(
-        ({ name }) => name === "resource_fixture",
-      );
-      if (definition === undefined) throw new Error("Missing resource fixture");
-      const advertised = new Ajv2020({ strict: false }).compile(
-        definition.inputSchema,
-      );
-      for (const value of [7, "seven"]) {
-        const args = { child: { value } };
-        expect(advertised(args)).toBe(canonical(args));
-        const result = await client.callTool({
-          name: "resource_fixture",
-          arguments: args,
-        });
-        expect(result.isError === true).toBe(!canonical(args));
-      }
-      expect(calls).toBe(1);
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
+    const mcp = createTestMcp();
+    onTestFinished(() => mcp.close());
+    const client = await mcp.connect(server, {
+      name: "resource-scope",
+      version: "1",
+    });
+    const definition = (await client.listTools()).tools.find(
+      ({ name }) => name === "resource_fixture",
+    );
+    if (definition === undefined) throw new Error("Missing resource fixture");
+    const advertised = new Ajv2020({ strict: false }).compile(
+      definition.inputSchema,
+    );
+    for (const value of [7, "seven"]) {
+      const args = { child: { value } };
+      expect(advertised(args)).toBe(canonical(args));
+      const result = await client.callTool({
+        name: "resource_fixture",
+        arguments: args,
+      });
+      expect(result.isError === true).toBe(!canonical(args));
     }
+    expect(calls).toBe(1);
   },
 );

@@ -20,7 +20,7 @@
 
 **[Site web](https://rea.tools/fr/) · [Guides](https://rea.tools/fr/guides/) · [Études de cas](https://rea.tools/fr/showcase/)**
 
-[Démarrage rapide](#démarrage-rapide) · [Comment fonctionne REA](#comment-fonctionne-rea) · [Ce que vous pouvez analyser](#ce-que-vous-pouvez-analyser) · [Études de cas](#études-de-cas) · [Questions fréquentes](#questions-fréquentes) · [Outils GNU objdump et Rizin](../reverse-engineering-tools.md) · [Documentation](#documentation)
+[Démarrage rapide](#démarrage-rapide) · [Comment fonctionne REA](#comment-fonctionne-rea) · [Ce que vous pouvez analyser](#ce-que-vous-pouvez-analyser) · [Études de cas](#études-de-cas) · [Créer des environnements RL](#build-rl-environments) · [Questions fréquentes](#questions-fréquentes) · [Documentation](#documentation)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@ Vous avez repéré dans une application une fonctionnalité que vous aimeriez av
 
 REA connecte votre agent à des outils d'inspection de binaires natifs, d'applications JavaScript et Electron, d'assemblys .NET et de sites web. Les mêmes outils sont aussi disponibles depuis votre terminal. L'analyse s'exécute localement, et chaque conclusion s'accompagne des preuves et des limites sur lesquelles elle repose.
 
-Setup enregistre REA auprès de votre agent et installe les instructions de workflow correspondantes. L'analyse native peut utiliser une installation existante de Hopper, de Ghidra ou d'IDA ; Setup peut aussi installer Hopper après votre accord. L'analyse statique JavaScript ne nécessite aucun moteur d'analyse natif.
+Setup enregistre REA auprès de votre agent et installe les instructions de workflow correspondantes. L'analyse native peut utiliser une installation existante de Hopper, de Ghidra, d'IDA ou de Kuna ; Setup peut aussi installer Hopper après votre accord. L'analyse statique JavaScript ne nécessite aucun moteur d'analyse natif.
 
 > **[Visitez le site web de REA](https://rea.tools/fr/)** pour les instructions d'installation, des guides illustrés et des études de cas réelles.
 
@@ -150,7 +150,7 @@ REA nécessite Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) ou 26+ (>=26.12.1), ai
 
 | Cible                        | Ce que REA renvoie                                                                                          | Prérequis et guide                                                                                                                        |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Binaires natifs              | Pseudo-code, assembleur, chaînes, symboles, appels et références                                            | Hopper, Ghidra ou IDA ; [analyse native](../native-investigation.md)                                                                      |
+| Binaires natifs              | Pseudo-code, assembleur, chaînes, symboles, appels et références                                            | Hopper, Ghidra, IDA ou Kuna ; [analyse native](../native-investigation.md)                                                                |
 | Structure ELF hors ligne     | Sections, segments, symboles et relocations d'origine, et protections statiques candidates                  | pwntools fourni par l'utilisateur sous Linux x64 ; [diagnostics binaires](../binary-diagnostics.md)                                       |
 | PE certificates              | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                   |
 | PE imports                   | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                             |
@@ -189,6 +189,8 @@ REA nécessite Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) ou 26+ (>=26.12.1), ai
 
 L'inspection statique JavaScript et .NET lit les fichiers fournis sans exécuter l'application. La capture à l'exécution lance la cible choisie ou interagit avec elle avec vos permissions utilisateur ; chaque guide d'exécution décrit ses effets.
 
+Pour inspecter les binaires natifs hors ligne, REA prend aussi en charge GNU objdump et Rizin, que vous devez fournir vous-même. Le [guide des outils de rétro-ingénierie](../reverse-engineering-tools.md) décrit la configuration des fournisseurs, les commandes CLI et les limites des Evidence. REA n’installe ni ne met à jour ces deux fournisseurs.
+
 <a id="choosing-a-deep-analysis-provider"></a>
 
 Les formats natifs et les hôtes pris en charge varient selon le fournisseur. Consultez [la configuration de Hopper et Ghidra](../installation.md#hopper), le [guide IDA](../ida-provider.md), [Kuna](../kuna-provider.md) et [la prise en charge expérimentale de Ghidra sous Windows](../windows-ghidra-p0.md). Ghidra prend aussi en charge [l'analyse DOS 16 bits](../ghidra-dos.md). Pour les gros binaires, augmentez son délai de démarrage avec `REA_GHIDRA_STARTUP_TIMEOUT_MS` / `REA_HOPPER_STARTUP_TIMEOUT_MS`. Pour le choix du fournisseur, consultez le [guide CLI](../cli.md#choose-a-provider). Vérifiez la [disponibilité dans les versions publiées](../installation.md#released-package-and-main) pour les fonctionnalités ajoutées depuis la dernière version npm.
@@ -220,7 +222,50 @@ Inspectez les instructions 16 bits du jeu PC-98 d'origine, retrouvez les calculs
 
 [Lire l'étude de cas](https://rea.tools/fr/showcase/th04/) · [Dépôt de la reconstruction](https://github.com/N0zoM1z0/th04)
 
+### Créer des environnements RL avec REA
+
+Enregistrez une session d’application web, transformez son API en outils et exportez un environnement utilisable par un agent IA. Exécutez-le avec AgentEnv, puis ajoutez des tâches et des vérifications de récompense pour l’entraînement RL ou l’évaluation.
+
+[Guide de création d’un environnement](https://rea.tools/guides/rl-environments/) ·
+[Voir la démo sur X](https://x.com/reatools/status/2112574822584918075?s=20)
+
 Si vous avez utilisé REA sur un projet intéressant, nous serions ravis de le découvrir. Partagez votre cas dans une [issue](https://github.com/morluto/rea/issues) ou une [pull request](https://github.com/morluto/rea/pulls), en précisant la cible, votre question, la manière dont REA vous a aidé et ce que vous avez découvert.
+
+<a id="build-rl-environments"></a>
+
+## Créer des environnements RL
+
+Créez un environnement local où un agent IA peut s’exercer à des tâches comme trouver un ticket ou créer un dossier, sans exécuter l’application d’origine. Utilisez-le pour l’apprentissage par renforcement (RL) ou pour tester la capacité d’un agent à accomplir des tâches.
+
+REA transforme les requêtes et réponses API enregistrées en outils que l’agent peut appeler. L’environnement utilise les données enregistrées et ne prend en charge des modifications que si l’enregistrement confirme leurs effets.
+
+Configurez REA dans votre agent, puis adaptez l’URL et les tâches sur les dossiers à votre application :
+
+```text
+Utilise REA pour créer un environnement RL à partir de mon application web de test à
+http://127.0.0.1:3000.
+Couvre la liste, la création, le renommage et la suppression de dossiers.
+Tu peux créer et supprimer des dossiers de test. Ne modifie pas les données existantes.
+Enregistre-le dans un dossier nommé my-env, vérifie les opérations disponibles et explique-moi comment le lancer.
+```
+
+<details>
+<summary>Utiliser la ligne de commande</summary>
+
+Utilisez ces commandes si vous disposez déjà d’un fichier contenant les requêtes et réponses de l’application enregistrées dans le navigateur. L’exécution du résultat nécessite aussi AgentEnv et Docker.
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA exporte un environnement exécutable avec un test de base qui vérifie qu’il démarre et répond. Utilisez-le avec votre framework RL pour définir les objectifs, ajouter les vérifications de récompense et lancer l’entraînement.
+
+[Guide de création d’un environnement](https://rea.tools/guides/rl-environments/) ·
+[Référence des environnements](../agent-environments.md) ·
+[Voir la démo sur X](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## Questions fréquentes
 
@@ -232,9 +277,9 @@ Tout agent compatible avec les serveurs MCP locaux. Setup configure les [agents 
 </details>
 
 <details>
-<summary><strong>Ai-je besoin de Hopper, Ghidra ou IDA ?</strong></summary>
+<summary><strong>Ai-je besoin de Hopper, Ghidra, IDA ou Kuna ?</strong></summary>
 
-L'analyse native approfondie utilise l'un d'eux. L'inspection statique JavaScript et .NET fonctionne sans moteur d'analyse native. Setup peut installer Hopper après votre accord ; Ghidra et IDA utilisent vos installations existantes. Consultez [la configuration des fournisseurs](../installation.md#hopper).
+L'analyse native approfondie utilise l'un d'eux. L'inspection statique JavaScript et .NET fonctionne sans moteur d'analyse native. Setup peut installer Hopper après votre accord ; Ghidra, IDA et Kuna utilisent vos installations existantes. Consultez [la configuration des fournisseurs](../installation.md#hopper).
 
 </details>
 
@@ -302,7 +347,7 @@ Signalez les vulnérabilités via [SECURITY.md](../../SECURITY.md).
 
 ## Historique des étoiles
 
-🎉 **300 000 étoiles GitHub — merci !**
+🎉 **400 000 étoiles GitHub — merci !**
 
 Merci à toutes les personnes qui utilisent REA, signalent des bugs, proposent des fonctionnalités, testent les builds et contribuent des correctifs.
 

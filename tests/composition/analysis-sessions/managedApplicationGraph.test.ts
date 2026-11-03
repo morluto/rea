@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { projectManagedApplicationGraphEvidence } from "../../../src/application/managed/ManagedApplicationGraphService.js";
-import { managedApplicationGraphReferenceInputSchema } from "../../../src/contracts/managed/managedWorkflowToolContracts.js";
+import {
+  managedApplicationGraphReferenceInputSchema,
+  managedApplicationGraphResultSchema,
+} from "../../../src/domain/managed/managedApplicationGraph.js";
 import { MANAGED_APPLICATION_GRAPH_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { traceApplicationFeatureEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { MANAGED_STATIC_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
-import { managedApplicationGraphResultSchema } from "../../../src/domain/managed/managedApplicationGraph.js";
 import {
   managedMemberInspectionSchema,
   managedNativeBoundaryInspectionSchema,
@@ -24,9 +26,12 @@ import {
 const tinyIl = (il: readonly number[]): Buffer =>
   Buffer.from([(il.length << 2) | 2, ...il]);
 
-const memberGraph = (bytes: Buffer) => {
+const memberGraph = (
+  bytes: Buffer,
+  options: Parameters<typeof inspectManagedMembersBytes>[2] = {},
+) => {
   const binary = managedPeFixtureTarget(bytes, "/fixture/ManagedCalls.exe");
-  const members = inspectManagedMembersBytes(bytes, binary);
+  const members = inspectManagedMembersBytes(bytes, binary, options);
   const memberEvidence = createEvidence(binary, MANAGED_STATIC_PROVIDER, {
     operation: "inspect_managed_members",
     parameters: {},
@@ -85,6 +90,57 @@ const createManagedInteropEvidence = () => {
     }),
   };
 };
+
+describe("managed application graph MethodDef scope", () => {
+  it("preserves MethodDef page omissions from decoded member Evidence", () => {
+    const bytes = buildManagedPeFixture({
+      ilBody: tinyIl([0x2a]),
+      methodRowCount: 3,
+    });
+    const full = memberGraph(bytes);
+    expect(full.members.method_rows).toEqual({ offset: 0, count: 3, total: 3 });
+    expect(full.result.coverage.status).toBe("complete-within-inputs");
+    for (const options of [
+      { methodLimit: 0 },
+      { methodOffset: 1, methodLimit: 1 },
+      { methodOffset: 3 },
+    ]) {
+      const page = memberGraph(bytes, options);
+      expect(page.members.coverage.state).toBe("complete");
+      expect(page.result.summary.methods).toBe(page.members.method_rows!.count);
+      expect(page.result.coverage.status).toBe("partial");
+      expect(page.result.limitations).toContain(
+        `Managed member Evidence examined MethodDef rows at offset ${page.members.method_rows!.offset} with count ${page.members.method_rows!.count} of 3 total rows; methods outside that interval and their relations are omitted, not absent.`,
+      );
+    }
+  });
+
+  it("keeps unrecorded legacy MethodDef scope unknown", () => {
+    const bytes = buildManagedPeFixture({ ilBody: tinyIl([0x2a]) });
+    const binary = managedPeFixtureTarget(bytes);
+    const members = inspectManagedMembersBytes(bytes, binary);
+    const { method_rows: _methodRows, ...legacy } = members;
+    const evidence = createEvidence(binary, MANAGED_STATIC_PROVIDER, {
+      operation: "inspect_managed_members",
+      parameters: {},
+      result: legacy,
+      rawResult: null,
+      limitations: members.limitations,
+    });
+    const projection = projectManagedApplicationGraphEvidence({
+      managed_members: evidence,
+    });
+    if (!projection.ok) throw new Error(JSON.stringify(projection.error));
+    const result = managedApplicationGraphResultSchema.parse(
+      parseEvidence(projection.value).normalized_result,
+    );
+    expect(result.coverage.status).toBe("partial");
+    expect(result.summary.methods).toBe(1);
+    expect(result.limitations).toContain(
+      "Managed member Evidence did not record its MethodDef row scope; coverage of methods and their relations outside the supplied observations is unknown.",
+    );
+  });
+});
 
 describe("managed application graph projection", () => {
   it("projects managed metadata and native declarations into authenticated graph Evidence", () => {
@@ -164,9 +220,11 @@ describe("managed application graph projection", () => {
     expect(observedEvidenceIds("managed-pinvoke-import")).toEqual([
       boundaryEvidence.evidence_id,
     ]);
-    for (const edge of graph.edges.filter(
+    const containmentEdges = graph.edges.filter(
       ({ relation }) => relation === "contains",
-    ))
+    );
+    expect(containmentEdges.length).toBeGreaterThan(0);
+    for (const edge of containmentEdges)
       expect(edge.evidence.evidence_ids).toEqual(allEvidenceIds);
     const method = graph.nodes.find(
       ({ kind, observations }) =>

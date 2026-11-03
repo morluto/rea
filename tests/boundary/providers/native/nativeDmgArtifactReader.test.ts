@@ -20,6 +20,7 @@ import {
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
+  type ArtifactReaderTraversal,
   type ArtifactTraversalOmission,
 } from "../../../../src/artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
@@ -1554,6 +1555,57 @@ describe("native DMG localized verification cleanup", () => {
     } finally {
       close.mockRestore();
     }
+  });
+});
+
+describe("native DMG checksum-free images", () => {
+  it("attaches after hdiutil reports no stored checksum and reports integrity as unverified", async () => {
+    const { host, state } = createOmittedInventoryHost();
+    state.inventoryMode = "listed";
+    state.detachAttempts = 4;
+    const verify = vi.fn(async () => ({
+      stdout: "",
+      stderr: 'hdiutil: verify: "/tmp/image.dmg" has no checksum.\n',
+      exitCode: 1,
+    }));
+    const reader = new NativeDmgArtifactReader("/tmp/image.dmg", process.env, {
+      ...host,
+      run: (arguments_, signal, options) =>
+        arguments_[0] === "verify"
+          ? verify()
+          : host.run(arguments_, signal, options),
+    });
+    onTestFinished(() => reader.close());
+    const coverage: ArtifactReaderTraversal[] = [];
+    const paths: string[] = [];
+    for await (const entry of reader.entries(undefined, {
+      onCoverage: (observed) => coverage.push(observed),
+    }))
+      paths.push(entry.path);
+
+    expect(paths).toContain("image.dmg/Fixture/hello.txt");
+    // Absence is a terminal answer, not a transient refusal to retry.
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(coverage).toEqual([
+      {
+        status: "complete",
+        limitations: [
+          expect.stringMatching(
+            /no stored checksum .* integrity was not verified/u,
+          ),
+        ],
+      },
+    ]);
+    expect(
+      reader
+        .provenance()
+        .map(({ arguments: [operation], exit_code }) => [operation, exit_code]),
+    ).toEqual([
+      ["verify", 1],
+      ["attach", 0],
+    ]);
+    await reader.close();
+    expect(state.attached).toBe(false);
   });
 });
 

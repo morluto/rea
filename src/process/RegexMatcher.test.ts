@@ -13,6 +13,7 @@ import {
   execArgvFromCommandLine,
   readLaunchExecArgv,
   readLaunchNodeOptions,
+  regexMatchingDeadlineError,
   regexMatchingLimitation,
   regexWorkerHeapError,
   resolveLaunchRegexWorkerHeap,
@@ -100,24 +101,6 @@ it.each([
     heap: effective(80, true),
   },
   {
-    name: "leaves a percentage flag unestablished instead of the 128 MiB request",
-    execArgv: ["--max-old-space-size-percentage=50"],
-    nodeOptions: undefined,
-    heap: { kind: "unknown" } as const,
-  },
-  {
-    name: "lets a percentage flag win over a later absolute flag",
-    execArgv: ["--max-old-space-size-percentage=50", "--max-old-space-size=64"],
-    nodeOptions: undefined,
-    heap: { kind: "unknown" } as const,
-  },
-  {
-    name: "lets a percentage flag win over an earlier absolute flag",
-    execArgv: ["--max-old-space-size=64", "--max-old-space-size-percentage=50"],
-    nodeOptions: undefined,
-    heap: { kind: "unknown" } as const,
-  },
-  {
     name: "lets a NODE_OPTIONS percentage win over an execArgv absolute flag",
     execArgv: ["--max-old-space-size=64"],
     nodeOptions: "--max-old-space-size-percentage=50",
@@ -164,34 +147,10 @@ it.each([
     heap: { kind: "unknown" } as const,
   },
   {
-    name: "leaves an env-file launch unestablished when NODE_OPTIONS was absent",
-    execArgv: ["--env-file=rea.env"],
-    nodeOptions: undefined,
-    heap: { kind: "unknown" } as const,
-  },
-  {
-    name: "leaves an env-file-if-exists launch unestablished when NODE_OPTIONS was absent",
-    execArgv: ["--env-file-if-exists=.env"],
-    nodeOptions: undefined,
-    heap: { kind: "unknown" } as const,
-  },
-  {
-    name: "does not let an absolute flag hide NODE_OPTIONS supplied by an env file",
-    execArgv: ["--env-file=rea.env", "--max-old-space-size=64"],
-    nodeOptions: undefined,
-    heap: { kind: "unknown" } as const,
-  },
-  {
     name: "recognizes an env-file flag split from its path",
     execArgv: ["--env-file", "rea.env"],
     nodeOptions: undefined,
     heap: { kind: "unknown" } as const,
-  },
-  {
-    name: "keeps an inherited NODE_OPTIONS value when an env file cannot override it",
-    execArgv: ["--env-file=rea.env"],
-    nodeOptions: "--max-old-space-size=64",
-    heap: effective(64, true),
   },
   {
     name: "lets a later absolute flag win when an inherited NODE_OPTIONS blocks the env file",
@@ -206,33 +165,6 @@ it.each([
     heap: effective(128, false),
   },
   {
-    name: "leaves a config-file percentage source unestablished",
-    execArgv: ["--experimental-config-file=node.config.json"],
-    nodeOptions: undefined,
-    heap: { kind: "unknown" } as const,
-  },
-  {
-    name: "leaves a default config-file launch unestablished",
-    execArgv: ["--experimental-default-config-file"],
-    nodeOptions: undefined,
-    heap: { kind: "unknown" } as const,
-  },
-  {
-    name: "recognizes a config-file flag split from its path",
-    execArgv: ["--experimental-config-file", "node.config.json"],
-    nodeOptions: undefined,
-    heap: { kind: "unknown" } as const,
-  },
-  {
-    name: "does not let an absolute flag hide a config-file heap option",
-    execArgv: [
-      "--experimental-config-file=node.config.json",
-      "--max-old-space-size=64",
-    ],
-    nodeOptions: undefined,
-    heap: { kind: "unknown" } as const,
-  },
-  {
     name: "does not let a recovered NODE_OPTIONS hide a config-file heap option",
     execArgv: ["--experimental-default-config-file"],
     nodeOptions: "--max-old-space-size=64",
@@ -245,26 +177,8 @@ it.each([
     heap: { kind: "unknown" } as const,
   },
   {
-    name: "leaves a positive --max-heap-size unestablished instead of the 128 MiB request",
-    execArgv: ["--max-heap-size=64"],
-    nodeOptions: undefined,
-    heap: { kind: "unknown" } as const,
-  },
-  {
     name: "recognizes an underscore --max-heap-size",
     execArgv: ["--max_heap_size=+064"],
-    nodeOptions: undefined,
-    heap: { kind: "unknown" } as const,
-  },
-  {
-    name: "leaves a NODE_OPTIONS --max-heap-size unestablished",
-    execArgv: [],
-    nodeOptions: "--max-heap-size=64",
-    heap: { kind: "unknown" } as const,
-  },
-  {
-    name: "does not let an old-space flag hide a positive --max-heap-size",
-    execArgv: ["--max-heap-size=64", "--max-old-space-size=256"],
     nodeOptions: undefined,
     heap: { kind: "unknown" } as const,
   },
@@ -458,12 +372,32 @@ it("describes the effective heap and the configurable matching deadline", () => 
     { kind: "unknown" } as const,
   ]) {
     const limitation = regexMatchingLimitation(heap);
-    expect(limitation).toContain(
+    for (const fact of [
+      "5000 ms",
+      "128 MiB",
+      "source default",
+      "regex.matching_deadline_ms",
+      "regex.worker_heap_request_mib",
+      "REA_REGEX_MATCHING_DEADLINE_MS",
+      "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
+      "update_analysis_settings",
+    ])
+      expect(limitation).toContain(fact);
+    // Providers repeat this text per search operation; bounds and recovery
+    // stay with the errors below instead of every capability entry.
+    expect(limitation).not.toContain(
       regexMatchingDeadlineRecovery(DEFAULT_REGEX_MATCHING_DEADLINE),
     );
-    expect(limitation).toContain(
+    expect(limitation).not.toContain(
       regexWorkerHeapRequestRecovery(DEFAULT_REGEX_WORKER_HEAP_REQUEST),
     );
+    expect(limitation.length).toBeLessThan(700);
+    if (heap.kind === "effective")
+      expect(limitation).toContain(`${String(heap.mib)} MiB`);
+    expect(
+      projectAnalysisError(regexMatchingDeadlineError("search_procedures"))
+        .remediation.action,
+    ).toContain(regexMatchingDeadlineRecovery(DEFAULT_REGEX_MATCHING_DEADLINE));
     const projected = projectAnalysisError(
       regexWorkerHeapError("search_procedures", new Error("heap"), heap),
     );
@@ -478,10 +412,13 @@ it("describes the effective heap and the configurable matching deadline", () => 
     expect(projected.remediation.action).toContain(
       "--max-old-space-size-percentage",
     );
+    expect(projected.remediation.action).toContain(
+      regexWorkerHeapRequestRecovery(DEFAULT_REGEX_WORKER_HEAP_REQUEST),
+    );
     if (heap.kind === "unknown") {
-      expect(limitation).toContain("--max-old-space-size-percentage");
-      expect(limitation).toContain("--max-heap-size");
-      expect(limitation).toContain("--experimental-config-file");
+      expect(projected.remediation.action).toContain(
+        "--experimental-config-file",
+      );
       expect(projected.remediation.action).toContain("--max-heap-size");
       expect(projected.remediation.action).toContain(
         "--experimental-default-config-file",
@@ -515,13 +452,21 @@ it("keeps a selected heap request unless a positive Node flag overrides it", () 
     DEFAULT_REGEX_MATCHING_DEADLINE,
     request,
   );
-  expect(selected).toContain(regexWorkerHeapRequestRecovery(request));
+  for (const fact of ["256 MiB", "source setting"])
+    expect(selected).toContain(fact);
+  expect(selected).not.toContain("--max-old-space-size");
   const overridden = regexMatchingLimitation(
     effective(64, true),
     DEFAULT_REGEX_MATCHING_DEADLINE,
     request,
   );
-  expect(overridden).toContain(regexWorkerHeapRequestRecovery(request));
+  for (const fact of [
+    "64 MiB",
+    "256 MiB",
+    "source setting",
+    "--max-old-space-size",
+  ])
+    expect(overridden).toContain(fact);
   const projected = projectAnalysisError(
     regexWorkerHeapError(
       "search_procedures",

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { z } from "zod";
+import { utcDateTimeSchema } from "./offsetDateTime.js";
 
 import { emptyArraySchema } from "./emptyArraySchema.js";
 import {
@@ -148,8 +149,7 @@ const eventBase = {
 
 const eventUrl = sanitizedBrowserUrlSchema.nullable();
 /** The browser's wall-clock request start, reported once the request ends. */
-const browserStartSchema = z.iso
-  .datetime()
+const browserStartSchema = utcDateTimeSchema
   .optional()
   .describe(
     "Wall-clock time the browser started the request, as it reported at completion; absent when it reported none.",
@@ -201,8 +201,7 @@ export const browserScenarioEventSchema = z
       kind: z.literal("request"),
       status: z.null(),
       failure: z.null(),
-      observed_at: z.iso
-        .datetime()
+      observed_at: utcDateTimeSchema
         .optional()
         .describe(
           "Wall-clock time the provider observed the request start; absent in captures made before it was recorded.",

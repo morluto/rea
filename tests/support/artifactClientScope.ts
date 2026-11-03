@@ -3,15 +3,23 @@ import type { AnalysisClient } from "../../src/application/AnalysisProvider.js";
 import { ArtifactProvider } from "../../src/artifacts/ArtifactProvider.js";
 import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
 
-export const withArtifactClient = async <T>(
+/** Retain test ownership until every artifact client is closed. */
+export const createOwnedArtifactClient = (
   target: BinaryTarget,
-  action: (client: AnalysisClient) => Promise<T>,
-): Promise<T> => {
+): AnalysisClient => {
   const client = new ArtifactProvider(process.env).createClient(target);
   onTestFinished(async () => {
     const closed = await client.close();
     if (!closed.ok) throw closed.error;
   });
+  return client;
+};
+
+export const withArtifactClient = async <T>(
+  target: BinaryTarget,
+  action: (client: AnalysisClient) => Promise<T>,
+): Promise<T> => {
+  const client = createOwnedArtifactClient(target);
   let outcome:
     | { readonly ok: true; readonly value: T }
     | { readonly ok: false; readonly error: unknown };

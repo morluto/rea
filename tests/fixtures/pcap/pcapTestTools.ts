@@ -13,6 +13,35 @@ export const CAPINFOS_OUTPUT = [
   "Latest packet time:   1791728020.981978",
 ].join("\n");
 
+/** Synthetic complete UDP A response; bytes own identity, tree owns display. */
+export const dnsResponseLayers = (query: string, address: string) => {
+  const name = Buffer.concat([
+    ...query
+      .split(".")
+      .map((label) =>
+        Buffer.concat([
+          Buffer.from([Buffer.byteLength(label)]),
+          Buffer.from(label),
+        ]),
+      ),
+    Buffer.from([0]),
+  ]);
+  const bytes = Buffer.concat([
+    Buffer.from("000181800001000100000000", "hex"),
+    name,
+    Buffer.from("00010001c00c000100010000003c0004", "hex"),
+    Buffer.from(address.split(".").map(Number)),
+  ]);
+  return {
+    dns_raw: [bytes.toString("hex"), 42, bytes.length, 0, 1],
+    dns: {
+      "dns.id_raw": ["0001", 42, 2, 0, 5],
+      Queries: { question: { "dns.qry.name": query } },
+      Answers: { answer: { "dns.a": address } },
+    },
+  };
+};
+
 export const TSHARK_JSON = JSON.stringify([
   {
     _source: {
@@ -22,7 +51,6 @@ export const TSHARK_JSON = JSON.stringify([
         "ip.src": ["192.168.1.100"],
         "ip.dst": ["8.8.8.8"],
         "dns.qry.name": ["api.example.com"],
-        "dns.flags.response": ["1"],
         "dns.a": ["93.184.216.34"],
       },
     },
@@ -51,8 +79,23 @@ export const TSHARK_JSON = JSON.stringify([
   },
 ]);
 
+export const TSHARK_DNS_JSON = JSON.stringify([
+  {
+    _source: {
+      layers: {
+        frame: { "frame.number": "1" },
+        ...dnsResponseLayers("api.example.com", "93.184.216.34"),
+      },
+    },
+  },
+]);
+
 export interface PcapStubToolsOptions {
   readonly failCapinfos?: boolean;
+  readonly malformedDnsJson?: boolean;
+  readonly dnsJson?: string;
+  readonly tsharkJson?: string;
+  readonly capinfosText?: string;
   readonly httpAbsoluteUriOnly?: boolean;
   readonly http2Uri?: boolean;
   readonly invalidTsharkStream?: "stdout" | "stderr";
@@ -95,10 +138,21 @@ if [ "$1" = "--version" ]; then
   exit 0
 fi
 [ "$1" = "-n" ] && [ "$2" = "-r" ] && [ "$4" = "-T" ] && [ "$5" = "json" ] || exit 2
-case " $* " in *" -e http.request.uri "*) ;; *) exit 2 ;; esac
-case " $* " in *" -e http2.request.full_uri "*) ;; *) exit 2 ;; esac
-case " $* " in *" -e http2.headers.path "*) ;; *) exit 2 ;; esac
-${options.invalidTsharkStream === "stdout" ? `printf '%s' '[{"_source":{"layers":{"frame.number":["1"],"frame.protocols":["eth:ip:tcp:http"],"http.request.full_uri":["http://example.test/'; printf '\\377'; printf '%s' '"]}}}]'` : `printf '%s' '${tsharkOutput.replace(/'/gu, "'\\''")}'`}
+case " $* " in
+  *" -x "*)
+    case " $* " in *" --no-duplicate-keys "*) ;; *) exit 2 ;; esac
+    case " $* " in *" -J frame dns mdns llmnr "*) ;; *) exit 2 ;; esac
+    case " $* " in *" -Y dns || mdns || llmnr "*) ;; *) exit 2 ;; esac
+    printf '%s' '${(options.malformedDnsJson ? "{" : (options.dnsJson ?? TSHARK_DNS_JSON)).replace(/'/gu, "'\\''")}'
+    exit 0
+    ;;
+  *)
+    case " $* " in *" -e http.request.uri "*) ;; *) exit 2 ;; esac
+    case " $* " in *" -e http2.request.full_uri "*) ;; *) exit 2 ;; esac
+    case " $* " in *" -e http2.headers.path "*) ;; *) exit 2 ;; esac
+    ;;
+esac
+${options.invalidTsharkStream === "stdout" ? `printf '%s' '[{"_source":{"layers":{"frame.number":["1"],"frame.protocols":["eth:ip:tcp:http"],"http.request.full_uri":["http://example.test/'; printf '\\377'; printf '%s' '"]}}}]'` : `printf '%s' '${(options.tsharkJson ?? tsharkOutput).replace(/'/gu, "'\\''")}'`}
 ${options.invalidTsharkStream === "stderr" ? `printf '\\377' >&2` : ""}
 exit 0
 `,
@@ -116,7 +170,7 @@ fi
 if [ "${String(options.failCapinfos === true)}" = "true" ]; then
   printf 'capinfos: The file is not a capture file' >&2; exit 1
 fi
-${options.invalidCapinfosStream === "stdout" ? `printf '\\377'` : options.invalidCapinfosStream === "stderr" ? `printf '\\377' >&2` : `printf '%s\\n' '${CAPINFOS_OUTPUT.replace(/'/gu, "'\\''")}'`}
+${options.invalidCapinfosStream === "stdout" ? `printf '\\377'` : options.invalidCapinfosStream === "stderr" ? `printf '\\377' >&2` : `printf '%s\\n' '${(options.capinfosText ?? CAPINFOS_OUTPUT).replace(/'/gu, "'\\''")}'`}
 exit 0
 `,
     { mode: 0o755 },

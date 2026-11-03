@@ -20,7 +20,7 @@
 
 **[Web sitesi](https://rea.tools/tr/) · [Rehberler](https://rea.tools/tr/guides/) · [Örnek çalışmalar](https://rea.tools/tr/showcase/)**
 
-[Hızlı başlangıç](#hızlı-başlangıç) · [REA nasıl çalışır](#rea-nasıl-çalışır) · [Neleri analiz edebilirsiniz](#neleri-analiz-edebilirsiniz) · [Örnek çalışmalar](#örnek-çalışmalar) · [Sık sorulan sorular](#sık-sorulan-sorular) · [GNU objdump ve Rizin araçları](../reverse-engineering-tools.md) · [Belgeler](#belgeler)
+[Hızlı başlangıç](#hızlı-başlangıç) · [REA nasıl çalışır](#rea-nasıl-çalışır) · [Neleri analiz edebilirsiniz](#neleri-analiz-edebilirsiniz) · [Örnek çalışmalar](#örnek-çalışmalar) · [RL ortamları oluşturun](#build-rl-environments) · [Sık sorulan sorular](#sık-sorulan-sorular) · [GNU objdump ve Rizin araçları](../reverse-engineering-tools.md) · [Belgeler](#belgeler)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@ Bir uygulamada kendi ürününüze eklemek istediğiniz bir özellik mi gördün
 
 REA, ajanınızı yerel makine kodu içeren ikili dosyaları, JavaScript ve Electron uygulamalarını, .NET derlemelerini ve web sitelerini inceleyen araçlara bağlar. Aynı araçları terminalden de kullanabilirsiniz. Analiz yerel olarak çalışır; sonuçlar her çıkarımın dayandığı kanıtları ve sınırlamaları içerir.
 
-Kurulum, REA'yı ajanınıza kaydeder ve uyumlu iş akışı talimatlarını yükler. Yerel makine kodu analizi mevcut bir Hopper, Ghidra veya IDA kurulumunu kullanabilir; kurulum işlemi, onayınızla isteğe bağlı olarak Hopper da yükleyebilir. Statik JavaScript analizi bu yerel analiz motorlarından hiçbirine ihtiyaç duymaz.
+Kurulum, REA'yı ajanınıza kaydeder ve uyumlu iş akışı talimatlarını yükler. Yerel makine kodu analizi mevcut bir Hopper, Ghidra, IDA veya Kuna kurulumunu kullanabilir; kurulum işlemi, onayınızla isteğe bağlı olarak Hopper da yükleyebilir. Statik JavaScript analizi bu yerel analiz motorlarından hiçbirine ihtiyaç duymaz.
 
 > Kurulum talimatları, görselli rehberler ve gerçek örnek çalışmalar için **[REA web sitesini ziyaret edin](https://rea.tools/tr/)**.
 
@@ -149,7 +149,7 @@ REA; Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) veya 26+ (>=26.12.1) ve npm gere
 
 | Hedef                                   | REA'nın döndürdükleri                                                                                       | Gereksinimler ve rehber                                                                                                            |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Yerel makine kodu içeren ikili dosyalar | Sözde kod, assembly kodu, dizeler, semboller, çağrılar ve referanslar                                       | Hopper, Ghidra veya IDA; [yerel kod analizi](../native-investigation.md)                                                           |
+| Yerel makine kodu içeren ikili dosyalar | Sözde kod, assembly kodu, dizeler, semboller, çağrılar ve referanslar                                       | Hopper, Ghidra, IDA veya Kuna; [yerel kod analizi](../native-investigation.md)                                                     |
 | Çevrimdışı ELF yapısı                   | Bölümler, segmentler, özgün semboller/yeniden konumlandırmalar ve statik analizden olası güvenlik önlemleri | Linux x64 üzerinde çağıranın sağladığı pwntools; [ikili dosya tanılama](../binary-diagnostics.md)                                  |
 | Go ikili dosyaları                      | Gömülü compiler sürümü, modüller, replacement'lar ve build ayarları                                         | Yerleşik statik ELF/PE/thin Mach-O incelemesi; Go kurulumu gerekmez                                                                |
 | Rust ikili dosyaları                    | Gömülü cargo-auditable crate adları, sürümleri, kaynakları ve bağımlılık ilişkileri                         | Yerleşik statik ELF/PE/thin Mach-O incelemesi; [Rust ikili dosyaları](../rust-binaries.md)                                         |
@@ -219,7 +219,50 @@ Bir ses çağrısından konumu stereo konumlandırmaya dönüştüren yardımcı
 
 [Örnek çalışmayı okuyun](https://rea.tools/tr/showcase/th04/) · [Yeniden oluşturma deposu](https://github.com/N0zoM1z0/th04)
 
+### REA ile RL ortamları oluşturun
+
+Bir web uygulaması oturumunu kaydedin, API’sini araçlara dönüştürün ve bir yapay zekâ ajanının kullanabileceği ortamı dışa aktarın. AgentEnv ile çalıştırın, ardından RL eğitimi veya değerlendirmesi için görevler ve ödül kontrolleri ekleyin.
+
+[Ortam oluşturma rehberi](https://rea.tools/guides/rl-environments/) ·
+[Demoyu X’te izleyin](https://x.com/reatools/status/2112574822584918075?s=20)
+
 REA'yı ilginç bir konuda kullandıysanız görmek isteriz. Hedefi, sorunuzu, REA'nın nasıl yardımcı olduğunu ve bulgularınızı bir [issue](https://github.com/morluto/rea/issues) veya [pull request](https://github.com/morluto/rea/pulls) ile paylaşın.
+
+<a id="build-rl-environments"></a>
+
+## RL ortamları oluşturun
+
+Asıl uygulamayı çalıştırmadan, yapay zekâ ajanının sorun bulma veya klasör oluşturma gibi görevleri deneyeceği yerel bir ortam oluşturun. Bunu pekiştirmeli öğrenme (RL) veya ajanın görevleri ne kadar iyi tamamladığını test etmek için kullanın.
+
+REA, kaydedilmiş API isteklerini ve yanıtlarını ajanın çağırabileceği araçlara dönüştürür. Ortam kayıtlı verileri kullanır ve yalnızca etkisi kayıtla doğrulanan değişiklikleri destekler.
+
+Ajanınızda REA’yı kurduktan sonra aşağıdaki örnek URL’yi ve klasör görevlerini kendinize göre değiştirin:
+
+```text
+REA ile şu test web uygulamamdan bir RL ortamı oluştur:
+http://127.0.0.1:3000
+Klasör listeleme, oluşturma, yeniden adlandırma ve silme işlemlerini kapsa.
+Test klasörleri oluşturup silebilirsin. Mevcut verileri değiştirme.
+my-env adlı klasöre kaydet, hangi işlemlerin çalıştığını kontrol et ve nasıl çalıştıracağımı anlat.
+```
+
+<details>
+<summary>Komut satırını kullanın</summary>
+
+Uygulamanın tarayıcı isteklerini ve yanıtlarını kaydettiğiniz bir dosya varsa bu komutları kullanabilirsiniz. Oluşan ortamı çalıştırmak için AgentEnv ve Docker da gerekir.
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA, çalıştırılabilir bir ortamı ve başlayıp yanıt verdiğini kontrol eden temel bir testi dışa aktarır. Görev hedeflerini ve ödül kontrollerini tanımlamak, ardından eğitim çalıştırmak için RL çerçevenizle kullanın.
+
+[Ortam oluşturma rehberi](https://rea.tools/guides/rl-environments/) ·
+[Ortam referansı](../agent-environments.md) ·
+[Demoyu X’te izleyin](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## Sık sorulan sorular
 
@@ -231,9 +274,9 @@ Yerel MCP sunucularını destekleyen her ajan REA'yı kullanabilir. Kurulum, [de
 </details>
 
 <details>
-<summary><strong>Hopper, Ghidra veya IDA gerekiyor mu?</strong></summary>
+<summary><strong>Hopper, Ghidra, IDA veya Kuna gerekiyor mu?</strong></summary>
 
-Derin yerel kod analizi bunlardan birini kullanır. Statik JavaScript ve .NET incelemesi yerel analiz motoru olmadan çalışır. Kurulum onaydan sonra Hopper yükleyebilir; Ghidra ve IDA mevcut kurulumlarınızı kullanır. [Sağlayıcı kurulumuna](../installation.md#hopper) bakın.
+Derin yerel kod analizi bunlardan birini kullanır. Statik JavaScript ve .NET incelemesi yerel analiz motoru olmadan çalışır. Kurulum onaydan sonra Hopper yükleyebilir; Ghidra, IDA ve Kuna mevcut kurulumlarınızı kullanır. [Sağlayıcı kurulumuna](../installation.md#hopper) bakın.
 
 </details>
 
@@ -301,7 +344,7 @@ Güvenlik açıklarını [SECURITY.md](../../SECURITY.md) üzerinden bildirin.
 
 ## Yıldız geçmişi
 
-🎉 **GitHub'da 300.000 yıldız — teşekkürler!**
+🎉 **GitHub'da 400.000 yıldız — teşekkürler!**
 
 REA'yı kullanan, hata bildiren, özellik talep eden, derlemeleri test eden ve düzeltmelere katkıda bulunan herkese teşekkürler.
 

@@ -46,7 +46,7 @@ export async function verifyGhidraBoundaries(
   }
   let successfulCalls = 0;
   let rejectedCalls = 0;
-  const call = async (name, args = {}) => {
+  const checkedReply = async (name, args = {}) => {
     const reply = await client.callTool({ name, arguments: args }, options);
     const result = requireMcpOperationResult(reply, name);
     const validate = validators.get(name);
@@ -66,8 +66,13 @@ export async function verifyGhidraBoundaries(
         `${name} omitted defined-string coverage`,
       );
     successfulCalls++;
-    return result;
+    return { reply, result };
   };
+  const call = async (name, args = {}) =>
+    (await checkedReply(name, args)).result;
+  // Validated complete Evidence for checks outside the operation result.
+  const evidence = async (name, args = {}) =>
+    (await checkedReply(name, args)).reply.structuredContent;
   const invalid = async (name, args, diagnostic) => {
     const reply = await client.callTool({ name, arguments: args }, options);
     assert.equal(
@@ -760,6 +765,7 @@ export async function verifyGhidraBoundaries(
   });
   await verifyGhidraNamespaceAnnotations({
     call,
+    evidence,
     reject: invalid,
     target,
     entrypoint,

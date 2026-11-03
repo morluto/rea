@@ -16,6 +16,7 @@ import {
   clientServerListedDisabled,
   clientServerPath,
   legacyClientServerPath,
+  shadowedClientServers,
   OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
   parseZcodeFallbackConfiguration,
@@ -39,11 +40,15 @@ import {
   type ProviderRequestBudgetResolver,
 } from "./ClientRegistrationEnvironment.js";
 
-import { refreshClientRegistration } from "./ClientRegistration.js";
+import {
+  clientRegistrationOwnership,
+  clientRegistrationOwnershipRemediation,
+  refreshClientRegistration,
+} from "./ClientRegistration.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { packageReadTargetChanged } from "./MsixPackageStorage.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
@@ -88,9 +93,16 @@ export class ClientConfigurationCleanupRollbackFailure extends RegularFileCleanu
 export const configureClientConfiguration = async (
   client: SetupClient,
   environment: SetupProviderEnvironment = {},
-  command: readonly string[] = npxRegistrationCommand(),
+  command: readonly string[] = currentClientRegistrationCommand(),
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Promise<ClientConfigurationResult> => {
+  if (command.length === 0)
+    return {
+      status: "failed",
+      reason: "registration_ownership",
+      detail:
+        "The running REA entrypoint could not be identified; run setup from an installed REA command.",
+    };
   if (client.configPathError !== undefined)
     return { status: "failed", reason: "path" };
   const transactionPath = await resolveClientConfigTransactionPath(
@@ -126,7 +138,12 @@ const configureClientDocument = async (
   const format = client.format;
   if (format === undefined || format === "unsupported")
     return { status: "failed", reason: "readback" };
-  const files = await readClientConfigurationFiles(client);
+  const files = await readClientConfigurationFiles(
+    client,
+    undefined,
+    undefined,
+    environment,
+  );
   if (!files.ok) {
     throwCleanupFailure(files.error);
     return { status: "failed", reason: "readback" };
@@ -164,6 +181,18 @@ const configureClientDocument = async (
       format,
     );
     parsed = clientConfigurationForWrite(parsed, files.value);
+    const ownershipBlocker = registrationOwnershipBlocker(
+      client,
+      parsed,
+      original ?? "",
+      files.value,
+    );
+    if (ownershipBlocker !== undefined)
+      return {
+        status: "failed",
+        reason: "registration_ownership",
+        detail: ownershipBlocker,
+      };
     const policy = await readClientPolicyBlock(
       client,
       parsed,
@@ -190,8 +219,15 @@ const configureClientDocument = async (
   }
   const fallback = await readZcodeFallbackServers(client, parsed);
   if (!fallback.ok) {
-    throwCleanupFailure(fallback.error);
-    return { status: "failed", reason: "readback" };
+    if (fallback.error.kind !== "registration_ownership")
+      throwCleanupFailure(fallback.error);
+    return fallback.error.kind === "registration_ownership"
+      ? {
+          status: "failed",
+          reason: "registration_ownership",
+          detail: fallback.error.detail,
+        }
+      : { status: "failed", reason: "readback" };
   }
   const desired = await clientConfigurationDesired(
     client,
@@ -305,8 +341,7 @@ const persistClientConfiguration = async ({
         ...(legacyPath === undefined ? [] : [legacyPath]),
         ...(enableOmp ? [[OMP_DISABLED_SERVERS_KEY]] : []),
       ],
-      // Setup deletes only REA's OpenCode V1 name, which the native V2 entry
-      // supersedes whatever its launcher; every repeat goes, as one member does.
+      // Ownership admission above covers every legacy member removed here.
       { removeShadowedMembersAt: legacyPath === undefined ? [] : [legacyPath] },
     );
   } catch (cause: unknown) {
@@ -344,7 +379,6 @@ const persistClientConfiguration = async ({
       transactionPath,
       serialized.value,
       original,
-      0o600,
       { requestedPath: client.configPath, state: snapshot?.state },
     );
   } catch (cause: unknown) {
@@ -420,7 +454,12 @@ export const clientConfigurationAligned = async (
 ): Promise<boolean> => {
   if (client.configPathError !== undefined) return false;
   try {
-    const files = await readClientConfigurationFiles(client);
+    const files = await readClientConfigurationFiles(
+      client,
+      undefined,
+      undefined,
+      providerEnvironment,
+    );
     if (!files.ok) {
       throwCleanupFailure(files.error);
       return false;
@@ -492,7 +531,12 @@ const inspectClientDocument = async (
   if (client.configPathError !== undefined)
     return { status: "invalid", remediation: client.configPathError };
   if (client.format === "unsupported") return { status: "already_current" };
-  const files = await readClientConfigurationFiles(client);
+  const files = await readClientConfigurationFiles(
+    client,
+    undefined,
+    undefined,
+    providerEnvironment,
+  );
   if (!files.ok) {
     throwCleanupFailure(files.error);
     return {
@@ -527,6 +571,16 @@ const inspectClientDocument = async (
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (isMissing(cause)) {
+      const inherited = effectiveClientConfiguration(files.value, {
+        client,
+        document: undefined,
+      });
+      const ownershipBlocker =
+        inherited === undefined
+          ? undefined
+          : registrationOwnershipBlocker(client, inherited, "", files.value);
+      if (ownershipBlocker !== undefined)
+        return { status: "invalid", remediation: ownershipBlocker };
       // This read establishes absence; do not reuse an earlier user-file policy.
       const policy = await readClientPolicyBlock(
         client,
@@ -551,7 +605,8 @@ const inspectClientDocument = async (
         return { status: "invalid", remediation: policy.value };
       const fallback = await readZcodeFallbackServers(client);
       if (!fallback.ok) {
-        throwCleanupFailure(fallback.error);
+        if (fallback.error.kind !== "registration_ownership")
+          throwCleanupFailure(fallback.error);
         return { status: "invalid", remediation: fallback.error.detail };
       }
       return { status: "create" };
@@ -566,6 +621,14 @@ const inspectClientDocument = async (
       parseClientConfiguration(original, client.format),
       files.value,
     );
+    const ownershipBlocker = registrationOwnershipBlocker(
+      client,
+      parsed,
+      original,
+      files.value,
+    );
+    if (ownershipBlocker !== undefined)
+      return { status: "invalid", remediation: ownershipBlocker };
     const desired = await clientConfigurationDesired(
       client,
       providerEnvironment,
@@ -588,7 +651,8 @@ const inspectClientDocument = async (
       return { status: "already_current" };
     const fallback = await readZcodeFallbackServers(client, parsed);
     if (!fallback.ok) {
-      throwCleanupFailure(fallback.error);
+      if (fallback.error.kind !== "registration_ownership")
+        throwCleanupFailure(fallback.error);
       return { status: "invalid", remediation: fallback.error.detail };
     }
   } catch (cause: unknown) {
@@ -627,12 +691,71 @@ const throwCleanupFailure = (error: ClientConfigurationFileError): void => {
   if (error.cleanupFailure !== undefined) throw error.cleanupFailure;
 };
 
+/** Admit only absent or proven-owned rows that this setup would replace. */
+const registrationOwnershipBlocker = (
+  client: SetupClient,
+  parsed: ClientConfigurationDocument,
+  original: string,
+  sources: readonly ClientConfigurationSource[] = [],
+): string | undefined => {
+  // Cordis owns registrations by stable entry ID, including malformed launchers.
+  if (parsed.dialect === "dsh") return undefined;
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  const entries: { value: unknown; paths: readonly string[] }[] = [];
+  const effective = effectiveClientConfiguration(sources, {
+    client,
+    document: parsed,
+  });
+  if (effective !== undefined && Object.hasOwn(effective.servers, name))
+    entries.push({
+      value: effective.servers[name],
+      paths: client.configPaths ?? [client.configPath],
+    });
+  const fragment = parsed.servers[name];
+  // A layered policy fragment inherits its launcher. Classify the effective
+  // launcher above, but also admit any explicit command this write replaces.
+  const inheritsLauncher =
+    effective !== undefined &&
+    effective !== parsed &&
+    typeof fragment === "object" &&
+    fragment !== null &&
+    !Array.isArray(fragment) &&
+    !Object.hasOwn(fragment, "command");
+  if (Object.hasOwn(parsed.servers, name) && !inheritsLauncher)
+    entries.push({ value: parsed.servers[name], paths: [client.configPath] });
+  if (legacyClientServerPath(parsed, name) !== undefined) {
+    entries.push({
+      value: parsed.legacyServers[name],
+      paths: [client.configPath],
+    });
+    entries.push(
+      ...shadowedClientServers(original, parsed, name).legacyServers.map(
+        (value) => ({ value, paths: [client.configPath] }),
+      ),
+    );
+  }
+  for (const entry of entries) {
+    const ownership = clientRegistrationOwnership(entry.value, client);
+    if (ownership !== "owned")
+      return clientRegistrationOwnershipRemediation(ownership, entry.paths);
+  }
+  return undefined;
+};
+
 /** Admit the fallback only when the first native ZCode server would suppress it. */
 const readZcodeFallbackServers = async (
   client: SetupClient,
   parsed?: ClientConfigurationDocument,
 ): Promise<
-  Result<Readonly<Record<string, unknown>>, ClientConfigurationFileError>
+  Result<
+    Readonly<Record<string, unknown>>,
+    | ClientConfigurationFileError
+    | {
+        readonly kind: "registration_ownership";
+        readonly path: string;
+        readonly detail: string;
+      }
+  >
 > => {
   if (
     client.format !== "zcode" ||
@@ -652,6 +775,17 @@ const readZcodeFallbackServers = async (
   if (source.value === undefined) return ok({});
   try {
     const parsed = parseZcodeFallbackConfiguration(source.value);
+    const ownershipBlocker = registrationOwnershipBlocker(
+      { ...client, configPath: path, format: "zcode_fallback" },
+      parsed,
+      source.value,
+    );
+    if (ownershipBlocker !== undefined)
+      return err({
+        kind: "registration_ownership",
+        path,
+        detail: ownershipBlocker,
+      });
     const environment = clientRegistrationEnvironment(parsed);
     if (!environment.ok)
       return err({

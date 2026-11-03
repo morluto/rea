@@ -20,7 +20,7 @@
 
 **[Trang web](https://rea.tools/vi/) · [Hướng dẫn](https://rea.tools/vi/guides/) · [Các nghiên cứu điển hình](https://rea.tools/vi/showcase/)**
 
-[Bắt đầu nhanh](#bắt-đầu-nhanh) · [Cách REA hoạt động](#cách-rea-hoạt-động) · [Những gì bạn có thể phân tích](#những-gì-bạn-có-thể-phân-tích) · [Các nghiên cứu điển hình](#các-nghiên-cứu-điển-hình) · [Câu hỏi thường gặp](#câu-hỏi-thường-gặp) · [Công cụ GNU objdump và Rizin](../reverse-engineering-tools.md) · [Tài liệu](#tài-liệu)
+[Bắt đầu nhanh](#bắt-đầu-nhanh) · [Cách REA hoạt động](#cách-rea-hoạt-động) · [Những gì bạn có thể phân tích](#những-gì-bạn-có-thể-phân-tích) · [Các nghiên cứu điển hình](#các-nghiên-cứu-điển-hình) · [Xây dựng môi trường RL](#build-rl-environments) · [Câu hỏi thường gặp](#câu-hỏi-thường-gặp) · [Tài liệu](#tài-liệu)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@ Bạn thấy một tính năng trong ứng dụng và muốn đưa nó vào sả
 
 REA kết nối tác nhân của bạn với các công cụ kiểm tra tệp nhị phân mã máy, ứng dụng JavaScript và Electron, assembly .NET và trang web. Bạn cũng có thể dùng các công cụ đó từ terminal. Việc phân tích chạy cục bộ; kết quả bao gồm bằng chứng và giới hạn làm cơ sở cho từng kết luận.
 
-Thiết lập đăng ký REA với tác nhân và cài hướng dẫn công việc tương ứng. Phân tích native dùng Hopper, Ghidra hoặc IDA có sẵn; có thể cài Hopper sau khi bạn chấp thuận. Phân tích tĩnh JavaScript không cần công cụ phân tích native.
+Thiết lập đăng ký REA với tác nhân và cài hướng dẫn công việc tương ứng. Phân tích native dùng Hopper, Ghidra, IDA hoặc Kuna có sẵn; có thể cài Hopper sau khi bạn chấp thuận. Phân tích tĩnh JavaScript không cần công cụ phân tích native.
 
 > **[Truy cập trang web REA](https://rea.tools/vi/)** để xem cách thiết lập, hướng dẫn có hình minh họa và các nghiên cứu điển hình thực tế.
 
@@ -151,7 +151,7 @@ REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1)
 
 | Mục tiêu                          | REA trả về gì                                                                                                   | Yêu cầu và hướng dẫn                                                                                                                            |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tệp nhị phân mã máy               | Mã giả, hợp ngữ, chuỗi, ký hiệu, lời gọi và tham chiếu                                                          | Hopper, Ghidra hoặc IDA; [phân tích mã máy](../native-investigation.md)                                                                         |
+| Tệp nhị phân mã máy               | Mã giả, hợp ngữ, chuỗi, ký hiệu, lời gọi và tham chiếu                                                          | Hopper, Ghidra, IDA hoặc Kuna; [phân tích mã máy](../native-investigation.md)                                                                   |
 | Bố cục ELF ngoại tuyến            | Các section, segment, ký hiệu/thông tin tái định vị gốc và các biện pháp giảm thiểu có thể có từ phân tích tĩnh | pwntools do bên gọi cung cấp trên Linux x64; [chẩn đoán tệp nhị phân](../binary-diagnostics.md)                                                 |
 | Bytecode EVM                      | Bộ chọn điều phối, độ lệch byte, tham số suy luận và khả năng thay đổi trạng thái                               | Đầu vào cục bộ chứa byte thô hoặc dạng thập lục phân trên Linux x64; [hướng dẫn EVM ngoại tuyến](../evm-bytecode.md)                            |
 | Rust binaries                     | Embedded cargo-auditable dependency list                                                                        | [Rust binaries](../rust-binaries.md)                                                                                                            |
@@ -190,6 +190,8 @@ REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1)
 
 Kiểm tra tĩnh JavaScript và .NET đọc các tệp được cung cấp mà không chạy ứng dụng. Ghi lại khi chạy sẽ khởi chạy hoặc tương tác với mục tiêu đã chọn bằng quyền người dùng của bạn; từng hướng dẫn mô tả tác động của nó.
 
+Để kiểm tra tệp nhị phân native ngoại tuyến, REA cũng hỗ trợ GNU objdump và Rizin do bạn tự cung cấp. [Hướng dẫn công cụ dịch ngược](../reverse-engineering-tools.md) trình bày cách thiết lập nhà cung cấp, các lệnh CLI và giới hạn của Evidence. REA không cài đặt hoặc cập nhật hai nhà cung cấp này.
+
 <a id="choosing-a-deep-analysis-provider"></a>
 
 Với tệp nhị phân lớn, tăng hạn khởi động bằng `REA_GHIDRA_STARTUP_TIMEOUT_MS` hoặc `REA_HOPPER_STARTUP_TIMEOUT_MS`.
@@ -223,7 +225,50 @@ Kiểm tra các lệnh 16 bit của trò chơi PC-98 gốc, khôi phục phép t
 
 [Đọc nghiên cứu điển hình](https://rea.tools/vi/showcase/th04/) · [Kho mã tái tạo](https://github.com/N0zoM1z0/th04)
 
+### Xây dựng môi trường RL bằng REA
+
+Ghi phiên ứng dụng web, chuyển API thành công cụ và xuất môi trường mà tác tử AI có thể dùng. Chạy bằng AgentEnv, rồi thêm tác vụ và kiểm tra phần thưởng để huấn luyện RL hoặc đánh giá.
+
+[Hướng dẫn xây dựng môi trường](https://rea.tools/guides/rl-environments/) ·
+[Xem bản demo trên X](https://x.com/reatools/status/2112574822584918075?s=20)
+
 Nếu bạn dùng REA cho một mục tiêu thú vị, chúng tôi muốn biết. Chia sẻ trường hợp của bạn qua [issue](https://github.com/morluto/rea/issues) hoặc [pull request](https://github.com/morluto/rea/pulls), nêu mục tiêu, câu hỏi, cách REA giúp bạn và những gì tìm được.
+
+<a id="build-rl-environments"></a>
+
+## Xây dựng môi trường RL
+
+Tạo môi trường cục bộ để tác tử AI luyện các tác vụ như tìm issue hoặc tạo thư mục mà không cần chạy ứng dụng gốc. Dùng môi trường này cho học tăng cường (RL) hoặc để kiểm tra khả năng hoàn thành tác vụ của tác tử.
+
+REA biến các yêu cầu và phản hồi API đã ghi thành công cụ mà tác tử có thể gọi. Môi trường dùng dữ liệu đã ghi và chỉ hỗ trợ thay đổi khi bản ghi xác nhận tác động của thay đổi đó.
+
+Sau khi thiết lập REA trong tác tử, thay URL và các tác vụ thư mục bên dưới bằng thông tin của bạn:
+
+```text
+Dùng REA xây dựng môi trường RL từ ứng dụng web thử nghiệm của tôi tại
+http://127.0.0.1:3000.
+Bao gồm liệt kê, tạo, đổi tên và xóa thư mục. Có thể tạo và xóa
+thư mục thử nghiệm nhưng không thay đổi dữ liệu có sẵn.
+Lưu vào thư mục my-env, kiểm tra thao tác nào hoạt động và cho tôi biết cách chạy.
+```
+
+<details>
+<summary>Dùng dòng lệnh</summary>
+
+Dùng các lệnh này nếu đã có tệp ghi lại yêu cầu và phản hồi của ứng dụng trong trình duyệt. Để chạy môi trường tạo ra, bạn cũng cần AgentEnv và Docker.
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA xuất môi trường chạy được cùng bài kiểm tra cơ bản để xác nhận môi trường khởi động và phản hồi. Kết nối với framework RL để đặt mục tiêu tác vụ, thêm kiểm tra phần thưởng và chạy huấn luyện.
+
+[Hướng dẫn xây dựng môi trường](https://rea.tools/guides/rl-environments/) ·
+[Tài liệu tham chiếu môi trường](../agent-environments.md) ·
+[Xem bản demo trên X](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## Câu hỏi thường gặp
 
@@ -235,9 +280,9 @@ Bất kỳ tác nhân nào hỗ trợ máy chủ MCP cục bộ. Quá trình thi
 </details>
 
 <details>
-<summary><strong>Tôi có cần Hopper, Ghidra hoặc IDA không?</strong></summary>
+<summary><strong>Tôi có cần Hopper, Ghidra, IDA hoặc Kuna không?</strong></summary>
 
-Phân tích mã máy chuyên sâu sử dụng một trong những công cụ đó. Kiểm tra tĩnh JavaScript và .NET hoạt động mà không cần bộ máy phân tích mã máy. Quá trình thiết lập có thể cài Hopper sau khi được chấp thuận; Ghidra và IDA dùng bản cài đặt sẵn có. Xem [thiết lập trình phân tích](../installation.md#hopper).
+Phân tích mã máy chuyên sâu sử dụng một trong những công cụ đó. Kiểm tra tĩnh JavaScript và .NET hoạt động mà không cần bộ máy phân tích mã máy. Quá trình thiết lập có thể cài Hopper sau khi được chấp thuận; Ghidra, IDA và Kuna dùng bản cài đặt sẵn có. Xem [thiết lập trình phân tích](../installation.md#hopper).
 
 </details>
 
@@ -305,7 +350,7 @@ Báo cáo lỗ hổng theo [SECURITY.md](../../SECURITY.md).
 
 ## Lịch sử sao
 
-🎉 **300.000 sao trên GitHub — xin cảm ơn!**
+🎉 **400.000 sao trên GitHub — xin cảm ơn!**
 
 Cảm ơn mọi người đã sử dụng REA, báo lỗi, đề xuất tính năng, kiểm thử bản dựng và đóng góp bản sửa lỗi.
 

@@ -11,6 +11,10 @@ import { prefixedDigestSchema } from "../digests.js";
 
 const boundedTextSchema = z.string().min(1);
 
+/** An observed IPC channel match whose uniqueness is not established. */
+export const IPC_COVERAGE_LIMITED_PAIRING_BASIS =
+  "observed-literal-channel-incomplete-coverage";
+
 /** Node kinds admitted by JavaScript Application Graph. */
 export const JAVASCRIPT_APPLICATION_NODE_KINDS = [
   "package",
@@ -33,6 +37,7 @@ export const JAVASCRIPT_APPLICATION_NODE_KINDS = [
   "context-bridge-api",
   "ipc-channel",
   "ipc-handler",
+  "url-scheme",
   "worker",
   "service-worker",
   "endpoint",

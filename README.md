@@ -20,7 +20,7 @@
 
 **[Website](https://rea.tools/) · [Guides](https://rea.tools/guides/) · [Showcases](https://rea.tools/showcase/)**
 
-[Quick start](#quick-start) · [How REA works](#how-rea-works) · [What you can analyze](#what-you-can-analyze) · [Showcases](#showcases) · [FAQ](#faq) · [Documentation](#documentation)
+[Quick start](#quick-start) · [How REA works](#how-rea-works) · [What you can analyze](#what-you-can-analyze) · [Showcases](#showcases) · [Build RL environments](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
 
 <code>npx rea-agents setup</code>
 
@@ -62,7 +62,7 @@ See a feature in an app that you want in your own product? Ask your agent to inv
 
 REA connects your agent to tools for inspecting native binaries, JavaScript and Electron apps, .NET assemblies, and websites. You can also use the same tools from your terminal. Analysis runs locally, and results include the evidence and limitations behind each conclusion.
 
-Setup registers REA with your agent and installs matching workflow instructions. Native analysis can use an existing Hopper, Ghidra, or IDA installation; setup can optionally install Hopper with approval. Static JavaScript analysis needs no native analysis engine.
+Setup registers REA with your agent and installs matching workflow instructions. Native analysis can use an existing Hopper, Ghidra, IDA or Kuna installation; setup can optionally install Hopper with approval. Static JavaScript analysis needs no native analysis engine.
 
 > **[Visit the REA website](https://rea.tools/)** for setup instructions, illustrated guides, and real case studies.
 
@@ -83,18 +83,27 @@ npx rea-agents setup
 
 Choose your agents, review the proposed changes, and approve them. Setup adds
 REA's MCP server and matching workflow instructions, with backups of existing
-configuration. Restart your agent afterward.
+configuration. Restart your agent afterward. Setup records the selected runtime and REA
+entry script directly. If acquired through a package runner, keep its cache entry
+available. Run package acquisition from a trusted directory outside the target
+project. Installation and recovery details are in the setup guide below.
 
 Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
 [other agents](docs/installation.md#supported-agents). See
 [installation and setup](docs/installation.md) for provider configuration and
-manual MCP registration.
+manual MCP registration and Claude Code/Codex plugin installation.
 
 MCP uses compact input schemas by default to reduce context overhead. Set
 `REA_MCP_INPUT_SCHEMA_PROFILE=full` in your MCP registration when you need the
 complete advertised field guidance and nested validation details. Both profiles
 keep the full tool set and canonical server validation. See
 "Compact input schema profile" in the MCP contracts guide.
+
+Complete output schemas are advertised by default. If your client caps the
+complete `tools/list` frame, set `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` to
+bound each advertised output schema, or `off` to omit output schemas entirely.
+Both settings keep canonical server-side validation and complete structured
+results. See "Output schemas" in the MCP contracts guide.
 
 ### Ask your agent
 
@@ -183,7 +192,7 @@ Additional tools and host support depend on the target:
 | Target                  | What REA returns                                                                                  | Requirements and guide                                                                                                                |
 | ----------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | Desktop installations   | Runtime candidates, supporting files, component markers and next probes                           | Built-in bounded directory/header inspection; [desktop applications](docs/desktop-applications.md)                                    |
-| Native binaries         | Pseudocode, assembly, strings, symbols, calls and references                                      | Hopper, Ghidra or IDA; [native analysis](docs/native-investigation.md)                                                                |
+| Native binaries         | Pseudocode, assembly, strings, symbols, calls and references                                      | Hopper, Ghidra, IDA or Kuna; [native analysis](docs/native-investigation.md)                                                          |
 | Offline ELF layout      | Sections, segments, original symbols/relocations and static mitigation candidates                 | Caller-supplied pwntools on Linux x64; [binary diagnostics](docs/binary-diagnostics.md)                                               |
 | Go binaries             | Embedded compiler version, modules, replacements and build settings                               | Built-in static ELF/PE/thin Mach-O inspection; no Go installation required                                                            |
 | GPU code objects        | CUDA/HIP targets, selected kernel parameters and resources, retained PTX text                     | Built-in static ELF/PE/fatbin/CUBIN/PTX inspection; [GPU code objects](docs/gpu-code-objects.md)                                      |
@@ -276,10 +285,52 @@ historical compiler output.
 [Read the case study](https://rea.tools/showcase/th04/) ·
 [Reconstruction repository](https://github.com/N0zoM1z0/th04)
 
+### Build RL environments with REA
+
+Record a web app session, turn its API into tools, and export an environment an AI agent can use. Run it with AgentEnv, then add tasks and reward checks for RL training or evaluation.
+
+[Read the guide](https://rea.tools/guides/rl-environments/) ·
+[Watch the video](https://x.com/reatools/status/2112574822584918075?s=20)
+
 If you've used REA on something interesting, we'd love to see it. Share your
 case in an [issue](https://github.com/morluto/rea/issues) or a
 [pull request](https://github.com/morluto/rea/pulls), including the target,
 your question, how REA helped, and what you found.
+
+## Build RL environments
+
+Give an AI agent a local environment to practice tasks such as finding an issue or creating a folder, without running the original app. Use it for reinforcement learning (RL) or to test how well an agent completes tasks.
+
+REA turns recorded API requests and responses into tools the agent can call. The environment uses the recorded data and supports changes only when the recording confirms their effects.
+
+With REA set up in your agent, replace the example URL and folder tasks below with your own:
+
+```text
+Use REA to build an RL environment from my test web app at
+http://127.0.0.1:3000.
+Cover listing, creating, renaming, and deleting folders. You may create and
+remove test folders. Leave existing data unchanged.
+Save it in a folder named my-env. Check which operations work and tell me
+how to run it.
+```
+
+<details>
+<summary>Use the command line instead</summary>
+
+Use these commands if you already have a file containing the app’s recorded browser requests and responses. Running the result also requires AgentEnv and Docker.
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA exports a runnable environment with a basic test to check that it starts and responds. Use it with your RL framework to define task goals, add reward checks, and run training.
+
+[Build an environment](https://rea.tools/guides/rl-environments/) ·
+[Environment reference](docs/agent-environments.md) ·
+[Watch the demo on X](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## FAQ
 
@@ -293,11 +344,13 @@ Any agent that supports local MCP servers. Setup configures the
 </details>
 
 <details>
-<summary><strong>Do I need Hopper, Ghidra or IDA?</strong></summary>
+<summary><strong>Do I need a native analysis engine?</strong></summary>
 
-Deep native analysis uses one of them. Static JavaScript and .NET inspection
-work without a native analysis engine. Setup can install Hopper after approval;
-Ghidra and IDA use your existing installations. See [provider setup](docs/installation.md#hopper).
+Deep native analysis uses Hopper, Ghidra, IDA or Kuna, depending on the target
+and operation. Static JavaScript and .NET inspection work without a native
+analysis engine. Setup can install Hopper after approval; Ghidra, IDA and Kuna
+use your existing installations. See [provider setup](docs/installation.md#hopper)
+for the options and their supported targets.
 
 </details>
 
@@ -377,7 +430,7 @@ Report vulnerabilities through [SECURITY.md](SECURITY.md).
 
 ## Star history
 
-🎉 **300,000 GitHub stars — thank you!**
+🎉 **400,000 GitHub stars — thank you!**
 
 Thanks to everyone using REA, reporting bugs, requesting features, testing builds, and contributing fixes.
 

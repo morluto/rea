@@ -31,6 +31,9 @@ const makeBinaryPlist = () => {
       negative: 1.5,
       positive: 0.25,
       wide: 9007199254740992,
+      // The writer shares this scalar with wide; patching its one source record
+      // tests exact integers inside an ordinary binary dictionary, not a UID.
+      wideDictionary: { CF$UID: 9007199254740992 },
       wide128: Buffer.alloc(16),
       plusInfinity: Number.POSITIVE_INFINITY,
       minusInfinity: Number.NEGATIVE_INFINITY,
@@ -143,6 +146,9 @@ describe.skipIf(process.platform !== "darwin")(
             negative: { $plist_type: "real", value: "-0" },
             positive: 0,
             wide: { $plist_type: "integer", decimal: "9007199254740993" },
+            wideDictionary: {
+              CF$UID: { $plist_type: "integer", decimal: "9007199254740993" },
+            },
             wide128: {
               $plist_type: "integer",
               decimal: "18446744073709551658",
@@ -157,7 +163,7 @@ describe.skipIf(process.platform !== "darwin")(
           expect.arrayContaining([
             expect.stringContaining("1 negative-zero real value(s)"),
             expect.stringContaining("3 non-finite real value(s)"),
-            expect.stringContaining("2 unambiguous integer value(s)"),
+            expect.stringContaining("3 unambiguous integer value(s)"),
           ]),
         );
         expect(binaryCliResult.limitations).not.toContainEqual(
@@ -171,7 +177,13 @@ describe.skipIf(process.platform !== "darwin")(
             separators: "a\u0085b\u2028c\u2029d",
             payload: { $plist_type: "data", base64: "AAEC" },
           },
-          provenance: [{ tool: "file" }],
+          provenance: [
+            { tool: "file" },
+            {
+              tool: "plutil",
+              command: ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
+            },
+          ],
           limitations: [],
         });
         expect(Buffer.compare(await readFile(binaryPath), binaryBytes)).toBe(0);

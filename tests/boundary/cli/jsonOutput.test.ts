@@ -280,7 +280,10 @@ describe("CLI result output surface", () => {
       if (output === undefined)
         throw new Error("Missing structured output surface");
       const cli = Cli.create("rea-output-test", { sync: false });
-      registerManagedCommands(cli, silentLogger, async () => failure);
+      registerManagedCommands(cli, silentLogger, async () => ({
+        ok: false,
+        error: failure,
+      }));
       streamCliCommandResults(cli, output);
       let fallback = "";
       const previousExitCode = process.exitCode;
@@ -408,12 +411,15 @@ describe("full-output token windows", () => {
     if (output === undefined) throw new Error("Missing TOON output surface");
     const cli = Cli.create("rea-output-test", { sync: false });
     registerManagedCommands(cli, silentLogger, async () => ({
-      code: "target_unavailable",
-      category: "unavailable",
-      message: "The selected artifact is missing.",
-      retryable: false,
-      remediation: { action: "Check that the path exists." },
-      details: { source: "artifact-open" },
+      ok: false,
+      error: {
+        code: "target_unavailable",
+        category: "unavailable",
+        message: "The selected artifact is missing.",
+        retryable: false,
+        remediation: { action: "Check that the path exists." },
+        details: { source: "artifact-open" },
+      },
     }));
     streamCliCommandResults(cli, output);
     const previousExitCode = process.exitCode;
@@ -667,7 +673,7 @@ describe("CLI result output surface", () => {
     registerManagedCommands(cli, silentLogger, async (...[path, operation]) => {
       expect(path).toBe("fixture.dll");
       expect(operation).toBe("inspect_managed_members");
-      return value;
+      return { ok: false, error: value };
     });
     // A terminal destination exercises the indented encoding past the limit.
     Object.defineProperty(destination, "isTTY", { value: true });
@@ -707,7 +713,10 @@ describe("CLI result output surface", () => {
     if (tokenOutput === undefined)
       throw new Error("Missing token-count output surface");
     const tokenCli = Cli.create("rea-output-test", { sync: false });
-    registerManagedCommands(tokenCli, silentLogger, async () => value);
+    registerManagedCommands(tokenCli, silentLogger, async () => ({
+      ok: false,
+      error: value,
+    }));
     streamCliCommandResults(tokenCli, tokenOutput);
     await tokenCli.serve(tokenArgv, {
       stdout: (text) => {
@@ -785,7 +794,7 @@ describe("streamed CLI filtered selections", () => {
         expect(JSON.parse(text)).toMatchObject({
           $rea: "jsonl/v1",
           type: "error",
-          result: { code: "unreadable_output" },
+          result: { code: "invalid_request", category: "invalid_input" },
         });
       else expect(text).toBe(expected);
     },

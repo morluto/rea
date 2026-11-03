@@ -1,0 +1,40 @@
+{
+  "name": "rea",
+  "version": "6.8.0",
+  "description": "Reverse engineer anything with agents, from app behavior down to native binaries.",
+  "author": {
+    "name": "morluto",
+    "url": "https://github.com/morluto"
+  },
+  "homepage": "https://rea.tools/",
+  "repository": "https://github.com/morluto/rea",
+  "license": "MIT",
+  "keywords": [
+    "reverse-engineering",
+    "binary-analysis",
+    "decompiler",
+    "mcp-server"
+  ],
+  "skills": "./skills",
+  "mcpServers": "./.codex-plugin/mcp.json",
+  "interface": {
+    "displayName": "REA",
+    "shortDescription": "Reverse engineer anything",
+    "longDescription": "Reverse engineer anything with agents, from app behavior down to native binaries.",
+    "developerName": "morluto",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://rea.tools/",
+    "defaultPrompt": [
+      "Use REA to explain how this binary implements a feature.",
+      "Use REA to compare two versions of this application.",
+      "Use REA to recover the sources from this JavaScript bundle."
+    ],
+    "composerIcon": "./assets/rea-plugin.png",
+    "logo": "./assets/rea-plugin.png"
+  }
+}

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import {
   cArchiveExecutable,
   pyzArchive,
@@ -28,17 +29,9 @@ it.each([1, 129])(
       })),
     });
     await writeFile(path, bytes);
-    const client = new ArtifactProvider({}).createClient({
-      path,
-      sourcePath: path,
-      sha256: "0".repeat(64),
-      kind: "executable",
-      format: "pe",
-      executableRole: "application",
-      managed: false,
-      architecture: "x86_64",
-      availableArchitectures: ["x86_64"],
-    });
+    const target = await parseBinaryTarget(path);
+    if (!target.ok) throw target.error;
+    const client = new ArtifactProvider({}).createClient(target.value);
     try {
       const result = await client.execute("inventory_artifact", {});
       if (count === 1) {

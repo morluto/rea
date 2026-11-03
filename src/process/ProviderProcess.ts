@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
@@ -20,6 +21,7 @@ import {
   systemProcessOwnershipHost,
 } from "./ProcessOwnershipObservation.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
+import { mergeEnvironmentOverrides } from "./snapshotEnvironment.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -262,16 +264,23 @@ export const spawnOwnedProviderProcess = async (
   if (sweepTokenOwnedProcesses) {
     const capture = systemProcessOwnershipHost.captureBaseline;
     if (capture === undefined)
-      throw new Error("Process ownership baseline is unavailable on this host");
+      throw new ProcessAdmissionError("baseline_unavailable");
     captureBaseline = await capture(options.signal);
     options.signal?.throwIfAborted();
   }
   const hostEnvironment = options.hostEnvironment ?? process.env;
-  const environment = {
-    ...hostEnvironment,
-    ...options.env,
-    REA_PROCESS_RUN_ID: options.runId,
-  };
+  const selectedEnvironment = mergeEnvironmentOverrides(
+    hostEnvironment,
+    options.env ?? {},
+    platform,
+  );
+  // Ownership is the final layer, including when a caller used another casing.
+  // Resolve undefined overrides before the launchers omit unset variables.
+  const environment = mergeEnvironmentOverrides(
+    selectedEnvironment,
+    { REA_PROCESS_RUN_ID: options.runId },
+    platform,
+  );
   if (platform === "win32" && process.platform === "win32") {
     const child = new WindowsOwnedProcess(
       options.command,
@@ -298,9 +307,7 @@ export const spawnOwnedProviderProcess = async (
     };
   }
   if (options.memoryLimitBytes !== undefined)
-    throw new Error(
-      "Owned process memory limits require the Windows Job Object launcher; no limit can be enforced on this host.",
-    );
+    throw new ProcessAdmissionError("memory_limit_unsupported");
   const child = spawn(options.command, [...options.arguments], {
     shell: false,
     windowsHide: true,
@@ -312,7 +319,8 @@ export const spawnOwnedProviderProcess = async (
   });
   await waitForSpawn(child);
   const pid = child.pid;
-  if (pid === undefined) throw new Error("Provider launcher has no process ID");
+  if (pid === undefined)
+    throw new ProcessAdmissionError("launcher_pid_missing");
   const ownership: OwnedProcessGroup = {
     runId: options.runId,
     leaderPid: pid,

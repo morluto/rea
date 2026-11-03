@@ -8,10 +8,80 @@ import { nativeExportsSchema } from "../../../src/domain/native/nativeExports.js
 import {
   elfExportImage,
   peExportImage,
+  peRepeatedExportNamesImage,
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("native export stable filesystem boundary", () => {
+  it("retains source identity and usable exports when a forwarder leaves its declared directory", async () => {
+    const root = await createTestTempDirectory("rea-native-export-forwarder-");
+    const path = join(root, "truncated-forwarder.dll");
+    const bytes = peExportImage({
+      functions: [{ rva: 0x11fc }, { rva: 0x2000 }],
+      names: [{ name: "Kept", index: 1 }],
+    });
+    bytes.write("DLL.Target\0", 0x5fc, "latin1");
+    await writeFile(path, bytes);
+    const service = createNativeExportsService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw new Error(JSON.stringify(result.error));
+      const evidence = parseEvidence(result.value);
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      expect(evidence.subject).toMatchObject({
+        local_path: path,
+        digest: { sha256 },
+      });
+      expect(
+        nativeExportsSchema.parse(evidence.normalized_result),
+      ).toMatchObject({
+        artifact: { path, sha256, bytes: bytes.length },
+        exports: [{ name: "Kept", ordinal: 2 }],
+        issues: [
+          {
+            code: "malformed_entry",
+            location: "0x11fc",
+            message: expect.stringContaining("Forwarder of ordinal 1"),
+          },
+        ],
+        coverage: { status: "partial", examined_entries: 2, exports: 1 },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("bounds retained PE aliases before interpreting their target", async () => {
+    const root = await createTestTempDirectory("rea-native-export-aliases-");
+    const service = createNativeExportsService();
+    try {
+      // A malformed forwarder suppresses all rows, but its names still occupy
+      // the intermediate inventory and must be bounded before EAT traversal.
+      for (const target of [0x3000, 0x1080, 0]) {
+        const path = join(root, `aliases-${String(target)}.dll`);
+        const bytes = peRepeatedExportNamesImage(target);
+        expect(bytes.length).toBeLessThan(32_000);
+        await writeFile(path, bytes);
+        const result = await service.inspect({ path });
+        if (target === 0) {
+          if (!result.ok) throw new Error(JSON.stringify(result.error));
+          expect(result.value.normalized_result).toMatchObject({
+            exports: [],
+            issues: [],
+            coverage: { status: "complete", examined_entries: 1, exports: 0 },
+          });
+        } else {
+          expect(result).toMatchObject({
+            ok: false,
+            error: { _tag: "AnalysisResourceConstraintError" },
+          });
+        }
+      }
+    } finally {
+      await service.close();
+    }
+  });
+
   it("binds PE and ELF export inventories to the selected file", async () => {
     const root = await createTestTempDirectory("rea-native-exports-");
     const service = createNativeExportsService();
@@ -52,6 +122,104 @@ describe("native export stable filesystem boundary", () => {
       });
     }
     await service.close();
+  });
+});
+
+describe("native export text capacity", () => {
+  it.each(["symbol", "version"] as const)(
+    "bounds UTF-8 bytes of retained ELF %s text and its exact-byte spelling",
+    async (kind) => {
+      const root = await createTestTempDirectory("rea-native-export-text-");
+      const service = createNativeExportsService();
+      const text = "€".repeat(20_000);
+      const rawName = Buffer.from(text, "utf8").toString("latin1");
+      try {
+        for (const count of [119, 160]) {
+          const path = join(root, `${kind}-${String(count)}.so`);
+          const bytes = elfExportImage({
+            symbols: Array.from({ length: count }, () =>
+              kind === "symbol" ? { name: rawName } : { name: "a", version: 2 },
+            ),
+            ...(kind === "version"
+              ? { versionDefinitions: ["lib.so", rawName] }
+              : {}),
+          });
+          expect(bytes.length).toBeLessThan(70_000);
+          await writeFile(path, bytes);
+          const result = await service.inspect({ path });
+          if (count === 160) {
+            expect(result).toMatchObject({
+              ok: false,
+              error: { _tag: "AnalysisResourceConstraintError" },
+            });
+            continue;
+          }
+          if (!result.ok) throw new Error(JSON.stringify(result.error));
+          const report = nativeExportsSchema.parse(
+            result.value.normalized_result,
+          );
+          if (report.format !== "elf") throw new Error("Expected ELF report");
+          expect(report.coverage).toMatchObject({
+            status: "complete",
+            exports: count,
+          });
+          const row = report.exports[0]!;
+          const name = kind === "symbol" ? row : row.version;
+          expect(name).toMatchObject({
+            name: text,
+            name_bytes_base64: Buffer.from(text, "utf8").toString("base64"),
+            name_utf8_decodable: true,
+          });
+        }
+      } finally {
+        await service.close();
+      }
+    },
+  );
+
+  it("bounds intermediate ELF version names even when no symbols use them", async () => {
+    const root = await createTestTempDirectory("rea-native-export-versions-");
+    const service = createNativeExportsService();
+    try {
+      for (const count of [279, 280]) {
+        const path = join(root, `versions-${String(count)}.so`);
+        const bytes = elfExportImage({
+          symbols: [],
+          versionDefinitions: Array<string>(count).fill("v".repeat(60_000)),
+          // Definitions replace requirements at the same indices; released
+          // names must not remain charged against the live map's allowance.
+          ...(count === 279
+            ? {
+                versionRequirements: Array.from(
+                  { length: count },
+                  (_, index) => ({
+                    index: index + 1,
+                    name: "w".repeat(60_000),
+                  }),
+                ),
+              }
+            : {}),
+        });
+        expect(bytes.length).toBeLessThan(140_000);
+        await writeFile(path, bytes);
+        const result = await service.inspect({ path });
+        if (count === 280)
+          expect(result).toMatchObject({
+            ok: false,
+            error: { _tag: "AnalysisResourceConstraintError" },
+          });
+        else {
+          if (!result.ok) throw new Error(JSON.stringify(result.error));
+          expect(result.value.normalized_result).toMatchObject({
+            exports: [],
+            issues: [],
+            coverage: { status: "complete", exports: 0 },
+          });
+        }
+      }
+    } finally {
+      await service.close();
+    }
   });
 });
 

@@ -19,7 +19,7 @@ export const projectSazRecord = (
   source: SazValue,
   sensitiveValues: readonly string[],
 ) => {
-  const redactor = new CaptureRedaction(sensitiveValues);
+  const redactor = new CaptureRedaction(sensitiveValues, source);
   const binary_fields: WebNetworkCaptureRecord["binary_fields"] = [];
   const visit = (
     value: SazValue,

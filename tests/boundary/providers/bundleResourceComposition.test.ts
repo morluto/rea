@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,7 +60,7 @@ it("routes a CLI app resource path through the resource session and preserves nu
     bundlePath,
     "inspect_keyed_archive",
     { path: "Resources/Archive.plist" },
-  );
+  ).then(projectCliAnalysisResult);
   expect(result).toMatchObject({
     operation: "inspect_keyed_archive",
     subject: null,

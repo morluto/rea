@@ -2,9 +2,10 @@ import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { matchNativeFunctions } from "./NativeFunctionMatchingService.js";
 import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatching.js";
-import { createEvidence } from "../../domain/evidence.js";
+import { createEvidence, immutableEvidence } from "../../domain/evidence.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
 import {
   nativeMatchingNamedInventory as nativeMatchingInventory,
@@ -789,6 +790,197 @@ it("cooperatively preserves the exact cancellation reason and rejects expansion 
   expect(large.ok).toBe(false);
   if (!large.ok)
     expect(large.error._tag).toBe("AnalysisResourceConstraintError");
+});
+
+const retainedInventories = (
+  rows: (side: "1" | "2") => readonly Record<string, unknown>[],
+) => {
+  const [left, right] = (["1", "2"] as const).map((side) =>
+    immutableEvidence(
+      createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
+        operation: "list_procedures",
+        parameters: {},
+        result: rows(side),
+      }),
+    ),
+  );
+  const ledger = new Map([left!, right!].map((x) => [x.evidence_id, x]));
+  const reference = (record: { evidence_id: string }) => ({
+    kind: "retained-evidence" as const,
+    evidence_id: record.evidence_id,
+  });
+  return {
+    left: left!,
+    right: right!,
+    references: { left: reference(left!), right: reference(right!) },
+    lookup: (id: string) => ledger.get(id),
+  };
+};
+const ghidraRow = (side: "1" | "2", index: number) => ({
+  address: `0x${(0x400000 + index * 16 + (side === "2" ? 8 : 0)).toString(16)}`,
+  value: `subsystem_function_${index}`,
+  symbol: {
+    primary: true,
+    dynamic: false,
+    external: false,
+    type: "Function",
+    source: "imported",
+  },
+  procedure: { external: false, thunk: false, thunk_target: null },
+});
+
+it("charges a borrowed retained inventory for its emitted members, not its resident payload", async () => {
+  // One shared 40 KB string per row: ~40 KB resident, but a per-occurrence
+  // walk would charge 1000 copies of it.
+  const resident = "r".repeat(40_000);
+  const { left, right, references, lookup } = retainedInventories((side) =>
+    Array.from({ length: 1000 }, (_, i) => ({
+      ...ghidraRow(side, i),
+      provider_note: resident,
+    })),
+  );
+  const borrowed = await matchNativeFunctions(references, undefined, lookup);
+  if (!borrowed.ok) throw borrowed.error;
+  expect(
+    nativeFunctionMatchingSchema.parse(
+      borrowed.value.evidence.normalized_result,
+    ).summary.matched,
+  ).toBe(1000);
+  // Inline Evidence is authenticated by cloning, so its whole payload is charged.
+  const inline = await matchNativeFunctions({
+    left: structuredClone(left),
+    right: structuredClone(right),
+  });
+  expect(inline.ok).toBe(false);
+  if (!inline.ok)
+    expect(inline.error._tag).toBe("AnalysisResourceConstraintError");
+});
+
+it("still charges a borrowed inventory's envelope, which matching copies into its result", async () => {
+  // Limitations are prefixed into the report and Evidence; 25 distinct
+  // 1 MiB entries are charged above the allowance although rows are few.
+  const record = (side: "1" | "2", limitations: readonly string[]) =>
+    immutableEvidence(
+      createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
+        operation: "list_procedures",
+        parameters: {},
+        result: [ghidraRow(side, 0)],
+        limitations: [...limitations],
+      }),
+    );
+  const left = record(
+      "1",
+      Array.from({ length: 25 }, (_, i) => `${"l".repeat(1024 * 1024)}${i}`),
+    ),
+    right = record("2", []);
+  const ledger = new Map([left, right].map((x) => [x.evidence_id, x]));
+  const refused = await matchNativeFunctions(
+    {
+      left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+      right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+    },
+    undefined,
+    (id) => ledger.get(id),
+  );
+  expect(refused.ok).toBe(false);
+  if (!refused.ok)
+    expect(refused.error._tag).toBe("AnalysisResourceConstraintError");
+});
+
+it("matches 20,000 retained Ghidra-shaped rows per side and refuses an oversized side before parsing its rows", async () => {
+  const large = retainedInventories((side) =>
+    Array.from({ length: 20_000 }, (_, i) => ghidraRow(side, i)),
+  );
+  const matched = await matchNativeFunctions(
+    large.references,
+    undefined,
+    large.lookup,
+  );
+  if (!matched.ok) throw matched.error;
+  expect(
+    nativeFunctionMatchingSchema.parse(matched.value.evidence.normalized_result)
+      .summary,
+  ).toEqual({ matched: 20_000, only_left: 0, only_right: 0, unresolved: 0 });
+  // A malformed final row would be an integrity failure if parsing began.
+  const oversized = retainedInventories((side) => [
+    ...Array.from({ length: 50_000 }, (_, i) => ghidraRow(side, i)),
+    { address: "not an address", value: 1 },
+  ]);
+  const refused = await matchNativeFunctions(
+    oversized.references,
+    undefined,
+    oversized.lookup,
+  );
+  expect(refused.ok).toBe(false);
+  if (!refused.ok)
+    expect(refused.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      reportedLimits: { maximum_bytes: 96 * 1024 * 1024 },
+      retryable: false,
+    });
+});
+
+it("enforces the caller-resolved representation allowance and names its setting", async () => {
+  const rows = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      address: `0x${(0x1000 + i * 16).toString(16)}`,
+      value: `function_${i}`,
+    }));
+  const small = {
+    left: nativeMatchingInventory("1", rows(100)),
+    right: nativeMatchingInventory("2", rows(100)),
+  };
+  const lowered = await matchNativeFunctions(small, {
+    representationAllowance: { maximumBytes: 64 * 1024, source: "runtime" },
+  });
+  expect(lowered.ok).toBe(false);
+  if (lowered.ok) throw new Error("Lowered allowance admitted the request");
+  expect(lowered.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    reportedLimits: { maximum_bytes: 64 * 1024 },
+    retryable: false,
+    limit: {
+      setting: "native.matching_representation_bytes",
+      effective_value: 64 * 1024,
+      source: "runtime",
+      unit: "bytes",
+      minimum: 1,
+      maximum: 1024 * 1024 * 1024,
+      applies_at: "next_operation",
+      agent_editable: true,
+    },
+  });
+  if (!(lowered.error instanceof AnalysisResourceConstraintError))
+    throw lowered.error;
+  expect(lowered.error.remediationAction).toContain(
+    "update_analysis_settings with setting native.matching_representation_bytes",
+  );
+  expect(lowered.error.remediationAction).toContain(
+    "REA_NATIVE_MATCHING_REPRESENTATION_BYTES",
+  );
+  expect((await matchNativeFunctions(small)).ok).toBe(true);
+  // A request refused by the 96 MiB default fits a raised allowance unchanged.
+  const large = {
+    left: nativeMatchingInventory("1", rows(15_000)),
+    right: nativeMatchingInventory("2", rows(15_000)),
+  };
+  const refused = await matchNativeFunctions(large);
+  expect(refused.ok).toBe(false);
+  if (!refused.ok)
+    expect(refused.error).toMatchObject({
+      limit: { effective_value: 96 * 1024 * 1024, source: "default" },
+    });
+  const raised = await matchNativeFunctions(large, {
+    representationAllowance: {
+      maximumBytes: 256 * 1024 * 1024,
+      source: "setting",
+    },
+  });
+  if (!raised.ok) throw raised.error;
+  expect(
+    nativeFunctionMatchingSchema.parse(raised.value.evidence.normalized_result)
+      .summary.matched,
+  ).toBe(15_000);
 });
 
 it("keeps duplicate candidate storage linear and emits every input occurrence exactly once", async () => {

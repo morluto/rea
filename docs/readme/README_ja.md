@@ -20,7 +20,7 @@
 
 **[ウェブサイト](https://rea.tools/ja/) · [ガイド](https://rea.tools/ja/guides/) · [事例](https://rea.tools/ja/showcase/)**
 
-[クイックスタート](#クイックスタート) · [REA の仕組み](#rea-の仕組み) · [分析できる対象](#分析できる対象) · [事例](#事例) · [よくある質問](#よくある質問) · [GNU objdump・Rizin ツール](../reverse-engineering-tools.md) · [ドキュメント](#ドキュメント)
+[クイックスタート](#クイックスタート) · [REA の仕組み](#rea-の仕組み) · [分析できる対象](#分析できる対象) · [事例](#事例) · [RL 環境を構築する](#build-rl-environments) · [よくある質問](#よくある質問) · [ドキュメント](#ドキュメント)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@
 
 REA はエージェントを分析ツールにつなぎ、ネイティブバイナリ、JavaScript や Electron のアプリ、.NET アセンブリ、ウェブサイトを調べられるようにします。同じツールをターミナルからも使えます。分析はローカルで実行され、結果には各結論を裏付ける根拠と制限事項が含まれます。
 
-セットアップはエージェントに REA を登録し、対応するワークフロー指示をインストールします。ネイティブ解析には既存の Hopper、Ghidra、IDA を使用でき、承認すれば Hopper をインストールできます。静的 JavaScript 解析にネイティブ解析エンジンは不要です。
+セットアップはエージェントに REA を登録し、対応するワークフロー指示をインストールします。ネイティブ解析には既存の Hopper、Ghidra、IDA、Kuna を使用でき、承認すれば Hopper をインストールできます。静的 JavaScript 解析にネイティブ解析エンジンは不要です。
 
 > **[REA のウェブサイト](https://rea.tools/ja/)**で、セットアップ手順、図解ガイド、実際の事例を確認できます。
 
@@ -151,7 +151,7 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 
 | 対象                             | REA が返すもの                                                                              | 要件とガイド                                                                                                                                   |
 | -------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| ネイティブバイナリ               | 疑似コード、アセンブリ、文字列、シンボル、呼び出し、参照                                    | Hopper、Ghidra、または IDA；[ネイティブ分析](../native-investigation.md)                                                                       |
+| ネイティブバイナリ               | 疑似コード、アセンブリ、文字列、シンボル、呼び出し、参照                                    | Hopper、Ghidra、IDA、または Kuna；[ネイティブ分析](../native-investigation.md)                                                                 |
 | オフライン ELF レイアウト        | セクション、セグメント、元のシンボル／再配置情報、静的解析によるセキュリティ対策の候補      | Linux x64 で利用者が用意する pwntools；[バイナリ診断](../binary-diagnostics.md)                                                                |
 | PE certificates                  | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                        |
 | PE imports                       | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                  |
@@ -190,6 +190,8 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 
 静的な JavaScript と .NET の検査は、指定されたファイルを読み取り、アプリケーションを実行しません。実行時キャプチャは、あなたのユーザー権限で対象を実行したり、対象とやり取りしたりします。それぞれの実行時ガイドに、どのような操作が行われるかを記載しています。
 
+ネイティブバイナリのオフライン検査では、利用者が用意した GNU objdump と Rizin も使用できます。[リバースエンジニアリングツールのガイド](../reverse-engineering-tools.md)では、プロバイダーのセットアップ、CLI コマンド、Evidence の制約を説明しています。REA はどちらのプロバイダーもインストールや更新を行いません。
+
 <a id="choosing-a-deep-analysis-provider"></a>
 
 大きなバイナリでは `REA_GHIDRA_STARTUP_TIMEOUT_MS` または `REA_HOPPER_STARTUP_TIMEOUT_MS` でプロバイダーの起動期限を延長できます。
@@ -225,7 +227,50 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 [事例を読む](https://rea.tools/ja/showcase/th04/) ·
 [再構築リポジトリ](https://github.com/N0zoM1z0/th04)
 
+### REA で RL 環境を構築する
+
+Web アプリのセッションを記録し、API をツールに変換して、AI エージェントが使える環境をエクスポートします。AgentEnv で実行し、タスクと報酬のチェックを追加して、RL の学習や評価に使えます。
+
+[環境構築ガイド](https://rea.tools/guides/rl-environments/) ·
+[X でデモを見る](https://x.com/reatools/status/2112574822584918075?s=20)
+
 REA で興味深い対象を調べたら、ぜひ共有してください。[issue](https://github.com/morluto/rea/issues) または [pull request](https://github.com/morluto/rea/pulls) に、対象、調べたかったこと、REA がどう役立ったか、何が分かったかを記載してください。
+
+<a id="build-rl-environments"></a>
+
+## RL 環境を構築する
+
+元のアプリを動かさずに、AI エージェントが issue の検索やフォルダーの作成などを練習できるローカル環境を構築します。強化学習（RL）や、エージェントのタスク遂行能力のテストに使えます。
+
+REA は記録した API のリクエストと応答を、エージェントが呼び出せるツールに変換します。環境は記録したデータを使い、記録で効果が確認された変更だけをサポートします。
+
+エージェントに REA を設定したら、次の URL とフォルダー操作を自分の環境に合わせて変更してください。
+
+```text
+REA を使い、次のテスト用 Web アプリから RL 環境を構築してください。
+http://127.0.0.1:3000
+フォルダーの一覧表示、作成、名前変更、削除を対象にしてください。
+テスト用フォルダーの作成と削除は許可します。既存のデータは変更しないでください。
+my-env というフォルダーに保存し、使える操作を確認して実行方法を教えてください。
+```
+
+<details>
+<summary>コマンドラインを使う場合</summary>
+
+アプリのブラウザーリクエストと応答を記録したファイルがあれば、このコマンドを使えます。作成した環境の実行には AgentEnv と Docker も必要です。
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA は実行可能な環境と、起動して応答することを確認する基本テストをエクスポートします。RL フレームワークに接続して、タスクの目標や報酬のチェックを定義し、学習を実行できます。
+
+[環境構築ガイド](https://rea.tools/guides/rl-environments/) ·
+[環境リファレンス](../agent-environments.md) ·
+[X でデモを見る](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## よくある質問
 
@@ -237,9 +282,9 @@ REA で興味深い対象を調べたら、ぜひ共有してください。[iss
 </details>
 
 <details>
-<summary><strong>Hopper、Ghidra、IDA は必要ですか？</strong></summary>
+<summary><strong>Hopper、Ghidra、IDA、Kuna は必要ですか？</strong></summary>
 
-深いネイティブ分析には、そのいずれかを使います。静的な JavaScript と .NET の検査には、ネイティブ分析エンジンは必要ありません。セットアップは承認後に Hopper をインストールできます。Ghidra と IDA は既存のインストールを使います。[プロバイダーのセットアップ](../installation.md#hopper)を参照してください。
+深いネイティブ分析には、そのいずれかを使います。静的な JavaScript と .NET の検査には、ネイティブ分析エンジンは必要ありません。セットアップは承認後に Hopper をインストールできます。Ghidra、IDA、Kuna は既存のインストールを使います。[プロバイダーのセットアップ](../installation.md#hopper)を参照してください。
 
 </details>
 
@@ -307,7 +352,7 @@ npx rea-agents@latest setup
 
 ## スター履歴
 
-🎉 **GitHub スター 300,000 件、ありがとうございます！**
+🎉 **GitHub スター 400,000 件、ありがとうございます！**
 
 REA の利用、バグ報告、機能の要望、ビルドのテスト、修正への貢献に感謝します。
 

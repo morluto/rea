@@ -10,6 +10,12 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import {
+  ArtifactFileCleanupFailure,
+  bindArtifactFileCleanup,
+} from "../../artifacts/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 import {
   DECOMPILE_DIRECTORY_FUNCTIONS_DIRECTORY,
@@ -23,9 +29,9 @@ import {
   type DecompileJournalHeader,
 } from "../../contracts/decompileDirectory.js";
 import {
+  AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  type AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
@@ -33,6 +39,7 @@ import { isPathWithinRoot } from "../../domain/localPath.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   acquireOwnedLease,
+  OwnedLeaseCleanupFailure,
   type LeaseFailure,
   type OwnedLease,
 } from "../../process/OwnedLease.js";
@@ -249,7 +256,7 @@ export class DecompileExport {
     if (!created.ok) return created;
     // The directory exists before its journal, so a resume that starts in
     // between takes the same lease and cannot write alongside this export.
-    const lease = await acquireExportLease(root);
+    const lease = await acquireExportLease(root, scope);
     // Even an empty directory may now have another lease holder preparing its
     // journal. Without the lease, preserve it rather than disrupting that run.
     if (!lease.ok) {
@@ -286,7 +293,7 @@ export class DecompileExport {
   ): Promise<Result<DecompileExport, AnalysisError>> {
     // The lease is held before the journal is read, so no other run appends
     // between this read and this run's own appends, repair or index.
-    const lease = await acquireExportLease(root);
+    const lease = await acquireExportLease(root, scope);
     if (!lease.ok) return lease;
     const resources = new ExportResources(
       root,
@@ -364,7 +371,8 @@ export type FileCommit =
   | { readonly status: "written"; readonly sha256: string }
   | { readonly status: "matched"; readonly sha256: string }
   | { readonly status: "conflict" }
-  | { readonly status: "io" };
+  | { readonly status: "io" }
+  | { readonly status: "error"; readonly error: AnalysisError };
 
 /**
  * Publish bytes with `link`, which fails when the final name exists.
@@ -385,10 +393,29 @@ const commitFunctionFile = async (
     (cause: unknown) => cause,
   );
   if (linked === true) return { status: "written", sha256: digest };
+  if (linked instanceof ArtifactReaderFailure && linked.cleanup !== undefined)
+    return {
+      status: "error",
+      error: exportOutputFailure(
+        "decompile function publication cleanup failed",
+        linked,
+      ),
+    };
   if (nodeCode(linked) !== "EEXIST") return { status: "io" };
   const existing = await resources
     .hashFile(finalPath)
     .catch((cause: unknown) => cause);
+  if (
+    existing instanceof ArtifactReaderFailure &&
+    existing.cleanup !== undefined
+  )
+    return {
+      status: "error",
+      error: exportOutputFailure(
+        "decompile file verification cleanup failed",
+        existing,
+      ),
+    };
   if (typeof existing !== "string") return { status: "io" };
   return existing === digest
     ? { status: "matched", sha256: digest }
@@ -636,20 +663,18 @@ const readJournal = async (
   if (!parsed.ok) return parsed;
   const unknown = unknownIdentity(parsed.value.header, identity);
   if (unknown !== undefined) return err(unknown);
-  return sameIdentity(parsed.value.header, identity)
-    ? ok({
-        records: parsed.value.records,
-        written: parsed.value.written,
-        paths: parsed.value.paths,
-        committedBytes: parsed.value.committedBytes,
-        journalBytes: parsed.value.journalBytes,
-      })
-    : err(
-        decompileInputError(
-          "output_directory",
-          "The decompile journal does not match this target, provider, analysis profile, or layout.",
-        ),
-      );
+  const mismatches = identityMismatches(parsed.value.header, identity);
+  if (mismatches.length > 0)
+    return err(
+      journalIdentityMismatch(parsed.value.header, identity, mismatches),
+    );
+  return ok({
+    records: parsed.value.records,
+    written: parsed.value.written,
+    paths: parsed.value.paths,
+    committedBytes: parsed.value.committedBytes,
+    journalBytes: parsed.value.journalBytes,
+  });
 };
 
 const parseJournal = (
@@ -720,16 +745,62 @@ const unknownIdentity = (
   return undefined;
 };
 
-const sameIdentity = (
+/** Identity components in the order presented to the caller. */
+const identityMismatches = (
   header: DecompileJournalHeader,
   identity: ExportIdentity,
-): boolean =>
-  header.target_sha256 === identity.targetSha256 &&
-  header.analysis_profile_digest === identity.analysisProfileDigest &&
-  header.layout === identity.layout &&
-  header.provider.id === identity.provider.id &&
-  header.provider.name === identity.provider.name &&
-  header.provider.version === identity.provider.version;
+): readonly string[] => [
+  ...(header.target_sha256 === identity.targetSha256 ? [] : ["target SHA-256"]),
+  ...(header.analysis_profile_digest === identity.analysisProfileDigest
+    ? []
+    : ["analysis profile digest"]),
+  ...(header.layout === identity.layout ? [] : ["layout"]),
+  ...(header.provider.id === identity.provider.id ? [] : ["provider id"]),
+  ...(header.provider.name === identity.provider.name ? [] : ["provider name"]),
+  ...(header.provider.version === identity.provider.version
+    ? []
+    : ["provider version"]),
+];
+
+/**
+ * Report the concrete resume identity that differs. The request is valid, so
+ * generic input-schema recovery would send the caller to the wrong boundary.
+ */
+const journalIdentityMismatch = (
+  header: DecompileJournalHeader,
+  identity: ExportIdentity,
+  mismatches: readonly string[],
+): AnalysisInputError => {
+  const message = `The decompile journal does not match the current ${mismatches.join(", ")}.`;
+  return new AnalysisInputError(
+    "decompile_all",
+    {
+      userMessage: message,
+      conformsToInputContract: true,
+      remediationAction:
+        "Resume with the target, provider, analysis profile, and layout that created this directory, or choose a new output directory. The journal and existing files were left unchanged.",
+    },
+    [
+      {
+        path: ["output_directory"],
+        reason: "invalid_value",
+        message,
+        expected: {
+          target_sha256: header.target_sha256,
+          analysis_profile_digest: header.analysis_profile_digest,
+          layout: header.layout,
+          provider: header.provider,
+        },
+        observed: {
+          target_sha256: identity.targetSha256,
+          analysis_profile_digest: identity.analysisProfileDigest,
+          layout: identity.layout,
+          provider: identity.provider,
+        },
+      },
+    ],
+  );
+};
 
 const incompatibleJournal = (): AnalysisInputError =>
   decompileInputError(
@@ -805,6 +876,7 @@ const DECOMPILE_EXPORT_LEASE_DIRECTORY = join(
  */
 const acquireExportLease = async (
   root: string,
+  scope: RetainedResourceScope | undefined,
 ): Promise<
   Result<
     {
@@ -824,6 +896,7 @@ const acquireExportLease = async (
         "The output directory could not be inspected.",
       ),
     );
+  const leaseResources = new ArtifactResourceScope();
   try {
     const acquisition = await acquireOwnedLease({
       identity: {
@@ -834,6 +907,7 @@ const acquireExportLease = async (
       runId: randomUUID(),
       directory: DECOMPILE_EXPORT_LEASE_DIRECTORY,
       failure: exportLeaseFailure,
+      resources: leaseResources,
     });
     return acquisition.acquired
       ? ok({ lease: acquisition.lease, identity: stat })
@@ -851,6 +925,16 @@ const acquireExportLease = async (
           ),
         );
   } catch (cause: unknown) {
+    if (leaseResources.hasPending)
+      scope?.retain(
+        {
+          close: () => leaseResources.close(),
+          get cleanupResources() {
+            return leaseResources.cleanupResources;
+          },
+        },
+        "decompile lease directory",
+      );
     return err(
       cause instanceof AnalysisError
         ? cause
@@ -866,15 +950,33 @@ const acquireExportLease = async (
 const exportLeaseFailure = (
   failure: LeaseFailure,
   cause?: unknown,
-): AnalysisOutputError =>
-  new AnalysisOutputError(
+): AnalysisOutputError => {
+  const primary =
+    cause instanceof OwnedLeaseCleanupFailure
+      ? cause.primary
+      : cause instanceof ArtifactFileCleanupFailure &&
+          cause.fileCleanupFailure.outcome.kind === "failed"
+        ? cause.fileCleanupFailure.outcome.cause
+        : undefined;
+  const error = new AnalysisOutputError(
     "decompile_all",
     "output directory lease could not be acquired",
     {
       ...(cause === undefined ? {} : { cause }),
-      userMessage: exportLeaseMessage(failure),
+      ...(primary instanceof AnalysisError ? { cleanupPrimary: primary } : {}),
+      ...(cause instanceof ArtifactFileCleanupFailure ||
+      cause instanceof OwnedLeaseCleanupFailure
+        ? { cleanup: cause.cleanup }
+        : {}),
+      userMessage:
+        primary instanceof AnalysisError
+          ? (primary.userMessage ?? exportLeaseMessage(failure))
+          : exportLeaseMessage(failure),
     },
   );
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
 
 const exportLeaseMessage = (failure: LeaseFailure): string => {
   switch (failure.kind) {
@@ -886,6 +988,10 @@ const exportLeaseMessage = (failure: LeaseFailure): string => {
       return `REA could not remove its lease recovery directory at ${JSON.stringify(failure.path)}. Check its write access before retrying.`;
     case "unrecoverable":
       return "REA could not take this output directory's lease. Retry after other decompile_all runs finish.";
+    case "socket_permissions":
+      return "REA could not secure its lease socket permissions.";
+    case "directory_close":
+      return "REA could not confirm closure of its output lease directory handle.";
     case "directory_access_denied":
       return `REA could not access its lease directory at ${JSON.stringify(failure.directory)}. Restore owner-only permissions (0700) on a directory you own, then retry.`;
     case "directory_create":
@@ -921,13 +1027,29 @@ const writeOwnedIndex = async (
     return ok(undefined);
   } catch (cause: unknown) {
     return err(
-      new AnalysisOutputError(
-        "decompile_all",
-        "decompile index could not be written",
-        { cause },
+      exportOutputFailure(
+        cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+          ? "decompile index publication cleanup failed"
+          : "decompile index could not be written",
+        cause,
       ),
     );
   }
+};
+
+/** Preserve the publisher's parsed failure and exact cleanup authority. */
+export const exportOutputFailure = (
+  message: string,
+  cause: unknown,
+): AnalysisOutputError => {
+  const error = new AnalysisOutputError("decompile_all", message, {
+    cause,
+    ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+      ? { cleanup: cause.cleanup }
+      : {}),
+  });
+  bindArtifactFileCleanup(cause, error);
+  return error;
 };
 
 export const sha256 = (bytes: Buffer): string =>

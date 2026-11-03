@@ -20,7 +20,7 @@
 
 **[വെബ്സൈറ്റ്](https://rea.tools/) · [ഗൈഡുകൾ](https://rea.tools/guides/) · [ഉദാഹരണങ്ങൾ](https://rea.tools/showcase/)**
 
-[ദ്രുതാരംഭം](#ദ്രുതാരംഭം) · [REA എങ്ങനെ പ്രവർത്തിക്കുന്നു](#rea-എങ്ങനെ-പ്രവർത്തിക്കുന്നു) · [എന്തൊക്കെ വിശകലനം ചെയ്യാം](#എന്തൊക്കെ-വിശകലനം-ചെയ്യാം) · [ഉദാഹരണങ്ങൾ](#ഉദാഹരണങ്ങൾ) · [പതിവുചോദ്യങ്ങൾ](#പതിവുചോദ്യങ്ങൾ) · [ഡോക്യുമെന്റേഷൻ](#ഡോക്യുമെന്റേഷൻ)
+[ദ്രുതാരംഭം](#ദ്രുതാരംഭം) · [REA എങ്ങനെ പ്രവർത്തിക്കുന്നു](#rea-എങ്ങനെ-പ്രവർത്തിക്കുന്നു) · [എന്തൊക്കെ വിശകലനം ചെയ്യാം](#എന്തൊക്കെ-വിശകലനം-ചെയ്യാം) · [ഉദാഹരണങ്ങൾ](#ഉദാഹരണങ്ങൾ) · [RL പരിതസ്ഥിതികൾ നിർമ്മിക്കുക](#build-rl-environments) · [പതിവുചോദ്യങ്ങൾ](#പതിവുചോദ്യങ്ങൾ) · [ഡോക്യുമെന്റേഷൻ](#ഡോക്യുമെന്റേഷൻ)
 
 <code>npx rea-agents setup</code>
 
@@ -62,7 +62,7 @@
 
 Native binaries, JavaScript, Electron apps, .NET assemblies, websites എന്നിവ പരിശോധിക്കുന്നതിനുള്ള tools-ലേക്ക് REA നിങ്ങളുടെ agent-നെ ബന്ധിപ്പിക്കുന്നു. ഇതേ tools നിങ്ങളുടെ terminal-ൽ നിന്നും ഉപയോഗിക്കാം. വിശകലനം local ആയി നടക്കുന്നു; ഓരോ നിഗമനത്തിനും പിന്നിലെ തെളിവുകളും പരിമിതികളും ഫലങ്ങളിൽ ഉൾപ്പെടുന്നു.
 
-Setup നിങ്ങളുടെ agent-ിൽ REA രജിസ്റ്റർ ചെയ്യുകയും അനുയോജ്യമായ workflow നിർദ്ദേശങ്ങൾ ഇൻസ്റ്റാൾ ചെയ്യുകയും ചെയ്യുന്നു. Native analysis-നായി നിലവിലുള്ള Hopper, Ghidra, അല്ലെങ്കിൽ IDA installation ഉപയോഗിക്കാം; അനുമതി നൽകിയാൽ setup-ന് Hopper ഇൻസ്റ്റാൾ ചെയ്യാനും കഴിയും. Static JavaScript analysis-ന് native analysis engine ആവശ്യമില്ല.
+Setup നിങ്ങളുടെ agent-ിൽ REA രജിസ്റ്റർ ചെയ്യുകയും അനുയോജ്യമായ workflow നിർദ്ദേശങ്ങൾ ഇൻസ്റ്റാൾ ചെയ്യുകയും ചെയ്യുന്നു. Native analysis-നായി നിലവിലുള്ള Hopper, Ghidra, IDA, അല്ലെങ്കിൽ Kuna installation ഉപയോഗിക്കാം; അനുമതി നൽകിയാൽ setup-ന് Hopper ഇൻസ്റ്റാൾ ചെയ്യാനും കഴിയും. Static JavaScript analysis-ന് native analysis engine ആവശ്യമില്ല.
 
 > **[REA വെബ്സൈറ്റ് സന്ദർശിക്കുക](https://rea.tools/)** — setup നിർദ്ദേശങ്ങൾക്കും ചിത്രങ്ങളോടുകൂടിയ ഗൈഡുകൾക്കും യഥാർത്ഥ case study-കൾക്കും.
 
@@ -151,7 +151,7 @@ REA-യ്ക്ക് Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), അല്ല�
 
 | Target                 | REA നൽകുന്ന ഫലങ്ങൾ                                                                             | ആവശ്യകതകളും ഗൈഡും                                                                                                                    |
 | ---------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Native binaries        | Pseudocode, assembly, strings, symbols, calls, references                                   | Hopper, Ghidra അല്ലെങ്കിൽ IDA; [native analysis](../native-investigation.md)                                                        |
+| Native binaries        | Pseudocode, assembly, strings, symbols, calls, references                                   | Hopper, Ghidra, IDA അല്ലെങ്കിൽ Kuna; [native analysis](../native-investigation.md)                                                  |
 | Offline ELF layout     | Sections, segments, യഥാർത്ഥ symbols/relocations, static mitigation candidates                 | Linux x64-ൽ caller നൽകുന്ന pwntools; [binary diagnostics](../binary-diagnostics.md)                                                 |
 | Go binaries            | ഉൾച്ചേർത്ത compiler version, modules, replacements, build settings                            | Built-in static ELF/PE/thin Mach-O പരിശോധന; Go installation ആവശ്യമില്ല                                                              |
 | Rust binaries          | ഉൾച്ചേർത്ത cargo-auditable crate പേരുകൾ, versions, sources, dependency edges                   | Built-in static ELF/PE/thin Mach-O പരിശോധന; [Rust binaries](../rust-binaries.md)                                                  |
@@ -229,7 +229,50 @@ Renderer-ന്റെ clipboard API കണ്ടെത്തി, അതിനെ
 [Case study വായിക്കുക](https://rea.tools/showcase/th04/) ·
 [പുനർനിർമ്മാണ repository](https://github.com/N0zoM1z0/th04)
 
+### REA ഉപയോഗിച്ച് RL പരിതസ്ഥിതികൾ നിർമ്മിക്കുക
+
+വെബ് ആപ്പ് സെഷൻ റെക്കോർഡ് ചെയ്ത് API ടൂളുകളാക്കി AI ഏജന്റിന് ഉപയോഗിക്കാവുന്ന പരിതസ്ഥിതി എക്‌സ്‌പോർട്ട് ചെയ്യുക. AgentEnv ഉപയോഗിച്ച് പ്രവർത്തിപ്പിച്ച ശേഷം RL പരിശീലനത്തിനോ മൂല്യനിർണയത്തിനോ ടാസ്‌ക്കുകളും റിവാർഡ് പരിശോധനകളും ചേർക്കുക.
+
+[പരിതസ്ഥിതി നിർമ്മാണ മാർഗ്ഗദർശി](https://rea.tools/guides/rl-environments/) ·
+[X-ൽ ഡെമോ കാണുക](https://x.com/reatools/status/2112574822584918075?s=20)
+
 REA ഉപയോഗിച്ച് നിങ്ങൾ രസകരമായ എന്തെങ്കിലും പരിശോധിച്ചിട്ടുണ്ടെങ്കിൽ അത് കാണാൻ ഞങ്ങൾ ആഗ്രഹിക്കുന്നു. പരിശോധിച്ച target, നിങ്ങളുടെ ചോദ്യം, REA എങ്ങനെ സഹായിച്ചു, നിങ്ങൾ കണ്ടെത്തിയത് എന്നിവ ഉൾപ്പെടുത്തി [issue](https://github.com/morluto/rea/issues) അല്ലെങ്കിൽ [pull request](https://github.com/morluto/rea/pulls) വഴി നിങ്ങളുടെ case പങ്കിടുക.
+
+<a id="build-rl-environments"></a>
+
+## RL പരിതസ്ഥിതികൾ നിർമ്മിക്കുക
+
+യഥാർഥ ആപ്പ് പ്രവർത്തിപ്പിക്കാതെ issue കണ്ടെത്തൽ, ഫോൾഡർ സൃഷ്ടിക്കൽ തുടങ്ങിയ ജോലികൾ AI ഏജന്റിന് പരിശീലിക്കാൻ ഒരു പ്രാദേശിക പരിതസ്ഥിതി നിർമ്മിക്കുക. റീഇൻഫോഴ്‌സ്‌മെന്റ് ലേണിംഗിനോ (RL) ഏജന്റ് ജോലികൾ എത്ര നന്നായി പൂർത്തിയാക്കുന്നു എന്ന് പരിശോധിക്കാനോ ഇത് ഉപയോഗിക്കാം.
+
+REA റെക്കോർഡ് ചെയ്ത API അഭ്യർത്ഥനകളും പ്രതികരണങ്ങളും ഏജന്റിന് വിളിക്കാവുന്ന ടൂളുകളാക്കുന്നു. പരിതസ്ഥിതി റെക്കോർഡ് ചെയ്ത ഡാറ്റ ഉപയോഗിക്കുന്നു. റെക്കോർഡ് ഫലം സ്ഥിരീകരിക്കുന്ന മാറ്റങ്ങൾ മാത്രമാണ് പിന്തുണയ്ക്കുന്നത്.
+
+ഏജന്റിൽ REA സജ്ജീകരിച്ച ശേഷം ഉദാഹരണത്തിലെ URL-ഉം ഫോൾഡർ ജോലികളും നിങ്ങളുടെ ആപ്പിന് അനുസരിച്ച് മാറ്റുക:
+
+```text
+എന്റെ പരീക്ഷണ വെബ് ആപ്പിൽ നിന്ന് REA ഉപയോഗിച്ച് RL പരിതസ്ഥിതി നിർമ്മിക്കുക:
+http://127.0.0.1:3000
+ഫോൾഡറുകൾ പട്ടികപ്പെടുത്തൽ, സൃഷ്ടിക്കൽ, പേരുമാറ്റൽ, ഇല്ലാതാക്കൽ എന്നിവ ഉൾപ്പെടുത്തുക.
+പരീക്ഷണ ഫോൾഡറുകൾ സൃഷ്ടിക്കാനും നീക്കാനും അനുമതിയുണ്ട്. നിലവിലുള്ള ഡാറ്റ മാറ്റരുത്.
+my-env എന്ന ഫോൾഡറിൽ സംരക്ഷിച്ച് ഏതെല്ലാം പ്രവർത്തനങ്ങൾ ലഭ്യമാണെന്നും എങ്ങനെ പ്രവർത്തിപ്പിക്കണമെന്നും പറയുക.
+```
+
+<details>
+<summary>കമാൻഡ് ലൈൻ ഉപയോഗിക്കുക</summary>
+
+ബ്രൗസറിലെ ആപ്പിന്റെ അഭ്യർത്ഥനകളും പ്രതികരണങ്ങളും റെക്കോർഡ് ചെയ്ത ഫയൽ ഉണ്ടെങ്കിൽ ഈ കമാൻഡുകൾ ഉപയോഗിക്കാം. ഫലം പ്രവർത്തിപ്പിക്കാൻ AgentEnv-ഉം Docker-ഉം വേണം.
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+പ്രവർത്തനം തുടങ്ങുന്നതും പ്രതികരിക്കുന്നതും പരിശോധിക്കുന്ന അടിസ്ഥാന ടെസ്റ്റിനൊപ്പം പ്രവർത്തിപ്പിക്കാവുന്ന പരിതസ്ഥിതി REA എക്‌സ്‌പോർട്ട് ചെയ്യുന്നു. ടാസ്‌ക് ലക്ഷ്യങ്ങളും റിവാർഡ് പരിശോധനകളും നിർവചിക്കാനും പരിശീലനം നടത്താനും RL ഫ്രെയിംവർക്കുമായി ബന്ധിപ്പിക്കുക.
+
+[പരിതസ്ഥിതി നിർമ്മാണ മാർഗ്ഗദർശി](https://rea.tools/guides/rl-environments/) ·
+[പരിതസ്ഥിതി റഫറൻസ്](../agent-environments.md) ·
+[X-ൽ ഡെമോ കാണുക](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## പതിവുചോദ്യങ്ങൾ
 
@@ -241,9 +284,9 @@ Local MCP servers പിന്തുണയ്ക്കുന്ന ഏത് age
 </details>
 
 <details>
-<summary><strong>Hopper, Ghidra അല്ലെങ്കിൽ IDA ആവശ്യമാണോ?</strong></summary>
+<summary><strong>Hopper, Ghidra, IDA അല്ലെങ്കിൽ Kuna ആവശ്യമാണോ?</strong></summary>
 
-ആഴത്തിലുള്ള native analysis-ന് ഇവയിൽ ഒന്ന് ആവശ്യമാണ്. Static JavaScript, .NET പരിശോധനകൾ native analysis engine ഇല്ലാതെയും പ്രവർത്തിക്കും. അനുമതി ലഭിച്ചാൽ setup-ന് Hopper ഇൻസ്റ്റാൾ ചെയ്യാം; Ghidra, IDA എന്നിവയ്ക്കായി നിങ്ങളുടെ നിലവിലുള്ള installations ഉപയോഗിക്കുന്നു. [Provider setup](../installation.md#hopper) കാണുക.
+ആഴത്തിലുള്ള native analysis-ന് ഇവയിൽ ഒന്ന് ആവശ്യമാണ്. Static JavaScript, .NET പരിശോധനകൾ native analysis engine ഇല്ലാതെയും പ്രവർത്തിക്കും. അനുമതി ലഭിച്ചാൽ setup-ന് Hopper ഇൻസ്റ്റാൾ ചെയ്യാം; Ghidra, IDA, Kuna എന്നിവയ്ക്കായി നിങ്ങളുടെ നിലവിലുള്ള installations ഉപയോഗിക്കുന്നു. [Provider setup](../installation.md#hopper) കാണുക.
 
 </details>
 
@@ -312,7 +355,7 @@ npx rea-agents@latest setup
 
 ## Star ചരിത്രം
 
-🎉 **250,000 GitHub stars — നന്ദി!**
+🎉 **400,000 GitHub stars — നന്ദി!**
 
 REA ഉപയോഗിക്കുന്നവർക്കും, bugs റിപ്പോർട്ട് ചെയ്യുന്നവർക്കും, features ആവശ്യപ്പെടുന്നവർക്കും, builds പരിശോധിക്കുന്നവർക്കും, fixes സംഭാവന ചെയ്യുന്നവർക്കും നന്ദി.
 

@@ -410,24 +410,27 @@ describe("compact input schema budget and reduction", () => {
     expect(presentation).toBe("reduced");
     expect(schema.properties).toEqual({
       capture: { type: "object", description: "Complete capture." },
-      observations: {
-        type: "array",
-        items: {
-          type: ["null", "boolean", "object", "array", "number", "string"],
-          items: {},
-        },
-      },
+      observations: { type: "array", items: { type: "object" } },
       label: { type: ["string", "null"] },
     });
     const validate = new Ajv2020({ strict: false }).compile(schema);
     expect(validate({ capture: {}, observations: [], label: null })).toBe(true);
+    const observation = {
+      captured_url: "https://example.test/",
+      captured_at: "2026-10-25T00:00:00Z",
+      status_code: 200,
+    };
+    const canonicalObservations = new Ajv2020({ strict: false }).compile(
+      original.$defs.observations,
+    );
+    expect(canonicalObservations([observation])).toBe(true);
+    expect(canonicalObservations(["text"])).toBe(false);
     expect(
-      validate({
-        capture: {},
-        observations: [[[null, true, 42, "nested"], { values: [[], [false]] }]],
-        label: null,
-      }),
+      validate({ capture: {}, observations: [observation], label: null }),
     ).toBe(true);
+    expect(validate({ capture: {}, observations: ["text"], label: null })).toBe(
+      false,
+    );
     expect(validate({ capture: {}, observations: [], label: "capture" })).toBe(
       true,
     );
@@ -696,4 +699,175 @@ it("includes restored root identity in the compact byte budget", () => {
   expect(result.presentation).toBe("reduced");
   expect(serializedBytes(result.schema)).toBeLessThanOrEqual(512);
   expect(result.schema.properties).toEqual({ value: { type: "number" } });
+});
+
+// An untyped primitive enum is gateway-incompatible, so these schemas take
+// the reduced projection independently of the budget.
+const reducedPresentation = (
+  properties: Record<string, unknown>,
+  $defs: Record<string, unknown> = {},
+) => {
+  const canonical = {
+    type: "object",
+    $defs,
+    properties: { mode: { enum: ["fast", "safe"] }, ...properties },
+  };
+  const result = compactAdvertisedInputSchema(canonical, 13 * 1024);
+  expect(result.presentation).toBe("reduced");
+  const { mode: _mode, ...advertised } = result.schema.properties as Record<
+    string,
+    unknown
+  >;
+  return {
+    advertised,
+    validateCanonical: new Ajv2020({ strict: false }).compile(canonical),
+    validateAdvertised: new Ajv2020({ strict: false }).compile(result.schema),
+  };
+};
+
+const reducedArrayCases = [
+  [
+    "string elements",
+    { type: "array", items: { type: "string", minLength: 1 } },
+    { type: "array", items: { type: "string" } },
+    [["a", "b"]],
+  ],
+  [
+    "object union elements",
+    {
+      type: "array",
+      minItems: 1,
+      items: {
+        oneOf: [
+          {
+            type: "object",
+            properties: { kind: { const: "click" } },
+            required: ["kind"],
+          },
+          {
+            type: "object",
+            properties: { kind: { const: "type" } },
+            required: ["kind"],
+          },
+        ],
+      },
+    },
+    { type: "array", items: { type: "object" } },
+    [[{ kind: "click" }, { kind: "type" }]],
+  ],
+  [
+    "referenced elements",
+    { type: "array", items: { $ref: "#/$defs/ordinal" } },
+    { type: "array", items: { type: "integer" } },
+    [[0, 7]],
+  ],
+  [
+    "nested array elements",
+    {
+      type: "array",
+      items: { type: "array", items: { type: "number" } },
+    },
+    { type: "array", items: { type: "array", items: { type: "number" } } },
+    [[[1.5], []]],
+  ],
+  [
+    "mixed scalar and object elements",
+    {
+      type: "array",
+      items: { anyOf: [{ type: "string" }, { type: "object" }] },
+    },
+    { type: "array", items: { type: ["string", "object"] } },
+    [["text", {}]],
+  ],
+  [
+    "elements that may be arrays or scalars",
+    {
+      type: "array",
+      items: {
+        anyOf: [
+          { type: "string" },
+          { type: "array", items: { type: "string" } },
+        ],
+      },
+    },
+    { type: "array", items: {} },
+    [["text", ["nested"]]],
+  ],
+  [
+    "tuple elements",
+    {
+      type: "array",
+      prefixItems: [{ type: "integer" }],
+      items: { type: "string" },
+    },
+    { type: "array", items: {} },
+    [[1, "rest"]],
+  ],
+  [
+    "nullable arrays",
+    {
+      anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }],
+    },
+    {
+      anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }],
+    },
+    [null, ["text"]],
+  ],
+] as const;
+
+describe("reduced array item presentation", () => {
+  it.each(reducedArrayCases)(
+    "advertises %s without placing items beside a non-array type",
+    (_label, property, expected, canonicalValues) => {
+      const { advertised, validateCanonical, validateAdvertised } =
+        reducedPresentation(
+          { values: property },
+          { ordinal: { type: "integer", minimum: 0 } },
+        );
+      expect(advertised).toEqual({ values: expected });
+      for (const values of canonicalValues) {
+        expect(validateCanonical({ values })).toBe(true);
+        expect(validateAdvertised({ values })).toBe(true);
+      }
+    },
+  );
+
+  it("stops deriving element types at the nested array depth bound", () => {
+    let property: Record<string, unknown> = { type: "string" };
+    for (let level = 0; level < 5; level += 1)
+      property = { type: "array", items: property };
+    const { advertised, validateAdvertised } = reducedPresentation({
+      values: property,
+    });
+    expect(advertised).toEqual({
+      values: {
+        type: "array",
+        items: {
+          type: "array",
+          items: { type: "array", items: { type: "array", items: {} } },
+        },
+      },
+    });
+    expect(validateAdvertised({ values: [[[[["deep"]]]]] })).toBe(true);
+  });
+
+  it("keeps an inline forbidden value as the empty schema under not", () => {
+    const canonical = {
+      type: "object",
+      properties: { view: { type: "string" } },
+      if: { properties: { view: { const: "x" } }, required: ["view"] },
+      then: { required: ["view"] },
+      else: { properties: { view: { not: {} } } },
+    };
+    const { schema, presentation } = compactAdvertisedInputSchema(
+      canonical,
+      13 * 1024,
+    );
+    expect(presentation).toBe("inline");
+    expect(schema).toHaveProperty(["else", "properties", "view", "not"], {});
+    const canonicalValidate = new Ajv2020({ strict: false }).compile(canonical);
+    const advertisedValidate = new Ajv2020({ strict: false }).compile(schema);
+    for (const input of [{}, { view: "x" }, { view: "y" }])
+      expect(advertisedValidate(input)).toBe(canonicalValidate(input));
+  });
 });

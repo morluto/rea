@@ -3,10 +3,7 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import type { WasmArtifactPort } from "./WasmArtifactPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectWasmArtifactInputSchema,
@@ -14,9 +11,9 @@ import {
   wasmArtifactMatchesSubject,
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
 } from "../../domain/wasm/wasmArtifact.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_wasm_artifact";
 
@@ -37,24 +34,18 @@ export class WasmArtifactService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
-    const input = inspectWasmArtifactInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectWasmArtifactInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
     const timeout =
-      input.data.command_timeout_ms ??
+      input.value.command_timeout_ms ??
       this.settings?.().overrides["wasm.command_timeout_ms"] ??
       DEFAULT_WASM_COMMAND_TIMEOUT_MS;
-    const inspected = await this.provider.inspect(input.data, {
+    const inspected = await this.provider.inspect(input.value, {
       ...options,
       commandTimeoutMs: timeout,
     });
@@ -63,14 +54,15 @@ export class WasmArtifactService {
     const report = wasmArtifactSchema.safeParse(execution.result);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
+      report.data.artifact.path !== input.value.path ||
+      execution.subject.path !== input.value.path ||
       report.data.tool_profile.timeout_ms !== timeout ||
       !wasmArtifactMatchesSubject(report.data.artifact, execution.subject) ||
       JSON.stringify(report.data.glue.map((item) => item.artifact.path)) !==
-        JSON.stringify(input.data.glue_paths) ||
+        JSON.stringify(input.value.glue_paths) ||
       JSON.stringify(report.data.candidates.map((item) => item.path)) !==
         JSON.stringify([
-          ...new Set([input.data.path, ...input.data.candidate_paths]),
+          ...new Set([input.value.path, ...input.value.candidate_paths]),
         ])
     )
       return err(
@@ -82,7 +74,7 @@ export class WasmArtifactService {
     return completeProviderEvidence(
       createAnalysisExecutionEvidence(
         OPERATION,
-        input.data,
+        input.value,
         { ...execution, result: report.data },
         "observed",
       ),

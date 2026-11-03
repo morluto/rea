@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { address, document } from "./toolContractHelpers.js";
 import {
+  MAX_BYTE_SEARCH_MATCHES,
   bytePatternFields,
   validateBytePattern,
 } from "../domain/native/bytePattern.js";
@@ -17,7 +18,7 @@ export const HOPPER_MEMORY_TOOL_DEFINITIONS = [
         document,
         start: address.optional(),
         end: address.optional(),
-        limit: z.int().min(1).max(1000).default(100),
+        limit: z.int().min(1).max(MAX_BYTE_SEARCH_MATCHES).default(100),
         cursor: z.string().min(1).optional(),
       })
       .superRefine(validateBytePattern),

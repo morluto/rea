@@ -1,6 +1,8 @@
 import { join } from "node:path";
 import { z } from "zod";
 
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+
 import {
   DECOMPILE_DIRECTORY_INDEX_NAME,
   DECOMPILE_DIRECTORY_INLINE_FAILURE_LIMIT,
@@ -33,6 +35,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   classifyOutputPath,
   DecompileExport,
+  exportOutputFailure,
   type ExportIdentity,
 } from "./exportTree.js";
 import {
@@ -173,6 +176,7 @@ export const decompileAll = async (
   const callerStoppedPublish =
     !published.ok &&
     published.error instanceof AnalysisCancelledError &&
+    !published.error.cleanupIncomplete &&
     isAborted(signal);
   const failures = [
     ...(!published.ok && !callerStoppedPublish ? [published.error] : []),
@@ -181,6 +185,14 @@ export const decompileAll = async (
   ];
   const primary = failures[0];
   if (primary !== undefined) {
+    if (
+      isAborted(signal) &&
+      !(
+        primary instanceof AnalysisCancelledError &&
+        primary.cause === signal?.reason
+      )
+    )
+      primary.retainSecondaryFailure(cancelled(signal));
     for (const failure of failures.slice(1))
       primary.retainSecondaryFailure(failure);
     return !closed.ok &&
@@ -191,7 +203,7 @@ export const decompileAll = async (
             primary,
             closed.error,
             "decompile_all",
-          ).bindCleanupDependencies([closed.error]),
+          ).bindCleanupDependencies([primary, closed.error]),
         )
       : err(primary);
   }
@@ -346,6 +358,7 @@ const publishSelected = async (
       procedure.address,
       input.signal,
     );
+    if (typeof existing === "object") return err(existing.error);
     if (isAborted(input.signal)) return err(cancelled(input.signal));
     if (existing === "skip") {
       input.state.skipped += 1;
@@ -413,13 +426,12 @@ const attemptOne = async (
         "The function file already exists and does not match this export.",
     };
     recordFailure(input.state, procedure, reason);
+    const retained = retainedObservation(input.session, procedure.address);
     const appended = await input.session.append(
-      failureRecord(
-        procedure,
-        retainedBody(input.session, procedure.address),
-        reason,
-        { relativePath: input.session.pathFor(procedure.address) },
-      ),
+      failureRecord(procedure, retained.body, reason, {
+        relativePath: input.session.pathFor(procedure.address),
+        ...retained.options,
+      }),
     );
     return { result: appended, bodySupport };
   }
@@ -429,13 +441,12 @@ const attemptOne = async (
       message: "The existing function file could not be read.",
     };
     recordFailure(input.state, procedure, reason);
+    const retained = retainedObservation(input.session, procedure.address);
     const appended = await input.session.append(
-      failureRecord(
-        procedure,
-        retainedBody(input.session, procedure.address),
-        reason,
-        { relativePath: input.session.pathFor(procedure.address) },
-      ),
+      failureRecord(procedure, retained.body, reason, {
+        relativePath: input.session.pathFor(procedure.address),
+        ...retained.options,
+      }),
     );
     return { result: appended, bodySupport };
   }
@@ -465,7 +476,7 @@ const publishOne = async (input: {
     input.signal,
     input.bodySupport,
   );
-  if (body.kind === "cancelled")
+  if (body.kind === "error")
     return { result: err(body.error), bodySupport: input.bodySupport };
   if (body.kind === "unavailable") input.state.bodyUnavailable = true;
   // Caveats of the observations this attempt used. The journal record keeps
@@ -489,6 +500,9 @@ const publishOne = async (input: {
     { procedure: input.procedure.address },
     executionOptions(input.signal),
   );
+  // A provider still owns cleanup even if the caller aborted meanwhile.
+  if (!decompiled.ok && decompiled.error.cleanupIncomplete)
+    return { result: decompiled, bodySupport: body.support };
   if (isAborted(input.signal))
     return { result: err(cancelled(input.signal)), bodySupport: body.support };
   if (!decompiled.ok) {
@@ -546,6 +560,8 @@ const publishOne = async (input: {
     "utf8",
   );
   const committed = await input.session.commitFunctionFile(relativePath, bytes);
+  if (committed.status === "error")
+    return { result: err(committed.error), bodySupport: body.support };
   if (committed.status === "conflict" || committed.status === "io") {
     const reason =
       committed.status === "conflict"
@@ -613,7 +629,7 @@ const readBody = async (
       readonly fact: FunctionBody;
       readonly support: "unavailable";
     }
-  | { readonly kind: "cancelled"; readonly error: AnalysisCancelledError }
+  | { readonly kind: "error"; readonly error: AnalysisError }
 > => {
   if (support === "unavailable")
     return {
@@ -627,8 +643,11 @@ const readBody = async (
     executionOptions(signal),
   );
   if (!observed.ok) {
-    if (observed.error instanceof AnalysisCancelledError)
-      return { kind: "cancelled", error: observed.error };
+    if (
+      observed.error.cleanupIncomplete ||
+      observed.error instanceof AnalysisCancelledError
+    )
+      return { kind: "error", error: observed.error };
     if (observed.error instanceof AnalysisCapabilityUnavailableError)
       return {
         kind: "unavailable",
@@ -690,7 +709,12 @@ const readBody = async (
   };
 };
 
-type ExistingFile = "skip" | "write" | "conflict" | "io";
+type ExistingFile =
+  | "skip"
+  | "write"
+  | "conflict"
+  | "io"
+  | { readonly error: AnalysisError };
 
 const existingFile = async (
   session: DecompileExport,
@@ -707,6 +731,13 @@ const existingFile = async (
   const digest = await session
     .hashFile(record.relative_path, signal)
     .catch((cause: unknown) => cause);
+  if (digest instanceof ArtifactReaderFailure && digest.cleanup !== undefined)
+    return {
+      error: exportOutputFailure(
+        "decompile file verification cleanup failed",
+        digest,
+      ),
+    };
   if (typeof digest === "string")
     return digest === record.sha256 ? "skip" : "conflict";
   return nodeAbsent(digest) ? "write" : "io";
@@ -908,12 +939,19 @@ const unavailableBody = (reason: string): FunctionBody => ({
   reason: reason.length === 0 ? "unavailable" : reason,
 });
 
-/** Keep the journal's body fact when a conflicting file is left unchanged. */
-const retainedBody = (
+/** Preserve the observations and their caveats when a file cannot be reused. */
+const retainedObservation = (
   session: DecompileExport,
   address: string,
-): FunctionBody => {
-  return session.record(address)?.body ?? unavailableBody("not rewritten");
+): { body: FunctionBody; options: { limitations?: readonly string[] } } => {
+  const record = session.record(address);
+  return {
+    body: record?.body ?? unavailableBody("not rewritten"),
+    options:
+      record?.limitations === undefined
+        ? {}
+        : { limitations: record.limitations },
+  };
 };
 
 const exportLimitations = (

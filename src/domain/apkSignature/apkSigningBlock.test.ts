@@ -102,7 +102,8 @@ describe("APK signing block locator", () => {
     if (!tail.ok) return;
     const block = locateApkSigningBlock(bytes, tail.value);
     expect(block.ok).toBe(true);
-    if (!block.ok || block.value === null) return expect(block).toBeTruthy();
+    if (!block.ok || block.value === null)
+      throw new Error("Expected an APK signing block");
     expect(block.value.pairs.map((p) => p.id)).toEqual([
       APK_BLOCK_ID.signatureV2,
       APK_BLOCK_ID.signatureV3,

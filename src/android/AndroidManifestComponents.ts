@@ -1,16 +1,17 @@
-import type { Element, Node } from "@xmldom/xmldom";
-
 import { parseXmlDocument } from "../domain/xmlDocument.js";
-
-/** Component kinds a decoded AndroidManifest can declare under <application>. */
-export const ANDROID_COMPONENT_KINDS = [
-  "activity",
-  "activity-alias",
-  "service",
-  "receiver",
-  "provider",
-] as const;
-export type AndroidComponentKind = (typeof ANDROID_COMPONENT_KINDS)[number];
+import {
+  androidAttribute,
+  plainAttribute,
+  childNodes,
+  isManifestElement,
+} from "./AndroidManifestXml.js";
+import { createAndroidManifestDetailsReader } from "./AndroidManifestComponentDetails.js";
+import {
+  ANDROID_COMPONENT_KINDS,
+  type AndroidComponentKind,
+  type ObservedAndroidManifestComponent,
+  type ObservedAndroidManifestComponentInventory,
+} from "../domain/android/androidManifestComponents.js";
 
 /** Bounds keep a hostile manifest from exhausting the inspection. */
 export const ANDROID_MANIFEST_LIMITS = {
@@ -23,102 +24,22 @@ export const ANDROID_MANIFEST_LIMITS = {
   authorityBytes: 1024 * 1024,
   /** Total copied permission-value bytes, including inherited defaults. */
   permissionBytes: 1024 * 1024,
+  /** Total copied android:process bytes across projected declarations. */
+  processBytes: 1024 * 1024,
+  /** Copied nested declaration values; complete text remains retained. */
+  detailBytes: 1024 * 1024,
 } as const;
-
-/** The attribute namespace every component facet uses. */
-const ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android";
-
-export interface AndroidManifestComponent {
-  readonly kind: AndroidComponentKind;
-  /** Class name as written in the manifest. */
-  readonly declared_name: string;
-  /**
-   * Fully qualified name with the manifest package applied, or the declared
-   * name unchanged when it cannot be resolved or its syntax is not
-   * established.
-   */
-  readonly name: string;
-  /**
-   * Declared android:exported, or null when the attribute is absent or set
-   * to a value other than the literals true or false, whose effective state
-   * the parser cannot resolve.
-   */
-  readonly exported: boolean | null;
-  /**
-   * Android's default export state when android:exported is absent: the
-   * intent-filter rule for activities, services, receivers and aliases, and
-   * the target-SDK rule for providers. Null when the provider rule cannot be
-   * evaluated because the target SDK is unknown, or when the attribute is
-   * present but not a literal boolean, since the default does not govern a
-   * declared value.
-   */
-  readonly exported_default: boolean | null;
-  readonly permission: string | null;
-  /** Source of the effective permission projection; unknown when its copy is capped. */
-  readonly permission_source: "component" | "application" | "none" | "unknown";
-  readonly intent_filter_count: number;
-  readonly actions: readonly string[];
-  readonly categories: readonly string[];
-  /** Declared android:foregroundServiceType on services; null otherwise. */
-  readonly foreground_service_type: string | null;
-  /** Exact declared provider authority segments, split on ";"; malformed segments remain raw. */
-  readonly authorities: readonly string[] | null;
-  /** Exact declared android:targetActivity on activity-alias; malformed references remain raw and make the inventory partial. */
-  readonly target_activity: string | null;
-}
-
-export interface AndroidManifestComponentInventory {
-  readonly status: "complete" | "partial" | "unavailable";
-  readonly items: readonly AndroidManifestComponent[];
-  readonly limitations: readonly string[];
-}
 
 const PARTIAL_LIMITATION =
   "The decoded manifest text is truncated, so its component inventory is not established; the retained manifest is partial.";
 
 const unavailable = (
   limitation: string,
-): AndroidManifestComponentInventory => ({
+): ObservedAndroidManifestComponentInventory => ({
   status: "unavailable",
   items: [],
   limitations: [limitation],
 });
-
-const childNodes = (element: Element): readonly Node[] =>
-  Array.from(element.childNodes);
-
-/** Manifest tags are unnamespaced; Android's namespace qualifies attributes. */
-const isManifestElement = (node: Node | null): node is Element =>
-  node !== null &&
-  node.nodeType === 1 &&
-  (node as Element).namespaceURI === null;
-
-/** Read an unnamespaced attribute, the shape manifest `package` uses. */
-const plainAttribute = (element: Element, name: string): string | null => {
-  const value = element.getAttribute(name);
-  return value === "" ? null : value;
-};
-
-/**
- * Read an android-namespaced attribute. XML prefixes are aliases, so a
- * same-local-name attribute from another namespace is never a match.
- */
-const androidAttribute = (
-  element: Element,
-  localName: string,
-): string | null => {
-  const attributes = element.attributes;
-  for (let index = 0; index < attributes.length; index += 1) {
-    const node = attributes.item(index);
-    if (node === null || node.localName !== localName) continue;
-    if (node.namespaceURI === ANDROID_NAMESPACE) return node.nodeValue;
-    // Without namespace information (an undeclared prefix), the conventional
-    // android: prefix is the only remaining signal.
-    if (node.namespaceURI === null && node.prefix === "android")
-      return node.nodeValue;
-  }
-  return null;
-};
 
 /** Android application-ID grammar, with the platform package exception. */
 const hasSupportedAndroidPackageNameSyntax = (name: string): boolean =>
@@ -184,37 +105,6 @@ const androidTargetSdkLevel = (targetSdk: string | null): number | null => {
     : null;
 };
 
-/**
- * Collect unique intent-filter actions and categories. The value budget is
- * shared across both arrays, matching the stated per-component bound.
- */
-const intentValues = (
-  filters: readonly Element[],
-): { actions: string[]; categories: string[]; truncated: boolean } => {
-  const actions: string[] = [];
-  const categories: string[] = [];
-  let truncated = filters.length > ANDROID_MANIFEST_LIMITS.intentFilters;
-  let budget = ANDROID_MANIFEST_LIMITS.intentValues;
-  for (const filter of filters.slice(0, ANDROID_MANIFEST_LIMITS.intentFilters))
-    for (const member of childNodes(filter)) {
-      if (!isManifestElement(member)) continue;
-      const element = member;
-      if (element.nodeName !== "action" && element.nodeName !== "category")
-        continue;
-      const value = androidAttribute(element, "name");
-      if (value === null) continue;
-      const target = element.nodeName === "action" ? actions : categories;
-      if (target.includes(value)) continue;
-      if (budget <= 0) {
-        truncated = true;
-        continue;
-      }
-      budget -= 1;
-      target.push(value);
-    }
-  return { actions, categories, truncated };
-};
-
 /** Split a provider authorities declaration within its own bound. */
 const providerAuthorities = (
   declared: string,
@@ -262,7 +152,7 @@ export const parseAndroidManifestComponents = (
   coverage: "complete" | "partial",
   declaredTargetSdk: string | null = null,
   minimumSdk: string | null = null,
-): AndroidManifestComponentInventory => {
+): ObservedAndroidManifestComponentInventory => {
   if (coverage === "partial")
     return {
       status: "partial",
@@ -295,7 +185,7 @@ export const parseAndroidManifestComponents = (
   const packageNameBytes =
     packageName === null ? 0 : Buffer.byteLength(packageName);
   const limitations: string[] = [];
-  const items: AndroidManifestComponent[] = [];
+  const items: ObservedAndroidManifestComponent[] = [];
   let truncated = false;
   let applicationSeen = false;
   let unnamed = 0;
@@ -313,9 +203,18 @@ export const parseAndroidManifestComponents = (
   let capacityTruncated = false;
   let permissionBudgetLimited = false;
   let unresolvedPermissionTokens = 0;
+  let nonliteralEnabled = 0;
+  let nonliteralGrantUriPermissions = 0;
+  let processBudgetLimited = false;
   let nameBudget = ANDROID_MANIFEST_LIMITS.resolvedNameBytes;
   let authorityBudget = ANDROID_MANIFEST_LIMITS.authorityBytes;
   let permissionBudget = ANDROID_MANIFEST_LIMITS.permissionBytes;
+  let detailBudgetLimited = false;
+  let unsupportedFilterMembers = 0;
+  const readDetails = createAndroidManifestDetailsReader(
+    manifestText,
+    ANDROID_MANIFEST_LIMITS,
+  );
   const children = childNodes(root);
   let targetSdkDeclared = false;
   let minimumSdkDeclared = false;
@@ -375,11 +274,21 @@ export const parseAndroidManifestComponents = (
         continue;
       }
       const unresolvedName = containsUnresolvedToken(declared);
-      const filters = childNodes(component).filter(
-        (entry): entry is Element =>
-          isManifestElement(entry) && entry.nodeName === "intent-filter",
-      );
-      const collected = intentValues(filters);
+      const details = readDetails(component, items.length + unnamed);
+      const collected = {
+        actions: details.actions,
+        categories: details.categories,
+        truncated: details.legacyTruncated,
+      };
+      if (details.partial) truncated = true;
+      if (details.detailLimited) detailBudgetLimited = true;
+      unsupportedFilterMembers += details.unsupported;
+      if (details.processLimited) {
+        processBudgetLimited = true;
+        capacityTruncated = true;
+      }
+      if (details.nonliteralEnabled) nonliteralEnabled += 1;
+      if (details.nonliteralGrant) nonliteralGrantUriPermissions += 1;
       if (collected.truncated) {
         truncated = true;
         capacityTruncated = true;
@@ -435,7 +344,7 @@ export const parseAndroidManifestComponents = (
             precedingActivityTargetNames.add(bareName);
         }
       }
-      let authorities: readonly string[] | null = null;
+      let authorities: string[] | null = null;
       if (component.nodeName === "provider") {
         if (
           androidAttribute(component, "readPermission") !== null ||
@@ -549,7 +458,7 @@ export const parseAndroidManifestComponents = (
         declaredExported === null &&
         targetSdkLevel !== null &&
         targetSdkLevel >= 31 &&
-        filters.length > 0 &&
+        details.filterCount > 0 &&
         (component.nodeName === "activity" ||
           component.nodeName === "activity-alias" ||
           component.nodeName === "service" ||
@@ -557,7 +466,7 @@ export const parseAndroidManifestComponents = (
       const filteredExportUnknown =
         declaredExported === null &&
         targetSdkLevel === null &&
-        filters.length > 0 &&
+        details.filterCount > 0 &&
         (component.nodeName === "activity" ||
           component.nodeName === "activity-alias" ||
           component.nodeName === "service" ||
@@ -582,10 +491,10 @@ export const parseAndroidManifestComponents = (
             ? null
             : component.nodeName === "provider"
               ? providerDefault
-              : filters.length > 0,
+              : details.filterCount > 0,
         permission,
         permission_source: effectivePermissionSource,
-        intent_filter_count: filters.length,
+        intent_filter_count: details.filterCount,
         actions: collected.actions,
         categories: collected.categories,
         foreground_service_type:
@@ -594,6 +503,7 @@ export const parseAndroidManifestComponents = (
             : null,
         authorities,
         target_activity: targetActivity,
+        ...details.facts,
       });
     }
   }
@@ -646,6 +556,14 @@ export const parseAndroidManifestComponents = (
     limitations.push(
       `${String(nonliteralExported)} component declaration(s) set android:exported to a value other than the literals true or false (for example a resource reference), so their effective export state is unknown and the Android default does not apply.`,
     );
+  if (nonliteralEnabled > 0)
+    limitations.push(
+      `${String(nonliteralEnabled)} component declaration(s) set android:enabled to a nonliteral boolean; the declared enabled state is unknown.`,
+    );
+  if (nonliteralGrantUriPermissions > 0)
+    limitations.push(
+      `${String(nonliteralGrantUriPermissions)} provider(s) set android:grantUriPermissions to a nonliteral boolean; the declared URI-grant state is unknown.`,
+    );
   if (unresolvedPackages > 0) {
     limitations.push(
       `${String(unresolvedPackages)} package-relative component name(s) remain unresolved because the manifest package is absent or contains a resource/placeholder token, or its syntax is unsupported; the declared name is retained.`,
@@ -667,6 +585,18 @@ export const parseAndroidManifestComponents = (
   if (permissionBudgetLimited)
     limitations.push(
       `Projected component permission values are capped at ${String(ANDROID_MANIFEST_LIMITS.permissionBytes)} total bytes; omitted copies have permission_source "unknown".`,
+    );
+  if (detailBudgetLimited)
+    limitations.push(
+      `Nested component declarations reached the ${String(ANDROID_MANIFEST_LIMITS.intentValues)}-record per-component or ${String(ANDROID_MANIFEST_LIMITS.detailBytes)}-byte shared copy bound; affected declaration coverage is partial. Read the retained manifest at each source location for omitted facts.`,
+    );
+  if (unsupportedFilterMembers > 0)
+    limitations.push(
+      `${String(unsupportedFilterMembers)} intent-filter child declaration(s) use unsupported constructs; affected filter coverage is partial and the declarations remain in the retained manifest.`,
+    );
+  if (processBudgetLimited)
+    limitations.push(
+      `Projected component process declarations are capped at ${String(ANDROID_MANIFEST_LIMITS.processBytes)} total bytes; omitted values are null.`,
     );
   if (unresolvedPermissionTokens > 0) {
     limitations.push(
@@ -691,7 +621,7 @@ export const parseAndroidManifestComponents = (
   }
   if (capacityTruncated)
     limitations.push(
-      `The component inventory reached a capacity limit: ${String(ANDROID_MANIFEST_LIMITS.components)} declarations, ${String(ANDROID_MANIFEST_LIMITS.intentFilters)} filters or ${String(ANDROID_MANIFEST_LIMITS.intentValues)} values per component, ${String(ANDROID_MANIFEST_LIMITS.authorities)} authorities per provider, ${String(ANDROID_MANIFEST_LIMITS.authorityBytes)} total authority bytes, or ${String(ANDROID_MANIFEST_LIMITS.permissionBytes)} total permission bytes.`,
+      `The component inventory reached a capacity limit: ${String(ANDROID_MANIFEST_LIMITS.components)} declarations, ${String(ANDROID_MANIFEST_LIMITS.intentFilters)} filters or ${String(ANDROID_MANIFEST_LIMITS.intentValues)} values per component, ${String(ANDROID_MANIFEST_LIMITS.authorities)} authorities per provider, ${String(ANDROID_MANIFEST_LIMITS.authorityBytes)} total authority bytes, or ${String(ANDROID_MANIFEST_LIMITS.permissionBytes)} total permission bytes, or ${String(ANDROID_MANIFEST_LIMITS.processBytes)} total process bytes.`,
     );
   return {
     status: truncated ? "partial" : "complete",

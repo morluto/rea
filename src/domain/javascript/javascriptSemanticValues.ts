@@ -42,7 +42,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { readSemanticRequireOrigin } from "./javascriptSemanticRequireOriginSlot.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   readExactJavaScriptLiteral,
@@ -721,8 +721,10 @@ const evaluateExpressionValue = (
   if (t.isTemplateLiteral(node)) return evaluateTemplate(node, context);
   if (t.isConditionalExpression(node) || t.isLogicalExpression(node))
     return mergeValues(
-      semanticSelectedBranches(node, context).map((branch) =>
-        evaluateExpression(branch, nestedContext(context)),
+      semanticSelectedBranches(node, context).map(
+        (branch) =>
+          branch.value ??
+          evaluateExpression(branch.node, nestedContext(context)),
       ),
     );
   if (t.isObjectExpression(node)) return evaluateObject(node, context);
@@ -774,27 +776,39 @@ const evaluateTemplate = (
   return primitiveSet(candidates);
 };
 
+/**
+ * A branch that may produce the expression's value. A logical left operand
+ * carries the value its selection already evaluated, so value consumers reuse
+ * it instead of re-evaluating that operand; re-evaluating it at every level of
+ * a left-nested `a || b || c` chain doubles the work per operand.
+ */
+interface SemanticSelectedBranch {
+  readonly node: t.Node;
+  readonly value?: JavaScriptSemanticValue;
+}
+
 /** Value and provenance selection consume the same established branch facts. */
 const semanticSelectedBranches = (
   node: t.ConditionalExpression | t.LogicalExpression,
   context: EvaluationContext,
-): readonly t.Node[] => {
+): readonly SemanticSelectedBranch[] => {
   if (t.isConditionalExpression(node)) {
     const test = evaluateExpression(node.test, nestedContext(context));
     const choice = semanticCondition(test, Boolean);
     return choice === undefined
-      ? [node.consequent, node.alternate]
-      : [choice ? node.consequent : node.alternate];
+      ? [{ node: node.consequent }, { node: node.alternate }]
+      : [{ node: choice ? node.consequent : node.alternate }];
   }
-  const left = evaluateExpression(node.left, nestedContext(context));
+  const value = evaluateExpression(node.left, nestedContext(context));
+  const left = { node: node.left, value };
   const choice = logicalRightOperand(
     node.operator,
-    semanticCondition(left, Boolean),
-    semanticCondition(left, (value) => value === null, false),
+    semanticCondition(value, Boolean),
+    semanticCondition(value, (candidate) => candidate === null, false),
   );
   return choice === undefined
-    ? [node.left, node.right]
-    : [choice ? node.right : node.left];
+    ? [left, { node: node.right }]
+    : [choice ? { node: node.right } : left];
 };
 
 /** All retained alternatives must agree before discarding a branch. */
@@ -1263,7 +1277,7 @@ const provenanceForExpression = (
       expressionDepth: context.expressionDepth + unwrapped.depth,
     });
   }
-  const required = semanticRequireOrigin(node, context.state);
+  const required = readSemanticRequireOrigin(node, context.state);
   if (required !== undefined)
     return semanticOriginsProvenance([required.origin]);
   if (t.isSequenceExpression(node)) {
@@ -1320,7 +1334,7 @@ const provenanceForExpression = (
   }
   if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
     const candidates = semanticSelectedBranches(node, context).map((branch) =>
-      provenanceForExpression(branch, nestedContext(context)),
+      provenanceForExpression(branch.node, nestedContext(context)),
     );
     const origins = uniqueSemanticOrigins(
       candidates.flatMap((candidate) => candidate.origins),

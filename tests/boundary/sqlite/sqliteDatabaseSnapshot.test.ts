@@ -9,6 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import type { StableArtifactFileSystem } from "../../../src/artifacts/readStableArtifact.js";
@@ -227,7 +228,8 @@ it.each(["activate", "replace", "remove"])(
       },
     };
     await expect(capture(fileSystem)).rejects.toMatchObject({
-      reason: "integrity",
+      _tag: "SqliteSnapshotAcquisitionFailure",
+      operationCause: { reason: "integrity" },
     });
   },
 );
@@ -252,7 +254,8 @@ it("refuses an activated journal even when filesystem metadata cannot distinguis
     },
   };
   await expect(capture(fileSystem)).rejects.toMatchObject({
-    reason: "integrity",
+    _tag: "SqliteSnapshotAcquisitionFailure",
+    operationCause: { reason: "integrity" },
   });
 });
 
@@ -276,7 +279,16 @@ it("rejects a database changed after its copy but before WAL acquisition", async
     },
   };
   await expect(capture(fileSystem)).rejects.toMatchObject({
-    reason: "integrity",
+    _tag: "SqliteSnapshotAcquisitionFailure",
+    operationCause: { reason: "integrity" },
+    completedMembers: expect.arrayContaining([
+      {
+        role: "database",
+        path: database.path,
+        sha256: createHash("sha256").update(initial).digest("hex"),
+        bytes: initial.length,
+      },
+    ]),
   });
   expect(changed).toBe(true);
   expect(
@@ -303,7 +315,8 @@ it.each(["-wal", "-journal"] as const)(
       },
     };
     await expect(capture(fileSystem)).rejects.toMatchObject({
-      reason: "integrity",
+      _tag: "SqliteSnapshotAcquisitionFailure",
+      operationCause: { reason: "integrity" },
     });
     expect(created).toBe(true);
   },

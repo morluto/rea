@@ -62,6 +62,7 @@ export const registerIl2cppCommands = (
         logCliCommand(logger, CLI_COMMANDS.inspectIl2cppMetadata, async () => {
           const service = createIl2cppMetadataService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () => {
               const input = {
                 path: absoluteCallerPath(args.path),

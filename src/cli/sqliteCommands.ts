@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { createSqliteDatabaseService } from "../composition/sqlite.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -7,7 +8,7 @@ import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { inspectSqliteDatabaseInputSchema } from "../domain/sqlite/sqliteDatabase.js";
 
 /** Resolve an operator-selected SQLite snapshot through the shared inspection workflow. */
@@ -53,7 +54,8 @@ export const registerSqliteCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectSqliteDatabase, () =>
-          finishAnalysisCommand(
+          finishCliEvidenceCommand(
+            args.path,
             () =>
               service.inspect(
                 {
@@ -80,7 +82,7 @@ export const registerSqliteCommands = (
             "sqlite",
             "inspect_sqlite_database",
             signal,
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });

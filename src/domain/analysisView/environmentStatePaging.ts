@@ -6,6 +6,9 @@ import {
 /** Query parameters that page or bound a list without filtering it. */
 const PAGING_PARAMETERS = new Set([
   "limit",
+  "max_results",
+  "maxresults",
+  "maxsize",
   "offset",
   "page",
   "per_page",
@@ -44,6 +47,9 @@ export const startsAtBeginning = (query: string | undefined): boolean => {
 /** Paging parameters that bound how many items a page holds. */
 const PAGE_SIZE_PARAMETERS = new Set([
   "limit",
+  "max_results",
+  "maxresults",
+  "maxsize",
   "per_page",
   "perpage",
   "page_size",

@@ -10,7 +10,6 @@ import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
 import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
 import { inspectUnicornProvider } from "./unicorn/UnicornDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
-import { parseJebMcpEndpoint } from "./jeb/JebMcpEndpoint.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
@@ -51,17 +50,9 @@ export const createSystemDoctorHost = (
     }
     return registration;
   };
-  const selectedJebEndpoint = environment.REA_JEB_MCP_URL;
-  const selectedJebRegistrationEnvironment: Readonly<Record<string, string>> =
-    selectedJebEndpoint !== undefined &&
-    selectedJebEndpoint.length > 0 &&
-    parseJebMcpEndpoint(selectedJebEndpoint).ok
-      ? { REA_JEB_MCP_URL: selectedJebEndpoint }
-      : {};
   return systemDoctorHost({
     environment,
     ...(signal === undefined ? {} : { signal }),
-    providerRegistrationEnvironment: () => selectedJebRegistrationEnvironment,
     resolveProviderRequestBudget: async (
       analysisProvider,
       registrationEnvironment,

@@ -61,12 +61,12 @@ it("discovers configuration without probing and admits only verified targets", a
     diagnostics: { version_probed: false },
   });
   expect(await fakeKunaCalls(kuna)).toEqual([]);
+  const capabilities = configured.capabilities();
+  expect(capabilities.length).toBeGreaterThan(0);
   expect(
-    configured
-      .capabilities()
-      .every(
-        ({ available, cachePolicy }) => available && cachePolicy === "live",
-      ),
+    capabilities.every(
+      ({ available, cachePolicy }) => available && cachePolicy === "live",
+    ),
   ).toBe(true);
 
   const executable = (
@@ -181,18 +181,41 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
 });
 
 it("commits the observed Kuna release and digest to the analysis profile", async () => {
-  const { profile } = await session("rea-kuna-profile-");
+  const { profile, kuna } = await session("rea-kuna-profile-", {
+    version: { stdout: "kuna 1.989\n" },
+  });
 
   expect(profile).toMatchObject({
-    provider: { id: "kuna", name: "Kuna", version: "1.833" },
+    provider: { id: "kuna", name: "Kuna", version: "1.989" },
     parameters: {
-      kuna_version: "1.833",
+      kuna_version: "1.989",
       kuna_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
-      verified_release: true,
+      kuna_command: kuna,
       jobs: 1,
       cache_policy: "live",
     },
   });
+});
+
+it("reports an unverified release on observations without binding policy into the profile", async () => {
+  const { profile, open } = await session("rea-kuna-policy-", {
+    version: { stdout: "kuna 1.988\n" },
+  });
+  expect(profile.parameters).not.toHaveProperty("verified_release");
+  expect(profile.parameters).toMatchObject({
+    kuna_version: "1.988",
+    kuna_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+  });
+  const client = open();
+  const inventory = await run(client, "list_procedures");
+  const warning = "Kuna 1.988 is not REA's verified 1.989 release";
+  expect(inventory.limitations.join("\n")).toContain(warning);
+  const dossier = await run(client, "analyze_function", { procedure: "main" });
+  expect(dossier.limitations.join("\n")).toContain(warning);
+  expect(
+    (dossier.result as { limitations: string[] }).limitations.join("\n"),
+  ).toContain(warning);
+  await client.close();
 });
 
 it("lists the selected document without starting target analysis", async () => {
@@ -210,6 +233,39 @@ it("lists the selected document without starting target analysis", async () => {
   } finally {
     await client.close();
   }
+});
+
+it("qualifies only parallel project pseudocode, including dossier results", async () => {
+  const { open } = await session(
+    "rea-kuna-parallel-context-",
+    { delayMs: 300 },
+    { REA_KUNA_JOBS: "2" },
+  );
+  const client = open();
+  const caveat =
+    "Parallel Kuna project export does not propagate callee-first prototypes";
+  const cold = await run(client, "procedure_pseudo_code", {
+    procedure: "main",
+  });
+  expect(cold.rawResult).toMatchObject({ source: { kind: "single-function" } });
+  expect(cold.limitations.join("\n")).not.toContain(caveat);
+  await run(client, "procedure_assembly", { procedure: "main" });
+  const warm = await run(client, "procedure_pseudo_code", {
+    procedure: "main",
+  });
+  expect(warm.rawResult).toMatchObject({ source: { kind: "project-export" } });
+  expect(warm.limitations.join("\n")).toContain(caveat);
+  const dossier = await run(client, "analyze_function", { procedure: "main" });
+  expect(dossier.limitations.join("\n")).toContain(caveat);
+  expect(
+    (dossier.result as { limitations: string[] }).limitations.join("\n"),
+  ).toContain(caveat);
+  const missing = await run(client, "procedure_pseudo_code", {
+    procedure: "broken",
+  });
+  expect(missing.result).toBeNull();
+  expect(missing.limitations.join("\n")).not.toContain(caveat);
+  await client.close();
 });
 
 it("answers a cold request from one function, then serves the finished export", async () => {
@@ -843,7 +899,7 @@ it.each([
     behavior: { project: "hang" } as const,
     environment: { REA_KUNA_PROJECT_TIMEOUT_MS: "300" },
     cause: "AnalysisTimeoutError",
-    next: "To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above 300 ms or raise REA_KUNA_JOBS in the environment that starts REA. REA reads Kuna settings when it starts, so restart REA, then reopen the target.",
+    next: "To retry, set REA_KUNA_PROJECT_TIMEOUT_MS above 300 ms in the environment that starts REA. REA reads Kuna settings when it starts, so restart REA, then reopen the target.",
     details: {
       timeout_ms: 300,
       captured_output: { truncated: expect.any(Boolean) },
@@ -977,3 +1033,69 @@ it("leaves no private copy behind when workspace setup fails", async () => {
     else process.env.TMPDIR = previous;
   }
 });
+
+it.each([
+  ["c", "overwrite"],
+  ["c", "replace"],
+  ["asm", "overwrite"],
+  ["asm", "replace"],
+] as const)(
+  "rebuilds a changed %s export (%s) before producing dossier Evidence",
+  async (extension, mutation) => {
+    const { open, provider, kuna } = await session(
+      "rea-kuna-export-integrity-",
+    );
+    const client = open();
+    try {
+      const first = await run(client, "analyze_function", {
+        procedure: "main",
+      });
+      const source = (
+        first.rawResult as {
+          source: {
+            directory: string;
+            files: { file: string; file_sha256: string }[];
+          };
+        }
+      ).source;
+      const selected = source.files.find(({ file }) =>
+        file.endsWith(`.${extension}`),
+      );
+      if (selected === undefined) throw new Error("Missing exported facet");
+      const path = join(source.directory, selected.file);
+      const original = await readFile(path, "utf8");
+      const edited =
+        extension === "c"
+          ? original.replace("return 0", "return 9")
+          : original.replace("RET", "NOP");
+      expect(edited).not.toBe(original);
+      expect(Buffer.byteLength(edited)).toBe(Buffer.byteLength(original));
+      if (mutation === "replace") {
+        await writeFile(`${path}.replacement`, edited);
+        await rename(`${path}.replacement`, path);
+      } else await writeFile(path, edited);
+      const recovered = await run(client, "analyze_function", {
+        procedure: "main",
+      });
+      const recoveredSource = (recovered.rawResult as { source: typeof source })
+        .source;
+      for (const file of recoveredSource.files) {
+        const bytes = await readFile(
+          join(recoveredSource.directory, file.file),
+        );
+        expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+          file.file_sha256,
+        );
+      }
+      expect(recovered.result).toEqual(first.result);
+      expect(
+        (await fakeKunaCalls(kuna)).filter(
+          ({ argv }) => argv[0] === "decompile-project",
+        ),
+      ).toHaveLength(2);
+    } finally {
+      expect(await client.close()).toMatchObject({ ok: true });
+      expect(await provider.closeOwnedResources()).toMatchObject({ ok: true });
+    }
+  },
+);

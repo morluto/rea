@@ -1,8 +1,122 @@
 import { describe, expect, it } from "vitest";
 
-import { inspectNativeDispatchMetadata } from "./objcSwiftMetadata.js";
+import {
+  inspectNativeDispatchMetadata,
+  objcImplementationClassName,
+} from "./objcSwiftMetadata.js";
 
 describe("symbol-only Objective-C implementation identity", () => {
+  it.each([" ", "  ", "\t"])(
+    "interprets legacy symbol ownership with separator %j without rewriting retained facts",
+    (separator) => {
+      const metadata = inspectNativeDispatchMetadata(
+        [
+          {
+            address: "0x1000",
+            name: `-[StoreController(Actions)${separator}buildTapped:]`,
+          },
+        ],
+        1,
+      );
+      const current = metadata.objc_dispatch_implementations[0]!;
+      const { category: _category, ...record } = current;
+      const legacy = { ...record, class_name: "StoreController(Actions)" };
+      expect(objcImplementationClassName(legacy)).toBe("StoreController");
+      expect(legacy.class_name).toBe("StoreController(Actions)");
+      expect(legacy.evidence).toBe(current.evidence);
+      expect(objcImplementationClassName({ ...legacy, evidence: [] })).toBe(
+        legacy.class_name,
+      );
+      expect(
+        objcImplementationClassName({
+          ...legacy,
+          evidence: [
+            ...legacy.evidence,
+            {
+              ...legacy.evidence[0]!,
+              description:
+                "Provider symbol -[OtherController(Actions) buildTapped:]",
+            },
+          ],
+        }),
+      ).toBe(legacy.class_name);
+      expect(objcImplementationClassName({ ...legacy, category: null })).toBe(
+        legacy.class_name,
+      );
+      expect(
+        objcImplementationClassName({
+          ...legacy,
+          decode: { status: "decoded", reason: null },
+        }),
+      ).toBe(legacy.class_name);
+    },
+  );
+
+  it("parses symbol category ownership once and retains the original symbol evidence", () => {
+    const names = [
+      "-[StoreController(Actions) buildTapped:]",
+      "-[StoreController(OtherActions) buildTapped:]",
+    ];
+    const result = inspectNativeDispatchMetadata(
+      names.map((name) => ({ address: "0x1000", name })),
+      2,
+    );
+    expect(result.objc_classes.map(({ name }) => name)).toEqual([
+      "StoreController",
+    ]);
+    expect(result.objc_dispatch_implementations).toMatchObject([
+      {
+        class_name: "StoreController",
+        category: "Actions",
+        decode: { status: "partial", reason: "symbol_name_only" },
+        evidence: [{ description: `Provider symbol ${names[0]}` }],
+      },
+      {
+        class_name: "StoreController",
+        category: "OtherActions",
+        evidence: [{ description: `Provider symbol ${names[1]}` }],
+      },
+    ]);
+  });
+
+  it("retains an owner outside the category-symbol grammar without guessing a category", () => {
+    const result = inspectNativeDispatchMetadata(
+      [{ address: "0x1000", name: "-[StoreController(A)(B) buildTapped:]" }],
+      1,
+    );
+    expect(result.objc_dispatch_implementations[0]).toMatchObject({
+      class_name: "StoreController(A)(B)",
+    });
+    expect(result.objc_dispatch_implementations[0]).not.toHaveProperty(
+      "category",
+    );
+  });
+
+  it("orders distinct category identities independently of provider inventory order", () => {
+    const names = [
+      "-[StoreController(Actions) buildTapped:]",
+      "-[StoreController(OtherActions) buildTapped:]",
+    ];
+    const inspect = (ordered: string[]) =>
+      inspectNativeDispatchMetadata(
+        ordered.map((name) => ({ address: "0x1000", name })),
+        ordered.length,
+      );
+    const forward = inspect(names);
+    const reverse = inspect([...names].reverse());
+    expect(reverse).toEqual(forward);
+    expect(
+      reverse.objc_dispatch_implementations.map(({ category }) => category),
+    ).toEqual(["Actions", "OtherActions"]);
+    expect(
+      reverse.objc_dispatch_implementations.map(({ evidence }) =>
+        evidence.map(({ description }) => description),
+      ),
+    ).toEqual(names.map((name) => [`Provider symbol ${name}`]));
+  });
+});
+
+describe("symbol-only Objective-C implementation addresses", () => {
   it.each([
     { source: "0X00002000", canonical: "0x2000", numeric: 8192 },
     {
@@ -145,13 +259,14 @@ describe("ObjC/Swift metadata", () => {
     );
   });
 
-  it("projects every accepted Swift mangling prefix and counts it", () => {
+  it("projects every accepted Swift symbol spelling and counts it", () => {
     const names = [
       "$s5Store7launchyyF",
       "_$s5Store7launchyyF",
       "$S5Store7launchyyF",
       "_$S5Store7launchyyF",
       "_T05Store7launchyyF",
+      "__T05Store7launchyyF",
       "@__swiftmacro_5Store7launchfMf_",
       "$e5Store7launchyyF",
       "_$e5Store7launchyyF",
@@ -175,7 +290,7 @@ describe("ObjC/Swift metadata", () => {
     expect(result.coverage).toContainEqual(
       expect.objectContaining({
         facet: "swift_declarations",
-        examined: 9,
+        examined: 10,
         decoded: 0,
       }),
     );

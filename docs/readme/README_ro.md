@@ -20,7 +20,7 @@
 
 **[Site web](https://rea.tools/) · [Ghiduri](https://rea.tools/guides/) · [Studii de caz](https://rea.tools/showcase/)**
 
-[Pornire rapidă](#pornire-rapidă) · [Cum funcționează REA](#cum-funcționează-rea) · [Ce poți analiza](#ce-poți-analiza) · [Studii de caz](#studii-de-caz) · [Întrebări frecvente](#întrebări-frecvente) · [Documentație](#documentație)
+[Pornire rapidă](#pornire-rapidă) · [Cum funcționează REA](#cum-funcționează-rea) · [Ce poți analiza](#ce-poți-analiza) · [Studii de caz](#studii-de-caz) · [Construiește medii RL](#build-rl-environments) · [Întrebări frecvente](#întrebări-frecvente) · [Documentație](#documentație)
 
 <code>npx rea-agents setup</code>
 
@@ -62,7 +62,7 @@ Ai văzut într-o aplicație o funcționalitate pe care ai vrea să o incluzi î
 
 REA conectează agentul tău la unelte pentru inspectarea fișierelor binare native, a aplicațiilor JavaScript și Electron, a ansamblurilor .NET și a site-urilor web. Poți folosi aceleași unelte și din terminal. Analiza rulează local, iar rezultatele includ dovezile și limitările care stau la baza fiecărei concluzii.
 
-Programul de configurare înregistrează REA în agentul tău și instalează instrucțiunile corespunzătoare pentru fluxul de lucru. Analiza nativă poate folosi o instalare existentă de Hopper, Ghidra sau IDA; programul de configurare poate instala opțional Hopper, cu aprobarea ta. Analiza statică JavaScript nu necesită un motor de analiză nativă.
+Programul de configurare înregistrează REA în agentul tău și instalează instrucțiunile corespunzătoare pentru fluxul de lucru. Analiza nativă poate folosi o instalare existentă de Hopper, Ghidra, IDA sau Kuna; programul de configurare poate instala opțional Hopper, cu aprobarea ta. Analiza statică JavaScript nu necesită un motor de analiză nativă.
 
 > **[Vizitează site-ul REA](https://rea.tools/)** pentru instrucțiuni de configurare, ghiduri ilustrate și studii de caz reale.
 
@@ -187,7 +187,7 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Țintă                               | Ce returnează REA                                                                                                             | Cerințe și ghid                                                                                                                        |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | Aplicații desktop instalate         | Componente de execuție candidate, fișiere auxiliare, indicii despre componente și următoarele verificări                      | Inspectare integrată a directoarelor și antetelor, cu limite de resurse; [aplicații desktop](../desktop-applications.md)               |
-| Fișiere binare native               | Pseudocod, cod de asamblare, șiruri de caractere, simboluri, apeluri și referințe                                             | Hopper, Ghidra sau IDA; [analiză nativă](../native-investigation.md)                                                                   |
+| Fișiere binare native               | Pseudocod, cod de asamblare, șiruri de caractere, simboluri, apeluri și referințe                                             | Hopper, Ghidra, IDA sau Kuna; [analiză nativă](../native-investigation.md)                                                             |
 | Structura ELF, offline              | Secțiuni, segmente, simboluri și relocări originale, precum și indicii statice despre mecanismele de protecție                | pwntools furnizat de utilizator, pe Linux x64; [diagnosticarea binarelor](../binary-diagnostics.md)                                    |
 | Fișiere binare Go                   | Versiunea compilatorului încorporată în fișier, modulele, înlocuirile și setările de compilare                                | Inspectare statică integrată a fișierelor ELF/PE/Mach-O cu o singură arhitectură; nu necesită instalarea Go                            |
 | Obiecte de cod GPU                  | Ținte CUDA/HIP, parametri și resurse selectate ale kernelurilor GPU, textul PTX păstrat                                       | Inspectare statică integrată a fișierelor ELF/PE/fatbin/CUBIN/PTX; [obiecte de cod GPU](../gpu-code-objects.md)                        |
@@ -282,10 +282,53 @@ compară codul C++ reconstruit cu rezultatul compilatorului folosit la acea vrem
 [Citește studiul de caz](https://rea.tools/showcase/th04/) ·
 [Repository-ul reconstrucției](https://github.com/N0zoM1z0/th04)
 
+### Construiește medii RL cu REA
+
+Înregistrează o sesiune de aplicație web, transformă API-ul în instrumente și exportă un mediu pe care un agent AI îl poate folosi. Rulează cu AgentEnv, apoi adaugă sarcini și verificări de recompensă pentru antrenare RL sau evaluare.
+
+[Ghid pentru construirea unui mediu](https://rea.tools/guides/rl-environments/) ·
+[Vezi demonstrația pe X](https://x.com/reatools/status/2112574822584918075?s=20)
+
 Dacă ai folosit REA pentru ceva interesant, ne-ar plăcea să vedem rezultatul.
 Prezintă cazul într-un [issue](https://github.com/morluto/rea/issues) sau într-un
 [pull request](https://github.com/morluto/rea/pulls), menționând ținta analizată,
 întrebarea ta, cum te-a ajutat REA și ce ai descoperit.
+
+<a id="build-rl-environments"></a>
+
+## Construiește medii RL
+
+Creează un mediu local în care un agent AI să exerseze sarcini precum găsirea unui issue sau crearea unui dosar, fără a rula aplicația originală. Folosește-l pentru învățare prin recompensă (RL) sau pentru a testa cât de bine îndeplinește agentul sarcinile.
+
+REA transformă cererile și răspunsurile API înregistrate în instrumente pe care agentul le poate apela. Mediul folosește datele înregistrate și permite modificări doar când înregistrarea le confirmă efectele.
+
+După ce configurezi REA în agent, înlocuiește URL-ul și sarcinile pentru dosare din exemplu cu ale tale:
+
+```text
+Folosește REA pentru a crea un mediu RL din aplicația mea web de test de la
+http://127.0.0.1:3000.
+Include listarea, crearea, redenumirea și ștergerea dosarelor. Poți crea și elimina
+dosare de test, dar nu modifica datele existente.
+Salvează într-un dosar numit my-env, verifică operațiile disponibile și spune-mi cum îl rulez.
+```
+
+<details>
+<summary>Folosește linia de comandă</summary>
+
+Folosește aceste comenzi dacă ai deja un fișier cu cererile și răspunsurile aplicației înregistrate în browser. Pentru a rula rezultatul ai nevoie și de AgentEnv și Docker.
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA exportă un mediu executabil cu un test de bază care verifică pornirea și răspunsurile. Conectează-l la frameworkul RL pentru a defini obiectivele, a adăuga verificări de recompensă și a rula antrenarea.
+
+[Ghid pentru construirea unui mediu](https://rea.tools/guides/rl-environments/) ·
+[Referință pentru medii](../agent-environments.md) ·
+[Vezi demonstrația pe X](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## Întrebări frecvente
 
@@ -299,11 +342,11 @@ poți folosi [înregistrarea manuală MCP](../installation.md#mcp-registry).
 </details>
 
 <details>
-<summary><strong>Am nevoie de Hopper, Ghidra sau IDA?</strong></summary>
+<summary><strong>Am nevoie de Hopper, Ghidra, IDA sau Kuna?</strong></summary>
 
 Analiza nativă aprofundată folosește unul dintre aceste instrumente. Inspectarea
 statică JavaScript și .NET funcționează fără un motor de analiză nativă.
-Programul de configurare poate instala Hopper după aprobare; pentru Ghidra și IDA
+Programul de configurare poate instala Hopper după aprobare; pentru Ghidra, IDA și Kuna
 folosește instalările existente. Consultă [configurarea motoarelor de analiză](../installation.md#hopper).
 
 </details>
@@ -386,7 +429,7 @@ Raportează vulnerabilitățile conform [SECURITY.md](../../SECURITY.md).
 
 ## Istoricul stelelor
 
-🎉 **300.000 de stele pe GitHub — vă mulțumim!**
+🎉 **400.000 de stele pe GitHub — vă mulțumim!**
 
 Mulțumim tuturor celor care folosesc REA, raportează erori, propun funcționalități,
 testează versiuni și contribuie cu remedieri.

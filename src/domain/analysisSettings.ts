@@ -11,6 +11,7 @@ export interface AnalysisSettingValues {
   readonly "javascript.analysis_timeout_ms": number;
   readonly "javascript.max_heap_mb": number;
   readonly "wasm.command_timeout_ms": number;
+  readonly "native.matching_representation_bytes": number;
 }
 export type AnalysisSettingId = keyof AnalysisSettingValues;
 export interface AnalysisSettingsSnapshot {
@@ -34,4 +35,20 @@ export interface AnalysisSettingLimit {
   readonly rea_restart_required: false;
   readonly required_value?: number;
   readonly parameter?: string;
+}
+
+/**
+ * The same limit for a caller whose REA runtime ended with one invocation. No
+ * runtime override can reach it; a new invocation reads the launch
+ * environment seed or the per-call argument. The caller can still choose that
+ * value, and no running REA process needs a restart.
+ */
+export interface AnalysisInvocationSettingLimit extends Omit<
+  AnalysisSettingLimit,
+  "applies_at" | "scope"
+> {
+  readonly applies_at: "next_invocation";
+  readonly scope: "rea-invocation";
+  /** Launch-environment seed that a new invocation reads, when one exists. */
+  readonly environment?: string;
 }

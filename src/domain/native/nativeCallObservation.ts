@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { jsonObjectSchema } from "../jsonValue.js";
+import { jsonRecordSchema } from "../jsonRecord.js";
 import { localPathStringSchema } from "../localPath.js";
 
 const hexSchema = z.string().regex(/^0x[0-9a-f]+$/u);
@@ -19,7 +19,7 @@ const functionBreakpoint = {
   name: nativeString
     .min(1)
     .describe(
-      "Exact LLDB runtime symbol name, such as `open`, a C++ or mangled Swift symbol, or `-[NSString length]`. Darwin C symbol-table `_main` may be exposed by LLDB as `main`; REA preserves the selected name without translating it.",
+      "Exact LLDB runtime symbol name, such as `open`, a C++ or mangled Swift symbol, or `-[NSString length]`. On Darwin, pass an inspect_macho export or import `runtime_name` (`main`), not its symbol-table `name` (`_main`); REA preserves the selected name without translating it.",
     ),
 };
 
@@ -66,29 +66,10 @@ const environmentNameSchema = z
 const environmentValueSchema = z
   .string()
   .regex(/^[^\x00]*$/u, "Environment values cannot contain NUL");
-const environmentRecordProjection = z.record(
-  environmentNameSchema,
+const nativeCallEnvironmentSchema = jsonRecordSchema(
   environmentValueSchema,
+  environmentNameSchema,
 );
-
-// z.record skips __proto__. Own the JSON map before validating entries so every
-// selected environment name survives input parsing, readback and partial Evidence.
-const nativeCallEnvironmentSchema = jsonObjectSchema
-  .superRefine((value, context) => {
-    for (const [name, entry] of Object.entries(value)) {
-      for (const parsed of [
-        environmentNameSchema.safeParse(name),
-        environmentValueSchema.safeParse(entry),
-      ]) {
-        if (!parsed.success)
-          for (const issue of parsed.error.issues)
-            context.addIssue({ ...issue, path: [name, ...issue.path] });
-      }
-    }
-  })
-  .transform((value) => value as Record<string, string>);
-nativeCallEnvironmentSchema._zod.toJSONSchema = () =>
-  z.toJSONSchema(environmentRecordProjection, { io: "input" });
 
 /**
  * Launch the active Mach-O as an owned process under LLDB and observe calls.

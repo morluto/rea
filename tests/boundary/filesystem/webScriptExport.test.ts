@@ -47,6 +47,7 @@ import {
   scriptCaptureEvidenceFixture,
   scriptScenarioFixture,
 } from "../../fixtures/webScriptCapture.js";
+import { injectPublishedDirectoryCloseFailure } from "../../support/publishedDirectoryCloseFailure.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -390,78 +391,72 @@ describe("captured script output owner retry", () => {
     });
   });
 
-  it("returns completed output when retry closes a descriptor after commit", async () => {
-    const { input, resources } = await setup();
-    const createTree = SafeOutputTree.create.bind(SafeOutputTree);
-    const create = vi
-      .spyOn(SafeOutputTree, "create")
-      .mockImplementationOnce(async (outputRoot, platform) => {
-        const tree = await createTree(outputRoot, platform);
-        const commit = tree.commit.bind(tree);
-        vi.spyOn(tree, "commit").mockImplementation(async () => {
-          await commit();
-          throw new Error("injected descriptor close failure");
-        });
-        return tree;
-      });
-    try {
-      const result = await exportWebScripts(input, resources);
-      if (!result.ok) throw result.error;
-      const published = webScriptExportResultSchema.parse(
-        result.value.normalized_result,
+  // Windows commit does not open directory descriptors for fsync.
+  it.skipIf(process.platform === "win32")(
+    "returns completed output when retry closes a descriptor after commit",
+    async () => {
+      const { input, resources } = await setup();
+      const failure = await injectPublishedDirectoryCloseFailure(
+        input.output_directory,
       );
-      expect(published.manifest.path).toBe(
-        join(input.output_directory, "manifest.json"),
-      );
-      await expect(access(published.manifest.path)).resolves.toBeUndefined();
-    } finally {
-      create.mockRestore();
-    }
-  });
+      try {
+        const result = await exportWebScripts(input, resources);
+        if (!result.ok) throw result.error;
+        const published = webScriptExportResultSchema.parse(
+          result.value.normalized_result,
+        );
+        expect(published.manifest.path).toBe(
+          join(input.output_directory, "manifest.json"),
+        );
+        expect(failure.wasInjected()).toBe(true);
+        expect(failure.owners).toHaveLength(2);
+        expect(failure.owners[1]).toBe(failure.owners[0]);
+        expect(failure.owners[0]?.handle.fd).toBe(-1);
+        await expect(access(published.manifest.path)).resolves.toBeUndefined();
+      } finally {
+        failure.restore();
+      }
+    },
+  );
 
-  it("retains published output and its result while cleanup remains unresolved", async () => {
-    const { input, resources } = await setup();
-    const createTree = SafeOutputTree.create.bind(SafeOutputTree);
-    let cleanupAttempts = 0;
-    const create = vi
-      .spyOn(SafeOutputTree, "create")
-      .mockImplementationOnce(async (outputRoot, platform) => {
-        const tree = await createTree(outputRoot, platform);
-        const commit = tree.commit.bind(tree);
-        vi.spyOn(tree, "commit").mockImplementation(async () => {
-          await commit();
-          throw new Error("injected descriptor close failure");
+  it.skipIf(process.platform === "win32")(
+    "retains published output and its result while cleanup remains unresolved",
+    async () => {
+      const { input, resources } = await setup();
+      const failure = await injectPublishedDirectoryCloseFailure(
+        input.output_directory,
+        true,
+      );
+      try {
+        const result = await exportWebScripts(input, resources);
+        if (result.ok) throw new Error("Expected unresolved cleanup");
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(result.error.userMessage).not.toContain("Remove the residual");
+        expect(result.error.partialObservation).toMatchObject({
+          kind: "web-script-export",
+          result: {
+            output_directory: input.output_directory,
+            manifest: { path: join(input.output_directory, "manifest.json") },
+          },
         });
-        const rollback = tree.rollback.bind(tree);
-        vi.spyOn(tree, "rollback").mockImplementation(async () => {
-          cleanupAttempts += 1;
-          if (cleanupAttempts === 1)
-            throw new Error("injected cleanup refusal");
-          return rollback();
-        });
-        return tree;
-      });
-    try {
-      const result = await exportWebScripts(input, resources);
-      if (result.ok) throw new Error("Expected unresolved cleanup");
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(result.error.userMessage).not.toContain("Remove the residual");
-      expect(result.error.partialObservation).toMatchObject({
-        kind: "web-script-export",
-        result: {
-          output_directory: input.output_directory,
-          manifest: { path: join(input.output_directory, "manifest.json") },
-        },
-      });
-      await expect(
-        access(join(input.output_directory, "manifest.json")),
-      ).resolves.toBeUndefined();
-      await resources.close();
-      expect(cleanupAttempts).toBe(2);
-    } finally {
-      create.mockRestore();
-    }
-  });
+        await expect(
+          access(join(input.output_directory, "manifest.json")),
+        ).resolves.toBeUndefined();
+        expect(failure.wasInjected()).toBe(true);
+        expect(failure.owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
+        failure.allowCleanup();
+        await resources.close();
+        expect(failure.owners.length).toBeGreaterThan(1);
+        expect(
+          failure.owners.every((owner) => owner === failure.owners[0]),
+        ).toBe(true);
+        expect(failure.owners[0]?.handle.fd).toBe(-1);
+      } finally {
+        failure.allowCleanup();
+        failure.restore();
+      }
+    },
+  );
 });
 
 describe("captured script publication failures and cleanup", () => {
@@ -761,7 +756,9 @@ describe("captured script final commit cancellation", () => {
       });
     },
   );
+});
 
+describe("captured script path validation", () => {
   it("identifies a missing capture file and rejected host path syntax", async () => {
     const { input, resources } = await setup();
     const missing = await exportWebScripts(
@@ -784,15 +781,67 @@ describe("captured script final commit cancellation", () => {
         ],
       },
     });
-    const relative = await exportWebScripts(
+    const relativeCapture = await exportWebScripts(
       {
         ...input,
         capture_path: "capture.json",
       },
       resources,
     );
-    if (relative.ok) throw new Error("Expected host path error");
-    expect(relative.error._tag).toBe("AnalysisInputError");
+    if (relativeCapture.ok) throw new Error("Expected host path error");
+    expect(relativeCapture.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["capture_path"],
+          reason: "invalid_format",
+          message:
+            "capture_path must be an absolute filesystem path on this host.",
+        },
+      ],
+    });
+
+    const relativeOutput = await exportWebScripts(
+      {
+        ...input,
+        output_directory: "dist",
+      },
+      resources,
+    );
+    if (relativeOutput.ok) throw new Error("Expected host path error");
+    expect(relativeOutput.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["output_directory"],
+          reason: "invalid_format",
+          message:
+            "output_directory must be an absolute filesystem path on this host.",
+        },
+      ],
+    });
+
+    const bothRelative = await exportWebScripts(
+      {
+        capture_path: "capture.json",
+        output_directory: "dist",
+      },
+      resources,
+    );
+    if (bothRelative.ok) throw new Error("Expected host path error");
+    expect(bothRelative.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["capture_path"],
+          reason: "invalid_format",
+        },
+        {
+          path: ["output_directory"],
+          reason: "invalid_format",
+        },
+      ],
+    });
   });
 });
 
@@ -1399,3 +1448,55 @@ it("isolates an observed exclusive-create alias using typed facts when diagnosti
     write.mockRestore();
   }
 });
+
+it.each(["basename", "directory"])(
+  "isolates a destination-unrepresentable %s without losing peer scripts",
+  async (kind) => {
+    const long = "b".repeat(kind === "basename" ? 253 : 256);
+    const scripts = [
+      {
+        url: "https://fixture.test/regular.js",
+        bytes: Buffer.from("export const regular = 1;"),
+      },
+      {
+        url: `https://fixture.test/${"c".repeat(252)}.js`,
+        bytes: Buffer.from("export const boundary = 1;"),
+      },
+      {
+        url: `https://fixture.test/${kind === "basename" ? `${long}.js` : `${long}/main.js`}`,
+        bytes: Buffer.from("export const long = 2;"),
+      },
+    ];
+    const { input, resources } = await setup(scriptScenarioFixture(scripts));
+    const exported = await exportWebScripts(input, resources);
+    if (!exported.ok) throw exported.error;
+    const result = webScriptExportResultSchema.parse(
+      exported.value.normalized_result,
+    );
+    expect(result.scripts).toHaveLength(3);
+    expect(result.scripts[0]?.content).toMatchObject({ layout: "url-path" });
+    expect(result.scripts[1]?.content).toMatchObject({ layout: "url-path" });
+    expect(result.scripts[2]?.content).toMatchObject({
+      layout: "isolated",
+      layout_reason: expect.stringContaining("cannot represent"),
+    });
+    for (const [index, script] of result.scripts.entries()) {
+      if (script.content.state !== "exported" || result.analysis_input === null)
+        throw new Error("Missing exported source");
+      expect(script.url).toBe(scripts[index]!.url);
+      expect(
+        (
+          await readFile(
+            join(
+              result.analysis_input.input_path,
+              script.content.relative_path,
+            ),
+          )
+        ).equals(scripts[index]!.bytes),
+      ).toBe(true);
+    }
+    expect(
+      JSON.parse(await readFile(result.manifest.path, "utf8")).scripts,
+    ).toEqual(result.scripts);
+  },
+);
