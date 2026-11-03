@@ -3037,6 +3037,22 @@ describe("ReleaseExposureReader Node shebang scripts", () => {
     expect(sourceMapSourcesStatus(await inspect(path))).toBe("exposed");
   });
 
+  it.each(["app.js.map", "debug.map"])(
+    "keeps a sibling %s a selected file declares unknown",
+    async (map) => {
+      const root = await shebangRoot();
+      const path = join(root, "runner");
+      await writeFile(
+        path,
+        `#!/usr/bin/env node\nrun();\n//# sourceMappingURL=${map}\n`,
+      );
+      await writeFile(join(root, map), embeddedSourceMap());
+      const scanned = await inspect(path);
+      expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+      expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+    },
+  );
+
   it("reads the map of an ASAR member", async () => {
     const path = join(await shebangRoot(), "app.asar");
     await writeFile(

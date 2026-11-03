@@ -1437,9 +1437,10 @@ const examineInlineMaps = (
 };
 
 /**
- * A declaration names its map by location, not by file name. A map that is
- * recognized by name is examined as a member; any other local target is
- * recorded so it is examined as a map when it is reached. A target already
+ * A declaration names its map by location, not by file name. Every local
+ * target is recorded so it is examined as a map when it is reached, and one
+ * that is never reached, such as a sibling of a selected file, stays
+ * unassessed rather than absent. A target already
  * examined as ordinary text was not assessed as a map, so coverage is unknown.
  * A `file:` URL names one absolute location rather than a path beside the
  * script, so even a `.map` target stays unassessed until that location is
@@ -1460,9 +1461,7 @@ const noteLocalMapReference = (
   }
   if (/^[a-z][a-z0-9+.-]+:/iu.test(url)) return;
   const path = url.replace(/[?#].*$/su, "");
-  // A generic `.map` name stays a target: only the declaration tells it from a
-  // linker map.
-  if (path.length === 0 || isJavaScriptSourceMapName(path)) return;
+  if (path.length === 0) return;
   let decoded: string;
   try {
     decoded = decodeURIComponent(path);
