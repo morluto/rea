@@ -2,6 +2,7 @@ import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
+  stableArtifactInputRecovery,
 } from "../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
@@ -115,15 +116,7 @@ const failureForPrimary = (
     if (cause.reason === "path")
       return new AnalysisInputError(
         OPERATION,
-        {
-          cause,
-          ...(cause.resolvedPath === undefined
-            ? {}
-            : {
-                remediationAction: `Retry with the resolved regular file path ${cause.resolvedPath}. The selected symlink is not admitted; the retry will validate the target again.`,
-                conformsToInputContract: true,
-              }),
-        },
+        { cause, ...stableArtifactInputRecovery(cause) },
         [{ path: ["path"], reason: "invalid_format", message: cause.message }],
       );
   }
