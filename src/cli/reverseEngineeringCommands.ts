@@ -22,12 +22,17 @@ import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { ReverseEngineeringService } from "../application/reverse/ReverseEngineeringService.js";
+import { gdbOneShotCommandMayInvalidateDetachProof } from "../gdb/GdbSessionManager.js";
 import {
-  GdbSessionManager,
-  gdbOneShotCommandMayInvalidateDetachProof,
-} from "../gdb/GdbSessionManager.js";
-import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
+  createGdbSessionManager,
+  createRizinDebugSessionManager,
+} from "../composition/debuggerSessions.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  retainedDebuggerDiagnostics,
+  retainedDebuggerProcessIds,
+  retainedDebuggerRemediation,
+} from "../process/ownedDebuggerCleanupError.js";
 import {
   analysisEvidenceDeliveryOptions,
   cliEvidenceDeliveryInputError,
@@ -144,6 +149,9 @@ const closeDebuggerCommandSession = async (
   try {
     await manager.closeAll();
   } catch (cause) {
+    // This process is the only owner, so a caller gets the debugger to check
+    // rather than a retry that no later command could perform.
+    const retainedPids = retainedDebuggerProcessIds(cause);
     throw new ProviderCleanupError(
       providerId,
       sessionId === undefined ? [] : [sessionId],
@@ -158,8 +166,15 @@ const closeDebuggerCommandSession = async (
             : cause instanceof Error
               ? cause.message
               : String(cause),
+        ...retainedDebuggerDiagnostics(cause),
       },
-      { cause, operation },
+      {
+        cause,
+        operation,
+        ...(retainedPids.length === 0
+          ? {}
+          : { remediationAction: retainedDebuggerRemediation(retainedPids) }),
+      },
     );
   }
 };
@@ -171,8 +186,7 @@ export const registerReverseEngineeringCommands = (
   environment: Readonly<NodeJS.ProcessEnv>,
   createGdbManager: (
     environment: Readonly<NodeJS.ProcessEnv>,
-  ) => GdbSessionManager = (providerEnvironment) =>
-    new GdbSessionManager({ environment: providerEnvironment }),
+  ) => ReturnType<typeof createGdbSessionManager> = createGdbSessionManager,
   createService: typeof createReverseEngineeringService = createReverseEngineeringService,
 ): void => {
   const service = createService(environment);
@@ -417,7 +431,7 @@ export const registerReverseEngineeringCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.debugWithRizin, async () => {
-          const manager = new RizinDebugSessionManager(environment);
+          const manager = createRizinDebugSessionManager(environment);
           let sessionId: string | undefined;
           return finishAnalysisCommand(
             async () => {

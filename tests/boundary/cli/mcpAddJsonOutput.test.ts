@@ -289,6 +289,7 @@ it("timing global splitting preserves output values and the global terminator", 
     ["--format", "--timings=false", "mcp", "add"],
     ["mcp", "add", "--", "--timings=false", "--no-timings", "--timings"],
     ["--command", "--timings=false", "mcp", "add"],
+    ["--filter-output", "--", "--timings", "mcp", "add", "--agent=amp"],
   ];
   for (const tokens of cases) {
     const builtinOnly = tokens.filter((_, index) => index !== 0 && index !== 1);
@@ -296,7 +297,11 @@ it("timing global splitting preserves output values and the global terminator", 
       tokens[0] === "--filter-output" || tokens[0] === "--format"
         ? builtinOnly
         : tokens;
-    expect(splitIncurBuiltinArguments(tokens).command).toEqual(
+    const split = splitIncurBuiltinArguments(tokens);
+    expect(split.commandIndices.map((index) => tokens[index])).toEqual(
+      split.command,
+    );
+    expect(split.command).toEqual(
       Parser.parseGlobals(
         input,
         z.object({ timings: z.boolean().default(false) }),
@@ -377,6 +382,30 @@ it("registration expansion preserves values and existing modes", () => {
       "rea",
     ),
   ).toEqual(["mcp", "add", "--command", "--no-timings", "--agent=cursor"]);
+  expect(
+    normalizeMcpAddArguments(
+      [
+        "--filter-output",
+        "--",
+        "--timings=false",
+        "mcp",
+        "add",
+        "--agent=amp",
+        "--command=fixture",
+      ],
+      "rea",
+    ),
+  ).toEqual([
+    "--filter-output",
+    "--",
+    "--timings=false",
+    "mcp",
+    "add",
+    "--agent",
+    "amp",
+    "--command",
+    "fixture",
+  ]);
   expect(
     normalizeMcpAddArguments(
       ["mcp", "add", "--agent=amp", "--command=fixture"],

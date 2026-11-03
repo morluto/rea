@@ -27,6 +27,19 @@ const allowedCycles = [
   ["environmentStateWriteAddress.ts", "environmentStateWriteEffects.ts"],
 ];
 
+const allowedCycleEdges = [
+  "StateRecordChronology.ts -> environmentStateRules.ts",
+  "environmentStateListQuery.ts -> environmentStateRules.ts",
+  "environmentStateRules.ts -> StateRecordChronology.ts",
+  "environmentStateRules.ts -> environmentStateListQuery.ts",
+  "environmentStateRules.ts -> environmentStateWriteRules.ts",
+  "environmentStateWriteRules.ts -> environmentStateRules.ts",
+  "environmentStateGate.ts -> environmentStateListFacts.ts",
+  "environmentStateListFacts.ts -> environmentStateGate.ts",
+  "environmentStateWriteAddress.ts -> environmentStateWriteEffects.ts",
+  "environmentStateWriteEffects.ts -> environmentStateWriteAddress.ts",
+].sort();
+
 const productionFiles = (directory: string): string[] => {
   const files: string[] = [];
   for (const name of readdirSync(directory)) {
@@ -106,11 +119,18 @@ const stronglyConnected = (
 
 describe("analysis view import cycles", () => {
   it("keeps projectors from importing the request and result hub", () => {
-    const cycles = stronglyConnected(importGraph()).map((cycle) =>
-      cycle.join("\n"),
-    );
+    const graph = importGraph();
+    const cycles = stronglyConnected(graph).map((cycle) => cycle.join("\n"));
     expect(cycles).toEqual(
       allowedCycles.map((cycle) => [...cycle].sort().join("\n")),
     );
+    const internalEdges = allowedCycles.flatMap((cycle) =>
+      cycle.flatMap((source) =>
+        [...(graph.get(source) ?? [])]
+          .filter((target) => cycle.includes(target))
+          .map((target) => `${source} -> ${target}`),
+      ),
+    );
+    expect(internalEdges.sort()).toEqual(allowedCycleEdges);
   });
 });

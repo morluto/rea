@@ -223,6 +223,17 @@ const collectRequests = (
     const method = requestMethod(node, context.state);
     if (method === null) return;
     const endpoint = requestEndpoint(node);
+    // `http.get`/`http.request` parse a string target with `new URL` before the
+    // request exists, so a literal that is not an absolute URL throws
+    // `ERR_INVALID_URL` synchronously — an options object cannot rescue it.
+    // `fetch` and `WebSocket` are host globals a browser resolves against the
+    // document URL, so their spellings stay as reported.
+    if (
+      endpoint !== null &&
+      (method === "get" || method === "request") &&
+      !URL.canParse(endpoint)
+    )
+      return;
     output.push({
       node,
       operation: {
