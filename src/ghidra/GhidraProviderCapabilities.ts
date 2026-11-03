@@ -63,6 +63,10 @@ export const ghidraEmptyIncomingReferencesLimitation =
 export const ghidraEmptyOutgoingReferencesLimitation =
   "Ghidra's ReferenceManager returned no actionable outgoing references for this function in this session. An empty outgoing list reflects what this analysis resolved, not proof that the function references nothing; synthetic entry-point references are omitted. The function's own disassembly is an independent check for direct outgoing references before concluding there are none.";
 
+/** Attached to an empty outgoing-reference list of one instruction result. */
+export const ghidraEmptyInstructionOutgoingLimitation =
+  "Ghidra's ReferenceManager returned no actionable outgoing references from this instruction in this session. An empty list reflects what this analysis resolved, not proof that the instruction references nothing. The instruction's own disassembly is an independent check for direct outgoing references (a direct operand naming a target with no recorded reference contradicts the empty result) before concluding there are none.";
+
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
   operation: string,

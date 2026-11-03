@@ -106,6 +106,7 @@ import {
   ghidraHealthLimitations,
   ghidraEmptyXrefsLimitation,
   ghidraEmptyIncomingReferencesLimitation,
+  ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
   windowsP0Limitations,
   limitationsFor,
@@ -221,10 +222,19 @@ const emptyReferenceCaveat = (
     const dossier = referenceObservationRecord(record.dossier ?? null);
     return dossier === undefined ? [] : emptyReferenceDirectionCaveats(dossier);
   }
-  if (operation === "inspect_native_instruction")
-    return isEmptyArray(record.incoming_references)
-      ? [ghidraEmptyXrefsLimitation]
-      : [];
+  if (operation === "inspect_native_instruction") {
+    // The incoming list and the outgoing references are independent
+    // ReferenceManager facets; each empty facet is qualified on its own.
+    const caveats = [
+      ...(isEmptyArray(record.incoming_references)
+        ? [ghidraEmptyXrefsLimitation]
+        : []),
+      ...(isEmptyArray(record.references)
+        ? [ghidraEmptyInstructionOutgoingLimitation]
+        : []),
+    ];
+    return caveats;
+  }
   return [];
 };
 

@@ -4,6 +4,7 @@ import {
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   existingProjectCapabilities,
   ghidraEmptyIncomingReferencesLimitation,
+  ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
   ghidraEmptyXrefsLimitation,
 } from "./GhidraProviderCapabilities.js";
@@ -3327,7 +3328,7 @@ describe("Ghidra empty function-reference facets", () => {
   });
 });
 
-describe("Ghidra empty annotation and instruction reference facets", () => {
+describe("Ghidra empty annotation reference facets", () => {
   const emptyReferenceProvider = (result: JsonValue) =>
     provider(installationHost(), () => ({
       start: () => Promise.resolve(ok(sessionInfo())),
@@ -3406,12 +3407,24 @@ describe("Ghidra empty annotation and instruction reference facets", () => {
       await client.close();
     }
   });
+});
 
-  it("names unresolved references when inspect_native_instruction reports no incoming references", async () => {
-    const ghidra = emptyReferenceProvider({
-      ...compactInstruction(),
-      incoming_references: [],
-    });
+describe("Ghidra empty instruction reference facets", () => {
+  const emptyReferenceProvider = (result: JsonValue) =>
+    provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () => Promise.resolve(ok(result)),
+      close: () => Promise.resolve(ok(null)),
+    }));
+
+  const instruction = (incoming: JsonValue[], outgoing: JsonValue[]) => ({
+    ...compactInstruction(outgoing),
+    incoming_references: incoming,
+  });
+  const executeInspect = async (
+    result: JsonValue,
+  ): Promise<readonly string[]> => {
+    const ghidra = emptyReferenceProvider(result);
     const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("inspect_native_instruction", {
@@ -3419,30 +3432,40 @@ describe("Ghidra empty annotation and instruction reference facets", () => {
         address: "0x401000",
       });
       if (!execution.ok) throw execution.error;
-      expect(execution.value.limitations).toContain(ghidraEmptyXrefsLimitation);
+      return execution.value.limitations;
     } finally {
       await client.close();
     }
+  };
+
+  it("names each unresolved facet when neither incoming nor outgoing references were observed", async () => {
+    const limitations = await executeInspect(instruction([], []));
+    expect(limitations).toContain(ghidraEmptyXrefsLimitation);
+    expect(limitations).toContain(ghidraEmptyInstructionOutgoingLimitation);
   });
 
-  it("does not add the caveat when inspect_native_instruction reports incoming references", async () => {
-    const ghidra = emptyReferenceProvider({
-      ...compactInstruction(),
-      incoming_references: [compactReference()],
-    });
-    const client = await createElfClient(ghidra);
-    try {
-      const execution = await client.execute("inspect_native_instruction", {
-        document: null,
-        address: "0x401000",
-      });
-      if (!execution.ok) throw execution.error;
-      expect(execution.value.limitations).not.toContain(
-        ghidraEmptyXrefsLimitation,
-      );
-    } finally {
-      await client.close();
-    }
+  it("qualifies the empty incoming list when only outgoing references were observed", async () => {
+    const limitations = await executeInspect(
+      instruction([], [compactReference()]),
+    );
+    expect(limitations).toContain(ghidraEmptyXrefsLimitation);
+    expect(limitations).not.toContain(ghidraEmptyInstructionOutgoingLimitation);
+  });
+
+  it("qualifies the empty outgoing references when only an incoming list was observed", async () => {
+    const limitations = await executeInspect(
+      instruction([compactReference()], []),
+    );
+    expect(limitations).toContain(ghidraEmptyInstructionOutgoingLimitation);
+    expect(limitations).not.toContain(ghidraEmptyXrefsLimitation);
+  });
+
+  it("adds no caveat when both instruction reference facets observed references", async () => {
+    const limitations = await executeInspect(
+      instruction([compactReference()], [compactReference()]),
+    );
+    expect(limitations).not.toContain(ghidraEmptyXrefsLimitation);
+    expect(limitations).not.toContain(ghidraEmptyInstructionOutgoingLimitation);
   });
 });
 
