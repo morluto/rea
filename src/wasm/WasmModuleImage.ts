@@ -32,6 +32,8 @@ export const WASM_MODULE_LIMITS = {
 export const WASM_PAGE_BYTES = 65536;
 /** Zero bytes kept after the last data segment; wider than any record read across it. */
 const LINEAR_MEMORY_TAIL_BYTES = 64;
+/** Bytes copied into the view between yields. */
+const LINEAR_MEMORY_COPY_BYTES = 1 << 20;
 
 export interface WasmMemory {
   readonly initialPages: number;
@@ -400,19 +402,32 @@ export function* readInitialLinearMemorySteps(
     );
   // Sparse segments would make a small file allocate (and searches walk) a
   // large zero span, so the zero bytes the view adds are bounded too.
+  // Overlapping segments cover their union once, so count that, not their sum.
   let stored = 0;
-  for (const s of filled) stored += s.bytes.length;
+  let reach = -1;
+  for (const s of [...filled].sort((a, b) => a.offset - b.offset)) {
+    const start = Math.max(s.offset, reach);
+    const end = s.offset + s.bytes.length;
+    if (end > start) stored += end - start;
+    reach = Math.max(reach, end);
+  }
   if (high - low - stored > WASM_MODULE_LIMITS.linearMemoryGapBytes)
     throw new WasmModuleFailure(
       "capacity",
       `data segments leave ${high - low - stored} zero bytes in their span, above ${WASM_MODULE_LIMITS.linearMemoryGapBytes}`,
     );
   const memory = Buffer.alloc(high - low);
-  let copied = 0;
-  for (const s of filled) {
-    s.bytes.copy(memory, s.offset - low);
-    if (++copied % 256 === 0) yield;
-  }
+  // Copy in bounded chunks so one large segment does not block cancellation.
+  for (const s of filled)
+    for (let at = 0; at < s.bytes.length; at += LINEAR_MEMORY_COPY_BYTES) {
+      s.bytes.copy(
+        memory,
+        s.offset - low + at,
+        at,
+        Math.min(at + LINEAR_MEMORY_COPY_BYTES, s.bytes.length),
+      );
+      yield;
+    }
   return { address: low, bytes: memory };
 }
 
