@@ -1585,6 +1585,7 @@ const noteLinkerMapGuess = (state: ScanState, location: string): void => {
   // Once a declaration was discarded, this map may be its target.
   if (state.mapTargetsDiscarded) {
     state.skippedMaps += 1;
+    state.skippedCompanions += 1;
     return;
   }
   const key = memberLocationKey(location);

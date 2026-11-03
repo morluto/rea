@@ -1066,6 +1066,7 @@ describe("ReleaseExposureReader generic map links", () => {
       await symlink("payload", join(root, "symbols.map"));
       const scanned = await inspect(root);
       expect(scanned.debug_companions.skipped).toBe(1);
+      expect(debugCompanionsStatus(scanned)).toBe("unknown");
       expect(scanned.source_maps.skipped).toBe(1);
     },
   );
@@ -2910,6 +2911,15 @@ const malformedLeaf = (mappings: string) => ({
   mappings,
 });
 
+const debugCompanionsStatus = (scan: ReleaseExposureScan) =>
+  assembleReleaseExposureReport(scan, {
+    electron_family: "not_electron",
+    fuse_images: [],
+    go_images: [],
+    rust_images: [],
+    credential_markers: { hits: [], omitted_hits: 0 },
+  }).checks.find((check) => check.id === "native.debug_companions")?.status;
+
 const sourceMapSourcesStatus = (scan: ReleaseExposureScan) =>
   assembleReleaseExposureReport(scan, {
     electron_family: "not_electron",
@@ -3272,6 +3282,8 @@ describe("ReleaseExposureReader map target allowance", () => {
     await writeFile(join(folder, "z.map"), "not a map\n");
     const scanned = await inspect(root);
     expect(scanned.debug_companions.paths).toEqual([]);
+    expect(scanned.debug_companions.skipped).toBeGreaterThan(0);
+    expect(debugCompanionsStatus(scanned)).toBe("unknown");
     expect(scanned.source_maps.skipped).toBeGreaterThan(0);
   });
 });
