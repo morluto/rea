@@ -38,15 +38,16 @@ if (
   !isAbsolute(strace ?? "")
 )
   throw new Error(
-    "verify:binary:layout requires Linux x64, absolute REA_PWNTOOLS_PYTHON (pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2) and REA_VERIFY_STRACE_COMMAND. gcc, ld, strip and the i686/ARM/MIPS/MIPSel linux-gnu cross gcc and readelf must be available. No target is executed.",
+    "verify:binary:layout requires Linux x64, absolute REA_PWNTOOLS_PYTHON (pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2) and REA_VERIFY_STRACE_COMMAND. gcc, ld, strip and the AArch64/i686/ARM/MIPS/MIPSel linux-gnu cross gcc and readelf must be available. No target is executed.",
   );
 const run = createVerifierRun();
 const execute = promisify(execFile);
-const ELF32_TOOLCHAINS = [
-  ["i686-linux-gnu", "EM_386", "little"],
-  ["arm-linux-gnueabi", "EM_ARM", "little"],
-  ["mips-linux-gnu", "EM_MIPS", "big"],
-  ["mipsel-linux-gnu", "EM_MIPS", "little"],
+const CROSS_TOOLCHAINS = [
+  ["aarch64-linux-gnu", "EM_AARCH64", 64, "little"],
+  ["i686-linux-gnu", "EM_386", 32, "little"],
+  ["arm-linux-gnueabi", "EM_ARM", 32, "little"],
+  ["mips-linux-gnu", "EM_MIPS", 32, "big"],
+  ["mipsel-linux-gnu", "EM_MIPS", 32, "little"],
 ];
 for (const command of [
   "gcc",
@@ -54,7 +55,7 @@ for (const command of [
   "strip",
   "/usr/bin/prlimit",
   strace,
-  ...ELF32_TOOLCHAINS.flatMap(([prefix]) => [
+  ...CROSS_TOOLCHAINS.flatMap(([prefix]) => [
     `${prefix}-gcc`,
     `${prefix}-readelf`,
   ]),
@@ -347,14 +348,15 @@ try {
       cases++;
     }
   }
-  // ELF32 profiles: cross-compiled, never executed, checked against GNU readelf.
+  // Cross profiles: cross-compiled, never executed, checked against GNU readelf.
   for (const [
     prefix,
     machine,
+    bits,
     byteOrder,
     kind,
     flags,
-  ] of ELF32_TOOLCHAINS.flatMap((toolchain) => [
+  ] of CROSS_TOOLCHAINS.flatMap((toolchain) => [
     [...toolchain, "executable", ["-fPIE", "-pie"]],
     [...toolchain, "relocatable", ["-c", "-fPIC"]],
   ])) {
@@ -423,16 +425,18 @@ try {
         `readelf relocation count: ${name}`,
       );
       for (const [entryIndex, [, offset, info]] of rows.entries()) {
-        // ELF32 r_info uses the low byte for type and the upper 24 bits for
-        // the symbol index. readelf has already decoded the file's byte order.
+        // ELF32 r_info packs an 8-bit type under a 24-bit symbol index;
+        // ELF64 packs a 32-bit type under a 32-bit index. readelf has already
+        // decoded the file's byte order.
         const decodedInfo = BigInt(`0x${info}`);
+        const typeBits = bits === 32 ? 8n : 32n;
         expectedRelocations.push({
           section_index: section.index,
           entry_index: entryIndex,
           reported_offset: BigInt(`0x${offset}`),
-          type: Number(decodedInfo & 0xffn),
+          type: Number(decodedInfo & ((1n << typeBits) - 1n)),
           symbol_table_index: section.link,
-          symbol_index: Number(decodedInfo >> 8n),
+          symbol_index: Number(decodedInfo >> typeBits),
         });
       }
     }
@@ -445,7 +449,7 @@ try {
       const value = await inspect(mode, path);
       assert.deepEqual(value.architecture, {
         machine,
-        bits: 32,
+        bits,
         byte_order: byteOrder,
       });
       assert.equal(
