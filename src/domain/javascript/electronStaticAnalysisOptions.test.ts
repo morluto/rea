@@ -1,7 +1,11 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import {
+  analyzeParsedJavaScriptStaticSource,
+  analyzeJavaScriptStaticSource,
+} from "./javascriptStaticAnalysis.js";
 
 describe("Electron constant option evidence", () => {
   it("keeps mixed constant, inline and unresolved windows in construction order", () => {
@@ -339,6 +343,31 @@ it.each([
 );
 
 describe("Classic-script global function activation", () => {
+  it.each([
+    "const { nested: { value } } = { nested: { value: 1 } };",
+    "let value; ({ nested: { value } } = { nested: { value: 1 } });",
+    "export type { createWindow };",
+    "export { type createWindow };",
+  ])("preserves settings across runtime-independent syntax: %s", (prefix) => {
+    const source = `${prefix === "export { type createWindow };" ? "import { BrowserWindow } from 'electron';" : "const { BrowserWindow } = require('electron');"}
+      ${prefix}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();`;
+    const parsed = parseJavaScriptSource(source, "fixture.ts");
+    expect(parsed).not.toBeNull();
+    if (parsed === null) throw new Error("fixture did not parse");
+    expect(
+      analyzeParsedJavaScriptStaticSource(source, parsed).electron
+        .browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  });
+
   it("retains possible classic activation after an erased type import", () => {
     const source = `import type { T } from './types';
       const { BrowserWindow } = require('electron'); globalThis.createWindow();

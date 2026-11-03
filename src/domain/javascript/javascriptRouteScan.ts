@@ -23,10 +23,8 @@ import {
   type JavaScriptBindingIndex,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import {
-  semanticCopiedReferencePath,
-  semanticReferenceSourcesInactive,
-} from "./javascriptSemanticReferenceSources.js";
+import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,

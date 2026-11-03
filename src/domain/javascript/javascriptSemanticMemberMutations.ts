@@ -69,11 +69,12 @@ import {
 import { semanticCoercionOperands } from "./javascriptSemanticLanguageInvocations.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
-  semanticCopiedReferencePath,
+  
   semanticKnownArrayIteration,
   semanticReferenceSourcesInactive,
   semanticSelectedReferenceSlot,
 } from "./javascriptSemanticReferenceSources.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import {
   semanticArrayIndex,
   joinSemanticPropertyPaths,

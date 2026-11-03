@@ -1,5 +1,9 @@
 import * as t from "@babel/types";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import {
+  isErasedJavaScriptValueChild,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
+import { isTypeOnlyExportDeclaration } from "./javascriptModuleDeclaration.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import { semanticPropertyReadSources } from "./javascriptSemanticIterationSources.js";
 
@@ -11,6 +15,7 @@ import {
 } from "./javascriptSemanticEvaluationOrder.js";
 
 import {
+  staticObjectProperty,
   semanticStaticPropertyKey,
   semanticWriteSiteReadsFirst,
   unwrapJavaScriptExpression,
@@ -890,6 +895,11 @@ const moduleFunctionFirstRead = (
       const exported =
         t.isExportNamedDeclaration(statement) ||
         t.isExportDefaultDeclaration(statement);
+      if (
+        t.isExportNamedDeclaration(statement) &&
+        isTypeOnlyExportDeclaration(statement)
+      )
+        continue;
       const node = exported ? statement.declaration : statement;
       if (!t.isFunctionDeclaration(node)) continue;
       reads.set(node, exported ? null : Infinity);
@@ -1026,6 +1036,9 @@ const moduleFunctionFirstRead = (
       const statement = body[index];
       if (statement === undefined) continue;
       traverseJavaScriptAst(statement, {
+        skip: (node) =>
+          state?.erasedSyntaxNodes.has(node) === true ||
+          isErasedJavaScriptValueChild(node, parents.get(node) ?? null),
         enter(node, parent) {
           if (t.isFunction(node)) active.add(node);
           // Direct eval sees lexical module/CommonJS bindings too. Its
@@ -1052,6 +1065,26 @@ const moduleFunctionFirstRead = (
                 source.iterationSources !== undefined ||
                 source.projection.length > 1;
               if (!projected && globalReceiver(source.node) === false) continue;
+              // Select the receiver through the shared property-reference owner.
+              // Unknown/iterated sources retain possible activation.
+              if (projected && source.iterationSources === undefined) {
+                let receiver: t.Node | undefined = source.node;
+                for (const key of source.projection.slice(0, -1)) {
+                  if (typeof key !== "string" && typeof key !== "number") {
+                    receiver = undefined;
+                    break;
+                  }
+                  const selected = staticObjectProperty(receiver, String(key));
+                  receiver =
+                    selected.status === "explicit" ? selected.value : undefined;
+                  if (receiver === undefined) break;
+                }
+                if (
+                  receiver !== undefined &&
+                  globalReceiver(receiver) === false
+                )
+                  continue;
+              }
               const key = source.projection[0];
               if (!projected && typeof key === "string")
                 retainNamedRead(key, parent, index);

@@ -38,10 +38,10 @@ import {
 } from "./javascriptSemanticGlobalReference.js";
 import { readSemanticRequireLoader } from "./javascriptSemanticRequireOriginSlot.js";
 import {
-  semanticCopiedReferencePath,
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 
 export {
   isUnmodifiedGlobalReference,

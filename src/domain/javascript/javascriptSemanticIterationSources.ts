@@ -11,7 +11,8 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { semanticCopiedReferencePath } from "./javascriptSemanticReferenceSources.js";
+
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import type {
   IterationSourceValue,
   SemanticIterationSource,
