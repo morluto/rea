@@ -186,7 +186,6 @@ for (const missingSource of [false, true])
         ancestor.evidence_id,
       ]);
       const savedAgain = session.exportAnalysisSnapshot();
-      expect(savedAgain.ok).toBe(true);
       if (!savedAgain.ok) throw savedAgain.error;
       expect(savedAgain.value.evidence_bundle.records).toEqual(
         expect.arrayContaining([
