@@ -93,7 +93,7 @@ export const kunaLimitations = (
 
 /** Pseudocode answered before the project export finishes differs from the export's. */
 export const KUNA_SINGLE_FUNCTION_LIMITATION =
-  "This pseudocode came from a single-function `kuna decompile` run while the project export was still building. It lacks the export's whole-program prototypes, and a later request for the same procedure can return the export's text.";
+  "This pseudocode came from a single-function `kuna decompile` run. It lacks the project export's whole-program prototypes and may differ from project-export pseudocode.";
 
 /** Advertise Kuna's static, process-launching operations truthfully. */
 export const kunaCapabilities = (
