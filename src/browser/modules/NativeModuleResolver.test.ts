@@ -254,6 +254,26 @@ describe("native resolution Chromium sandbox", () => {
       });
     },
   );
+
+  it("keeps the default recovery for engine failures after a sandboxed launch", async () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    const provider = new NativeModuleResolver(
+      { REA_BROWSER_EXECUTABLE: "/browser" },
+      () =>
+        Promise.resolve({
+          version: () => "fixture",
+          newContext: () =>
+            Promise.reject(new Error("fixture context failure")),
+          close: () => Promise.resolve(),
+        }),
+    );
+    const result = await provider.resolve(input);
+    if (result.ok) throw new Error("expected engine failure");
+    expect(result.error).toMatchObject({
+      remediationAction: undefined,
+      diagnostics: { error_message: "fixture context failure" },
+    });
+  });
 });
 
 describe("completed native resolution finalization", () => {

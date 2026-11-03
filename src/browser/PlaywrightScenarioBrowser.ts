@@ -1,6 +1,6 @@
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import {
-  CHROMIUM_SANDBOX_REMEDIATION,
+  chromiumLaunchRemediation,
   chromiumSandboxEnabled,
 } from "./ChromiumSandbox.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -845,9 +845,6 @@ const openAttachedScenarioBrowser = async (
   }
 };
 
-const LAUNCH_REMEDIATION =
-  "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.";
-
 /** Launch or attach using the caller-selected environment and browser engine. */
 export const openPlaywrightScenarioBrowser = async (
   scenario: BrowserScenario,
@@ -929,9 +926,7 @@ export const openPlaywrightScenarioBrowser = async (
             {
               cause,
               userMessage: "The selected browser could not start.",
-              remediationAction: chromiumSandbox
-                ? `${LAUNCH_REMEDIATION} ${CHROMIUM_SANDBOX_REMEDIATION}`
-                : LAUNCH_REMEDIATION,
+              remediationAction: chromiumLaunchRemediation(chromiumSandbox),
               diagnostics: {
                 executable_path: executablePath,
                 startup_error:

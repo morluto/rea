@@ -15,12 +15,18 @@ export const chromiumSandboxEnabled = (
   platform !== "android" &&
   environment[CHROMIUM_NO_SANDBOX_VARIABLE] !== "true";
 
+const LAUNCH_REMEDIATION =
+  "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.";
+
 /**
- * Remediation for a sandboxed launch that failed to start.
+ * Remediation for a Chromium launch that failed before the browser connected.
  *
- * Chromium reports sandbox failures through several unrelated messages (no
+ * Chromium reports an unusable sandbox through several unrelated messages (no
  * namespace support, a misconfigured setuid helper, a refused namespace move,
- * a root user), so REA does not classify the startup log. The retained
- * diagnostics show whether the sandbox was the cause.
+ * a root user), so REA does not classify the startup log. A sandboxed launch
+ * adds the opt-out; the retained diagnostics show whether it applies.
  */
-export const CHROMIUM_SANDBOX_REMEDIATION = `If the startup diagnostics show that Chromium could not start its sandbox on this host, enable the host's sandbox support or set ${CHROMIUM_NO_SANDBOX_VARIABLE}=true to launch it without the sandbox.`;
+export const chromiumLaunchRemediation = (sandbox: boolean): string =>
+  sandbox
+    ? `${LAUNCH_REMEDIATION} If the startup diagnostics show that Chromium could not start its sandbox on this host, enable the host's sandbox support or set ${CHROMIUM_NO_SANDBOX_VARIABLE}=true to launch it without the sandbox.`
+    : LAUNCH_REMEDIATION;

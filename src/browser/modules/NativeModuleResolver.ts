@@ -1,6 +1,6 @@
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import {
-  CHROMIUM_SANDBOX_REMEDIATION,
+  chromiumLaunchRemediation,
   chromiumSandboxEnabled,
 } from "../ChromiumSandbox.js";
 import { isAbsolute } from "node:path";
@@ -79,13 +79,11 @@ const launch: ModuleResolverLauncher = async (options) =>
 const moduleResolverFailure = (
   cause: unknown,
   executable: string,
-  chromiumSandbox: boolean,
+  remediationAction: string | undefined,
 ): ProviderAdapterError =>
   new ProviderAdapterError("native-module-resolver", OPERATION, {
     cause,
-    ...(chromiumSandbox
-      ? { remediationAction: CHROMIUM_SANDBOX_REMEDIATION }
-      : {}),
+    ...(remediationAction === undefined ? {} : { remediationAction }),
     diagnostics: {
       executable,
       error_message: cause instanceof Error ? cause.message : String(cause),
@@ -186,6 +184,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
       );
     };
     let lease: AnalysisCleanupLease | undefined;
+    let launched = false;
     let cleanup: Promise<void> | undefined;
     const close = (): Promise<void> => {
       if (cleanup === undefined && lease !== undefined) {
@@ -226,6 +225,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
           ],
         }),
       );
+      launched = true;
       lease = new AnalysisCleanupLease(async () => {
         if (
           deadline.signal.aborted &&
@@ -257,7 +257,15 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
               cause instanceof AnalysisCapabilityUnavailableError ||
               cause instanceof BrowserObservationError
             ? cause
-            : moduleResolverFailure(cause, executable, chromiumSandbox),
+            : moduleResolverFailure(
+                cause,
+                executable,
+                // Only an unresolved sandboxed launch can be a sandbox failure;
+                // later engine failures keep the default recovery guidance.
+                launched || !chromiumSandbox
+                  ? undefined
+                  : chromiumLaunchRemediation(true),
+              ),
       );
     } finally {
       deadline.signal.removeEventListener("abort", onAbort);
