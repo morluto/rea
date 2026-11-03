@@ -135,6 +135,24 @@ it("retains each written function's producer across an export resume", async () 
   expect(digest(await readFile(join(output, first.relative_path)))).toBe(
     before,
   );
+  const outputPath = join(output, first.relative_path);
+  const originalBytes = await readFile(outputPath);
+  await writeFile(outputPath, "owned modified output");
+  const conflict = await run("clean", true);
+  const conflictMain = conflict.functions.find(
+    (item) => item.address === "0x1000",
+  );
+  expect(conflictMain).toMatchObject({
+    status: "failed",
+    failure: { code: "output_exists" },
+  });
+  expect(conflictMain?.provider_source).toBeUndefined();
+  expect(await readFile(outputPath, "utf8")).toBe("owned modified output");
+  await writeFile(outputPath, originalBytes);
+  const restored = await run("clean", true);
+  expect(restored.functions.find((item) => item.address === "0x1000")).toEqual(
+    first,
+  );
   // A file published before a journal append can be adopted on resume, but
   // matching bytes do not identify the run that originally wrote the file.
   const journalPath = join(output, "decompile-journal.jsonl");
