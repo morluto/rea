@@ -1,4 +1,7 @@
-import { filterGhidraLiteralCandidates } from "./GhidraLiteralSearch.js";
+import {
+  filterGhidraLiteralCandidates,
+  GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+} from "./GhidraLiteralSearch.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
 import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
@@ -845,7 +848,9 @@ export const createGhidraProviderClient = (input: {
         ? parseGhidraFunctionResult(operation, called.value)
         : parseGhidraInventoryResult(operation, called.value);
       if (!result.ok) return result;
-      let { value: normalized, ...observation } = result.value;
+      const { value: parsedValue, ...parsedObservation } = result.value;
+      let normalized = parsedValue;
+      let observation: GhidraExecutionMetadata = parsedObservation;
       if (
         (operation === "search_procedures" || operation === "search_strings") &&
         input.value.mode === "literal" &&
@@ -856,7 +861,14 @@ export const createGhidraProviderClient = (input: {
           normalized,
           input.value.pattern,
         );
-        observation = { ...observation, rawResult: called.value };
+        observation = {
+          ...observation,
+          rawResult: called.value,
+          limitations: [
+            ...(observation.limitations ?? []),
+            GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+          ],
+        };
       }
       if (
         operation === "inspect_native_data_type" &&
