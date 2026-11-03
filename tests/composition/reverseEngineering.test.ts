@@ -5,13 +5,14 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
 import {
   findsNoExecutable,
   TestReverseEngineeringService as ReverseEngineeringService,
 } from "../support/reverseEngineeringService.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtures.js";
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
@@ -743,26 +744,41 @@ it.each([
 it("lets hashes of the same path read at the same time", async () => {
   const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
   const opened: Readable[] = [];
+  let acknowledge: (() => void) | undefined;
+  const bothOpened = new Promise<void>((resolve) => {
+    acknowledge = resolve;
+  });
   const open = () => {
     const stream = new Readable({ read() {} });
     opened.push(stream);
+    if (opened.length === 2) acknowledge?.();
     return stream as unknown as ReturnType<
       typeof import("node:fs").createReadStream
     >;
   };
   const path = "/tmp/rea-concurrent-digest";
-  const digests = Promise.all([
+  const digests = Promise.allSettled([
     digestFile(path, undefined, stat, 1_000, open),
     digestFile(path, undefined, stat, 1_000, open),
   ]);
-  // Neither hash waits for the other: both open the file before either reads.
-  await vi.waitFor(() => expect(opened).toHaveLength(2));
-  for (const stream of opened) {
-    stream.push("x");
-    stream.push(null);
+  try {
+    // Neither hash waits for the other: both open the file before either
+    // reads it.
+    await awaitAcknowledgement(bothOpened, digests, "the second hash's open");
+    for (const stream of opened) {
+      stream.push("x");
+      stream.push(null);
+    }
+    const expected = createHash("sha256").update("x").digest("hex");
+    expect(await digests).toEqual([
+      { status: "fulfilled", value: expected },
+      { status: "fulfilled", value: expected },
+    ]);
+  } finally {
+    // A failed wait leaves the hashes reading; end them and join them.
+    for (const stream of opened) stream.destroy(new Error("test finished"));
+    await digests;
   }
-  const expected = createHash("sha256").update("x").digest("hex");
-  await expect(digests).resolves.toEqual([expected, expected]);
 });
 
 it("shares a stalled stat between hashes of the same path", async () => {
