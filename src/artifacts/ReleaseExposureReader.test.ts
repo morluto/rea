@@ -1057,6 +1057,31 @@ describe("ReleaseExposureReader mixed maps and sibling paths", () => {
   );
 });
 
+describe("ReleaseExposureReader generic map links", () => {
+  it.skipIf(process.platform === "win32")(
+    "keeps debug companion coverage unresolved for a generic .map link",
+    async () => {
+      const root = await createTestTempDirectory("rea-release-map-link-");
+      await writeFile(join(root, "payload"), "not a map\n");
+      await symlink("payload", join(root, "symbols.map"));
+      const scanned = await inspect(root);
+      expect(scanned.debug_companions.skipped).toBe(1);
+      expect(scanned.source_maps.skipped).toBe(1);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "leaves debug companions alone for a JavaScript map link",
+    async () => {
+      const root = await createTestTempDirectory("rea-release-map-link-");
+      await writeFile(join(root, "payload"), "{}");
+      await symlink("payload", join(root, "app.js.map"));
+      const scanned = await inspect(root);
+      expect(scanned.debug_companions.skipped).toBe(0);
+    },
+  );
+});
+
 describe("ReleaseExposureReader acquisition and sibling review regressions", () => {
   it.each(["external section", "decoder limit", "malformed JSON"])(
     "keeps a sibling map with an unsupported %s unresolved",

@@ -2685,6 +2685,9 @@ const noteUnfollowedMapLink = (
   state.examinedMaps.add(key);
   state.examinedScripts.add(key);
   state.skippedMaps += 1;
+  // A generic `.map` link may name a linker map, as an unread map may.
+  if (isSourceMap(logical, "file") && !isJavaScriptSourceMapName(logical))
+    state.skippedCompanions += 1;
 };
 
 const noteUnlistedEntry = (state: ScanState, entry: ArtifactEntry): void => {
