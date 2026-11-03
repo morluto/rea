@@ -802,11 +802,26 @@ const journalIdentityMismatch = (
   );
 };
 
-const incompatibleJournal = (): AnalysisInputError =>
-  decompileInputError(
-    "output_directory",
-    "The decompile journal is not a compatible export.",
+const incompatibleJournal = (): AnalysisInputError => {
+  const message =
+    "The decompile journal cannot be read and may be damaged or require a different REA version.";
+  return new AnalysisInputError(
+    "decompile_all",
+    {
+      userMessage: message,
+      conformsToInputContract: true,
+      remediationAction:
+        "Inspect the decompile journal, use the REA version that created it, or select a new output directory. The journal and existing files were left unchanged.",
+    },
+    [
+      {
+        path: ["output_directory"],
+        reason: "invalid_value",
+        message,
+      },
+    ],
   );
+};
 
 const parseJson = (line: string | undefined): unknown => {
   if (line === undefined) return undefined;

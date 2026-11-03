@@ -509,7 +509,9 @@ describe("decompile_all external functions", () => {
       if (resumed.ok) return;
       expect(resumed.error).toBeInstanceOf(AnalysisInputError);
       if (resumed.error instanceof AnalysisInputError)
-        expect(resumed.error.userMessage).toContain("not a compatible export");
+        expect(resumed.error.userMessage).toContain(
+          "cannot be read and may be damaged",
+        );
     },
   );
 
@@ -609,8 +611,18 @@ describe("decompile_all resume", () => {
     await writeFile(journalPath, `${original}not-json\n`);
     const broken = await run(harness().tools, directory(), { resume: true });
     expect(broken.ok).toBe(false);
-    if (!broken.ok)
-      expect(broken.error.userMessage).toContain("not a compatible export");
+    if (!broken.ok) {
+      expect(broken.error.userMessage).toContain(
+        "cannot be read and may be damaged",
+      );
+      expect(broken.error).toBeInstanceOf(AnalysisInputError);
+      if (broken.error instanceof AnalysisInputError) {
+        expect(broken.error.conformsToInputContract).toBe(true);
+        expect(broken.error.remediationAction).toContain(
+          "Inspect the decompile journal",
+        );
+      }
+    }
     expect(
       await readFile(join(directory(), "functions/0x1000.c"), "utf8"),
     ).toContain(sentinel);
@@ -1028,7 +1040,9 @@ describe("decompile_all portable function paths", () => {
     const refused = await run(tools, directory(), { resume: true });
     expect(refused.ok).toBe(false);
     if (!refused.ok)
-      expect(refused.error.userMessage).toContain("compatible export");
+      expect(refused.error.userMessage).toContain(
+        "cannot be read and may be damaged",
+      );
   });
 });
 
