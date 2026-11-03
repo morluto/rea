@@ -428,3 +428,24 @@ describe("table source", () => {
     expect(readWasmModuleImage(module(table)).tableImported).toBe(false);
   });
 });
+
+describe("import yields and sparse memory", () => {
+  it("yields while reading a large import section", () => {
+    const imports = section(
+      2,
+      vec(Array.from({ length: 5000 }, () => importFunction("f"))),
+    );
+    expect(readWasmModuleImageSteps(module(imports)).next().done).toBe(false);
+  });
+  it("bounds the zero bytes sparse segments add before allocating them", () => {
+    const sparse = readWasmModuleImage(
+      module(
+        memory(2048),
+        data([0, [1]], [WASM_MODULE_LIMITS.linearMemoryGapBytes + 16, [1]]),
+      ),
+    );
+    expect(() =>
+      readInitialLinearMemory({ dataSegments: sparse.dataSegments }),
+    ).toThrow(/zero bytes in their span/u);
+  });
+});
