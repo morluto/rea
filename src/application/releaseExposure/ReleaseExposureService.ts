@@ -1037,7 +1037,8 @@ const linkerSearchLists = (flags: string[]): string[] =>
 /**
  * Rooted and relative paths in flags a C compiler driver reads. A forwarded
  * search list is read entry by entry, so a loader-expanded entry such as
- * `$ORIGIN` drops only itself.
+ * `$ORIGIN` drops only itself. Only a search list is loader-expanded: the
+ * argument of `-T`, `-L` or `-I` is a literal path even when it reads `$ORIGIN`.
  */
 const compilerPaths = (value: string): string[] => {
   const flags = goFlags(value);
@@ -1054,7 +1055,7 @@ const compilerPaths = (value: string): string[] => {
     ...flagPaths(flags).filter((path) => !whole.has(path)),
     ...goRelativeFlagPaths(compiler, GO_COMPILER_PATH_FLAG),
     ...goRelativeFlagPaths(linker, LINKER_PATH_FLAG).filter(
-      (path) => !whole.has(path) && !LINKER_RUNTIME_TOKEN.test(path),
+      (path) => !whole.has(path),
     ),
     ...entries,
   ];

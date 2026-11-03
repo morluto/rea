@@ -1499,6 +1499,20 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
     expect(check?.observation.samples).toEqual(paths);
   });
 
+  it.each([
+    ["-Wl,-T,$ORIGIN.ld", "$ORIGIN.ld"],
+    ["-Xlinker -T -Xlinker ${ORIGIN}/link.ld", "${ORIGIN}/link.ld"],
+    ["-Wl,-L,$ORIGIN/lib", "$ORIGIN/lib"],
+  ])(
+    "keeps a literal path that only a search list would expand in %s",
+    async (value, path) => {
+      const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.status).toBe("exposed");
+      expect(check?.observation.samples).toEqual([path]);
+    },
+  );
+
   it("does not read loader-expanded runtime search paths as build paths", async () => {
     const report = await goReport(
       goModule([
