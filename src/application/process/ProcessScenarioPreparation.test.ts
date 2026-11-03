@@ -72,26 +72,50 @@ it("reports cancellation after the last awaited admission step", async () => {
     working_directory: ".",
   });
   const controller = new AbortController();
+  let admissionEntered!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    admissionEntered = resolve;
+  });
   let release!: () => void;
   const pendingAdmission = new Promise<Result<void, AnalysisError>>(
     (resolve) => {
       release = () => resolve(ok(undefined));
     },
   );
+  let admissionCalls = 0;
 
   const planning = prepareProcessScenarioPlan(
     scenario,
     {},
     process.platform,
     controller.signal,
-    { admitRoots: () => pendingAdmission },
+    {
+      admitRoots: () => {
+        admissionCalls += 1;
+        admissionEntered();
+        return pendingAdmission;
+      },
+    },
   );
-  controller.abort("caller stopped planning");
+
+  // Abort only once admission is actually running. Aborting earlier would be
+  // observed by the pre-admission check and would leave the post-admission
+  // check untested.
+  await entered;
+  expect(admissionCalls).toBe(1);
+  expect(controller.signal.aborted).toBe(false);
+  controller.abort("caller stopped after admission");
+
+  // Admission still succeeds after the abort, so only the check that runs
+  // after it can turn the planning result into a cancellation.
   release();
 
   const prepared = await planning;
+  expect(admissionCalls).toBe(1);
   expect(prepared.ok).toBe(false);
   if (prepared.ok) return;
   expect(prepared.error._tag).toBe("AnalysisCancelledError");
-  expect(prepared.error).toMatchObject({ cause: "caller stopped planning" });
+  expect(prepared.error).toMatchObject({
+    cause: "caller stopped after admission",
+  });
 });
