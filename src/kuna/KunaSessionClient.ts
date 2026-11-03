@@ -89,7 +89,7 @@ import {
   kunaLimitations,
   type KunaOperation,
 } from "./KunaProviderCapabilities.js";
-import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import { KUNA_PROVIDER_ID, KUNA_VERIFIED_VERSION } from "./KunaRelease.js";
 import { KunaTargetCommands } from "./KunaTargetCommands.js";
 import { KunaReferenceQueries } from "./KunaReferenceQueries.js";
 import { KunaQueryWork } from "./KunaQueryWork.js";
@@ -284,6 +284,16 @@ const exportUnavailable = (
     },
   );
 };
+
+/** Version verification is observation context, not an analysis input. */
+const kunaVerificationLimitations = (
+  installation: KunaInstallation,
+): readonly string[] =>
+  installation.verified
+    ? []
+    : [
+        `Kuna ${installation.version} is not REA's verified ${KUNA_VERIFIED_VERSION} release; its project layout is unverified. Version matching does not authenticate the executable.`,
+      ];
 
 /** Kuna names a procedure by its inventory entry or by an exact entry address. */
 const procedureSelectorSchema = z.string().min(1);
@@ -652,7 +662,11 @@ export class KunaSessionClient implements AnalysisClient {
                   : { strings: answer.stringSource }),
               },
             }),
-        limitations: [...operationLimitations, ...answer.limitations],
+        limitations: [
+          ...operationLimitations,
+          ...kunaVerificationLimitations(installation),
+          ...answer.limitations,
+        ],
         ...(answer.relationshipCoverage === undefined
           ? {}
           : { relationshipCoverage: answer.relationshipCoverage }),
@@ -1469,6 +1483,7 @@ export class KunaSessionClient implements AnalysisClient {
           this.#deadline,
           this.#heapRequest,
         ),
+        ...kunaVerificationLimitations(installation),
         ...pseudocode.value.limitations,
         KUNA_RELATIONSHIP_LIMITATION,
         ...(relationships.ok

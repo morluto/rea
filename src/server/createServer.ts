@@ -13,6 +13,7 @@ import { registerCaptureTools } from "./registerCaptureTools.js";
 import { registerSignalTools } from "./registerSignalTools.js";
 import { registerWasmTools } from "./registerWasmTools.js";
 import { registerApkSignatureTools } from "./registerApkSignatureTools.js";
+import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
@@ -307,7 +308,10 @@ export const createServer = (
     previousOnclose?.();
     void closeProviders().catch((cause: unknown) => {
       logger.error(
-        { error: cause instanceof Error ? cause.message : String(cause) },
+        {
+          error: cause instanceof Error ? cause.message : String(cause),
+          ...retainedDebuggerDiagnostics(cause),
+        },
         "Provider cleanup failed during server shutdown",
       );
     });

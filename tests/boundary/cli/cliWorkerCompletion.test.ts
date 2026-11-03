@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { z } from "zod";
 
+import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createCliSessionFrameReader,
@@ -41,22 +43,45 @@ process.stdout.write = (chunk, ...arguments_) => {
 };
 `,
     );
-    const result = await processes.run(
-      process.execPath,
-      ["--import", preload, worker],
-      {
-        input: encodeCliSessionFrame({
-          id: 1,
-          arguments: ["--help"],
-          cwd: root,
-          env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
-        }),
-        timeoutMs: 15_000,
-      },
+    const child = processes.spawn(process.execPath, [
+      "--import",
+      preload,
+      worker,
+    ]);
+    const closed = new Promise<void>((resolve) => {
+      child.once("close", () => resolve());
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    const ready = createDeferred<void>();
+    child.stdout.on(
+      "data",
+      createCliSessionFrameReader((value: unknown) => {
+        const frame = z.object({ ready: z.boolean() }).parse(value);
+        if (frame.ready) ready.resolve();
+      }),
     );
-    expect(result.signal, result.stderr).toBeNull();
-    expect(result.exitCode, result.stderr).toBe(1);
-    expect(result.stderr).toContain("selected CLI response frame write failed");
+    await awaitAcknowledgement(
+      ready.promise,
+      closed,
+      "CLI worker startup",
+      15_000,
+    );
+    child.stdin.end(
+      encodeCliSessionFrame({
+        id: 1,
+        arguments: ["--help"],
+        cwd: root,
+        env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+      }),
+    );
+    expect(await waitForExit(child, 15_000), stderr).toBe(true);
+    await closed;
+    expect(child.signalCode, stderr).toBeNull();
+    expect(child.exitCode, stderr).toBe(1);
+    expect(stderr).toContain("selected CLI response frame write failed");
   },
 );
 

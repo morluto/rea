@@ -42,6 +42,11 @@ import type { JebAnalysisAvailability } from "./jeb/JebAnalysisPort.js";
 import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import {
+  analysisCleanupRetrySchema,
+  cleanupRetryRemediation,
+  type AnalysisCleanupRetry,
+} from "../domain/analysisErrorRecovery.js";
 import { isBundleResourceOperation } from "./binary/BundleResourceSession.js";
 
 const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
@@ -50,6 +55,7 @@ const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
 
 const statusSchema = z.object({
   open: z.boolean(),
+  cleanup_retry: analysisCleanupRetrySchema.optional(),
   session_kind: z.literal("bundle_resources").optional(),
   kind: z.enum(["executable", "database", "archive", "artifact"]).optional(),
   format: z.string().optional(),
@@ -135,6 +141,7 @@ type AvailabilityContext = {
   readonly name: string;
   readonly kind: ToolKind;
   readonly targetOpen: boolean;
+  readonly cleanupRetry: AnalysisCleanupRetry | undefined;
   readonly resourceSession: boolean;
   readonly requiresActiveTarget: boolean;
   readonly targetKind:
@@ -263,6 +270,7 @@ export const buildCapabilityInventory = (
       name: contract.name,
       kind: contract.kind,
       targetOpen: status.open,
+      cleanupRetry: status.cleanup_retry,
       resourceSession: status.session_kind === "bundle_resources",
       requiresActiveTarget:
         "requiresActiveTarget" in contract &&
@@ -780,13 +788,17 @@ const targetAvailability = ({
   targetKind,
   targetFormat,
   targetOpen,
+  cleanupRetry,
   requiresActiveTarget,
   descriptors,
 }: AvailabilityContext): Availability | null => {
   if (!targetOpen && requiresActiveTarget)
     return {
       reason: "target_required",
-      remediation: "Call open_binary with a supported local target.",
+      remediation:
+        cleanupRetry === undefined
+          ? "Call open_binary with a supported local target."
+          : `${cleanupRetryRemediation(cleanupRetry)} After cleanup succeeds, call open_binary with a supported local target.`,
     };
   const descriptor = descriptors.get(name);
   if (
