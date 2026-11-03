@@ -15,8 +15,10 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import type {
   Evidence,
+  EvidenceAuthority,
   EvidenceLocation,
   EvidenceSubjectTarget,
+  ExecutionEnvironment,
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
@@ -81,6 +83,9 @@ interface CreateAnalysisExecutionOptions {
   readonly locations?: readonly EvidenceLocation[];
   readonly sourceEvidence?: readonly Evidence[];
   readonly subject?: EvidenceSubjectTarget | null;
+  readonly authority?: EvidenceAuthority;
+  readonly environment?: ExecutionEnvironment | null;
+  readonly subjectUnavailableReason?: string;
 }
 
 /**
@@ -134,6 +139,15 @@ export function createAnalysisExecution(
       ? {}
       : { sourceEvidence: Object.freeze([...options.sourceEvidence]) }),
     ...(options.subject === undefined ? {} : { subject: options.subject }),
+    ...(options.authority === undefined
+      ? {}
+      : { authority: options.authority }),
+    ...(options.environment === undefined
+      ? {}
+      : { environment: options.environment }),
+    ...(options.subjectUnavailableReason === undefined
+      ? {}
+      : { subjectUnavailableReason: options.subjectUnavailableReason }),
   };
 }
 

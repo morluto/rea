@@ -116,6 +116,8 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   list_adb_processes: "lists running processes without changing the device",
   inspect_web_event_listeners: "states it does not evaluate JavaScript",
   inspect_apk_signature: "states that no Android code executes",
+  emulate_function:
+    "runs caller-supplied bytes inside the Unicorn emulator only, never on the host or device",
 };
 
 const declaresForeignAuthority = (name: string): boolean => {

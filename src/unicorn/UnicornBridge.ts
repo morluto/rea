@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -109,7 +109,14 @@ export type UnicornBridgeLauncher = (
 const defaultLauncher: UnicornBridgeLauncher = (spawn, timeoutMs, signal) =>
   runOwnedCommand(
     spawn,
-    { diagnosticBytes: UNICORN_LIMITS.diagnosticBytes, timeoutMs },
+    {
+      diagnosticBytes: UNICORN_LIMITS.diagnosticBytes,
+      timeoutMs,
+      // The bridge protocol treats a completed nonzero exit as data:
+      // 75/76 are resource errors, anything else an output error. Without
+      // this flag runOwnedCommand throws first and those branches are dead.
+      acceptNonZeroExit: true,
+    },
     { signal },
   );
 
@@ -118,7 +125,17 @@ export interface UnicornBridgeRunOptions {
   readonly bridgePath: string;
   /** Request fields; reply_path is added by the runner. */
   readonly request: Readonly<Record<string, unknown>>;
+  /**
+   * Outer deadline for the launcher, including bridge startup and the reply
+   * round-trip. The worker enforces the emulation budget itself; see
+   * budgetMs for the user-facing value.
+   */
   readonly timeoutMs: number;
+  /**
+   * Emulation budget named in timeout errors. Defaults to timeoutMs when
+   * the caller inflates the deadline with a startup allowance.
+   */
+  readonly budgetMs?: number;
   readonly signal?: AbortSignal;
   readonly launcher?: UnicornBridgeLauncher;
   /** Test hook: parent directory for the per-run directory. */
@@ -222,6 +239,16 @@ export const runUnicornBridge = async (
       );
     } catch (error) {
       if (error instanceof OwnedCommandFailure) {
+        // Best effort: an incomplete stop retains its owner so cleanup can
+        // be retried. Retry the stop once; a secondary failure must not
+        // replace the primary bridge error.
+        if (error.cleanupOwner !== undefined) {
+          try {
+            await error.cleanupOwner.stop();
+          } catch {
+            // The primary bridge error below stays the reported outcome.
+          }
+        }
         if (error.reason === "cancelled")
           return err(
             new AnalysisCancelledError(UNICORN_OPERATION, {
@@ -230,9 +257,13 @@ export const runUnicornBridge = async (
           );
         if (error.reason === "timeout")
           return err(
-            new AnalysisTimeoutError(UNICORN_OPERATION, options.timeoutMs, {
-              userMessage: `Unicorn emulation exceeded its ${String(options.timeoutMs)} ms budget.`,
-            }),
+            new AnalysisTimeoutError(
+              UNICORN_OPERATION,
+              options.budgetMs ?? options.timeoutMs,
+              {
+                userMessage: `Unicorn emulation exceeded its ${String(options.budgetMs ?? options.timeoutMs)} ms budget.`,
+              },
+            ),
           );
         return err(
           new AnalysisOutputError(
@@ -284,6 +315,34 @@ export const runUnicornBridge = async (
           { capturedOutput: output },
         ),
       );
+    let replyStat;
+    try {
+      replyStat = await stat(replyPath);
+    } catch {
+      return err(
+        new AnalysisOutputError(
+          UNICORN_OPERATION,
+          "Unicorn bridge exited 0 without writing a reply.",
+          { capturedOutput: output },
+        ),
+      );
+    }
+    // Defense in depth: the bridge refuses oversize replies itself, but a
+    // reply is only trusted after its size is checked, not read blind.
+    if (replyStat.size > UNICORN_LIMITS.outputBytes)
+      return err(
+        new AnalysisResourceConstraintError(
+          UNICORN_OPERATION,
+          "file-size",
+          "Unicorn bridge reply exceeded its output size.",
+          null,
+          {
+            capturedOutput: output,
+            remediationAction:
+              "Reduce the function size, memory image, or stack size and retry.",
+          },
+        ),
+      );
     let replyText: string;
     try {
       replyText = await readFile(replyPath, "utf8");
@@ -319,6 +378,14 @@ export const runUnicornBridge = async (
       );
     if (reply.data.ok === false)
       return err(mapFailureReply(reply.data, output));
+    // A cancellation that lands during the final read/parse must not be
+    // reported as a success just because the reply arrived first.
+    if (options.signal?.aborted)
+      return err(
+        new AnalysisCancelledError(UNICORN_OPERATION, {
+          cause: options.signal.reason,
+        }),
+      );
     return ok(reply.data);
   } finally {
     await rm(runDir, { recursive: true, force: true });

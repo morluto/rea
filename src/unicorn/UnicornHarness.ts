@@ -117,7 +117,9 @@ export const validateEmulationHarness = (
   const stubPages = new Set<number>();
   for (const key of Object.keys(input.stubs)) {
     const address = Number.parseInt(key, 16);
-    const page = address & ~(PAGE_SIZE - 1);
+    // Bitwise ops are signed 32-bit in JS; high addresses (above 2^31)
+    // would wrap. Use division so stub pages above 4 GiB stay exact.
+    const page = Math.floor(address / PAGE_SIZE) * PAGE_SIZE;
     stubPages.add(page);
     if (regions.some((region) => page >= region.start && page < region.end))
       issues.push(
@@ -135,6 +137,39 @@ export const validateEmulationHarness = (
         ["budgets", "address_space_bytes"],
         "out_of_range",
         "Mapped address space exceeds the declared budget.",
+      ),
+    );
+
+  // The setup writes an 8-byte return sentinel at stack_top - 8; a smaller
+  // stack leaves that write below the mapped stack.
+  if (input.stack_size < 8)
+    issues.push(
+      issue(
+        ["stack_size"],
+        "invalid_value",
+        "stack_size must be at least 8 bytes for the return sentinel.",
+      ),
+    );
+
+  // The sentinel page is how a clean return is recognized: a fetch fault
+  // at the sentinel address means "returned". A region or stub page
+  // covering it would execute bytes instead of reporting the return.
+  const SENTINEL_PAGE = 0x0badf000;
+  for (const region of regions)
+    if (region.start <= SENTINEL_PAGE && SENTINEL_PAGE < region.end)
+      issues.push(
+        issue(
+          ["memory"],
+          "invalid_value",
+          `Memory region ${region.label} covers the Unicorn return sentinel page.`,
+        ),
+      );
+  if (stubPages.has(SENTINEL_PAGE))
+    issues.push(
+      issue(
+        ["stubs"],
+        "invalid_value",
+        "Stub address falls on the Unicorn return sentinel page.",
       ),
     );
 

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata } from "../toolEffects.js";
+import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 
 /**
  * Complete evidence budgets for Phase 1, mirroring the pwntools lane's
@@ -93,10 +94,12 @@ export const emulateFunctionInputSchema = z.strictObject({
     .max(1024)
     .default([]),
   stack_address: safeAddressSchema,
+  // The setup writes an 8-byte return sentinel at stack_top - 8; a smaller
+  // stack leaves that write below the mapped stack.
   stack_size: z
     .number()
     .int()
-    .positive()
+    .min(8)
     .max(256 * 1024 * 1024)
     .default(65536),
   stubs: z
@@ -184,7 +187,7 @@ export const UNICORN_TOOL_CONTRACTS = [
     kind: "native-provider",
     requiresActiveTarget: false,
     inputSchema: emulateFunctionInputSchema,
-    outputSchema: emulateFunctionOutputSchema,
+    outputSchema: evidenceResultOf(emulateFunctionOutputSchema),
     examples: [
       {
         title: "Example emulate function request",
