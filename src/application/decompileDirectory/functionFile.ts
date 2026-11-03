@@ -90,10 +90,11 @@ export const pseudocodeExportFacts = (input: {
 /** Optional journal/index fields for established facts only. */
 export const establishedPseudocodeFields = (
   facts: PseudocodeExportFacts,
-): Pick<
-  DecompileDirectoryFunctionRecord,
-  "language" | "representation" | "source"
-> => ({
+): {
+  readonly language?: string;
+  readonly representation?: string;
+  readonly source?: string;
+} => ({
   ...(facts.language === null ? {} : { language: facts.language }),
   ...(facts.representation === null
     ? {}
@@ -145,7 +146,7 @@ const sourceFact = (value: unknown): string | null => {
   if (typeof value === "string") return optionalFact(value);
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return null;
-  return optionalFact(value.kind);
+  return "kind" in value ? optionalFact(value.kind) : null;
 };
 
 /** Keep a provider string on one header line without control characters. */

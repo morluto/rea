@@ -584,6 +584,7 @@ const publishOne = async (input: {
         failureRecord(input.procedure, body.fact, reason, {
           relativePath,
           limitations: caveats,
+          ...establishedPseudocodeFields(facts),
         }),
       ),
       bodySupport: body.support,
@@ -894,6 +895,9 @@ const failureRecord = (
     readonly relativePath?: string;
     /** Caveats of the observations this attempt used. */
     readonly limitations?: readonly string[];
+    readonly language?: string;
+    readonly representation?: string;
+    readonly source?: string;
   } = {},
 ): DecompileDirectoryFunctionRecord => ({
   address: procedure.address,
@@ -907,6 +911,11 @@ const failureRecord = (
   ...(options.limitations === undefined || options.limitations.length === 0
     ? {}
     : { limitations: [...options.limitations] }),
+  ...establishedPseudocodeFields({
+    language: options.language ?? null,
+    representation: options.representation ?? null,
+    source: options.source ?? null,
+  }),
 });
 
 /** Why a successful pseudocode observation still produced no file. */
@@ -948,14 +957,28 @@ const unavailableBody = (reason: string): FunctionBody => ({
 const retainedObservation = (
   session: DecompileExport,
   address: string,
-): { body: FunctionBody; options: { limitations?: readonly string[] } } => {
+): {
+  body: FunctionBody;
+  options: {
+    limitations?: readonly string[];
+    language?: string;
+    representation?: string;
+    source?: string;
+  };
+} => {
   const record = session.record(address);
   return {
     body: record?.body ?? unavailableBody("not rewritten"),
-    options:
-      record?.limitations === undefined
+    options: {
+      ...(record?.limitations === undefined
         ? {}
-        : { limitations: record.limitations },
+        : { limitations: record.limitations }),
+      ...establishedPseudocodeFields({
+        language: record?.language ?? null,
+        representation: record?.representation ?? null,
+        source: record?.source ?? null,
+      }),
+    },
   };
 };
 

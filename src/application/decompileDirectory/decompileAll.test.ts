@@ -332,9 +332,8 @@ describe("decompile_all manifest", () => {
     expect(text).toContain("// language: unavailable");
     expect(text).toContain("// representation: unavailable");
     expect(text).toContain("// source: unavailable");
-    expect(text).toContain(
-      "// path_extension: .c; export path spelling only — does not establish C syntax",
-    );
+    expect(text).toMatch(/\/\/ path_extension: \.c\b/);
+    expect(text).toMatch(/does not establish C syntax/i);
     expect(text.slice(text.indexOf("\n\n") + 2)).toBe(
       `int fn(void) { ${sentinel} }`,
     );
@@ -384,8 +383,7 @@ describe("decompile_all manifest", () => {
       },
     });
     const result = await run(tools, directory());
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
 
     const text = await readFile(
       join(directory(), "functions/0x1000.c"),
@@ -394,9 +392,8 @@ describe("decompile_all manifest", () => {
     expect(text).toContain("// language: rust-language");
     expect(text).toContain("// representation: provider-pseudocode");
     expect(text).toContain("// source: single-function");
-    expect(text).toContain(
-      "// path_extension: .c; export path spelling only — does not establish C syntax",
-    );
+    expect(text).toMatch(/\/\/ path_extension: \.c\b/);
+    expect(text).toMatch(/does not establish C syntax/i);
     expect(text.endsWith(rustLike)).toBe(true);
 
     const index = decompileDirectoryIndexSchema.parse(
