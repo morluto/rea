@@ -225,15 +225,16 @@ const emptyReferenceCaveat = (
   if (operation === "inspect_native_instruction") {
     // The incoming list and the outgoing references are independent
     // ReferenceManager facets; each empty facet is qualified on its own.
-    const caveats = [
+    // The outgoing list is only collected for a decoded instruction — other
+    // statuses return before the ReferenceManager is queried at all.
+    return [
       ...(isEmptyArray(record.incoming_references)
         ? [ghidraEmptyXrefsLimitation]
         : []),
-      ...(isEmptyArray(record.references)
+      ...(record.status === "decoded" && isEmptyArray(record.references)
         ? [ghidraEmptyInstructionOutgoingLimitation]
         : []),
     ];
-    return caveats;
   }
   return [];
 };
