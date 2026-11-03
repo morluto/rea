@@ -373,3 +373,14 @@ describe("table types and yielding", () => {
     expect(steps.next().done).toBe(false);
   });
 });
+
+describe("table source", () => {
+  it("reports whether table 0 is imported", () => {
+    const imported = section(
+      2,
+      vec([[...name("env"), ...name("table"), 0x01, 0x70, 0x00, 4]]),
+    );
+    expect(readWasmModuleImage(module(imported)).tableImported).toBe(true);
+    expect(readWasmModuleImage(module(table)).tableImported).toBe(false);
+  });
+});

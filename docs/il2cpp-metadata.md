@@ -355,8 +355,9 @@ element segment fills is refused; a slot naming an imported function is
 `binary.format` is `wasm`, `architecture` `wasm32` and `image_base` `0x0`.
 
 Passive or explicit-memory data segments, non-constant offsets, shared or
-64-bit memory, several memories or tables, and reordered or repeated sections
-are refused. Linking does not use WABT, so the `inspect_wasm_artifact` input
+64-bit memory, a memory or function table imported from the host (its
+initial contents are not in the file), non-funcref tables, several memories
+or tables, and reordered or repeated sections are refused. Linking does not use WABT, so the `inspect_wasm_artifact` input
 cap does not apply. `generic_instances` and Ghidra seeds are refused for a
 wasm32 module. Checked on two uncompressed Unity 2022.3.62f3 WebGL builds
 (metadata version 31, release and development, built for this check): every

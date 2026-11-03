@@ -140,6 +140,12 @@ function* openWasmImageSteps(bytes: Buffer): Generator<void, NativeImage> {
         "unsupported",
         "the module imports its memory, whose initial bytes the module does not determine",
       );
+    // A host-supplied table may hold functions in slots the module never fills.
+    if (module.tableImported)
+      throw new WasmModuleFailure(
+        "unsupported",
+        "the module imports its function table, whose slots the module does not determine",
+      );
     memory = readInitialLinearMemory(module);
   } catch (cause) {
     if (cause instanceof WasmModuleFailure)
