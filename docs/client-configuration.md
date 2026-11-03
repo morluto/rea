@@ -49,6 +49,29 @@ launcher; see [verification scope](client-verification.md#launch-environment-ver
 the registration's file does not carry as a
 [non-blocking unknown](installation.md#check-readiness-for-your-task).
 
+## Setting launch variables in PowerShell
+
+Shell examples that prefix a command with `REA_MCP_INPUT_SCHEMA_PROFILE=compact`
+use POSIX shell syntax. In PowerShell, set the process environment before
+launching REA:
+
+```powershell
+$env:REA_MCP_INPUT_SCHEMA_PROFILE = "compact"
+rea mcp doctor --json
+```
+
+The assignment applies to the current PowerShell process and commands it launches.
+Restore the previous value when finished, or use
+`Remove-Item Env:REA_MCP_INPUT_SCHEMA_PROFILE` if it was previously unset. It does
+not update an already running MCP server or desktop client.
+
+To select this profile for an agent, set `REA_MCP_INPUT_SCHEMA_PROFILE` in that
+client's existing REA registration `env` object and restart the client, preserving
+its other settings. A successful terminal doctor run does not verify the client's
+launch environment. See [launch-environment verification](client-verification.md#launch-environment-verification)
+and the client-specific instructions below. REA setup does not copy the terminal's
+ambient environment into the registration.
+
 ## Runtime settings and client deadlines
 
 `update_analysis_settings` changes curated defaults inside the running REA
