@@ -70,6 +70,19 @@ const DT_VERNEED = 0x6ffffffe;
 const DT_VERNEEDNUM = 0x6fffffff;
 const VER_FLG_BASE = 1;
 const VER_FLG_WEAK = 2;
+/**
+ * Tags whose value is a virtual address. ELF64 addresses may exceed
+ * Number.MAX_SAFE_INTEGER, so they stay bigint until a PT_LOAD maps them.
+ */
+const ADDRESS_DYNAMIC_TAGS = new Set([
+  DT_HASH,
+  DT_STRTAB,
+  DT_SYMTAB,
+  DT_GNU_HASH,
+  DT_VERSYM,
+  DT_VERDEF,
+  DT_VERNEED,
+]);
 const UNIQUE_DYNAMIC_TAGS = new Set([
   DT_HASH,
   DT_STRTAB,
@@ -123,7 +136,7 @@ const fail = (message: string): never => {
   throw new BinaryFormatFailure("malformed", message);
 };
 
-const hex = (value: number): string => `0x${value.toString(16)}`;
+const hex = (value: number | bigint): string => `0x${value.toString(16)}`;
 
 /** Class-width tag value, or null when it is wider than every known DT_* tag. */
 const asTag = (tag: bigint, bits: 32 | 64): number | null => {
@@ -400,7 +413,7 @@ const mappedExtentEnd = (
  */
 const agreedSection = (
   section: SectionFacts | undefined,
-  declared: number | undefined,
+  declared: bigint | undefined,
   mappings: readonly FileMapping[],
   label: string,
   issues: ElfDependencyIssue[],
@@ -408,8 +421,8 @@ const agreedSection = (
 ): SectionFacts | undefined => {
   if (section === undefined || declared === undefined) return section;
   if (
-    section.address === BigInt(declared) &&
-    mapAddress(mappings, BigInt(declared), 1) === section.offset &&
+    section.address === declared &&
+    mapAddress(mappings, declared, 1) === section.offset &&
     sizeAgrees(section)
   )
     return section;
@@ -451,11 +464,11 @@ const tableFromSection = (
 
 const tableFromVirtual = (
   mappings: readonly FileMapping[],
-  address: number | undefined,
+  address: bigint | undefined,
   size: number,
 ): LocatedTable | null => {
   if (address === undefined || size < 0) return null;
-  const offset = mapAddress(mappings, BigInt(address), size === 0 ? 1 : size);
+  const offset = mapAddress(mappings, address, size === 0 ? 1 : size);
   if (offset === null) return null;
   return {
     offset,
@@ -467,17 +480,13 @@ const tableFromVirtual = (
 const sysvSymbolCount = (
   reader: BinaryReader,
   mappings: readonly FileMapping[],
-  address: number,
+  address: bigint,
 ): number | null => {
-  const header = mapAddress(mappings, BigInt(address), 8);
+  const header = mapAddress(mappings, address, 8);
   if (header === null) return null;
   const buckets = reader.u32(header);
   const count = reader.u32(header + 4);
-  const table = mapAddress(
-    mappings,
-    BigInt(address),
-    8 + 4 * (buckets + count),
-  );
+  const table = mapAddress(mappings, address, 8 + 4 * (buckets + count));
   if (table === null) return null;
   return count;
 };
@@ -523,12 +532,12 @@ const gnuSymbolCountAt = (
 const gnuSymbolCount = (
   reader: BinaryReader,
   mappings: readonly FileMapping[],
-  address: number,
+  address: bigint,
   bits: 32 | 64,
 ): number | null => {
-  const header = mapAddress(mappings, BigInt(address), 16);
+  const header = mapAddress(mappings, address, 16);
   if (header === null) return null;
-  const limit = mappedExtentEnd(mappings, BigInt(address));
+  const limit = mappedExtentEnd(mappings, address);
   if (limit === null) return null;
   return gnuSymbolCountAt(reader, header, limit, bits);
 };
@@ -537,18 +546,18 @@ const locateVersionTable = (
   mappings: readonly FileMapping[],
   fileBytes: number,
   section: SectionFacts | undefined,
-  address: number | undefined,
+  address: bigint | undefined,
   label: string,
   issues: ElfDependencyIssue[],
 ): LocatedTable | null => {
   const fromSection = tableFromSection(section, fileBytes, label, issues);
   if (fromSection !== null) return fromSection;
   if (address === undefined) return null;
-  const offset = mapAddress(mappings, BigInt(address), 16);
+  const offset = mapAddress(mappings, address, 16);
   if (offset === null) return null;
   // Without a section header the table extent is unknown; keep every later
   // record read inside the PT_LOAD mapping that admitted the table start.
-  const end = mappedExtentEnd(mappings, BigInt(address));
+  const end = mappedExtentEnd(mappings, address);
   if (end === null) return null;
   const size = Math.min(end, fileBytes) - offset;
   return {
@@ -690,6 +699,7 @@ export const parseElfDependencies = (
   reader.range(dynamic.offset, dynamic.bytes, "PT_DYNAMIC");
   const entrySize = bits === 64 ? 16 : 8;
   const unique = new Map<number, number>();
+  const addresses = new Map<number, bigint>();
   const neededOffsets: number[] = [];
   let terminated = false;
   for (
@@ -721,9 +731,13 @@ export const parseElfDependencies = (
       continue;
     }
     if (!UNIQUE_DYNAMIC_TAGS.has(tag)) continue;
-    const value = asNumber(parsedEntry.value.value, `DT tag ${hex(tag)}`);
-    if (unique.has(tag)) fail(`Duplicate dynamic tag ${hex(tag)}`);
-    unique.set(tag, value);
+    if (unique.has(tag) || addresses.has(tag))
+      fail(`Duplicate dynamic tag ${hex(tag)}`);
+    if (ADDRESS_DYNAMIC_TAGS.has(tag)) {
+      addresses.set(tag, parsedEntry.value.value);
+      continue;
+    }
+    unique.set(tag, asNumber(parsedEntry.value.value, `DT tag ${hex(tag)}`));
   }
   if (!terminated)
     issues.push({
@@ -742,7 +756,7 @@ export const parseElfDependencies = (
   const sectionOf = (type: number, tag: number, label: string) =>
     agreedSection(
       sectionFacts.find((section) => section.type === type),
-      unique.get(tag),
+      addresses.get(tag),
       mappings,
       label,
       issues,
@@ -750,7 +764,7 @@ export const parseElfDependencies = (
   const syment = unique.get(DT_SYMENT);
   const dynsymSection = agreedSection(
     sectionFacts.find((section) => section.type === SHT_DYNSYM),
-    unique.get(DT_SYMTAB),
+    addresses.get(DT_SYMTAB),
     mappings,
     ".dynsym",
     issues,
@@ -764,7 +778,7 @@ export const parseElfDependencies = (
     dynsymSection === undefined ? undefined : sectionFacts[dynsymSection.link];
   const dynstrSection = agreedSection(
     linkedStrings?.type === 3 ? linkedStrings : undefined,
-    unique.get(DT_STRTAB),
+    addresses.get(DT_STRTAB),
     mappings,
     ".dynstr",
     issues,
@@ -781,7 +795,7 @@ export const parseElfDependencies = (
   const gnuHashSection = sectionOf(SHT_GNU_HASH, DT_GNU_HASH, ".gnu.hash");
   const dynstrTable =
     tableFromSection(dynstrSection, bytes.length, "Dynamic string", issues) ??
-    tableFromVirtual(mappings, unique.get(DT_STRTAB), strsz ?? 0);
+    tableFromVirtual(mappings, addresses.get(DT_STRTAB), strsz ?? 0);
   if (
     dynstrTable === null &&
     (neededOffsets.length > 0 || unique.has(DT_SONAME))
@@ -849,7 +863,7 @@ export const parseElfDependencies = (
     mappings,
     dynstr,
     verneedSection,
-    unique.get(DT_VERNEED),
+    addresses.get(DT_VERNEED),
     unique.get(DT_VERNEEDNUM) ?? verneedSection?.info,
     issues,
     versionNames,
@@ -870,7 +884,7 @@ export const parseElfDependencies = (
     mappings,
     dynstr,
     verdefSection,
-    unique.get(DT_VERDEF),
+    addresses.get(DT_VERDEF),
     unique.get(DT_VERDEFNUM) ?? verdefSection?.info,
     issues,
     () => {
@@ -902,7 +916,7 @@ export const parseElfDependencies = (
     dynsymSection,
     hashSection,
     gnuHashSection,
-    unique,
+    addresses,
     bits,
     symbolEntrySize,
     issues,
@@ -912,31 +926,31 @@ export const parseElfDependencies = (
     tableFromSection(dynsymSection, bytes.length, "Dynamic symbol", issues) ??
     (symbolCount === null
       ? null
-      : tableFromVirtual(mappings, unique.get(DT_SYMTAB), symbolBytes));
+      : tableFromVirtual(mappings, addresses.get(DT_SYMTAB), symbolBytes));
   const versymTable =
     tableFromSection(versymSection, bytes.length, "GNU versym", issues) ??
     (symbolCount === null
       ? null
-      : tableFromVirtual(mappings, unique.get(DT_VERSYM), symbolCount * 2));
+      : tableFromVirtual(mappings, addresses.get(DT_VERSYM), symbolCount * 2));
   if (
     dynsymTable === null &&
     symbolCount !== null &&
-    (dynsymSection !== undefined || unique.has(DT_SYMTAB))
+    (dynsymSection !== undefined || addresses.has(DT_SYMTAB))
   )
     issues.push({
       code: "table_unavailable",
-      location: hex(unique.get(DT_SYMTAB) ?? dynsymSection?.offset ?? 0),
+      location: hex(addresses.get(DT_SYMTAB) ?? dynsymSection?.offset ?? 0),
       message:
         "Dynamic symbol table could not be located from section headers or DT_SYMTAB",
     });
   if (
     versymTable === null &&
     symbolCount !== null &&
-    (versymSection !== undefined || unique.has(DT_VERSYM))
+    (versymSection !== undefined || addresses.has(DT_VERSYM))
   )
     issues.push({
       code: "table_unavailable",
-      location: hex(unique.get(DT_VERSYM) ?? versymSection?.offset ?? 0),
+      location: hex(addresses.get(DT_VERSYM) ?? versymSection?.offset ?? 0),
       message:
         "GNU versym table could not be located from section headers or DT_VERSYM",
     });
@@ -1115,7 +1129,7 @@ const locateSymbolCount = (
   dynsym: SectionFacts | undefined,
   hash: SectionFacts | undefined,
   gnuHash: SectionFacts | undefined,
-  tags: ReadonlyMap<number, number>,
+  tags: ReadonlyMap<number, bigint>,
   bits: 32 | 64,
   entrySize: number,
   issues: ElfDependencyIssue[],
@@ -1191,7 +1205,7 @@ const parseVerneed = (
   mappings: readonly FileMapping[],
   dynstr: DynamicStrings,
   section: SectionFacts | undefined,
-  address: number | undefined,
+  address: bigint | undefined,
   declaredCount: number | undefined,
   issues: ElfDependencyIssue[],
   versionNames: Map<number, { name: string | null; file: string | null }>,
@@ -1344,7 +1358,7 @@ const parseVerdef = (
   mappings: readonly FileMapping[],
   dynstr: DynamicStrings,
   section: SectionFacts | undefined,
-  address: number | undefined,
+  address: bigint | undefined,
   declaredCount: number | undefined,
   issues: ElfDependencyIssue[],
   chargeVersion: () => void,

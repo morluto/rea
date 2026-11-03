@@ -117,15 +117,40 @@ export const elfSearchPathTokens = (
 
 const VERSION_NAME = /^(.*)_([0-9]+(?:\.[0-9]+)*)$/u;
 
-const versionParts = (value: string): bigint[] =>
-  value.split(".").map((part) => BigInt(part));
+/** Compare two unsigned decimal strings by integer value. */
+const compareDecimal = (left: string, right: string): number => {
+  let l = 0;
+  while (l < left.length - 1 && left[l] === "0") l += 1;
+  let r = 0;
+  while (r < right.length - 1 && right[r] === "0") r += 1;
+  const a = left.slice(l);
+  const b = right.slice(r);
+  if (a.length !== b.length) return a.length < b.length ? -1 : 1;
+  return a === b ? 0 : a < b ? -1 : 1;
+};
 
-const compareVersionParts = (left: bigint[], right: bigint[]): number => {
-  const length = Math.max(left.length, right.length);
-  for (let index = 0; index < length; index += 1) {
-    const a = left[index] ?? 0n;
-    const b = right[index] ?? 0n;
-    if (a !== b) return a < b ? -1 : 1;
+/**
+ * Integer order on dotted version suffixes, missing components reading as 0.
+ * Walks both strings one component at a time so no per-name component array
+ * is built or kept: a suffix can be as long as the string cap allows.
+ */
+const compareVersionSuffixes = (left: string, right: string): number => {
+  const componentEnd = (value: string, start: number): number => {
+    const dot = value.indexOf(".", start);
+    return dot === -1 ? value.length : dot;
+  };
+  let l = 0;
+  let r = 0;
+  while (l < left.length || r < right.length) {
+    const lEnd = l < left.length ? componentEnd(left, l) : l;
+    const rEnd = r < right.length ? componentEnd(right, r) : r;
+    const order = compareDecimal(
+      l < left.length ? left.slice(l, lEnd) : "0",
+      r < right.length ? right.slice(r, rEnd) : "0",
+    );
+    if (order !== 0) return order;
+    l = lEnd + 1;
+    r = rEnd + 1;
   }
   return 0;
 };
@@ -138,17 +163,20 @@ const compareVersionParts = (left: bigint[], right: bigint[]): number => {
 export const derivedElfVersionMaxima = (
   names: readonly string[],
 ): { namespace: string; maximum: string; evidence_kind: "derived" }[] => {
-  const best = new Map<string, { maximum: string; parts: bigint[] }>();
+  const best = new Map<string, { maximum: string; suffix: string }>();
   for (const name of names) {
     const match = VERSION_NAME.exec(name);
     if (match === null || match[1] === undefined || match[2] === undefined)
       continue;
     const namespace = match[1];
     if (namespace.length === 0) continue;
-    const parts = versionParts(match[2]);
+    const suffix = match[2];
     const current = best.get(namespace);
-    if (current === undefined || compareVersionParts(parts, current.parts) > 0)
-      best.set(namespace, { maximum: name, parts });
+    if (
+      current === undefined ||
+      compareVersionSuffixes(suffix, current.suffix) > 0
+    )
+      best.set(namespace, { maximum: name, suffix });
   }
   return [...best.entries()].map(([namespace, value]) => ({
     namespace,

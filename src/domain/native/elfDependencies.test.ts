@@ -105,3 +105,20 @@ it("decodes named DT_FLAGS and DT_FLAGS_1 bits without expanding unrecognized va
     unrecognized: 0x100000000,
   });
 });
+
+it("orders dotted suffixes by integer components without per-name arrays", () => {
+  const long = Array.from({ length: 30000 }, () => "1").join(".");
+  expect(
+    derivedElfVersionMaxima([
+      "A_1.9",
+      "A_01.10",
+      "B_1.2",
+      "B_1.2.0.1",
+      "C_1.0",
+      "C_1",
+      `D_${long}`,
+      `D_${long}.0.2`,
+      `D_${long}.0.1`,
+    ]).map((entry) => entry.maximum),
+  ).toEqual(["A_01.10", "B_1.2.0.1", "C_1.0", `D_${long}.0.2`]);
+});

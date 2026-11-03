@@ -879,3 +879,53 @@ it("keeps DT_STRTAB names when the linked .dynstr section names other bytes", ()
     }),
   );
 });
+
+/** Moves every PT_LOAD and address-valued DT_* tag of an ELF64 LE image up by base. */
+const relocateElf64 = (bytes: Buffer, base: bigint): Buffer => {
+  const moved = Buffer.from(bytes);
+  const addressTags = new Set([
+    4n,
+    5n,
+    6n,
+    0x6ffffef5n,
+    0x6ffffff0n,
+    0x6ffffffcn,
+    0x6ffffffen,
+  ]);
+  const phoff = Number(moved.readBigUInt64LE(32));
+  const phent = moved.readUInt16LE(54);
+  const phnum = moved.readUInt16LE(56);
+  for (let index = 0; index < phnum; index += 1) {
+    const at = phoff + index * phent;
+    const type = moved.readUInt32LE(at);
+    if (type === 1)
+      for (const field of [16, 24])
+        moved.writeBigUInt64LE(
+          moved.readBigUInt64LE(at + field) + base,
+          at + field,
+        );
+    if (type !== 2) continue;
+    const start = Number(moved.readBigUInt64LE(at + 8));
+    const end = start + Number(moved.readBigUInt64LE(at + 32));
+    for (let entry = start; entry + 16 <= end; entry += 16)
+      if (addressTags.has(moved.readBigUInt64LE(entry)))
+        moved.writeBigUInt64LE(
+          moved.readBigUInt64LE(entry + 8) + base,
+          entry + 8,
+        );
+  }
+  return moved;
+};
+
+it("maps ELF64 table addresses above Number.MAX_SAFE_INTEGER through PT_LOAD", () => {
+  const image = elfDependencyFixture({
+    bits: 64,
+    little: true,
+    stripped: true,
+  });
+  const high = relocateElf64(image, 0xffffffff00000000n);
+  const report = parse(high);
+  expect(report).toEqual(parse(image));
+  expect(report.needed.map((entry) => entry.name)).toEqual(defaultNeeded);
+  expect(report.imports.length).toBeGreaterThan(0);
+});
