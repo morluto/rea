@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
@@ -101,14 +102,18 @@ it("reports cancellation after the last awaited admission step", async () => {
   // Abort only once admission is actually running. Aborting earlier would be
   // observed by the pre-admission check and would leave the post-admission
   // check untested.
-  await entered;
-  expect(admissionCalls).toBe(1);
-  expect(controller.signal.aborted).toBe(false);
-  controller.abort("caller stopped after admission");
+  try {
+    await awaitAcknowledgement(entered, planning, "root admission");
+    expect(admissionCalls).toBe(1);
+    expect(controller.signal.aborted).toBe(false);
+    controller.abort("caller stopped after admission");
 
-  // Admission still succeeds after the abort, so only the check that runs
-  // after it can turn the planning result into a cancellation.
-  release();
+    // Admission still succeeds after the abort, so only the check that runs
+    // after it can turn the planning result into a cancellation.
+  } finally {
+    release();
+    await planning;
+  }
 
   const prepared = await planning;
   expect(admissionCalls).toBe(1);
