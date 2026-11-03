@@ -1185,9 +1185,12 @@ treated as malformed.
 exact array path with `--filter-output` and provide comma-separated direct
 scalar columns with `--columns`; column order is the output column order:
 
+For an artifact inventory request that selects the `occurrences` collection
+and includes `logical_path` and `artifact_id` in its view fields:
+
 ```bash
 rea inspect-analysis-view request.json --format csv \
-  --filter-output normalized_result.rows --columns name,address
+  --filter-output normalized_result.items --columns logical_path,artifact_id
 ```
 
 The first line is a REA metadata record,
