@@ -9,6 +9,7 @@ import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 } from "../config/regexWorkerHeapRequest.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import {
   matchRegexValues,
   execArgvFromCommandLine,
@@ -504,4 +505,9 @@ it("reports actionable recovery for an invalid search regex from the worker", as
     remediation: { action: expect.stringMatching(/pattern.*mode literal/u) },
   });
   expect(error.message).toContain("Invalid regex pattern");
+  expect(result.error).toBeInstanceOf(AnalysisInputError);
+  if (!(result.error instanceof AnalysisInputError)) throw result.error;
+  const reason = result.error.issues[0]?.message;
+  expect(reason).toBeTruthy();
+  expect(error.message).toContain(reason);
 });

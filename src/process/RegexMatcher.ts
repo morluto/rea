@@ -635,7 +635,7 @@ export const matchRegexValues = async (input: {
                     {
                       path: ["pattern"],
                       reason: "invalid_format",
-                      message: "Supply a valid regular expression.",
+                      message: reply.data.reason,
                     },
                   ],
                 ),
