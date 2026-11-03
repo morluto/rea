@@ -151,7 +151,13 @@ const row = ({
 
 type LinkedProperty = "nx" | "relro" | "rpath" | "runpath";
 type SpanProgram = Exclude<ElfProgramDeclaration, { type: 2 }>;
-type FileMapping = { readonly offset: number; readonly available: bigint };
+type FileMapping = {
+  readonly offset: number;
+  /** File-backed bytes left in the owning PT_LOAD from this address. */
+  readonly backed: bigint;
+  /** Bytes before another PT_LOAD maps the same addresses again. */
+  readonly available: bigint;
+};
 type MapVa = (va: bigint, size: bigint) => FileMapping;
 
 const isSpan = (program: ElfProgramDeclaration): program is SpanProgram =>
@@ -326,7 +332,11 @@ const mapVirtualAddress = (
   va: bigint,
   size: bigint,
 ): FileMapping => {
-  const matches: FileMapping[] = [];
+  const matches: {
+    readonly load: SpanProgram;
+    readonly offset: number;
+    readonly backed: bigint;
+  }[] = [];
   for (const load of loads) {
     if (
       va < load.virtual_address ||
@@ -337,13 +347,25 @@ const mapVirtualAddress = (
     if (delta >= load.file_size || size > load.file_size - delta)
       malformed("ELF virtual address range is not file-backed in its PT_LOAD");
     matches.push({
+      load,
       offset: exact(load.file_offset + delta, "ELF virtual address"),
-      available: load.file_size - delta,
+      backed: load.file_size - delta,
     });
   }
   if (matches.length !== 1)
     malformed("ELF virtual address does not map through exactly one PT_LOAD");
-  return matches[0]!;
+  const { load: owner, offset, backed } = matches[0]!;
+  // A later PT_LOAD inside the span maps those addresses again, possibly from
+  // other file bytes, so the whole range must stay inside one interpretation.
+  let available = backed;
+  for (const load of loads) {
+    if (load === owner || load.memory_size === 0n) continue;
+    const start = load.virtual_address - va;
+    if (start > 0n && start < available) available = start;
+  }
+  if (size > available)
+    malformed("ELF virtual address range crosses another PT_LOAD mapping");
+  return { offset, backed, available };
 };
 
 type DynamicEntry = {
@@ -596,8 +618,9 @@ const hashWords = (
   return (relative) => {
     // Hash readers may jump over bloom filters or chains. Validate the whole
     // prefix, including skipped bytes, in the same file-backed mapping.
-    if (BigInt(relative + 4) > mapping.available)
-      return err("is not file-backed in its PT_LOAD");
+    const end = BigInt(relative + 4);
+    if (end > mapping.backed) return err("is not file-backed in its PT_LOAD");
+    if (end > mapping.available) return err("crosses another PT_LOAD mapping");
     const at = mapping.offset + relative;
     if (at > bytes.length - 4) return err("extends outside the file");
     return ok(little ? bytes.readUInt32LE(at) : bytes.readUInt32BE(at));

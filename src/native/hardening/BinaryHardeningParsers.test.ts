@@ -671,6 +671,48 @@ it("reads sectionless GNU hash buckets with many non-owning load declarations", 
 });
 
 it.each([
+  ["string table", 5n, 1n, /crosses another PT_LOAD/u],
+  ["SysV hash table", 4n, 4n, /crosses another PT_LOAD/u],
+] as const)(
+  "rejects a dynamic %s that a second PT_LOAD remaps partway through",
+  (_label, tag, inset, message) => {
+    const original = elfHardeningFixture({ sections: false, stackChk: true });
+    const oldPhoff = Number(original.readBigUInt64LE(32));
+    const phnum = original.readUInt16LE(56);
+    const phoff = original.length;
+    const bytes = Buffer.alloc(phoff + (phnum + 1) * 56);
+    original.copy(bytes);
+    original.copy(bytes, phoff, oldPhoff, oldPhoff + phnum * 56);
+    bytes.writeBigUInt64LE(BigInt(phoff), 32);
+    bytes.writeUInt16LE(phnum + 1, 56);
+    let table = 0n;
+    for (let index = 0; index < phnum; index += 1) {
+      const at = phoff + index * 56;
+      if (bytes.readUInt32LE(at) !== 2) continue;
+      for (
+        let entry = Number(bytes.readBigUInt64LE(at + 8));
+        bytes.readBigUInt64LE(entry) !== 0n;
+        entry += 16
+      )
+        if (bytes.readBigUInt64LE(entry) === tag)
+          table = bytes.readBigUInt64LE(entry + 8);
+    }
+    expect(table).toBeGreaterThan(0n);
+    expect(findRow(readElfHardening(bytes).rows, "stack_protector").state).toBe(
+      "enabled",
+    );
+    // The extra load starts inside the table and maps it from other bytes.
+    const extraAt = phoff + phnum * 56;
+    bytes.writeUInt32LE(1, extraAt);
+    bytes.writeBigUInt64LE(0n, extraAt + 8);
+    bytes.writeBigUInt64LE(table + inset, extraAt + 16);
+    bytes.writeBigUInt64LE(16n, extraAt + 32);
+    bytes.writeBigUInt64LE(16n, extraAt + 40);
+    expect(() => readElfHardening(bytes)).toThrow(message);
+  },
+);
+
+it.each([
   ["string table", 5, 18, null],
   ["string table with only its first byte mapped", 5, 18, 1],
   ["symbol table", 6, 48, null],
