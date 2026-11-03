@@ -114,6 +114,10 @@ Code-object equality used by sets and dictionaries follows the selected CPython 
 3.11+ compare raw flags; raw `co_flags` remain in reported facts. The older
 layouts ignore line tables, while 3.11+ include line and exception tables and
 skip inline-cache code units according to the cache table for the exact magic.
+Magic 3620 is shared by 3.14.0a6 and the main-branch builds of the following
+day that already carry the 3621 opcode table, so no cache table is pinned to
+it: equality under 3620 uses the raw bytecode, which keeps code objects that
+differ only in cache units distinct, and the report says so in a limitation.
 Reported bytecode length and SHA-256 still describe the original code bytes.
 This does not emulate CPython's deoptimization of specialized or instrumented
 opcode bytes in handcrafted pyc files.

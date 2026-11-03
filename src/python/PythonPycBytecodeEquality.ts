@@ -66,8 +66,9 @@ const inlineCacheProfiles = (
  * a10f99375e7912df863cf101a38e9703cfcd72f1 reverted it; the pinned table is
  * 75b49621578a45415bfeedd6cc68d50e821d8281's. Builds of magic 3620 after
  * 053c285f6b41f92fbdd1d4ff0c959cceefacd7cd (the day before 3621) already
- * carry the 3621 table. Final 3.14 magic 3627 matches v3.14.4 and final 3.15
- * magic 3666 matches v3.15.0.
+ * carry the 3621 table, so no table is pinned to 3620 (see
+ * `PYTHON_PYC_SHARED_TABLE_MAGIC`). Final 3.14 magic 3627 matches v3.14.4 and
+ * final 3.15 magic 3666 matches v3.15.0.
  */
 const INLINE_CACHE_ENTRIES_BY_MAGIC: ReadonlyMap<
   number,
@@ -715,7 +716,7 @@ const INLINE_CACHE_ENTRIES_BY_MAGIC: ReadonlyMap<
     ],
   ),
   ...inlineCacheProfiles(
-    [3619, 3620],
+    [3619],
     [
       [37, 1],
       [38, 3],
@@ -915,6 +916,15 @@ const INLINE_CACHE_ENTRIES_BY_MAGIC: ReadonlyMap<
     ],
   ),
 ]);
+
+/**
+ * Magic 3620 is shared by CPython 3.14.0a6 and the main-branch builds after
+ * 053c285f6b41f92fbdd1d4ff0c959cceefacd7cd that already carry the 3621
+ * opcode table; the header cannot tell them apart, and the wrong table would
+ * merge distinct code objects. No table is pinned to it, so its identity is the
+ * raw bytecode, which keeps code objects that differ only in cache units apart.
+ */
+export const PYTHON_PYC_SHARED_TABLE_MAGIC = 3620;
 
 /** Preserve CPython's bytecode-size check and omit only cache code units. */
 export const pythonPycBytecodeIdentity = (

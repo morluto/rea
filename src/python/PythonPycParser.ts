@@ -19,7 +19,10 @@ import {
   PythonPycFormatFailure,
   PythonPycResourceFailure,
 } from "./PythonPyc.errors.js";
-import { pythonPycBytecodeIdentity } from "./PythonPycBytecodeEquality.js";
+import {
+  PYTHON_PYC_SHARED_TABLE_MAGIC,
+  pythonPycBytecodeIdentity,
+} from "./PythonPycBytecodeEquality.js";
 
 const FLAG_REF = 0x80;
 const TYPE_NULL = 0x30;
@@ -291,6 +294,11 @@ export const parsePythonPyc = (
       codeObjects.some((code) => code.stacksize < 0 || code.flags < 0)
         ? [
             "Magic 3410 is shared by CPython revisions with different negative co_stacksize/co_flags constructor checks; these raw values are preserved, but this header cannot establish constructor acceptance.",
+          ]
+        : []),
+      ...(magic === PYTHON_PYC_SHARED_TABLE_MAGIC
+        ? [
+            "Magic 3620 is shared by CPython 3.14.0a6 and later main-branch builds that already carry the 3621 opcode table; code-object equality uses the raw bytecode, so code objects that differ only in inline cache units stay distinct.",
           ]
         : []),
       ...(unknownFlags === 0
