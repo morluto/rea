@@ -168,7 +168,7 @@ const referenceObservationRecord = (
     ? (normalized as Readonly<Record<string, JsonValue>>)
     : undefined;
 
-const isEmptyArray = (value: JsonValue | undefined): boolean =>
+const isEmptyArray = (value: JsonValue | undefined | null): boolean =>
   Array.isArray(value) && value.length === 0;
 
 /**
@@ -192,6 +192,18 @@ const emptyReferenceCaveat = (
   if (operation === "analyze_function")
     return isEmptyArray(record.incoming_references) &&
       isEmptyArray(record.outgoing_references)
+      ? ghidraEmptyFunctionReferencesLimitation
+      : undefined;
+  if (operation === "annotate_native_function") {
+    const dossier = referenceObservationRecord(record.dossier ?? null);
+    return dossier !== undefined &&
+      isEmptyArray(dossier.incoming_references) &&
+      isEmptyArray(dossier.outgoing_references)
+      ? ghidraEmptyFunctionReferencesLimitation
+      : undefined;
+  }
+  if (operation === "inspect_native_instruction")
+    return isEmptyArray(record.incoming_references)
       ? ghidraEmptyFunctionReferencesLimitation
       : undefined;
   return undefined;

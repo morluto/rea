@@ -48,6 +48,10 @@ import {
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import {
+  compactInstruction,
+  compactReference,
+} from "../domain/native/nativeInstruction.fixture.js";
+import {
   ghidraFunctionDossier,
   ghidraFunctionIdentity,
   ghidraReferenceEdge,
@@ -3225,6 +3229,17 @@ describe("Ghidra empty reference diagnostics", () => {
       await client.close();
     }
   });
+});
+
+describe("Ghidra empty function-reference facets", () => {
+  const emptyReferenceProvider = (result: JsonValue) =>
+    provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () => Promise.resolve(ok(result)),
+      close: () => Promise.resolve(ok(null)),
+    }));
+
+  const observation = (value: JsonValue) => ({ value, limitations: [] });
 
   it("names unresolved references in the limitations of a dossier without any references", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
@@ -3258,6 +3273,77 @@ describe("Ghidra empty reference diagnostics", () => {
     try {
       const execution = await client.execute("analyze_function", {
         procedure: "0x401000",
+      });
+      if (!execution.ok) throw execution.error;
+      expect(execution.value.limitations).not.toContain(
+        ghidraEmptyFunctionReferencesLimitation,
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("names unresolved references when annotation readback observes no references", async () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    const ghidra = emptyReferenceProvider({
+      annotations: {
+        address: "0x401000",
+        name: "fixture_main",
+        comment: null,
+        inline_comment: null,
+      },
+      dossier: { ...dossier, incoming_references: [], outgoing_references: [] },
+      effects: {
+        scope: "session-analysis-database",
+        source_bytes_modified: false,
+        persists_after_close: false,
+      },
+    });
+    const client = await createElfClient(ghidra);
+    try {
+      const execution = await client.execute("annotate_native_function", {
+        procedure: "0x401000",
+        name: "fixture_main",
+      });
+      if (!execution.ok) throw execution.error;
+      expect(execution.value.limitations).toContain(
+        ghidraEmptyFunctionReferencesLimitation,
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("names unresolved references when inspect_native_instruction reports no incoming references", async () => {
+    const ghidra = emptyReferenceProvider({
+      ...compactInstruction(),
+      incoming_references: [],
+    });
+    const client = await createElfClient(ghidra);
+    try {
+      const execution = await client.execute("inspect_native_instruction", {
+        document: null,
+        address: "0x401000",
+      });
+      if (!execution.ok) throw execution.error;
+      expect(execution.value.limitations).toContain(
+        ghidraEmptyFunctionReferencesLimitation,
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("does not add the caveat when inspect_native_instruction reports incoming references", async () => {
+    const ghidra = emptyReferenceProvider({
+      ...compactInstruction(),
+      incoming_references: [compactReference()],
+    });
+    const client = await createElfClient(ghidra);
+    try {
+      const execution = await client.execute("inspect_native_instruction", {
+        document: null,
+        address: "0x401000",
       });
       if (!execution.ok) throw execution.error;
       expect(execution.value.limitations).not.toContain(
