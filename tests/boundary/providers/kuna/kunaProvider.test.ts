@@ -552,6 +552,57 @@ it("rejects oversized cached text before buffering while retaining its full expo
   }
 });
 
+it("can recover a standalone output overflow from a completed project", async () => {
+  const { open } = await session("rea-kuna-overflow-project-", {
+    delayMs: 3000,
+    decompilePadding: KUNA_FUNCTION_TEXT_BYTES + 1,
+  });
+  const client = open();
+  const first = await client.execute("procedure_pseudo_code", {
+    procedure: "main",
+  });
+  expect(first.ok).toBe(false);
+  if (first.ok) return;
+  expect(projectAnalysisError(first.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: true,
+    remediation: { action: expect.stringContaining("project export") },
+    details: {
+      reported_limits: { output_limit_bytes: KUNA_FUNCTION_TEXT_BYTES },
+    },
+  });
+  expect(
+    projectAnalysisError(first.error, "invocation").remediation.action,
+  ).not.toContain("procedure_assembly");
+  await run(client, "procedure_assembly", { procedure: "main" });
+  const later = await run(client, "procedure_pseudo_code", {
+    procedure: "main",
+  });
+  expect(later.rawResult).toMatchObject({ source: { kind: "project-export" } });
+  await client.close();
+
+  const failed = await session("rea-kuna-overflow-failed-project-", {
+    project: "exit-failure",
+    decompilePadding: KUNA_FUNCTION_TEXT_BYTES + 1,
+  });
+  const failedClient = failed.open();
+  expect(
+    (await failedClient.execute("procedure_assembly", { procedure: "main" }))
+      .ok,
+  ).toBe(false);
+  const overflow = await failedClient.execute("procedure_pseudo_code", {
+    procedure: "main",
+  });
+  expect(overflow.ok).toBe(false);
+  if (!overflow.ok)
+    expect(projectAnalysisError(overflow.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      remediation: { action: expect.stringContaining("Use another provider") },
+    });
+  await failedClient.close();
+});
+
 it("keeps answering pseudocode one function at a time when the export fails", async () => {
   const { open } = await session("rea-kuna-export-failed-", {
     project: "exit-failure",
