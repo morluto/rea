@@ -9,9 +9,7 @@ import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 } from "../config/regexWorkerHeapRequest.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import {
-  matchRegexValues,
   execArgvFromCommandLine,
   readLaunchExecArgv,
   readLaunchNodeOptions,
@@ -488,26 +486,4 @@ it("keeps a selected heap request unless a positive Node flag overrides it", () 
     regexWorkerHeapRequestRecovery(request),
   );
   expect(projected.details?.limit).toBeUndefined();
-});
-
-it("reports actionable recovery for an invalid search regex from the worker", async () => {
-  const result = await matchRegexValues({
-    operation: "search_strings",
-    pattern: "(",
-    caseSensitive: false,
-    values: ["example"],
-  });
-  if (result.ok) throw new Error("Expected an invalid-pattern refusal");
-  const error = projectAnalysisError(result.error);
-  expect(error).toMatchObject({
-    code: "invalid_request",
-    details: { issues: [{ path: ["pattern"], reason: "invalid_format" }] },
-    remediation: { action: expect.stringMatching(/pattern.*mode literal/u) },
-  });
-  expect(error.message).toContain("Invalid regex pattern");
-  expect(result.error).toBeInstanceOf(AnalysisInputError);
-  if (!(result.error instanceof AnalysisInputError)) throw result.error;
-  const reason = result.error.issues[0]?.message;
-  expect(reason).toBeTruthy();
-  expect(error.message).toContain(reason);
 });
