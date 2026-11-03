@@ -156,6 +156,53 @@ describe("UnicornClient", () => {
     expect(result.value.provider.id).toBe("unicorn");
     expect(result.value.result).toBeNull();
   });
+
+  it("attributes a target-free run to controlled replay, not the active target", async () => {
+    await withTempDir(async (dir) => {
+      const client = new UnicornClient(
+        { [UNICORN_PYTHON_ENV_VAR]: "/usr/bin/python3" },
+        { launcher: replyingLauncher(successReply()), runtimeDirBase: dir },
+      );
+      const result = await client.execute("emulate_function", addInput());
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // An explicit null subject keeps the session from substituting the
+      // active target; the authority says replay, not artifact provenance.
+      expect(result.value.subject).toBeNull();
+      expect(result.value.authority).toBe("controlled-replay");
+      expect(result.value.environment).toMatchObject({
+        id: "unicorn-2.1.2",
+        architecture: "x86_64",
+        isolation: "process",
+      });
+      expect(result.value.subjectUnavailableReason).toMatch(
+        /caller-supplied, not an opened artifact/,
+      );
+    });
+  });
+
+  it("gives the outer deadline a startup allowance over the emulation budget", async () => {
+    await withTempDir(async (dir) => {
+      let seenTimeoutMs: number | undefined;
+      const recordingLauncher: UnicornBridgeLauncher = async (
+        spawn,
+        timeoutMs,
+        signal,
+      ) => {
+        seenTimeoutMs = timeoutMs;
+        return replyingLauncher(successReply())(spawn, timeoutMs, signal);
+      };
+      const client = new UnicornClient(
+        { [UNICORN_PYTHON_ENV_VAR]: "/usr/bin/python3" },
+        { launcher: recordingLauncher, runtimeDirBase: dir },
+      );
+      const result = await client.execute("emulate_function", addInput());
+      expect(result.ok).toBe(true);
+      // Default budget 30s plus the 30s startup allowance for Python import
+      // and the reply round-trip; timeout errors still name the 30s budget.
+      expect(seenTimeoutMs).toBe(60_000);
+    });
+  });
 });
 
 describe("UnicornClient failures", () => {

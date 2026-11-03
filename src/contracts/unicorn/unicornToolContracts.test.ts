@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { createEvidence } from "../../domain/evidence.js";
 import {
   emulateFunctionInputSchema,
   emulateFunctionOutputSchema,
   UNICORN_TOOL_CONTRACTS,
 } from "./unicornToolContracts.js";
+import { UNICORN_PROVIDER_IDENTITY } from "../UnicornRelease.js";
 
 const CODE = 0x1000000;
 const STACK = 0x7f000000;
@@ -42,6 +44,31 @@ describe("emulate_function contract", () => {
     expect(parsed.entry_offset).toBe(0);
     expect(parsed.budgets.instruction_cap).toBe(1_000_000);
     expect(parsed.stub_policy).toBe("record");
+  });
+
+  it("advertises the Evidence envelope, not the raw result, as its output", () => {
+    const contract = emulateFunctionContract();
+    const raw = emulateFunctionOutputSchema.parse({
+      stop_reason: "returned",
+      return_value: 42,
+      registers: { rax: 42, rip: 0x0badf00d },
+      memory_writes: [],
+      memory_diff_truncated: false,
+      calls_hit: [],
+      instructions_executed: 3,
+      engine: { name: "unicorn", version: "2.1.2" },
+    });
+    // The raw result alone must not satisfy the advertised output schema:
+    // MCP clients validate structuredContent against it, and the tool
+    // returns a complete Evidence record.
+    expect(() => contract.outputSchema.parse(raw)).toThrow();
+    const evidence = createEvidence(undefined, UNICORN_PROVIDER_IDENTITY, {
+      operation: "emulate_function",
+      parameters: {},
+      result: raw,
+    });
+    const parsed = contract.outputSchema.parse(evidence);
+    expect(parsed.normalized_result).toEqual(raw);
   });
 
   it("rejects a non-x86_64 architecture", () => {

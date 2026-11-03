@@ -1,11 +1,21 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisResourceConstraintError,
+  AnalysisTimeoutError,
+} from "../../../src/domain/analysisErrorCore.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
-import type { ProviderProcessSnapshot } from "../../../src/process/ProviderProcess.js";
+import type {
+  ProviderProcessSnapshot,
+  ProviderProcessSupervisor,
+} from "../../../src/process/ProviderProcess.js";
 import { UnicornClient } from "../../../src/unicorn/UnicornClient.js";
-import type { UnicornBridgeLauncher } from "../../../src/unicorn/UnicornBridge.js";
+import {
+  runUnicornBridge,
+  type UnicornBridgeLauncher,
+} from "../../../src/unicorn/UnicornBridge.js";
 import { UNICORN_PYTHON_ENV_VAR } from "../../../src/unicorn/UnicornRelease.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -207,5 +217,114 @@ describe("Unicorn bridge boundary", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error._tag).toBe("AnalysisInputError");
+  });
+});
+
+describe("Unicorn bridge boundary fixes", () => {
+  it("does not report success when cancellation lands after the reply arrives", async () => {
+    const controller = new AbortController();
+    const client = new UnicornClient(
+      { [UNICORN_PYTHON_ENV_VAR]: "/usr/bin/python3" },
+      {
+        launcher: async (spawn, timeoutMs, signal) => {
+          const snapshot = await replyingLauncher(
+            JSON.stringify({
+              ok: true,
+              stop_reason: "returned",
+              return_value: 42,
+              registers: {},
+              memory_writes: [],
+              memory_diff_truncated: false,
+              calls_hit: [],
+              instructions_executed: 3,
+              engine: { name: "unicorn", version: "2.1.2" },
+            }),
+          )(spawn, timeoutMs, signal);
+          controller.abort(new Error("late abort"));
+          return snapshot;
+        },
+      },
+    );
+    const result = await client.execute("emulate_function", addInput(), {
+      signal: controller.signal,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+  });
+
+  it("retries a retained cleanup owner instead of dropping it", async () => {
+    let stops = 0;
+    const cleanupOwner = {
+      stop: async () => {
+        stops += 1;
+        return { status: "complete" };
+      },
+    } as unknown as ProviderProcessSupervisor;
+    const client = new UnicornClient(
+      { [UNICORN_PYTHON_ENV_VAR]: "/usr/bin/python3" },
+      {
+        launcher: () => {
+          throw new OwnedCommandFailure(
+            "process",
+            "boom",
+            null,
+            null,
+            undefined,
+            [],
+            cleanupOwner,
+          );
+        },
+      },
+    );
+    const result = await client.execute("emulate_function", addInput());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
+    expect(stops).toBe(1);
+  });
+
+  it("rejects an oversize reply without reading it blind", async () => {
+    const client = new UnicornClient(
+      { [UNICORN_PYTHON_ENV_VAR]: "/usr/bin/python3" },
+      {
+        launcher: async (spawn) => {
+          const requestPath = spawn.arguments[3] as string;
+          const request = JSON.parse(await readFile(requestPath, "utf8")) as {
+            reply_path: string;
+          };
+          await writeFile(request.reply_path, " ".repeat(65 * 1024 * 1024), {
+            flag: "wx",
+            mode: 0o600,
+          });
+          return snapshot("", 0);
+        },
+      },
+    );
+    const result = await client.execute("emulate_function", addInput());
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      if (result.error instanceof AnalysisResourceConstraintError)
+        expect(result.error.resource).toBe("file-size");
+    }
+  });
+
+  it("maps a completed exit 75 through the default launcher to a resource error", async () => {
+    const dir = await createTestTempDirectory("rea-unicorn-exit75-");
+    const script = join(dir, "exit75.sh");
+    await writeFile(script, "#!/bin/sh\nexit 75\n", { mode: 0o755 });
+    const result = await runUnicornBridge({
+      pythonPath: script,
+      bridgePath: join(dir, "bridge.py"),
+      request: {},
+      timeoutMs: 5000,
+      runtimeDirBase: dir,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      if (result.error instanceof AnalysisResourceConstraintError)
+        expect(result.error.resource).toBe("memory");
+    }
+    expect(await readdir(dir)).toContain("exit75.sh");
   });
 });
