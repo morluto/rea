@@ -248,6 +248,11 @@ describe("RT-Spark board annotation", () => {
       "serial-usart1",
     ]);
     expect(usart?.boardDrivers[0]?.linkage).toBe("linked_in_image");
+    expect(usart?.socPeripheralNameBasis).toBe("chip_manual");
+    expect(
+      report.attributions.find((item) => item.targetAddress === "0x40011000")
+        ?.controllerBasis,
+    ).toBe("chip_manual");
 
     const spi = report.peripheralBlocks.find(
       (block) => block.socPeripheralName === "SPI2",
@@ -302,6 +307,12 @@ describe("RT-Spark board annotation", () => {
     expect(
       report.boardDrivers.find((driver) => driver.id === "esp8266")?.linkage,
     ).toBe("not_observed");
+    expect(report.unsettledFacts.map((fact) => fact.subject)).toEqual(
+      expect.arrayContaining(["spi-flash", "led-b", "usb-device", "usb-host"]),
+    );
+    expect(
+      report.unsettledFacts.every((fact) => fact.basis === "unsettled"),
+    ).toBe(true);
     const cortex = reconstructHardwareFromReferences(
       references,
       "cortex-m",

@@ -3,6 +3,12 @@ import {
   type HardwareArchitecture,
   type HardwareMemoryRegionKind,
 } from "./hardwareMemoryMap.js";
+import {
+  controllerNameBasis,
+  registerNameBasis,
+  type ControllerNameBasis,
+  type RegisterNameBasis,
+} from "./hardwareFactBasis.js";
 import { lookupHardwareRegister } from "./hardwareRegisterCatalog.js";
 import {
   lookupSocPeripheral,
@@ -38,8 +44,11 @@ export interface HardwareAccessAttribution {
   readonly accessKind: HardwareAccessKind;
   readonly peripheralBlockBase: string;
   readonly peripheralBlockOffset: string;
+  readonly controllerName: string | null;
+  readonly controllerBasis: ControllerNameBasis;
   readonly registerName?: string | null;
   readonly registerMnemonic?: string | null;
+  readonly registerBasis: RegisterNameBasis;
   readonly sourceAddress?: string | null;
   readonly operandIndex?: number | null;
   readonly provenance?: string | null;
@@ -128,8 +137,11 @@ export const attributeHardwareAccess = (
     accessKind,
     peripheralBlockBase: `0x${blockBaseValue.toString(16)}`,
     peripheralBlockOffset: `0x${blockOffsetValue.toString(16)}`,
+    controllerName: socPeripheral?.name ?? null,
+    controllerBasis: controllerNameBasis(socPeripheral != null),
     registerName: knownRegister?.name ?? null,
     registerMnemonic: knownRegister?.mnemonic ?? null,
+    registerBasis: registerNameBasis(knownRegister != null),
     sourceAddress: reference.source_address ?? null,
     operandIndex: reference.operand_index ?? null,
     provenance: reference.provenance ?? null,

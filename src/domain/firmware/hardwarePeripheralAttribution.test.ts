@@ -31,8 +31,11 @@ describe("Hardware peripheral reference attribution", () => {
       accessKind: "read",
       peripheralBlockBase: "0x40011000",
       peripheralBlockOffset: "0x4",
+      controllerName: null,
+      controllerBasis: "observed_address",
       registerName: null,
       registerMnemonic: null,
+      registerBasis: "observed_address",
       sourceAddress: "0x08000150",
       operandIndex: 1,
       provenance: "instruction_disassembly",
@@ -79,6 +82,8 @@ describe("Hardware peripheral reference attribution", () => {
     expect(result.value.registerName).toBe(
       "SysTick Control and Status Register",
     );
+    expect(result.value.registerBasis).toBe("architecture_manual");
+    expect(result.value.controllerBasis).toBe("observed_address");
   });
 
   it("distinguishes non-MMIO code and RAM memory accesses", () => {
@@ -215,6 +220,9 @@ describe("SoC platform-specific peripheral attribution", () => {
     expect(stm32Result.value.peripheralBlockBase).toBe("0x40010800");
     expect(stm32Result.value.peripheralBlockOffset).toBe("0x4");
     expect(stm32Result.value.regionName).toBe("GPIOA (APB2)");
+    expect(stm32Result.value.controllerName).toBe("GPIOA");
+    expect(stm32Result.value.controllerBasis).toBe("chip_manual");
+    expect(stm32Result.value.registerBasis).toBe("observed_address");
     expect(stm32Result.value.isMmio).toBe(true);
 
     const esp32Ref: AnalyzedInstructionReference = {

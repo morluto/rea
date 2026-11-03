@@ -16,6 +16,14 @@ import {
   hardwareMemoryRegionKindSchema,
 } from "../../domain/firmware/hardwareMemoryMap.js";
 import {
+  controllerNameBasis,
+  CONTROLLER_NAME_BASES,
+  REGISTER_NAME_BASES,
+  unsettledBoardFacts,
+  type ControllerNameBasis,
+  type UnsettledBoardFact,
+} from "../../domain/firmware/hardwareFactBasis.js";
+import {
   boardDriversForControllers,
   boardDriverSchema,
   type BoardDriver,
@@ -74,6 +82,7 @@ export type ReconstructProcedureHardwareInput = z.infer<
 /** Enriched peripheral block with optional SoC-specific controller identification. */
 export interface ReconstructedPeripheralBlock extends HardwarePeripheralBlockSummary {
   readonly socPeripheralName?: string | null;
+  readonly socPeripheralNameBasis: ControllerNameBasis;
   readonly socPeripheralBus?: string | null;
   readonly boardDevices: readonly BoardDeviceAttachment[];
   readonly boardDrivers: readonly BoardDriver[];
@@ -106,6 +115,7 @@ export interface HardwarePeripheralReconstruction {
   readonly peripheralBlocks: readonly ReconstructedPeripheralBlock[];
   readonly attributions: readonly HardwareAccessAttribution[];
   readonly detectedPlatforms: readonly SocPlatformMatchCandidate[];
+  readonly unsettledFacts: readonly UnsettledBoardFact[];
   readonly limitations: readonly string[];
 }
 
@@ -143,6 +153,7 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
       observedOffsets: z.array(z.string()),
       knownRegisters: z.array(z.string()),
       socPeripheralName: z.string().nullable().optional(),
+      socPeripheralNameBasis: z.enum(CONTROLLER_NAME_BASES),
       socPeripheralBus: z.string().nullable().optional(),
       boardDevices: z.array(boardDeviceAttachmentSchema),
       boardDrivers: z.array(boardDriverSchema),
@@ -159,8 +170,11 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
       accessKind: z.enum(["read", "write", "read_write", "unknown"]),
       peripheralBlockBase: z.string(),
       peripheralBlockOffset: z.string(),
+      controllerName: z.string().nullable(),
+      controllerBasis: z.enum(CONTROLLER_NAME_BASES),
       registerName: z.string().nullable().optional(),
       registerMnemonic: z.string().nullable().optional(),
+      registerBasis: z.enum(REGISTER_NAME_BASES),
       sourceAddress: z.string().nullable().optional(),
       operandIndex: z.number().nullable().optional(),
       provenance: z.string().nullable().optional(),
@@ -173,6 +187,13 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
       totalAddresses: z.number().int().min(0),
       confidence: z.number(),
       matchedPeripherals: z.array(z.string()),
+    }),
+  ),
+  unsettledFacts: z.array(
+    z.strictObject({
+      subject: z.string(),
+      basis: z.literal("unsettled"),
+      reason: z.string(),
     }),
   ),
   limitations: z.array(z.string()),
@@ -351,6 +372,7 @@ export const reconstructHardwareFromReferences = (
           matchedNames.size > 0
             ? Array.from(matchedNames).sort().join(", ")
             : null,
+        socPeripheralNameBasis: controllerNameBasis(matchedNames.size > 0),
         socPeripheralBus: primaryBus,
         boardDevices:
           boardApplies && boardProfile !== null
@@ -401,6 +423,10 @@ export const reconstructHardwareFromReferences = (
     peripheralBlocks,
     attributions,
     detectedPlatforms,
+    unsettledFacts:
+      boardApplies && boardProfile !== null
+        ? unsettledBoardFacts(boardProfile.devices)
+        : [],
     limitations,
   };
 };
