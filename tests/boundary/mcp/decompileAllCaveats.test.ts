@@ -157,6 +157,38 @@ describe("decompile_all MCP caveats", () => {
     });
     expect(calls).not.toContain("procedure_pseudo_code");
   });
+
+  it("projects targeted remediation rather than generic input schema advice for a damaged journal", async () => {
+    const parent = await createTestTempDirectory(
+      "rea-decompile-damaged-journal-",
+    );
+    const output = join(parent, "out");
+    const client = await connect(addressCaveats);
+    expect(
+      (
+        await client.callTool({
+          name: "decompile_all",
+          arguments: { output_directory: output },
+        })
+      ).isError,
+    ).not.toBe(true);
+
+    await writeFile(
+      join(output, "decompile-journal.jsonl"),
+      "corrupt-journal-line\n",
+    );
+    const res = await client.callTool({
+      name: "decompile_all",
+      arguments: { output_directory: output, resume: true },
+    });
+    expect(res.isError).toBe(true);
+    const parsed = parseMcpToolError(res);
+    expect(parsed.error.code).toBe("invalid_request");
+    expect(parsed.error.message).toContain("cannot be read and may be damaged");
+    expect(parsed.error.remediation?.action).toContain(
+      "Inspect the decompile journal",
+    );
+  });
   it("returns a bounded caveat summary and keeps each function's caveats in its file", async () => {
     const parent = await createTestTempDirectory("rea-decompile-caveats-");
     const client = await connect(addressCaveats);
