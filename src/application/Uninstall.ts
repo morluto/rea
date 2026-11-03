@@ -992,7 +992,7 @@ const unownedLowerLayerFallback = async (
   client: SetupClient,
   fileSystem: UninstallFileSystem,
 ): Promise<string | undefined> => {
-  if (client.format !== "opencode" && client.format !== "pi") return undefined;
+  if (client.format !== "pi") return undefined;
   const allPaths = [
     ...(client.configPaths ?? [client.configPath]),
     ...(client.projectConfigPaths ?? []),
