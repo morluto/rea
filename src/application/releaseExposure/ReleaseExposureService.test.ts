@@ -1434,6 +1434,10 @@ describe("ReleaseExposureService Go relative flag paths", () => {
     ["-Wl,--library-path=private-sdk", "private-sdk"],
     ["-Wl,-T,link.ld", "link.ld"],
     ["-Xlinker -L -Xlinker private-sdk", "private-sdk"],
+    ["-Xlinker -Ilib/ld-custom.so", "lib/ld-custom.so"],
+    ["-Wl,--dynamic-linker=lib/ld-custom.so", "lib/ld-custom.so"],
+    ["-Wl,-dynamic-linker,lib/ld-custom.so", "lib/ld-custom.so"],
+    ["-Wl,-Tlink.ld,-Ttext=0x400000", "link.ld"],
   ])(
     "keeps the relative path a compiler forwards in %s",
     async (value, path) => {
@@ -1449,7 +1453,8 @@ describe("ReleaseExposureService Go relative flag paths", () => {
       goModule([
         {
           key: "CGO_LDFLAGS",
-          value: "-Wl,-Bstatic,-lssl,-Bdynamic -Xlinker -Bsymbolic",
+          value:
+            "-Wl,-Bstatic,-lssl,-Bdynamic -Xlinker -Bsymbolic -Wl,-Ttext=0x400000,-Tdata,0x600000 -Xlinker -Ttext-segment=0x10000",
         },
       ]),
     );

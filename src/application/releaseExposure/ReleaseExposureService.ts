@@ -830,9 +830,12 @@ const GO_COMPILER_PATH_FLAG =
   /^-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT])=?\s*(.*)$/su;
 /**
  * Linker options a C compiler forwards through `-Wl,a,b` or `-Xlinker a`. The
- * linker reads its own letters: `-L` and `-T` take a path, `-Bstatic` does not.
+ * linker reads its own letters: `-L`, `-T` and `-I` (the ELF interpreter) take
+ * a path, `-Bstatic` does not, and `-Ttext=0x400000` and its siblings set a
+ * section or segment address.
  */
-const LINKER_PATH_FLAG = /^(?:-[LT]|--(?:library-path|script)(?==|$))=?(.*)$/su;
+const LINKER_PATH_FLAG =
+  /^(?:-(?!T(?:bss|data|text|(?:ldata|rodata|text)-segment)(?:=|$))[ILT]|-{1,2}(?:dynamic-linker|library-path|script)(?==|$))=?(.*)$/su;
 /** `go tool link` takes a library directory as `-L dir` or `-L=dir`, never attached. */
 const GO_LINKER_PATH_FLAG = /^-{1,2}L(?:=|\s+|$)(.*)$/su;
 /** The options `go tool compile -h` documents as taking a directory, path or file. */
