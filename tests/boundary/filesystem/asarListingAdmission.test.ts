@@ -88,11 +88,13 @@ it.each(["..", ".", "", "a/../b", "a/b", "a\0b"])(
   },
 );
 
-/** Listing failures name the member, then the archive that holds it. */
+/** Listing failures name the member, then the archive that holds it. The
+ * reader may report the canonical spelling of a temporary directory, which can
+ * contain spaces, so only the archive name is matched exactly. */
 const inArchive = (message: string, path: string) =>
   expect.stringMatching(
     new RegExp(
-      `^${message.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")} in \\S*${basename(path).replace(".", "\\.")}$`,
+      `^${message.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")} in .*[\\\\/]${basename(path).replace(".", "\\.")}$`,
       "u",
     ),
   );
