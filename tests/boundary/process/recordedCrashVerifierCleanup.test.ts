@@ -155,17 +155,15 @@ processTest(
 );
 
 processTest(
-  "keeps both the connection failure and a refused transport close",
+  "closes a session whose connection failed before releasing the root",
   async ({ processes }) => {
-    const outcome = await runScenario(processes, "connect-and-close-refused");
+    const outcome = await runScenario(processes, "connect-refused");
     expect(outcome.stderr).toContain("authored connection failure");
-    expect(outcome.stderr).toContain("authored transport close failure");
-    expect(outcome.stderr).toContain("transport close was refused");
-    // The failed connection owned no session, so only the sentinel is closed.
+    expect(outcome.stderr).not.toContain("retained fixture root");
+    // The session is owned before it connects, so its owners still close.
     expect(outcome.events).toEqual([
       "root-create",
-      "transport-close",
-      "sentinel-close",
+      ...ownersClosed,
       "lineage-observe",
       "root-close",
     ]);
@@ -174,5 +172,25 @@ processTest(
       retained_root: null,
     });
     expect(outcome.rootRetained).toBe(false);
+  },
+);
+
+processTest(
+  "retains the root when a failed connection's transport close is refused",
+  async ({ processes }) => {
+    const outcome = await runScenario(processes, "connect-and-close-refused");
+    expect(outcome.stderr).toContain("authored connection failure");
+    expect(outcome.stderr).toContain("authored transport close failure");
+    expect(outcome.stderr).toContain("retained fixture root");
+    expect(outcome.events).toEqual([
+      "root-create",
+      ...ownersClosed,
+      "lineage-observe",
+    ]);
+    expect(outcome.report).toMatchObject({
+      status: "failed",
+      retained_root: outcome.fixtureRoot,
+    });
+    expect(outcome.rootRetained).toBe(true);
   },
 );

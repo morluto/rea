@@ -11,7 +11,7 @@ import {
   completeVerifierRun,
 } from "./lib/verifier-run.mjs";
 import { verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
-import { connectRecordedCrash } from "./verify/recorded-crash/public.mjs";
+import { openRecordedCrashSession } from "./verify/recorded-crash/public.mjs";
 import {
   createRecordedCore,
   fixtureCommand,
@@ -91,8 +91,11 @@ try {
   );
   const spaced = join(root.path, "recording with spaces.core");
   await copyFile(core, spaced);
-  const basic = await connectRecordedCrash({ entrypoint, environment });
+  // Each session is owned before it connects, so a failed connection still
+  // closes through the cleanup below.
+  const basic = openRecordedCrashSession({ entrypoint, environment });
   sessions.push(basic);
+  await basic.connect();
   const advertised = (await basic.client.listTools()).tools;
   assert.equal(
     advertised.filter((tool) => tool.name === "inspect_recorded_crash").length,
@@ -297,11 +300,12 @@ try {
         `from pathlib import Path\nentry = ${JSON.stringify(environment.REA_PWNDBG_GDBINIT)}\nexec(compile(Path(entry).read_bytes(), entry, 'exec'), {'__name__': '__main__', '__file__': entry})\nimport pwndbg.lib.version\npwndbg.lib.version.__version__ = '0.0.0-source-owned'\n`,
       );
     }
-    const session = await connectRecordedCrash({
+    const session = openRecordedCrashSession({
       entrypoint,
       environment: { ...environment, ...changes },
     });
     sessions.push(session);
+    await session.connect();
     for (const mode of ["cli", "mcp"]) {
       const error = await session.inspect(mode, core, {
         debuggerContext: true,

@@ -11,8 +11,14 @@ import { mcpTextValue } from "../../lib/mcp-verifier-results.mjs";
 
 const execute = promisify(execFile);
 
-/** Exercise the public installed CLI and SDK transport with the same selected environment. */
-export async function connectRecordedCrash({ entrypoint, environment }) {
+/**
+ * Own the public installed CLI and SDK transport for one selected environment.
+ * The transport is acquired here and released only by `close`, so a caller
+ * owns the session before `connect` starts the SDK stdio child: a failed
+ * connection, or a refused close after one, leaves the owner in the caller's
+ * cleanup instead of losing the only handle to a possibly live transport.
+ */
+export function openRecordedCrashSession({ entrypoint, environment }) {
   const client = new Client({ name: "recorded-crash-verifier", version: "1" });
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -20,23 +26,11 @@ export async function connectRecordedCrash({ entrypoint, environment }) {
     env: environment,
     stderr: "pipe",
   });
-  try {
-    await client.connect(transport);
-  } catch (cause) {
-    // A refused transport close must not replace the connection failure.
-    try {
-      await transport.close();
-    } catch (closeFailure) {
-      throw new AggregateError(
-        [cause, closeFailure],
-        "Recorded crash MCP connection failed and its transport close was refused",
-        { cause },
-      );
-    }
-    throw cause;
-  }
   return {
     client,
+    async connect() {
+      await client.connect(transport);
+    },
     async inspect(mode, path, { debuggerContext = false, category } = {}) {
       const original = await readFile(path);
       let evidence;

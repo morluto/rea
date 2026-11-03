@@ -28,7 +28,7 @@ const lineage =
     ? '{ status: "unavailable", reason: "authored lineage unavailability", descendants: [] }'
     : '{ status: "verified", descendants: [] }';
 const connection =
-  scenario === "connect-and-close-refused"
+  scenario === "connect-refused" || scenario === "connect-and-close-refused"
     ? 'throw new Error("authored connection failure");'
     : "";
 const prerequisite =

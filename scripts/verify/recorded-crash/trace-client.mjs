@@ -1,11 +1,12 @@
-import { connectRecordedCrash } from "./public.mjs";
+import { openRecordedCrashSession } from "./public.mjs";
 import assert from "node:assert/strict";
 
-const session = await connectRecordedCrash({
+const session = openRecordedCrashSession({
   entrypoint: process.argv[2],
   environment: process.env,
 });
 try {
+  await session.connect();
   const report = await session.inspect("mcp", process.argv[3], {
     debuggerContext: true,
   });
