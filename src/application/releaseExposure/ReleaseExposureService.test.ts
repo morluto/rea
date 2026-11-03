@@ -1513,6 +1513,24 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
     },
   );
 
+  it.each([
+    ["-Wl,-rpath,@loader_path/lib:extra", "not_observed", []],
+    ["-Wl,-rpath,$ORIGIN:/opt/private-runtime", "not_observed", []],
+    ["-Wl,-rpath,/opt/a:b", "exposed", ["/opt/a:b"]],
+  ])(
+    "reads a Mach-O search path in %s as one directory",
+    async (value, status, paths) => {
+      const report = await goReport(
+        goModule([{ key: "CGO_LDFLAGS", value }]),
+        [],
+        "mach-o",
+      );
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.status).toBe(status);
+      expect(check?.observation.samples ?? []).toEqual(paths);
+    },
+  );
+
   it("does not read loader-expanded runtime search paths as build paths", async () => {
     const report = await goReport(
       goModule([
@@ -2035,9 +2053,10 @@ const goBinaryReport = (
 const goReport = async (
   module: NonNullable<GoBinary["build_info"]>["module"],
   limitations: string[] = [],
+  format: "elf" | "mach-o" = "elf",
 ) => {
   const { service, goBinaries } = owners(
-    scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
+    scan({ native_images: [{ path: "/work/app", format }] }),
   );
   goBinaries.inspect.mockResolvedValue(
     ok(evidence(goBinaryReport(module, limitations))),

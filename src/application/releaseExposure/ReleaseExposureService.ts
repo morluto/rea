@@ -380,7 +380,7 @@ export class ReleaseExposureService {
         if (report.data.build_info === null) return { kind: "absent" };
         return {
           kind: "paths",
-          paths: goPaths(report.data.build_info.module),
+          paths: goPaths(report.data.build_info.module, image.format),
           complete: report.data.build_info.module.complete,
           limitations: report.data.limitations,
         };
@@ -853,6 +853,7 @@ const LINKER_PATH_FLAG =
  */
 const LINKER_RUNTIME_TOKEN =
   /^(?:\$(?:ORIGIN|LIB|PLATFORM)\b|\$\{(?:ORIGIN|LIB|PLATFORM)\}|@(?:executable_path|loader_path|rpath)(?:\/|$))/u;
+type NativeImageFormat = ReleaseExposureNativeImage["format"];
 /** `-rpath` and `-rpath-link` take a search list, not one directory. */
 const LINKER_SEARCH_LIST_FLAG = /^-{1,2}(?:rpath|rpath-link)(?==|$)/u;
 /**
@@ -1039,15 +1040,17 @@ const linkerSearchLists = (flags: string[]): string[] =>
  * search list is read entry by entry, so a loader-expanded entry such as
  * `$ORIGIN` drops only itself. Only a search list is loader-expanded: the
  * argument of `-T`, `-L` or `-I` is a literal path even when it reads `$ORIGIN`.
+ * Only the ELF linker splits a search list at `:`. The Mach-O linker stores
+ * each `-rpath` argument as one directory, so `@loader_path/lib:extra` is one
+ * loader-relative entry.
  */
-const compilerPaths = (value: string): string[] => {
+const compilerPaths = (value: string, format: NativeImageFormat): string[] => {
   const flags = goFlags(value);
   const { compiler, linker } = splitForwardedLinkerFlags(flags);
   const lists = linkerSearchLists(linker);
   const whole = new Set(lists);
   const entries = lists.flatMap((list) =>
-    list
-      .split(LINKER_SEARCH_LIST_SEPARATOR)
+    (format === "elf" ? list.split(LINKER_SEARCH_LIST_SEPARATOR) : [list])
       .map((entry) => entry.trimEnd())
       .filter((entry) => entry.length > 0 && !LINKER_RUNTIME_TOKEN.test(entry)),
   );
@@ -1065,8 +1068,12 @@ const compilerPaths = (value: string): string[] => {
  * Paths in a flag setting. Each `-extldflags` value is read only as the
  * external linker splits it, so a path quoted inside it is read whole.
  */
-const goSettingPaths = (key: string, value: string): string[] => {
-  if (GO_COMPILER_SETTING.test(key)) return compilerPaths(value);
+const goSettingPaths = (
+  key: string,
+  value: string,
+  format: NativeImageFormat,
+): string[] => {
+  if (GO_COMPILER_SETTING.test(key)) return compilerPaths(value, format);
   const pathFlag = GO_TOOL_PATH_FLAGS.get(key);
   const { flags, own, external } = goToolFlags(value);
   const whole =
@@ -1082,12 +1089,13 @@ const goSettingPaths = (key: string, value: string): string[] => {
       ),
     ),
     ...whole.paths,
-    ...external.flatMap(compilerPaths),
+    ...external.flatMap((flags) => compilerPaths(flags, format)),
   ];
 };
 
 const goPaths = (
   module: NonNullable<GoBinary["build_info"]>["module"],
+  format: NativeImageFormat,
 ): string[] => {
   const paths = new Set<string>();
   const add = (value: string | null | undefined) => {
@@ -1108,7 +1116,7 @@ const goPaths = (
       continue;
     }
     if (!GO_FLAG_SETTING.test(setting.key)) continue;
-    for (const path of goSettingPaths(setting.key, setting.value))
+    for (const path of goSettingPaths(setting.key, setting.value, format))
       paths.add(path);
   }
   return [...paths];
