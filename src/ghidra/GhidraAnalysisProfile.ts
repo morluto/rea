@@ -69,6 +69,7 @@ const sharedAnalysisSemantics = {
   instruction_status: "unlisted-address-without-decode-v1",
   instruction_references: "exact-address-incoming-without-synthetic-entry-v2",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
+  byte_search_coverage: "separated-skipped-overlay-v1",
 } as const;
 
 /**
