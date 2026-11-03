@@ -1214,6 +1214,18 @@ const projectPrimarySessionError = (
       },
     );
   }
+  if (failure.kind === "remote" && failure.remoteCode === "ambiguous_procedure")
+    return new AnalysisInputError(
+      operation,
+      {
+        ...context,
+        userMessage: failure.message,
+        remediationAction:
+          "Select the intended function by an exact entry address from the candidates, then retry. Do not repeat the unchanged call.",
+        conformsToInputContract: true,
+      },
+      [{ path: [], reason: "invalid_value", message: failure.message }],
+    );
   if (failure.kind === "remote" && isGhidraInputFailureCode(failure.remoteCode))
     return new AnalysisInputError(operation, context, [
       { path: [], reason: "invalid_value", message: failure.message },

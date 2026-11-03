@@ -2458,7 +2458,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 if (matchProcedureNames(entry, selector).matched()) matches.add(entry.function);
             }
             if (matches.size() > 1)
-                throw new RequestFailure("ambiguous", "Ghidra procedure name is ambiguous: " + value +
+                throw new RequestFailure("ambiguous_procedure", "Ghidra procedure name is ambiguous: " + value +
                     "; select an exact entry address from " + matches.stream()
                         .map(function -> canonicalAddress(function.getEntryPoint())).toList());
             if (matches.size() == 1) return matches.get(0);
