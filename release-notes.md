@@ -956,6 +956,7 @@
 * include Kuna in native provider guidance ([#7929](https://github.com/morluto/rea/issues/7929)) ([1631dcb](https://github.com/morluto/rea/commit/1631dcb09a34380f36b34e217efe4e98d96b203f))
 * prioritize product contracts over skill guidance ([293db94](https://github.com/morluto/rea/commit/293db94dd00e1ee084dd0fcc7a8a9e4b49f671a1))
 * **providers:** verify prerequisite recovery and sibling failures ([d684125](https://github.com/morluto/rea/commit/d684125eedc75ea3ea6061d086ae9c530da198a4))
+* **readme:** add Join us on Discord button ([#8754](https://github.com/morluto/rea/issues/8754)) ([4f7c4cc](https://github.com/morluto/rea/commit/4f7c4cc21834b1183655b532df104990180c66f6))
 * **readme:** align Linux x64 analysis prerequisites ([#7997](https://github.com/morluto/rea/issues/7997)) ([b966ebe](https://github.com/morluto/rea/commit/b966ebeb22103356ba108b403d55ecaa6bb047b4))
 * scope performance measurements to concrete needs ([90b793e](https://github.com/morluto/rea/commit/90b793e0f488be73a3e98ba430bcb132ad8b0c31))
 * **search:** clarify provider case folding ([86d4a21](https://github.com/morluto/rea/commit/86d4a21215cb0fbafaf555b5c7d9fcda3f255d82))
