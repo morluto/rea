@@ -720,6 +720,54 @@ cliTest(
 );
 
 cliTest(
+  "reads link membership from a deliberately partial portable bundle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-evidence-links-cli-");
+    const path = join(root, "partial.json");
+    const absent = analysisViewLayoutEvidence();
+    const linked = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "trace_feature",
+        parameters: {},
+        result: {},
+        evidenceLinks: [absent.evidence_id],
+      },
+    );
+    const bundle = createEvidenceBundle([linked]);
+    await writeFile(path, JSON.stringify(bundle));
+    const options = {
+      detail: "links",
+      traversal: "retained-closure",
+    } as const;
+    const result = await cli.run({
+      arguments: [
+        "inspect-evidence-bundle",
+        JSON.stringify({ path, ...options }),
+        "--json",
+      ],
+      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
+    });
+    expect(result.exitCode).toBe(0);
+    const expected = inspectEvidenceBundle(bundle, options);
+    if (!expected.ok) throw expected.error;
+    expect(result.json).toEqual(expected.value);
+    expect(result.json).toMatchObject({
+      kind: "evidence-link-inspection",
+      retained_closure: "incomplete",
+      rows: [
+        {
+          evidence_id: linked.evidence_id,
+          linked_evidence_id: absent.evidence_id,
+          status: "missing",
+        },
+      ],
+    });
+  },
+);
+
+cliTest(
   "formats the full caller-admitted native inventory page as Markdown and JSON",
   async ({ cli }) => {
     const root = await createTestTempDirectory(

@@ -390,6 +390,20 @@ A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
 
+Provider checks read the terminal running doctor. A client-started server may
+receive a different environment, and doctor cannot observe it. When an available
+provider relies on a setting that a registration's file does not record, or
+records with other text, doctor adds a non-blocking
+`registration_environment:<client>` check with `classification: "unknown"`. The
+setting names appear in that registration's `provider_settings`. Selecting the
+client or an affected provider places the check in `scope_checks`; it never
+changes `healthy`, because the client may still pass the setting on. Preview
+`rea setup --client <client-id> --skill=false --dry-run` from that terminal and
+approve it to record the settings, then restart the client. To see what the
+running server can use, call `binary_session` in the client and read
+`result.tool_availability`. For Hopper, only an explicit `HOPPER_LAUNCHER_PATH`
+is compared.
+
 An invalid `REA_LOG_LEVEL` fails every scope, including one client or the
 installed skill, because the executable rejects it before any command. A
 selected client also fails for every other setting that MCP startup rejects,

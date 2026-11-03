@@ -356,9 +356,11 @@ describe("MCP composed workflow snapshot replay", () => {
       arguments: {},
     });
     expect(retained.isError, JSON.stringify(retained.content)).not.toBe(true);
-    const retainedBundle = toolContract(
-      "get_evidence_bundle",
-    ).outputSchema.parse(retained.structuredContent).result;
+    const retainedBundle = evidenceBundleSchema.parse(
+      toolContract("get_evidence_bundle").outputSchema.parse(
+        retained.structuredContent,
+      ).result,
+    );
     expect(
       retainedBundle.records.find(
         ({ evidence_id }) => evidence_id === primitiveEvidence.evidence_id,
