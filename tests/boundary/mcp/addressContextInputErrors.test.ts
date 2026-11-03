@@ -20,6 +20,8 @@ const createContextRecoverySession = () => {
   const identity = { id: "fixture", name: "Fixture", version: "1" };
   return createTestBinarySession(() => ({
     execute: async (operation, parameters) => {
+      if (operation === "health")
+        return ok(createAnalysisExecution(null, identity));
       if (operation === "comment" && parameters.address === "0x405000")
         return err(
           new AnalysisCapabilityUnavailableError(
@@ -65,10 +67,21 @@ const createContextRecoverySession = () => {
             "not supported",
           ),
         );
+      if (
+        operation !== "resolve_containing_procedure" &&
+        operation !== "address_name" &&
+        operation !== "list_bookmarks"
+      )
+        throw new Error(`Unexpected provider operation: ${operation}`);
       const result =
         operation === "resolve_containing_procedure"
           ? parameters.address === "0x402000"
-            ? { query_address: "0x402000", found: false }
+            ? {
+                query_address: "0x402000",
+                found: false,
+                procedure: null,
+                reason: "not_in_procedure",
+              }
             : {
                 query_address: parameters.address,
                 found: true,
@@ -143,7 +156,8 @@ it.each(["compact", "full"] as const)(
           throw new Error("expected unavailable facet");
         expect(facet.remediation).toContain("same document");
         expect(facet.remediation).toContain("exact requested address");
-        expect(facet.remediation).not.toContain("Call comment directly");
+        expect(facet.remediation).toContain("parent_evidence_id");
+        expect(facet.remediation).toContain("inspect_analysis_view");
       }
       const outside = await client.callTool({
         name: "inspect_address_context",
@@ -152,11 +166,26 @@ it.each(["compact", "full"] as const)(
       const outsideResult = contract.outputSchema.parse(
         outside.structuredContent,
       ).result;
+      expect(outsideResult.procedure).toMatchObject({
+        state: "available",
+        value: {
+          query_address: "0x402000",
+          found: false,
+          procedure: null,
+          reason: "not_in_procedure",
+        },
+      });
       expect(outsideResult.comment).toMatchObject({
         state: "unavailable",
-        remediation:
-          "Review provider availability in binary_session with detail complete and select another supported provider if appropriate. After switching, if a name is known and search_procedures is available, use it to find candidates and verify their identity and coordinates.",
+        remediation: expect.stringContaining("binary_session"),
       });
+      if (outsideResult.comment.state !== "unavailable")
+        throw new Error("expected unavailable facet");
+      expect(outsideResult.comment.remediation).toContain("detail complete");
+      expect(outsideResult.comment.remediation).toContain("search_procedures");
+      expect(outsideResult.comment.remediation).not.toContain(
+        "analyze_function",
+      );
       const transient = await client.callTool({
         name: "inspect_address_context",
         arguments: { address: "0x403000", document: "fixture" },
@@ -189,9 +218,16 @@ it.each(["compact", "full"] as const)(
       ).result;
       expect(unsupportedResult.procedure).toMatchObject({
         state: "unavailable",
-        remediation:
-          "Review provider availability in binary_session with detail complete and select another supported provider if appropriate. After switching, if a name is known and search_procedures is available, use it to find candidates and verify their identity and coordinates.",
+        remediation: expect.stringContaining("binary_session"),
       });
+      if (unsupportedResult.procedure.state !== "unavailable")
+        throw new Error("expected unavailable facet");
+      expect(unsupportedResult.procedure.remediation).toContain(
+        "detail complete",
+      );
+      expect(unsupportedResult.procedure.remediation).toContain(
+        "search_procedures",
+      );
     } finally {
       await client.close();
       await server.close();
