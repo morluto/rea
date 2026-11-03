@@ -1086,6 +1086,22 @@ describe("ReleaseExposureReader generic map links", () => {
   );
 
   it.skipIf(process.platform === "win32")(
+    "keeps a declared .map link beside a selected script a source map",
+    async () => {
+      const root = await createTestTempDirectory("rea-release-declared-link-");
+      await writeFile(
+        join(root, "app.js"),
+        "const value = 1;\n//# sourceMappingURL=symbols.map\n",
+      );
+      await writeFile(join(root, "payload"), "not a map\n");
+      await symlink("payload", join(root, "symbols.map"));
+      const scanned = await inspect(join(root, "app.js"));
+      expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+      expect(scanned.source_maps.skipped).toBe(1);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
     "leaves debug companions alone for a JavaScript map link",
     async () => {
       const root = await createTestTempDirectory("rea-release-map-link-");

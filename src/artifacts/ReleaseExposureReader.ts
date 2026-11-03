@@ -2563,6 +2563,8 @@ const scanSiblings = async (
     }
     if (!entry.name.toLowerCase().endsWith(".map")) continue;
     if (isJavaScriptSourceMapName(entry.name)) continue;
+    // A declared map stays a source map, and `noteUnreachedTargets` counts it.
+    if (state.mapTargets.has(memberLocationKey(sibling))) continue;
     // A link is not followed, so a linker map it names stays unread, not absent.
     if (entry.isSymbolicLink()) {
       state.skippedCompanions += 1;
@@ -2584,8 +2586,6 @@ const classifySiblingMap = async (
   state: ScanState,
   input: ConsumeInput,
 ): Promise<void> => {
-  // A declared map stays a source map, and `noteUnreachedTargets` counts it.
-  if (state.mapTargets.has(memberLocationKey(sibling))) return;
   const { hasSlot, bytes } = chargeMapRead(state);
   const loaded = await readDiskMember(sibling, bytes, undefined, state, input);
   if (loaded.kind === "unread") {
