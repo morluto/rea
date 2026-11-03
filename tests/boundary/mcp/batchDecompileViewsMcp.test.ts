@@ -576,6 +576,28 @@ it("reads the same rows from a bundle and an Evidence file without a provider", 
 
 it("reads historical batch Evidence with the prior null-pseudocode error", async () => {
   const harness = await connect("full");
+  const savedItem = {
+    address: "bodyless",
+    procedure: { status: "resolved", address: "0x403000", name: "bodyless" },
+    status: "error",
+    error: {
+      code: "capability_unavailable",
+      category: "unsupported_provider",
+      message:
+        "The provider returned no pseudocode for this function; this item's limitations hold that observation's caveats, including any reason the provider reported.",
+      retryable: false,
+      remediation: {
+        action:
+          "Read this item's limitations for the provider's reason before retrying; another provider may decompile this entry.",
+      },
+      details: {
+        provider_id: "fixture",
+        operation: "procedure_pseudo_code",
+        reason: "provider returned null pseudocode",
+      },
+    },
+    limitations: [NO_BODY_REASON],
+  } as const;
   const historical = createEvidence(
     undefined,
     { id: "fixture", name: "Fixture", version: "1" },
@@ -583,24 +605,7 @@ it("reads historical batch Evidence with the prior null-pseudocode error", async
       operation: "batch_decompile",
       parameters: { addresses: ["bodyless"] },
       result: {
-        items: [
-          {
-            address: "bodyless",
-            procedure: {
-              status: "resolved",
-              address: "0x403000",
-              name: "bodyless",
-            },
-            status: "error",
-            error: {
-              code: "capability_unavailable",
-              category: "unsupported_provider",
-              message: "The provider returned no pseudocode.",
-              retryable: false,
-              remediation: { action: "Inspect the provider observation." },
-            },
-          },
-        ],
+        items: [savedItem],
         total: 1,
         succeeded: 0,
         failed: 1,
@@ -616,13 +621,7 @@ it("reads historical batch Evidence with the prior null-pseudocode error", async
       where: { statuses: ["error"] },
     },
   });
-  expect(viewOf(result.evidence).items).toMatchObject([
-    {
-      address: "bodyless",
-      status: "error",
-      error: { code: "capability_unavailable" },
-    },
-  ]);
+  expect(viewOf(result.evidence).items).toEqual([{ index: 0, ...savedItem }]);
 });
 
 it("keeps the caller's own source when a page cannot fit, without retaining its parent", async () => {
