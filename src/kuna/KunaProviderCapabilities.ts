@@ -46,7 +46,7 @@ const KUNA_ENTRY_LIMITATION =
 /** Provider text is not comparable across providers. */
 const KUNA_TEXT_LIMITATION =
   "Pseudocode and assembly are exact Kuna text, not comparable as equal or different with another provider's text.";
-const KUNA_TEXT_CAPACITY_LIMITATION = `Each buffered source facet admits at most ${String(KUNA_FUNCTION_TEXT_BYTES)} bytes before allocation; larger text stays accessible in the local project export.`;
+const KUNA_TEXT_CAPACITY_LIMITATION = `Each buffered source facet admits at most ${String(KUNA_FUNCTION_TEXT_BYTES)} bytes before allocation; larger project-export spans remain in the local project export.`;
 
 /** The limitations that apply to one operation's answer, and only those. */
 export const kunaLimitations = (

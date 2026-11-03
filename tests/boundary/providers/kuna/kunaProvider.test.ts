@@ -576,6 +576,9 @@ it("keeps answering pseudocode one function at a time when the export fails", as
   });
   expect(pseudocode.limitations.at(-1)).toContain("The project export failed");
   expect(pseudocode.limitations.join(" ")).not.toContain("still building");
+  expect(pseudocode.limitations.join(" ")).toContain(
+    "larger project-export spans remain in the local project export",
+  );
   expect(pseudocode.limitations.join(" ")).not.toContain(
     "a later request for the same procedure can return the export's text",
   );
