@@ -34,5 +34,26 @@ cliTest(
         ),
       ]),
     });
+
+    const architectures = await cli.run({
+      arguments: ["list-objdump-architectures", "--format", "json"],
+      environment: { REA_OBJDUMP_COMMAND: process.execPath },
+      input: "",
+    });
+    expect(architectures.exitCode).toBe(0);
+    expect(architectures.json).toMatchObject({
+      provider: {
+        id: "objdump.command",
+        name: "objdump command",
+        version: null,
+      },
+      subject: null,
+      limitations: expect.arrayContaining([
+        expect.stringContaining("implementation and version are unknown"),
+      ]),
+    });
+    expect(JSON.stringify(architectures.json)).not.toContain(
+      "lists BFD targets",
+    );
   },
 );
