@@ -282,3 +282,22 @@ export const parseJavaScriptSource = (
     return null;
   }
 };
+
+/** A script's top-level lexical this may be its ambient global; wrappers and modules isolate it. */
+export const javaScriptTopLevelThisMayBeGlobal = (
+  node: t.ThisExpression,
+  program: t.Program,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  if (javaScriptRuntimeContext(program) !== "unknown") return false;
+  let current: t.Node | undefined = parents.get(node);
+  while (current !== undefined && current !== program) {
+    if (
+      (t.isFunction(current) && !t.isArrowFunctionExpression(current)) ||
+      t.isClass(current)
+    )
+      return false;
+    current = parents.get(current);
+  }
+  return current === program;
+};

@@ -1,3 +1,4 @@
+import { javaScriptTopLevelThisMayBeGlobal } from "./javascriptSourceParser.js";
 import * as t from "@babel/types";
 
 import {
@@ -316,6 +317,18 @@ export const createAmbientPathResolver = (
           root.property.name === "meta"
         ) {
           retain(["import-meta", ...(suffix ?? [])]);
+          resolvedIdentity = true;
+          continue;
+        }
+        if (
+          t.isThisExpression(root) &&
+          javaScriptTopLevelThisMayBeGlobal(
+            root,
+            state.program,
+            state.parentsByNode,
+          )
+        ) {
+          retain(["global", ...(suffix ?? [])]);
           resolvedIdentity = true;
           continue;
         }

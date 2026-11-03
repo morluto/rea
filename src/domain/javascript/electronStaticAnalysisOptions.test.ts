@@ -342,6 +342,47 @@ it.each([
   },
 );
 
+const CLASSIC_GLOBAL_ACTIVATIONS = [
+  "globalThis.createWindow();",
+  'globalThis["createWindow"]();',
+  "const early = globalThis.createWindow; early();",
+  "globalThis?.createWindow?.();",
+  "window.createWindow();",
+  'self["createWindow"]();',
+  "this.createWindow();",
+  "const root = globalThis; root.createWindow();",
+  "const root = window; const alias = root; alias.createWindow();",
+  "const root = globalThis.window; root.createWindow();",
+  "const { root } = { root: globalThis }; root.createWindow();",
+  "const key = 'createWindow'; globalThis[key]();",
+  "with ({}) { createWindow(); }",
+  "const { createWindow: start } = globalThis; start();",
+  "let start; ({ createWindow: start } = globalThis); start();",
+  "let start; for ({ createWindow: start } of [globalThis]) start();",
+  "for (const { createWindow: start } of [globalThis]) start();",
+  "let start; ({ root: { createWindow: start } } = { root: globalThis }); start();",
+  "const start = (createWindow ||= null); start();",
+  "const root = { __proto__: globalThis }; root.createWindow();",
+  "const root = { ...globalThis }; root.createWindow();",
+  "(0, eval)('createWindow()');",
+  "Function('createWindow()')();",
+  "new Function('createWindow()')();",
+  "this['Function']('createWindow()')();",
+  "const root = {}; const alias = root; Object.setPrototypeOf(root, globalThis); alias.createWindow();",
+  "const root = {}; const alias = root; Object.assign(root, globalThis); alias.createWindow();",
+  "const F = Function.bind(null); new F('createWindow()')();",
+  "Reflect.construct(Function, ['createWindow()'])();",
+  "const root = {}; Object.setPrototypeOf(root, globalThis); root.createWindow();",
+  "const root = {}; Object.assign(root, globalThis); root.createWindow();",
+  "const F = Function; F('createWindow()')();",
+  "Function.call(null, 'createWindow()')();",
+  "Function.apply(null, ['createWindow()'])();",
+  "globalThis.Function('createWindow()')();",
+  "const F = Function.bind(null); F('createWindow()')();",
+  "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');",
+  "const noop = () => {}; (0, eval)(''); function unused() { noop(); } (0, eval)('createWindow()');",
+];
+
 describe("Classic-script global function activation", () => {
   it.each([
     "const { nested: { value } } = { nested: { value: 1 } };",
@@ -401,44 +442,10 @@ describe("Classic-script global function activation", () => {
       ],
     });
   });
-  it.each([
-    "globalThis.createWindow();",
-    'globalThis["createWindow"]();',
-    "const early = globalThis.createWindow; early();",
-    "globalThis?.createWindow?.();",
-    "window.createWindow();",
-    'self["createWindow"]();',
-    "this.createWindow();",
-    "const root = globalThis; root.createWindow();",
-    "const root = window; const alias = root; alias.createWindow();",
-    "const root = globalThis.window; root.createWindow();",
-    "const { root } = { root: globalThis }; root.createWindow();",
-    "const key = 'createWindow'; globalThis[key]();",
-    "with ({}) { createWindow(); }",
-    "const { createWindow: start } = globalThis; start();",
-    "let start; ({ createWindow: start } = globalThis); start();",
-    "let start; for ({ createWindow: start } of [globalThis]) start();",
-    "for (const { createWindow: start } of [globalThis]) start();",
-    "let start; ({ root: { createWindow: start } } = { root: globalThis }); start();",
-    "const start = (createWindow ||= null); start();",
-    "const root = { __proto__: globalThis }; root.createWindow();",
-    "const root = { ...globalThis }; root.createWindow();",
-    "(0, eval)('createWindow()');",
-    "Function('createWindow()')();",
-    "new Function('createWindow()')();",
-    "const F = Function.bind(null); new F('createWindow()')();",
-    "Reflect.construct(Function, ['createWindow()'])();",
-    "const root = {}; Object.setPrototypeOf(root, globalThis); root.createWindow();",
-    "const root = {}; Object.assign(root, globalThis); root.createWindow();",
-    "const F = Function; F('createWindow()')();",
-    "Function.call(null, 'createWindow()')();",
-    "Function.apply(null, ['createWindow()'])();",
-    "globalThis.Function('createWindow()')();",
-    "const F = Function.bind(null); F('createWindow()')();",
-    "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');",
-    "const noop = () => {}; (0, eval)(''); function unused() { noop(); } (0, eval)('createWindow()');",
-  ])("keeps early global access unresolved: %s", (activation) => {
-    const body = (early: boolean) => `
+  it.each(CLASSIC_GLOBAL_ACTIVATIONS)(
+    "keeps early global access unresolved: %s",
+    (activation) => {
+      const body = (early: boolean) => `
       const { BrowserWindow } = require("electron");
       ${early ? activation : ""}
       const webPreferences = { nodeIntegration: true };
@@ -446,36 +453,40 @@ describe("Classic-script global function activation", () => {
       ${early ? "" : activation}
       createWindow();
     `;
-    const runtime = () => ({ require: () => ({ BrowserWindow: class {} }) });
-    expect(() =>
-      runInNewContext(
-        "globalThis.window = globalThis; globalThis.self = globalThis;" +
-          body(true),
-        runtime(),
-      ),
-    ).toThrow(/before initialization/);
-    expect(() =>
-      runInNewContext(
-        "globalThis.window = globalThis; globalThis.self = globalThis;" +
-          body(false),
-        runtime(),
-      ),
-    ).not.toThrow();
-    expect(
-      analyzeJavaScriptStaticSource(body(true)).electron.browser_windows[0],
-    ).toMatchObject({
-      web_preferences_status: "dynamic",
-      web_preferences: [],
-    });
-    expect(
-      analyzeJavaScriptStaticSource(body(false)).electron.browser_windows[0],
-    ).toMatchObject({
-      web_preferences_status: "object-literal",
-      web_preferences: [
-        { name: "nodeIntegration", value: { status: "literal", value: true } },
-      ],
-    });
-  });
+      const runtime = () => ({ require: () => ({ BrowserWindow: class {} }) });
+      expect(() =>
+        runInNewContext(
+          "globalThis.window = globalThis; globalThis.self = globalThis;" +
+            body(true),
+          runtime(),
+        ),
+      ).toThrow(/before initialization/);
+      expect(() =>
+        runInNewContext(
+          "globalThis.window = globalThis; globalThis.self = globalThis;" +
+            body(false),
+          runtime(),
+        ),
+      ).not.toThrow();
+      expect(
+        analyzeJavaScriptStaticSource(body(true)).electron.browser_windows[0],
+      ).toMatchObject({
+        web_preferences_status: "dynamic",
+        web_preferences: [],
+      });
+      expect(
+        analyzeJavaScriptStaticSource(body(false)).electron.browser_windows[0],
+      ).toMatchObject({
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          {
+            name: "nodeIntegration",
+            value: { status: "literal", value: true },
+          },
+        ],
+      });
+    },
+  );
 
   it("keeps callbacks in hoisted default parameters uncertain", () => {
     const source = `

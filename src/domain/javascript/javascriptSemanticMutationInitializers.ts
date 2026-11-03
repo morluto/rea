@@ -1017,24 +1017,134 @@ const moduleFunctionFirstRead = (
       }
       return globalReceivers.get(input) ?? null;
     };
+    interface ReceiverBound {
+      index: number;
+      node?: t.Node;
+      ambiguous: boolean;
+    }
+    const receiverBounds = new WeakMap<
+      JavaScriptSemanticBindingState,
+      ReceiverBound | null
+    >();
+    const receiverBound = (
+      root: JavaScriptSemanticBindingState,
+    ): ReceiverBound | null => {
+      const pending = [{ binding: root, finish: false }];
+      const activeBindings = new Set<JavaScriptSemanticBindingState>();
+      const dependencies = new WeakMap<
+        JavaScriptSemanticBindingState,
+        JavaScriptSemanticBindingState[]
+      >();
+      const merge = (
+        left: ReceiverBound,
+        right: ReceiverBound,
+      ): ReceiverBound => {
+        if (left.index < right.index) return left;
+        if (right.index < left.index) return right;
+        return {
+          ...left,
+          ambiguous:
+            left.ambiguous || right.ambiguous || left.node !== right.node,
+        };
+      };
+      while (pending.length > 0) {
+        const frame = pending.pop()!;
+        const binding = frame.binding;
+        if (frame.finish) {
+          let bound: ReceiverBound | null = {
+            index: Infinity,
+            ambiguous: false,
+          };
+          for (const effects of [binding.memberWrites, binding.escapedPaths]) {
+            for (const effect of effects) {
+              const position =
+                effect.node === undefined
+                  ? null
+                  : directMutationPosition(effect.node, parents);
+              if (
+                effect.node === undefined ||
+                position === null ||
+                position.body !== body
+              ) {
+                bound = null;
+                break;
+              }
+              bound = merge(bound, {
+                index: position.index,
+                node: effect.node,
+                ambiguous: false,
+              });
+            }
+            if (bound === null) break;
+          }
+          for (const dependency of dependencies.get(binding) ?? []) {
+            const inherited = receiverBounds.get(dependency);
+            if (
+              bound === null ||
+              inherited === null ||
+              inherited === undefined
+            ) {
+              bound = null;
+              break;
+            }
+            bound = merge(bound, inherited);
+          }
+          receiverBounds.set(binding, bound);
+          activeBindings.delete(binding);
+          continue;
+        }
+        if (receiverBounds.has(binding)) continue;
+        if (activeBindings.has(binding)) {
+          receiverBounds.set(binding, null);
+          continue;
+        }
+        activeBindings.add(binding);
+        const selected: JavaScriptSemanticBindingState[] = [];
+        for (const initializer of binding.initializers) {
+          const node = unwrapJavaScriptExpression(initializer.node).node;
+          if (!t.isIdentifier(node) || state === undefined) continue;
+          const dependency = resolveSemanticBindingState(
+            state,
+            node,
+            node.name,
+          );
+          if (dependency !== undefined) selected.push(dependency);
+        }
+        dependencies.set(binding, selected);
+        pending.push({ binding, finish: true });
+        for (const dependency of selected)
+          pending.push({ binding: dependency, finish: false });
+      }
+      return receiverBounds.get(root) ?? null;
+    };
     const receiverAtRead = (input: t.Node, read: t.Node): boolean | null => {
       const identity = globalReceiver(input);
-      if (identity !== false || state === undefined) return identity;
-      if (!memberEffectsComplete) return identity;
+      if (identity !== false || state === undefined || !memberEffectsComplete)
+        return identity;
       const root = unwrapJavaScriptExpression(input).node;
       if (!t.isIdentifier(root)) return identity;
       const binding = resolveSemanticBindingState(state, root, root.name);
       if (binding === undefined) return null;
-      for (const effect of [...binding.memberWrites, ...binding.escapedPaths]) {
-        if (
-          effect.node !== undefined &&
-          semanticReadPrecedesEffectWithinActivation(read, effect.node, parents)
-        )
-          continue;
-        if (semanticEffectTiming(read, effect.node, state) !== "after")
-          return null;
-      }
-      return identity;
+      const bound = receiverBound(binding);
+      if (bound === null) return null;
+      const position = bindingReadPosition(read, parents);
+      if (
+        position.position === null ||
+        position.repeatingLoop ||
+        position.position.body !== body
+      )
+        return null;
+      if (position.position.index < bound.index) return identity;
+      if (position.position.index > bound.index || bound.ambiguous) return null;
+      return bound.node !== undefined &&
+        (semanticReadPrecedesEffectWithinActivation(
+          read,
+          bound.node,
+          parents,
+        ) ||
+          semanticEffectTiming(read, bound.node, state) === "after")
+        ? identity
+        : null;
     };
     const active = new Set<t.Function>();
     const retainNamedRead = (

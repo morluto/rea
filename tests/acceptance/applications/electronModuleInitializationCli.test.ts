@@ -108,6 +108,12 @@ cliTest.for([
   ["stdio MCP", "prototype-effect"],
   ["CLI", "assign-effect"],
   ["stdio MCP", "assign-effect"],
+  ["CLI", "this-constructor"],
+  ["stdio MCP", "this-constructor"],
+  ["CLI", "alias-prototype"],
+  ["stdio MCP", "alias-prototype"],
+  ["CLI", "alias-assign"],
+  ["stdio MCP", "alias-assign"],
   ["CLI", "assignment-pattern"],
   ["stdio MCP", "assignment-pattern"],
   ["CLI", "iteration-pattern"],
@@ -119,29 +125,35 @@ cliTest.for([
       "rea-electron-global-initialization-",
     );
     const activation =
-      alias === "bound-constructor"
-        ? "const F = Function.bind(null); new F('createWindow()')();"
-        : alias === "reflect-constructor"
-          ? "Reflect.construct(Function, ['createWindow()'])();"
-          : alias === "prototype-effect"
-            ? "const changed = {}; Object.setPrototypeOf(changed, globalThis); changed.createWindow();"
-            : alias === "assign-effect"
-              ? "const changed = {}; Object.assign(changed, globalThis); changed.createWindow();"
-              : alias === "assignment-pattern"
-                ? "let start; ({createWindow:start}=globalThis); start();"
-                : alias === "iteration-pattern"
-                  ? "for(const {createWindow:start} of [globalThis]) start();"
-                  : alias === "module-eval"
-                    ? "eval('createWindow()');"
-                    : alias === "erased-type"
-                      ? "globalThis.createWindow();"
-                      : alias === "constructed-function"
-                        ? "new Function('createWindow()')();"
-                        : alias === "cached-eval"
-                          ? "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');"
-                          : alias
-                            ? "root.createWindow();"
-                            : "globalThis.createWindow();";
+      alias === "this-constructor"
+        ? "this['Function']('createWindow()')();"
+        : alias === "alias-prototype"
+          ? "const changed = {}; const indirect = changed; Object.setPrototypeOf(changed, globalThis); indirect.createWindow();"
+          : alias === "alias-assign"
+            ? "const changed = {}; const indirect = changed; Object.assign(changed, globalThis); indirect.createWindow();"
+            : alias === "bound-constructor"
+              ? "const F = Function.bind(null); new F('createWindow()')();"
+              : alias === "reflect-constructor"
+                ? "Reflect.construct(Function, ['createWindow()'])();"
+                : alias === "prototype-effect"
+                  ? "const changed = {}; Object.setPrototypeOf(changed, globalThis); changed.createWindow();"
+                  : alias === "assign-effect"
+                    ? "const changed = {}; Object.assign(changed, globalThis); changed.createWindow();"
+                    : alias === "assignment-pattern"
+                      ? "let start; ({createWindow:start}=globalThis); start();"
+                      : alias === "iteration-pattern"
+                        ? "for(const {createWindow:start} of [globalThis]) start();"
+                        : alias === "module-eval"
+                          ? "eval('createWindow()');"
+                          : alias === "erased-type"
+                            ? "globalThis.createWindow();"
+                            : alias === "constructed-function"
+                              ? "new Function('createWindow()')();"
+                              : alias === "cached-eval"
+                                ? "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');"
+                                : alias
+                                  ? "root.createWindow();"
+                                  : "globalThis.createWindow();";
     const source = (early: boolean) => `
       ${alias === "erased-type" ? "import type { T } from './types';" : alias === "module-eval" ? "export {};" : ""}
       ${alias === "module-eval" ? 'import { BrowserWindow } from "electron";' : 'const { BrowserWindow } = require("electron");'}

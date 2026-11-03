@@ -4,6 +4,7 @@ import { expect, it, vi } from "vitest";
 import {
   analyzeJavaScriptSemantics,
   indexJavaScriptBindingsSteps,
+  indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
 import {
   resolveLocalCallables,
@@ -607,3 +608,55 @@ it("resolves calls in computed method keys before subsequent pattern writes", ()
     calleeCallableIds: [original?.callableId],
   });
 });
+
+it.each([64, 128])(
+  "indexes receiver effects once for %s reads before distinct writes",
+  (count) => {
+    const source = `const object = {}; ${"object.x;".repeat(count)} ${Array.from({ length: count }, (_, i) => `object.p${i}=1;`).join("")} const make=()=>1; function use(){make();} use();`;
+    const file = parseJavaScriptSource(source, "fixture.js");
+    if (file === null) throw Error("Invalid fixture");
+    const steps = indexJavaScriptBindingsWithReceiversSteps(file.program);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    const index = step.value;
+    for (const _ of index.indexMemberMutationFactsSteps()) {
+      void _;
+    }
+    const state = index.bindings;
+    const object = [...state.bindingsById.values()].find(
+      (b) => b.name === "object",
+    );
+    const make = [...state.bindingsById.values()].find(
+      (b) => b.name === "make",
+    );
+    if (object === undefined || make === undefined)
+      throw Error("Missing fixture bindings");
+    let visits = 0;
+    Object.defineProperty(object, "memberWrites", {
+      value: new Proxy(object.memberWrites, {
+        get(target, key, receiver) {
+          if (typeof key === "string" && /^\d+$/.test(key)) visits++;
+          return Reflect.get(target, key, receiver);
+        },
+      }),
+    });
+    let checked = 0;
+    traverseJavaScriptAst(file.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "make" })
+        ) {
+          expect(
+            semanticBindingAtRead(make, node.callee, state)
+              .hasDefiniteInitializer,
+          ).toBe(true);
+          checked++;
+        }
+      },
+    });
+    expect(checked).toBe(1);
+    expect(object.memberWrites.length).toBe(count);
+    expect(visits).toBeLessThanOrEqual(count * 2);
+  },
+);

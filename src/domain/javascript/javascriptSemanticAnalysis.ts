@@ -1218,7 +1218,10 @@ function* collectDefinitionsSteps(
         thrownValues.push({ node, ancestors: readAncestors() });
       // Every supported global-code origin starts with one of these decoded
       // identifiers, including computed properties and destructured aliases.
-      if (t.isIdentifier(node) && globalCodeRoots.has(node.name))
+      if (
+        t.isThisExpression(node) ||
+        (t.isIdentifier(node) && globalCodeRoots.has(node.name))
+      )
         state.opaqueEffects.mayReferenceGlobalCode = true;
       if (
         t.isCallExpression(node) &&
