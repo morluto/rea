@@ -289,7 +289,7 @@ export const registerCoreNativeCommands = (
     cli.command(command, {
       description:
         operation === "inspect_native_instruction"
-          ? "Inspect a code or data address and its containing Ghidra listing object"
+          ? "Inspect a code or data address, its containing Ghidra listing object, and typed incoming references where supported"
           : "Resolve one static native call site",
       args: z.object({
         path: localPathStringSchema.describe(
