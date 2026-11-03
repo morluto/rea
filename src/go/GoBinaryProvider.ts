@@ -113,9 +113,18 @@ const failureForPrimary = (
         },
       );
     if (cause.reason === "path")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        {
+          cause,
+          ...(cause.resolvedPath === undefined
+            ? {}
+            : {
+                remediationAction: `Retry with the resolved regular file path ${cause.resolvedPath}. The selected symlink is not admitted; the retry will validate the target again.`,
+              }),
+        },
+        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")

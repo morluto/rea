@@ -1,7 +1,7 @@
 import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { writeFile } from "node:fs/promises";
+import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
@@ -183,6 +183,35 @@ for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
     },
   );
 }
+
+goMcpTest.skipIf(process.platform === "win32")(
+  "suggests a resolved regular file after rejecting a selected symlink",
+  async ({ go: { client } }) => {
+    const root = await createTestTempDirectory("rea-go-mcp-symlink-");
+    const original = join(root, "original.elf");
+    const selected = join(root, "selected");
+    await writeFile(original, createGoBinaryFixture().bytes);
+    await symlink(original, selected);
+
+    const rejected = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: selected },
+    });
+    expect(parseMcpToolError(rejected).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["path"], reason: "invalid_format" }],
+      },
+      remediation: { action: expect.stringContaining(original) },
+    });
+
+    const retried = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: original },
+    });
+    expect(retried.isError).not.toBe(true);
+  },
+);
 
 goMcpTest(
   "preserves invalid embedded Go text bytes through MCP",
