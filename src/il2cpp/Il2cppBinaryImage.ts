@@ -25,7 +25,7 @@ import {
   WASM_PAGE_BYTES,
   WasmModuleFailure,
   readInitialLinearMemory,
-  readWasmModuleImage,
+  readWasmModuleImageSteps,
 } from "../wasm/WasmModuleImage.js";
 import { applyElfRelativeRelocationsSteps } from "./ElfRelocations.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
@@ -128,11 +128,18 @@ const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
  * Bytes below the lowest segment stay unmapped, so a pointer into them is not
  * read as zero.
  */
-const openWasmImage = (bytes: Buffer): NativeImage => {
+function* openWasmImageSteps(bytes: Buffer): Generator<void, NativeImage> {
   let module;
   let memory;
   try {
-    module = readWasmModuleImage(bytes);
+    module = yield* readWasmModuleImageSteps(bytes);
+    // A host-supplied memory may already hold bytes that data segments do not
+    // overwrite, so the initial memory is not known.
+    if (module.memory?.imported === true)
+      throw new WasmModuleFailure(
+        "unsupported",
+        "the module imports its memory, whose initial bytes the module does not determine",
+      );
     memory = readInitialLinearMemory(module);
   } catch (cause) {
     if (cause instanceof WasmModuleFailure)
@@ -188,7 +195,7 @@ const openWasmImage = (bytes: Buffer): NativeImage => {
       importedFunctionCount: module.importedFunctionCount,
     },
   };
-};
+}
 
 export function* openImageSteps(
   bytes: Buffer,
@@ -201,7 +208,7 @@ export function* openImageSteps(
         "slice-not-found",
         `architecture ${architecture} was requested but the binary is a WebAssembly module`,
       );
-    return openWasmImage(bytes);
+    return yield* openWasmImageSteps(bytes);
   }
   let image = selectImage(bytes, architecture);
   let container: BinaryContainer;

@@ -2044,3 +2044,34 @@ it("builds a wasm fixture that the engine itself accepts", () => {
   ).WebAssembly;
   expect(engine.validate(createWasmFixture())).toBe(true);
 });
+
+it("refuses a wasm module that imports its memory", () => {
+  // env.memory, one page; the host may supply bytes no data segment writes.
+  const importMemory = [
+    1,
+    3,
+    ..."env".split("").map((c) => c.charCodeAt(0)),
+    6,
+    ..."memory".split("").map((c) => c.charCodeAt(0)),
+    0x02,
+    0x00,
+    1,
+  ];
+  const bytes = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    2,
+    importMemory.length,
+    ...importMemory,
+  ]);
+  expect(failure(bytes)).toEqual({
+    reason: "unsupported-container",
+    kind: "unsupported",
+  });
+});
