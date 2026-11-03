@@ -26,7 +26,11 @@ limitation. Addresses are bus-local; no `ranges` translation is attempted.
 Invalid or ambiguous strings remain raw, rather than being guessed.
 
 The summary is labeled derived and includes root compatible/model, chosen
-bootargs/stdout-path and aliases. An undecodable alias retains its name with a
+bootargs/stdout-path and aliases. For older trees, `linux,stdout-path` supplies
+`summary.stdout_path` only when `/chosen/stdout-path` is absent, following the
+[Devicetree specification](https://devicetree-specification.readthedocs.io/en/stable/devicenodes.html#chosen-node).
+A malformed canonical property does not enable the fallback. Alias names and
+console options after `:` are preserved as written. An undecodable alias retains its name with a
 null path; it is not silently treated as absent. Single-cell `interrupt-parent`, `remote-endpoint` and `msi-parent`
 references resolve through phandle declarations. Missing or duplicate targets
 have null target paths. A node whose `phandle` and `linux,phandle` disagree

@@ -214,9 +214,14 @@ export const parseDevicetree = (
       const raw = bytes.subarray(cursor, cursor + length);
       // Only binding-independent standard strings and single-cell declarations are decoded.
       const stringProperty =
-        ["compatible", "model", "status", "bootargs", "stdout-path"].includes(
-          name,
-        ) || owner.node.path === "/aliases";
+        [
+          "compatible",
+          "model",
+          "status",
+          "bootargs",
+          "stdout-path",
+          "linux,stdout-path",
+        ].includes(name) || owner.node.path === "/aliases";
       if (stringProperty) admit(raw.length * 4);
       let strings: string[] | null = null;
       if (
@@ -234,7 +239,9 @@ export const parseDevicetree = (
           (entries === 1 &&
             ((owner.node.path === "/" && name === "model") ||
               (owner.node.path === "/chosen" &&
-                ["bootargs", "stdout-path"].includes(name)) ||
+                ["bootargs", "stdout-path", "linux,stdout-path"].includes(
+                  name,
+                )) ||
               owner.node.path === "/aliases"));
         // Summary values serialize again, including quotes, commas and escapes.
         if (repeatedInSummary) admit(raw.length * 2 + entries * 3 + 2);
@@ -397,7 +404,13 @@ export const parseDevicetree = (
       compatible: prop("/", "compatible")?.derived.strings ?? null,
       model: singleString("/", "model"),
       bootargs: singleString("/chosen", "bootargs"),
-      stdout_path: singleString("/chosen", "stdout-path"),
+      stdout_path: singleString(
+        "/chosen",
+        // The legacy spelling applies only when the canonical property is absent.
+        prop("/chosen", "stdout-path") === undefined
+          ? "linux,stdout-path"
+          : "stdout-path",
+      ),
       aliases: (byPath.get("/aliases")?.properties ?? []).map((p) => ({
         name: p.name,
         path: singleString("/aliases", p.name),

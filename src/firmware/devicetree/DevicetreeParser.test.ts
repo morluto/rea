@@ -7,6 +7,7 @@ import {
 import { DevicetreeLimitFailure, parseDevicetree } from "./DevicetreeParser.js";
 import {
   cells,
+  dtString,
   devicetreeFixture,
   type FixtureNode,
 } from "./Devicetree.fixture.js";
@@ -21,6 +22,56 @@ const parse = (b: Buffer, limits = {}) =>
     inspectDevicetreeInputSchema.parse({ path: "/board.dtb", ...limits }),
   );
 describe("flattened devicetree", () => {
+  it.each([
+    [
+      "legacy only",
+      undefined,
+      dtString("serial0:115200n8"),
+      "serial0:115200n8",
+    ],
+    [
+      "canonical wins",
+      dtString("/serial@2000"),
+      dtString("serial0"),
+      "/serial@2000",
+    ],
+    ["empty canonical wins", dtString(""), dtString("serial0"), ""],
+    [
+      "malformed canonical blocks fallback",
+      Buffer.alloc(0),
+      dtString("serial0"),
+      null,
+    ],
+    [
+      "ambiguous canonical blocks fallback",
+      dtString("a\0b"),
+      dtString("serial0"),
+      null,
+    ],
+    [
+      "unterminated legacy remains unknown",
+      undefined,
+      Buffer.from("serial0"),
+      null,
+    ],
+    ["missing console remains unknown", undefined, undefined, null],
+  ])("derives stdout-path: %s", (_label, canonical, legacy, expected) => {
+    const properties: Record<string, Buffer> = {};
+    if (canonical !== undefined) properties["stdout-path"] = canonical;
+    if (legacy !== undefined) properties["linux,stdout-path"] = legacy;
+    const report = parse(
+      devicetreeFixture({
+        name: "",
+        children: [{ name: "chosen", properties }],
+      }),
+    );
+    expect(report.summary.stdout_path).toBe(expected);
+    if (legacy !== undefined) {
+      expect(
+        report.nodes[1]?.properties.find((p) => p.name === "linux,stdout-path"),
+      ).toMatchObject({ hex: legacy.toString("hex"), bytes: legacy.length });
+    }
+  });
   it.each([16, 17])(
     "decodes v%s with derived facts and unresolved references",
     (version) => {
