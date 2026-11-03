@@ -113,6 +113,40 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
+  "does not offer a symlinked SQLite WAL target as the database retry (#8714)",
+  async () => {
+    const root = await createTestTempDirectory("rea-sqlite-wal-symlink-");
+    const database = join(root, "app.db");
+    const walTarget = join(root, "elsewhere.wal");
+    await writeFile(database, Buffer.from("SQLite format 3\u0000"));
+    await writeFile(walTarget, Buffer.alloc(32));
+    await symlink(walTarget, `${database}-wal`);
+    const snapshotRoot = await createTestTempDirectory(
+      "rea-sqlite-wal-snapshot-root-",
+    );
+    const resources = new ArtifactResourceScope();
+    const refusal: unknown = await captureSqliteDatabaseSnapshot(
+      database,
+      snapshotRoot,
+      resources,
+    ).then(
+      () => {
+        throw new Error("expected the WAL symlink to be refused");
+      },
+      (cause: unknown) => cause,
+    );
+    await resources.close();
+    const error = sqliteDatabaseFailure(refusal, database, "artifact-read");
+    expect(error).toBeInstanceOf(AnalysisInputError);
+    const action = projectAnalysisError(error as AnalysisInputError).remediation
+      .action;
+    expect(action).toContain(`${database}-wal`);
+    expect(action).toContain("consistent offline export or copy workflow");
+    expect(action).not.toContain(await realpath(walTarget));
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "keeps the resolved-target recovery for EVM, Wasm, APK and capture path refusals (#8714)",
   async () => {
     const { selected, target } = await selectedSymlink("rea-readers-symlink-");
