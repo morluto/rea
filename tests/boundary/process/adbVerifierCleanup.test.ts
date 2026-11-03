@@ -144,7 +144,13 @@ export class AdbDeviceAnalysisService {
     (text) => text.trim().split("\n"),
     () => [],
   );
-  return { ...run, created, closed, adbCalls, deviceFiles: await readdir(device) };
+  return {
+    ...run,
+    created,
+    closed,
+    adbCalls,
+    deviceFiles: await readdir(device),
+  };
 };
 
 // The fake adb client is a POSIX shell script.
@@ -257,14 +263,15 @@ it("reports both an unexpected verifier throw and provider cleanup failure", asy
   expect(result.closed).toBe("closed");
 });
 
-
 it.each([["--install-apk", "/tmp/unrelated.apk"], ["--install-apk"]])(
   "rejects %s before contacting the device or acquiring provider resources",
   async (...args) => {
     const result = await runVerifier({ args });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("APK identity and device cleanup ownership cannot be established safely");
+    expect(result.stderr).toContain(
+      "APK identity and device cleanup ownership cannot be established safely",
+    );
     expect(result.created).toBeNull();
     expect(result.closed).toBeNull();
     expect(result.adbCalls).toEqual([]);

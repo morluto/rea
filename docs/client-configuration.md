@@ -45,6 +45,10 @@ the client's configured command or reproduce the client's environment. If doctor
 passes but the client disconnects, inspect the client's startup error and registered
 launcher; see [verification scope](client-verification.md#launch-environment-verification).
 
+`rea doctor` has the same limit for provider checks, and reports a provider setting
+the registration's file does not carry as a
+[non-blocking unknown](installation.md#check-readiness-for-your-task).
+
 ## Runtime settings and client deadlines
 
 `update_analysis_settings` changes curated defaults inside the running REA
