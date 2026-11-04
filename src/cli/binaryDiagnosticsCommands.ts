@@ -3,6 +3,7 @@ import { inspectDevicetreeInputSchema } from "../domain/firmware/devicetree.js";
 import { inspectPeLoadConfigInputSchema } from "../domain/native/peLoadConfig.js";
 import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
 import { z } from "incur";
+import { cliDecimalField } from "./options.js";
 import {
   createByteEntropyService,
   createRecordedCrashService,
@@ -208,15 +209,19 @@ export const registerBinaryDiagnosticsCommands = (
       "Inspect file-wide and block byte entropy without executing the file",
     args: z.object({ path: localPathStringSchema.describe("Local file") }),
     options: z.object({
-      blockSize: inspectByteEntropyInputSchema.shape.block_size.describe(
+      // Decimal tokens only: numeric coercion would read "" as 0 and accept
+      // "0x10" or "1e2".
+      blockSize: cliDecimalField(
+        inspectByteEntropyInputSchema.shape.block_size,
+      ).describe(
         "Power-of-two block size from 256 to 65536 bytes (default 4096)",
       ),
-      offset: inspectByteEntropyInputSchema.shape.offset.describe(
-        "Window start as a decimal file byte offset (default 0)",
-      ),
-      length: inspectByteEntropyInputSchema.shape.length.describe(
-        "Window length in bytes; omit to extend through EOF",
-      ),
+      offset: cliDecimalField(
+        inspectByteEntropyInputSchema.shape.offset,
+      ).describe("Window start as a decimal file byte offset (default 0)"),
+      length: cliDecimalField(
+        inspectByteEntropyInputSchema.shape.length,
+      ).describe("Window length in bytes; omit to extend through EOF"),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
