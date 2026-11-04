@@ -245,6 +245,12 @@ export function* readWasmModuleImageSteps(
       for (let count = body.u32(); count > 0; count--) addMemory(body, false);
     } else if (id === 9) {
       const count = body.u32();
+      // Each segment takes at least one byte, so a count the body cannot hold is
+      // a damaged section, not one past the allowance.
+      if (count > body.end - body.at)
+        throw malformed(
+          `section declares ${count} element segments in ${body.end - body.at} bytes`,
+        );
       if (count > WASM_MODULE_LIMITS.elementSegments)
         throw new WasmModuleFailure(
           "capacity",
@@ -257,6 +263,11 @@ export function* readWasmModuleImageSteps(
           throw unsupported(`element segment flags ${flags} are not read`);
         const base = body.constOffset("element segment");
         const length = body.u32();
+        // Each slot holds a function index of at least one byte.
+        if (length > body.end - body.at)
+          throw malformed(
+            `element segment declares ${length} slots in ${body.end - body.at} bytes`,
+          );
         slots += length;
         if (slots > WASM_MODULE_LIMITS.tableSlots)
           throw new WasmModuleFailure(
@@ -280,6 +291,10 @@ export function* readWasmModuleImageSteps(
       }
     } else if (id === 11) {
       const count = body.u32();
+      if (count > body.end - body.at)
+        throw malformed(
+          `section declares ${count} data segments in ${body.end - body.at} bytes`,
+        );
       if (count > WASM_MODULE_LIMITS.dataSegments)
         throw new WasmModuleFailure(
           "capacity",

@@ -2050,10 +2050,10 @@ it("reports wasm data spread over more than the reconstruction allowance as capa
   });
 });
 
-it("reports a wasm module past a parser count cap as wasm module capacity", () => {
-  // A data section that declares one segment more than the reader keeps.
-  const data = leb128(WASM_MODULE_LIMITS.dataSegments + 1);
-  const module = Buffer.from([
+/** A module whose data section declares `count` segments over `body` bytes. */
+const wasmDataCountModule = (count: number, body: number) => {
+  const data = [...leb128(count), ...new Array<number>(body).fill(0)];
+  return Buffer.from([
     0x00,
     0x61,
     0x73,
@@ -2066,9 +2066,22 @@ it("reports a wasm module past a parser count cap as wasm module capacity", () =
     ...leb128(data.length),
     ...data,
   ]);
-  expect(failure(module)).toEqual({
+};
+
+it("reports a wasm module past a parser count cap as wasm module capacity", () => {
+  // One segment more than the reader keeps, with a body that could hold them.
+  const count = WASM_MODULE_LIMITS.dataSegments + 1;
+  expect(failure(wasmDataCountModule(count, count))).toEqual({
     reason: "wasm-module-capacity",
     kind: "capacity",
+  });
+});
+
+it("reports a wasm segment count its section cannot hold as malformed, not capacity", () => {
+  const count = WASM_MODULE_LIMITS.dataSegments + 1;
+  expect(failure(wasmDataCountModule(count, 0))).toEqual({
+    reason: "malformed-container",
+    kind: "malformed",
   });
 });
 

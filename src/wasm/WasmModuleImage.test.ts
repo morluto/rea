@@ -241,19 +241,30 @@ describe("readWasmModuleImage", () => {
   });
 
   it("bounds data segment and slot counts", () => {
+    // Bodies long enough for the declared counts, so only the cap refuses them.
+    const dataCount = WASM_MODULE_LIMITS.dataSegments + 1;
     const tooManyData = module(
-      section(11, u32(WASM_MODULE_LIMITS.dataSegments + 1)),
+      section(11, [...u32(dataCount), ...Array<number>(dataCount).fill(0)]),
     );
     expect(failure(tooManyData)[0]).toBe("capacity");
+    const slotCount = WASM_MODULE_LIMITS.tableSlots + 1;
     const tooManySlots = module(
       section(9, [
         1,
         0x00,
         ...offset(0),
-        ...u32(WASM_MODULE_LIMITS.tableSlots + 1),
+        ...u32(slotCount),
+        ...Array<number>(slotCount).fill(0),
       ]),
     );
     expect(failure(tooManySlots)[0]).toBe("capacity");
+    // The same counts over bodies that cannot hold them are damaged sections.
+    expect(failure(module(section(11, u32(dataCount))))[0]).toBe("malformed");
+    expect(
+      failure(
+        module(section(9, [1, 0x00, ...offset(0), ...u32(slotCount)])),
+      )[0],
+    ).toBe("malformed");
   });
 
   it("bounds input bytes before parsing", () => {
@@ -357,8 +368,12 @@ describe("code bodies and segment counts", () => {
   });
   it("bounds element segment records before reading them", () => {
     const count = WASM_MODULE_LIMITS.elementSegments + 1;
-    const bytes = module(table, section(9, [...u32(count)]));
+    const bytes = module(
+      table,
+      section(9, [...u32(count), ...Array<number>(count).fill(0)]),
+    );
     expect(failure(bytes)[0]).toBe("capacity");
+    expect(failure(module(table, section(9, u32(count))))[0]).toBe("malformed");
   });
 });
 

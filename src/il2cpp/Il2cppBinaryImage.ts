@@ -135,7 +135,8 @@ const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
 function* openWasmImageSteps(bytes: Buffer): Generator<void, NativeImage> {
   let module;
   let memory;
-  // Reconstruction allowances are bytes; the reader's other allowances are counts.
+  // Reconstruction allowances are bytes; the reader's other allowances are counts,
+  // apart from its 1 GiB input cap, which the 1 GiB binary read refuses first.
   let rebuilding = false;
   try {
     module = yield* readWasmModuleImageSteps(bytes);

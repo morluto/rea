@@ -3,6 +3,18 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { WASM_MODULE_LIMITS } from "../../../src/wasm/WasmModuleImage.js";
+
+const wasmLeb128 = (value: number): number[] => {
+  const out: number[] = [];
+  do {
+    let byte = value & 0x7f;
+    value >>>= 7;
+    if (value !== 0) byte |= 0x80;
+    out.push(byte);
+  } while (value !== 0);
+  return out;
+};
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   AnalysisCancelledError,
@@ -888,6 +900,45 @@ it("refuses generic rows that exceed the report budget and keeps the requested p
       parameters: { binary_path, generic_instances: true },
       normalized_result: { selected_binary: { path: binary_path } },
     });
+  } finally {
+    await provider.close();
+  }
+});
+
+it("names the wasm32 module parser allowance when a wasm module passes a count cap", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-wasm-cap-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "build.wasm");
+  const count = WASM_MODULE_LIMITS.dataSegments + 1;
+  const data = [...wasmLeb128(count), ...new Array<number>(count).fill(0)];
+  await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+  await writeFile(
+    binaryPath,
+    Buffer.from([
+      0x00,
+      0x61,
+      0x73,
+      0x6d,
+      1,
+      0,
+      0,
+      0,
+      11,
+      ...wasmLeb128(data.length),
+      ...data,
+    ]),
+  );
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const result = await provider.inspect({ path, binary_path: binaryPath });
+    if (result.ok) throw new Error("expected a capacity refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.message).toMatch(/^wasm-module-capacity: /);
+    expect(JSON.stringify(projected)).toContain(
+      "The wasm32 module parser allowance is a fixed count",
+    );
+    expect(JSON.stringify(projected)).not.toContain("native-link");
   } finally {
     await provider.close();
   }
