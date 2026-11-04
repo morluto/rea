@@ -156,7 +156,10 @@ export const registerCoreNativeCommands = (
         .describe(
           `Procedure name or provider address; use --procedure=<value> for leading dashes. ${addressOrProcedureGuidance}`,
         ),
-      direction: z.enum(["incoming", "outgoing"]).default("outgoing"),
+      direction: z
+        .enum(["incoming", "outgoing"])
+        .default("outgoing")
+        .describe("Reference direction. Defaults to outgoing."),
       snapshot: snapshotSelectionOption,
       ...analysisEvidenceDeliveryOptions,
       ...nativeOpenOptionFields,
