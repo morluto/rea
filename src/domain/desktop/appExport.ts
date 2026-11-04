@@ -210,14 +210,19 @@ def _view(path: Path) -> dict:
             "truncated": len(lines) > MAX_LINES}
 
 
-def _xml(element) -> dict:
-    """An element with its attributes, text and children, keeping text that follows a child."""
-    children = []
-    if element.text and element.text.strip():
-        children.append(element.text)
+def _xml(element, preserve: bool = False) -> dict:
+    """An element with its attributes, text and children; whitespace between elements is formatting unless preserved."""
+    space = element.get("{http://www.w3.org/XML/1998/namespace}space")
+    preserve = space == "preserve" if space in ("preserve", "default") else preserve
+    leaf = len(element) == 0
+
+    def kept(text):
+        return bool(text) and (preserve or leaf or text.strip() != "")
+
+    children = [element.text] if kept(element.text) else []
     for child in element:
-        children.append(_xml(child))
-        if child.tail and child.tail.strip():
+        children.append(_xml(child, preserve))
+        if kept(child.tail):
             children.append(child.tail)
     return {"name": element.tag, "attributes": dict(element.attrib), "children": children}
 
