@@ -351,6 +351,10 @@ export const finishModuleRequireCalls = (
         ...(call.resolutionBasePath === undefined
           ? {}
           : { resolutionBasePath: call.resolutionBasePath }),
+        // A factory or `createRequire` loader saved under a member named `require`
+        // still names a bundle module key, not a package. Dropping the loader here
+        // would read that key as an external specifier.
+        ...(call.loader === undefined ? {} : { loader: call.loader }),
       });
   }
   context.accumulator.pendingModuleRequireCalls.length = 0;
