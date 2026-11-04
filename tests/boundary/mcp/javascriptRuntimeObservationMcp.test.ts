@@ -1,5 +1,5 @@
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -27,20 +27,14 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("JavaScript runtime observation MCP tools", () => {
   const resources: Array<{ close(): Promise<unknown> }> = [];
-  const temporary: string[] = [];
 
   afterEach(async () => {
     await Promise.all(resources.splice(0).map((item) => item.close()));
-    await Promise.all(
-      temporary
-        .splice(0)
-        .map((path) => rm(path, { recursive: true, force: true })),
-    );
   });
 
   registerRuntimeParameterContract(resources);
   registerRuntimeMetadataContract();
-  registerRetainedRuntimeEvidence(resources, temporary);
+  registerRetainedRuntimeEvidence(resources);
 });
 
 function registerRuntimeParameterContract(
@@ -206,11 +200,9 @@ function registerRuntimeMetadataContract(): void {
 
 function registerRetainedRuntimeEvidence(
   resources: Array<{ close(): Promise<unknown> }>,
-  temporary: string[],
 ): void {
   test("lists and observes one target as retained Evidence", async () => {
     const root = await createTestTempDirectory("rea-v8-mcp-");
-    temporary.push(root);
     const { entry, inspector, client } = await createObservationClient(
       root,
       resources,
@@ -288,8 +280,10 @@ function registerRetainedRuntimeEvidence(
     expect(new Set(inspector.commands.map(({ method }) => method))).toEqual(
       new Set(["Runtime.enable", "Debugger.enable"]),
     );
-    const direct = await observeDirectly(inspector);
-    expect(direct.ok).toBe(true);
+    const provider = new V8InspectorProvider();
+    resources.push(provider);
+    const direct = await observeDirectly(inspector, provider);
+    expect(direct.ok, direct.ok ? undefined : direct.error.message).toBe(true);
     if (direct.ok) expect(evidenceId).toBe(direct.value.evidence_id);
   });
 }
@@ -344,9 +338,10 @@ const createObservationClient = async (
 
 const observeDirectly = (
   inspector: Awaited<ReturnType<typeof startFakeV8Inspector>>,
+  provider: V8InspectorProvider,
 ) =>
   observeJavaScriptRuntime(
-    new V8InspectorProvider(),
+    provider,
     observeJavaScriptRuntimeInputSchema.parse({
       inspector_endpoint: inspector.endpoint,
       target_id: inspector.targetId,

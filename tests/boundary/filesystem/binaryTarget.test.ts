@@ -446,6 +446,34 @@ describe("binary target I/O: app plist permissions and decoding", () => {
   });
 });
 
+describe("binary target I/O: OpenStep app plist escapes", () => {
+  it.each([
+    '{ CFBundleExecutable = "M\\U0061in"; }',
+    '{ CFBundleExecutable = "M\\141in"; }',
+    '{ "CFBundle\\U0045xecutable" = "Main"; }',
+  ])(
+    "resolves an OpenStep bundle executable with escaped keys or values in %s",
+    async (plistContent) => {
+      const directory = await createTestTempDirectory(
+        "rea-app-openstep-escapes-",
+      );
+      const app = join(directory, "Probe.app");
+      const programs = join(app, "Contents", "MacOS");
+      await mkdir(programs, { recursive: true });
+      await writeFile(join(app, "Contents", "Info.plist"), plistContent);
+      await writeFile(join(programs, "Main"), "binary");
+      const result = await resolveAppBundleExecutable(app);
+      expect(result).toEqual({
+        ok: true,
+        value: {
+          executable: join(programs, "Main"),
+          infoPlist: join(app, "Contents", "Info.plist"),
+        },
+      });
+    },
+  );
+});
+
 describe("binary target I/O: package classification", () => {
   it("classifies ZIP package families and text artifacts without Hopper", async () => {
     const directory = await createTestTempDirectory("rea-artifact-target-");

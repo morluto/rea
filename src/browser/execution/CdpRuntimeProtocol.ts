@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cdpResourceColumnSchema } from "../../domain/cdpObservationSchemas.js";
 
 const integer = z.int().min(0);
 const range = z.object({
@@ -30,7 +31,7 @@ export const runtimeStackSchema = z.object({
       scriptId: z.string(),
       url: z.string(),
       lineNumber: integer,
-      columnNumber: integer,
+      columnNumber: cdpResourceColumnSchema,
       functionName: z.string(),
     }),
   ),
@@ -49,7 +50,7 @@ export const runtimeListenersSchema = z.object({
       once: z.boolean(),
       scriptId: z.string(),
       lineNumber: integer,
-      columnNumber: integer,
+      columnNumber: cdpResourceColumnSchema,
     }),
   ),
 });
