@@ -302,6 +302,19 @@ const runCapture = async (
   };
   const evidence = captureEvidence(request, capture);
   const published = await writeCaptureFile(output, evidence);
+  try {
+    await store.close();
+  } catch (cause: unknown) {
+    throw new ProviderAdapterError(DESKTOP_PROVIDER.id, DESKTOP_OPERATION, {
+      cause,
+      userMessage: `The capture was written to ${published}, but a file REA read while retaining content could not be closed.`,
+      cleanup: {
+        reason: "a retained file's handle could not be closed after a retry",
+        resources: [output],
+      },
+      diagnostics: { capture_file: published },
+    });
+  }
   if (!session.cleanup.verified)
     throw new ProviderAdapterError(DESKTOP_PROVIDER.id, DESKTOP_OPERATION, {
       userMessage: `The capture was written to ${published}, but REA could not verify that the processes it launched have exited.`,

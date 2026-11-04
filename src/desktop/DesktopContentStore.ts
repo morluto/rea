@@ -4,7 +4,11 @@ import { join } from "node:path";
 
 import type { DesktopApplicationCapture } from "../domain/desktop/desktopCapture.js";
 import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
-import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
+import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import {
+  RegularFileCleanupFailure,
+  withOwnedRegularFile,
+} from "../filesystem/OwnedRegularFile.js";
 import {
   NonRegularFileReadError,
   RegularFileChangedError,
@@ -37,6 +41,8 @@ export class DesktopContentStore {
   readonly #maxFileBytes: number;
   readonly #stored = new Map<string, number>();
   readonly #omissions: Omission[] = [];
+  /** Handles whose close failed; kept owned so `close` can retry them. */
+  readonly #unclosed: OwnedFileHandle[] = [];
   #remainingBytes: number;
 
   constructor(
@@ -64,6 +70,14 @@ export class DesktopContentStore {
 
   get omissions(): readonly Omission[] {
     return this.#omissions;
+  }
+
+  /** Retry every handle whose close failed during a read; rejects if one still fails. */
+  async close(): Promise<void> {
+    while (this.#unclosed.length > 0) {
+      await this.#unclosed[0]?.close();
+      this.#unclosed.shift();
+    }
   }
 
   /**
@@ -110,6 +124,9 @@ export class DesktopContentStore {
       return { kind: "omitted", reason: "too_large" };
     const options = {
       symlinks: "reject" as const,
+      retainFailedClose: (owner: OwnedFileHandle) => {
+        this.#unclosed.push(owner);
+      },
       ...(signal === undefined ? {} : { signal }),
     };
     try {
@@ -132,6 +149,9 @@ export class DesktopContentStore {
       signal?.throwIfAborted();
       if (cause instanceof ChangedSinceWalk)
         return { kind: "omitted", reason: "changed_since_walk" };
+      // The read finished or failed but its close did not; the owner is kept.
+      if (cause instanceof RegularFileCleanupFailure)
+        return { kind: "omitted", reason: "unreadable" };
       if (cause instanceof RegularFileChangedError)
         return { kind: "omitted", reason: "changed_during_read" };
       // The path was renamed, removed or retyped after the walk.
