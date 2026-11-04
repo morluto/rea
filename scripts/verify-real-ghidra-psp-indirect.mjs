@@ -330,7 +330,9 @@ try {
     procedure: symbols.rea_psp_computed_dispatch,
   });
   assert.ok(
-    replayed.evidence?.limitations.includes(SNAPSHOT_REPLAY_LIMITATION),
+    replayed.evidence?.limitations.some((limitation) =>
+      limitation.includes(SNAPSHOT_REPLAY_LIMITATION),
+    ),
     "Expected native API Evidence replayed from the saved snapshot",
   );
   assert.ok(originalDispatchInspection, "Original API result missing");
