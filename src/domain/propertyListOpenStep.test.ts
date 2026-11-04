@@ -10,7 +10,6 @@ import {
 
 it.each([
   "{ numeric = (42, -2.5, 0x10, YES); path = /a/b:c$; }",
-  String.raw`{ escapes = "\n\r\t\0\"\\\q\137\U0041"; }`,
   "{ bytes = (<ffzz0>, <0>, <a b c d>, <>); }",
   '/* header */ ("//text", "/*text*/", /* before */ value, // after\n)',
   "{ first = x second = y; third = (a, b,); }",
@@ -169,3 +168,27 @@ it("does not treat nonterminating whitespace or quoted comment text as line ends
     ),
   ).toMatchObject({ code: "unexpected_end" });
 });
+
+it.each([
+  ['{ CFBundleExecutable = "M\\U0061in"; }', { CFBundleExecutable: "Main" }],
+  ['{ CFBundleExecutable = "M\\141in"; }', { CFBundleExecutable: "Main" }],
+  ['{ "CFBundle\\U0045xecutable" = "Main"; }', { CFBundleExecutable: "Main" }],
+  ['{ accent = "\\U00e9"; }', { accent: "é" }],
+  ['{ nextstep = "\\335"; }', { nextstep: "é" }],
+  [
+    String.raw`{ escapes = "\n\r\t\0\"\\\q\137\U0041"; }`,
+    { escapes: '\n\r\t\0"\\q_A' },
+  ],
+  ['{ controls = "\\a\\b\\f\\v"; }', { controls: "\u0007\b\f\v" }],
+  ['{ surrogatePair = "\\Ud83d\\Ude00"; }', { surrogatePair: "😀" }],
+  ['{ loneHighSurrogate = "\\Ud800"; }', { loneHighSurrogate: "\ufffd" }],
+  ['{ loneLowSurrogate = "\\Udc00"; }', { loneLowSurrogate: "\ufffd" }],
+  ['{ octalBoundary376 = "\\376"; }', { octalBoundary376: "\ufffd" }],
+  ['{ octalBoundary377 = "\\377"; }', { octalBoundary377: "\ufffd" }],
+  ['{ octalWrap400 = "\\400"; }', { octalWrap400: "\0" }],
+])(
+  "decodes OpenStep quoted escape sequences in keys and values for %s",
+  (text, expected) => {
+    expect(decodeOpenStepPropertyList(text)).toEqual(expected);
+  },
+);

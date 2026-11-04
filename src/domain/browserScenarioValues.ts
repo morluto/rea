@@ -437,7 +437,7 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
         z
           .int()
           .min(100)
-          .max(599)
+          .max(999)
           .refine((status) => status < 300 || status > 399, {
             message:
               "Request steps follow no redirects, so a 3xx status cannot complete one",

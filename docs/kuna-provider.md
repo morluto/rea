@@ -1,8 +1,26 @@
 # Kuna provider
 
-[Kuna](https://github.com/Noelo-Lab/kuna) is an Apache-2.0 decompiler distributed as one `kuna` executable. For a new installation, use Kuna 1.988, REA's recommended verified release. REA uses a `kuna` you supply; it does not download, install, update or bundle Kuna. REA accepts other releases, which it reports as unverified in `rea doctor` and in each analysis profile. The verified-release flag compares the reported version; it does not authenticate the executable. The 1.988 real-provider checks ran on macOS arm64; Linux and other hosts have not been verified with that release.
+[Kuna](https://github.com/Noelo-Lab/kuna) is an Apache-2.0 decompiler distributed as one `kuna` executable. For a new installation, use Kuna 1.990, REA's recommended verified release. REA uses a `kuna` you supply; it does not download, install, update or bundle Kuna. REA accepts other releases; `rea doctor` and analysis Evidence report them as unverified. Verification compares the reported version; it does not authenticate the executable. Analysis profiles retain the observed version and executable digest, independently of REA's current verified-release policy. The 1.990 real-provider checks ran on macOS arm64; Linux and other hosts have not been verified with that release.
 
 Kuna is static: it reads the selected image and never executes it.
+
+This profile change makes earlier Kuna analysis snapshots and resumable directory
+exports incompatible, even with the same Kuna executable. Keep the old files:
+their recorded Evidence remains historical. To continue analysis, open the
+binary without the old snapshot and save a new one, or choose a new export
+directory. Existing snapshot Evidence can be extracted from its
+`evidence_bundle` JSON member and imported as a separate Evidence bundle; that
+does not restore cached workflow entries or resume the old directory export.
+For example, using `jq` and a new output path:
+
+```bash
+jq -e '.evidence_bundle | select(type == "object")' old-snapshot.json > history.json
+rea evidence-import history.json --json
+```
+
+The CLI command validates the bundle in a one-shot session. To use the records
+in an MCP session, call `import_evidence_bundle` with the extracted file path.
+This validates the embedded bundle, not the rest of the snapshot container.
 
 ## Configure
 
@@ -29,6 +47,10 @@ completes. Cleanup retries keep both the observations and the exact file owner.
 | `REA_KUNA_PROJECT_TIMEOUT_MS` | 30 minutes                                                                                                                              | Deadline for whole-program inventory/export, reference and string scans.                                                                                                                 |
 | `REA_KUNA_TIMEOUT_MS`         | 120 s                                                                                                                                   | Deadline for one single-function decompile, and for the inventory run REA makes when the export ends without one.                                                                        |
 | `REA_KUNA_JOBS`               | 1                                                                                                                                       | `decompile-project --jobs`. 1 is Kuna's reference answer; more jobs finish sooner but lose callee-first prototypes, and change about 40–60% of function bodies on the measured binaries. |
+
+Pseudocode read from a parallel project export includes a prototype-context
+limitation in its Evidence, including in function dossiers and composed
+workflows. Early single-function results have their own source limitation.
 
 A single-function decompile, inventory, string, graph or xref run that exceeds its deadline fails as `provider_timeout`, naming the setting that owns the deadline and that raising it takes a restart. A project export that exceeds `REA_KUNA_PROJECT_TIMEOUT_MS` is an export failure instead: requests that need the export report `capability_unavailable` with the export's own retry guidance.
 
@@ -72,7 +94,7 @@ The assembly label index is scanned once per export reader. Cancelling a request
 
 Regex procedure and string search uses ECMAScript Unicode matching in a cancellable worker with a matching deadline and a worker old-generation heap. Literal matching remains the default. Cancellation or a matching deadline leaves the session available. The deadline is `REA_REGEX_MATCHING_DEADLINE_MS`, a positive decimal integer from 1 to 2147483647 ms. Unset uses 5000 ms. A larger value is refused because Node schedules a delay past that signed 32-bit bound as 1 ms. Invalid values are configuration errors and do not fall back to the default. The setting is read from the environment that starts REA, so a change needs a restart. A deadline failure names the effective milliseconds, whether they came from the default or the setting, the default, and the maximum. The worker old-generation heap does not raise it. The worker heap request is `REA_REGEX_WORKER_HEAP_REQUEST_MIB`, a decimal integer from 7 to 16384 MiB. Unset uses 128 MiB. A request below 7 MiB aborts the worker during startup, and a larger value is refused. Invalid values are configuration errors and do not fall back to 128. The setting is read from the environment that starts REA, so a change needs a restart. A heap failure names the effective request, whether it came from the default or the setting, the default, the floor, and the maximum. A positive Node.js `--max-old-space-size` on the process that starts REA, including `NODE_OPTIONS`, overrides that request and sets the effective heap. `--max-old-space-size-percentage` takes precedence over that flag in either order. REA does not turn the percentage into a MiB, so the effective heap stays unestablished instead of the worker heap request or the absolute flag. The reported `NODE_OPTIONS` value is the process initial environment when that block can be read. A later edit to the environment is not the value Node applied, and an unreadable initial value leaves the effective heap unestablished. The launch Node options are the initial command line on Linux when that buffer still has a program entry, not a later edit to `process.execArgv`. A preload can clear that array after V8 has applied the flags. Setting `process.title` or `--title` overwrites the command line, so a buffer without a program entry leaves the effective heap unestablished. `--env-file` or `--env-file-if-exists` can supply `NODE_OPTIONS` when the initial environment has none. That file is not part of the initial environment block, so the effective heap stays unestablished instead of the worker heap request. An initial `NODE_OPTIONS` is still used, because Node does not let the file replace it. A positive `--max-heap-size`, including the underscore form and launch `NODE_OPTIONS` on Node versions that allow it, sets the total heap rather than the old generation and can be lower than the worker heap request. The effective old generation stays unestablished while that value is in effect. A zero or empty value clears it. `--experimental-config-file` or `--experimental-default-config-file` can set `nodeOptions`, including a heap percentage, from a file that is not read back. The effective heap stays unestablished when either flag is present, including when an absolute `--max-old-space-size` is also on the command line or in the recovered `NODE_OPTIONS`. Node accepts the config path as `=` or the next argument.
 
-Single-function subprocess output and each cached source facet share a 16 MiB buffered-text capacity. Cached spans are checked before allocation; larger text remains in the local export and the error identifies the file and range. `analyze_function` with `detail: "complete"` (the CLI default) returns the complete dossier inline, which can still be large; later retained views do not remove that first transfer. The MCP default retains the dossier and returns its summary, so page the facets you need through `inspect_analysis_view`, or prefer the individual text tools for a focused question.
+Single-function subprocess output and each cached source facet share a 16 MiB buffered-text capacity. Cached spans are checked before allocation; larger project-export spans remain in the local export and the error identifies the file and range. A single-function run does not by itself retain a complete project export. `analyze_function` with `detail: "complete"` (the CLI default) returns the complete dossier inline, which can still be large; later retained views do not remove that first transfer. The MCP default retains the dossier and returns its summary, so page the facets you need through `inspect_analysis_view`, or prefer the individual text tools for a focused question.
 
 ## Mach-O data entries
 

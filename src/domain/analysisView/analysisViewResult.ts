@@ -1,4 +1,7 @@
-import { analysisViewCoverageSchema } from "./analysisViewCoverage.js";
+import {
+  analysisViewCoverageSchema,
+  nullableCollectionViewCoverageSchema,
+} from "./analysisViewCoverage.js";
 import {
   javaScriptRouteInventorySourceSchema,
   javaScriptRouteInventorySchema,
@@ -16,6 +19,7 @@ import {
   NATIVE_OBSERVATION_OPERATIONS,
   type NativeObservationOperation,
 } from "../native/nativeObservation.js";
+import { nativeValueTraceSummarySchema } from "./nativeValueTraceView.js";
 import {
   devicetreeViewRequestSchema,
   devicetreeViewItemsSchema,
@@ -68,6 +72,11 @@ import {
   featureTraceViewCollections,
   featureTraceViewContextSchema,
 } from "./featureTraceView.js";
+import {
+  batchDecompileSummarySchema,
+  batchDecompileViewCollections,
+  batchDecompileViewContextSchema,
+} from "./batchDecompileView.js";
 import {
   gpuCodeObjectsViewRequestSchema,
   gpuCodeObjectsSummarySchema,
@@ -343,6 +352,7 @@ const viewResultBase = {
     "inspect_gpu_code_objects",
     ...NATIVE_INVENTORY_OPERATIONS,
     ...NATIVE_OBSERVATION_OPERATIONS,
+    "trace_native_values",
     "match_native_functions",
   ]),
   parent_digest: digestSchema,
@@ -377,17 +387,27 @@ export const nativeObservationSummaryViewResultSchemas = {
   procedure_address: nativeObservationSummaryFor("procedure_address"),
   procedure_callees: nativeObservationSummaryFor("procedure_callees"),
   procedure_callers: nativeObservationSummaryFor("procedure_callers"),
+  xrefs: nativeObservationSummaryFor("xrefs"),
   resolve_containing_procedure: nativeObservationSummaryFor(
     "resolve_containing_procedure",
   ),
   get_call_graph: nativeObservationSummaryFor("get_call_graph"),
 };
+
+export const nativeValueTraceSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: artifactSchema.nullable(),
+  parent_operation: z.literal("trace_native_values"),
+  summary: nativeValueTraceSummarySchema,
+});
+
 const nativeObservationSummaryViewResultSchema = z.discriminatedUnion(
   "parent_operation",
   [
     nativeObservationSummaryViewResultSchemas.procedure_address,
     nativeObservationSummaryViewResultSchemas.procedure_callees,
     nativeObservationSummaryViewResultSchemas.procedure_callers,
+    nativeObservationSummaryViewResultSchemas.xrefs,
     nativeObservationSummaryViewResultSchemas.resolve_containing_procedure,
     nativeObservationSummaryViewResultSchemas.get_call_graph,
   ],
@@ -407,6 +427,7 @@ const nativeObservationPageViewResultSchema = z.discriminatedUnion(
     nativeObservationPageFor("procedure_address"),
     nativeObservationPageFor("procedure_callees"),
     nativeObservationPageFor("procedure_callers"),
+    nativeObservationPageFor("xrefs"),
     nativeObservationPageFor("resolve_containing_procedure"),
     nativeObservationPageFor("get_call_graph"),
   ],
@@ -429,7 +450,9 @@ const nativeContextViewResultSchema = z.discriminatedUnion("facet", [
   nativeContextFor("overview"),
   nativeContextFor("analysis-profile"),
   nativeContextFor("limitations"),
-  nativeContextFor("result-limitations"),
+  nativeContextFor("result-limitations").extend({
+    coverage: nullableCollectionViewCoverageSchema,
+  }),
 ]);
 
 export const byteEntropySummaryViewResultSchema = z.strictObject({
@@ -987,6 +1010,39 @@ export const featureTraceViewResultSchema = z
     ]),
   );
 
+/** Counts and identities of a retained batch without any pseudocode body. */
+export const batchDecompileSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: artifactSchema.nullable(),
+  parent_operation: z.literal("batch_decompile"),
+  summary: batchDecompileSummarySchema,
+});
+const batchDecompilePage = {
+  ...viewResultBase,
+  ...batchDecompileViewContextSchema.shape,
+  kind: z.literal("batch-decompile"),
+  artifact: artifactSchema.nullable(),
+  parent_operation: z.literal("batch_decompile"),
+};
+// The kind tag keeps dispatch while each collection keeps exactly its own shape.
+export const batchDecompileViewResultSchema = z
+  .object({ kind: z.literal("batch-decompile") })
+  .passthrough()
+  .pipe(
+    z.union([
+      z.strictObject({
+        ...batchDecompilePage,
+        view: batchDecompileViewCollections.items.request,
+        items: batchDecompileViewCollections.items.rows,
+      }),
+      z.strictObject({
+        ...batchDecompilePage,
+        view: batchDecompileViewCollections.pseudocode.request,
+        item: batchDecompileViewCollections.pseudocode.item,
+      }),
+    ]),
+  );
+
 /** Bind the existing nested facet selection to its producer-owned rows. */
 const machoPage = <Facet extends keyof typeof machoViewRows>(facet: Facet) =>
   z.strictObject({
@@ -1026,6 +1082,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   webBundlePageViewResultSchema,
   sourceToBundlePageViewResultSchema,
   featureTraceViewResultSchema,
+  batchDecompileViewResultSchema,
   z.strictObject({
     ...viewResultBase,
     ...nativeFunctionMatchingContextSchema.shape,
@@ -1078,6 +1135,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   z.discriminatedUnion("parent_operation", [
     nativeObservationSummaryViewResultSchema,
+    nativeValueTraceSummaryViewResultSchema,
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
@@ -1116,6 +1174,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeFunctionSummaryViewResultSchema,
     sourceToBundleSummaryViewResultSchema,
     featureTraceSummaryViewResultSchema,
+    batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
   ]),
   z.strictObject({
@@ -1148,6 +1207,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...viewResultBase,
     kind: z.literal("native-load-image"),
+    coverage: nullableCollectionViewCoverageSchema,
     ...nativeViewSourceContext,
     verification_status: z.enum(["unsupported", "verified", "mismatch"]),
     parent_operation: z.literal("inspect_native_load_image"),

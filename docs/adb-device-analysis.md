@@ -203,8 +203,12 @@ and during shutdown.
   `uninstall_adb_package` declare `mutatesTarget` and never run implicitly:
   pushes check for existing device files before transfer and refuse them
   unless `overwrite` is set. A failed or unexpected existence probe stops
-  transfer even with `overwrite`; only a clean `test -e` exit of 1 with no
-  output is interpreted as absence. The check is not atomic, so a different
+  transfer even with `overwrite`. A completed `test -e` exit of 1 establishes
+  absence only with empty stdout and either empty stderr or a recognized,
+  completed adb-server startup notice sequence. Startup notices are host
+  observations, not remote-path diagnostics; successful push receipts retain
+  them in `raw_result.device_path_probes`. Incomplete startup, extra diagnostics,
+  truncation and cancellation do not establish absence. The check is not atomic, so a different
   process can create the path before `adb push` writes it. When available, the device's
   `sha256sum` verifies the transfer. A missing command or output without a
   recognizable digest reports `device_digest_source: "unavailable"` with an

@@ -20,6 +20,18 @@ describe("macOS Hopper setup failure projection", () => {
         "The mounted package did not contain the expected Hopper application bundle. Retry setup; if it repeats, update REA before installing.",
     });
   });
+
+  it("keeps a host below the release minimum distinct from an unsupported host", () => {
+    const incompatible = setupInstallFailure("incompatible_host_version");
+    expect(incompatible).toMatchObject({
+      status: "failed",
+      code: "incompatible_host_version",
+    });
+    expect(incompatible.remediation).toContain("HOPPER_LAUNCHER_PATH");
+    const unsupported = setupInstallFailure("unsupported_host");
+    expect(unsupported.code).toBe("unsupported_host");
+    expect(incompatible.remediation).not.toBe(unsupported.remediation);
+  });
 });
 
 describe("Linux package-manager setup failure projection", () => {
