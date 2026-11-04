@@ -14,6 +14,14 @@ const LSTAT_CONCURRENCY = 64;
 export interface HomeStateWalk extends DesktopWalk {
   readonly truncated: boolean;
   readonly unreadableDirectories: number;
+  /** Directories on another device than their walk root, recorded but not entered. */
+  readonly mountPoints: readonly string[];
+}
+
+/** A directory still to list, with the device of the root it was reached from. */
+interface PendingDirectory {
+  readonly path: string;
+  readonly device: bigint;
 }
 
 const pathState = (stats: BigIntStats): DesktopPathState => ({
@@ -45,20 +53,21 @@ const statPath = async (
 
 interface WalkProgress {
   readonly entries: Map<string, DesktopPathState>;
-  readonly pending: string[];
+  readonly pending: PendingDirectory[];
+  readonly mountPoints: string[];
   readonly maxEntries: number;
   truncated: boolean;
 }
 
 /** Record one directory's entries; true when every one of them was recorded. */
 const listDirectory = async (
-  directory: string,
+  directory: PendingDirectory,
   names: readonly string[],
   excluded: readonly string[],
   progress: WalkProgress,
 ): Promise<boolean> => {
   const paths = names
-    .map((name) => join(directory, name))
+    .map((name) => join(directory.path, name))
     .filter((path) => !isWithinAny(path, excluded));
   let complete = true;
   for (let offset = 0; offset < paths.length; offset += LSTAT_CONCURRENCY) {
@@ -76,16 +85,21 @@ const listDirectory = async (
         return false;
       }
       progress.entries.set(path, pathState(stat));
-      if (stat.isDirectory()) progress.pending.push(path);
+      if (!stat.isDirectory()) continue;
+      // A network or FUSE mount can be slow or hang, so the walk stays on its root's device.
+      if (stat.dev === directory.device)
+        progress.pending.push({ path, device: directory.device });
+      else progress.mountPoints.push(path);
     }
   }
   return complete;
 };
 
 /**
- * Record every path under the roots without following symbolic links. The walk
- * stops adding entries at `maxEntries` and reports itself truncated. A
- * directory counts as listed only when every one of its entries was recorded.
+ * Record every path under the roots without following symbolic links or
+ * entering a directory on another device than its root. The walk stops adding
+ * entries at `maxEntries` and reports itself truncated. A directory counts as
+ * listed only when every one of its entries was recorded.
  */
 export const walkHomeState = async (
   roots: readonly string[],
@@ -96,6 +110,7 @@ export const walkHomeState = async (
   const progress: WalkProgress = {
     entries: new Map(),
     pending: [],
+    mountPoints: [],
     maxEntries,
     truncated: false,
   };
@@ -109,20 +124,22 @@ export const walkHomeState = async (
     checkedRoots.add(root);
     if (stats === null) continue;
     progress.entries.set(root, pathState(stats));
-    if (stats.isDirectory()) progress.pending.push(root);
+    if (stats.isDirectory())
+      progress.pending.push({ path: root, device: stats.dev });
   }
   while (progress.pending.length > 0 && !progress.truncated) {
     signal?.throwIfAborted();
-    const directory = progress.pending.pop() ?? "";
+    const directory = progress.pending.pop();
+    if (directory === undefined) break;
     let names: string[];
     try {
-      names = await readdir(directory);
+      names = await readdir(directory.path);
     } catch {
       unreadableDirectories += 1;
       continue;
     }
     if (await listDirectory(directory, names, excluded, progress))
-      listed.add(directory);
+      listed.add(directory.path);
   }
   return {
     entries: progress.entries,
@@ -130,5 +147,6 @@ export const walkHomeState = async (
     roots: checkedRoots,
     truncated: progress.truncated,
     unreadableDirectories,
+    mountPoints: progress.mountPoints,
   };
 };

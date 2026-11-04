@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { DesktopSession } from "../domain/desktop/desktopCapture.js";
+import {
+  checkpointNameRefusal,
+  type DesktopSession,
+} from "../domain/desktop/desktopCapture.js";
 import { ownedCommandResources } from "../process/OwnedCommand.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
@@ -9,15 +12,18 @@ import {
   spawnOwnedProviderProcess,
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import { terminateTokenOwnedProcesses } from "../process/TokenOwnedTermination.js";
 import {
   SessionObservations,
+  matchesWindowNames,
   observedSession,
   recordWindows,
   sampleOpenFiles,
   sampleProcesses,
   trackProcess,
+  type WindowMatching,
 } from "./DesktopSessionObservations.js";
-import type { ObservedWindow, X11WindowObserver } from "./X11WindowObserver.js";
+import type { WindowSample, X11WindowObserver } from "./X11WindowObserver.js";
 
 const STDERR_BYTES = 8 * 1024;
 const TERMINATION_GRACE_MS = 5_000;
@@ -27,6 +33,22 @@ export interface DesktopSessionOutcome {
   readonly session: DesktopSession;
   /** Run token, launcher pid and process group still owned after cleanup failed. */
   readonly cleanupResources: readonly string[];
+}
+
+/** A session failed, and the processes it launched could not all be removed. */
+export class DesktopSessionCleanupError extends Error {
+  constructor(
+    readonly primary: unknown,
+    readonly cleanup: {
+      readonly reason: string;
+      readonly resources: readonly string[];
+    },
+  ) {
+    super(`desktop session cleanup is incomplete: ${cleanup.reason}`, {
+      cause: primary,
+    });
+    this.name = "DesktopSessionCleanupError";
+  }
 }
 
 /** A line the person or driver sent while the session runs. */
@@ -42,8 +64,7 @@ export interface DesktopSessionPlan {
   readonly workingDirectory: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly windows: X11WindowObserver;
-  /** Window class or instance names that identify the application, lowercase. */
-  readonly windowNames: ReadonlySet<string>;
+  readonly windowMatching: WindowMatching;
   readonly roots: readonly string[];
   readonly maxDurationMs: number;
   readonly pollIntervalMs: number;
@@ -59,20 +80,25 @@ export interface DesktopSessionPlan {
 }
 
 /**
- * Windows that already match the application before it is launched, or
- * undefined when the window list cannot be read. A capture refuses to start
- * beside such windows: the launch could hand off to that instance, and its
- * unsaved state would sit outside the baseline.
+ * Windows that already match the application by name before it is launched,
+ * or why the window list cannot be read. A capture refuses to start beside
+ * such windows: the launch could hand off to that instance, and its unsaved
+ * state would sit outside the baseline.
  */
 export const runningApplicationWindows = async (
   windows: X11WindowObserver,
   names: ReadonlySet<string>,
   signal?: AbortSignal,
-): Promise<readonly ObservedWindow[] | undefined> => {
-  const observations = new SessionObservations(performance.now(), "", names);
-  return (await windows.sample(() => false, signal))?.filter((window) =>
-    observations.belongs(window),
-  );
+): Promise<WindowSample> => {
+  const sample = await windows.sample(() => false, signal);
+  return sample.state === "listed"
+    ? {
+        state: "listed",
+        windows: sample.windows.filter((window) =>
+          matchesWindowNames(window, names),
+        ),
+      }
+    : sample;
 };
 
 /** Sample processes, windows and open files; returns the application's window count. */
@@ -82,14 +108,14 @@ const sampleSession = async (
   signal: AbortSignal,
 ): Promise<number> => {
   await sampleProcesses(observations, signal);
-  const windows = await plan.windows.sample(
+  const sample = await plan.windows.sample(
     (window) => observations.belongs(window),
     signal,
   );
   const applicationWindows =
-    windows === undefined
-      ? 0
-      : await recordWindows(observations, windows, signal);
+    sample.state === "listed"
+      ? await recordWindows(observations, sample.windows, signal)
+      : 0;
   await sampleOpenFiles(observations, plan.roots);
   if (!observations.announced && observations.firstWindowMs !== null) {
     observations.announced = true;
@@ -113,6 +139,23 @@ const checkpointNow = (
     new Set(observations.openedFiles.keys()),
   );
 
+/** Record a requested checkpoint, or report why its name was refused and carry on. */
+const requestCheckpoint = async (
+  plan: DesktopSessionPlan,
+  observations: SessionObservations,
+  name: string | undefined,
+  taken: Set<string>,
+): Promise<void> => {
+  const refusal = checkpointNameRefusal(name, taken);
+  if (refusal !== undefined) {
+    await plan.report(`${refusal} No checkpoint was recorded.`);
+    return;
+  }
+  const chosen = name ?? `checkpoint-${String(observations.now())}`;
+  taken.add(chosen);
+  await checkpointNow(plan, observations, chosen, "request");
+};
+
 /** Watch until the application exits, a stop is requested or time runs out. */
 const watch = async (
   plan: DesktopSessionPlan,
@@ -121,6 +164,7 @@ const watch = async (
   signal: AbortSignal,
 ): Promise<DesktopSession["end_reason"]> => {
   let quietSamples = 0;
+  const taken = new Set<string>();
   for (;;) {
     signal.throwIfAborted();
     if (observations.now() >= plan.maxDurationMs) return "time_limit";
@@ -128,12 +172,7 @@ const watch = async (
     const request = plan.nextRequest();
     if (request?.kind === "stop") return "stop_requested";
     if (request !== undefined)
-      await checkpointNow(
-        plan,
-        observations,
-        request.name ?? `checkpoint-${String(observations.now())}`,
-        "request",
-      );
+      await requestCheckpoint(plan, observations, request.name, taken);
     const applicationWindows = await sampleSession(plan, observations, signal);
     const quiet =
       supervisor.observedExit() !== undefined &&
@@ -146,16 +185,21 @@ const watch = async (
 };
 
 /**
- * Ask the launched process to exit, then remove every process carrying the
- * run token. Processes that only own a matching window, such as an instance
- * started outside the capture, are never signalled.
+ * Ask the launched process, its process group and every process carrying the
+ * run token to exit, wait up to the grace period, then remove whatever still
+ * carries the token. Processes that only own a matching window, such as an
+ * instance started outside the capture, are never signalled.
  */
 const release = async (
   spawned: SpawnedOwnedProviderProcess,
   supervisor: ProviderProcessSupervisor,
-  graceful: boolean,
 ): Promise<DesktopSession["cleanup"]> => {
-  if (graceful && supervisor.observedExit() === undefined) {
+  // One SIGTERM each, since some applications treat a second one as a forced exit.
+  const { launchGroupSignalled } = await terminateTokenOwnedProcesses(
+    spawned.ownership,
+    TERMINATION_GRACE_MS,
+  );
+  if (!launchGroupSignalled && supervisor.observedExit() === undefined) {
     spawned.process.kill("SIGTERM");
     await supervisor.waitForExit(TERMINATION_GRACE_MS);
   }
@@ -199,7 +243,8 @@ const launch = async (
 /**
  * Launch the application with a run token in its own process group and watch
  * it. Checkpoints run between samples. Cancellation ends the session without
- * further checkpoints and still releases the application.
+ * further checkpoints and still releases the application; any other failure
+ * releases it the same way before it is rethrown.
  */
 export const runDesktopSession = async (
   plan: DesktopSessionPlan,
@@ -207,21 +252,17 @@ export const runDesktopSession = async (
   const signal = plan.signal ?? new AbortController().signal;
   const runId = randomUUID();
   const startedAt = new Date();
-  const observations = new SessionObservations(
-    performance.now(),
-    runId,
-    plan.windowNames,
-  );
+  const startedMs = performance.now();
   const { spawned, supervisor } = await launch(plan, runId, signal);
+  const observations = new SessionObservations(
+    startedMs,
+    { runId, launchPid: spawned.ownership.leaderPid },
+    plan.windowMatching,
+  );
   let endReason: DesktopSession["end_reason"];
   let cleanup: DesktopSession["cleanup"];
   try {
-    await trackProcess(
-      observations,
-      spawned.ownership.leaderPid,
-      process.pid,
-      signal,
-    );
+    await trackProcess(observations, spawned.ownership.leaderPid, signal);
     endReason = await watch(plan, observations, supervisor, signal);
     if (endReason !== "application_exited")
       await checkpointNow(
@@ -230,12 +271,17 @@ export const runDesktopSession = async (
         endReason === "stop_requested" ? "stop" : "time-limit",
         "stop",
       );
-    cleanup = await release(spawned, supervisor, true);
+    cleanup = await release(spawned, supervisor);
     await checkpointNow(plan, observations, "exit", "exit");
   } catch (cause: unknown) {
-    // A cancelled session still lets the application exit on SIGTERM first.
-    cleanup = await release(spawned, supervisor, signal.aborted);
-    if (!signal.aborted) throw cause;
+    cleanup = await release(spawned, supervisor);
+    if (!signal.aborted) {
+      if (cleanup.verified) throw cause;
+      throw new DesktopSessionCleanupError(cause, {
+        reason: cleanup.reason ?? "cleanup was not verified",
+        resources: ownedCommandResources(spawned.ownership),
+      });
+    }
     endReason = "cancelled";
   }
   const snapshot = supervisor.snapshot();

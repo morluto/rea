@@ -1,5 +1,5 @@
-import { mkdir, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -49,4 +49,33 @@ describe("walkHomeState", () => {
     const walk = await walkHomeState([join(home, "missing")], [], 10);
     expect(walk.entries.size).toBe(0);
   });
+
+  // Linux mounts devpts, shm and mqueue under /dev, a root on its own device.
+  it.skipIf(process.platform !== "linux")(
+    "records a directory on another device without entering it",
+    async () => {
+      const root = "/dev";
+      const rootDevice = (await lstat(root)).dev;
+      const mounted: string[] = [];
+      for (const name of await readdir(root)) {
+        const stats = await lstat(join(root, name)).catch(() => undefined);
+        if (stats?.isDirectory() === true && stats.dev !== rootDevice)
+          mounted.push(join(root, name));
+      }
+
+      const walk = await walkHomeState([root], [], 100_000);
+
+      expect(
+        walk.mountPoints.filter((path) => dirname(path) === root).sort(),
+      ).toEqual(mounted.sort());
+      for (const mountPoint of mounted) {
+        expect(walk.entries.get(mountPoint)?.type).toBe("directory");
+        expect(
+          [...walk.entries.keys()].some((path) =>
+            path.startsWith(`${mountPoint}/`),
+          ),
+        ).toBe(false);
+      }
+    },
+  );
 });

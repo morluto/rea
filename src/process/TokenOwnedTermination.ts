@@ -1,0 +1,132 @@
+import { performance } from "node:perf_hooks";
+import { setTimeout as delay } from "node:timers/promises";
+
+import { processIdentityHasExited } from "./ProcessLifecycle.js";
+import type {
+  OwnedProcessGroup,
+  ProcessOwnershipFact,
+  ProcessOwnershipHost,
+  ProcessTableEntry,
+} from "./ProcessOwnership.js";
+import {
+  readNativeProcessIdentityMap,
+  readProcessOwnershipFacts,
+  systemProcessOwnershipHost,
+} from "./ProcessOwnershipObservation.js";
+import { liveProcesses } from "./ProcessOwnershipProcessTree.js";
+import { readProcessRunTokens } from "./ProcessRunTokenObservations.js";
+
+const EXIT_POLL_INTERVAL_MS = 100;
+
+/** Operating-system seams for a graceful stop; replaceable in tests. */
+export interface TokenOwnedTerminationHost {
+  readonly ownership: ProcessOwnershipHost;
+  readonly signalProcess: (pid: number, signal: NodeJS.Signals) => void;
+}
+
+const systemTerminationHost: TokenOwnedTerminationHost = {
+  ownership: systemProcessOwnershipHost,
+  signalProcess: (pid, signal) => {
+    process.kill(pid, signal);
+  },
+};
+
+/** Live processes whose run token was read between two matching identity reads. */
+const tokenOwnedFacts = async (
+  runId: string,
+  host: ProcessOwnershipHost,
+): Promise<readonly ProcessOwnershipFact[]> => {
+  const candidates: ProcessTableEntry[] = [];
+  for await (const { process, observation } of readProcessRunTokens(
+    host,
+    liveProcesses(await host.listProcesses()),
+  ))
+    if (observation.state === "readable" && observation.runId === runId)
+      candidates.push(process);
+  return (await readProcessOwnershipFacts(candidates, host)).filter(
+    (fact) =>
+      fact.state === "same-generation" &&
+      fact.token.state === "readable" &&
+      fact.token.runId === runId &&
+      !processIdentityHasExited(fact.identityAfter),
+  );
+};
+
+const processGroupOf = ({ identityAfter, process }: ProcessOwnershipFact) =>
+  identityAfter.state === "readable" &&
+  identityAfter.relation?.state === "observed"
+    ? identityAfter.relation.processGroupId
+    : process.processGroupId;
+
+const identityOf = ({ identityAfter }: ProcessOwnershipFact) =>
+  identityAfter.state === "readable" ? identityAfter.identity : undefined;
+
+/** Poll until every signalled process has exited or been replaced, or the deadline passes. */
+const awaitExit = async (
+  signalled: readonly ProcessOwnershipFact[],
+  deadline: number,
+  host: ProcessOwnershipHost,
+): Promise<void> => {
+  let pending = signalled;
+  while (pending.length > 0) {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) return;
+    await delay(Math.min(EXIT_POLL_INTERVAL_MS, remaining));
+    const current = await readNativeProcessIdentityMap(
+      pending.map(({ process }) => process),
+      host,
+    );
+    pending = pending.filter((fact) => {
+      const now = current.get(fact.process.pid);
+      return (
+        !processIdentityHasExited(now) &&
+        !(now?.state === "readable" && now.identity !== identityOf(fact))
+      );
+    });
+  }
+};
+
+const send = (deliver: () => void): void => {
+  try {
+    deliver();
+  } catch {
+    // A process that exited first has nothing left to stop.
+  }
+};
+
+/**
+ * Ask an owned run to exit before it is killed: send one SIGTERM to its
+ * launch process group, while a member proven to carry the run token keeps
+ * that group id from being reused, and one to every other process proven to
+ * carry the token, then wait up to `graceMs` for them to exit. Anything still
+ * running is left to the caller's verified cleanup. Resolves whether the
+ * launch group was signalled; when it was not, the caller still owns asking
+ * its launcher to exit.
+ */
+export const terminateTokenOwnedProcesses = async (
+  ownership: Pick<OwnedProcessGroup, "runId" | "processGroupId">,
+  graceMs: number,
+  host: TokenOwnedTerminationHost = systemTerminationHost,
+): Promise<{ readonly launchGroupSignalled: boolean }> => {
+  const deadline = performance.now() + graceMs;
+  let owned: readonly ProcessOwnershipFact[];
+  try {
+    owned = await tokenOwnedFacts(ownership.runId, host.ownership);
+  } catch {
+    return { launchGroupSignalled: false };
+  }
+  const inGroup = (fact: ProcessOwnershipFact) =>
+    processGroupOf(fact) === ownership.processGroupId;
+  const launchGroupSignalled = owned.some(inGroup);
+  if (launchGroupSignalled)
+    send(() => {
+      host.ownership.signalGroup(ownership.processGroupId, "SIGTERM");
+    });
+  for (const fact of owned)
+    if (!inGroup(fact))
+      send(() => {
+        host.signalProcess(fact.process.pid, "SIGTERM");
+      });
+  await awaitExit(owned, deadline, host.ownership);
+  return { launchGroupSignalled };
+};

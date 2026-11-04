@@ -41,10 +41,15 @@ const quotedStrings = (value: string): readonly string[] => {
   return strings;
 };
 
-/** Parse the `_NET_CLIENT_LIST` window ids from `xprop -root`. */
-export const parseX11ClientList = (output: string): readonly string[] => {
+/**
+ * Parse the `_NET_CLIENT_LIST` window ids from `xprop -root`; undefined when
+ * the window manager does not publish the property.
+ */
+export const parseX11ClientList = (
+  output: string,
+): readonly string[] | undefined => {
   const value = propertyValues(output).get("_NET_CLIENT_LIST");
-  if (value === undefined) return [];
+  if (value === undefined) return undefined;
   return [...value.matchAll(/0x[0-9a-f]+/giu)].map((match) =>
     match[0].toLowerCase(),
   );

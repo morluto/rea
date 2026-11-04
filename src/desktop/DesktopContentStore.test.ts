@@ -112,4 +112,37 @@ describe("DesktopContentStore", () => {
       "changed_since_walk",
     ]);
   });
+
+  it("does not read a file larger than the remaining budget", async () => {
+    const root = await createTestTempDirectory("desktop-content-budget-");
+    await mkdir(join(root, "files"));
+    await writeFile(join(root, "files/notes.txt"), "abcdef");
+    const state = await walked(join(root, "files"));
+    // A read would find the file changed; the budget refuses it first.
+    await writeFile(join(root, "files/notes.txt"), "abc");
+    const content = await store(root, 1024, 4);
+
+    expect(
+      await content.retain(join(root, "files/notes.txt"), state("notes.txt")),
+    ).toEqual({ kind: "omitted", reason: "budget_exhausted" });
+  });
+
+  it("discards only the files it wrote and refuses to remove other content", async () => {
+    const root = await createTestTempDirectory("desktop-content-discard-");
+    await mkdir(join(root, "files"));
+    await writeFile(join(root, "files/a.txt"), "secret");
+    const state = await walked(join(root, "files"));
+    const content = await store(root, 1024, 1024);
+    await content.retain(join(root, "files/a.txt"), state("a.txt"));
+
+    await content.discard();
+    expect(await readdir(join(root, "capture"))).toEqual([]);
+
+    const again = new DesktopContentStore(join(root, "capture"), 1024, 1024);
+    await again.prepare();
+    await again.retain(join(root, "files/a.txt"), state("a.txt"));
+    await writeFile(join(root, "capture/content/foreign"), "kept");
+    await expect(again.discard()).rejects.toThrow();
+    expect(await readdir(join(root, "capture/content"))).toEqual(["foreign"]);
+  });
 });

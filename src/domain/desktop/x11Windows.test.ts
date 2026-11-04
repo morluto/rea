@@ -12,9 +12,12 @@ describe("parseX11ClientList", () => {
     ).toEqual(["0x800003"]);
   });
 
-  it("returns no windows when the property is missing or empty", () => {
-    expect(parseX11ClientList("_NET_CLIENT_LIST:  not found.\n")).toEqual([]);
+  it("returns no windows for an empty list and nothing when the window manager does not publish one", () => {
     expect(parseX11ClientList("_NET_CLIENT_LIST: window id # \n")).toEqual([]);
+    expect(parseX11ClientList("_NET_CLIENT_LIST:  not found.\n")).toBe(
+      undefined,
+    );
+    expect(parseX11ClientList("")).toBe(undefined);
   });
 });
 

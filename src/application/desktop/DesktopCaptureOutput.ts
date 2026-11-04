@@ -5,6 +5,7 @@ import {
   readdir,
   realpath,
   rename,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -51,13 +52,29 @@ export const prepareOutputDirectory = async (
   return { path: await realpath(output) };
 };
 
+const capturePartial = (output: string) => join(output, "capture.json.partial");
+
+/**
+ * Remove a `capture.json` this run started but did not publish; returns the
+ * path when it could not be removed.
+ */
+export const discardCaptureFile = async (
+  output: string,
+): Promise<string | undefined> => {
+  const partial = capturePartial(output);
+  return rm(partial, { force: true }).then(
+    () => undefined,
+    () => partial,
+  );
+};
+
 /** Publish `capture.json` through an exclusively created private file. */
 export const writeCaptureFile = async (
   output: string,
   evidence: Evidence,
 ): Promise<string> => {
   const target = join(output, "capture.json");
-  const partial = `${target}.partial`;
+  const partial = capturePartial(output);
   await writeFile(partial, `${JSON.stringify(evidence, null, 2)}\n`, {
     mode: 0o600,
     flag: "wx",
