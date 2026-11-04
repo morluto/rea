@@ -987,7 +987,7 @@ export class KunaSessionClient implements AnalysisClient {
           ...(references.value.pointers !== null &&
           references.value.pointers.length > 0
             ? [
-                'The recorded pointer rows can be paged from this Evidence with inspect_analysis_view: view {"kind":"recorded-array","path":["references","pointers"]}. These are raw Kuna observations.',
+                'The recorded pointer rows can be paged from this Evidence with inspect_analysis_view: view {"kind":"recorded-array","path":["references","pointers"]}. These raw Kuna rows may include alias targets; compare each row\'s to_address with the selected address before treating it as an exact-target reference.',
               ]
             : []),
           ...(references.value.pointerCoverage === null

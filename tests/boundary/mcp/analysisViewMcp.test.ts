@@ -2030,6 +2030,11 @@ it("pages retained raw array rows without losing the parent and refuses an overs
     source_provider: { id: "fixture", name: "Fixture", version: "1" },
     source_analysis_profile_digest: null,
     source_parameters: { address: "0x20" },
+    limitations: expect.arrayContaining([
+      expect.stringContaining(
+        "excluded from the parent operation's normalized result",
+      ),
+    ]),
     rows: rows.slice(0, 2),
     coverage: { examined: 2, total: 3, next_offset: 2 },
   });

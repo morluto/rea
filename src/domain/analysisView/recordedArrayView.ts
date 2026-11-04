@@ -63,6 +63,7 @@ export const projectRecordedArrayView = (
     coverage: pageViewCoverage(view.offset, 0, value.length),
     limitations: [
       "These are raw provider-recorded values; interpretation and provider coverage require the parent Evidence.",
+      "Raw rows may include values excluded from the parent operation's normalized result; use source parameters and parent caveats to interpret their scope.",
     ],
     unknowns: [],
   };
