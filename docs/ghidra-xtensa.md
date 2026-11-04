@@ -147,9 +147,10 @@ executes target code. It checks:
 
 With `REA_XTENSA_CC` set to an Espressif compiler such as
 `xtensa-esp32-elf-gcc`, the lane also builds `tests/conformance/c/xtensa.c`. It
-checks in decompiled code that the caller passes the global and 5 through
-`call8` and returns the result, and that the callee returns `value * factor`
-plus its `l32r` constant.
+checks that the callee's compiled code loads the constant `0x1234567` with an
+`l32r` from a literal holding it. In decompiled code it checks that the caller
+passes the global and 5 through `call8` and returns the result, and that the
+callee returns `value * factor` plus the constant.
 
 REA also measured Ghidra 12.1.4 on ESP-IDF 5.5.2 `hello_world` builds (Espressif
 GCC 14.2.0, default `-Og`), with Ghidra's DWARF analyzer disabled so that

@@ -414,6 +414,42 @@ try {
           BigInt(address) === BigInt(readelf.symbols.rea_xtensa_c_scale),
       ),
     );
+    // The compiler's own literal load: walk the callee as Ghidra decodes it
+    // until its l32r, then read the word that load references.
+    let literalLoad;
+    let at = BigInt(readelf.symbols.rea_xtensa_c_scale);
+    for (let step = 0; step < 64 && literalLoad === undefined; step += 1) {
+      const decoded = await call(
+        "inspect_native_instruction",
+        { address: hex(at) },
+        built.sha256,
+      );
+      assert.equal(decoded.status, "decoded", `${hex(at)} was not decoded`);
+      if (decoded.mnemonic?.toLowerCase() === "l32r") literalLoad = decoded;
+      else if (decoded.flow?.kind === "return") break;
+      at += BigInt(decoded.bytes.length / 2);
+    }
+    assert.ok(
+      literalLoad !== undefined,
+      "rea_xtensa_c_scale loads no literal with l32r before it returns",
+    );
+    const literalWords = [];
+    for (const reference of literalLoad.references)
+      literalWords.push(
+        (
+          await call(
+            "read_bytes",
+            { address: reference.target_address, length: 4 },
+            built.sha256,
+          )
+        ).bytes_hex,
+      );
+    const constant = Buffer.alloc(4);
+    constant.writeUInt32LE(XTENSA_C_FIXTURE_VALUES.constant);
+    assert.ok(
+      literalWords.includes(constant.toString("hex")),
+      `l32r references no literal holding the constant: ${JSON.stringify(literalWords)}`,
+    );
     const decompiled = {};
     for (const name of cNames)
       decompiled[name] = await call(
@@ -434,9 +470,11 @@ try {
       checks: [
         "readelf symbols",
         "call8 callee",
+        "the callee's compiled l32r loads the constant from its literal",
         "decompiled call8 arguments are the global and the factor; caller returns the callee result",
-        "decompiled callee returns value * factor plus its l32r constant",
+        "decompiled callee returns value * factor plus the constant",
       ],
+      literal_load: { address: literalLoad.address, bytes: literalLoad.bytes },
       entry_pseudocode: decompiled.rea_xtensa_c_entry,
       scale_pseudocode: decompiled.rea_xtensa_c_scale,
     });
