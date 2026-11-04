@@ -172,6 +172,17 @@ __attribute__((noinline)) _Float16 rea_riscv_abi_half(_Float16 value)
 
 void (*volatile rea_riscv_abi_spread_callback)(struct rea_riscv_abi_spread, int);
 
+/* A flexible array member puts this float in a0, not fa0. */
+struct rea_riscv_abi_flexible {
+    float value;
+    int tail[];
+};
+
+__attribute__((noinline)) float rea_riscv_abi_flexible(struct rea_riscv_abi_flexible value)
+{
+    return value.value;
+}
+
 /* A shape __rea_ilp32f does express, which the refusal must not name: a
  * bit-field counts by its width, so a float and a one-bit field of a 64-bit
  * type take fa0 and a0. */

@@ -424,15 +424,21 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
   /**
    * Collect the psABI's flattened fields, true for a float of at most 32 bits. False when a
    * field makes the value use the integer convention: a union, a pointer, a value or bit-field
-   * over 32 bits, a third field, or a nonzero array of elements without fields, such as C++
-   * empty classes, which GCC and Clang do not ignore. Empty members, zero-length arrays and
-   * zero-width bit-fields are ignored.
+   * over 32 bits, a third field, a nonzero array of elements without fields, such as C++ empty
+   * classes, which GCC and Clang do not ignore, or a trailing array without elements. Ghidra
+   * imports a flexible array member, which uses the integer convention, and a trailing `[0]`,
+   * which is ignored, alike, so both are treated as the flexible array and fail closed. Other
+   * empty members, zero-length arrays and zero-width bit-fields are ignored.
    */
   private static boolean flatten(DataType type, List<Boolean> fields) {
     type = strip(type);
     if (type instanceof Structure structure) {
       for (DataTypeComponent component : structure.getDefinedComponents()) {
-        if (component.getLength() == 0) continue;
+        if (component.getLength() == 0) {
+          if (strip(component.getDataType()) instanceof Array
+              && component.getOffset() >= structure.getLength()) return false;
+          continue;
+        }
         if (component.getDataType() instanceof BitFieldDataType bitField) {
           if (bitField.getBitSize() == 0) continue;
           // The width counts, not the declared type: `unsigned long long b : 1` is one word.

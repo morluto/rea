@@ -267,8 +267,11 @@ the class the psABI gives it. The script refuses the policy when any signature
 passes a type the prototype misplaces:
 
 - a structure the new rule would split that the psABI passes in integer
-  registers, such as the three above, or a C++ structure with a nonzero array
-  of empty classes, which GCC and Clang do not ignore when they flatten it;
+  registers, such as the three above, a C++ structure with a nonzero array of
+  empty classes, which GCC and Clang do not ignore when they flatten it, or a
+  structure with a flexible array member. Ghidra imports a trailing `[0]` array
+  the same way, so a structure with one is refused too, although Clang passes
+  it in a float register;
 - a type the psABI places in float registers where the prototype cannot:
   `_Float16`, a packed structure whose `float` is not 4-byte aligned, or an
   over-aligned structure of more than 8 bytes.
@@ -375,8 +378,9 @@ assembly sources:
 - The single-float build with `REA_RISCV_ABI_UNMODELLED`, which adds a
   function that passes and returns a three-field structure, a `_Float16`
   function, a function-pointer type that passes the three-field structure,
-  and, from `riscv-float-abi-empty.cpp`, a function that passes a structure
-  with an array of one empty class. It also adds a function that passes a
+  a function that passes a structure with a flexible array member, and, from
+  `riscv-float-abi-empty.cpp`, a function that passes a structure with an array
+  of one empty class. It also adds a function that passes a
   `float` beside a one-bit field of a 64-bit type, which the policy admits.
 
 Independent LLVM readelf observations establish ELF declarations,
@@ -411,7 +415,7 @@ For the soft- and single-float builds the lane also checks:
 - Retained Evidence states the prototype outcome; the stripped builds have no
   function definitions.
 - The unmodelled build is admitted by its headers, then refused over MCP and
-  the CLI with the bridge's reason, which names its four refused signatures
+  the CLI with the bridge's reason, which names its five refused signatures
   and not the bit-field function.
 
 Header-mutated copies check admission. The RV32 double-float image relabelled as
