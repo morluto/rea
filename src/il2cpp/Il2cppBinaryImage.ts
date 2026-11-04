@@ -11,11 +11,9 @@ import {
   isZeroFilledSpan,
   type BinaryContainer,
   type FileMappingIndex,
+  UnrecognizedBinaryFailure,
 } from "../native/metadata/BinaryContainer.js";
-import {
-  readBinaryContainer,
-  UNRECOGNIZED_NATIVE_IMAGE,
-} from "../native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import {
   parsePointerFixups,
   type PointerFixups,
@@ -250,7 +248,7 @@ export function* openImageSteps(
           ? "unsupported-container"
           : "malformed-container",
         // The shared reader names native formats only; IL2CPP also links wasm32.
-        cause.message === UNRECOGNIZED_NATIVE_IMAGE
+        cause instanceof UnrecognizedBinaryFailure
           ? IL2CPP_UNRECOGNIZED_BINARY
           : cause.message,
       );

@@ -1,5 +1,6 @@
 import {
   BinaryFormatFailure,
+  UnrecognizedBinaryFailure,
   type BinaryContainer,
 } from "./BinaryContainer.js";
 import {
@@ -11,10 +12,6 @@ import {
 import { readElfImage } from "./ElfImage.js";
 import { readPeImage } from "./PeImage.js";
 import { readMachoImage } from "./MachoImage.js";
-
-/** The refusal for bytes that match none of the native image formats. */
-export const UNRECOGNIZED_NATIVE_IMAGE =
-  "Only ELF, PE, and thin Mach-O native images are supported";
 
 /** Identify an ELF, PE, or thin Mach-O image and its file sections. */
 export const readBinaryContainer = (bytes: Buffer): BinaryContainer => {
@@ -47,5 +44,5 @@ export const readBinaryContainer = (bytes: Buffer): BinaryContainer => {
     if (readMachoHeaderPrefixFacts(bytes).format !== null)
       return readMachoImage(bytes);
   }
-  throw new BinaryFormatFailure("unsupported", UNRECOGNIZED_NATIVE_IMAGE);
+  throw new UnrecognizedBinaryFailure();
 };
