@@ -410,7 +410,8 @@ describe("table representation", () => {
   const bigTable = (min: number) =>
     section(4, vec([[0x70, 0x00, ...u32(min)]]));
   it("keeps a high-base segment without allocating the slots below it", () => {
-    const base = 1_000_000;
+    // Past the slot allowance, so a table that started at slot 0 would be refused.
+    const base = WASM_MODULE_LIMITS.tableSlots * 2;
     const image = readWasmModuleImage(
       module(functions(1), bigTable(base + 1), elements(base, [0])),
     );
@@ -434,6 +435,46 @@ describe("table representation", () => {
     expect(failure(bytes)).toEqual([
       "capacity",
       `element segments span ${far + 1} table slots, above ${far}`,
+    ]);
+  });
+  it("leaves a slot between two segments unfilled", () => {
+    const image = readWasmModuleImage(
+      module(
+        functions(2),
+        table,
+        section(
+          9,
+          vec([
+            [0x00, ...offset(1), ...vec([u32(0)])],
+            [0x00, ...offset(3), ...vec([u32(1)])],
+          ]),
+        ),
+      ),
+    );
+    expect(image.table.get(2)).toBeUndefined();
+    expect([...image.table]).toEqual([
+      [1, 0],
+      [3, 1],
+    ]);
+  });
+  it("accepts filled slots spread exactly as wide as the slot allowance", () => {
+    const last = WASM_MODULE_LIMITS.tableSlots - 1;
+    const image = readWasmModuleImage(
+      module(
+        functions(1),
+        bigTable(last + 1),
+        section(
+          9,
+          vec([
+            [0x00, ...offset(0), ...vec([u32(0)])],
+            [0x00, ...offset(last), ...vec([u32(0)])],
+          ]),
+        ),
+      ),
+    );
+    expect([...image.table]).toEqual([
+      [0, 0],
+      [last, 0],
     ]);
   });
   it("lets a later segment overwrite an earlier one's slot", () => {
