@@ -1,3 +1,5 @@
+import { bindSessionEvidenceExecution } from "./SessionEvidenceReuse.js";
+import { admitCompletedAnalysis } from "../investigation/admitCompletedAnalysis.js";
 import { randomUUID } from "node:crypto";
 import {
   writeEvidenceBundle,
@@ -1526,22 +1528,37 @@ export class BinarySession
       isSourceEvidenceRetainable(name, capability, arguments_) &&
       profile !== undefined
     ) {
+      const evidenceExecution = {
+        ...execution.value,
+        analysisProfile: profile,
+        subject:
+          execution.value.subject === undefined
+            ? active.target
+            : execution.value.subject,
+      };
+      const admitted = admitCompletedAnalysis(
+        name,
+        arguments_,
+        evidenceExecution,
+        this.admitRecoveryObservation.bind(this),
+      );
+      if (!admitted.ok) return admitted;
       const evidence = createAnalysisExecutionEvidence(
         name,
         arguments_,
-        {
-          ...execution.value,
-          analysisProfile: profile,
-          subject:
-            execution.value.subject === undefined
-              ? active.target
-              : execution.value.subject,
-        },
+        evidenceExecution,
         "observed",
       );
       const recorded = this.recordEvidence(evidence);
       if (!recorded.ok) return recorded;
-      const retained = { ...execution.value, evidenceId: evidence.evidence_id };
+      const authenticated = this.evidenceForAnalysis(evidence.evidence_id);
+      const retained =
+        authenticated === undefined
+          ? { ...execution.value, evidenceId: evidence.evidence_id }
+          : bindSessionEvidenceExecution(
+              { ...execution.value, evidenceId: evidence.evidence_id },
+              authenticated,
+            );
       if (cacheable && execution.value.cachePolicy !== "live")
         this.recordSnapshot({
           target: active.target,

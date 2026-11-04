@@ -384,3 +384,149 @@ it("accounts for a wide source ID list before constructing recovery Evidence", a
     await session.close();
   }
 });
+
+it.each(["compact", "full"] as const)(
+  "reports omitted primary when a retained provider source precedes an authentication refusal (%s)",
+  async (profile) => {
+    const identity = { id: "fixture", name: "Fixture", version: "1" };
+    const source = createEvidence(
+      undefined,
+      identity,
+      { operation: "health", parameters: {}, result: "historical source" },
+      { immutable: true },
+    );
+    const path = join(
+      await createTestTempDirectory("rea-source-primary-headroom-"),
+      "fixture.com",
+    );
+    await writeFile(path, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
+    const router = createTestProviderRouter(() => ({
+      execute: async () =>
+        ok(
+          createAnalysisExecution("completed primary", identity, {
+            sourceEvidence: [source],
+          }),
+        ),
+      close: async () => ok(null),
+    }));
+    const records = new InvestigationRecords({
+      maximumRepresentationBytes: 1000000,
+      availableAuthenticationBytes: () => 0,
+    });
+    const session = new BinarySession(router, records);
+    const server = createServer(
+      { kind: "session", session },
+      {
+        environment: { ...process.env, REA_MCP_OUTPUT_SCHEMA_PROFILE: profile },
+      },
+    );
+    const client = new Client({
+      name: "source-primary-headroom",
+      version: "1",
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(st);
+      await client.connect(ct);
+      expect(
+        (
+          await client.callTool({
+            name: "open_binary",
+            arguments: { path, format: "dos-com" },
+          })
+        ).isError,
+      ).not.toBe(true);
+      const response = await client.callTool({
+        name: "address_name",
+        arguments: { document: "fixture", address: "0x100" },
+      });
+      expect(response.isError).toBe(true);
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          completed_observation_omitted: {
+            reason: "insufficient-authentication-headroom",
+            source_closure: "not-established",
+          },
+        },
+      });
+      expect(records.statistics().evidenceRecords).toBe(1);
+      expect(session.hasEvidence(source.evidence_id)).toBe(true);
+    } finally {
+      await client.close();
+      await server.close();
+      await session.close();
+    }
+  },
+);
+
+it("accounts for source links before admitting a completed direct observation", async () => {
+  const identity = { id: "fixture", name: "Fixture", version: "1" };
+  const source = createEvidence(
+    undefined,
+    identity,
+    { operation: "health", parameters: {}, result: "source" },
+    { immutable: true },
+  );
+  const path = join(
+    await createTestTempDirectory("rea-wide-primary-admission-"),
+    "fixture.com",
+  );
+  await writeFile(path, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
+  const router = createTestProviderRouter(() => ({
+    execute: async () =>
+      ok(
+        createAnalysisExecution("primary", identity, {
+          sourceEvidence: Array.from({ length: 5000 }, () => source),
+        }),
+      ),
+    close: async () => ok(null),
+  }));
+  const records = new InvestigationRecords({
+    maximumRepresentationBytes: 1000000,
+    availableAuthenticationBytes: () => 100000,
+  });
+  const session = new BinarySession(router, records);
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "wide-primary-admission", version: "1" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(st);
+    await client.connect(ct);
+    expect(
+      (
+        await client.callTool({
+          name: "open_binary",
+          arguments: { path, format: "dos-com" },
+        })
+      ).isError,
+    ).not.toBe(true);
+    const response = await client.callTool({
+      name: "address_name",
+      arguments: { document: "fixture", address: "0x100" },
+    });
+    expect(response.isError).toBe(true);
+    const error = parseMcpToolError(response).error;
+    expect(error).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        completed_observation_omitted: {
+          reason: "insufficient-authentication-headroom",
+          source_closure: "not-established",
+        },
+      },
+    });
+    expect(error.details?.reported_limits).toMatchObject({
+      available_heap_bytes: 100000,
+    });
+    const reported = error.details?.reported_limits as
+      { projected_value_bytes: number } | undefined;
+    expect(reported?.projected_value_bytes).toBeGreaterThan(100000);
+    expect(records.statistics().evidenceRecords).toBe(1);
+    expect(session.hasEvidence(source.evidence_id)).toBe(true);
+  } finally {
+    await client.close();
+    await server.close();
+    await session.close();
+  }
+});

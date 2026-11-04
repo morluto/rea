@@ -1,3 +1,4 @@
+import { admitCompletedAnalysis } from "./investigation/admitCompletedAnalysis.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
@@ -742,16 +743,24 @@ const executeAnalysisTool = async (input: {
       );
   }
   if (!result.ok) return result;
+  const observation = {
+    ...result.value,
+    subject:
+      result.value.subject === undefined
+        ? input.openedTarget
+        : result.value.subject,
+  };
+  const admitted = admitCompletedAnalysis(
+    tool,
+    input.evidenceParameters,
+    observation,
+    session.admitRecoveryObservation.bind(session),
+  );
+  if (!admitted.ok) return admitted;
   const evidence = createAnalysisExecutionEvidence(
     tool,
     input.evidenceParameters,
-    {
-      ...result.value,
-      subject:
-        result.value.subject === undefined
-          ? input.openedTarget
-          : result.value.subject,
-    },
+    observation,
     "observed",
   );
   return ok({ evidence });
