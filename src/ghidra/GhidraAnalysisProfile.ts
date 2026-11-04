@@ -58,7 +58,7 @@ const sharedAnalysisSemantics = {
   byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
   load_image_observations: "source-mappings-entry-context-relocation-symbol-v3",
   function_body_evidence: "complete-inclusive-ranges-v1",
-  function_references: "complete-body-and-entry-reference-manager-v2",
+  function_references: "complete-body-and-entry-reference-manager-v3",
   call_relationship_coverage: "function-body-call-coverage-v5",
   function_dossier_coverage: "observed-facets-and-call-relationships-v1",
   string_inventory_evidence: "defined-data-coverage-v1",
@@ -68,7 +68,7 @@ const sharedAnalysisSemantics = {
     "address-first-unique-target-source-mapping-v2",
   instruction_flow_evidence: "decoded-return-pcode-v1",
   instruction_status: "unlisted-address-without-decode-v1",
-  instruction_references: "exact-address-incoming-without-synthetic-entry-v2",
+  instruction_references: "exact-address-incoming-without-synthetic-entry-v3",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
 } as const;
 

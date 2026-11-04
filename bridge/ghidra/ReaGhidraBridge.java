@@ -179,6 +179,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<FunctionEntry> procedureInventory;
     private List<InventoryItem> stringInventory;
     private DecompInterface decompiler;
+    // A refused Program may only report its admission failure to the client.
+    private String identityAdmissionFailure;
     /** Per-function native decompiler limit from the session; 0 leaves it unbounded. */
     private int decompileTimeoutSeconds;
     // DecompileProcess converts seconds to an int millisecond timer delay.
@@ -224,14 +226,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new IllegalStateException("Ghidra provider version does not match the session");
         }
         String importedSha256 = currentProgram.getExecutableSHA256();
-        if (importedSha256 == null ||
-            !constantTimeEquals(
-                importedSha256.toLowerCase(Locale.ROOT),
-                descriptor.targetSha256
-            )) {
-            throw new IllegalStateException(
-                "Ghidra imported-byte digest does not match the admitted target"
-            );
+        if (importedSha256 == null || !importedSha256.matches("(?i)[0-9a-f]{64}")) {
+            identityAdmissionFailure = "import_identity_unavailable";
+        }
+        else if (!constantTimeEquals(importedSha256.toLowerCase(Locale.ROOT),
+                                     descriptor.targetSha256)) {
+            identityAdmissionFailure = "import_identity_mismatch";
+        }
+        if (identityAdmissionFailure != null) {
+            end(false);
+            serve(descriptor);
+            return;
         }
         admittedTargetSha256 = descriptor.targetSha256;
         // GhidraScript wraps run() in a transaction. End it before serving so
@@ -404,6 +409,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     result.addProperty("project_ephemeral", true);
                     writeSuccess(writer, request.id, result);
                     return;
+                }
+                if (identityAdmissionFailure != null) {
+                    // Keep the producer alive until the client has consumed the
+                    // refusal and closed or sent shutdown. Every other request
+                    // remains refused, including further startup attempts.
+                    writeFailure(writer, request.id, identityAdmissionFailure,
+                        "Ghidra imported identity admission failed");
+                    continue;
                 }
                 decompileTimeoutSeconds = request.decompileTimeoutSeconds() == null
                     ? descriptor.decompileTimeoutSeconds() : request.decompileTimeoutSeconds();
@@ -1035,7 +1048,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             } catch (RequestFailure failure) {
                 // Existing names/addresses win. Only an unresolved numeric input
                 // can fall back to source coordinates; ambiguity never falls back.
-                if (!failure.code.equals("not_found") || !selector.matches("0x[0-9a-fA-F]+"))
+                if (!failure.code.equals("procedure_not_found") || !selector.matches("0x[0-9a-fA-F]+"))
                     throw failure;
             }
         }
@@ -1062,17 +1075,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         List<Address> candidates = new ArrayList<>(mappedAddresses);
         if (candidates.size() > 1)
-            throw new RequestFailure("ambiguous", "File offset " + coordinate +
+            throw new RequestFailure("file_offset_ambiguous", "File offset " + coordinate +
                 " has multiple loaded mappings: " + candidates.stream().map(ReaGhidraBridge::canonicalAddress).toList() +
                 "; select an explicit analysis address");
         if (candidates.isEmpty())
-            throw new RequestFailure("not_found", "File offset " + coordinate +
+            throw new RequestFailure("file_offset_unmapped", "File offset " + coordinate +
                 " has no loaded source mapping for the admitted target file; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Inspect mappings with rea inspect-native-load-image <path> --provider ghidra --json or MCP inspect_native_load_image.");
         Address mapped = candidates.get(0);
         Function function = functionAtOrContaining(mapped);
         if (function == null)
-            throw new RequestFailure("not_found", "File offset " + coordinate +
+            throw new RequestFailure("procedure_not_found", "File offset " + coordinate +
                 " maps to analysis address " + canonicalAddress(mapped) +
                 ", but no procedure starts at or contains that address in the current Ghidra analysis. " +
                 "Choose an observed procedure with CLI rea search <path> . --kind procedures --mode regex --provider ghidra --json or MCP list_procedures.");
@@ -2483,7 +2496,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 if (matchProcedureNames(entry, selector).matched()) matches.add(entry.function);
             }
             if (matches.size() > 1)
-                throw new RequestFailure("ambiguous", "Ghidra procedure name is ambiguous: " + value +
+                throw new RequestFailure("procedure_ambiguous", "Ghidra procedure name is ambiguous: " + value +
                     "; select an exact entry address from " + matches.stream()
                         .map(function -> canonicalAddress(function.getEntryPoint())).toList());
             if (matches.size() == 1) return matches.get(0);
@@ -2491,11 +2504,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // Retain legacy bare-hex address input only when no symbol matches.
         Address address = explicitAddress ? parseReaAddress(value) : tryParseAddress(value);
         if (address == null)
-            throw new RequestFailure("not_found", "Unknown Ghidra procedure name or address: " + value);
+            throw new RequestFailure("procedure_not_found", "Unknown Ghidra procedure name or address: " + value);
         Function function = functionAtOrContaining(address);
         if (function == null)
             // Other procedure operations retain their analysis-address semantics.
-            throw new RequestFailure("not_found", "No procedure exists at the requested address: " + value +
+            throw new RequestFailure("procedure_not_found", "No procedure exists at the requested address: " + value +
                 "; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
                 ". Choose an observed analysis address. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra --json; " +
                 "MCP: list_procedures. Inspect the loaded base and source mappings with CLI rea analyze <path> --provider ghidra --json " +
@@ -4941,7 +4954,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // without retaining its cause. This producer reason is not bad syntax.
             if (exception.getDescription().equals("Stack overflow during pattern compilation"))
                 throw regexStackExhausted(expression, "compiling");
-            throw new RequestFailure("invalid_request", "Invalid regex pattern " + expression + ": " + exception.getDescription() + " at index " + exception.getIndex());
+            throw new RequestFailure("invalid_regex_pattern", "Invalid regex pattern " + expression + ": " + exception.getDescription() + " at index " + exception.getIndex());
         }
         catch (StackOverflowError exhausted) {
             throw regexStackExhausted(expression, "compiling");

@@ -170,13 +170,12 @@ cliTest(
   "non-Amp selections, command values and discovery do not touch Amp settings",
   async ({ cli }) => {
     const f = await fixture("broken JSON\n");
-    for (const selection of [
+    const selections = [
       ["--agent", "claude-code"],
       ["--agent=claude-code"],
       ["--agent", "cursor", "--agent", "claude-code"],
-      ["--command", "--agent", "amp", "--agent", "claude-code"],
-      ["-c", "--agent", "amp", "--agent", "claude-code"],
-    ]) {
+    ];
+    for (const selection of selections) {
       const result = await cli.run({
         arguments: ["mcp", "add", ...selection, "--json"],
         cwd: f.home,
@@ -187,8 +186,24 @@ cliTest(
       expect(await readFile(f.settings, "utf8")).toBe("broken JSON\n");
       expect(await readdir(f.directory)).toEqual(["settings.json"]);
     }
+    // A following flag is not a command value. Reject it before Amp settings.
+    for (const selection of [
+      ["--command", "--agent", "amp", "--agent", "claude-code"],
+      ["-c", "--agent", "amp", "--agent", "claude-code"],
+    ]) {
+      const result = await cli.run({
+        arguments: ["mcp", "add", ...selection, "--json"],
+        cwd: f.home,
+        environment: f.environment,
+        timeoutMs: 20_000,
+      });
+      expect(result.exitCode, result.stdout).toBe(1);
+      expect(result.stdout).toContain("Missing value for flag:");
+      expect(await readFile(f.settings, "utf8")).toBe("broken JSON\n");
+      expect(await readdir(f.directory)).toEqual(["settings.json"]);
+    }
     const calls = (await readFile(f.log, "utf8")).trim().split("\n");
-    expect(calls).toHaveLength(5);
+    expect(calls).toHaveLength(selections.length);
     for (const line of calls) expect(JSON.parse(line)).toContain("claude-code");
     await writeFile(f.log, "");
     for (const flag of [
