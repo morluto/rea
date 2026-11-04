@@ -35,12 +35,25 @@ const { hasMachoMagic } = await importVerifierSource(
  */
 const commands = await createVerifierCommands();
 
+/**
+ * Ctrl-C or SIGTERM aborts the running command instead of ending Node, so the
+ * owned process trees and the compiled outputs are still cleaned up below.
+ */
+const interruption = new AbortController();
+const interrupt = (signal) =>
+  interruption.abort(
+    new Error(`Binary hardening verifier interrupted by ${signal}`),
+  );
+process.on("SIGINT", interrupt);
+process.on("SIGTERM", interrupt);
+
 /** Report an exit status the way the probes read it; other failures propagate. */
 const run = async (command, args) => {
   try {
     const { stdout, stderr } = await commands.exec(command, args, {
       maxBuffer: 16 * 1024 * 1024,
       timeout: 120_000,
+      signal: interruption.signal,
     });
     return { status: 0, stdout, stderr };
   } catch (failure) {
@@ -145,6 +158,10 @@ await withVerifierCleanup(async () => {
   async () => {
     if (commandsClosed && root !== undefined)
       await rm(root, { recursive: true, force: true });
+  },
+  async () => {
+    process.off("SIGINT", interrupt);
+    process.off("SIGTERM", interrupt);
   },
 ]);
 
