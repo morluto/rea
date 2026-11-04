@@ -1046,6 +1046,26 @@ it("reports the note budget it hit and keeps the header rows", () => {
   expect(findRow(text.rows, "aarch64_bti_pac").state).toBe("not_applicable");
 });
 
+it("skips an empty SHT_NOTE section instead of rejecting the image", () => {
+  const bytes = elfHardeningFixture({
+    propertyCarrier: "pt-note",
+    property: { arch: "x86", value: 3 },
+  });
+  const shoff = Number(bytes.readBigUInt64LE(40));
+  let sectionAt = 0;
+  for (let index = 0; index < bytes.readUInt16LE(60); index += 1) {
+    const at = shoff + index * 64;
+    if (bytes.readUInt32LE(at + 4) === 7) sectionAt = at;
+  }
+  expect(sectionAt).toBeGreaterThan(0);
+  bytes.writeBigUInt64LE(0n, sectionAt + 32);
+  expect(() => readElfImage(bytes)).not.toThrow();
+  const image = readElfHardening(bytes);
+  expect(image.status).toBe("parsed");
+  expect(findRow(image.rows, "nx").state).toBe("enabled");
+  expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("enabled");
+});
+
 it("leaves GNU property rows unknown behind a compressed note section", () => {
   const image = readElfHardening(
     elfHardeningFixture({

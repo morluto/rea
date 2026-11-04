@@ -890,6 +890,8 @@ const readFeatureNotes = (
   let incomplete: string | null = null;
   for (const section of sections) {
     if (section.type !== SHT_NOTE) continue;
+    // An empty note section owns no bytes, so it has nothing to walk.
+    if (section.size === 0n) continue;
     const compressed = (section.flags & SHF_COMPRESSED) !== 0n;
     if (compressed)
       incomplete ??=
