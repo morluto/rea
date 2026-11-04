@@ -74,18 +74,16 @@ it("omits an endpoint that no accepted row uses", () => {
 it("recognizes a multibyte selected procedure after the page is partly full", () => {
   const multibyte = {
     ...selected,
-    name: "雪".repeat(100_000),
+    name: "雪".repeat(200_000),
+  };
+  const filler = {
+    ...selected,
+    address: "0x3000",
+    name: "y".repeat(150_000),
   };
   const projected = projectNativeProcedureReferencesView(
     {
-      ...parentFor([
-        edge("0x1001", {
-          ...selected,
-          address: "0x3000",
-          name: "y".repeat(500_000),
-        }),
-        edge("0x1002", multibyte),
-      ]),
+      ...parentFor([edge("0x1001", filler), edge("0x1002", multibyte)]),
       normalizedResult: {
         procedure: multibyte,
         direction: "outgoing",
@@ -93,11 +91,7 @@ it("recognizes a multibyte selected procedure after the page is partly full", ()
         unresolved_calls: [],
         references: [
           {
-            ...edge("0x1001", {
-              ...selected,
-              address: "0x3000",
-              name: "y".repeat(500_000),
-            }),
+            ...edge("0x1001", filler),
             source_procedure: null,
           },
           {
