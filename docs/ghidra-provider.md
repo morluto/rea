@@ -326,19 +326,22 @@ must be constrained.
 
 Optional `start` and `end` addresses are inclusive and select one address space.
 A match must end at or before `end`, so `end` set inside a match excludes it.
-Without bounds, loaded memory blocks are eligible, in Ghidra address order.
-Blocks that are not loaded (file parts such as `.symtab`) are listed in
-`searched.skipped_not_loaded`; loaded overlay blocks are listed separately in
-`searched.skipped_overlays`. Neither is searched by default; pass `start` or
-`end` in its address space to search it. A block that is both unloaded and an
-overlay is listed once under `skipped_not_loaded`.
+Without bounds, loaded non-overlay memory blocks are eligible, in Ghidra address
+order, including across adjacent initialized blocks. Blocks that are not loaded
+(file parts such as `.symtab`) are listed in `searched.skipped_not_loaded`;
+loaded overlay blocks are listed separately in `searched.skipped_overlays`.
+Neither is searched by default; pass `start` or `end` in its address space to
+search it. A block that is both unloaded and an overlay is listed once under
+`skipped_not_loaded`.
 The separate overlay field changes the byte-search result contract and the
 Ghidra analysis profile. Refresh cached MCP schemas; snapshots from the older
 profile are not replayed. Previously exported Evidence remains importable as
 historical data with its original result shape.
-Overlapping matches are included; matches never cross block boundaries.
-Each match reports its address, segment, unique source file offset (or null),
-and containing procedure (or null).
+Overlapping matches are included, including across adjacent eligible initialized
+blocks in the same address space. Gaps and excluded or uninitialized blocks break
+a search run. Each match reports its address, starting segment, unique source file
+offset for that starting address (or null), and containing procedure (or null).
+A starting offset does not imply the full match is contiguous in the file.
 
 Pages default to 100 matches and accept 1 to 1000. Pass `next_cursor` as `cursor`
 with the same target, profile, pattern, mask and bounds to continue. `complete`

@@ -6,11 +6,14 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 
 import {
   createAnalysisExecution,
@@ -28,6 +31,7 @@ import { err, ok } from "../../../src/domain/result.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { existingProjectCapabilities } from "../../../src/ghidra/GhidraProviderCapabilities.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { BINARY_SESSION_SUMMARY_OMITTED_FIELDS } from "../../../src/contracts/sessionStatusContract.js";
@@ -549,6 +553,68 @@ describe("binary_session detail over MCP", () => {
   });
 });
 
+const expectedOpenSelection = (path: string, sha256: string) => ({
+  kind: "binary",
+  path,
+  sha256,
+});
+
+const expectQueuedOpenReceipt = async (
+  mcp: Client,
+  session: BinarySession,
+  first: string,
+  second: string,
+  snapshotPath: string,
+) => {
+  const call = (name: string, args: Record<string, unknown>) =>
+    mcp.callTool({ name, arguments: args });
+  const originalOpen = session.open.bind(session);
+  const failedSettled = createDeferred<void>();
+  const deliverFailure = createDeferred<void>();
+  const intercept = vi
+    .spyOn(session, "open")
+    .mockImplementation(async (path, options) => {
+      const result = await originalOpen(path, options);
+      if (path === second && options?.loadSnapshot !== undefined) {
+        failedSettled.resolve();
+        await deliverFailure.promise;
+      }
+      return result;
+    });
+  // Launch after the release gate exists so a failed assertion still joins it.
+  const failedSwitch = call("open_binary", {
+    path: second,
+    provider_id: "beta",
+    snapshot_path: snapshotPath,
+  });
+  try {
+    await awaitAcknowledgement(
+      failedSettled.promise,
+      failedSwitch,
+      "failed snapshot open",
+    );
+    const nextReply = await call("open_binary", {
+      path: second,
+      provider_id: "beta",
+    });
+    expect(nextReply.isError).not.toBe(true);
+    const sha = (value: string) =>
+      createHash("sha256").update(value).digest("hex");
+    expect((await call("binary_session", {})).structuredContent).toMatchObject({
+      result: { path: second, sha256: sha("second fixture") },
+    });
+    deliverFailure.resolve();
+    const failedReply = await failedSwitch;
+    expect(
+      parseMcpToolError(failedReply).error.details?.selection_at_failure,
+    ).toEqual(expectedOpenSelection(first, sha("first fixture")));
+  } finally {
+    deliverFailure.resolve();
+    await failedSwitch.catch(() => undefined);
+    intercept.mockRestore();
+  }
+};
+
 it("reports confirmed snapshot binding differences and keeps the active session", async () => {
   const testDirectory = await createTestTempDirectory(
     "rea-snapshot-mismatch-mcp-",
@@ -612,9 +678,11 @@ it("reports confirmed snapshot binding differences and keeps the active session"
       provider_id: provider,
       snapshot_path: snapshotPath,
     });
-    expect(result.isError).toBe(true);
     const error = parseMcpToolError(result).error;
     expect(error.code).toBe("evidence_integrity_mismatch");
+    expect(error.details?.selection_at_failure).toEqual(
+      expectedOpenSelection(first, sha("first fixture")),
+    );
     expect(error.remediation.action).toBe(
       analysisErrorRemediationAction(new AnalysisSnapshotMismatchError("")),
     );
@@ -665,6 +733,8 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   expect((await call("address_name", { address: "0x10" })).isError).not.toBe(
     true,
   );
+
+  await expectQueuedOpenReceipt(mcp, session, first, second, snapshotPath);
 
   revision = 1;
   const raw = join(testDirectory, "raw.bin");
@@ -781,6 +851,70 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
   result.isError === true
     ? parseMcpToolError(result)
     : z.record(z.string(), z.unknown()).parse(result.structuredContent);
+
+it("preserves a selected Ghidra project's read-only guidance when an edit is requested", async () => {
+  const directory = await createTestTempDirectory("rea-project-refusal-mcp-");
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const starts: string[] = [];
+  const base = candidate("ghidra", starts);
+  const projectCapabilities = existingProjectCapabilities("linux");
+  const annotation = projectCapabilities.find(
+    (entry) => entry.operation === "annotate_native_function",
+  );
+  if (annotation === undefined || annotation.available)
+    throw new Error("Expected read-only annotation capability");
+  expect(annotation.userMessage).toBeDefined();
+  expect(annotation.remediation).toBeDefined();
+  const provider = {
+    ...base,
+    capabilities: () =>
+      projectCapabilities.map((entry) => ({
+        ...entry,
+        provider: base.identity(),
+      })),
+  };
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([provider]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "project-refusal", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  expect(
+    (await mcp.callTool({ name: "open_binary", arguments: { path: target } }))
+      .isError,
+  ).not.toBe(true);
+
+  const refused = await mcp.callTool({
+    name: "annotate_native_function",
+    arguments: { procedure: "fixture", comment: "must not be applied" },
+  });
+  expect(refused.isError).toBe(true);
+  expect(parseMcpToolError(refused)).toMatchObject({
+    error: {
+      code: "capability_unavailable",
+      message: annotation.userMessage,
+      details: { reason: "Existing Ghidra project sessions are read-only." },
+      remediation: { action: annotation.remediation },
+    },
+  });
+  const status = await sessionStatusOf(mcp, { detail: "complete" });
+  const availability = status.parsed.tool_availability.groups.find((group) =>
+    group.names.includes("annotate_native_function"),
+  );
+  expect(availability).toMatchObject({
+    available: false,
+    remediation: annotation.remediation,
+  });
+  expect(starts).toEqual([]);
+});
 
 it("retains attributed mixed profile cleanup through registered MCP calls and partial retry", async () => {
   directory = await createTestTempDirectory("rea-profile-completion-mcp-");

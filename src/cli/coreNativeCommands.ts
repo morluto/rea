@@ -30,9 +30,12 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import {
   analysisEvidenceDeliveryOptions,
   cliEvidenceDeliveryInputError,
+  cliEvidenceSourceClosure,
   publishCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 
 const bytePatternInputSchema = z
   .object(bytePatternFields)
@@ -145,7 +148,8 @@ export const registerCoreNativeCommands = (
       ),
   });
   cli.command(CLI_COMMANDS.readBytes, {
-    description: "Read exact provider memory bytes at one analysis address",
+    description:
+      "Read provider memory bytes; Ghidra memory may include loader fixups and differ from file bytes",
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
       address: z.string().describe("Exact provider memory address"),
@@ -170,7 +174,8 @@ export const registerCoreNativeCommands = (
       ),
   });
   cli.command(CLI_COMMANDS.addressToFileOffset, {
-    description: "Resolve an analysis address to its original file byte offset",
+    description:
+      "Map one analysis address to a file offset; memory bytes may differ and ranges may not be contiguous",
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
       address: z.string().describe("Exact provider memory address"),
@@ -247,25 +252,69 @@ export const registerCoreNativeCommands = (
         .max(5000)
         .default(1000)
         .describe("Maximum nodes on this page"),
+      ...analysisEvidenceDeliveryOptions,
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.traceNativeValues, () =>
-        runDirectAnalysis(
-          args.path,
-          "trace_native_values",
-          {
-            procedure: args.procedure,
-            max_depth: options.maxDepth,
-            max_functions: options.maxFunctions,
-            max_call_sites: options.maxCallSites,
-            max_nodes: options.maxNodes,
-            max_edges: options.maxEdges,
-            offset: options.offset,
-            limit: options.limit,
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.traceNativeValues, async () => {
+          const delivery = {
+            providerId: "auto",
+            operation: "trace_native_values",
+            signal,
+            detail: options.detail,
+            evidenceOutput: options.evidence_output,
+          };
+          const invalid = cliEvidenceDeliveryInputError(delivery);
+          if (invalid !== undefined) return projectAnalysisError(invalid);
+          let sessionBundle: EvidenceBundle | undefined;
+          const complete = await runDirectAnalysis(
+            args.path,
+            "trace_native_values",
+            {
+              procedure: args.procedure,
+              max_depth: options.maxDepth,
+              max_functions: options.maxFunctions,
+              max_call_sites: options.maxCallSites,
+              max_nodes: options.maxNodes,
+              max_edges: options.maxEdges,
+              offset: options.offset,
+              limit: options.limit,
+            },
+            {
+              ...directAnalysisOptionsFromCli(logger, options),
+              signal,
+              ...(options.evidence_output === undefined
+                ? {}
+                : {
+                    onEvidenceBundle: (bundle: EvidenceBundle) => {
+                      sessionBundle = bundle;
+                    },
+                  }),
+            },
+          );
+          if (!complete.ok || options.evidence_output === undefined)
+            return publishCliAnalysisEvidence(complete, delivery);
+          if (sessionBundle === undefined)
+            return projectAnalysisError(
+              new AnalysisOutputError(
+                "trace_native_values",
+                "The CLI session did not return its retained Evidence bundle.",
+              ).retainPartialObservation(complete.value),
+            );
+          const sources = cliEvidenceSourceClosure(
+            complete.value,
+            sessionBundle.records,
+          );
+          if (!sources.ok)
+            return projectAnalysisError(
+              sources.error.retainPartialObservation(complete.value),
+            );
+          return publishCliAnalysisEvidence(complete, {
+            ...delivery,
+            sourceEvidence: sources.value,
+          });
+        }),
       ),
   });
   cli.command(CLI_COMMANDS.inspectNativeDataType, {

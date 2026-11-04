@@ -309,16 +309,78 @@ it("reports an external cleanup blocker until its exact owner confirms release",
       (_value, error) => error,
     );
     expect(await session.status()).toMatchObject({ cleanup_pending: true });
-    expect(await session.open(target)).toEqual(err(failure));
-    await session.close();
+    expect(await session.open(target)).toEqual({
+      ok: false,
+      error: failure,
+      selection: { kind: "none" },
+    });
+    await session.close({ cleanupRetry: { operation: "close_binary" } });
     expect(released).toBe(false);
     expect(await session.status()).toMatchObject({ cleanup_pending: true });
+    expect(await session.status()).not.toHaveProperty("cleanup_retry");
     await lease.release();
     expect(await session.status()).toMatchObject({ cleanup_pending: false });
     expect((await session.open(target)).ok).toBe(true);
   } finally {
     await lease.release();
     await session.close();
+  }
+});
+
+it("does not offer close retry while an external owner also blocks cleanup", async () => {
+  const [target] = await createBinarySessionTargets();
+  const externalFailure = new ProviderCleanupError(
+    "external-debugger",
+    ["external-run"],
+    {},
+  );
+  const clientFailure = new ProviderCleanupError("fixture", ["client-run"], {});
+  let clientReleased = false;
+  const externalLease = new AnalysisCleanupLease(async () => {}, [
+    "external-run",
+  ]);
+  const clientLease = new AnalysisCleanupLease(async () => {
+    clientReleased = true;
+  }, ["client-run"]);
+  externalLease.bindCleanupError(externalFailure);
+  clientLease.bindCleanupError(clientFailure);
+  const provider = createCacheProvider([]);
+  const session = createTestBinarySession({
+    ...provider,
+    createClient: (...args) => {
+      const client = provider.createClient(...args);
+      return {
+        ...client,
+        close: () =>
+          clientReleased ? client.close() : Promise.resolve(err(clientFailure)),
+      };
+    },
+  });
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    await session.execute("address_name", {
+      address: "0x1000",
+      document: "fixture",
+    });
+    await session.withAdmittedExternalMutation(
+      target,
+      undefined,
+      async () => err(externalFailure),
+      (_value, error) => error,
+    );
+    expect(
+      (await session.close({ cleanupRetry: { operation: "close_binary" } })).ok,
+    ).toBe(false);
+    expect(await session.status()).toMatchObject({
+      open: false,
+      cleanup_pending: true,
+    });
+    expect(await session.status()).not.toHaveProperty("cleanup_retry");
+  } finally {
+    await clientLease.release();
+    await externalLease.release();
+    const closed = await session.close();
+    if (!closed.ok) throw closed.error;
   }
 });
 
@@ -1804,7 +1866,11 @@ describe("no replacement start", () => {
     });
     expect((await session.open(first)).ok).toBe(true);
 
-    expect(await session.open(second)).toEqual(err(cleanupError));
+    expect(await session.open(second)).toEqual({
+      ok: false,
+      error: cleanupError,
+      selection: { kind: "none" },
+    });
     expect(created).toBe(1);
     expect(await session.status()).toMatchObject({ open: false });
   });
@@ -1863,7 +1929,11 @@ it("blocks analysis rebinding until the external writer cleanup settles", async 
   );
   expect(result).toEqual(resultOk(err(failure)));
   expect(session.activeTarget()).toBeUndefined();
-  expect(await session.open(target)).toEqual(err(failure));
+  expect(await session.open(target)).toEqual({
+    ok: false,
+    error: failure,
+    selection: { kind: "none" },
+  });
   const anotherMutation = vi.fn(async () => resultOk("unrelated command"));
   expect(
     await session.withAdmittedExternalMutation(

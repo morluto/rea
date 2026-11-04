@@ -45,6 +45,10 @@ the client's configured command or reproduce the client's environment. If doctor
 passes but the client disconnects, inspect the client's startup error and registered
 launcher; see [verification scope](client-verification.md#launch-environment-verification).
 
+`rea doctor` has the same limit for provider checks, and reports a provider setting
+the registration's file does not carry as a
+[non-blocking unknown](installation.md#check-readiness-for-your-task).
+
 ## Runtime settings and client deadlines
 
 `update_analysis_settings` changes curated defaults inside the running REA
@@ -305,6 +309,22 @@ Kimi Code also discovers personal skills in `~/.agents/skills` and project-local
 `.agents/skills`, so no separate skill root is required; setup still installs
 and verifies the matching skill files through the normal shared-skill flow.
 Start a new Kimi Code session to pick up MCP and skill changes.
+
+## LM Studio
+
+For [LM Studio](https://lmstudio.ai/docs/app/mcp), setup writes `mcpServers.rea`
+into `mcp.json` in the LM Studio home directory. Setup finds that directory as
+LM Studio does: the path stored in `~/.lmstudio-home-pointer`, otherwise
+`~/.cache/lm-studio` when it exists, otherwise `~/.lmstudio`. Setup only reads
+the pointer file. LM Studio parses `mcp.json` as strict JSON, so setup rejects
+a file with comments, trailing commas, or a byte order mark without a backup
+or a write. The entry carries `command`, `args`, and `env`, and setup keeps
+every other server. Local models often have small context windows, so setup
+selects `REA_MCP_INPUT_SCHEMA_PROFILE=compact` unless the stored entry or the
+setup environment selects a profile explicitly. Doctor reports an entry with no
+explicit profile as stale, as for Kimi Code. LM Studio 0.4.26 on macOS loaded
+this registration, and a local model called an REA tool through it. Linux and
+Windows remain unverified.
 
 ## Pi
 
@@ -628,21 +648,20 @@ writing a registration ZCode cannot load.
 
 ## FreeBuff
 
-For FreeBuff, the proposed integration writes `mcpServers.rea` into the user-scope
-`~/.agents/mcp.json` shared-agent file. Entries carry `command`, `args`, and
-`env`; stdio is the default transport. The proposed personal skill location is
-`~/.agents/skills`, so setup installs its skill copy there. Because the same
+For FreeBuff, `rea setup --client freebuff` writes `mcpServers.rea` into the
+user-scope `~/.agents/mcp.json` shared-agent file. Entries carry `command`,
+`args`, and `env`; stdio is the default transport. The personal skill location
+is `~/.agents/skills`, so setup installs its skill copy there. Because the same
 file doubles as ZCode's user-scope fallback (see above), a `freebuff`
-registration is also in the file ZCode uses until ZCode defines its own native server.
-Setup and doctor detect FreeBuff from its own profile directory
-(`~/.config/freebuff-desktop`), not from the shared `.agents` folder that
-REA's skill installs create for every client.
+registration is also in the file ZCode uses until ZCode defines its own native
+server. Setup and doctor detect FreeBuff from its own profile directory
+(`~/.config/freebuff-desktop`), not from the shared `.agents` folder that REA's
+skill installs create for every client.
 
-The configuration write and personal skill locations are proposed integration
-boundaries. FreeBuff MCP loading and skill discovery have not been verified
-with an installed native FreeBuff client/version; filesystem tests cover REA's
-editing, discovery, and ownership behavior only. Automatic applicability
-requires the FreeBuff profile directory even when the shared MCP file exists.
+FreeBuff MCP loading and skill discovery have not been verified with an
+installed native FreeBuff client/version; filesystem tests cover REA's editing,
+discovery, and ownership behavior only. Automatic applicability requires the
+FreeBuff profile directory even when the shared MCP file exists.
 When uninstall cannot establish FreeBuff or another shared-storage reader from
 product discovery, a malformed or unreadable shared MCP file is retained
 unchanged and does not stop other REA removals, including `--purge-data`. When
@@ -650,8 +669,9 @@ FreeBuff or ZCode product applicability is established or unresolved, the same
 malformed shared file stops uninstall before removals. See
 [Diagnose, update, and remove](installation.md#diagnose-update-and-remove).
 
-FreeBuff setup support requires `rea-agents@6.8.0` or later. Older versions
-reject `rea setup --client freebuff` as an unsupported client. See the
+FreeBuff setup support requires `rea-agents@6.8.0` or later (including the
+current npm `latest` release). Older versions reject
+`rea setup --client freebuff` as an unsupported client. See the
 [installation guide](installation.md#supported-agents) for client availability.
 
 ## DeepSeek Harness
