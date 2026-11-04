@@ -19,6 +19,11 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
+import {
+  ProviderProcessSupervisor,
+  spawnOwnedProviderProcess,
+} from "../dist/process/ProviderProcess.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import {
   requireMcpLifecycleResult,
@@ -47,6 +52,7 @@ assert.equal(installation.status, "available", JSON.stringify(installation));
 
 const run = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-raw-proof-"));
+let fixtureCleaned = true;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const bytes = Buffer.from("1eff2fe1", "hex"); // ARM little-endian bx lr.
@@ -492,7 +498,7 @@ try {
 } finally {
   await client.close();
   await transport.close();
-  await rm(workspace, { recursive: true, force: true });
+  if (fixtureCleaned) await rm(workspace, { recursive: true, force: true });
 }
 const verifierRun = await completeVerifierRun(run);
 assert.equal(verifierRun.process_lineage.status, "verified");
@@ -563,9 +569,9 @@ async function verifyCrossBlockProject(target, targetSha256) {
   const scriptDirectory = fileURLToPath(
     new URL("../tests/conformance/ghidra", import.meta.url),
   );
-  const { stdout, stderr } = await promisify(execFile)(
-    join(process.env.GHIDRA_INSTALL_DIR, "support", "analyzeHeadless"),
-    [
+  const launch = await spawnOwnedProviderProcess({
+    command: installation.analyzeHeadlessPath,
+    arguments: [
       projectDirectory,
       "Boundary",
       "-import",
@@ -576,9 +582,34 @@ async function verifyCrossBlockProject(target, targetSha256) {
       "-postScript",
       "ReaCrossBlockFixture.java",
     ],
-    { env, timeout: 180000, maxBuffer: 4 * 1024 * 1024 },
-  );
-  assert.doesNotMatch(`${stdout}\n${stderr}`, /REPORT SCRIPT ERROR/u);
+    env,
+    runId: run.run_id,
+    expectedCommand: null,
+  });
+  fixtureCleaned = false;
+  const supervisor = new ProviderProcessSupervisor({
+    ...launch,
+    ownsProcessLifetime: true,
+    cleanup: () => cleanupOwnedProcessGroup(launch.ownership),
+  });
+  try {
+    assert.ok(await supervisor.waitForExit(180000), "Fixture setup timed out");
+    assert.ok(
+      await supervisor.waitForOutputClose(1000),
+      "Fixture output did not close",
+    );
+    const snapshot = supervisor.snapshot();
+    const output = `${snapshot.stdout.text}\n${snapshot.stderr.text}`;
+    assert.equal(snapshot.exitCode, 0, output);
+    assert.doesNotMatch(output, /REPORT SCRIPT ERROR/u);
+  } finally {
+    const stopped = await supervisor.stop();
+    fixtureCleaned = stopped.status === "verified-cleanup";
+    assert.ok(
+      fixtureCleaned,
+      `Owned cleanup incomplete; retained ${workspace}: ${JSON.stringify(stopped)}`,
+    );
+  }
   const beforeProject = await fingerprintFiles(projectDirectory);
   const projectTransport = new StdioClientTransport({
     command: process.execPath,
