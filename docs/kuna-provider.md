@@ -1,8 +1,26 @@
 # Kuna provider
 
-[Kuna](https://github.com/Noelo-Lab/kuna) is an Apache-2.0 decompiler distributed as one `kuna` executable. For a new installation, use Kuna 1.988, REA's recommended verified release. REA uses a `kuna` you supply; it does not download, install, update or bundle Kuna. REA accepts other releases, which it reports as unverified in `rea doctor` and in each analysis profile. The verified-release flag compares the reported version; it does not authenticate the executable. The 1.988 real-provider checks ran on macOS arm64; Linux and other hosts have not been verified with that release.
+[Kuna](https://github.com/Noelo-Lab/kuna) is an Apache-2.0 decompiler distributed as one `kuna` executable. For a new installation, use Kuna 1.990, REA's recommended verified release. REA uses a `kuna` you supply; it does not download, install, update or bundle Kuna. REA accepts other releases; `rea doctor` and analysis Evidence report them as unverified. Verification compares the reported version; it does not authenticate the executable. Analysis profiles retain the observed version and executable digest, independently of REA's current verified-release policy. The 1.990 real-provider checks ran on macOS arm64; Linux and other hosts have not been verified with that release.
 
 Kuna is static: it reads the selected image and never executes it.
+
+This profile change makes earlier Kuna analysis snapshots and resumable directory
+exports incompatible, even with the same Kuna executable. Keep the old files:
+their recorded Evidence remains historical. To continue analysis, open the
+binary without the old snapshot and save a new one, or choose a new export
+directory. Existing snapshot Evidence can be extracted from its
+`evidence_bundle` JSON member and imported as a separate Evidence bundle; that
+does not restore cached workflow entries or resume the old directory export.
+For example, using `jq` and a new output path:
+
+```bash
+jq -e '.evidence_bundle | select(type == "object")' old-snapshot.json > history.json
+rea evidence-import history.json --json
+```
+
+The CLI command validates the bundle in a one-shot session. To use the records
+in an MCP session, call `import_evidence_bundle` with the extracted file path.
+This validates the embedded bundle, not the rest of the snapshot container.
 
 ## Configure
 
@@ -29,6 +47,10 @@ completes. Cleanup retries keep both the observations and the exact file owner.
 | `REA_KUNA_PROJECT_TIMEOUT_MS` | 30 minutes                                                                                                                              | Deadline for whole-program inventory/export, reference and string scans.                                                                                                                 |
 | `REA_KUNA_TIMEOUT_MS`         | 120 s                                                                                                                                   | Deadline for one single-function decompile, and for the inventory run REA makes when the export ends without one.                                                                        |
 | `REA_KUNA_JOBS`               | 1                                                                                                                                       | `decompile-project --jobs`. 1 is Kuna's reference answer; more jobs finish sooner but lose callee-first prototypes, and change about 40–60% of function bodies on the measured binaries. |
+
+Pseudocode read from a parallel project export includes a prototype-context
+limitation in its Evidence, including in function dossiers and composed
+workflows. Early single-function results have their own source limitation.
 
 A single-function decompile, inventory, string, graph or xref run that exceeds its deadline fails as `provider_timeout`, naming the setting that owns the deadline and that raising it takes a restart. A project export that exceeds `REA_KUNA_PROJECT_TIMEOUT_MS` is an export failure instead: requests that need the export report `capability_unavailable` with the export's own retry guidance.
 

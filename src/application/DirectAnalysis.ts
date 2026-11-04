@@ -17,7 +17,10 @@ import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
-import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
+import {
+  createImmutableEvidenceBundle,
+  type EvidenceBundle,
+} from "../domain/evidenceBundle.js";
 import {
   retainAnalysisResultSources,
   type AnalysisResultWithSources,
@@ -63,6 +66,7 @@ import {
   composedLimitationBudget,
   executeComposedWorkflow,
   createWorkflowEvidence,
+  retainPartialWorkflowEvidence,
   workflowSnapshotRecord,
   recordWorkflowUnknowns,
 } from "./WorkflowEvidence.js";
@@ -144,6 +148,8 @@ export const runDirectAnalysis = async (
     readonly entryPoint?: string;
     readonly espFlash?: EspFlashSelection;
     readonly includeEvidenceSources?: boolean;
+    /** Capture the exact session Evidence available to a one-shot CLI adapter. */
+    readonly onEvidenceBundle?: (bundle: EvidenceBundle) => void;
   } = {},
 ): Promise<AnalysisResultWithSources<Evidence, JsonValue>> =>
   withProcessCancellation(options.signal, (signal) =>
@@ -154,6 +160,9 @@ export const runDirectAnalysis = async (
       ...(options.includeEvidenceSources === true
         ? { includeEvidenceSources: true }
         : {}),
+      ...(options.onEvidenceBundle === undefined
+        ? {}
+        : { onEvidenceBundle: options.onEvidenceBundle }),
       ...targetSelection(options),
       ...(options.providerId === undefined
         ? {}
@@ -372,6 +381,7 @@ const runAnalysis = async (
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
     readonly evidenceParameters?: Readonly<Record<string, JsonValue>>;
+    readonly onEvidenceBundle?: (bundle: EvidenceBundle) => void;
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly providerId?: AnalysisProviderSelector;
     readonly formatHint?: ExecutableFormatHint;
@@ -496,9 +506,10 @@ const runAnalysis = async (
             evidence,
             snapshot.evidence_bundle.records,
           );
-          return sources.ok
-            ? ok(evidence)
-            : err(sources.error.retainPartialObservation(evidence));
+          if (!sources.ok)
+            return err(sources.error.retainPartialObservation(evidence));
+          options.onEvidenceBundle?.(snapshot.evidence_bundle);
+          return ok(evidence);
         }
       }
     }
@@ -524,6 +535,7 @@ const runAnalysis = async (
       evidenceParameters,
       signal,
       evidenceProfile,
+      saveSnapshot: snapshotPath !== undefined,
     });
     if (!executed.ok) return executed;
     const { cachePolicy } = executed.value;
@@ -594,6 +606,7 @@ const runAnalysis = async (
           return err(written.error.retainPartialObservation(evidence));
       }
     }
+    options.onEvidenceBundle?.(session.exportEvidenceBundle());
     return ok(evidence);
   };
   const outcome = await withSessionCleanup<{
@@ -642,6 +655,7 @@ const executeAnalysisTool = async (input: {
   readonly evidenceParameters: Readonly<Record<string, JsonValue>>;
   readonly signal: AbortSignal;
   readonly evidenceProfile: AnalysisProfileCommitment | undefined;
+  readonly saveSnapshot: boolean;
 }): Promise<
   Result<
     {
@@ -676,6 +690,12 @@ const executeAnalysisTool = async (input: {
         new EnhancedTools(observed).execute(tool, input.arguments, signal),
       composedLimitationBudget(tool),
     );
+    retainPartialWorkflowEvidence(result, {
+      target: input.openedTarget,
+      operation: tool,
+      parameters: input.evidenceParameters,
+      upstreamProfile: evidenceProfile,
+    });
     result = retainAnalysisResultSources(
       tool,
       (source) => session.recordEvidence(source),
@@ -700,7 +720,12 @@ const executeAnalysisTool = async (input: {
         : { cachePolicy: result.value.cachePolicy }),
     });
   }
-  let result = await session.execute(tool, input.arguments, { signal });
+  let result = await session.execute(tool, input.arguments, {
+    signal,
+    ...(input.saveSnapshot && tool === "procedure_pseudo_code"
+      ? { snapshotContext: "one-shot-target" as const }
+      : {}),
+  });
   if (
     tool === "xrefs" &&
     typeof input.arguments.address === "string" &&

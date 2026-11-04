@@ -132,10 +132,11 @@ export const registerEnhancedTools = (
   server.registerTool(
     batchDecompile.name,
     toolRegistrationOptions(batchDecompile),
-    (input, context) =>
+    ({ detail, ...input }, context) =>
       executeEnhancedTool(registration, batchDecompile, {
         validatedCall: { name: "batch_decompile", input },
         context,
+        detail,
       }),
   );
   server.registerTool(
