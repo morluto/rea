@@ -401,6 +401,7 @@
 * **ghidra:** decide batch names independently of request order ([#8306](https://github.com/morluto/rea/issues/8306)) ([7c9ed94](https://github.com/morluto/rea/commit/7c9ed94259fef560fdbec0c9b640348c5d54c391))
 * **ghidra:** discover installed versioned Homebrew JDKs ([#8853](https://github.com/morluto/rea/issues/8853)) ([1998e65](https://github.com/morluto/rea/commit/1998e65705afd04dee078724932fa98d446248b9))
 * **ghidra:** distinguish unlisted instruction addresses ([#7823](https://github.com/morluto/rea/issues/7823)) ([bd687bb](https://github.com/morluto/rea/commit/bd687bbc40daf47d93f2b4c65b72004eb8f87c83))
+* **ghidra:** explain read-only project edit refusals ([#8413](https://github.com/morluto/rea/issues/8413)) ([810cebc](https://github.com/morluto/rea/commit/810cebcba07d1a793b8657a7f3a5c14fe5995206))
 * **ghidra:** honor current directory in PATH discovery ([81adb89](https://github.com/morluto/rea/commit/81adb8977a2df1b84b628aed9317719e6df91fd8))
 * **ghidra:** mark empty xrefs results as unresolved, not unreferenced ([#8831](https://github.com/morluto/rea/issues/8831)) ([d7df9df](https://github.com/morluto/rea/commit/d7df9df3393f77c78a76a06144ff4f515d5db928))
 * **ghidra:** match startup-timeout guidance to the project mode ([#8114](https://github.com/morluto/rea/issues/8114)) ([ca7d1c3](https://github.com/morluto/rea/commit/ca7d1c3750b244364b60cf2253c2c8c481b6dea7)), closes [#3751](https://github.com/morluto/rea/issues/3751)
