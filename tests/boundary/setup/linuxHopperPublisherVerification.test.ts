@@ -790,11 +790,19 @@ it("bounds a stalled metadata fetch and preserves caller cancellation", async ()
         }),
     ),
   );
-  await expect(
-    downloadHopperPackage("https://www.hopperapp.com/fixture", {
+  // REA's own deadline is a returned transport fact; only caller cancellation rejects.
+  expect(
+    await downloadHopperPackage("https://www.hopperapp.com/fixture", {
       timeoutMs: 10,
     }),
-  ).rejects.toMatchObject({ name: "TimeoutError" });
+  ).toEqual({
+    ok: false,
+    error: {
+      url: "https://www.hopperapp.com/fixture",
+      kind: "timeout",
+      timeoutMs: 10,
+    },
+  });
   const controller = new AbortController();
   const reason = new Error("Caller cancelled metadata inspection");
   const pending = downloadHopperPackage("https://www.hopperapp.com/fixture", {
@@ -823,7 +831,14 @@ it("cancels an oversized chunked metadata response before retaining it", async (
     await downloadHopperPackage("https://www.hopperapp.com/fixture", {
       maxBytes: 3,
     }),
-  ).toEqual({ ok: false, bytes: new Uint8Array() });
+  ).toEqual({
+    ok: false,
+    error: {
+      url: "https://www.hopperapp.com/fixture",
+      kind: "response_too_large",
+      maxBytes: 3,
+    },
+  });
   expect(cancelled).toHaveBeenCalledOnce();
 });
 

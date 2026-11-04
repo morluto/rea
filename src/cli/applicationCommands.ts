@@ -218,7 +218,7 @@ const registerJsonCommand = <Schema extends z.ZodType>({
           ? result.value
           : {
               error: "Application workflow failed",
-              ...projectAnalysisError(result.error),
+              ...projectAnalysisError(result.error, "invocation"),
             };
       }),
   });
