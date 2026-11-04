@@ -71,6 +71,56 @@ it("omits an endpoint that no accepted row uses", () => {
   expect(pageBytes(projected.value)).toBeLessThanOrEqual(PAGE_BYTES);
 });
 
+it("recognizes a multibyte selected procedure after the page is partly full", () => {
+  const multibyte = {
+    ...selected,
+    name: "雪".repeat(100_000),
+  };
+  const projected = projectNativeProcedureReferencesView(
+    {
+      ...parentFor([
+        edge("0x1001", {
+          ...selected,
+          address: "0x3000",
+          name: "y".repeat(500_000),
+        }),
+        edge("0x1002", multibyte),
+      ]),
+      normalizedResult: {
+        procedure: multibyte,
+        direction: "outgoing",
+        reference_kinds_available: false,
+        unresolved_calls: [],
+        references: [
+          {
+            ...edge("0x1001", {
+              ...selected,
+              address: "0x3000",
+              name: "y".repeat(500_000),
+            }),
+            source_procedure: null,
+          },
+          {
+            ...edge("0x1002", multibyte),
+            source_procedure: null,
+          },
+        ],
+      },
+    },
+    viewFor(8),
+  );
+  if (!projected.ok) throw projected.error;
+  if (projected.value.kind !== "native-procedure-references")
+    throw new Error("Expected a procedure-reference page");
+  if (projected.value.items.collection !== "references")
+    throw new Error("Expected reference rows");
+  expect(projected.value.items.rows).toHaveLength(2);
+  expect(projected.value.items.rows[1]?.target_procedure).toEqual({
+    kind: "selected-procedure",
+  });
+  expect(projected.value.items.endpoints).toHaveLength(1);
+});
+
 it("counts distinct shared endpoints inside the page allowance", () => {
   const projected = projectNativeProcedureReferencesView(
     parentFor(

@@ -244,6 +244,7 @@ export const projectNativeProcedureReferencesView = (
   const selected = canonicalJson(source.procedure);
   const endpoints: z.infer<typeof procedureIdentitySchema>[] = [];
   const endpointIndexes = new Map<string, number>();
+  let longestIdentityBytes = Buffer.byteLength(selected);
   const planEndpoints = (
     sourceProcedure: z.infer<typeof procedureIdentitySchema> | null,
     targetProcedure: z.infer<typeof procedureIdentitySchema> | null,
@@ -260,15 +261,12 @@ export const projectNativeProcedureReferencesView = (
         Math.max(0, PAGE_BYTES - bytes - extra),
       );
       const size = measured + comma;
-      // A value whose JSON is already larger than every identity string cannot
-      // be the selected procedure or a stored endpoint. Reject it before
-      // allocating its canonical form.
-      let longestKey = selected.length;
-      for (const known of endpointIndexes.keys())
-        if (known.length > longestKey) longestKey = known.length;
-      for (const known of pendingKeys)
-        if (known.length > longestKey) longestKey = known.length;
-      if (bytes + extra + size > PAGE_BYTES && measured > longestKey) {
+      // `measured` is a UTF-8 lower bound. It can skip canonicalization only
+      // when it already exceeds every stored identity's UTF-8 length.
+      if (
+        bytes + extra + size > PAGE_BYTES &&
+        measured > longestIdentityBytes
+      ) {
         overflow = true;
         return undefined;
       }
@@ -290,6 +288,8 @@ export const projectNativeProcedureReferencesView = (
       extra += size;
       pending.push(value);
       pendingKeys.push(key);
+      const keyBytes = Buffer.byteLength(key);
+      if (keyBytes > longestIdentityBytes) longestIdentityBytes = keyBytes;
       return {
         kind: "shared" as const,
         index: endpoints.length + pending.length - 1,
