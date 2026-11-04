@@ -984,6 +984,12 @@ export class KunaSessionClient implements AnalysisClient {
         locations,
         limitations: [
           ...limitations,
+          ...(references.value.pointers !== null &&
+          references.value.pointers.length > 0
+            ? [
+                'The recorded pointer rows can be paged from this Evidence with inspect_analysis_view: view {"kind":"recorded-array","path":["references","pointers"]}. These are raw Kuna observations.',
+              ]
+            : []),
           ...(references.value.pointerCoverage === null
             ? []
             : [

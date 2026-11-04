@@ -1987,3 +1987,52 @@ it("projects an environment manifest identically from retained, portable and fil
   expect(JSON.stringify(refused)).not.toContain("/api/folders");
   await client.ping();
 });
+
+it("pages retained raw array rows without losing the parent and refuses an oversized row", async () => {
+  const { client, session } = await connect();
+  const rows = [
+    { from_address: "0x10", to_address: "0x20", source: "fixups" },
+    { from_address: "0x18", to_address: "0x20", source: "fixups" },
+    { from_address: "0x20", name: "x".repeat(1024 * 1024) },
+  ];
+  const parent = createEvidence(
+    { path: "/fixtures/raw-native", format: "mach-o", sha256: "e".repeat(64) },
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "xrefs",
+      parameters: { address: "0x20" },
+      result: ["0x10", "0x18", "0x20"],
+      rawResult: { references: { pointers: rows } },
+    },
+  );
+  expect(session.recordEvidence(parent).ok).toBe(true);
+  const call = (offset: number, limit: number) =>
+    client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+        view: {
+          kind: "recorded-array",
+          path: ["references", "pointers"],
+          offset,
+          limit,
+        },
+      },
+    });
+  const first = await call(0, 10);
+  expect(first.isError).not.toBe(true);
+  const parsed = toolContract("inspect_analysis_view").outputSchema.parse(
+    first.structuredContent,
+  );
+  expect(parsed.normalized_result).toMatchObject({
+    kind: "recorded-array",
+    parent_evidence_id: parent.evidence_id,
+    rows: rows.slice(0, 2),
+    coverage: { examined: 2, total: 3, next_offset: 2 },
+  });
+  expect(parsed.evidence_links).toEqual([parent.evidence_id]);
+  const oversized = parseMcpToolError(await call(2, 1)).error;
+  expect(oversized.code).toBe("resource_constraint");
+  expect(oversized.remediation.action).toContain("1,048,576-byte");
+  expect((await call(0, 1)).isError).not.toBe(true);
+});
