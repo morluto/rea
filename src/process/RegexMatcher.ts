@@ -552,7 +552,6 @@ export const matchRegexValues = async (input: {
   readonly caseSensitive: boolean;
   readonly values: readonly string[];
   readonly signal?: AbortSignal | undefined;
-  readonly invalidPattern?: (reason: string) => AnalysisError;
   /** Resolved deadline. Omitted means the 5000 ms default, not ambient `process.env`. */
   readonly deadline?: RegexMatchingDeadline | undefined;
   /** Resolved heap request. Omitted means the 128 MiB default, not ambient `process.env`. */
@@ -623,20 +622,21 @@ export const matchRegexValues = async (input: {
         if (reply.data.status === "invalid_pattern")
           return finish(
             err(
-              input.invalidPattern?.(reply.data.reason) ??
-                new AnalysisInputError(
-                  input.operation,
+              new AnalysisInputError(
+                input.operation,
+                {
+                  userMessage: `Invalid regex pattern: ${reply.data.reason}`,
+                  remediationAction:
+                    "Correct the pattern using the reported regex syntax error, or select mode literal to search for the text literally, then retry.",
+                },
+                [
                   {
-                    userMessage: `Invalid regex pattern: ${reply.data.reason}`,
+                    path: ["pattern"],
+                    reason: "invalid_format",
+                    message: reply.data.reason,
                   },
-                  [
-                    {
-                      path: ["pattern"],
-                      reason: "invalid_format",
-                      message: "Supply a valid regular expression.",
-                    },
-                  ],
-                ),
+                ],
+              ),
             ),
           );
         if (

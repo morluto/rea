@@ -278,6 +278,23 @@ it("coarsens ordinary sensitive issue-path segments to their real parent", () =>
   expect(JSON.stringify(projectAnalysisError(result))).not.toContain("secret");
 });
 
+it("retains input retry guidance while redacting marked text", () => {
+  const error = new AnalysisInputError(
+    "inspect_web_network_capture",
+    {
+      userMessage: "Selected private-marker capture is a symlink",
+      remediationAction: "Retry /resolved/private-marker/capture.har",
+      conformsToInputContract: true,
+    },
+    [{ path: ["capture_path"], reason: "invalid_format" }],
+  );
+  const redacted = redactExplicitFailure(error, ["private-marker"]);
+  const projected = projectAnalysisError(redacted);
+  expect(projected.remediation.action).toContain("/resolved/");
+  expect(projected).not.toHaveProperty("recovery");
+  expect(JSON.stringify(projected)).not.toContain("private-marker");
+});
+
 it("does not reinterpret an unknown argument name as a JSON pointer", () => {
   const input = new AnalysisInputError(
     "inspect_web_network_capture",
