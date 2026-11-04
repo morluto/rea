@@ -323,6 +323,33 @@ describe("Electron module interop helper results", () => {
     `);
     expect(analysis.electron.browser_windows).toHaveLength(3);
   });
+
+  it("preserves BrowserWindow findings through lexical aliases of proven interop results", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      function identity(mod) { return mod; }
+      const electron = identity(require("electron"));
+      const api = electron;
+      new api.BrowserWindow({webPreferences:{preload:"./p.js"}});
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: "./p.js" },
+    ]);
+  });
+
+  it("preserves BrowserWindow and IPC findings through aliases of Rolldown namespace conversions", () => {
+    const analysis = analyzeJavaScriptStaticSource(`${ROLLDOWN_MODULE_INTEROP}
+      const electron = __toESM(require("electron"), 1);
+      const api = electron;
+      new api.BrowserWindow({webPreferences:{preload:"./p.js"}});
+      api.ipcMain.handle("ping", () => "pong");
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: "./p.js" },
+    ]);
+    expect(analysis.electron.ipc).toMatchObject([
+      { channel: "ping", side: "main" },
+    ]);
+  });
 });
 
 describe("Electron module interop pattern writes", () => {

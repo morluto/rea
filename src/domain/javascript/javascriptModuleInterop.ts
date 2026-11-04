@@ -87,6 +87,7 @@ export const createSemanticModuleInterop = (
     semanticKnownArrayIterationAt(array, state);
   const helpers = new Map<string, InteropHelper | null>();
   const origins = new Map<string, InteropOrigin>();
+  const activeOrigins = new Set<string>();
   const calls = new WeakMap<t.Node, InteropOrigin>();
   const intrinsicBindings = new Map<string, readonly string[] | null>();
   const writes: {
@@ -520,93 +521,119 @@ export const createSemanticModuleInterop = (
   const origin = (
     binding: JavaScriptSemanticBindingState,
   ): InteropOrigin | undefined => {
-    const single = semanticStableInitializer(binding, state);
-    if (single !== undefined) {
-      if (
-        !single.projection.every(
-          (key): key is string => typeof key === "string",
+    const cached = origins.get(binding.bindingId);
+    if (cached !== undefined) return cached;
+    if (activeOrigins.has(binding.bindingId)) return undefined;
+    activeOrigins.add(binding.bindingId);
+    try {
+      const single = semanticStableInitializer(binding, state);
+      if (single !== undefined) {
+        if (
+          !single.projection.every(
+            (key): key is string => typeof key === "string",
+          )
         )
-      )
-        return undefined;
-      const converted = callOrigin(single.node);
+          return undefined;
+        let converted = callOrigin(single.node);
+        let targetMembers: readonly string[] = [];
+        if (converted === undefined) {
+          const { root, members } = electronMemberPath(single.node);
+          if (
+            t.isIdentifier(root) &&
+            members.every((member): member is string => member !== null)
+          ) {
+            const targetBinding = resolveSemanticBindingState(
+              state,
+              root,
+              root.name,
+            );
+            if (targetBinding !== undefined && targetBinding !== binding) {
+              converted = origin(targetBinding);
+              targetMembers = members;
+            }
+          }
+        }
+        if (converted === undefined) return undefined;
+        const firstSegment = targetMembers[0] ?? single.projection[0];
+        if (
+          converted.origin.importedPath.length === 0 &&
+          firstSegment === "default" &&
+          !converted.defaultIsModule
+        )
+          return undefined;
+        const result = {
+          ...converted,
+          origin: {
+            ...converted.origin,
+            importedPath: [
+              ...converted.origin.importedPath,
+              ...targetMembers,
+              ...single.projection,
+            ],
+          },
+        };
+        origins.set(binding.bindingId, result);
+        return result;
+      }
+      const [initial, converted] = binding.initializers;
       if (
-        converted?.origin.importedPath.length === 0 &&
-        single.projection[0] === "default" &&
-        !converted.defaultIsModule
+        binding.definitions.length !== 2 ||
+        binding.definitions[0]?.kind !== "variable" ||
+        binding.definitions[1]?.kind !== "assignment" ||
+        binding.initializers.length !== 2 ||
+        initial === undefined ||
+        converted === undefined ||
+        initial.projection.length !== 0 ||
+        converted.projection.length !== 0 ||
+        state.conditionallySkippedExpressions.has(initial.node)
       )
         return undefined;
-      const result =
-        converted === undefined
+      const call = converted.node;
+      const assignment = state.parentsByNode.get(call);
+      const statement =
+        assignment === undefined
           ? undefined
-          : {
-              ...converted,
-              origin: {
-                ...converted.origin,
-                importedPath: [
-                  ...converted.origin.importedPath,
-                  ...single.projection,
-                ],
-              },
-            };
-      if (result !== undefined) origins.set(binding.bindingId, result);
+          : state.parentsByNode.get(assignment);
+      const declaration = state.parentsByNode.get(initial.node);
+      const declarationStatement =
+        declaration === undefined
+          ? undefined
+          : state.parentsByNode.get(declaration);
+      if (
+        !t.isCallExpression(call) ||
+        !t.isIdentifier(call.callee) ||
+        !t.isAssignmentExpression(assignment, { operator: "=" }) ||
+        assignment.right !== call ||
+        !t.isIdentifier(assignment.left, { name: binding.name }) ||
+        !t.isExpressionStatement(statement) ||
+        !t.isVariableDeclarator(declaration) ||
+        !t.isVariableDeclaration(declarationStatement) ||
+        state.parentsByNode.get(statement) !==
+          state.parentsByNode.get(declarationStatement) ||
+        (initial.node.start ?? Infinity) >= (call.start ?? -1)
+      )
+        return undefined;
+      const convertedCall = provenCall(call);
+      const input = convertedCall?.input;
+      if (
+        !t.isIdentifier(input) ||
+        resolveSemanticBindingState(state, input, input.name) !== binding
+      )
+        return undefined;
+      const required = readSemanticRequireOrigin(initial.node, state)?.origin;
+      if (required === undefined || required.importedPath.length !== 0)
+        return undefined;
+      if (convertedCall === undefined) return undefined;
+      const result = {
+        origin: required,
+        dependencies: convertedCall.dependencies,
+        defaultIsModule: convertedCall.defaultIsModule,
+      };
+      origins.set(binding.bindingId, result);
       return result;
+    } finally {
+      activeOrigins.delete(binding.bindingId);
     }
-    const [initial, converted] = binding.initializers;
-    if (
-      binding.definitions.length !== 2 ||
-      binding.definitions[0]?.kind !== "variable" ||
-      binding.definitions[1]?.kind !== "assignment" ||
-      binding.initializers.length !== 2 ||
-      initial === undefined ||
-      converted === undefined ||
-      initial.projection.length !== 0 ||
-      converted.projection.length !== 0 ||
-      state.conditionallySkippedExpressions.has(initial.node)
-    )
-      return undefined;
-    const call = converted.node;
-    const assignment = state.parentsByNode.get(call);
-    const statement =
-      assignment === undefined
-        ? undefined
-        : state.parentsByNode.get(assignment);
-    const declaration = state.parentsByNode.get(initial.node);
-    const declarationStatement =
-      declaration === undefined
-        ? undefined
-        : state.parentsByNode.get(declaration);
-    if (
-      !t.isCallExpression(call) ||
-      !t.isIdentifier(call.callee) ||
-      !t.isAssignmentExpression(assignment, { operator: "=" }) ||
-      assignment.right !== call ||
-      !t.isIdentifier(assignment.left, { name: binding.name }) ||
-      !t.isExpressionStatement(statement) ||
-      !t.isVariableDeclarator(declaration) ||
-      !t.isVariableDeclaration(declarationStatement) ||
-      state.parentsByNode.get(statement) !==
-        state.parentsByNode.get(declarationStatement) ||
-      (initial.node.start ?? Infinity) >= (call.start ?? -1)
-    )
-      return undefined;
-    const convertedCall = provenCall(call);
-    const input = convertedCall?.input;
-    if (
-      !t.isIdentifier(input) ||
-      resolveSemanticBindingState(state, input, input.name) !== binding
-    )
-      return undefined;
-    const required = readSemanticRequireOrigin(initial.node, state)?.origin;
-    if (required === undefined || required.importedPath.length !== 0)
-      return undefined;
-    if (convertedCall === undefined) return undefined;
-    const result = {
-      origin: required,
-      dependencies: convertedCall.dependencies,
-      defaultIsModule: convertedCall.defaultIsModule,
-    };
-    origins.set(binding.bindingId, result);
-    return result;
   };
   const invalidatedOrigin = (record: InteropOrigin | undefined): boolean =>
     record?.dependencies.some(({ path, capturedAt }) => {
