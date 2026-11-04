@@ -23,9 +23,9 @@ import {
 } from "./ProcessScenarioRuntimeValidation.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import {
+  fileStepBudget,
   fileWorkDeadline,
   HOST_FILE_WORK,
-  MAX_HELD_FILE_STEPS,
 } from "../FileWork.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
@@ -422,7 +422,8 @@ it("refuses executable resolution while stalled steps hold the process's budget"
   });
   const controller = new AbortController();
   const deadline = fileWorkDeadline(controller.signal, undefined);
-  const leaving = Array.from({ length: MAX_HELD_FILE_STEPS }, (_, index) =>
+  const budget = fileStepBudget();
+  const leaving = Array.from({ length: budget }, (_, index) =>
     HOST_FILE_WORK.run(`/stalled/${String(index)}`, deadline, () => stalled),
   );
   controller.abort();
@@ -434,10 +435,7 @@ it("refuses executable resolution while stalled steps hold the process's budget"
     ).rejects.toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       resource: "capacity",
-      reportedLimits: {
-        file_steps_held: MAX_HELD_FILE_STEPS,
-        max_held_file_steps: MAX_HELD_FILE_STEPS,
-      },
+      reportedLimits: { file_steps_held: budget, max_held_file_steps: budget },
     });
   } finally {
     answer();

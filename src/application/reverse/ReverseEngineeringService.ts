@@ -450,7 +450,10 @@ export class ReverseEngineeringService {
         );
       if (cause instanceof FileWorkSaturatedError)
         return err(
-          fileWorkSaturated(operation, cause, { phase: "target_preflight" }),
+          fileWorkSaturated(operation, cause, {
+            phase: "target_preflight",
+            artifact_path: cause.path,
+          }),
         );
       if (code === "EACCES" || code === "EPERM") {
         const deniedPath = absolutePath === undefined ? command : absolutePath;

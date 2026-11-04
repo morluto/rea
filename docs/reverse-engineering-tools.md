@@ -176,12 +176,15 @@ work it left behind is still running keeps its place among the eight
 concurrent objdump and rizin operations until that work returns; a call that
 only waited for another call's work does not. The capacity error counts such
 calls as `operations_awaiting_file_work`. Each stalled step holds a thread of
-Node's four-thread file pool, so the process holds at most 2. Past that, a call
-that needs a new file step is refused with a retryable capacity error
-(`file_steps_held`, `max_held_file_steps`) and starts nothing, which keeps file
-access working for REA's other tools; process capture's executable lookup obeys
-the same budget. A retry on a path that already has stalled work waits and takes
-no thread. Closing the service does not wait for that work, which a mount that
+Node's file pool, so these steps share a budget of half that pool: 2 of the
+default 4 threads, or 1 when `UV_THREADPOOL_SIZE` is 2 or 3. A step reserves the
+budget before it starts, so steps that stall together stay within it, and two
+long hashes can make another call's file steps wait within its deadline. Once
+stalled steps fill the budget, a call that needs a new file step is refused with
+a retryable capacity error (`file_steps_held`, `max_held_file_steps`) and starts
+nothing, which keeps file access working for REA's other tools; process
+capture's executable lookup obeys the same budget. A retry on a path that
+already has stalled work waits and takes no thread. Closing the service does not wait for that work, which a mount that
 never answers would hold forever. An MCP server's process cannot end on its own
 until the work returns. The CLI writes its result and then exits explicitly; a
 system call the kernel treats as uninterruptible can still hold the process.

@@ -235,7 +235,7 @@ it("refuses new file work while stalled steps hold the budget, then admits it", 
         _tag: "AnalysisResourceConstraintError",
         resource: "capacity",
         reportedLimits: { file_steps_held: 2, max_held_file_steps: 2 },
-        diagnostics: { phase: "target_preflight" },
+        diagnostics: { phase: "target_preflight", artifact_path: healthy },
       },
     });
     // The refused call started no step, so it holds no thread.
@@ -244,6 +244,45 @@ it("refuses new file work while stalled steps hold the budget, then admits it", 
     await Promise.allSettled(held);
     await new Promise((resolve) => setImmediate(resolve));
     await expect(inspect(healthy)).resolves.toMatchObject({ ok: true });
+  } finally {
+    answer();
+    await Promise.allSettled(held);
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("starts no more file steps than the budget when calls stall together", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-together-"));
+  const paths = ["a", "b", "c", "d"].map((name) => join(directory, name));
+  await Promise.all(paths.map((path) => writeFile(path, "fixture")));
+  let answer!: () => void;
+  const answered = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  const started: string[] = [];
+  const held: Promise<unknown>[] = [];
+  const service = new TestReverseEngineeringService({
+    run: async () => ({ stdout: "", stderr: "" }),
+    stat: (path) => {
+      started.push(path);
+      const check = answered.then(() => stat(path));
+      held.push(check);
+      return check;
+    },
+  });
+  try {
+    const results = await Promise.all(
+      paths.map((path) =>
+        service.inspectWithObjdump({
+          path,
+          operation: "file_headers",
+          command_timeout_ms: 50,
+        }),
+      ),
+    );
+    expect(results.every((result) => !result.ok)).toBe(true);
+    expect(started).toHaveLength(2);
   } finally {
     answer();
     await Promise.allSettled(held);

@@ -71,11 +71,19 @@ export const fileWorkDeadline = (
 const ignore = (): void => undefined;
 
 /**
- * Stalled steps one process holds before it refuses new file work. Each holds
- * a thread of libuv's pool, which Node sizes at 4 and REA does not resize, so
- * two stay free for every other file, DNS and compression call.
+ * File steps one process runs or holds at once: half of libuv's pool, which
+ * `UV_THREADPOOL_SIZE` sizes as libuv reads it, and 4 by default. A stalled
+ * step holds a pool thread until its mount answers, so the rest stay free for
+ * every other file, DNS and compression call. A pool of one thread still
+ * allows a step, since nothing could run otherwise.
  */
-export const MAX_HELD_FILE_STEPS = 2;
+export const fileStepBudget = (
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
+): number => {
+  const declared = environment.UV_THREADPOOL_SIZE;
+  const pool = declared === undefined ? 4 : Number.parseInt(declared, 10) || 1;
+  return Math.max(1, Math.floor(pool / 2));
+};
 
 /** Work left behind on one path, and the calls waiting for it to settle. */
 interface LeftWork {
@@ -84,13 +92,41 @@ interface LeftWork {
   readonly waiters: Set<() => void>;
 }
 
+const wakeAll = (waiters: ReadonlySet<() => void>): void => {
+  for (const wake of waiters) wake();
+};
+
+/**
+ * Wait to be woken, or for the deadline. The caller's waiter is removable,
+ * since a reaction on stalled work would stay attached after it stops waiting.
+ */
+const waitFor = async (
+  waiters: Set<() => void>,
+  deadline: FileWorkDeadline,
+): Promise<
+  Extract<FileWorkOutcome<never>, { status: "interrupted" }> | undefined
+> => {
+  let wake!: () => void;
+  const woken = new Promise<void>((resolve) => {
+    wake = resolve;
+  });
+  waiters.add(wake);
+  const waited = await deadline.race(woken);
+  waiters.delete(wake);
+  return waited.status === "interrupted" ? waited : undefined;
+};
+
 /** What every scope of one owner shares. */
 interface Owner {
   /** Work left behind, by path. */
   readonly left: Map<string, LeftWork>;
   readonly budget: number;
+  /** Steps a caller is still waiting for; any of them could stall. */
+  running: number;
   /** Left-behind steps that have not returned. */
   held: number;
+  /** Each wakes one call waiting for the budget, which removes it. */
+  readonly waiters: Set<() => void>;
 }
 
 /**
@@ -99,8 +135,10 @@ interface Owner {
  * worker with it, until the mount answers. A caller that stops waiting leaves
  * that work behind, and later work on the same path waits for it to settle
  * instead of starting more, so stalled work stays bounded by the paths. Work
- * that was not left behind never makes other work wait. Once the owner holds
- * `budget` stalled steps, it refuses to start more until one returns.
+ * that was not left behind waits only for the budget. A step reserves the
+ * budget before it starts and releases it when the underlying work settles, so
+ * steps that stall together cannot exceed it; a step waits while running steps
+ * fill the budget, and is refused once left-behind steps fill it.
  *
  * Each scope shares its owner's record of left-behind work and also keeps
  * the work it left itself, so a caller can hold resources, such as its place
@@ -111,8 +149,14 @@ export class FileWork {
   /** Work this scope left behind. */
   readonly #own = new Set<Promise<void>>();
 
-  constructor(budget = MAX_HELD_FILE_STEPS) {
-    this.#owner = { left: new Map(), budget, held: 0 };
+  constructor(budget = fileStepBudget()) {
+    this.#owner = {
+      left: new Map(),
+      budget,
+      running: 0,
+      held: 0,
+      waiters: new Set(),
+    };
   }
 
   /** A scope that waits for, and is waited for by, this owner's other scopes. */
@@ -129,42 +173,39 @@ export class FileWork {
 
   /**
    * Start one step on `path` once the work left behind on that path has
-   * settled, and wait for it within `deadline`. A step that the deadline or
-   * cancellation interrupts is left behind with this scope.
+   * settled and the budget has room, and wait for it within `deadline`. A step
+   * that the deadline or cancellation interrupts is left behind with this
+   * scope, and keeps its share of the budget until it returns.
    */
   async run<Value>(
     path: string,
     deadline: FileWorkDeadline,
     start: () => Promise<Value>,
   ): Promise<FileWorkOutcome<Value>> {
-    for (
-      let earlier = this.#owner.left.get(path);
-      earlier !== undefined;
-      earlier = this.#owner.left.get(path)
-    ) {
-      // A waiter the call removes, since a reaction on the left-behind work
-      // would stay attached after the call stops waiting.
-      let wake!: () => void;
-      const settled = new Promise<void>((resolve) => {
-        wake = resolve;
-      });
-      earlier.waiters.add(wake);
-      const waited = await deadline.race(settled);
-      earlier.waiters.delete(wake);
-      if (waited.status === "interrupted") return waited;
+    const owner = this.#owner;
+    for (;;) {
+      const earlier = owner.left.get(path);
+      if (earlier === undefined) {
+        if (deadline.ended !== undefined)
+          return { status: "interrupted", by: deadline.ended };
+        const { held, budget } = owner;
+        if (held >= budget) return { status: "saturated", held, budget };
+        if (held + owner.running < budget) break;
+      }
+      const waited = await waitFor(earlier?.waiters ?? owner.waiters, deadline);
+      if (waited !== undefined) return waited;
     }
-    if (deadline.ended !== undefined)
-      return { status: "interrupted", by: deadline.ended };
-    const { held, budget } = this.#owner;
-    if (held >= budget) return { status: "saturated", held, budget };
+    owner.running += 1;
     let step: Promise<Value>;
     try {
       step = start();
     } catch (cause) {
+      this.#finishRunning();
       return { status: "rejected", cause };
     }
     const outcome = await deadline.race(step);
     if (outcome.status === "interrupted") this.#leave(path, step);
+    else this.#finishRunning();
     return outcome;
   }
 
@@ -184,15 +225,25 @@ export class FileWork {
     this.#owner.left.set(path, held);
     held.steps.add(settled);
     this.#own.add(settled);
-    this.#owner.held += 1;
+    const owner = this.#owner;
+    owner.running -= 1;
+    owner.held += 1;
+    // A call waiting for the budget learns that this step will not free it.
+    wakeAll(owner.waiters);
     void settled.then(() => {
       held.steps.delete(settled);
       this.#own.delete(settled);
-      this.#owner.held -= 1;
+      owner.held -= 1;
+      wakeAll(owner.waiters);
       if (held.steps.size > 0) return;
-      if (this.#owner.left.get(path) === held) this.#owner.left.delete(path);
-      for (const wake of held.waiters) wake();
+      if (owner.left.get(path) === held) owner.left.delete(path);
+      wakeAll(held.waiters);
     });
+  }
+
+  #finishRunning(): void {
+    this.#owner.running -= 1;
+    wakeAll(this.#owner.waiters);
   }
 }
 
