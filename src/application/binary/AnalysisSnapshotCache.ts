@@ -147,9 +147,12 @@ export const SNAPSHOT_REPLAY_LIMITATION =
 /** Bounded in-memory cache for one immutable binary identity. */
 export class AnalysisSnapshotCache {
   readonly #entries = new Map<string, AnalysisSnapshotEntry>();
-  // Null means imported provenance cannot be faithfully replayed. It is distinct
-  // from an entry recorded before an Evidence ID was assigned.
-  readonly #replayBindings = new Map<string, SnapshotReplayBinding | null>();
+  // Null is ambiguous provenance; a pending ID is an exact parent whose source
+  // closure was missing and can be checked again against the owning ledger.
+  readonly #replayBindings = new Map<
+    string,
+    SnapshotReplayBinding | { readonly pendingEvidenceId: string } | null
+  >();
   readonly #workflowEntries = new Map<string, AnalysisSnapshotWorkflowEntry>();
   #target: AnalysisSnapshotTarget | undefined;
   #binding: AnalysisSnapshotBinding | undefined;
@@ -242,11 +245,15 @@ export class AnalysisSnapshotCache {
       else evidenceByQuery.set(queryId, evidence);
     }
     for (const [queryId, evidence] of evidenceByQuery) {
+      if (ambiguous.has(queryId)) {
+        this.#replayBindings.set(queryId, null);
+        continue;
+      }
       this.#replayBindings.set(
         queryId,
-        ambiguous.has(queryId)
-          ? null
-          : snapshotReplayBinding(evidence, (id) => records.get(id)),
+        snapshotReplayBinding(evidence, (id) => records.get(id)) ?? {
+          pendingEvidenceId: evidence.evidence_id,
+        },
       );
     }
     for (const entry of snapshot.workflow_entries) {
@@ -272,7 +279,12 @@ export class AnalysisSnapshotCache {
       replacements.map(({ current }) => [current.evidence_id, current]),
     );
     for (const [queryId, binding] of this.#replayBindings) {
-      if (binding === null || binding.sourceEvidence === undefined) continue;
+      if (
+        binding === null ||
+        "pendingEvidenceId" in binding ||
+        binding.sourceEvidence === undefined
+      )
+        continue;
       const sources = binding.sourceEvidence;
       if (!sources.some((source) => currentRecords.has(source.evidence_id)))
         continue;
@@ -475,6 +487,7 @@ export class AnalysisSnapshotCache {
     profile: AnalysisProfileCommitment,
     operation: AnalysisOperation,
     parameters: Readonly<Record<string, JsonValue>>,
+    lookup?: (id: string) => Evidence | undefined,
   ): AnalysisExecution | undefined {
     const queryId = analysisQueryId(
       snapshotTarget(target),
@@ -484,10 +497,18 @@ export class AnalysisSnapshotCache {
     );
     const cached = this.#entries.get(queryId);
     if (cached === undefined) return undefined;
-    const binding = this.#replayBindings.get(queryId);
+    let binding = this.#replayBindings.get(queryId);
     // Do not turn a refused provenance selection into a fresh, unlinked record.
     // The provider must produce a new observation before this query can replay.
     if (binding === null) return undefined;
+    if (binding !== undefined && "pendingEvidenceId" in binding) {
+      const parent = lookup?.(binding.pendingEvidenceId);
+      if (parent === undefined || lookup === undefined) return undefined;
+      const restored = snapshotReplayBinding(parent, lookup);
+      if (restored === null) return undefined;
+      this.#replayBindings.set(queryId, restored);
+      binding = restored;
+    }
     const cachedSubject = cached.execution.subject;
     const subject =
       cachedSubject == null

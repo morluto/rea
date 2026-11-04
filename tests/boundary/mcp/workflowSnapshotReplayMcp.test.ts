@@ -25,7 +25,10 @@ import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { ok } from "../../../src/domain/result.js";
-import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
+import {
+  createEvidenceBundle,
+  evidenceBundleSchema,
+} from "../../../src/domain/evidenceBundle.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -691,7 +694,74 @@ it("replays a source-bearing observation through an exported MCP snapshot", asyn
       },
     ],
   });
+  await expectRestoredSourceReplay(provider, targetPath, snapshotPath, calls);
 });
+
+const expectRestoredSourceReplay = async (
+  provider: AnalysisProvider,
+  targetPath: string,
+  snapshotPath: string,
+  calls: string[],
+) => {
+  const saved = await readAnalysisSnapshot(snapshotPath);
+  if (!saved.ok) throw saved.error;
+  const source = saved.value.evidence_bundle.records.find(
+    (record) => record.operation === "health",
+  );
+  if (source === undefined) throw new Error("Expected historical source");
+  const directory = dirname(snapshotPath);
+  const prunedPath = join(directory, "missing-source.json");
+  const sourcePath = join(directory, "source-bundle.json");
+  await writeFile(
+    prunedPath,
+    JSON.stringify({
+      ...saved.value,
+      evidence_bundle: createEvidenceBundle(
+        saved.value.evidence_bundle.records.filter(
+          (record) => record.evidence_id !== source.evidence_id,
+        ),
+      ),
+    }),
+  );
+  await writeFile(sourcePath, JSON.stringify(createEvidenceBundle([source])));
+  const { mcp } = await connectWorkflowMcp(
+    createWorkflowSession(provider),
+    "source-restored-after-open",
+  );
+  expect(
+    (
+      await mcp.callTool({
+        name: "open_binary",
+        arguments: { path: targetPath, snapshot_path: prunedPath },
+      })
+    ).isError,
+  ).not.toBe(true);
+  expect(
+    (
+      await mcp.callTool({
+        name: "import_evidence_bundle",
+        arguments: { path: sourcePath },
+      })
+    ).isError,
+  ).not.toBe(true);
+  const replayed = toolContract("list_strings").outputSchema.parse(
+    (
+      await mcp.callTool({
+        name: "list_strings",
+        arguments: { document: "fixture" },
+      })
+    ).structuredContent,
+  );
+  expect(replayed.evidence_links).toEqual([source.evidence_id]);
+  expect(replayed.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("did not re-run the provider"),
+    ]),
+  );
+  expect(
+    calls.filter((operation) => operation === "list_strings"),
+  ).toHaveLength(1);
+};
 
 const createWorkflowFiles = async (
   prefix: string,
