@@ -16,7 +16,6 @@ import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { Ajv2020 } from "ajv/dist/2020.js";
 
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
@@ -30,6 +29,7 @@ import {
   requireMcpOutput,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-raw.mjs");
@@ -103,17 +103,13 @@ transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
 });
 let report;
-let validateSearch;
+let searchDefinition;
 try {
   await client.connect(transport);
-  const searchDefinition = (await client.listTools()).tools.find(
+  searchDefinition = (await client.listTools()).tools.find(
     (tool) => tool.name === "search_bytes",
   );
   assert.ok(searchDefinition?.outputSchema);
-  validateSearch = new Ajv2020({
-    strict: false,
-    validateFormats: false,
-  }).compile(searchDefinition.outputSchema);
   const profiles = [];
   const sessions = [];
   for (const entryPoint of ["0x08000000", "0x8000000", "0x09000000"]) {
@@ -346,6 +342,7 @@ try {
   for (const pattern of ["aa aa aa", "aa ?? aa"]) {
     let cursor;
     const addresses = [];
+    const pages = [];
     do {
       const evidence = await call(
         "search_bytes",
@@ -361,6 +358,14 @@ try {
       );
       const result = evidence.normalized_result;
       addresses.push(...result.matches.map((match) => match.address));
+      pages.push({
+        matches: result.matches.map(({ address, segment, file_offset }) => ({
+          address,
+          segment,
+          file_offset,
+        })),
+        blocks: result.searched.blocks,
+      });
       cursor = result.next_cursor ?? undefined;
       if (cursor !== undefined && !cursorReopened) {
         const snapshot = join(workspace, "split-snapshot.json");
@@ -380,6 +385,62 @@ try {
       "0x401003",
       "0x401004",
       "0x401005",
+    ]);
+    assert.deepEqual(pages, [
+      {
+        matches: [
+          { address: "0x401000", segment: "segment_0", file_offset: 0x1000 },
+          { address: "0x401001", segment: "segment_0", file_offset: 0x1001 },
+        ],
+        blocks: [
+          {
+            segment: "segment_0",
+            start: "0x401000",
+            end: "0x401003",
+            bytes: 4,
+          },
+          {
+            segment: "segment_1",
+            start: "0x401004",
+            end: "0x401004",
+            bytes: 1,
+          },
+        ],
+      },
+      {
+        matches: [
+          { address: "0x401002", segment: "segment_0", file_offset: 0x1002 },
+          { address: "0x401003", segment: "segment_0", file_offset: 0x1003 },
+        ],
+        blocks: [
+          {
+            segment: "segment_0",
+            start: "0x401002",
+            end: "0x401003",
+            bytes: 2,
+          },
+          {
+            segment: "segment_1",
+            start: "0x401004",
+            end: "0x401006",
+            bytes: 3,
+          },
+        ],
+      },
+      {
+        matches: [
+          { address: "0x401004", segment: "segment_1", file_offset: 0x3000 },
+          { address: "0x401005", segment: "segment_1", file_offset: 0x3001 },
+        ],
+        blocks: [
+          {
+            segment: "segment_1",
+            start: "0x401004",
+            end: "0x401007",
+            bytes: 4,
+          },
+        ],
+      },
     ]);
     const bounded = await call(
       "search_bytes",
@@ -519,14 +580,14 @@ async function call(
 ) {
   const result = await client.callTool(
     { name, arguments: args },
-    { timeout: 240000 },
+    {
+      timeout: 240000,
+      ...(name === "search_bytes" ? { toolDefinition: searchDefinition } : {}),
+    },
   );
   if (["open_binary", "close_binary", "binary_session"].includes(name))
     return requireMcpLifecycleResult(result, name);
   const output = requireMcpOutput(result, name);
-  if (name === "search_bytes") {
-    assert.ok(validateSearch(output), JSON.stringify(validateSearch.errors));
-  }
   const evidence = parseEvidence(output);
   assert.equal(evidence.subject.digest.sha256, targetSha256);
   assert.equal(evidence.subject.format, targetFormat);
@@ -592,7 +653,7 @@ async function verifyCrossBlockProject(target, targetSha256) {
     ownsProcessLifetime: true,
     cleanup: () => cleanupOwnedProcessGroup(launch.ownership),
   });
-  try {
+  await withVerifierCleanup(async () => {
     assert.ok(await supervisor.waitForExit(180000), "Fixture setup timed out");
     assert.ok(
       await supervisor.waitForOutputClose(1000),
@@ -602,14 +663,16 @@ async function verifyCrossBlockProject(target, targetSha256) {
     const output = `${snapshot.stdout.text}\n${snapshot.stderr.text}`;
     assert.equal(snapshot.exitCode, 0, output);
     assert.doesNotMatch(output, /REPORT SCRIPT ERROR/u);
-  } finally {
-    const stopped = await supervisor.stop();
-    fixtureCleaned = stopped.status === "verified-cleanup";
-    assert.ok(
-      fixtureCleaned,
-      `Owned cleanup incomplete; retained ${workspace}: ${JSON.stringify(stopped)}`,
-    );
-  }
+  }, [
+    async () => {
+      const stopped = await supervisor.stop();
+      fixtureCleaned = stopped.status === "verified-cleanup";
+      assert.ok(
+        fixtureCleaned,
+        `Owned cleanup incomplete; retained ${workspace}: ${JSON.stringify(stopped)}`,
+      );
+    },
+  ]);
   const beforeProject = await fingerprintFiles(projectDirectory);
   const projectTransport = new StdioClientTransport({
     command: process.execPath,
@@ -630,19 +693,17 @@ async function verifyCrossBlockProject(target, targetSha256) {
       (tool) => tool.name === "search_bytes",
     );
     assert.ok(definition?.outputSchema);
-    const validate = new Ajv2020({
-      strict: false,
-      validateFormats: false,
-    }).compile(definition.outputSchema);
     const projectCall = async (name, args) => {
       const reply = await projectClient.callTool(
         { name, arguments: args },
-        { timeout: 240000 },
+        {
+          timeout: 240000,
+          ...(name === "search_bytes" ? { toolDefinition: definition } : {}),
+        },
       );
       if (name === "open_binary" || name === "close_binary")
         return requireMcpLifecycleResult(reply, name);
       const output = requireMcpOutput(reply, name);
-      assert.ok(validate(output), JSON.stringify(validate.errors));
       const evidence = parseEvidence(output);
       assert.equal(evidence.subject.digest.sha256, targetSha256);
       return evidence.normalized_result;
