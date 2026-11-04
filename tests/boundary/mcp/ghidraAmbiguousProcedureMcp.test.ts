@@ -18,7 +18,7 @@ it.each(["compact", "full"] as const)(
               "remote",
               message,
               {},
-              { remoteCode: "ambiguous_procedure" },
+              { remoteCode: "procedure_ambiguous" },
             ),
           ),
         ),
@@ -33,7 +33,9 @@ it.each(["compact", "full"] as const)(
       expect(error).toMatchObject({
         code: "invalid_request",
         message,
-        remediation: { action: expect.stringContaining("exact entry address") },
+        remediation: {
+          action: expect.stringContaining("explicit procedure entry address"),
+        },
       });
       expect(error.recovery).toBeUndefined();
       const malformed = await harness.mcp.callTool({
@@ -72,7 +74,7 @@ it.each(["compact", "full"] as const)(
               "remote",
               message,
               {},
-              { remoteCode: "ambiguous_file_offset" },
+              { remoteCode: "file_offset_ambiguous" },
             ),
           ),
         ),
@@ -88,7 +90,7 @@ it.each(["compact", "full"] as const)(
         code: "invalid_request",
         message,
         remediation: {
-          action: expect.stringContaining("does not establish a function"),
+          action: expect.stringContaining("explicit analysis address"),
         },
       });
       expect(error.recovery).toBeUndefined();
