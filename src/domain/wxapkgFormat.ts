@@ -1,3 +1,5 @@
+import { err, ok, type Result } from "./result.js";
+
 /**
  * WeChat mini-program package (wxapkg): an 18-byte big-endian header, a
  * name/offset/size member table, then verbatim member data. Members are stored
@@ -9,6 +11,12 @@ export const WXAPKG_HEADER_BYTES = 18;
 
 /** Minimum fixed row fields: name length, offset and size without name bytes. */
 export const WXAPKG_MIN_ROW_BYTES = 12;
+
+/**
+ * The member count is stored in the last four header bytes. Some producers
+ * include those bytes in `indexLength`; others count only the rows that follow.
+ */
+const WXAPKG_MEMBER_COUNT_BYTES = 4;
 
 /**
  * Encrypted PC-client packages start with this ASCII magic instead of the
@@ -29,7 +37,10 @@ export const hasWxapkgEncryptedMagic = (bytes: Uint8Array): boolean =>
 export interface WxapkgHeaderFacts {
   /** Unknown header field after the first mark; producers write zero. */
   readonly info: number;
-  /** Declared byte length of the member table region. */
+  /**
+   * Declared index length. This is either the row bytes or those rows plus
+   * the 4-byte member count; {@link resolveWxapkgIndexLayouts} admits both.
+   */
   readonly indexLength: number;
   /** Declared byte length of the member data region. */
   readonly dataLength: number;
@@ -71,3 +82,97 @@ export const hasWxapkgHeader = (bytes: Uint8Array): boolean =>
   bytes.length >= WXAPKG_HEADER_BYTES &&
   bytes[0] === WXAPKG_FIRST_MARK &&
   bytes[13] === WXAPKG_LAST_MARK;
+
+/** Row table and declared data region for one index-length convention. */
+export interface WxapkgIndexLayout {
+  /** Absolute offset of the first name/offset/size row. */
+  readonly tableStart: number;
+  /** Row bytes to read. The member count, when included, stays in the header. */
+  readonly tableBytes: number;
+  /** Inclusive start of the declared member-data region. */
+  readonly dataStart: number;
+  /** Exclusive end of the declared member-data region. */
+  readonly dataEnd: number;
+}
+
+export type WxapkgIndexLayoutFailure =
+  | { readonly _tag: "IndexExceedsFile" }
+  | { readonly _tag: "DataRegionExceedsFile" };
+
+const spanEnd = (start: number, length: number): number | undefined => {
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(length) ||
+    length < 0
+  )
+    return undefined;
+  const end = start + length;
+  return Number.isSafeInteger(end) ? end : undefined;
+};
+
+const indexLayout = (
+  facts: WxapkgHeaderFacts,
+  fileSize: number,
+  includedCountBytes: number,
+): WxapkgIndexLayout | "index-outside" | "data-outside" | "too-small" => {
+  if (
+    !Number.isSafeInteger(facts.indexLength) ||
+    !Number.isSafeInteger(facts.fileCount) ||
+    facts.fileCount < 0 ||
+    facts.indexLength < includedCountBytes
+  )
+    return "too-small";
+  const tableBytes = facts.indexLength - includedCountBytes;
+  if (tableBytes < facts.fileCount * WXAPKG_MIN_ROW_BYTES) return "too-small";
+  const dataStart = spanEnd(WXAPKG_HEADER_BYTES, tableBytes);
+  if (dataStart === undefined || dataStart > fileSize) return "index-outside";
+  const dataEnd = spanEnd(dataStart, facts.dataLength);
+  if (dataEnd === undefined || dataEnd > fileSize) return "data-outside";
+  return { tableStart: WXAPKG_HEADER_BYTES, tableBytes, dataStart, dataEnd };
+};
+
+/**
+ * Admit every index-length convention whose index and declared data region
+ * both lie inside the carrier. A carrier that ends on one convention's data
+ * region selects that convention; otherwise the caller distinguishes them
+ * with the parsed row length.
+ */
+export const resolveWxapkgIndexLayouts = (
+  facts: WxapkgHeaderFacts,
+  fileSize: number,
+): Result<readonly WxapkgIndexLayout[], WxapkgIndexLayoutFailure> => {
+  if (!Number.isSafeInteger(fileSize) || fileSize < 0)
+    return err({ _tag: "IndexExceedsFile" });
+  const described = [WXAPKG_MEMBER_COUNT_BYTES, 0].map((included) =>
+    indexLayout(facts, fileSize, included),
+  );
+  const admissible = described.filter(
+    (layout): layout is WxapkgIndexLayout => typeof layout !== "string",
+  );
+  if (admissible.length === 0)
+    return err({
+      _tag: described.some((layout) => layout === "data-outside")
+        ? "DataRegionExceedsFile"
+        : "IndexExceedsFile",
+    });
+  const exact = admissible.filter((layout) => layout.dataEnd === fileSize);
+  return ok(exact.length > 0 ? exact : admissible);
+};
+
+/**
+ * Choose the shortest admitted index that still contains the parsed rows.
+ * Callers pass only the layouts {@link resolveWxapkgIndexLayouts} returned,
+ * so an exact carrier end has already dropped the other convention.
+ */
+export const selectWxapkgIndexLayout = (
+  layouts: readonly WxapkgIndexLayout[],
+  consumedRowBytes: number,
+): WxapkgIndexLayout | undefined => {
+  let selected: WxapkgIndexLayout | undefined;
+  for (const layout of layouts) {
+    if (layout.tableBytes < consumedRowBytes) continue;
+    if (selected === undefined || layout.tableBytes < selected.tableBytes)
+      selected = layout;
+  }
+  return selected;
+};

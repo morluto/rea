@@ -220,10 +220,32 @@ describe("WxapkgArtifactReader malformed inputs", () => {
     await withReader(
       buildWxapkg([{ path: "evil.bin", data: "x", offset: 18, size: 1 }]),
       async (reader) => {
-        await expect(list(reader)).rejects.toMatchObject({
-          reason: "format",
-          message: expect.stringContaining("data region"),
-        });
+        await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      },
+    );
+  });
+});
+
+describe("WxapkgArtifactReader data region", () => {
+  it("rejects a member range that covers unused index bytes", async () => {
+    const bytes = buildWxapkg([{ path: "a", data: "Z" }], {
+      tablePadding: 8,
+    });
+    // The row ends at byte 31; the next eight bytes are still the index.
+    bytes.writeUInt32BE(31, 23);
+    bytes.writeUInt32BE(1, 27);
+    await withReader(bytes, async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+
+  it("reads member bytes that follow unused index bytes", async () => {
+    await withReader(
+      buildWxapkg([{ path: "a", data: "Z" }], { tablePadding: 8 }),
+      async (reader) => {
+        const [entry] = await list(reader);
+        expect(entry).toMatchObject({ byteOffset: 39, declaredSize: 1 });
+        expect(await text(await reader.open(entry!))).toBe("Z");
       },
     );
   });
@@ -234,23 +256,81 @@ describe("WxapkgArtifactReader malformed inputs", () => {
         declaredDataLength: 5,
       }),
       async (reader) => {
-        await expect(list(reader)).rejects.toMatchObject({
-          reason: "format",
-          message: expect.stringContaining("data region"),
-        });
+        await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
       },
     );
   });
 
-  it("tolerates a data region declared past the file", async () => {
+  it("rejects a data region declared past the file", async () => {
     await withReader(
       buildWxapkg([{ path: "x", data: "ok" }], {
         declaredDataLength: 1 << 24,
       }),
       async (reader) => {
-        expect(await text(await reader.open((await list(reader))[0]!))).toBe(
-          "ok",
-        );
+        await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      },
+    );
+  });
+
+  it("reads a one-byte member when indexLength counts only the rows", async () => {
+    const bytes = buildWxapkg([{ path: "a", data: "Z" }]);
+    expect(bytes).toHaveLength(32);
+    expect(bytes.readUInt32BE(5)).toBe(13);
+    await withReader(bytes, async (reader) => {
+      const [entry] = await list(reader);
+      expect(entry).toMatchObject({ byteOffset: 31, declaredSize: 1 });
+      expect(reader.formatMetadata()).toMatchObject({
+        index_length: 13,
+        data_length: 1,
+        file_count: 1,
+      });
+      expect(await text(await reader.open(entry!))).toBe("Z");
+    });
+  });
+
+  it("reads a one-byte member when indexLength includes the member count", async () => {
+    const bytes = buildWxapkg([{ path: "a", data: "Z" }], {
+      indexLengthIncludesFileCount: true,
+    });
+    expect(bytes).toHaveLength(32);
+    expect(bytes.readUInt32BE(5)).toBe(17);
+    await withReader(bytes, async (reader) => {
+      const [entry] = await list(reader);
+      expect(entry).toMatchObject({
+        path: "a",
+        byteOffset: 31,
+        declaredSize: 1,
+      });
+      expect(reader.formatMetadata()).toMatchObject({
+        index_length: 17,
+        data_length: 1,
+        file_count: 1,
+      });
+      expect(await text(await reader.open(entry!))).toBe("Z");
+    });
+  });
+
+  it("keeps a count-inclusive member inside the data region when bytes trail the package", async () => {
+    const bytes = Buffer.concat([
+      buildWxapkg([{ path: "a", data: "Z" }], {
+        indexLengthIncludesFileCount: true,
+      }),
+      Buffer.alloc(8, 0xee),
+    ]);
+    await withReader(bytes, async (reader) => {
+      const [entry] = await list(reader);
+      expect(entry).toMatchObject({ byteOffset: 31, declaredSize: 1 });
+      expect(await text(await reader.open(entry!))).toBe("Z");
+    });
+  });
+
+  it("rejects an index byte of a count-inclusive package", async () => {
+    await withReader(
+      buildWxapkg([{ path: "a", data: "Z", offset: 18, size: 1 }], {
+        indexLengthIncludesFileCount: true,
+      }),
+      async (reader) => {
+        await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
       },
     );
   });

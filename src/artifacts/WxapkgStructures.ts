@@ -9,8 +9,11 @@ import { setImmediate } from "node:timers/promises";
 import {
   hasWxapkgEncryptedMagic,
   readWxapkgHeaderFacts,
-  WXAPKG_HEADER_BYTES,
+  resolveWxapkgIndexLayouts,
+  selectWxapkgIndexLayout,
   WXAPKG_MIN_ROW_BYTES,
+  type WxapkgIndexLayout,
+  type WxapkgIndexLayoutFailure,
 } from "../domain/wxapkgFormat.js";
 
 /** The member table is a flat name/offset/size row list. */
@@ -48,7 +51,10 @@ export interface WxapkgHeader {
   readonly fileCount: number;
   readonly layout:
     | { readonly status: "encrypted" }
-    | { readonly status: "available"; readonly tableStart: number };
+    | {
+        readonly status: "available";
+        readonly indexLayouts: readonly WxapkgIndexLayout[];
+      };
 }
 
 export interface WxapkgMember {
@@ -87,13 +93,22 @@ export const readWxapkgHeader = async (
     };
   const facts = readWxapkgHeaderFacts(prefix);
   if (facts === undefined) return undefined;
-  if (WXAPKG_HEADER_BYTES + facts.indexLength > size)
-    throw wxapkgFormatFailure("declared member table exceeds the file");
+  const indexes = resolveWxapkgIndexLayouts(facts, size);
+  if (!indexes.ok) throw wxapkgIndexLayoutFailure(indexes.error);
   return {
     ...facts,
-    layout: { status: "available", tableStart: WXAPKG_HEADER_BYTES },
+    layout: { status: "available", indexLayouts: indexes.value },
   };
 };
+
+const wxapkgIndexLayoutFailure = (
+  failure: WxapkgIndexLayoutFailure,
+): ArtifactReaderFailure =>
+  wxapkgFormatFailure(
+    failure._tag === "DataRegionExceedsFile"
+      ? "declared data region exceeds the file"
+      : "declared member table exceeds the file",
+  );
 
 export const readWxapkgFileTable = async (
   handle: FileHandle,
@@ -107,18 +122,27 @@ export const readWxapkgFileTable = async (
       "unavailable",
       "wxapkg directory is encrypted",
     );
-  if (header.indexLength > MAX_TABLE_BYTES)
+  const indexLayouts = layout.indexLayouts;
+  let readBytes = 0;
+  let tableStart: number | undefined;
+  for (const indexLayout of indexLayouts) {
+    if (tableStart === undefined) tableStart = indexLayout.tableStart;
+    if (indexLayout.tableBytes > readBytes) readBytes = indexLayout.tableBytes;
+  }
+  if (tableStart === undefined)
+    throw wxapkgFormatFailure("declared member table exceeds the file");
+  if (readBytes > MAX_TABLE_BYTES)
     throw artifactFixedLimitFailure(
       "wxapkg member table",
       MAX_TABLE_BYTES,
       "bytes",
     );
   const budget = new WxapkgDirectoryBudget();
-  budget.reserve(header.indexLength);
+  budget.reserve(readBytes);
   const table = await readArtifactFileBytes(
     handle,
-    layout.tableStart,
-    header.indexLength,
+    tableStart,
+    readBytes,
     size,
     signal,
   );
@@ -166,20 +190,18 @@ export const readWxapkgFileTable = async (
       throw wxapkgFormatFailure("member name has no package-relative path");
     members.push({ offset, size: sizeMember, path, declaredPath });
   }
-  // Member ranges must not overlap the bytes the table actually consumed and
-  // must stay inside the declared data region. Producers may count the index
-  // region differently (fileCount included) or overdeclare the region past
-  // the file, so the floor is the parsed table end and the ceiling is the
-  // declared region bounded by the carrier.
-  const memberDataFloor = layout.tableStart + cursor;
-  const dataEnd = Math.min(
-    layout.tableStart + header.indexLength + header.dataLength,
-    size,
-  );
+  const index = selectWxapkgIndexLayout(indexLayouts, cursor);
+  if (index === undefined)
+    throw wxapkgFormatFailure("member table is truncated");
+  // The declared data region was admitted against the carrier. Member bytes
+  // have to sit inside it, which excludes the header, the index, and anything
+  // past the declared end.
   for (const member of members) {
+    const extentEnd = member.offset + member.size;
     if (
-      member.offset < memberDataFloor ||
-      member.offset + member.size > dataEnd
+      member.offset < index.dataStart ||
+      extentEnd > index.dataEnd ||
+      extentEnd < member.offset
     )
       throw wxapkgFormatFailure(
         `member exceeds the data region: ${member.path}`,

@@ -4,7 +4,9 @@
 package (`.wxapkg`) containers without running WeChat or an unpacker. The
 plaintext form starts with a `0xBE` mark and an 18-byte big-endian header:
 an unknown `info` field producers leave zero, the member-table byte length,
-the member-data byte length, a `0xED` mark and the member count. The table
+the member-data byte length, a `0xED` mark and the member count. Producers
+either count only the name/offset/size rows in that table length or include
+the four-byte member count as well; both declarations are accepted. The table
 region then carries one name/offset/size row per member; member bytes are
 stored verbatim at absolute file offsets.
 
@@ -20,10 +22,10 @@ Encrypted PC-client packages start with the `V1MMWX` magic instead of the
 plain header. They keep their format identity but report `encrypted`
 directory status with unknown coverage: member identities and bytes remain
 unknown and no decryption is attempted, so extraction refuses with a typed
-error rather than producing ciphertext. Declared tables that exceed the
-file, member extents outside the file or inside the header, truncated rows,
-invalid UTF-8 names, and counts that cannot fit their table are
-malformed-input errors.
+error rather than producing ciphertext. Declared tables or data regions
+that exceed the file, member extents outside the declared data region,
+truncated rows, invalid UTF-8 names, and counts that cannot fit their table
+are malformed-input errors.
 
 ## Resource bounds
 
@@ -56,10 +58,12 @@ requested bundle.
 Synthetic fixtures cover plaintext headers, multiple members, empty members,
 chunked reads, unicode and dotted names, malformed marks, truncated tables,
 invalid UTF-8, table and directory-budget admission, member extents inside
-the header or beyond the file, an overstated first row consuming its
-successor, V1MMWX packages, cancellation inside member reads, paused
-iteration, close during I/O, cleanup retry, stream capacity and carrier
-freshness. Compiled full/compact MCP tests cover inventory and extraction.
+the header, the index, or beyond the declared data region, a data region
+declared past the file, a one-byte member whose table length includes the
+member count, an overstated first row consuming its successor, V1MMWX
+packages, cancellation inside member reads, paused iteration, close during
+I/O, cleanup retry, stream capacity and carrier freshness. Compiled
+full/compact MCP tests cover inventory and extraction.
 
 Real producer verification used plaintext `0xBE` packages from a local macOS
 WeChat mini-program cache (`__APP__.wxapkg` main packages and
@@ -73,3 +77,8 @@ extraction.
 `wxml`/`wxss` source recovery, compiled bundle semantics, subpackage
 relationships and runtime behavior are outside this container reader's
 verification scope.
+
+Artifact comparison pairs members by their package-relative paths and
+compares their bytes. It does not compare `wxapkg` or `wxapkg-entry`
+metadata: header fields repeat the package bytes, `index` is layout, and
+`source_path` keeps a producer root prefix that the occurrence path strips.

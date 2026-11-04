@@ -857,6 +857,14 @@ const declarationsByKind: {
       flags: metadata.flags,
     }),
   },
+  wxapkg: {
+    notCompared:
+      "Its fields come from the package's own bytes, which content comparison covers.",
+  },
+  "wxapkg-entry": {
+    notCompared:
+      "index is layout. source_path keeps the declared name, including a producer root prefix the occurrence path strips.",
+  },
   pyinstaller: {
     notCompared:
       "Its fields come from the archive's own bytes, which content comparison covers.",

@@ -16,6 +16,11 @@ export interface WxapkgOptions {
   readonly declaredFileCount?: number;
   readonly declaredIndexLength?: number;
   readonly declaredDataLength?: number;
+  /**
+   * Count the 4-byte member count inside `indexLength`. Row bytes and member
+   * offsets stay where they are; only the declared length grows by four.
+   */
+  readonly indexLengthIncludesFileCount?: boolean;
   /** Override the encoded row's name-length field for every member. */
   readonly nameLength?: number;
   /** Bytes appended to the table region beyond the declared rows. */
@@ -54,9 +59,16 @@ export const buildWxapkg = (
   const names = members.map(({ path }) => utf8(path));
   // Encoded rows carry the real name bytes regardless of any declared override.
   const rowBytes = names.reduce((sum, name) => sum + 12 + name.length, 0);
+  const rowRegion = rowBytes + (options.tablePadding ?? 0);
   const indexLength =
-    options.declaredIndexLength ?? rowBytes + (options.tablePadding ?? 0);
-  const dataStart = 18 + indexLength;
+    options.declaredIndexLength ??
+    rowRegion + (options.indexLengthIncludesFileCount === true ? 4 : 0);
+  // A declared length override repositions the data. Including the member
+  // count changes only the length field; the rows still begin at byte 18.
+  const dataStart =
+    options.declaredIndexLength !== undefined
+      ? 18 + indexLength
+      : 18 + rowRegion;
   let cursor = dataStart;
   const rows: Buffer[] = [];
   const payload: Buffer[] = [];
