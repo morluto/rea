@@ -3,6 +3,7 @@ import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
+import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -1715,7 +1716,10 @@ it("replays source-bearing direct analysis only while snapshot source Evidence i
   });
   const dependencies = fixture.dependencies(provider);
   const parameters = { procedure: "0x1000", document: "fixture" };
-  const options = { snapshotPath: fixture.snapshotPath };
+  const options = {
+    snapshotPath: fixture.snapshotPath,
+    includeEvidenceSources: true,
+  };
   const run = () =>
     runDirectAnalysis(
       dependencies,
@@ -1723,8 +1727,12 @@ it("replays source-bearing direct analysis only while snapshot source Evidence i
       "procedure_pseudo_code",
       parameters,
       options,
-    ).then(projectCliAnalysisResult);
-  const first = parseEvidence(await run());
+    );
+  const firstResult = await run();
+  const first = parseEvidence(projectCliAnalysisResult(firstResult));
+  expect(
+    firstResult.sourceEvidence?.map((record) => record.evidence_id),
+  ).toEqual(first.evidence_links);
   expect(first.evidence_links).toHaveLength(1);
   const saved = await readAnalysisSnapshot(fixture.snapshotPath);
   if (!saved.ok) throw saved.error;
@@ -1736,8 +1744,29 @@ it("replays source-bearing direct analysis only while snapshot source Evidence i
     ),
   ).toBe(true);
   const initialStarts = fixture.starts.length;
-  expect(parseEvidence(await run()).evidence_links).toEqual(
+  const replayed = await run();
+  expect(
+    parseEvidence(projectCliAnalysisResult(replayed)).evidence_links,
+  ).toEqual(first.evidence_links);
+  expect(replayed.sourceEvidence?.map((record) => record.evidence_id)).toEqual(
     first.evidence_links,
+  );
+  const outputPath = join(
+    dirname(fixture.snapshotPath),
+    "replayed-evidence.json",
+  );
+  await publishCliAnalysisEvidence(replayed, {
+    providerId: IDENTITY.id,
+    operation: "procedure_pseudo_code",
+    signal: new AbortController().signal,
+    detail: "complete",
+    evidenceOutput: outputPath,
+  });
+  const published = JSON.parse(await readFile(outputPath, "utf8")) as {
+    records: Evidence[];
+  };
+  expect(published.records.map((record) => record.evidence_id).sort()).toEqual(
+    [first.evidence_id, ...first.evidence_links].sort(),
   );
   expect(fixture.starts).toHaveLength(initialStarts);
 
@@ -1753,7 +1782,11 @@ it("replays source-bearing direct analysis only while snapshot source Evidence i
     writeAnalysisSnapshot(withoutSource, fixture.snapshotPath, true, resources),
   );
   if (!written.ok) throw written.error;
-  const refreshed = parseEvidence(await run());
+  const refreshedResult = await run();
+  const refreshed = parseEvidence(projectCliAnalysisResult(refreshedResult));
+  expect(
+    refreshedResult.sourceEvidence?.map((record) => record.evidence_id),
+  ).toEqual(first.evidence_links);
   expect(fixture.starts).toHaveLength(initialStarts + 1);
   expect(refreshed.evidence_links).toEqual(first.evidence_links);
   const repaired = await readAnalysisSnapshot(fixture.snapshotPath);

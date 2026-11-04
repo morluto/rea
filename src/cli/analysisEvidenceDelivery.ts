@@ -203,9 +203,18 @@ const withUndeliveredSourceClosure = (
 
 /** Publish already finalized CLI analysis without opening a second provider/session. */
 export const publishCliAnalysisEvidence = async (
-  result: Result<Evidence, JsonValue>,
+  result: Result<Evidence, JsonValue> & {
+    readonly sourceEvidence?: readonly Evidence[];
+  },
   input: CliEvidenceDelivery,
 ): Promise<JsonValue> => {
+  input = {
+    ...input,
+    sourceEvidence: [
+      ...(input.sourceEvidence ?? []),
+      ...(result.sourceEvidence ?? []),
+    ],
+  };
   const { operation, signal, detail, evidenceOutput } = input;
   const projectFailure = (error: AnalysisError) =>
     projectAnalysisError(
