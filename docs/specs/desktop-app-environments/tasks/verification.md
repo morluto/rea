@@ -14,7 +14,7 @@ environment, with local Docker for the computer run.
   duplication findings in the new or touched files.
 - `docs:build`: passed, including the new guide and this step's spec pages.
 - `npx vitest run src/domain/desktop src/application/desktop src/desktop`
-  with the two Python boundary tests: 260 passed and 14 skipped on macOS; 273
+  with the two Python boundary tests: 261 passed and 14 skipped on macOS; 274
   passed and 1 skipped in the container.
 - CLI boundary tests `cliInputSchemaRequired`, `cliToolCoverage` and
   `cliStartupImports`, `setupSkill`, and the Python boundary tests
@@ -31,7 +31,8 @@ environment, with local Docker for the computer run.
   among them a `regex` field; suggestions for text, a format rewrite, key
   files, SQLite rows and created and deleted files, and drafts that keep a
   database whose rows changed under an unchanged hash and a file whose
-  truncated views match while it changed; the export with a task and nine
+  truncated views match while it changed, and that leave out a database with
+  one version; the export with a task and nine
   refusals, among them a byte-order mark reported with the reader's fix, none
   writing a bundle; and a draft the export accepts.
 
