@@ -95,6 +95,77 @@ it("passes the selected environment to the actual browser launch boundary", asyn
   });
 });
 
+it("reports elapsed time and settles a browser launch that exceeds its deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    const launch = deferred<BrowserContext>();
+    const closeContext = vi.fn(async () => undefined);
+    const scenario = browserScenarioSchema.parse({
+      browser: { mode: "launch", executable_path: process.execPath },
+      start_url: { url: "https://example.test" },
+      actions: [
+        { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
+      ],
+      command_timeout_ms: 100,
+    });
+    const opening = openPlaywrightScenarioBrowser(
+      scenario,
+      {},
+      {
+        launcher: {
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+          launchPersistentContext: async () => launch.promise,
+        },
+      },
+    );
+    const failure = opening.then(
+      () => {
+        throw new Error("Expected browser startup to exceed its deadline");
+      },
+      (cause: unknown) => cause,
+    );
+
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(150);
+    launch.resolve({ close: closeContext } as unknown as BrowserContext);
+
+    const cause = await failure;
+    expect(cause).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "timeout",
+      diagnostics: {
+        phase: "launch",
+        command_timeout_ms: 100,
+        elapsed_ms: expect.any(Number),
+        profile_preparation_elapsed_ms: expect.any(Number),
+        operation_settled_elapsed_ms: expect.any(Number),
+        operation_settled: "resolved",
+      },
+    });
+    if (typeof cause !== "object" || cause === null)
+      throw new Error("Expected a typed browser startup failure");
+    const diagnostics = Reflect.get(cause, "diagnostics");
+    if (typeof diagnostics !== "object" || diagnostics === null)
+      throw new Error("Expected browser startup timing diagnostics");
+    const deadlineElapsed = Reflect.get(diagnostics, "elapsed_ms");
+    const settledElapsed = Reflect.get(
+      diagnostics,
+      "operation_settled_elapsed_ms",
+    );
+    if (
+      typeof deadlineElapsed !== "number" ||
+      typeof settledElapsed !== "number"
+    )
+      throw new Error("Expected numeric browser startup timings");
+    expect(settledElapsed).toBeGreaterThan(deadlineElapsed);
+    expect(closeContext).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it.skipIf(process.platform === "win32")(
   "passes the caller-selected symlink-parent executable to the launch boundary",
   async () => {
