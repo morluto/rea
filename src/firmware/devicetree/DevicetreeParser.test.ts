@@ -366,3 +366,77 @@ it("bounds repeated reference paths before Evidence serialization", () => {
   expect(bytes.length).toBeLessThan(100_000);
   expect(() => parse(bytes)).toThrow("decoded representation");
 });
+
+it.each([true, false])(
+  "does not reserve an unselected legacy console summary (legacy first: %s)",
+  (legacyFirst) => {
+    const legacy = Buffer.alloc(6 * 1024 * 1024, 0x22);
+    legacy[legacy.length - 1] = 0;
+    for (const canonical of [dtString("serial0"), Buffer.alloc(0)]) {
+      const entries: [string, Buffer][] = [
+        ["stdout-path", canonical],
+        ["linux,stdout-path", legacy],
+      ];
+      if (legacyFirst) entries.reverse();
+      const report = parse(
+        devicetreeFixture({
+          name: "",
+          children: [
+            { name: "chosen", properties: Object.fromEntries(entries) },
+          ],
+        }),
+        { max_file_bytes: 16777216 },
+      );
+      expect(report.summary.stdout_path).toBe(
+        canonical.length ? "serial0" : null,
+      );
+      expect(
+        report.nodes[1]?.properties.find((p) => p.name === "linux,stdout-path")
+          ?.derived.strings?.[0]?.length,
+      ).toBe(legacy.length - 1);
+    }
+  },
+);
+
+it.each(["linux,stdout-path", "stdout-path", "bootargs", "compatible"])(
+  "does not charge undecodable %s as retained text",
+  (name) => {
+    for (const terminated of [false, true]) {
+      const raw = Buffer.alloc(9 * 1024 * 1024, 0x41);
+      if (terminated) {
+        raw[0] = 0xff;
+        raw[raw.length - 1] = 0;
+      }
+      const report = parse(
+        devicetreeFixture({
+          name: "",
+          children: [{ name: "chosen", properties: { [name]: raw } }],
+        }),
+        { max_file_bytes: 16777216 },
+      );
+      expect(report.nodes[1]?.properties[0]).toMatchObject({
+        bytes: raw.length,
+        truncated: true,
+        derived: { strings: null },
+      });
+      expect(report.summary.stdout_path).toBeNull();
+    }
+  },
+);
+
+it.each(["stdout-path", "linux,stdout-path"])(
+  "still charges the selected %s summary",
+  (name) => {
+    const raw = Buffer.alloc(6 * 1024 * 1024, 0x22);
+    raw[raw.length - 1] = 0;
+    expect(() =>
+      parse(
+        devicetreeFixture({
+          name: "",
+          children: [{ name: "chosen", properties: { [name]: raw } }],
+        }),
+        { max_file_bytes: 16777216 },
+      ),
+    ).toThrow(new DevicetreeLimitFailure("decoded_bytes"));
+  },
+);

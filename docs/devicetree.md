@@ -71,7 +71,10 @@ collection and parent Evidence; property indices are scoped to their node.
 | `max_depth`      |      64 |     256 |
 
 Decoded names, paths, values and row overhead share a fixed 32 MiB representation
-allowance, charged before expansion. It has no runtime override.
+allowance, charged before expansion. Only valid decoded strings consume the
+string allowance; malformed values retain their bounded raw preview. The console
+summary charges only the selected property, regardless of property order.
+It has no runtime override.
 
 The reservation count also uses `max_properties`. CLI flags use kebab case,
 for example `--max-nodes 16384`. View pages contain at most 256 rows.

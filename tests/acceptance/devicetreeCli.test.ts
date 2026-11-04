@@ -198,3 +198,48 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "keeps a large malformed console raw through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dtb-cli-raw-console-");
+    const path = join(root, "board.dtb");
+    const raw = Buffer.alloc(9 * 1024 * 1024, 0x41);
+    const bytes = devicetreeFixture({
+      name: "",
+      children: [{ name: "chosen", properties: { "linux,stdout-path": raw } }],
+    });
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: [
+        "inspect-devicetree",
+        path,
+        "--max-file-bytes",
+        "16777216",
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_devicetree", {
+      path,
+      max_file_bytes: 16777216,
+    });
+    expect(response.isError).not.toBe(true);
+    for (const value of [result.json, response.structuredContent]) {
+      const report =
+        toolContract("inspect_devicetree").outputSchema.parse(
+          value,
+        ).normalized_result;
+      if (!("nodes" in report)) throw new Error("Expected complete report");
+      expect(report.summary.stdout_path).toBeNull();
+      expect(report.nodes[1]?.properties[0]).toMatchObject({
+        bytes: raw.length,
+        hex: raw.subarray(0, 256).toString("hex"),
+        truncated: true,
+        derived: { strings: null },
+      });
+    }
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
