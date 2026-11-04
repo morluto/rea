@@ -2039,3 +2039,55 @@ it("reports the selected command deadline when preparation times out", async () 
     await client.close();
   }
 });
+
+it("projects an ownership-helper compile timeout independently from the command deadline", async () => {
+  const inspection = new DarwinProcessOwnershipInspectionError(
+    "ownership-helper compilation timed out",
+    {
+      compilerOutcome: {
+        outcome: "timed_out",
+        code: "ETIMEDOUT",
+        signal: "SIGINT",
+        stderr: "",
+        stderrTruncated: false,
+        outputTruncated: false,
+        killed: true,
+        timeoutMs: 1,
+      },
+    },
+  );
+  const failure = new NativeCommandFailure("swift-demangle", "io", null, {
+    cause: inspection,
+  });
+  const runner: NativeCommandRunner = { run: async () => err(failure) };
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+    machoTarget("/fixture"),
+  );
+  try {
+    const result = await client.execute("demangle_swift", {
+      symbols: ["fixture"],
+      native_command_timeout_ms: 60_000,
+    });
+    if (result.ok) throw new Error("Expected ownership-helper timeout");
+    expect(result.error).toMatchObject({ _tag: "AnalysisTimeoutError" });
+    expect(result.error.diagnostics).toMatchObject({
+      compiler_outcome: { outcome: "timed_out", timeout_ms: 1 },
+    });
+
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "provider_timeout",
+      category: "timeout",
+      retryable: true,
+    });
+    expect(projected.message).toContain("of 1 ms");
+    expect(projected.remediation.action).toContain(
+      "REA_SWIFTC_COMPILE_TIMEOUT_MS",
+    );
+    expect(projected.remediation.action).not.toContain(
+      "native_command_timeout_ms",
+    );
+  } finally {
+    await client.close();
+  }
+});
