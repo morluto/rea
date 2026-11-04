@@ -642,6 +642,7 @@
 * **pe:** bound forwarders to export directory ([1fe92bf](https://github.com/morluto/rea/commit/1fe92bff8ea1c230086c967268f71dd96dc2d7b2))
 * **pe:** distinguish bounded imphash name reads ([#7830](https://github.com/morluto/rea/issues/7830)) ([5c60720](https://github.com/morluto/rea/commit/5c60720ad726c6e8cf5f05399d791ee6a4632abf))
 * **pe:** enforce certificate name string alphabets ([#8494](https://github.com/morluto/rea/issues/8494)) ([aa48d49](https://github.com/morluto/rea/commit/aa48d494e9726d469a1b9ed917f021d8a1a4c7ea))
+* **pe:** reject certificates whose signature algorithms disagree ([#8922](https://github.com/morluto/rea/issues/8922)) ([a1660bc](https://github.com/morluto/rea/commit/a1660bc016cfe9f0b5fa15ee4192876ee9e82da4))
 * **pe:** reject empty and non-minimal certificate serial INTEGERs ([#8836](https://github.com/morluto/rea/issues/8836)) ([772c1bc](https://github.com/morluto/rea/commit/772c1bc40167ce387bc9d7dd43f63ca043407079))
 * **pe:** reject invalid certificate bit-string padding ([#8011](https://github.com/morluto/rea/issues/8011)) ([ca666ec](https://github.com/morluto/rea/commit/ca666ec1308a168df38a31944e15e1ed35b6b5f5))
 * **pe:** reject malformed certificate validity times ([#8832](https://github.com/morluto/rea/issues/8832)) ([a97f827](https://github.com/morluto/rea/commit/a97f82746973613c77b6a93d0576b5383bfbb595))
