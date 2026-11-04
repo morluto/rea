@@ -954,3 +954,57 @@ it("keeps a possibly repeated factory's native descriptor value unknown", () => 
   })();`);
   expect(value.kind).toBe("unknown");
 });
+
+it("bounds recursion when spreading a self-recursive call result and querying properties", () => {
+  const { resolver, values } = inspectFixture(
+    `function f(o) { const stay = f(o); return { ...stay, c: stay.sc.startsWith("k") }; }
+     inspect(f({}));`,
+    (bindings, node) => {
+      const obj = bindings.evaluate(node.arguments[0]);
+      const sc = bindings.property(obj, "sc");
+      const c = bindings.property(obj, "c");
+      const members = bindings.members(obj);
+      const unknownMembers = bindings.unknownMembers(obj);
+      expect(sc.kind).toBe("unknown");
+      expect(c.kind).toBe("unknown");
+      expect(members).toContain("c");
+      expect(unknownMembers).toBeGreaterThan(0);
+      return obj;
+    },
+  );
+  expect(values).toHaveLength(1);
+  expect(resolver.truncated).toBe(true);
+});
+
+it("evaluates finite recursion across returned closures and object arguments to literal results", () => {
+  const closureResult = inspectOne(`
+    function make(flag) { return function step() { return flag ? { next: make(false)() } : { value: "end" }; }; }
+    inspect(make(true)().next.value);
+  `);
+  expect(closureResult).toMatchObject({ kind: "literal", value: "end" });
+
+  const stepResult = inspectOne(`
+    function f(step) { return step ? { next: f(step.next) } : { value: "end" }; }
+    inspect(f({ next: { next: null } }).next.next.value);
+  `);
+  expect(stepResult).toMatchObject({ kind: "literal", value: "end" });
+});
+
+it("bounds recursion with fresh arguments while preserving own stable members", () => {
+  const { resolver, values } = inspectFixture(
+    `function grow(value) { return { ...grow({ value }), stable: 1 }; }
+     inspect(grow(null));`,
+    (bindings, node) => {
+      const obj = bindings.evaluate(node.arguments[0]);
+      const stable = bindings.property(obj, "stable");
+      const members = bindings.members(obj);
+      const unknownMembers = bindings.unknownMembers(obj);
+      expect(stable).toMatchObject({ kind: "literal", value: 1 });
+      expect(members).toContain("stable");
+      expect(unknownMembers).toBeGreaterThan(0);
+      return obj;
+    },
+  );
+  expect(values).toHaveLength(1);
+  expect(resolver.truncated).toBe(true);
+});
