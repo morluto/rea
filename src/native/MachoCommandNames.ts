@@ -631,6 +631,7 @@ export const readMachoCommandNames = async (
       };
     }
     let fileset: MachoCommandNames["commands"][number]["fileset"];
+    let filesetStringStartsAfterHeader = false;
     let filesetStringEnd: number | undefined;
     if (frame.command === 0x80000035) {
       if (frame.size < 32)
@@ -642,6 +643,7 @@ export const readMachoCommandNames = async (
         throw new MachoBinaryFormatError(
           "Mach-O fileset entry string offset is invalid",
         );
+      filesetStringStartsAfterHeader = offset === 32;
       const length = Math.min(frame.size - offset, maximumStringBytes + 1);
       const value = await exact(at + offset, length);
       const end = value.indexOf(0);
@@ -733,7 +735,9 @@ export const readMachoCommandNames = async (
               0,
             )) ||
       (note !== undefined && frame.size === 40) ||
-      (fileset !== undefined && filesetStringEnd === frame.size) ||
+      (fileset !== undefined &&
+        filesetStringStartsAfterHeader &&
+        filesetStringEnd === frame.size) ||
       (fixedNames !== undefined && frame.size === 8 + fixedNames.length * 4) ||
       (uuid !== undefined && frame.size === 24) ||
       (entrypoint !== undefined && frame.size === 24) ||
