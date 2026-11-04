@@ -106,6 +106,7 @@
 * **managed:** show readable type names in member signatures ([c9bf6a9](https://github.com/morluto/rea/commit/c9bf6a9df712f8e968ac76147c97457ee911f10a))
 * **managed:** show readable type names in member signatures ([#5309](https://github.com/morluto/rea/issues/5309)) ([c9bf6a9](https://github.com/morluto/rea/commit/c9bf6a9df712f8e968ac76147c97457ee911f10a))
 * **mcp:** page retained incoming reference addresses ([#8591](https://github.com/morluto/rea/issues/8591)) ([55078b9](https://github.com/morluto/rea/commit/55078b9f575528e451c888d8b7a85da2f188bbb7))
+* **mcp:** page retained instruction references ([#8594](https://github.com/morluto/rea/issues/8594)) ([71f680d](https://github.com/morluto/rea/commit/71f680d7c1aa7a45ba0325fe87b104744b0c105f))
 * **mcp:** scope advertised tools by family ([#7228](https://github.com/morluto/rea/issues/7228)) ([b675073](https://github.com/morluto/rea/commit/b675073b731dc3209f59578fad5ca8fe85b104cc))
 * **mcp:** support compact output schema advertisements ([#7218](https://github.com/morluto/rea/issues/7218)) ([9085222](https://github.com/morluto/rea/commit/9085222ca1b5a636d4835a48b8bfed03da461b4f))
 * **native:** deliver batch decompile as a retained summary ([#8631](https://github.com/morluto/rea/issues/8631)) ([93b8b82](https://github.com/morluto/rea/commit/93b8b82db70279e40f484114cff9dc1958dc14ee))
