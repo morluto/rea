@@ -955,12 +955,22 @@ export class KunaSessionClient implements AnalysisClient {
         ...(references.value.walkCoverage !== null &&
         references.value.walkCoverage.unwalked.length > 0
           ? [
-              "Kuna reports unwalked code candidates whose outgoing references are not included. Their presence does not establish a reference to the selected target; the source observation identifies them.",
+              {
+                code: "unwalked-code",
+                scope: "observation" as const,
+                description:
+                  "Kuna reports unwalked code candidates whose outgoing references are not included. Their presence does not establish a reference to the selected target; the source observation identifies them.",
+              },
             ]
           : []),
         ...(references.value.pointerCoverage === "none"
           ? [
-              "Kuna reports no pointer-relocation coverage for this image; stored pointers may still exist.",
+              {
+                code: "pointer-relocations-unavailable",
+                scope: "image" as const,
+                description:
+                  "Kuna reports no pointer-relocation coverage for this image; stored pointers may still exist.",
+              },
             ]
           : []),
       ];
@@ -975,7 +985,7 @@ export class KunaSessionClient implements AnalysisClient {
             : [
                 "Kuna pointer references come from relocation metadata. The reported metadata source does not establish successful or complete enumeration.",
               ]),
-          ...coverageGaps,
+          ...coverageGaps.map(({ description }) => description),
         ],
         ...(coverageGaps.length === 0
           ? {}

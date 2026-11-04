@@ -137,6 +137,7 @@ const traceReferences = async (
   const tracedTargets = new Set<string>();
   // A source address is resolved once however many matches reference it.
   const containing = new Map<string, TraceContainingProcedure>();
+  const imageCoverageGaps = new Set<string>();
   for (const match of request.matches) {
     if (tracedTargets.has(match.address)) continue;
     tracedTargets.add(match.address);
@@ -154,8 +155,17 @@ const traceReferences = async (
         `References to ${match.address} were truncated by the provider; additional references may exist.`,
       );
     }
-    for (const gap of observed.value.referenceCoverageGaps ?? [])
-      residual.push(`References to ${match.address}: ${gap}`);
+    for (const gap of observed.value.referenceCoverageGaps ?? []) {
+      if (gap.scope === "observation") {
+        residual.push(`References to ${match.address}: ${gap.description}`);
+      } else {
+        const key = JSON.stringify([observed.value.provider.id, gap.code]);
+        if (!imageCoverageGaps.has(key)) {
+          imageCoverageGaps.add(key);
+          residual.push(gap.description);
+        }
+      }
+    }
     const sources = observed.value.result;
     if (!Array.isArray(sources))
       return err(

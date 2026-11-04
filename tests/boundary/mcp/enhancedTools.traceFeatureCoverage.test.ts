@@ -150,7 +150,9 @@ it("reports known reference-discovery gaps without claiming truncation or a miss
         ? Promise.resolve(
             ok(
               createAnalysisExecution([], PROVIDER, {
-                referenceCoverageGaps: [gap],
+                referenceCoverageGaps: [
+                  { code: "unwalked", scope: "observation", description: gap },
+                ],
               }),
             ),
           )
@@ -160,6 +162,39 @@ it("reports known reference-discovery gaps without claiming truncation or a miss
     truncated: false,
     residual_unknowns: [`References to 0x10: ${gap}`],
     references: [{ target_address: "0x11", source_address: "0x21" }],
+  });
+});
+
+it("deduplicates an image-wide gap without merging target-specific gaps", async () => {
+  const baseline = provider();
+  const output = await trace({
+    execute: async (operation, input, options) => {
+      const result = await baseline.execute(operation, input, options);
+      if (operation !== "xrefs" || !result.ok) return result;
+      return ok({
+        ...result.value,
+        referenceCoverageGaps: [
+          {
+            code: "missing-relocations",
+            scope: "image",
+            description: "Image relocation coverage unavailable.",
+          },
+          {
+            code: "unwalked",
+            scope: "observation",
+            description: "This observation has unwalked sources.",
+          },
+        ],
+      });
+    },
+  });
+  expect(output.normalized_result).toMatchObject({
+    truncated: false,
+    residual_unknowns: [
+      "Image relocation coverage unavailable.",
+      "References to 0x10: This observation has unwalked sources.",
+      "References to 0x11: This observation has unwalked sources.",
+    ],
   });
 });
 
