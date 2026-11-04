@@ -91,6 +91,7 @@
 * **javascript:** page retained feature traces through analysis views ([#8522](https://github.com/morluto/rea/issues/8522)) ([423059a](https://github.com/morluto/rea/commit/423059a4de9669afa44d81942803083e82149dc4))
 * **kuna:** verify release 1.986 and guide version selection ([#8187](https://github.com/morluto/rea/issues/8187)) ([245a581](https://github.com/morluto/rea/commit/245a581818ab13694fa438a06e39898ce03ab206))
 * **kuna:** verify release 1.988 ([#8509](https://github.com/morluto/rea/issues/8509)) ([1d343a8](https://github.com/morluto/rea/commit/1d343a88e53af51101a408d437641c60b7bb34e4))
+* **kuna:** verify release 1.990 ([#8813](https://github.com/morluto/rea/issues/8813)) ([f8f9095](https://github.com/morluto/rea/commit/f8f9095d2d280c6d5ed8f62f28bd073b9f050f20))
 * **macho:** report per-slice encryption status in inspect_macho ([#5359](https://github.com/morluto/rea/issues/5359)) ([860fdd8](https://github.com/morluto/rea/commit/860fdd8fbeded2ddf9abfac61f6982db7458e94e))
 * **managed:** filter and project retained member views ([#7968](https://github.com/morluto/rea/issues/7968)) ([cf9f010](https://github.com/morluto/rea/commit/cf9f010dcdc01f1227cb1d3ec8e626a1a3b1054d))
 * **managed:** show readable type names in member signatures ([c9bf6a9](https://github.com/morluto/rea/commit/c9bf6a9df712f8e968ac76147c97457ee911f10a))
