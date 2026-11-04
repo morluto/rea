@@ -53,6 +53,11 @@ const reasons = [];
 // baseline. Full qualification still selects every lane.
 const SHARED_BOUNDARY =
   /^(src\/process\/|src\/filesystem\/|src\/contracts\/tool|src\/server\/createServer|src\/cli\.ts|scripts\/ci\/)/;
+// Debugger process ownership is shared infrastructure, but it also guards
+// real GDB/Rizin target lifecycle behavior. Keep that one provider lane when
+// the changed shared source directly participates in debugger ownership.
+const DEBUGGER_PROCESS_BOUNDARY =
+  /^src\/process\/(?:ProcessOwnership.*|OwnedCommand|ProviderProcess|ownedDebuggerSession|inferiorInputSink)\.ts$/;
 const full = (reason) => {
   if (tier === "full") {
     for (const flag of flags) selected[flag] = true;
@@ -263,6 +268,12 @@ if (tier === "reused") {
       if (tier !== "full" && SHARED_BOUNDARY.test(file)) {
         selected.code = true;
         selected.runtime = true;
+        if (
+          DEBUGGER_PROCESS_BOUNDARY.test(file) &&
+          matchesAny(file, CI_LANES.reverse_providers.paths)
+        ) {
+          selected.reverse_providers = true;
+        }
         const owners = Object.entries(CI_LANES)
           .filter(([, { paths }]) => matchesAny(file, paths))
           .map(([owner]) => owner);

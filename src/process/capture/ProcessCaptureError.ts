@@ -82,12 +82,14 @@ export class ProcessCaptureError extends AnalysisError {
       ...(executionFailure === undefined ? {} : { executionFailure }),
       ...(partialObservation === undefined ? {} : { partialObservation }),
       ...(cleanupReport === undefined ? {} : { cleanupReport }),
-    }).bindCleanupDependencies([
+    }).resolveCleanup();
+    // This wrapper owns no resources itself: cleanup status and live
+    // attribution come from the source error and any secondary owner.
+    if (secondary !== undefined) finalized.retainSecondaryFailure(secondary);
+    return finalized.bindCleanupDependencies([
       this,
       ...(secondary === undefined ? [] : [secondary]),
     ]);
-    if (secondary !== undefined) finalized.retainSecondaryFailure(secondary);
-    return finalized;
   }
 }
 

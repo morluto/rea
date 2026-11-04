@@ -2,6 +2,10 @@ import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
 import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
+import {
+  isGdbInterruptCommand,
+  isGdbTargetDispositionCommand,
+} from "../gdb/GdbProviderIdentity.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import {
@@ -23,7 +27,8 @@ import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 export type GdbToolManager = Pick<
   GdbSessionManager,
   "start" | "execute" | "status" | "close" | "retryCleanupFailures"
->;
+> &
+  Partial<Pick<GdbSessionManager, "waitForInferiorStop">>;
 
 /** Register persistent GDB session operations on the existing REA MCP server. */
 export const registerGdbTools = (
@@ -75,22 +80,36 @@ export const registerGdbTools = (
         );
         if (!ready.ok) return delivery.toCallToolResult(ready, consoleContract);
       }
-      const execute = () =>
-        logToolExecution(logger, consoleContract.name, () =>
-          manager.execute(
-            input.session_id,
-            input.command,
-            context.mcpReq.signal,
-          ),
+      const execute = async () => {
+        const executed = await logToolExecution(
+          logger,
+          consoleContract.name,
+          () =>
+            manager.execute(
+              input.session_id,
+              input.command,
+              context.mcpReq.signal,
+            ),
         );
-      const executed = await runWithExternalMutationAdmission(
-        session,
-        consoleContract.name,
-        context.mcpReq.signal,
-        execute,
-        (value) => value.evidence,
-        () => manager.retryCleanupFailures(),
-      );
+        const settled = manager.waitForInferiorStop?.(input.session_id);
+        if (settled !== undefined)
+          session?.retainExternalMutationOwner?.(settled);
+        return executed;
+      };
+      // Interrupt must bypass mutation admission: the provider only admits it
+      // while its original run owns admission, so queuing would deadlock stop.
+      const executed = isGdbInterruptCommand(input.command)
+        ? await execute()
+        : await runWithExternalMutationAdmission(
+            session,
+            consoleContract.name,
+            context.mcpReq.signal,
+            execute,
+            (value) => value.evidence,
+            () => manager.retryCleanupFailures(),
+            undefined,
+            isGdbTargetDispositionCommand(input.command),
+          );
       const result = !executed.ok
         ? executed
         : input.detail === "summary"

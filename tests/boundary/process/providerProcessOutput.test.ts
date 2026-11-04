@@ -127,3 +127,34 @@ it("bounds additional late output while retaining observed byte counts", () => {
   expect(snapshot.diagnosticTruncated).toBe(true);
   supervisor.dispose();
 });
+
+it("coalesces many tiny retained writes instead of keeping one Buffer per event", () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null as number | null,
+    signalCode: null as NodeJS.Signals | null,
+    kill: vi.fn(() => true),
+  });
+  const supervisor = new ProviderProcessSupervisor({
+    process: child,
+    ownsProcessLifetime: true,
+  });
+  const copy = vi.spyOn(Buffer, "from");
+  const slabAllocation = vi.spyOn(Buffer, "allocUnsafe");
+  const byte = Buffer.from("x");
+
+  for (let index = 0; index < 100_000; index += 1)
+    child.stdout.emit("data", byte);
+
+  expect(copy).toHaveBeenCalledTimes(1);
+  expect(slabAllocation).toHaveBeenCalledTimes(Math.ceil(100_000 / 4_096));
+  expect(supervisor.snapshot().stdout).toMatchObject({
+    bytes: 100_000,
+    observedBytes: 100_000,
+    text: "x".repeat(100_000),
+  });
+  copy.mockRestore();
+  slabAllocation.mockRestore();
+  supervisor.dispose();
+});

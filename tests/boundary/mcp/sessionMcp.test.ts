@@ -654,7 +654,10 @@ describe("target-free MCP workflow", () => {
       ).isError,
     ).not.toBe(true);
     await mcp.callTool({ name: "close_binary", arguments: {} });
-  });
+    // The full no-target/open/analyze/switch/status/close workflow measured
+    // 11.5 s on a loaded macOS runner, so the previous 10 s budget could not be
+    // reached; 30 s matches the sibling case above.
+  }, 30_000);
 });
 
 describe("MCP snapshot open ordering", () => {

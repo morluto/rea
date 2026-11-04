@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
 import pino from "pino";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { err } from "../../../src/domain/result.js";
@@ -10,6 +10,8 @@ import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngi
 import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
+
+afterEach(() => vi.useRealTimers());
 
 const registerGdbCommand = (
   createManager: () => GdbSessionManager,
@@ -58,6 +60,12 @@ it.each([
   "run > /tmp/out",
   "set inferior-t /dev/null",
   "with inferior-t /dev/null -- run",
+  'interpreter-exec console "shell sleep 3600 &"',
+  'interpreter-exec mi "-gdb-exit"',
+  "interp console run",
+  'eval "shell sleep 1"',
+  "pipe print 1 | cat",
+  "info files | less",
 ])("rejects one-shot command %s before starting GDB", async (inputCommand) => {
   const manager = {
     start: vi.fn(),
@@ -134,6 +142,37 @@ it("marks the CLI failed when retained GDB cleanup remains incomplete", async ()
     });
     expect(manager.closeAll).toHaveBeenCalledOnce();
     expect(process.exitCode).toBe(1);
+  } finally {
+    process.exitCode = originalExitCode;
+  }
+});
+
+it("retains and retries a one-shot GDB manager after interrupted cleanup", async () => {
+  vi.useFakeTimers();
+  const closeAll = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error("interrupted command is still pending"))
+    .mockResolvedValue(undefined);
+  const manager = {
+    start: vi.fn(async () =>
+      err(new AnalysisOutputError("start_gdb_session", "startup failed")),
+    ),
+    closeAll,
+  } as unknown as GdbSessionManager;
+  const originalExitCode = process.exitCode;
+  const command = registerGdbCommand(() => manager);
+
+  try {
+    await command.run({
+      args: { command: "info files" },
+      options: { inferiorTty: "/dev/pts/42" },
+    });
+    expect(closeAll).toHaveBeenCalledOnce();
+    expect(process.exitCode).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(closeAll).toHaveBeenCalledTimes(2);
   } finally {
     process.exitCode = originalExitCode;
   }

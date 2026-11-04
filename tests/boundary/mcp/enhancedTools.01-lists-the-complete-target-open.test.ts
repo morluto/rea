@@ -245,10 +245,17 @@ describe("enhanced MCP tools", () => {
   it("lists the complete target-open analysis surface", async () => {
     const client = await connect();
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(
-      TOOL_CONTRACTS.length -
-        SESSION_TOOL_CONTRACTS.length -
-        MANAGED_WORKFLOW_TOOL_CONTRACTS.length,
+    const expectedToolNames = TOOL_CONTRACTS.filter(
+      ({ name }) =>
+        !SESSION_TOOL_CONTRACTS.some((tool) => tool.name === name) &&
+        !MANAGED_WORKFLOW_TOOL_CONTRACTS.some((tool) => tool.name === name) &&
+        // Fixed analysis sessions cannot admit Rizin's mutating operation.
+        name !== "execute_rizin_command",
+    )
+      .map(({ name }) => name)
+      .sort();
+    expect(listed.tools.map(({ name }) => name).sort()).toEqual(
+      expectedToolNames,
     );
     expect(
       listed.tools

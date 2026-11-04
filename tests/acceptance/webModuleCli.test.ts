@@ -1,13 +1,18 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, onTestFinished } from "vitest";
+import { expect, onTestFinished, vi } from "vitest";
 import { createWebModuleTraceService } from "../../src/composition/webModules.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { webModuleArtifactsFixture } from "../fixtures/webModuleTrace.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+// The CLI case below owns a 60 s child budget. This file's own deadline must
+// outlast that child budget plus slack, otherwise the test aborts before the
+// child's own outcome can be reported.
+vi.setConfig({ testTimeout: 90_000 });
 
 cliTest(
   "accepts zero-based numeric source indices and returns the same engine-free CLI/MCP trace",
@@ -43,7 +48,10 @@ cliTest(
         // This single CLI invocation cannot reuse a newly written cache.
         NODE_DISABLE_COMPILE_CACHE: "1",
       },
-      timeoutMs: 15000,
+      // A loaded Windows runner exceeded the previous 15 s deadline while the
+      // child had already emitted the complete trace; this case takes about
+      // 1.2 s on an idle Linux host.
+      timeoutMs: 60_000,
     });
     expect(cliResponse.exitCode, cliResponse.stdout + cliResponse.stderr).toBe(
       0,

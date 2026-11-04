@@ -16,6 +16,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,
@@ -35,6 +36,7 @@ import type {
 } from "../AnalysisProvider.js";
 import type {
   BinarySessionPort,
+  BinarySessionCloseOptions,
   SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
 import {
@@ -180,6 +182,8 @@ export class BinarySession
 {
   #active: SessionBinding | undefined;
   #externalMutationCleanupFailure: AnalysisError | undefined;
+  #externalMutationOwner: Promise<void> | undefined;
+  #externalMutationOwnerPending = false;
   #lastCloseCleanupFailure: AnalysisError | undefined;
   #pendingCleanup:
     | {
@@ -191,6 +195,7 @@ export class BinarySession
   #transition: Promise<void> = Promise.resolve();
   #transitionGeneration = 0;
   #transitionPending = 0;
+  #closeEpoch = 0;
   /** Process shutdown has begun; later target acquisition must not outlive it. */
   #shutdownStarted = false;
   readonly #calls = new Map<Promise<unknown>, number>();
@@ -227,6 +232,8 @@ export class BinarySession
             cause: options.signal?.reason,
           }),
         );
+      if (this.#externalMutationOwnerPending)
+        return err(this.#externalMutationStillActive("open_bundle_resources"));
       if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
         return err(this.#externalMutationCleanupFailure);
       if (this.#bundleResourceFactory === undefined)
@@ -371,7 +378,10 @@ export class BinarySession
   async #tryRetainedFastPath(
     retained: SessionBinding,
     target: BinaryTarget,
-    options: Pick<BinarySessionOpenOptions, "signal" | "snapshot">,
+    options: Pick<
+      BinarySessionOpenOptions,
+      "signal" | "snapshot" | "beforeOpen"
+    >,
   ): Promise<Result<BinaryTarget, AnalysisError> | undefined> {
     const live = await this.#retainedClientLive(retained.client, options);
     if (isAborted(options.signal))
@@ -497,7 +507,10 @@ export class BinarySession
   /** Open a previewed target without repeating parsing or provider profile discovery. */
   openResolvedTarget(
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
-    options: Pick<BinarySessionOpenOptions, "signal" | "snapshot"> = {},
+    options: Pick<
+      BinarySessionOpenOptions,
+      "signal" | "snapshot" | "beforeOpen"
+    > = {},
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#open(
       () =>
@@ -520,17 +533,49 @@ export class BinarySession
     ) => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
     options: BinarySessionOpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
-    return this.#serialize(async (admittedThrough) => {
-      const refused = this.#targetAcquisitionRefused("open_binary");
-      if (refused !== undefined) return refused;
-      const admitted = await this.#withLoadedSnapshot(options);
-      if (!admitted.ok) return admitted;
-      return this.#openWithinTransition(
-        admittedThrough,
-        () => resolve(admitted.value),
-        admitted.value,
-      );
-    });
+    return (async () => {
+      let deferred = false;
+      let closeEpochAtDeferral = 0;
+      for (;;) {
+        const opened = await this.#serialize(async (admittedThrough) => {
+          if (deferred && this.#closeEpoch !== closeEpochAtDeferral)
+            return err(new AnalysisCancelledError("open_binary"));
+          if (isAborted(options.signal))
+            return err(
+              new AnalysisCancelledError("open_binary", {
+                cause: options.signal?.reason,
+              }),
+            );
+          const refused = this.#targetAcquisitionRefused("open_binary");
+          if (refused !== undefined) return refused;
+          // Do not hold the lifecycle queue while an external writer is still
+          // active. Its owner may need this queue to interrupt or dispose the
+          // target before the open can continue.
+          if (this.#externalMutationOwnerPending) {
+            deferred = true;
+            closeEpochAtDeferral = this.#closeEpoch;
+            return undefined;
+          }
+          const admitted = await this.#withLoadedSnapshot(options);
+          if (!admitted.ok) return admitted;
+          return this.#openWithinTransition(
+            admittedThrough,
+            () => resolve(admitted.value),
+            admitted.value,
+          );
+        });
+        if (opened !== undefined) return opened;
+
+        // Wait outside the serialized transition, then retry admission. A new
+        // owner may have arrived while this open was queued, so the check must
+        // happen again inside the queue before reading or changing targets.
+        const owner = await this.#waitForExternalMutationOwner(
+          "open_binary",
+          options.signal,
+        );
+        if (!owner.ok) return owner;
+      }
+    })();
   }
 
   /** Read the staged snapshot only after earlier lifecycle transitions have settled. */
@@ -553,16 +598,31 @@ export class BinarySession
   async #openWithinTransition(
     admittedThrough: number,
     resolve: () => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
-    options: Pick<BinarySessionOpenOptions, "signal" | "snapshot">,
+    options: Pick<
+      BinarySessionOpenOptions,
+      "signal" | "snapshot" | "beforeOpen"
+    >,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
-    if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
-      return err(this.#externalMutationCleanupFailure);
     if (isAborted(options.signal))
       return err(
         new AnalysisCancelledError("open_binary", {
           cause: options.signal?.reason,
         }),
       );
+    // Retry retained owners first: a successful retry resolves the stored
+    // failure, so the guard below must observe the post-retry state.
+    if (options.beforeOpen !== undefined) {
+      const prepared = await options.beforeOpen();
+      if (!prepared.ok) return prepared;
+      if (isAborted(options.signal))
+        return err(
+          new AnalysisCancelledError("open_binary", {
+            cause: options.signal?.reason,
+          }),
+        );
+    }
+    if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
+      return err(this.#externalMutationCleanupFailure);
     const resolved = await resolve();
     if (!resolved.ok) return resolved;
     const { target, route, sameTarget } = resolved.value;
@@ -718,7 +778,9 @@ export class BinarySession
   withAdmittedExternalMutation<Value>(
     _path: string | undefined,
     signal: AbortSignal | undefined,
-    operation: () => Promise<Result<Value, AnalysisError>>,
+    operation: (
+      onDispatch: () => void,
+    ) => Promise<Result<Value, AnalysisError>>,
     completionFailure: (
       value: Result<Value, AnalysisError>,
       error: AnalysisError,
@@ -727,6 +789,8 @@ export class BinarySession
     cleanupRecovery?: (
       failure: AnalysisError | undefined,
     ) => Promise<Result<null, AnalysisError>>,
+    mutationStart: "admission" | "provider-dispatch" = "admission",
+    ownerCleanup = false,
   ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       if (this.#activeBundleResources !== undefined)
@@ -741,6 +805,8 @@ export class BinarySession
         return err(
           new AnalysisCancelledError(operationName, { cause: signal?.reason }),
         );
+      if (this.#externalMutationOwnerPending && !ownerCleanup)
+        return err(this.#externalMutationStillActive(operationName));
       await this.#drainCalls(admittedThrough);
       if (isAborted(signal))
         return err(
@@ -806,11 +872,20 @@ export class BinarySession
       // A protocol reply does not prove that background writers have stopped.
       // Retire the old analysis and require an explicit fresh open rather than
       // silently binding a snapshot while an unrestricted command can still write.
-      const retireTarget = activeAtDispatch !== undefined;
-      this.invalidateSnapshot();
-      const value = await operation();
+      let dispatched = false;
+      const onDispatch = (): void => {
+        if (dispatched) return;
+        dispatched = true;
+        this.invalidateSnapshot();
+      };
+      if (mutationStart === "admission") onDispatch();
+      const value = await operation(onDispatch);
       this.#externalMutationCleanupFailure =
         !value.ok && value.error.cleanupIncomplete ? value.error : undefined;
+      // A newly discovered retained writer can already mutate the artifact,
+      // even when this operation never reached its own dispatch boundary.
+      if (this.#externalMutationCleanupFailure !== undefined) onDispatch();
+      const retireTarget = dispatched && activeAtDispatch !== undefined;
       if (retireTarget) {
         const retired = await this.#closeActive({});
         if (!retired.ok) {
@@ -848,6 +923,41 @@ export class BinarySession
     });
   }
 
+  /** Retain target lifecycle admission until an external writer is confirmed idle. */
+  retainExternalMutationOwner(completion: Promise<unknown>): void {
+    const owner = completion.then(
+      () => undefined,
+      () => new Promise<void>(() => {}),
+    );
+    const previous = this.#externalMutationOwner;
+    const aggregate =
+      previous === undefined
+        ? owner
+        : Promise.all([previous, owner]).then(() => undefined);
+    this.#externalMutationOwner = aggregate;
+    this.#externalMutationOwnerPending = true;
+    void aggregate.then(() => {
+      if (this.#externalMutationOwner === aggregate)
+        this.#externalMutationOwnerPending = false;
+    });
+  }
+
+  #externalMutationStillActive(
+    operation: string,
+  ): AnalysisResourceConstraintError {
+    return new AnalysisResourceConstraintError(
+      operation,
+      "capacity",
+      "A debugger inferior still owns the target. Stop or dispose its debugger session, then retry this operation.",
+      null,
+      {
+        retryable: true,
+        remediationAction:
+          "Use gdb_console with its session_id to interrupt, detach, or terminate each remaining inferior, or close_gdb_session, then retry this operation.",
+      },
+    );
+  }
+
   /**
    * Reject target acquisition once process shutdown has begun.
    * Acquisition already inside its transition still finishes; the shutdown
@@ -866,17 +976,22 @@ export class BinarySession
 
   /** Release the engine and replay state while retaining investigation history. */
   close(
-    options: Pick<ExecutionOptions, "progress"> & {
-      readonly retainProviderDocuments?: boolean;
-      readonly cleanupRetry?: AnalysisCleanupRetry;
-    } = {},
+    options: BinarySessionCloseOptions = {},
   ): Promise<Result<null, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
+      this.#closeEpoch++;
+      if (this.#externalMutationOwnerPending)
+        return err(this.#externalMutationStillActive("close_binary"));
       await this.#drainCalls(admittedThrough);
-      return this.#offerCleanupRetry(
-        await this.#closeActive(options),
-        options.cleanupRetry,
-      );
+      const closed = await this.#closeActive(options);
+      if (!closed.ok)
+        return this.#offerCleanupRetry(closed, options.cleanupRetry);
+      if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
+        return this.#offerCleanupRetry(
+          err(this.#externalMutationCleanupFailure),
+          options.cleanupRetry,
+        );
+      return closed;
     });
   }
 
@@ -884,11 +999,12 @@ export class BinarySession
   closeWithSnapshot(
     path: string,
     overwrite: boolean,
-    options: Pick<ExecutionOptions, "progress"> & {
-      readonly cleanupRetry?: AnalysisCleanupRetry;
-    } = {},
+    options: BinarySessionCloseOptions = {},
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
+      this.#closeEpoch++;
+      if (this.#externalMutationOwnerPending)
+        return err(this.#externalMutationStillActive("close_binary"));
       await this.#drainCalls(admittedThrough);
       const snapshot = this.exportAnalysisSnapshot();
       if (!snapshot.ok) return snapshot;
@@ -910,9 +1026,21 @@ export class BinarySession
         await this.#closeActive(options),
         options.cleanupRetry,
       );
-      return closed.ok
-        ? ok(receipt)
-        : err(retainSavedAnalysisSnapshot(closed.error, receipt));
+      if (!closed.ok)
+        return err(retainSavedAnalysisSnapshot(closed.error, receipt));
+      if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true) {
+        const failure = this.#offerCleanupRetry(
+          err(this.#externalMutationCleanupFailure),
+          options.cleanupRetry,
+        );
+        return err(
+          retainSavedAnalysisSnapshot(
+            failure.ok ? this.#externalMutationCleanupFailure : failure.error,
+            receipt,
+          ),
+        );
+      }
+      return ok(receipt);
     });
   }
 
@@ -924,9 +1052,14 @@ export class BinarySession
   ): Promise<Result<null, AnalysisError>> {
     this.beginShutdown();
     return this.#serialize(async (admittedThrough) => {
+      this.#closeEpoch++;
       await this.#drainCalls(admittedThrough);
       const closed = await this.#closeActive(options);
-      if (closed.ok) this.disposeInvestigationRecords();
+      if (closed.ok) {
+        if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
+          return err(this.#externalMutationCleanupFailure);
+        this.disposeInvestigationRecords();
+      }
       return closed;
     });
   }
@@ -1047,9 +1180,7 @@ export class BinarySession
   }
 
   async #closeActive(
-    options: Pick<ExecutionOptions, "progress"> & {
-      readonly retainProviderDocuments?: boolean;
-    },
+    options: BinarySessionCloseOptions,
     onCleanupFailure?: (failure: AnalysisError) => void,
   ): Promise<Result<null, AnalysisError>> {
     const previous = this.#active;
@@ -1104,6 +1235,9 @@ export class BinarySession
         if (previous.cleanupIncomplete && next.cleanupIncomplete)
           resourceFailure.bindCleanupDependencies([previous, next]);
       }
+    // External writers own their cleanup independently of analysis clients.
+    // Settle that owner within this transition before deciding close completion.
+    await options.afterResourceClose?.();
     if (!closed.ok && resourceFailure !== undefined) {
       const combined = analysisErrorWithCleanupFailure(
         closed.error,
@@ -1274,6 +1408,7 @@ export class BinarySession
       providerOperationHealth: client?.operationHealthSnapshot?.() ?? null,
       ...(cleanupRetry === undefined ? {} : { cleanupRetry }),
       cleanupPending:
+        this.#externalMutationOwnerPending ||
         this.#externalMutationCleanupFailure?.cleanupIncomplete === true ||
         this.#retainsCloseCleanup(),
     });
@@ -1534,6 +1669,20 @@ export class BinarySession
 
   #currentRoute(): SessionProviderRoute {
     return this.#active?.route ?? this.#providerRouter.initialRoute();
+  }
+
+  async #waitForExternalMutationOwner(
+    operation: string,
+    signal: AbortSignal | undefined,
+  ): Promise<Result<undefined, AnalysisCancelledError>> {
+    while (this.#externalMutationOwner !== undefined) {
+      const owner = this.#externalMutationOwner;
+      const settled = await this.#waitForTransition(operation, signal, owner);
+      if (!settled.ok) return settled;
+      if (this.#externalMutationOwner === owner)
+        this.#externalMutationOwner = undefined;
+    }
+    return ok(undefined);
   }
 
   #serialize<T>(

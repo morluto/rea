@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -682,3 +682,214 @@ it("records partial GDB startup Evidence from an MCP start error", async () => {
     await closeVerifierResources([() => client.close(), () => server.close()]);
   }
 });
+
+it.skipIf(process.platform === "win32")(
+  "retains an interrupted command until its terminal reply permits safe detach",
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-gdb-cancel-detach-"));
+    const provider = join(directory, "fake-gdb.mjs");
+    const commandPath = join(directory, "command-started");
+    const detachPath = join(directory, "detach-started");
+    const tty = join(directory, "inferior-tty");
+    await writeFile(
+      provider,
+      `#!${process.execPath}
+process.stdout.write("(gdb)\\n");
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", async (chunk) => {
+  for (const line of chunk.split("\\n")) {
+    const match = /^(\\d+)/.exec(line);
+    if (!match) continue;
+    if (line.includes("sleep 600"))
+      await import("node:fs/promises").then(async (fs) => {
+        await fs.writeFile(${JSON.stringify(commandPath)}, "started");
+        while (!(await fs.access(${JSON.stringify(commandPath + ".settle")}).then(() => true, () => false))) await new Promise((resolve) => setTimeout(resolve, 5));
+        process.stdout.write(match[1] + "^done\\n");
+      });
+    else if (line.includes("target-detach"))
+      await import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(detachPath)}, "started")).then(() => process.stdout.write(match[1] + "^done\\n"));
+    else if (line.includes("inferior-tty-show"))
+      process.stdout.write(match[1] + "^done,inferior_tty_terminal=" + ${JSON.stringify(JSON.stringify(tty))} + "\\n");
+    else if (line.includes("list-thread-groups"))
+      process.stdout.write(match[1] + '^done,groups=[{id="i1",pid="4242"}]\\n');
+    else process.stdout.write(match[1] + "^done\\n");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+    const manager = new GdbSessionManager({
+      platform: "linux",
+      environment: { REA_GDB_COMMAND: provider },
+      verifyInferiorOutputSink: async (pid, selectedTty, remember) => {
+        remember({ pid, startTime: selectedTty });
+        return "durable";
+      },
+    });
+    try {
+      const started = await manager.start(undefined, { inferiorTty: tty });
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+      const controller = new AbortController();
+      const execution = manager.execute(
+        started.value.session_id,
+        "shell sleep 600",
+        controller.signal,
+      );
+      await waitForStartedFile(commandPath);
+      controller.abort();
+      const cancelled = await execution;
+
+      expect(cancelled.ok).toBe(false);
+      if (!cancelled.ok) {
+        expect(cancelled.error._tag).toBe("AnalysisCancelledError");
+        expect(cancelled.error.cleanupIncomplete).toBe(true);
+      }
+      // The fake provider sends the original terminal record only after its
+      // simulated operation ends, so cleanup cannot confuse commands.
+      await writeFile(`${commandPath}.settle`, "settle");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect((await manager.close(started.value.session_id)).ok).toBe(true);
+      await waitForStartedFile(detachPath);
+    } finally {
+      await manager.closeAll().catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "interrupts an admitted running target through MCP while a fresh open waits",
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-gdb-mcp-interrupt-"));
+    const provider = join(directory, "gdb.mjs");
+    const marker = join(directory, "running");
+    const interruptStopped = join(directory, "interrupt-stopped");
+    const releaseInterrupt = join(directory, "release-interrupt");
+    await writeFile(
+      provider,
+      `#!${process.execPath}
+import { existsSync, writeFileSync } from "node:fs";
+process.on("SIGINT", () => process.stdout.write('*stopped,reason="signal-received",signal-name="SIGINT"\\n'));
+process.stdout.write("(gdb)\\n");
+let pendingInterrupt;
+setInterval(() => {
+  if (pendingInterrupt && existsSync(${JSON.stringify(releaseInterrupt)})) {
+    process.stdout.write(pendingInterrupt + '^done\\n');
+    pendingInterrupt = undefined;
+  }
+}, 5);
+process.stdin.on("data", (chunk) => {
+  for (const line of chunk.toString().split("\\n")) {
+    const token = /^(\\d+)/.exec(line)?.[1];
+    if (!token) continue;
+    if (line.includes('console "run"')) {
+      process.stdout.write(token + '^running\\n*running,thread-id="all"\\n*stopped,reason="breakpoint-hit",thread-id="1",stopped-threads=["1"]\\n');
+      writeFileSync(${JSON.stringify(marker)}, "started");
+    } else if (line.includes("-thread-info")) process.stdout.write(token + '^done,threads=[{id="1",state="stopped"},{id="2",state="running"}]\\n');
+    else if (line.includes("-exec-interrupt")) {
+      pendingInterrupt = token;
+      process.stdout.write('*stopped,reason="signal-received",stopped-threads="all"\\n');
+      writeFileSync(${JSON.stringify(interruptStopped)}, "stopped");
+    }
+    else process.stdout.write(token + (line.includes("list-thread-groups") ? "^done,groups=[]\\n" : "^done\\n"));
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+    const target = join(directory, "target.macho");
+    const replacement = join(directory, "replacement.macho");
+    await writeFile(target, thinMach(0xfeedfacf, 0x0100000c));
+    await writeFile(replacement, thinMach(0xfeedfacf, 0x0100000c));
+    let resolveReplacementAdmission!: () => void;
+    const replacementAdmission = new Promise<void>((resolve) => {
+      resolveReplacementAdmission = resolve;
+    });
+    const cacheProvider = createCacheProvider([]);
+    const analysisSession = createTestBinarySession(cacheProvider, {
+      resolveAnalysisProfile: async (openedTarget, options) => {
+        if (openedTarget.path === replacement) resolveReplacementAdmission();
+        return cacheProvider.resolveAnalysisProfile!(openedTarget, options);
+      },
+    });
+    expect((await analysisSession.open(target)).ok).toBe(true);
+    const manager = new GdbSessionManager({
+      platform: "linux",
+      environment: { REA_GDB_COMMAND: provider },
+      commandTimeoutMs: 1_000,
+    });
+    const server = new McpServer({ name: "gdb-run-interrupt", version: "1" });
+    registerGdbTools(
+      server,
+      manager,
+      silentLogger,
+      createToolResultDelivery(undefined),
+      undefined,
+      analysisSession,
+    );
+    const client = new Client({ name: "gdb-run-interrupt", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const started = await manager.start();
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+      const sessionId = started.value.session_id;
+      const run = client.callTool({
+        name: "gdb_console",
+        arguments: { session_id: sessionId, command: "run" },
+      });
+      await waitForStartedFile(marker);
+      expect((await run).isError ?? false).toBe(false);
+      let opened = false;
+      const reopening = analysisSession.open(replacement).then((value) => {
+        opened = true;
+        return value;
+      });
+      const enteredOpen = await Promise.race([
+        replacementAdmission.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
+      ]);
+      expect(enteredOpen).toBe(false);
+      expect(opened).toBe(false);
+      const interrupting = client.callTool({
+        name: "gdb_console",
+        arguments: { session_id: sessionId, command: "interrupt" },
+      });
+      await expect
+        .poll(() => readFile(interruptStopped, "utf8").catch(() => ""))
+        .toBe("stopped");
+      const openedBeforeInterruptSettled = await Promise.race([
+        replacementAdmission.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
+      ]);
+      await writeFile(releaseInterrupt, "release");
+      const interrupted = await interrupting;
+      expect(openedBeforeInterruptSettled).toBe(false);
+      expect(interrupted.isError ?? false).toBe(false);
+      await replacementAdmission;
+      expect((await reopening).ok).toBe(true);
+      expect(analysisSession.activeTarget()?.path).toBe(replacement);
+      // An idle session has no admitted run for an interrupt to control.
+      const invalid = await client.callTool({
+        name: "gdb_console",
+        arguments: { session_id: sessionId, command: "interrupt" },
+      });
+      expect(invalid.isError).toBe(true);
+    } finally {
+      await Promise.allSettled([client.close(), server.close()]);
+      try {
+        await manager.closeAll();
+      } finally {
+        try {
+          await analysisSession.close();
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
+      }
+    }
+  },
+);

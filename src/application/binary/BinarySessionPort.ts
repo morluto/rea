@@ -30,6 +30,13 @@ import type {
 import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 export type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 
+/** Cleanup extension runs inside the close transition before final ownership checks. */
+export type BinarySessionCloseOptions = Pick<ExecutionOptions, "progress"> & {
+  readonly retainProviderDocuments?: boolean;
+  readonly cleanupRetry?: AnalysisCleanupRetry;
+  readonly afterResourceClose?: () => Promise<void>;
+};
+
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
 export interface BinarySessionPort
   extends AnalysisOperationPort, InvestigationRecordPort {
@@ -49,7 +56,9 @@ export interface BinarySessionPort
   withAdmittedExternalMutation<Value>(
     _path: string | undefined,
     signal: AbortSignal | undefined,
-    operation: () => Promise<Result<Value, AnalysisError>>,
+    operation: (
+      onDispatch: () => void,
+    ) => Promise<Result<Value, AnalysisError>>,
     completionFailure: (
       value: Result<Value, AnalysisError>,
       error: AnalysisError,
@@ -58,7 +67,12 @@ export interface BinarySessionPort
     cleanupRecovery?: (
       failure: AnalysisError | undefined,
     ) => Promise<Result<null, AnalysisError>>,
+    mutationStart?: "admission" | "provider-dispatch",
+    /** Explicit cleanup/disposition of the currently retained external owner. */
+    ownerCleanup?: boolean,
   ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>>;
+  /** Keep rebinding blocked while allowing the external writer's cleanup to run. */
+  retainExternalMutationOwner?(completion: Promise<unknown>): void;
   open(
     path: string,
     options?: {
@@ -83,10 +97,7 @@ export interface BinarySessionPort
    * to a failed close only while it retains that cleanup for the next close.
    */
   close(
-    options?: Pick<ExecutionOptions, "progress"> & {
-      readonly retainProviderDocuments?: boolean;
-      readonly cleanupRetry?: AnalysisCleanupRetry;
-    },
+    options?: BinarySessionCloseOptions,
   ): Promise<Result<null, AnalysisError>>;
   /** Seal runtime acquisition and release investigation state after successful cleanup. */
   dispose(
@@ -108,9 +119,7 @@ export interface BinarySessionPort
   closeWithSnapshot(
     path: string,
     overwrite: boolean,
-    options?: Pick<ExecutionOptions, "progress"> & {
-      readonly cleanupRetry?: AnalysisCleanupRetry;
-    },
+    options?: BinarySessionCloseOptions,
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>>;
   /** Default complete detail; summary omits provider diagnostics and candidate capabilities. */
   status(options?: {

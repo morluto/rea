@@ -103,6 +103,7 @@ const connect = async (retain = true) => {
     undefined,
     undefined,
     undefined,
+    true,
     retain ? lookup : undefined,
   );
   registerAnalysisViewTool(

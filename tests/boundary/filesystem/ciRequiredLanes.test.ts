@@ -380,6 +380,64 @@ async function assertProviderCacheCallers(
     expect(jobs[name]?.secrets, name).toBeUndefined();
 }
 
+async function assertReverseProviderCacheCaller(
+  jobs: Awaited<ReturnType<typeof workflow>>["jobs"],
+) {
+  expect(jobs.reverse_providers).toEqual({
+    needs: ["changes", "static", "build"],
+    if: "needs.changes.outputs.reverse_providers == 'true'",
+    uses: "./.github/workflows/real-reverse-providers.yml",
+    with: { build_cache_artifact: "rea-build-cache" },
+  });
+  expect(jobs.reverse_providers?.secrets).toBeUndefined();
+  const called = z
+    .object({
+      on: z.object({
+        workflow_call: z.object({
+          inputs: z.record(z.string(), z.unknown()),
+          secrets: z.unknown().optional(),
+        }),
+        workflow_dispatch: z.unknown(),
+      }),
+      jobs: z.record(
+        z.string(),
+        z.object({
+          steps: z.array(
+            z.object({
+              uses: z.string().optional(),
+              with: z.record(z.string(), z.unknown()).optional(),
+            }),
+          ),
+        }),
+      ),
+    })
+    .parse(
+      parse(
+        await readFile(
+          new URL(
+            "../../../.github/workflows/real-reverse-providers.yml",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      ),
+    );
+  expect(called.on.workflow_call.inputs.build_cache_artifact).toMatchObject({
+    type: "string",
+    default: "",
+  });
+  expect(called.on.workflow_call.inputs).not.toHaveProperty(
+    "remote_cache_write",
+  );
+  expect(called.on.workflow_call).not.toHaveProperty("secrets");
+  expect(Object.hasOwn(called.on, "workflow_dispatch")).toBe(true);
+  expect(
+    called.jobs["real-reverse-providers"]?.steps.find(
+      (step) => step.uses === "./.github/actions/portable-build-cache",
+    )?.with,
+  ).toEqual({ build_cache_artifact: "${{ inputs.build_cache_artifact }}" });
+}
+
 it("binds provider build reuse to the current run while keeping standalone dispatches independent", async () => {
   const { jobs } = await workflow();
   const buildSteps = z
@@ -424,6 +482,7 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "apk_signature",
     "javascript_recovery",
     "recorded_crash",
+    "reverse_providers",
     "web_network",
     "web_runtime",
     "web_source_map",
@@ -446,7 +505,11 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     ),
   );
   expect(jobs["test-shard"]?.if).toBe("needs.changes.outputs.code == 'true'");
-  await assertProviderCacheCallers(jobs, consumers);
+  await assertProviderCacheCallers(
+    jobs,
+    consumers.filter((name) => name !== "reverse_providers"),
+  );
+  await assertReverseProviderCacheCaller(jobs);
   const action = z
     .object({
       runs: z.object({
@@ -826,6 +889,7 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
         "nativeaot",
         "ghidra_bridge",
         "website",
+        "reverse_providers",
       ].map((name) => [name, { fast: [name], full: [name] }]),
     ),
   };

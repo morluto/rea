@@ -147,7 +147,7 @@ const expectCancelledResult = (result: CancellationResult): void => {
   });
   expect(result.error.cause).toBeInstanceOf(Error);
   expect(result.error.partialObservation).toMatchObject({
-    raw_result: {
+    normalized_result: {
       stdout: "provider output before cancellation",
       completion_status: "unknown",
     },

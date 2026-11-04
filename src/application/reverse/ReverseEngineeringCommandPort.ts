@@ -14,6 +14,16 @@ export interface ReverseEngineeringProviderCommand {
 
 /** Provider-specific command construction stays outside the application layer. */
 export interface ReverseEngineeringCommandPort {
-  objdump(input: ObjdumpSelection): ReverseEngineeringProviderCommand;
-  rizin(input: RizinInput): ReverseEngineeringProviderCommand;
+  objdump(
+    input: ObjdumpSelection,
+    options?: { readonly signal?: AbortSignal },
+  ):
+    | ReverseEngineeringProviderCommand
+    | Promise<ReverseEngineeringProviderCommand>;
+  rizin(
+    input: RizinInput,
+    options?: { readonly signal?: AbortSignal },
+  ):
+    | ReverseEngineeringProviderCommand
+    | Promise<ReverseEngineeringProviderCommand>;
 }

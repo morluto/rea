@@ -58,6 +58,29 @@ describe("reverse-tools mutation configuration", () => {
       );
   });
 
+  it("selects every explicit cancellation checkpoint without weakening single-target ambiguity checks", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-mutation-checkpoints-",
+    );
+    const source = join(directory, "source.ts");
+    await writeFile(
+      source,
+      "class Owner { run(signal) {\n if (signal?.aborted) return;\n if (signal?.aborted) return;\n } }\n",
+    );
+    const result = runNode(
+      `import {mutationRanges} from "./scripts/lib/reverse-tools-mutation-targets.mjs";
+      const source = process.argv[1];
+      const selector = {kind: "guards", owner: "Owner", method: "run", condition: "signal?.aborted", direct: true};
+      const ranges = mutationRanges(source, [selector]);
+      if (ranges.length !== 2 || new Set(ranges).size !== 2) throw new Error("Cancellation checkpoints lost");
+      try { mutationRanges(source, [{...selector, condition: "missing"}]); throw new Error("Missing guard accepted"); }
+      catch(error) {if(!error.message.includes("found 0")) throw error;}
+      process.stdout.write(JSON.stringify(ranges));`,
+      source,
+    );
+    expect(JSON.parse(result)).toEqual([`${source}:2-2`, `${source}:3-3`]);
+  });
+
   it("fails closed when an owned mutation method is missing", async () => {
     const directory = await createTestTempDirectory("rea-mutation-selector-");
     const source = join(directory, "source.ts");

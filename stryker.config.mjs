@@ -51,7 +51,7 @@ export default {
         name: "retryCleanup",
       },
       {
-        kind: "guard",
+        kind: "guards",
         owner: "ReverseEngineeringService",
         method: "#observeProvider",
         condition: "signal?.aborted",
