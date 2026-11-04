@@ -786,6 +786,44 @@ it("rejects a UTF8String name that is not valid UTF-8", () => {
   ).toBe("commonName=é");
 });
 
+it("accepts only RFC 5280 UTC validity instants", () => {
+  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+  const certificate = (notBefore: Buffer) =>
+    readAsn1(
+      derSeq(
+        derSeq(
+          derInt(1),
+          SHA256_ALG,
+          name,
+          derSeq(notBefore, der(0x17, Buffer.from("260101000000Z"))),
+          name,
+          spki,
+        ),
+        SHA256_ALG,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  for (const [tag, content] of [
+    [0x17, Buffer.from([0xff, 0xfe])],
+    [0x17, Buffer.from("2501010000Z")],
+    [0x17, Buffer.from("250101000000+0800")],
+    [0x17, Buffer.from("250229000000Z")],
+    [0x18, Buffer.from("20250101000000.5Z")],
+    [0x18, Buffer.from("20250101240000Z")],
+  ] as const)
+    expect(() => parseCertificate(certificate(der(tag, content)))).toThrow(
+      PeCertificateAsn1Failure,
+    );
+  // UTCTime 00 is 2000, a leap year; GeneralizedTime carries 2050 onward.
+  for (const [tag, time] of [
+    [0x17, "000229235959Z"],
+    [0x18, "20500101000000Z"],
+  ] as const)
+    expect(
+      parseCertificate(certificate(der(tag, Buffer.from(time)))).not_before,
+    ).toBe(time);
+});
+
 it.each([
   ["GeneralString", 0x1b, Buffer.from("name")],
   ["OCTET STRING", 0x04, Buffer.from("name")],

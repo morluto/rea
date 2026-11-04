@@ -319,12 +319,51 @@ const decodeName = (
   return { text, attributes };
 };
 
+// RFC 5280 4.1.2.5 and X.690 11.7-11.8: UTC with seconds, a final "Z", and
+// no fractional seconds. UTCTime years 50-99 are 1950-1999, 00-49 are 2000-2049.
+const VALIDITY_TIMES = {
+  0x17: {
+    label: "UTCTime",
+    layout: "YYMMDDHHMMSSZ",
+    form: /^(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/u,
+  },
+  0x18: {
+    label: "GeneralizedTime",
+    layout: "YYYYMMDDHHMMSSZ",
+    form: /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/u,
+  },
+} as const;
+
+const isCalendarInstant = (
+  year: number,
+  [month = 0, day = 0, hour = 24, minute = 60, second = 60]: number[],
+): boolean => {
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return (
+    day >= 1 &&
+    day <= (days[month - 1] ?? 0) &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59
+  );
+};
+
 const validityTime = (node: Asn1BerNode, budget: DecodedNameBudget): string => {
   if (node.tag !== 0x17 && node.tag !== 0x18)
     return fail("Validity instant is not UTCTime or GeneralizedTime.");
   // A zero byte becomes "\u0000" (six characters) in the hashed evidence JSON.
   chargeDecodedName(budget, node.content.length * 6);
-  return node.content.toString("utf8");
+  const { label, layout, form } = VALIDITY_TIMES[node.tag];
+  // Latin-1 maps each byte to one character, so no invalid byte can match.
+  const text = node.content.toString("latin1");
+  const [year = 0, ...rest] = form.exec(text)?.slice(1).map(Number) ?? [];
+  if (rest.length === 0)
+    return fail(`${label} validity instant is not ${layout}.`);
+  const fullYear = node.tag === 0x17 ? year + (year < 50 ? 2000 : 1900) : year;
+  if (!isCalendarInstant(fullYear, rest))
+    return fail(`${label} validity instant is not a calendar time.`);
+  return text;
 };
 
 export interface ParsedCertificate {
