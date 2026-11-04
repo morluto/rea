@@ -72,7 +72,7 @@ jobs:
         run: |
           runner_root="${RUNNER_TEMP}/rea-agentenv-runner"
           python -m venv "${runner_root}"
-          "${runner_root}/bin/python" -m pip install --require-virtualenv --no-cache-dir 'agentenv-framework==0.9.1334'
+          "${runner_root}/bin/python" -m pip install --require-virtualenv --no-cache-dir 'agentenv-framework==0.9.1431'
           "${runner_root}/bin/agent-env" --version
           docker version --format '{{.Server.Version}}'
           echo "REA_AGENT_ENV_COMMAND=${runner_root}/bin/agent-env" >> "${GITHUB_ENV}"

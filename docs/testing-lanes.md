@@ -1171,7 +1171,7 @@ installed package entrypoint as the script's first argument for package coverage
 
 `npm run verify:agentenv:environment` is the `real-agentenv` lane. It requires
 the host's Docker CLI named by absolute `REA_DOCKER_COMMAND`, Python 3.12 with
-`agentenv-framework==0.9.1334` installed in a virtual environment whose
+`agentenv-framework==0.9.1431` installed in a virtual environment whose
 `agent-env` binary is named by absolute `REA_AGENT_ENV_COMMAND`, and outbound
 network for `pip` on the runner and for `npm` inside the image build. Both
 variables are required; neither upstream executable is resolved from `PATH`,

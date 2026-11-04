@@ -8,7 +8,7 @@ import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
 
-const AGENTENV_VERSION = "0.9.1334";
+const AGENTENV_VERSION = "0.9.1431";
 const AGENTENV_PIN = `agentenv-framework ${AGENTENV_VERSION}`;
 // The framework builds its infra images from public ECR, whose anonymous pull quota hosted
 // runners share; a rate refusal earns one retry, anything else fails at once.
