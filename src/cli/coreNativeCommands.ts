@@ -137,7 +137,7 @@ export const registerCoreNativeCommands = (
       ),
   });
   cli.command(CLI_COMMANDS.procedureReferences, {
-    description: `Inspect incoming or outgoing references for one native procedure. ${equalSelectorGuidance}`,
+    description: `Inspect incoming or outgoing references for one native procedure. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
       procedure: z
@@ -145,7 +145,7 @@ export const registerCoreNativeCommands = (
         .min(1)
         .optional()
         .describe(
-          `Procedure name or provider address. ${equalSelectorGuidance}`,
+          `Procedure name or provider address. ${addressOrProcedureGuidance}`,
         ),
     }),
     options: z.object({
@@ -154,7 +154,7 @@ export const registerCoreNativeCommands = (
         .min(1)
         .optional()
         .describe(
-          `Procedure name or provider address; use --procedure=<value> for leading dashes. ${equalSelectorGuidance}`,
+          `Procedure name or provider address; use --procedure=<value> for leading dashes. ${addressOrProcedureGuidance}`,
         ),
       direction: z.enum(["incoming", "outgoing"]).default("outgoing"),
       snapshot: snapshotSelectionOption,

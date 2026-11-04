@@ -94,8 +94,9 @@ direction and counts. Page it with `inspect_analysis_view`, using the summary's
 The optional exact source and target filters apply before paging. A row's
 `source_index` identifies it in the original retained collection, including
 duplicates. Endpoint `kind: "selected-procedure"` refers to the full procedure
-in the page summary; `inline` retains a different procedure and `null` preserves
-the original null without asserting why it was unavailable. Use collection
+in the page summary; `kind: "null"` preserves the original null without asserting
+why it was unavailable. `kind: "shared"` carries an index into `items.endpoints`,
+where each other procedure object is stored once per page. Use collection
 `unresolved_calls` for paged unresolved call sites and their original reasons.
 Page coverage describes retained rows, not complete provider discovery or runtime
 execution. A 1 MiB projection allowance, also used by other bounded analysis views, can
