@@ -357,12 +357,24 @@ const escapeMarkdownText = (value: string): string =>
 const markdownHeading = (path: readonly string[]): string =>
   `## ${escapeMarkdownText(path.join("."))}\n\n`;
 
+const markdownEdgeWhitespace = /[\t \p{Z}\ufeff]/u;
+
 /** Encode edge spacing that Markdown can represent as character references. */
-export const encodeMarkdownTableCell = (value: string): string =>
-  escapeTableCell(value).replace(
-    /^[\t \p{Z}\ufeff]+|[\t \p{Z}\ufeff]+$/gu,
-    encodeMarkdownWhitespace,
+export const encodeMarkdownTableCell = (value: string): string => {
+  const escaped = escapeTableCell(value);
+  let start = 0;
+  let end = escaped.length;
+  // Scan each edge once instead of retrying a trailing match at every suffix.
+  while (start < end && markdownEdgeWhitespace.test(escaped[start]!))
+    start += 1;
+  while (end > start && markdownEdgeWhitespace.test(escaped[end - 1]!))
+    end -= 1;
+  return (
+    encodeMarkdownWhitespace(escaped.slice(0, start)) +
+    escaped.slice(start, end) +
+    encodeMarkdownWhitespace(escaped.slice(end))
   );
+};
 
 const renderTable = (
   headers: readonly string[],
