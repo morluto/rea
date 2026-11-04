@@ -53,6 +53,30 @@ cliTest("mcp add rejects valued options without a value", async ({ cli }) => {
     });
   }
 
+  // A separate empty string is not a value either; without this check Incur
+  // silently registers with defaults. REA rejects it before registration.
+  for (const [flag, field] of [
+    ["--agent", "agent"],
+    ["--command", "command"],
+    ["-c", "command"],
+  ] as const) {
+    const result = await run(["mcp", "add", flag, ""]);
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: expect.arrayContaining([
+        expect.objectContaining({
+          code: "invalid_value",
+          missing: false,
+          path: field,
+        }),
+      ]),
+    });
+    await expect(access(settingsPath(home))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }
+
   // Incur would swallow the following flag as the option value; REA rejects it.
   const swallowed = await run(["mcp", "add", "--command", "--agent", "amp"]);
   expect(swallowed.exitCode, swallowed.stderr).toBe(1);
