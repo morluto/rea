@@ -110,6 +110,37 @@ it("retains nested facts in standalone Markdown table cells and mixed arrays", a
   expect(JSON.parse(renderCliDocument(value, "json", false))).toEqual(value);
 });
 
+it("preserves leading and trailing Unicode whitespace in Markdown table keys and values", async () => {
+  const value = [
+    {
+      "\u00a0name": "\u00a0value\u00a0",
+      name: "value",
+      "\u202fname\u202f": "\u202fvalue\u202f",
+      "\u2003name\u2003": "\u2003value\u2003",
+    },
+  ];
+  const markdown = renderCliDocument(value, "md", false);
+  expect(markdown).toContain("&#160;name");
+  expect(markdown).toContain("&#8239;name&#8239;");
+  expect(markdown).toContain("&#8195;name&#8195;");
+  const renderer = await createMarkdownRenderer(process.cwd(), {
+    linkify: false,
+  });
+  const text = (node: DefaultTreeAdapterTypes.Node): string =>
+    node.nodeName === "#text" && "value" in node
+      ? node.value
+      : "childNodes" in node
+        ? node.childNodes.map(text).join("")
+        : "";
+  const rendered = text(parseFragment(renderer.render(markdown)));
+  expect(rendered).toContain("\u00a0name");
+  expect(rendered).toContain("\u00a0value\u00a0");
+  expect(rendered).toContain("\u202fname\u202f");
+  expect(rendered).toContain("\u202fvalue\u202f");
+  expect(rendered).toContain("\u2003name\u2003");
+  expect(rendered).toContain("\u2003value\u2003");
+});
+
 workspaceCliTest(
   "preserves archive inventory facts through public Markdown and JSON output",
   async ({ cli }) => {

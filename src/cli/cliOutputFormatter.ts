@@ -344,23 +344,27 @@ const escapeTableCell = (value: string): string =>
     .replace(/\r\n|\r|\n/g, "<br>");
 
 const encodeMarkdownWhitespace = (whitespace: string): string =>
-  whitespace.replace(/ /g, "&#32;").replace(/\t/g, "&#9;");
+  whitespace.replace(
+    /[\s\p{White_Space}]/gu,
+    (character) => `&#${character.codePointAt(0)};`,
+  );
 
 /** Heading and paragraph facts are literal data, including block syntax. */
 const escapeMarkdownText = (value: string): string =>
   escapeTableCell(value)
     .replace(/^(\s*)([-+=])/, "$1\\$2")
     .replace(/^(\s*\d{1,9})([.)])(?=\s|$)/, "$1\\$2")
-    .replace(/^[ \t]+/, encodeMarkdownWhitespace)
-    .replace(/[ \t]+$/u, encodeMarkdownWhitespace);
+    .replace(/^[\s\p{White_Space}]+/u, encodeMarkdownWhitespace)
+    .replace(/[\s\p{White_Space}]+$/u, encodeMarkdownWhitespace);
 
 const markdownHeading = (path: readonly string[]): string =>
   `## ${escapeMarkdownText(path.join("."))}\n\n`;
 
 /** Encode literal text for a Markdown table cell, including edge whitespace. */
 export const encodeMarkdownTableCell = (value: string): string =>
-  escapeTableCell(value).replace(/^[ \t]+|[ \t]+$/g, (whitespace) =>
-    encodeMarkdownWhitespace(whitespace),
+  escapeTableCell(value).replace(
+    /^[\s\p{White_Space}]+|[\s\p{White_Space}]+$/gu,
+    encodeMarkdownWhitespace,
   );
 
 const renderTable = (
