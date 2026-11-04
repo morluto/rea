@@ -47,6 +47,7 @@ describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
       arguments: ["/tmp/today.md"],
       environment,
       home,
+      callerDirectory: home,
     });
 
     if (!inspected.ok) throw new Error(inspected.error.reason);
@@ -79,6 +80,26 @@ describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
     );
   });
 
+  it("resolves a relative executable from the caller's directory and runs it there", async () => {
+    const { home, bin, environment } = await fixture();
+
+    const inspected = await inspectLinuxApplication({
+      desktopEntry: undefined,
+      executable: "./notes-app",
+      arguments: ["today.md"],
+      environment,
+      home,
+      callerDirectory: bin,
+    });
+
+    if (!inspected.ok) throw new Error(inspected.error.reason);
+    expect(inspected.value.inventory.argv).toEqual([
+      join(bin, "notes-app"),
+      "today.md",
+    ]);
+    expect(inspected.value.inventory.working_directory).toBe(bin);
+  });
+
   it("refuses an unknown entry and an executable that is not on PATH", async () => {
     const { home, environment } = await fixture();
     const missingEntry = await inspectLinuxApplication({
@@ -87,6 +108,7 @@ describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
       arguments: [],
       environment,
       home,
+      callerDirectory: home,
     });
     expect(!missingEntry.ok && missingEntry.error.reason).toBe(
       "desktop_entry_not_found",
@@ -97,6 +119,7 @@ describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
       arguments: [],
       environment,
       home,
+      callerDirectory: home,
     });
     expect(!missingProgram.ok && missingProgram.error).toEqual({
       reason: "executable_not_found",

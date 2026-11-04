@@ -1,4 +1,4 @@
-import { createInterface } from "node:readline";
+import { createInterface, type Interface } from "node:readline";
 
 import { z } from "incur";
 import type { Logger } from "pino";
@@ -56,6 +56,41 @@ const captureOptions = z.object({
   ),
 });
 
+const QUEUE_PAUSE = 16;
+const QUEUE_RESUME = 4;
+
+/**
+ * Requests read from stdin. Reading pauses while many are queued, so a fast
+ * driver cannot grow the queue without bound.
+ */
+class SessionRequestQueue {
+  readonly #requests: SessionRequest[] = [];
+  #paused = false;
+
+  constructor(readonly lines: Interface) {
+    lines.on("line", (line) => {
+      this.#requests.push(parseSessionRequest(line));
+      if (!this.#paused && this.#requests.length >= QUEUE_PAUSE) {
+        this.#paused = true;
+        lines.pause();
+      }
+    });
+  }
+
+  next(): SessionRequest | undefined {
+    const request = this.#requests.shift();
+    if (this.#paused && this.#requests.length <= QUEUE_RESUME) {
+      this.#paused = false;
+      this.lines.resume();
+    }
+    return request;
+  }
+
+  close(): void {
+    this.lines.close();
+  }
+}
+
 /** `stop` ends the session; any other line, empty or not, names a checkpoint. */
 export const parseSessionRequest = (line: string): SessionRequest => {
   const text = line.trim();
@@ -80,13 +115,8 @@ export const registerDesktopCaptureCommands = (
           logger,
           CLI_COMMANDS.captureDesktopApplication,
           async () => {
-            const requests: SessionRequest[] = [];
-            const lines = createInterface({
-              input: process.stdin,
-              terminal: false,
-            });
-            lines.on("line", (line) =>
-              requests.push(parseSessionRequest(line)),
+            const requests = new SessionRequestQueue(
+              createInterface({ input: process.stdin, terminal: false }),
             );
             try {
               return await captureDesktopApplication(
@@ -105,7 +135,8 @@ export const registerDesktopCaptureCommands = (
                 {
                   platform: process.platform,
                   environment,
-                  nextRequest: () => requests.shift(),
+                  callerDirectory: process.cwd(),
+                  nextRequest: () => requests.next(),
                   report: async (message) => {
                     process.stderr.write(
                       `${JSON.stringify({ rea_progress: { phase: "desktop_capture", message } })}\n`,
@@ -115,7 +146,7 @@ export const registerDesktopCaptureCommands = (
                 signal,
               );
             } finally {
-              lines.close();
+              requests.close();
             }
           },
         ),

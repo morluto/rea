@@ -57,6 +57,7 @@ const fixture = async () => {
     join(bin, "xprop"),
     [
       "#!/bin/sh",
+      `if [ -f "${join(root, "display-broken")}" ]; then exit 1; fi`,
       'if [ "$1" = "-root" ]; then',
       `  if [ -f "${windowFile}" ]; then echo "_NET_CLIENT_LIST: window id # 0x100001"; else echo "_NET_CLIENT_LIST: window id # "; fi`,
       "else",
@@ -85,6 +86,7 @@ const host = (
 ) => ({
   platform,
   environment,
+  callerDirectory: environment.HOME ?? "/",
   nextRequest,
   report: async () => {},
 });
@@ -205,6 +207,57 @@ describe.skipIf(process.platform !== "linux")(
 
       expect(JSON.stringify(refused)).toContain("already open");
       await expect(readdir(output)).rejects.toThrow();
+    });
+
+    it("refuses when the window list cannot be read", async () => {
+      const { root, environment } = await fixture();
+      await writeFile(join(root, "display-broken"), "");
+      const output = join(root, "out");
+
+      const refused = await captureDesktopApplication(
+        request(output),
+        host(environment),
+      );
+
+      expect(refused).toMatchObject({
+        details: { reason: "display_unreadable" },
+      });
+      await expect(readdir(output)).rejects.toThrow();
+    });
+
+    it("keeps the checkpoints taken before a cancellation and closes the application", async () => {
+      const { root, home, environment } = await fixture();
+      const output = join(root, "out");
+      const statePath = join(home, ".config/fakeapp/state.ini");
+      const controller = new AbortController();
+      let checkpointed = false;
+      const nextRequest = (): SessionRequest | undefined => {
+        if (checkpointed) {
+          controller.abort();
+          return undefined;
+        }
+        if (readFileSyncSafe(statePath) !== "count=1\n") return undefined;
+        checkpointed = true;
+        return { kind: "checkpoint", name: "written" };
+      };
+
+      const evidence = await captureDesktopApplication(
+        request(output),
+        host(environment, nextRequest),
+        controller.signal,
+      );
+
+      if ("error" in evidence) throw new Error(JSON.stringify(evidence));
+      const capture = desktopApplicationCaptureSchema.parse(
+        evidence.normalized_result,
+      );
+      expect(capture.session.end_reason).toBe("cancelled");
+      expect(capture.session.cleanup).toEqual({ verified: true, reason: null });
+      expect(
+        capture.state.checkpoints.map((checkpoint) => checkpoint.name),
+      ).toEqual(["baseline", "written"]);
+      expect(await readdir(output)).toContain("capture.json");
+      await expect(readFile(join(root, "window-open"))).rejects.toThrow();
     });
 
     it("ends when the application exits and records what it wrote on the way out", async () => {

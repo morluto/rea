@@ -39,6 +39,8 @@ export const desktopCheckpointSchema = z.strictObject({
   entries: z.int().min(0),
   truncated: z.boolean(),
   unreadable_directories: z.int().min(0),
+  /** Differences left out because a walk did not list the parent directory. */
+  unconfirmed_changes: z.int().min(0),
   changes: z.array(desktopStateChangeSchema),
   retained: z.array(desktopRetainedFileSchema),
 });
@@ -116,7 +118,12 @@ export type DesktopProcess = z.infer<typeof processSchema>;
 export const desktopSessionSchema = z.strictObject({
   started_at: z.iso.datetime(),
   duration_ms: milliseconds,
-  end_reason: z.enum(["application_exited", "stop_requested", "time_limit"]),
+  end_reason: z.enum([
+    "application_exited",
+    "stop_requested",
+    "time_limit",
+    "cancelled",
+  ]),
   launch_pid: z.int().positive(),
   exit: z
     .strictObject({ code: z.int().nullable(), signal: z.string().nullable() })
@@ -130,7 +137,14 @@ export const desktopSessionSchema = z.strictObject({
   opened_files: z.array(
     z.strictObject({ path: z.string().min(1), first_seen_ms: milliseconds }),
   ),
-  stderr_tail: z.string(),
+  /** The first bytes the launched process wrote to stderr. */
+  stderr: z.string(),
+  stderr_truncated: z.boolean(),
+  /** Whether the run-token sweep confirmed every launched process is gone. */
+  cleanup: z.strictObject({
+    verified: z.boolean(),
+    reason: z.string().nullable(),
+  }),
 });
 export type DesktopSession = z.infer<typeof desktopSessionSchema>;
 
@@ -156,6 +170,7 @@ export const desktopApplicationCaptureSchema = z.strictObject({
         reason: z.enum([
           "too_large",
           "budget_exhausted",
+          "changed_since_walk",
           "changed_during_read",
           "unreadable",
         ]),

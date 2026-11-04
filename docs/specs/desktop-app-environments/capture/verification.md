@@ -18,10 +18,12 @@ arm64 container with Node v24.22.1, Xvfb, xfwm4 and Mousepad 0.6.1-1build2.
   failed. 38 of them fail on main in the same environment (client profiles,
   setup, doctor and version reports). The 39th, `closedStdout`, passed three
   runs out of three when rerun alone.
-- The new domain, adapter and service tests on Linux: 46 passed, including
-  three captures of a fake application with a stub `xprop`: a requested
+- The new domain, adapter and service tests on Linux: 51 passed, including
+  five captures of a fake application with a stub `xprop`: a requested
   checkpoint with the state change and its content, an application that exits
-  on its own, and a refusal while the application's window is already open.
+  on its own, a refusal while the application's window is already open, a
+  refusal when the window list cannot be read, and a cancellation after a
+  checkpoint that still writes the capture and verifies cleanup.
 
 ## Mousepad end to end
 
@@ -34,19 +36,21 @@ and then `stop`. The session was recorded with `ffmpeg` (30 seconds).
   package is `mousepad` 0.6.1-1build2 from
   `http://ports.ubuntu.com/ubuntu-ports noble/universe arm64 Packages`; no
   Electron markers.
-- Session: the first window appeared after 527 ms; the Mousepad window's
+- Session: the first window appeared after about 530 ms; the Mousepad window's
   titles went from `Untitled 1 - Mousepad` to `*Untitled 1 - Mousepad` to
   `~/Documents/groceries.txt - Mousepad`; the `Save As` dialog was recorded as a
   dialog of the application; the progress terminal's window was recorded and
   not attributed. The window match is class `Mousepad`, instance `mousepad`.
   The session ended on `stop` after 25.9 s and Mousepad exited with code 0.
-- State: checkpoints `baseline`, `typed`, `saved`, `stop` and `exit`. `saved`
-  holds `~/Documents/groceries.txt` as created, and its retained content is
-  `Groceries: milk, eggs, coffee` with a matching SHA-256. `exit` holds
-  `~/.config/Mousepad/accels.scm`, marked as a state directory. The dconf
-  database, the window manager's settings and GTK's recently used list also
-  changed and are not marked. Nine files (27,256 bytes) were retained and none
-  were omitted.
+- Cleanup: verified; the only process recorded was `mousepad`, carrying the
+  run token.
+- State: checkpoints `baseline`, `typed`, `saved`, `stop` and `exit`, none
+  with unconfirmed changes. `saved` holds `~/Documents/groceries.txt` as
+  created, and its retained content is `Groceries: milk, eggs, coffee` with a
+  matching SHA-256. `exit` holds `~/.config/Mousepad/accels.scm`, marked as a
+  state directory. The dconf database, the window manager's settings and GTK's
+  recently used list also changed and are not marked. Nine files were retained
+  and none were omitted.
 
 A second run started Mousepad before the capture. The capture refused with
 `The application is already open: "Untitled 1 - Mousepad" (pid 35).` and wrote
@@ -60,5 +64,5 @@ tab in its existing window while the launched process exited at once.
   Joplin and a full desktop VM are for later steps.
 - No real snap, flatpak or AppImage application was captured; those paths are
   covered by parser tests only.
-- The time limit and cancellation paths are covered by code review, not by a
-  test.
+- The time limit is covered by code review, not by a test. Cancellation is
+  covered by a Linux test with a fake application, not by Ctrl-C on Mousepad.

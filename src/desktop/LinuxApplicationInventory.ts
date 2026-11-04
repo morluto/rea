@@ -1,6 +1,13 @@
 import { constants } from "node:fs";
-import { access, lstat, open, readdir, realpath } from "node:fs/promises";
-import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
+import { access, lstat, readdir, realpath } from "node:fs/promises";
+import {
+  basename,
+  delimiter,
+  dirname,
+  isAbsolute,
+  join,
+  resolve,
+} from "node:path";
 
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
 import {
@@ -20,12 +27,30 @@ import {
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
+import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
+import {
+  NonRegularFileReadError,
+  RegularFileChangedError,
+} from "../filesystem/RegularFile.js";
+import {
+  RegularFileCapacityError,
+  readStableFileBytes,
+  readStableFilePrefix,
+} from "../filesystem/readStableFileBytes.js";
 import {
   execFileOutput,
   execFileOutputFailure,
 } from "../process/ExecFileOutput.js";
 
 const DESKTOP_ENTRY_MAX_BYTES = 1024 * 1024;
+const REFUSED_READ_CODES = new Set(["ENOENT", "EACCES", "EPERM", "ELOOP"]);
+
+/** A read the inventory reports as unreadable rather than failing on. */
+const isRefusedRead = (cause: unknown): boolean =>
+  cause instanceof RegularFileCapacityError ||
+  cause instanceof RegularFileChangedError ||
+  cause instanceof NonRegularFileReadError ||
+  REFUSED_READ_CODES.has((cause as NodeJS.ErrnoException).code ?? "");
 const COMMAND_TIMEOUT_MS = 30_000;
 const COMMAND_MAX_BUFFER = 4 * 1024 * 1024;
 
@@ -36,6 +61,8 @@ export interface LinuxApplicationRequest {
   readonly arguments: readonly string[];
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly home: string;
+  /** Where a relative executable is found and an executable launch runs. */
+  readonly callerDirectory: string;
 }
 
 /** Why the request does not name a launchable application. */
@@ -99,32 +126,39 @@ const locateDesktopEntry = async (
 
 const readDesktopEntry = async (
   path: string,
+  signal: AbortSignal | undefined,
 ): Promise<Result<DesktopEntry, LinuxApplicationRefusal>> => {
-  const handle = await open(path, "r").catch(() => undefined);
-  if (handle === undefined)
-    return err({ reason: "desktop_entry_invalid", detail: "unreadable" });
+  const options = {
+    symlinks: "follow" as const,
+    ...(signal === undefined ? {} : { signal }),
+  };
+  let text: string;
   try {
-    const buffer = Buffer.alloc(DESKTOP_ENTRY_MAX_BYTES + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead > DESKTOP_ENTRY_MAX_BYTES)
-      return err({
-        reason: "desktop_entry_invalid",
-        detail: "larger than 1 MiB",
-      });
-    const parsed = parseDesktopEntry(
-      buffer.subarray(0, bytesRead).toString("utf8"),
-    );
-    if (!parsed.ok)
-      return err({ reason: "desktop_entry_invalid", detail: parsed.error });
-    if (parsed.value.type !== "Application" || parsed.value.exec === null)
-      return err({
-        reason: "desktop_entry_invalid",
-        detail: "not an Application entry with an Exec key",
-      });
-    return ok(parsed.value);
-  } finally {
-    await handle.close();
+    text = (
+      await withOwnedRegularFile(path, options, ({ handle }) =>
+        readStableFileBytes(handle, path, DESKTOP_ENTRY_MAX_BYTES, options),
+      )
+    ).toString("utf8");
+  } catch (cause: unknown) {
+    signal?.throwIfAborted();
+    if (!isRefusedRead(cause)) throw cause;
+    return err({
+      reason: "desktop_entry_invalid",
+      detail:
+        cause instanceof RegularFileCapacityError
+          ? "larger than 1 MiB"
+          : "unreadable",
+    });
   }
+  const parsed = parseDesktopEntry(text);
+  if (!parsed.ok)
+    return err({ reason: "desktop_entry_invalid", detail: parsed.error });
+  if (parsed.value.type !== "Application" || parsed.value.exec === null)
+    return err({
+      reason: "desktop_entry_invalid",
+      detail: "not an Application entry with an Exec key",
+    });
+  return ok(parsed.value);
 };
 
 /** Find a program the way a shell would, without running a shell. */
@@ -228,15 +262,25 @@ const debianPackage = async (
   return unknown;
 };
 
-const readHeader = async (path: string): Promise<Uint8Array> => {
-  const handle = await open(path, "r").catch(() => undefined);
-  if (handle === undefined) return new Uint8Array();
+const readHeader = async (
+  path: string,
+  signal: AbortSignal | undefined,
+): Promise<Uint8Array> => {
+  const options = {
+    symlinks: "follow" as const,
+    ...(signal === undefined ? {} : { signal }),
+  };
   try {
-    const buffer = Buffer.alloc(16);
-    const { bytesRead } = await handle.read(buffer, 0, 16, 0);
-    return buffer.subarray(0, bytesRead);
-  } finally {
-    await handle.close();
+    return await withOwnedRegularFile(
+      path,
+      options,
+      async ({ handle }) =>
+        (await readStableFilePrefix(handle, path, 16, options)).bytes,
+    );
+  } catch (cause: unknown) {
+    signal?.throwIfAborted();
+    if (!isRefusedRead(cause)) throw cause;
+    return new Uint8Array();
   }
 };
 
@@ -267,7 +311,7 @@ const identifyPackage = async (
     return { kind: "flatpak", name: fromPath.name, ...base };
   if (
     fromPath?.kind === "appimage" ||
-    isAppImageHeader(await readHeader(resolved ?? program))
+    isAppImageHeader(await readHeader(resolved ?? program, signal))
   )
     return { kind: "appimage", name: basename(resolved ?? program), ...base };
   return debianPackage(
@@ -342,6 +386,7 @@ const stateDirectories = async (
 
 const launchCommand = async (
   request: LinuxApplicationRequest,
+  signal: AbortSignal | undefined,
 ): Promise<
   Result<
     {
@@ -352,15 +397,24 @@ const launchCommand = async (
     LinuxApplicationRefusal
   >
 > => {
-  if (request.desktopEntry === undefined)
+  if (request.desktopEntry === undefined) {
+    const executable = request.executable ?? "";
+    // Run like a shell would: from the caller's directory, with a relative
+    // path resolved there rather than in the application's working directory.
     return ok({
-      argv: [request.executable ?? "", ...request.arguments],
-      workingDirectory: request.home,
+      argv: [
+        executable.includes("/")
+          ? resolve(request.callerDirectory, executable)
+          : executable,
+        ...request.arguments,
+      ],
+      workingDirectory: request.callerDirectory,
       entry: null,
     });
+  }
   const located = await locateDesktopEntry(request, request.desktopEntry);
   if (!located.ok) return located;
-  const entry = await readDesktopEntry(located.value.path);
+  const entry = await readDesktopEntry(located.value.path, signal);
   if (!entry.ok) return entry;
   const tokens = tokenizeDesktopExec(entry.value.exec ?? "");
   if (!tokens.ok)
@@ -397,7 +451,7 @@ export const inspectLinuxApplication = async (
   request: LinuxApplicationRequest,
   signal?: AbortSignal,
 ): Promise<Result<LinuxApplicationFacts, LinuxApplicationRefusal>> => {
-  const command = await launchCommand(request);
+  const command = await launchCommand(request, signal);
   if (!command.ok) return command;
   const { argv, workingDirectory, entry } = command.value;
   const wrapper = unwrapDesktopCommand(argv);

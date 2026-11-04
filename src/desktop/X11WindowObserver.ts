@@ -11,6 +11,8 @@ import {
 
 const XPROP_TIMEOUT_MS = 5_000;
 const XPROP_MAX_BUFFER = 1024 * 1024;
+/** Reads of a window whose class or owner pid was missing, for one set late. */
+const INCOMPLETE_READS = 4;
 
 /** One managed top-level window seen in a sample. */
 export interface ObservedWindow extends X11WindowProperties {
@@ -27,13 +29,17 @@ export class XpropUnavailableError extends Error {
 
 /**
  * Lists the window manager's client windows with `xprop`. A window's class,
- * pid and type are read once; titles are re-read only for windows the caller
- * marks as interesting, since every read starts a process.
+ * pid and type are read once, or a few times while either is still missing;
+ * titles are re-read only for windows the caller marks as interesting, since
+ * every read starts a process. Entries for closed windows are dropped.
  */
 export class X11WindowObserver {
   readonly #command: string;
   readonly #environment: NodeJS.ProcessEnv;
-  readonly #known = new Map<string, X11WindowProperties>();
+  readonly #known = new Map<
+    string,
+    { readonly properties: X11WindowProperties; readonly reads: number }
+  >();
 
   constructor(command: string, environment: NodeJS.ProcessEnv) {
     this.#command = command;
@@ -72,10 +78,21 @@ export class X11WindowObserver {
     );
     if (root === undefined) return undefined;
     const windows: ObservedWindow[] = [];
-    for (const id of parseX11ClientList(root)) {
+    const ids = parseX11ClientList(root);
+    for (const id of this.#known.keys())
+      if (!ids.includes(id)) this.#known.delete(id);
+    for (const id of ids) {
       const cached = this.#known.get(id);
-      if (cached !== undefined && !refresh({ id, ...cached })) {
-        windows.push({ id, ...cached });
+      const incomplete =
+        cached !== undefined &&
+        (cached.properties.class === null || cached.properties.pid === null) &&
+        cached.reads < INCOMPLETE_READS;
+      if (
+        cached !== undefined &&
+        !incomplete &&
+        !refresh({ id, ...cached.properties })
+      ) {
+        windows.push({ id, ...cached.properties });
         continue;
       }
       const output = await this.#xprop(
@@ -84,7 +101,7 @@ export class X11WindowObserver {
       );
       if (output === undefined) continue;
       const properties = parseX11WindowProperties(output);
-      this.#known.set(id, properties);
+      this.#known.set(id, { properties, reads: (cached?.reads ?? 0) + 1 });
       windows.push({ id, ...properties });
     }
     return windows;

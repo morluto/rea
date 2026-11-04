@@ -5,21 +5,51 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
 import { DesktopContentStore } from "./DesktopContentStore.js";
+import { walkHomeState } from "./HomeStateWalker.js";
 
 const sha256 = (text: string) =>
   createHash("sha256").update(text).digest("hex");
 
-describe("DesktopContentStore", () => {
-  it("stores each distinct content once under its SHA-256", async () => {
-    const root = await createTestTempDirectory("desktop-content-");
-    await writeFile(join(root, "a.txt"), "same");
-    await writeFile(join(root, "b.txt"), "same");
-    const store = new DesktopContentStore(join(root, "capture"), 1024, 4096);
-    await store.prepare();
+/** The walked state of every path under the root. */
+const walked = async (root: string) => {
+  const { entries } = await walkHomeState([root], [], 100);
+  return (path: string): DesktopPathState => {
+    const state = entries.get(join(root, path));
+    if (state === undefined) throw new Error(`not walked: ${path}`);
+    return state;
+  };
+};
 
-    const first = await store.retain(join(root, "a.txt"));
-    const second = await store.retain(join(root, "b.txt"));
+const store = async (root: string, maxFileBytes: number, maxBytes: number) => {
+  const created = new DesktopContentStore(
+    join(root, "capture"),
+    maxFileBytes,
+    maxBytes,
+  );
+  await mkdir(join(root, "capture"));
+  await created.prepare();
+  return created;
+};
+
+describe("DesktopContentStore", () => {
+  it("stores each distinct content once and charges the budget once", async () => {
+    const root = await createTestTempDirectory("desktop-content-");
+    await mkdir(join(root, "files"));
+    await writeFile(join(root, "files/a.txt"), "same");
+    await writeFile(join(root, "files/b.txt"), "same");
+    const state = await walked(join(root, "files"));
+    const content = await store(root, 1024, 4);
+
+    const first = await content.retain(
+      join(root, "files/a.txt"),
+      state("a.txt"),
+    );
+    const second = await content.retain(
+      join(root, "files/b.txt"),
+      state("b.txt"),
+    );
 
     expect(first).toEqual({
       kind: "retained",
@@ -33,40 +63,44 @@ describe("DesktopContentStore", () => {
     expect(
       await readFile(join(root, "capture/content", sha256("same")), "utf8"),
     ).toBe("same");
-    expect([store.files, store.bytes]).toEqual([1, 4]);
+    expect([content.files, content.bytes]).toEqual([1, 4]);
   });
 
   it("records why a file was left out", async () => {
     const root = await createTestTempDirectory("desktop-content-omit-");
-    await writeFile(join(root, "big.bin"), "0123456789");
-    await writeFile(join(root, "a.txt"), "aaaa");
-    await writeFile(join(root, "b.txt"), "bbbb");
-    await mkdir(join(root, "folder"));
-    const store = new DesktopContentStore(join(root, "capture"), 8, 6);
-    await store.prepare();
+    await mkdir(join(root, "files/folder"), { recursive: true });
+    await writeFile(join(root, "files/big.bin"), "0123456789");
+    await writeFile(join(root, "files/a.txt"), "aaaa");
+    await writeFile(join(root, "files/b.txt"), "bbbb");
+    await writeFile(join(root, "files/later.txt"), "v1");
+    const state = await walked(join(root, "files"));
+    await writeFile(join(root, "files/later.txt"), "version 2");
+    const content = await store(root, 8, 6);
+    const retain = (name: string) =>
+      content.retain(join(root, "files", name), state(name));
 
-    expect(await store.retain(join(root, "big.bin"))).toEqual({
+    expect(await retain("big.bin")).toEqual({
       kind: "omitted",
       reason: "too_large",
     });
-    expect((await store.retain(join(root, "a.txt"))).kind).toBe("retained");
-    expect(await store.retain(join(root, "b.txt"))).toEqual({
+    expect((await retain("a.txt")).kind).toBe("retained");
+    expect(await retain("b.txt")).toEqual({
       kind: "omitted",
       reason: "budget_exhausted",
     });
-    expect(await store.retain(join(root, "folder"))).toEqual({
+    expect(await retain("folder")).toEqual({
       kind: "omitted",
       reason: "unreadable",
     });
-    expect(await store.retain(join(root, "missing"))).toEqual({
+    expect(await retain("later.txt")).toEqual({
       kind: "omitted",
-      reason: "unreadable",
+      reason: "changed_since_walk",
     });
-    expect(store.omissions.map((omission) => omission.reason)).toEqual([
+    expect(content.omissions.map((omission) => omission.reason)).toEqual([
       "too_large",
       "budget_exhausted",
       "unreadable",
-      "unreadable",
+      "changed_since_walk",
     ]);
   });
 });

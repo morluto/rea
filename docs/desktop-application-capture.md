@@ -31,10 +31,17 @@ rea capture-desktop-application --executable gnucash --argument /home/ada/books.
 
 Desktop entries are looked up in `$XDG_DATA_HOME/applications` and then each
 `$XDG_DATA_DIRS` directory. The entry's `Exec` line is expanded with no files;
-`--argument` values are appended in its place.
+`--argument` values are appended in its place, and the application runs in the
+entry's `Path` or the home directory. An `--executable` runs from the current
+directory, as it would from a shell, and a relative path to it is resolved
+there.
 
-The command records the starting state, launches the application in its own
-process group and then reads commands from stdin, one per line:
+Before writing anything the command refuses to start if a window of the
+application is already open, or if the window list cannot be read. A launch
+beside a running instance can hand off to it, and that instance's unsaved
+state would be missing from the baseline. It then records the starting state,
+launches the application in its own process group with a run token in its
+environment, and reads commands from stdin, one per line:
 
 | Line                                        | Effect                                                      |
 | ------------------------------------------- | ----------------------------------------------------------- |
@@ -42,9 +49,18 @@ process group and then reads commands from stdin, one per line:
 | any other text except `stop`                | Record a checkpoint named by that text                      |
 | `stop`                                      | Record a final checkpoint, close the application and finish |
 
-The session also finishes when the application's processes and windows are
-all gone, or when `--max-duration-seconds` passes. Progress lines on stderr
-say when the window has opened and when each checkpoint is taken.
+The session also finishes when the launched process has exited and the
+application's processes and windows are all gone, or when
+`--max-duration-seconds` passes. One queued line is handled between samples,
+and reading stdin pauses while 16 lines wait. Progress lines on stderr say when
+the window has opened and when each checkpoint is taken.
+
+When the session ends the capture sends SIGTERM to the launched process, waits
+up to five seconds, and then removes every process that still carries the run
+token, whether or not it stayed in the process group. Interrupting the command
+(Ctrl-C) ends the session the same way without a further checkpoint; the
+capture is still written with end reason `cancelled`, and the command exits
+with status 130.
 
 A person types these lines in the terminal. An agent can drive the
 application with a tool such as `xdotool` and write the lines to a FIFO that
@@ -61,7 +77,8 @@ it passes as stdin.
 
 ## The capture folder
 
-The output folder must be new or empty. It holds:
+The output folder must be new, or empty and owned by the current user; the
+command makes it private (mode 0700). It holds:
 
 - `capture.json`: the Evidence record, also printed on stdout.
 - `content/<sha256>`: the bytes of each retained file, stored once per
@@ -88,34 +105,39 @@ process's exit status; every process seen in the application's tree; every
 client window with its class pair, titles, owner pid and type, marked when it
 belongs to the application; when the first application window appeared; the
 most common class pair of the application's windows, for matching its window
-later; files the application's processes held open under the walked roots; and
-the last 8 KiB of the application's stderr.
+later; files the application's processes held open under the walked roots; the first
+8 KiB of the launched process's stderr; and whether cleanup was verified. Each
+process records whether it carries the capture's run token.
 
 A window belongs to the application when its owner pid is one of the
 application's processes or its class matches the desktop entry's
-`StartupWMClass`, the executable's name or the last part of the entry id. A
-matching window's pid joins the application's processes, so an application
-that hands its launch to another instance of itself is still followed. When
-the capture stops it signals only the processes it started, so such an
-instance is left running.
+`StartupWMClass`, the executable's name or the last part of the entry id.
+Ownership is checked again at every sample, because a window can appear before
+the process that owns it is found. A matching window's pid joins the
+application's processes, so a launch handed to a process the capture did not
+start, such as a D-Bus activated service, is still followed. That process does
+not carry the run token, so the capture never signals it and leaves it
+running.
 
-If a window of the application is already open, the capture refuses to start
-and asks for it to be closed first. A launch beside a running instance can hand
-off to it, and that instance's unsaved state would be missing from the
-baseline.
-
-**State.** The walked roots (the home directory plus any `--state-path`
+**State.** The walked roots (the home directory plus any content root
 outside it), the content roots (state directories, `--state-path` values and
 absolute `--argument` values), and the checkpoints in order: `baseline` before
 launch, each requested checkpoint, `stop` or `time-limit`, and `exit` after the
 application has gone. Each checkpoint records how many paths its walk saw,
 whether it was truncated, which paths were created, modified, deleted or
-changed type since the previous checkpoint, and which files it retained. The
+changed type since the previous checkpoint, and which files it retained. A
+path counts as created or deleted only where the walk listed its nearest
+existing directory completely; differences under a directory that could not be
+listed, or that a truncated walk did not reach, are counted as unconfirmed
+instead. The
 baseline retains every file under the content roots; later checkpoints retain
 every changed file. A change records the file's type, size, mode,
 modification time and, when known, the SHA-256 of its content before and
 after, plus whether it lies in a state directory and whether the application
-held it open. Files that could not be retained are listed with the reason.
+held it open. A file is retained only if it is still the version the walk
+recorded and does not change while it is read. Files that could not be
+retained are listed with the reason: too large, over the content budget,
+changed since the walk, changed during the read, or unreadable.
 Directories the application held files open in, but whose starting content was
 not retained, are listed so a second capture can pass them with
 `--state-path`.

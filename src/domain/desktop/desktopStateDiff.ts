@@ -10,6 +10,15 @@ export interface DesktopPathState {
   readonly inode: string;
 }
 
+/** One stat walk and the places where it established what exists. */
+export interface DesktopWalk {
+  readonly entries: ReadonlyMap<string, DesktopPathState>;
+  /** Directories whose every entry the walk recorded. */
+  readonly listed: ReadonlySet<string>;
+  /** Roots whose presence or absence the walk established. */
+  readonly roots: ReadonlySet<string>;
+}
+
 /** A difference between two walks before attribution and content are added. */
 export interface DesktopPathDifference {
   readonly path: string;
@@ -29,22 +38,48 @@ const sameContentIdentity = (
     before.inode === after.inode &&
     before.mode === after.mode);
 
-/** Compare two walks of the same roots, in code-point order of path. */
+const parentOf = (path: string): string =>
+  path.slice(0, Math.max(1, path.lastIndexOf("/")));
+
+/**
+ * Whether the walk established this path's presence or absence: it is a
+ * checked root, or its nearest ancestor present in the walk was fully listed.
+ */
+const covers = (walk: DesktopWalk, path: string): boolean => {
+  if (walk.roots.has(path)) return true;
+  for (let directory = parentOf(path); ; directory = parentOf(directory)) {
+    if (walk.entries.has(directory)) return walk.listed.has(directory);
+    if (walk.roots.has(directory)) return true;
+    if (directory === "/") return false;
+  }
+};
+
+/**
+ * Compare two walks of the same roots, in code-point order of path. A path
+ * counts as created or deleted only where both walks checked its parent; the
+ * rest are counted as unconfirmed rather than reported.
+ */
 export const diffDesktopStates = (
-  before: ReadonlyMap<string, DesktopPathState>,
-  after: ReadonlyMap<string, DesktopPathState>,
-): readonly DesktopPathDifference[] => {
+  before: DesktopWalk,
+  after: DesktopWalk,
+): {
+  readonly differences: readonly DesktopPathDifference[];
+  readonly unconfirmed: number;
+} => {
   const differences: DesktopPathDifference[] = [];
-  for (const [path, previous] of before) {
-    const next = after.get(path);
-    if (next === undefined)
-      differences.push({
-        path,
-        kind: "deleted",
-        before: previous,
-        after: null,
-      });
-    else if (next.type !== previous.type)
+  let unconfirmed = 0;
+  for (const [path, previous] of before.entries) {
+    const next = after.entries.get(path);
+    if (next === undefined) {
+      if (covers(after, path))
+        differences.push({
+          path,
+          kind: "deleted",
+          before: previous,
+          after: null,
+        });
+      else unconfirmed += 1;
+    } else if (next.type !== previous.type)
       differences.push({
         path,
         kind: "type_changed",
@@ -59,12 +94,18 @@ export const diffDesktopStates = (
         after: next,
       });
   }
-  for (const [path, next] of after)
-    if (!before.has(path))
-      differences.push({ path, kind: "created", before: null, after: next });
-  return differences.sort((left, right) =>
-    compareUnicodeCodePoints(left.path, right.path),
-  );
+  for (const [path, next] of after.entries)
+    if (!before.entries.has(path)) {
+      if (covers(before, path))
+        differences.push({ path, kind: "created", before: null, after: next });
+      else unconfirmed += 1;
+    }
+  return {
+    differences: differences.sort((left, right) =>
+      compareUnicodeCodePoints(left.path, right.path),
+    ),
+    unconfirmed,
+  };
 };
 
 /** Whether a path is one of the roots or lies beneath one. */

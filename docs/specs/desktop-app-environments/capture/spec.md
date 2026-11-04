@@ -15,12 +15,16 @@ folder to build the environment; this step builds nothing.
 
 - The command is CLI only. A capture is a long interactive session whose
   checkpoints come from stdin lines (empty, `checkpoint [name]` or other
-  text) and which ends on `stop`, when the application's processes and
-  windows are gone, or at the time limit.
+  text) and which ends on `stop`, when the launched process has exited and
+  the application's processes and windows are gone, or at the time limit. One
+  queued line is handled per sample, and stdin reading pauses while 16 wait.
 - It runs only on Linux with `DISPLAY` set and `xprop` available (or
-  `REA_XPROP_COMMAND`), and refuses other hosts before launching anything.
-  Exactly one of `--desktop-entry` and `--executable` names the application.
-  The output folder must be new or empty.
+  `REA_XPROP_COMMAND`). Before writing or launching anything it refuses other
+  hosts, a request naming neither or both of `--desktop-entry` and
+  `--executable`, an output folder that is not new or empty or is owned by
+  another user, an unreadable window list, and an application that already
+  has a window open. The output folder is made private (0700) and its files
+  are created exclusively (0600).
 - The inventory resolves a desktop entry id through `$XDG_DATA_HOME` and
   `$XDG_DATA_DIRS`, expands its `Exec` line with no files and appends
   `--argument` values, resolves the program on `PATH`, and identifies the
@@ -29,26 +33,36 @@ folder to build the environment; this step builds nothing.
   listing the installed version. It marks Electron applications by the fuse
   sentinel or `resources/app.asar`, and lists candidate state directories
   under the XDG folders and dot-folders named after the package, executable,
-  desktop entry id and name.
-- The baseline walk runs before launch and retains every file under the
-  content roots: the state directories, `--state-path` values and absolute
-  arguments. Each later checkpoint walks the same roots, reports created,
-  modified, deleted and retyped paths against the previous walk, and retains
-  every changed file. Walks do not follow symbolic links, leave out the
-  output folder and `--exclude` paths, and stop at `--max-entries`.
-  Retention respects `--max-file-bytes` and `--max-content-bytes` and leaves
-  out files that change while read, recording why.
-- The application starts in its own process group. Every half second the
-  session reads the application's process tree from procfs, the window
-  manager's client list with `xprop`, and the files its processes hold open
-  under the walked roots. A window belongs to the application by owner pid or
-  by class; a matching window's pid is followed too. A capture refuses to
-  start, before writing anything, while a matching window is already open.
-- On `stop` or the time limit the session records a checkpoint, sends SIGTERM
-  to the process group and every process in the launched tree, and SIGKILL
-  after five seconds. A process found only as the owner of a matching window
-  is never signalled and does not keep the session open. Every session ends with an `exit` checkpoint. Cancellation also
-  terminates the application.
+  desktop entry id and name. An `--executable` runs from the caller's
+  directory, which also resolves a relative path to it.
+- Paths are compared in their physical spelling. The walked roots are the
+  home directory and every content root outside it: the state directories,
+  `--state-path` values and absolute arguments. The baseline walk runs before
+  launch and retains every file under the content roots; each later
+  checkpoint reports created, modified, deleted and retyped paths against the
+  previous walk and retains every changed file. A creation or deletion is
+  reported only where the walk listed the path's nearest existing directory
+  completely; the rest are counted as unconfirmed. Walks do not follow
+  symbolic links, leave out the output folder and `--exclude` paths, and stop
+  at `--max-entries`.
+- Retention opens files without following links or blocking, keeps a file
+  only if it is still the version the walk recorded and does not change while
+  read, respects `--max-file-bytes`, and charges `--max-content-bytes` only
+  for content not already stored. Every omission is recorded with its reason.
+- The application is launched through REA's owned process path: its own
+  process group and a run token in its environment. Every half second the
+  session reads its process tree from procfs, the client list with `xprop`,
+  and the files its processes hold open under the walked roots. A window
+  belongs to the application by owner pid or by class, re-evaluated every
+  sample; a matching window's pid is followed too, and each process records
+  whether it carries the run token.
+- When the session ends it records a `stop` or `time-limit` checkpoint if the
+  application is still running, sends SIGTERM to the launched process, waits
+  up to five seconds, removes every process still carrying the run token, and
+  records an `exit` checkpoint. Processes without the token are never
+  signalled. Cancellation ends the session without further checkpoints,
+  releases the application the same way, and still writes the capture with
+  end reason `cancelled`; cancellation before launch writes no capture.
 - The Evidence uses provider `rea-desktop` version 1, operation
   `capture_desktop_application` and predicate type
   `rea.desktop-application-capture`; its parameters carry only counts and the
