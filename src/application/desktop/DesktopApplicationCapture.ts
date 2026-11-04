@@ -254,7 +254,7 @@ const runCapture = async (
   await host.report("Recording the starting state.");
   await recorder.record("baseline", "baseline", 0, signal);
   await host.report(`Launching ${inventory.argv.join(" ")}.`);
-  const session = await runDesktopSession({
+  const { session, cleanupResources } = await runDesktopSession({
     argv: inventory.argv,
     workingDirectory: inventory.working_directory,
     environment: host.environment,
@@ -301,7 +301,18 @@ const runCapture = async (
     ],
   };
   const evidence = captureEvidence(request, capture);
-  await writeCaptureFile(output, evidence);
+  const published = await writeCaptureFile(output, evidence);
+  if (!session.cleanup.verified)
+    throw new ProviderAdapterError(DESKTOP_PROVIDER.id, DESKTOP_OPERATION, {
+      userMessage: `The capture was written to ${published}, but REA could not verify that the processes it launched have exited.`,
+      remediationAction:
+        "Check for processes still carrying the listed run token and stop them before capturing again.",
+      cleanup: {
+        reason: session.cleanup.reason ?? "cleanup was not verified",
+        resources: cleanupResources,
+      },
+      diagnostics: { capture_file: published },
+    });
   // A cancellation that arrives during publication must not read as success.
   if (signal?.aborted === true && session.end_reason !== "cancelled")
     throw new AnalysisCancelledError(DESKTOP_OPERATION, {

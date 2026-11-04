@@ -57,7 +57,10 @@ the window has opened and when each checkpoint is taken.
 
 When the session ends the capture sends SIGTERM to the launched process, waits
 up to five seconds, and then removes every process that still carries the run
-token, whether or not it stayed in the process group. Interrupting the command
+token, whether or not it stayed in the process group. If that cleanup cannot be
+verified after a second attempt, the capture is still written, and the command
+then fails, naming the run token and process group that may remain.
+Interrupting the command
 (Ctrl-C) ends the session the same way without a further checkpoint; the
 capture is still written with end reason `cancelled`, and the command exits
 with status 130.

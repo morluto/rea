@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
 import type { DesktopSession } from "../domain/desktop/desktopCapture.js";
+import { ownedCommandResources } from "../process/OwnedCommand.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   ProviderProcessSupervisor,
@@ -20,6 +21,13 @@ import type { ObservedWindow, X11WindowObserver } from "./X11WindowObserver.js";
 
 const STDERR_BYTES = 8 * 1024;
 const TERMINATION_GRACE_MS = 5_000;
+
+/** The session record and, when cleanup was not verified, what remains owned. */
+export interface DesktopSessionOutcome {
+  readonly session: DesktopSession;
+  /** Run token, launcher pid and process group still owned after cleanup failed. */
+  readonly cleanupResources: readonly string[];
+}
 
 /** A line the person or driver sent while the session runs. */
 export type SessionRequest =
@@ -151,7 +159,9 @@ const release = async (
     spawned.process.kill("SIGTERM");
     await supervisor.waitForExit(TERMINATION_GRACE_MS);
   }
-  const stopped = await supervisor.stop();
+  let stopped = await supervisor.stop();
+  // An incomplete stop leaves the supervisor owning the processes; try once more.
+  if (stopped.status === "incomplete") stopped = await supervisor.stop();
   return stopped.status === "incomplete"
     ? { verified: false, reason: stopped.reason }
     : { verified: true, reason: null };
@@ -193,7 +203,7 @@ const launch = async (
  */
 export const runDesktopSession = async (
   plan: DesktopSessionPlan,
-): Promise<DesktopSession> => {
+): Promise<DesktopSessionOutcome> => {
   const signal = plan.signal ?? new AbortController().signal;
   const runId = randomUUID();
   const startedAt = new Date();
@@ -230,7 +240,7 @@ export const runDesktopSession = async (
   }
   const snapshot = supervisor.snapshot();
   const exit = supervisor.observedExit();
-  return {
+  const session: DesktopSession = {
     started_at: startedAt.toISOString(),
     duration_ms: observations.now(),
     end_reason: endReason,
@@ -238,7 +248,13 @@ export const runDesktopSession = async (
     exit: exit === undefined ? null : { code: exit.code, signal: exit.signal },
     ...observedSession(observations),
     stderr: snapshot.stderr.text,
-    stderr_truncated: snapshot.diagnosticTruncated === true,
+    stderr_truncated: snapshot.stderr.bytes < snapshot.stderr.observedBytes,
     cleanup,
+  };
+  return {
+    session,
+    cleanupResources: cleanup.verified
+      ? []
+      : ownedCommandResources(spawned.ownership),
   };
 };

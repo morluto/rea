@@ -43,12 +43,15 @@ const parentOf = (path: string): string =>
 
 /**
  * Whether the walk established this path's presence or absence: it is a
- * checked root, or its nearest ancestor present in the walk was fully listed.
+ * checked root, or its nearest ancestor present in the walk was either fully
+ * listed or not a directory, which nothing can be inside.
  */
 const covers = (walk: DesktopWalk, path: string): boolean => {
   if (walk.roots.has(path)) return true;
   for (let directory = parentOf(path); ; directory = parentOf(directory)) {
-    if (walk.entries.has(directory)) return walk.listed.has(directory);
+    const ancestor = walk.entries.get(directory);
+    if (ancestor !== undefined)
+      return ancestor.type !== "directory" || walk.listed.has(directory);
     if (walk.roots.has(directory)) return true;
     if (directory === "/") return false;
   }

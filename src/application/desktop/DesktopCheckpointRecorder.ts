@@ -37,11 +37,20 @@ const fileFacts = (
   sha256,
 });
 
+const sameVersion = (left: DesktopPathState, right: DesktopPathState) =>
+  left.size === right.size &&
+  left.mtime_ns === right.mtime_ns &&
+  left.inode === right.inode;
+
 /** Walks, diffs and retains state for each checkpoint in turn. */
 export class CheckpointRecorder {
   readonly checkpoints: DesktopCheckpoint[] = [];
   #previous: DesktopWalk = EMPTY_WALK;
-  readonly #hashes = new Map<string, string>();
+  /** Digests keyed by path, valid only for the file version they were read from. */
+  readonly #hashes = new Map<
+    string,
+    { readonly sha256: string; readonly state: DesktopPathState }
+  >();
   openedFiles: ReadonlySet<string> = new Set();
 
   constructor(
@@ -58,7 +67,7 @@ export class CheckpointRecorder {
     const outcome = await this.store.retain(path, state, signal);
     if (outcome.kind === "omitted") return null;
     retained.push({ path, sha256: outcome.sha256, size: outcome.size });
-    this.#hashes.set(path, outcome.sha256);
+    this.#hashes.set(path, { sha256: outcome.sha256, state });
     return outcome.sha256;
   }
 
@@ -73,7 +82,13 @@ export class CheckpointRecorder {
     );
     const changes: DesktopCheckpoint["changes"] = [];
     for (const { path, kind, before, after } of differences) {
-      const beforeHash = this.#hashes.get(path) ?? null;
+      const known = this.#hashes.get(path);
+      const beforeHash =
+        known !== undefined &&
+        before !== null &&
+        sameVersion(known.state, before)
+          ? known.sha256
+          : null;
       this.#hashes.delete(path);
       const afterHash =
         after?.type === "file"

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -73,8 +73,12 @@ describe("DesktopContentStore", () => {
     await writeFile(join(root, "files/a.txt"), "aaaa");
     await writeFile(join(root, "files/b.txt"), "bbbb");
     await writeFile(join(root, "files/later.txt"), "v1");
+    await mkdir(join(root, "files/sub"));
+    await writeFile(join(root, "files/sub/x.txt"), "x");
     const state = await walked(join(root, "files"));
     await writeFile(join(root, "files/later.txt"), "version 2");
+    await rm(join(root, "files/sub"), { recursive: true });
+    await writeFile(join(root, "files/sub"), "now a file");
     const content = await store(root, 8, 6);
     const retain = (name: string) =>
       content.retain(join(root, "files", name), state(name));
@@ -96,10 +100,15 @@ describe("DesktopContentStore", () => {
       kind: "omitted",
       reason: "changed_since_walk",
     });
+    expect(await retain("sub/x.txt")).toEqual({
+      kind: "omitted",
+      reason: "changed_since_walk",
+    });
     expect(content.omissions.map((omission) => omission.reason)).toEqual([
       "too_large",
       "budget_exhausted",
       "unreadable",
+      "changed_since_walk",
       "changed_since_walk",
     ]);
   });

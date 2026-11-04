@@ -195,34 +195,30 @@ describe.skipIf(process.platform !== "linux")(
       ).toEqual(JSON.parse(JSON.stringify(evidence)));
     }, 30_000);
 
-    it("refuses to start beside an instance that already has a window", async () => {
-      const { root, environment } = await fixture();
-      await writeFile(join(root, "window-open"), "");
+    it("keeps a baseline-only capture when cancelled before any checkpoint", async () => {
+      const { root, home, environment } = await fixture();
       const output = join(root, "out");
+      const statePath = join(home, ".config/fakeapp/state.ini");
+      const controller = new AbortController();
+      const nextRequest = (): SessionRequest | undefined => {
+        if (readFileSyncSafe(statePath) === "count=1\n") controller.abort();
+        return undefined;
+      };
 
-      const refused = await captureDesktopApplication(
+      const evidence = await captureDesktopApplication(
         request(output),
-        host(environment),
+        host(environment, nextRequest),
+        controller.signal,
       );
 
-      expect(JSON.stringify(refused)).toContain("already open");
-      await expect(readdir(output)).rejects.toThrow();
-    });
-
-    it("refuses when the window list cannot be read", async () => {
-      const { root, environment } = await fixture();
-      await writeFile(join(root, "display-broken"), "");
-      const output = join(root, "out");
-
-      const refused = await captureDesktopApplication(
-        request(output),
-        host(environment),
+      if ("error" in evidence) throw new Error(JSON.stringify(evidence));
+      const capture = desktopApplicationCaptureSchema.parse(
+        evidence.normalized_result,
       );
-
-      expect(refused).toMatchObject({
-        details: { reason: "display_unreadable" },
-      });
-      await expect(readdir(output)).rejects.toThrow();
+      expect(capture.session.end_reason).toBe("cancelled");
+      expect(
+        capture.state.checkpoints.map((checkpoint) => checkpoint.name),
+      ).toEqual(["baseline"]);
     });
 
     it("keeps the checkpoints taken before a cancellation and closes the application", async () => {
@@ -299,6 +295,41 @@ describe.skipIf(process.platform !== "linux")(
         }),
       ]);
     }, 30_000);
+  },
+);
+
+describe.skipIf(process.platform !== "linux")(
+  "captureDesktopApplication refusals on Linux",
+  () => {
+    it("refuses to start beside an instance that already has a window", async () => {
+      const { root, environment } = await fixture();
+      await writeFile(join(root, "window-open"), "");
+      const output = join(root, "out");
+
+      const refused = await captureDesktopApplication(
+        request(output),
+        host(environment),
+      );
+
+      expect(JSON.stringify(refused)).toContain("already open");
+      await expect(readdir(output)).rejects.toThrow();
+    });
+
+    it("refuses when the window list cannot be read", async () => {
+      const { root, environment } = await fixture();
+      await writeFile(join(root, "display-broken"), "");
+      const output = join(root, "out");
+
+      const refused = await captureDesktopApplication(
+        request(output),
+        host(environment),
+      );
+
+      expect(refused).toMatchObject({
+        details: { reason: "display_unreadable" },
+      });
+      await expect(readdir(output)).rejects.toThrow();
+    });
   },
 );
 

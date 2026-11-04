@@ -31,6 +31,7 @@ import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import {
   NonRegularFileReadError,
   RegularFileChangedError,
+  isSelectedRegularFileError,
 } from "../filesystem/RegularFile.js";
 import {
   RegularFileCapacityError,
@@ -43,14 +44,15 @@ import {
 } from "../process/ExecFileOutput.js";
 
 const DESKTOP_ENTRY_MAX_BYTES = 1024 * 1024;
-const REFUSED_READ_CODES = new Set(["ENOENT", "EACCES", "EPERM", "ELOOP"]);
+const DENIED_CODES = new Set(["EACCES", "EPERM"]);
 
 /** A read the inventory reports as unreadable rather than failing on. */
 const isRefusedRead = (cause: unknown): boolean =>
   cause instanceof RegularFileCapacityError ||
   cause instanceof RegularFileChangedError ||
   cause instanceof NonRegularFileReadError ||
-  REFUSED_READ_CODES.has((cause as NodeJS.ErrnoException).code ?? "");
+  isSelectedRegularFileError(cause) ||
+  DENIED_CODES.has((cause as NodeJS.ErrnoException).code ?? "");
 const COMMAND_TIMEOUT_MS = 30_000;
 const COMMAND_MAX_BUFFER = 4 * 1024 * 1024;
 

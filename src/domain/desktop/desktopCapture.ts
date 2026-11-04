@@ -161,7 +161,8 @@ export const desktopApplicationCaptureSchema = z.strictObject({
   state: z.strictObject({
     roots: z.array(z.string().min(1)).min(1),
     content_roots: z.array(z.string().min(1)),
-    checkpoints: z.array(desktopCheckpointSchema).min(2),
+    /** At least the baseline; a cancelled capture can stop there. */
+    checkpoints: z.array(desktopCheckpointSchema).min(1),
     content_files: z.int().min(0),
     content_bytes: z.int().min(0),
     omitted_content: z.array(

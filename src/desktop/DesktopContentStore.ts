@@ -8,6 +8,7 @@ import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import {
   NonRegularFileReadError,
   RegularFileChangedError,
+  isSelectedRegularFileError,
 } from "../filesystem/RegularFile.js";
 import {
   RegularFileCapacityError,
@@ -27,13 +28,8 @@ export type RetainOutcome =
 
 class ChangedSinceWalk extends Error {}
 
-const UNREADABLE_CODES = new Set([
-  "ENOENT",
-  "EACCES",
-  "EPERM",
-  "ELOOP",
-  "ENXIO",
-]);
+/** Permission refusals; path changes use the shared selected-file classification. */
+const DENIED_CODES = new Set(["EACCES", "EPERM", "ENXIO"]);
 
 /** Content-addressed copies of observed files under `<capture>/content`. */
 export class DesktopContentStore {
@@ -138,11 +134,14 @@ export class DesktopContentStore {
         return { kind: "omitted", reason: "changed_since_walk" };
       if (cause instanceof RegularFileChangedError)
         return { kind: "omitted", reason: "changed_during_read" };
+      // The path was renamed, removed or retyped after the walk.
+      if (isSelectedRegularFileError(cause))
+        return { kind: "omitted", reason: "changed_since_walk" };
       if (cause instanceof RegularFileCapacityError)
         return { kind: "omitted", reason: "too_large" };
       if (
         cause instanceof NonRegularFileReadError ||
-        UNREADABLE_CODES.has((cause as NodeJS.ErrnoException).code ?? "")
+        DENIED_CODES.has((cause as NodeJS.ErrnoException).code ?? "")
       )
         return { kind: "omitted", reason: "unreadable" };
       throw cause;

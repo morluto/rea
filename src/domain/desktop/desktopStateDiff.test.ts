@@ -92,6 +92,28 @@ describe("diffDesktopStates", () => {
     expect(unconfirmed).toBe(0);
   });
 
+  it("treats a former file as proof that nothing existed beneath it", () => {
+    const { differences, unconfirmed } = diffDesktopStates(
+      walk([
+        ["/h", directory("1")],
+        ["/h/x", file()],
+      ]),
+      walk(
+        [
+          ["/h", directory("1")],
+          ["/h/x", directory("2")],
+          ["/h/x/new", file()],
+        ],
+        ["/h", "/h/x"],
+      ),
+    );
+    expect(differences.map(({ path, kind }) => [path, kind])).toEqual([
+      ["/h/x", "type_changed"],
+      ["/h/x/new", "created"],
+    ]);
+    expect(unconfirmed).toBe(0);
+  });
+
   it("counts paths whose parent a walk did not list as unconfirmed, not created or deleted", () => {
     // /h/e could not be listed before and /h/d could not be listed after.
     const { differences, unconfirmed } = diffDesktopStates(
