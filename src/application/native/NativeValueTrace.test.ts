@@ -1,6 +1,9 @@
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { describe, expect, it } from "vitest";
-import { traceNativeValues as traceNativeValuesCore } from "./NativeValueTrace.js";
+import {
+  traceNativeValues as traceNativeValuesCore,
+  UNRECORDED_NATIVE_VALUE_FLOW,
+} from "./NativeValueTrace.js";
 import { executeComposedWorkflow } from "../WorkflowEvidence.js";
 import {
   createAnalysisExecution,
@@ -190,11 +193,46 @@ describe("native value trace seed admission", () => {
         expect.objectContaining({ address: base.procedure.address }),
       ],
       unknowns: [
-        expect.objectContaining({
-          reason: "Native def-use was not recorded for this procedure.",
-        }),
+        {
+          procedure: base.procedure.address,
+          address: null,
+          reason: UNRECORDED_NATIVE_VALUE_FLOW,
+        },
       ],
     });
+  });
+
+  it("preserves an explicit unavailable reason for that procedure", async () => {
+    const base = functionDossierSchema.parse(ghidraFunctionDossier());
+    const providerReason = "selected procedure has no p-code model";
+    const result = await traceNativeValues(
+      {
+        execute: async () =>
+          ok(
+            createAnalysisExecution(
+              {
+                ...base,
+                native_value_flow: {
+                  available: false,
+                  reason: providerReason,
+                  limitations: [],
+                },
+              },
+              provider,
+              { subject },
+            ),
+          ),
+      },
+      { procedure: base.procedure.address },
+    );
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value).unknowns).toEqual([
+      {
+        procedure: base.procedure.address,
+        address: null,
+        reason: providerReason,
+      },
+    ]);
   });
 });
 

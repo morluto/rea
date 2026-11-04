@@ -28,6 +28,10 @@ import { createValueTraceBudget } from "./NativeValueTraceBudget.js";
 export const CLEANUP_STOPPED_VALUE_TRACE =
   "Trace stopped because the provider did not confirm cleanup of resources it owns";
 
+/** Fallback when a dossier has no native value-flow facet for this procedure. */
+export const UNRECORDED_NATIVE_VALUE_FLOW =
+  "Native def-use was not recorded for this procedure.";
+
 /** Compose bounded high-p-code def-use graphs across exactly referenced call destinations. */
 export const traceNativeValues = async (
   analysis: AnalysisOperationPort,
@@ -181,8 +185,7 @@ export const traceNativeValues = async (
       unknowns.push({
         procedure: address,
         address: null,
-        reason:
-          flow?.reason ?? "Native def-use was not recorded for this procedure.",
+        reason: flow?.reason ?? UNRECORDED_NATIVE_VALUE_FLOW,
       });
       continue;
     }
