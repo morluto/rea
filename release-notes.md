@@ -1008,6 +1008,7 @@
 * **ci:** avoid pinning skip warning wording ([ec3f84b](https://github.com/morluto/rea/commit/ec3f84b6266846f938b0dc400f4fa7e5841e7260))
 * **ci:** require provider checks and reduce test startup ([#8145](https://github.com/morluto/rea/issues/8145)) ([77b0931](https://github.com/morluto/rea/commit/77b09314ffcb36a96eecc2b139f37a2ebe184f5f))
 * **cli:** cover literal Markdown heading output ([#7866](https://github.com/morluto/rea/issues/7866)) ([c2cc7e6](https://github.com/morluto/rea/commit/c2cc7e6eb0979303ae78c7146b2705b7181e8dd6))
+* **desktop:** cover ENOTDIR intermediate path refusal ([#8692](https://github.com/morluto/rea/issues/8692)) ([a56cc93](https://github.com/morluto/rea/commit/a56cc93cabe81242dcadaee85a129a14fc05bd2a))
 * **electron:** consolidate handler presence coverage in public workflows ([19082ac](https://github.com/morluto/rea/commit/19082acddbb3ddab5e381274ca38dcecbc292723))
 * **electron:** remove duplicate graph protocol fixture ([e8cb717](https://github.com/morluto/rea/commit/e8cb71740b40a574a328d3cc778784662090c2ac))
 * **elf:** cover big-endian ABI notes through CLI and MCP ([#8803](https://github.com/morluto/rea/issues/8803)) ([9a68ce5](https://github.com/morluto/rea/commit/9a68ce57a0891551c3494bcdb945f81a987aadd6))
