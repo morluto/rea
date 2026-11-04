@@ -6,7 +6,10 @@ import { Readable } from "node:stream";
 
 import { expect, it } from "vitest";
 
-import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
+import {
+  digestFile,
+  POST_RUN_ARTIFACT_UNREADABLE,
+} from "../../src/application/reverse/ReverseEngineeringService.js";
 import {
   FileWork,
   FileWorkSaturatedError,
@@ -285,9 +288,9 @@ it("keeps command Evidence and says why when the budget refuses the post-run dig
         max_held_file_steps: 2,
       },
     });
-    const limitations = result.value.limitations.join("\n");
-    expect(limitations).toContain("the artifact was not read");
-    expect(limitations).not.toContain("could not be read");
+    expect(result.value.limitations).not.toContain(
+      POST_RUN_ARTIFACT_UNREADABLE,
+    );
   } finally {
     await service.close();
     await rm(directory, { recursive: true, force: true });

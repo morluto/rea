@@ -878,7 +878,7 @@ export class ReverseEngineeringService {
                 ? "The post-run artifact digest is unknown because cancellation interrupted the digest."
                 : digestAfterRefused !== undefined
                   ? `The post-run artifact digest is unknown because ${String(digestAfterRefused.held)} file-system steps that an unresponsive mount has not returned hold REA's budget of ${String(digestAfterRefused.budget)}; the artifact was not read, so artifact changes during the command remain unquantified. Retry once the mount answers.`
-                  : "The post-run artifact digest is unknown because the artifact could not be read after the provider call.",
+                  : POST_RUN_ARTIFACT_UNREADABLE,
           ]
         : []),
     ];
@@ -1591,6 +1591,10 @@ const reverseCommandTimeoutGuidance = (
       : `command_timeout_ms is already at the maximum ${String(MAX_REVERSE_COMMAND_TIMEOUT_MS)} ms; no higher deadline is supported.`
   } The new value applies on the next call; no restart is required. The ${String(MAX_COMBINED_OUTPUT_BYTES)} byte (16 MiB) combined output cap has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
+
+/** The limitation for a post-run hash that read the artifact and failed. */
+export const POST_RUN_ARTIFACT_UNREADABLE =
+  "The post-run artifact digest is unknown because the artifact could not be read after the provider call.";
 
 /** Optional bounds and file access for one hash. */
 export interface FileDigestBounds {
