@@ -123,11 +123,16 @@ const configurationDetails = (
   }
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return null;
-  const fileMethod = builtinMethod(node.callee, context.state, [
-    "fs",
-    "node:fs",
-  ]);
-  return fileMethod === "readFile" || fileMethod === "readFileSync"
+  const fsMethod = builtinMethod(node.callee, context.state, ["fs", "node:fs"]);
+  const isFileRead =
+    fsMethod === "readFile" ||
+    fsMethod === "readFileSync" ||
+    (fsMethod === null &&
+      builtinMethod(node.callee, context.state, [
+        "fs/promises",
+        "node:fs/promises",
+      ]) === "readFile");
+  return isFileRead
     ? {
         kind: "file",
         key: literalString(node.arguments[0]),
