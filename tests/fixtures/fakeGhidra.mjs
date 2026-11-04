@@ -13,6 +13,7 @@ const {
   targetSha256,
   transport,
   mode = "success",
+  handshakeReports = {},
 } = configuration ?? {};
 
 if (
@@ -182,6 +183,40 @@ const handleRequest = (socket, server, request, state) => {
     return;
   }
   if (
+    ["import_identity_unavailable", "import_identity_mismatch"].includes(
+      state.mode,
+    ) &&
+    request.method !== "shutdown"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: state.mode,
+          message: "Ghidra imported identity admission failed",
+        },
+      })}\n`,
+    );
+    return;
+  }
+  if (
+    state.mode === "late_identity_failure" &&
+    request.method === "list_strings"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "import_identity_mismatch",
+          message: "Unexpected later failure",
+        },
+      })}\n`,
+    );
+    return;
+  }
+  if (
     state.mode === "old_oom_then_malformed" &&
     request.method === "list_documents" &&
     !state.emittedOome
@@ -340,6 +375,23 @@ const handleRequest = (socket, server, request, state) => {
 };
 
 const handlePing = (socket, request, state) => {
+  if (
+    ["import_identity_unavailable", "import_identity_mismatch"].includes(
+      state.mode,
+    )
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: state.mode,
+          message: "Ghidra project identity admission failed",
+        },
+      })}\n`,
+    );
+    return;
+  }
   if (state.mode === "remote_startup_error") {
     socket.write(
       `${JSON.stringify({
@@ -386,14 +438,17 @@ const handlePing = (socket, request, state) => {
     return;
   }
   if (state.mode === "hang_after_start" && state.pings.value > 1) return;
-  const result = sessionInfo({
-    runId: state.runId,
-    providerVersion:
-      state.mode === "wrong_identity" ? "0.0.0" : state.providerVersion,
-    profileDigest: state.profileDigest,
-    targetSha256: state.targetSha256,
-    timedOut: state.mode === "analysis_timeout",
-  });
+  const result = {
+    ...sessionInfo({
+      runId: state.runId,
+      providerVersion:
+        state.mode === "wrong_identity" ? "0.0.0" : state.providerVersion,
+      profileDigest: state.profileDigest,
+      targetSha256: state.targetSha256,
+      timedOut: state.mode === "analysis_timeout",
+    }),
+    ...handshakeReports,
+  };
   const response = `${JSON.stringify({ id: request.id, ok: true, result })}\n`;
   if (state.mode === "fragmented") {
     const split = Math.floor(response.length / 2);
