@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **native:** preserve value-flow absence semantics ([#8785](https://github.com/morluto/rea/issues/8785))
 * **ghidra:** Ghidra analysis snapshots from earlier byte-search policies are refused; reopen the target and create a new snapshot. Historical Evidence remains importable.
 * **mcp:** distinguish unavailable batch pseudocode ([#8737](https://github.com/morluto/rea/issues/8737))
 * Snapshot-shaped bundle import failures use invalid_request rather than evidence_integrity_mismatch.
@@ -619,6 +620,7 @@
 * **native:** preserve import names across dyld text formats ([d27e3f8](https://github.com/morluto/rea/commit/d27e3f8e89c2a5b37bacb784e2275256441e6292))
 * **native:** preserve Mach-O target selection in macOS tools ([#7831](https://github.com/morluto/rea/issues/7831)) ([c0c3902](https://github.com/morluto/rea/commit/c0c3902207d6b1a33709e42b80c7e570da7db964))
 * **native:** preserve mapping and literal coverage ([b0c48e8](https://github.com/morluto/rea/commit/b0c48e8b6524a809e51acdca155e253b9fe73f14))
+* **native:** preserve value-flow absence semantics ([#8785](https://github.com/morluto/rea/issues/8785)) ([1ff5a65](https://github.com/morluto/rea/commit/1ff5a655bc8d97738c4e5a1ff7a6786126e6e3fe))
 * **native:** reject mixed dyld refusal diagnostics ([#5778](https://github.com/morluto/rea/issues/5778)) ([d47efe1](https://github.com/morluto/rea/commit/d47efe1a54ada1fab1386d25ce0081edac5fe5f3))
 * **native:** report dispatch target applicability ([#8400](https://github.com/morluto/rea/issues/8400)) ([bafe378](https://github.com/morluto/rea/commit/bafe3784cd6fd3f46dd472a913e97f08f4d7427f))
 * **native:** report NativeAOT failures as reason codes ([#8053](https://github.com/morluto/rea/issues/8053)) ([b894be6](https://github.com/morluto/rea/commit/b894be6361d8db3bc402080719c74bb0bb27349b))
