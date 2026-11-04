@@ -129,6 +129,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   const configurationError = cliConfigurationError(process.env);
   let dispatchFailure;
   let closeCliResources;
+  let cliHoldsStalledFileWork;
   // Incur can exit from the callback below before this function returns.
   // That callback owns the status, including a closed-pipe exit of 141.
   let exiting = false;
@@ -151,6 +152,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     } else {
       const cliRuntime = await import("../dist/cli-runtime/cli.js");
       closeCliResources = cliRuntime.closeCliResources;
+      cliHoldsStalledFileWork = cliRuntime.cliHoldsStalledFileWork;
       const { createCli } = cliRuntime;
       const { createCliResultOutput } =
         await import("../dist/cli-runtime/cliResultOutput.js");
@@ -245,6 +247,13 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     !(stdoutClosed && dispatchFailure?.code === "EPIPE")
   )
     throw dispatchFailure;
+  // A stalled file step keeps the event loop alive until its mount answers,
+  // which may be never. The command has delivered its result, so exit.
+  if (!exiting && cliHoldsStalledFileWork?.()) {
+    if (!stdoutClosed)
+      await new Promise((resolve) => process.stdout.write("", resolve));
+    process.exit();
+  }
 }
 
 /**

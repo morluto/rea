@@ -86,6 +86,10 @@ import {
 } from "./cli/guidanceCommands.js";
 import { closeCliJavaScriptResources } from "./cli/javascriptApplicationAnalysis.js";
 import { registerGuidedWorkflowCommands } from "./cli/guidedWorkflowCommands.js";
+import { HOST_FILE_WORK } from "./process/FileWork.js";
+
+/** Whether a stalled file step would keep the process alive after its command. */
+export const cliHoldsStalledFileWork = (): boolean => HOST_FILE_WORK.held > 0;
 
 /** Close every process-owned resource used by CLI commands. */
 export const closeCliResources = async (): Promise<void> => {

@@ -182,8 +182,9 @@ that needs a new file step is refused with a retryable capacity error
 access working for REA's other tools; process capture's executable lookup obeys
 the same budget. A retry on a path that already has stalled work waits and takes
 no thread. Closing the service does not wait for that work, which a mount that
-never answers would hold forever; the process itself cannot exit until it
-returns.
+never answers would hold forever. An MCP server's process cannot end on its own
+until the work returns. The CLI writes its result and then exits explicitly; a
+system call the kernel treats as uninterruptible can still hold the process.
 
 Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override. A typed failure's `captured_output` marks a stream that held invalid UTF-8 with `stdout_invalid_utf8` or `stderr_invalid_utf8`.
 
