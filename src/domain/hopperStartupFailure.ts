@@ -1,4 +1,4 @@
-import { MAX_PROVIDER_STARTUP_TIMEOUT_MS } from "./analysisResourceLimits.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
 
 export type HopperPrivateDisplayStrategy =
   | "direct"
@@ -19,8 +19,7 @@ export const MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS = 1;
  * Largest accepted dialog watch. Delays above this signed 32-bit bound are
  * the same ceiling REA uses for its other millisecond settings.
  */
-export const MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS =
-  MAX_PROVIDER_STARTUP_TIMEOUT_MS;
+export const MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS = MAX_NODE_TIMER_DELAY_MS;
 
 /** Rejected dialog-timeout setting retained with the adapter diagnostic. */
 export type DialogTimeoutRejection = {

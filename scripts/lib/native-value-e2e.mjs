@@ -17,6 +17,7 @@ import {
   requireMcpOutput,
 } from "./mcp-verifier-results.mjs";
 import { verifyGhidraBoundaries } from "./real-ghidra-boundaries.mjs";
+import { verifyGhidraProjectIdentity } from "./real-ghidra-project-identity.mjs";
 
 const defaultEntrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 const environment = () => ({
@@ -253,20 +254,9 @@ async function verifyNativeValueAdapters(
       functionEvidence.analysis_profile,
     );
     assert.deepEqual(functionProfile, upstreamProfile);
-    const comparison = await client.callTool(
-      {
-        name: "compare_functions",
-        arguments: {
-          left: analyzed.structuredContent,
-          right: analyzed.structuredContent,
-        },
-      },
-      { timeout: 180000 },
-    );
-    assert.notEqual(comparison.isError, true, JSON.stringify(comparison));
-    assert.notEqual(comparison.structuredContent, undefined);
-    const comparisonEvidence = parseEvidence(
-      requireMcpOutput(comparison, "compare_functions"),
+    const comparisonEvidence = await compareRetainedFunctionEvidence(
+      client,
+      functionEvidence,
     );
     assert.equal(
       comparisonEvidence.normalized_result.status,
@@ -328,6 +318,11 @@ async function verifyNativeValueAdapters(
     await client.close();
     await transport.close();
   }
+  const projectIdentity = await verifyGhidraProjectIdentity({
+    target,
+    entrypoint,
+    env,
+  });
   return {
     mocked: false,
     cli: true,
@@ -335,6 +330,7 @@ async function verifyNativeValueAdapters(
     inline_evidence: true,
     direct_function_comparison: true,
     boundaries,
+    project_identity: projectIdentity,
     nodes: cliGraph.total_nodes,
     edges: cliGraph.total_edges,
     decompilations: cliGraph.decompilations,
@@ -395,21 +391,27 @@ async function verifyUnresolvedCallEvidence(client) {
   assert.equal(trace.goal_status, "unknown");
   assert.equal(trace.truncated, true);
   assert.ok(trace.residual_unknowns.length > 0);
+  const compared = await compareRetainedFunctionEvidence(client, evidence);
+  assert.equal(compared.normalized_result.status, "unknown");
+}
+
+/** Compare an already admitted function record without retransmitting its payload. */
+export async function compareRetainedFunctionEvidence(client, evidence) {
+  const reference = {
+    kind: "retained-evidence",
+    evidence_id: evidence.evidence_id,
+  };
   const compared = await client.callTool(
     {
       name: "compare_functions",
       arguments: {
-        left: analyzed.structuredContent,
-        right: analyzed.structuredContent,
+        left: reference,
+        right: reference,
       },
     },
     { timeout: 180000 },
   );
   assert.notEqual(compared.isError, true, JSON.stringify(compared));
   assert.notEqual(compared.structuredContent, undefined);
-  assert.equal(
-    parseEvidence(requireMcpOutput(compared, "compare_functions"))
-      .normalized_result.status,
-    "unknown",
-  );
+  return parseEvidence(requireMcpOutput(compared, "compare_functions"));
 }

@@ -777,7 +777,9 @@ describe("analysis snapshot cache policy", () => {
       );
     },
   );
+});
 
+describe("document-scoped snapshot admission", () => {
   it("retains caller observations without a document while refusing to replay them", () => {
     const descriptor: CapabilityDescriptor = {
       operation: "procedure_callers",
@@ -829,6 +831,35 @@ describe("analysis snapshot cache policy", () => {
         document: "fixture",
       }),
     ).toBe(true);
+    const ghidra = {
+      ...pseudocode,
+      provider: { ...pseudocode.provider, id: "ghidra" },
+    };
+    expect(
+      isSnapshotCacheable("procedure_pseudo_code", ghidra, parameters),
+    ).toBe(false);
+    expect(
+      isSnapshotCacheable(
+        "procedure_pseudo_code",
+        ghidra,
+        parameters,
+        "one-shot-target",
+      ),
+    ).toBe(true);
+    for (const refused of [
+      pseudocode,
+      { ...ghidra, cachePolicy: "live" as const },
+      { ...ghidra, effects: { ...ghidra.effects, mutatesArtifact: true } },
+      { ...ghidra, effects: { ...ghidra.effects, changesPermissions: true } },
+    ])
+      expect(
+        isSnapshotCacheable(
+          "procedure_pseudo_code",
+          refused,
+          parameters,
+          "one-shot-target",
+        ),
+      ).toBe(false);
   });
 });
 
@@ -1247,6 +1278,11 @@ describe("executions that report truncated references", () => {
 
 it("revises the trace_feature workflow profile so earlier results are not replayed", () => {
   const profile = ANALYSIS_SNAPSHOT_PROFILE;
+
+  expect(
+    workflowAnalysisProfile(profile, "trace_feature").parameters
+      .workflow_revision,
+  ).toBe(4);
 
   expect(workflowAnalysisProfile(profile, "trace_feature")).not.toEqual(
     workflowAnalysisProfile(profile),

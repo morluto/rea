@@ -1,8 +1,12 @@
-import { parseAnalysisInput } from "../AnalysisInput.js";
-import { z } from "zod";
+import {
+  resolveEvidenceRequest,
+  type EvidenceLookup,
+} from "../EvidenceInputResolver.js";
+import type { ExecutionOptions } from "../AnalysisProvider.js";
 
 import {
   compareManagedMembers,
+  compareManagedMembersRequestSchema,
   type ManagedMemberComparisonResult,
 } from "../../domain/managed/managedMemberComparison.js";
 import { readManagedMemberEvidence } from "../../domain/managed/managedMemberComparisonMatch.js";
@@ -31,11 +35,6 @@ import {
   MANAGED_WORKFLOW_PROVIDER,
 } from "../../domain/investigationProviders.js";
 
-const managedMemberComparisonRequestSchema = z.strictObject({
-  left: z.unknown(),
-  right: z.unknown(),
-});
-
 export interface ManagedMemberComparisonExecution {
   readonly evidence: Evidence;
   readonly summary: ManagedMemberComparisonResult["summary"];
@@ -45,17 +44,21 @@ export interface ManagedMemberComparisonExecution {
 /** Authenticate both source records, then compare their parsed observations. */
 export const executeManagedMemberComparison = (
   input: unknown,
+  lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
 ): Result<ManagedMemberComparisonExecution, AnalysisError> => {
   const operation = "compare_managed_members";
-  const request = parseAnalysisInput(
+  const request = resolveEvidenceRequest(
     operation,
     input,
-    managedMemberComparisonRequestSchema,
+    compareManagedMembersRequestSchema,
+    lookup,
+    options,
   );
   if (!request.ok) return request;
-  const left = readManagedMemberEvidence(request.value.left, "left");
+  const left = readManagedMemberEvidence(request.value.input.left, "left");
   if (!left.ok) return left;
-  const right = readManagedMemberEvidence(request.value.right, "right");
+  const right = readManagedMemberEvidence(request.value.input.right, "right");
   if (!right.ok) return right;
   if (left.value.evidence.evidence_id === right.value.evidence.evidence_id)
     return err(

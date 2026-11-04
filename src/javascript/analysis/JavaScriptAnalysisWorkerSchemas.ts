@@ -300,6 +300,23 @@ const electron = z
         dynamic_member_access: z.boolean().optional(),
       }),
     ),
+    protocols: z.array(
+      z
+        .strictObject({
+          ...findingContext,
+          api: z.string(),
+          role: z.enum([
+            "os-default-client",
+            "privileged-scheme",
+            "handler",
+            "interceptor",
+          ]),
+          scheme: staticValue,
+          session: z.enum(["default-protocol", "default-session"]),
+          enabled_privileges: strings.nullable(),
+        })
+        .transform(withRuntime),
+    ),
   })
   .transform(({ call_paths, app_path_changes, ...rest }) => ({
     ...rest,

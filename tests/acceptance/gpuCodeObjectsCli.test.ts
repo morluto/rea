@@ -38,7 +38,7 @@ cliTest(
     ] as const) {
       const path = join(root, name);
       await writeFile(path, bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -817,7 +817,7 @@ cliTest(
   "attributes malformed selector JSON to its actual CLI option",
   async ({ cli }) => {
     for (const name of ["object_ids", "targets", "view"]) {
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           "/not-opened-for-invalid-selectors",

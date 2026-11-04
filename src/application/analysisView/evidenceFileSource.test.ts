@@ -326,7 +326,9 @@ it("keeps bundle-selection errors useful when operation labels exceed the reply 
   if (read.ok) throw new Error("Expected a record-selection error");
   const encoded = JSON.stringify(read);
   expect(Buffer.byteLength(encoded, "utf8")).toBeLessThan(8192);
-  for (const record of records) expect(encoded).toContain(record.evidence_id);
-  expect(encoded).toContain("operation omitted");
+  for (const record of records)
+    expect(read.error.userMessage).toContain(
+      `${record.evidence_id} (operation omitted)`,
+    );
   expect(encoded).not.toContain(operation);
 });

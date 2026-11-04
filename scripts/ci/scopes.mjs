@@ -8,10 +8,16 @@ export const WINDOWS_EXECUTABLE_SELECTION_INPUTS = [
   "tests/boundary/process/windowsExecutableSelection.test.ts",
 ];
 
+// Inputs whose changes must select both real capture lanes, even at shared boundaries.
+const CAPTURE_SHARED_INPUTS = [
+  "src/process/LinuxResourceLimits*",
+  "scripts/ci/require-provider-tests.mjs",
+];
+
 // Ownership of the native-host, real-provider and website verification lanes.
 // Shared build inputs are classified once in plan.mjs rather than repeated in
 // every workflow.
-export const SCOPES = {
+const PATH_SCOPES = {
   python: [
     "bridge/**/*.py",
     "tests/support/analysis-efficiency/**",
@@ -22,6 +28,8 @@ export const SCOPES = {
     "tests/boundary/cli/captureCleanup.test.ts",
     "tests/boundary/mcp/packetCaptureMcp.test.ts",
     "tests/boundary/pcap/**",
+    "tests/acceptance/pcapVerifier.test.ts",
+    "tests/fixtures/pcap/offlineHttpCapture.ts",
     "src/captures/**",
     "src/pcap/**",
     "src/domain/pcap/**",
@@ -35,9 +43,9 @@ export const SCOPES = {
     "src/composition/captures.ts",
     "src/cli/captureCommands.ts",
     "src/server/registerCaptureTools.ts",
-    "src/process/LinuxResourceLimits*",
+    ...CAPTURE_SHARED_INPUTS,
     "scripts/verify-packet-capture.mjs",
-    "scripts/ci/require-provider-tests.mjs",
+    "scripts/verify-pcap.mjs",
     ".github/workflows/real-packet-capture.yml",
   ],
   signal_recording: [
@@ -51,9 +59,8 @@ export const SCOPES = {
     "src/composition/signals.ts",
     "src/cli/signalCommands.ts",
     "src/server/registerSignalTools.ts",
-    "src/process/LinuxResourceLimits*",
+    ...CAPTURE_SHARED_INPUTS,
     "scripts/verify-signal-recording.mjs",
-    "scripts/ci/require-provider-tests.mjs",
     ".github/workflows/real-signal-recording.yml",
   ],
   readiness: [
@@ -69,6 +76,7 @@ export const SCOPES = {
     "src/frida/frida-bindings.d.ts",
     "src/objdump/**",
     "src/cli/reverseEngineeringCommands.ts",
+    "src/process/ownedDebuggerCleanupError.ts",
     "src/process/ownedDebuggerSession.ts",
     "src/rizin/**",
     "src/contracts/*ToolContracts.ts",
@@ -96,6 +104,7 @@ export const SCOPES = {
     "tests/boundary/providers/RizinInferiorTty.test.ts",
     "tests/boundary/providers/RizinTestInferiorTty.ts",
     "tests/boundary/process/ownedDebuggerSession.test.ts",
+    "tests/boundary/cli/debuggerOneShotExit.test.ts",
     "tests/boundary/cli/gdbStartupCleanupCli.test.ts",
     "tests/boundary/cli/reverseEngineeringCommands.test.ts",
     "tests/boundary/mcp/cutter*.test.ts",
@@ -121,6 +130,12 @@ export const SCOPES = {
   ],
   // Apple artifact CLI/MCP lane on macOS, including its focused regressions.
   apple: [
+    "src/artifacts/InesArtifactReader.ts",
+    "src/domain/inesContainer.ts",
+    "tests/fixtures/ines.ts",
+    "tests/acceptance/inesContainer.test.ts",
+    "tests/boundary/filesystem/inesArtifact.test.ts",
+    "tests/boundary/filesystem/inesCancellation.test.ts",
     "src/hopper/BridgeLauncher.ts",
     "src/domain/hopperErrors.ts",
     "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
@@ -148,7 +163,11 @@ export const SCOPES = {
     "tests/boundary/cli/nativeDemangleCli.test.ts",
     "tests/boundary/cli/nativeDispatchPropertyAttributes.test.ts",
     "tests/boundary/mcp/nativeDemangleMcp.test.ts",
+    "tests/boundary/mcp/nativeMachoSummaryMcp.test.ts",
     "tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts",
+    "tests/boundary/providers/native/nativeUiOffscreenWindow.test.ts",
+    "tests/boundary/process/nativeUiVerifierLane.test.ts",
+    "tests/conformance/native/ui-offscreen.swift",
     "tests/boundary/cli/nativeSignatureCli.test.ts",
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
     "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
@@ -340,20 +359,30 @@ export const SCOPES = {
     ".github/workflows/real-browser.yml",
     "scripts/verify-real-browser.mjs",
     "scripts/verify-browser-network.mjs",
+    "scripts/verify-browser-request.mjs",
     "scripts/verify-browser-scripts.mjs",
     "scripts/verify-browser-modules.mjs",
     "scripts/verify-browser-dom-destinations.mjs",
     "scripts/lib/browser-*.mjs",
     "scripts/fixtures/browser-network-site.mjs",
+    "scripts/fixtures/browser-request-site.mjs",
     "scripts/fixtures/browser-script-site.mjs",
     "scripts/fixtures/browser-module-site.mjs",
     "scripts/fixtures/browser-verifier-site.mjs",
     "scripts/fixtures/page-cdp-proxy.mjs",
     "src/browser/**",
     "src/domain/browser*.ts",
+    "src/domain/webCaptureDiffSchemas.ts",
+    "src/domain/webScreenshot.ts",
     "src/domain/webScript*.ts",
     "src/domain/webModule*.ts",
+    "src/domain/analysisView/environment*.ts",
+    "src/domain/analysisView/{EnvironmentManifest*,EnvironmentState*}.ts",
+    "src/domain/analysisView/{scenarioCaptureRecords,recordedResponseBody,recordedExchangeBody,recordedMediaType,webNetworkRouteTemplates,WebNetworkProjectionAccumulator}.ts",
+    "src/application/BrowserScenario*.ts",
+    "src/application/environment/**",
     "src/application/WebModule*.ts",
+    "src/composition/browserScenario.ts",
     "src/composition/webModules.ts",
     "src/artifacts/readStableArtifact.ts",
     "src/artifacts/ArtifactPaths.ts",
@@ -363,6 +392,8 @@ export const SCOPES = {
     "src/server/registerWebModuleTool.ts",
     "src/server/createServer.ts",
     "src/cli/webModuleCommands.ts",
+    "src/cliBrowserScenarioCommands.ts",
+    "src/cli/environmentCommands.ts",
     "src/cli.ts",
     "src/cliCommandNames.ts",
     "src/contracts/toolEffects.ts",
@@ -553,6 +584,8 @@ export const SCOPES = {
     ".github/workflows/real-web-source-map.yml",
     "scripts/verify-browser-source-maps.mjs",
     "scripts/lib/browser-source-map-e2e.mjs",
+    "scripts/lib/browser-nested-source-map-e2e.mjs",
+    "scripts/lib/browser-runtime-fixture-lifecycle.mjs",
     "scripts/fixtures/browser-source-map-site.mjs",
     "src/javascript/sourceMaps/**",
     "src/browser/assets/**",
@@ -597,6 +630,8 @@ export const SCOPES = {
     "src/ghidra/GhidraJavaProperties.ts",
     "src/ghidra/GhidraReleasePolicy.ts",
     "scripts/verify-ghidra-bridge-sources.mjs",
+    "tests/conformance/ghidra/ReaArmContextProbe.java",
+    "tests/conformance/ghidra/ReaDecodeProbe.java",
     ".github/workflows/ghidra-bridge-sources.yml",
   ],
   website: [
@@ -609,19 +644,75 @@ export const SCOPES = {
   ],
 };
 
-export const CI_FLAGS = [
-  ...new Set([
-    "code",
-    "runtime",
-    "package",
-    "apple",
-    "fixtures",
-    "readiness",
-    "docs",
-    "workflows",
-    ...Object.keys(SCOPES),
+// Each lane owns its path inputs, selection policy, and required jobs. The
+// workflow stays explicit; contract tests bind it to this registry.
+const sameJobs = (paths, jobs, selection = {}) => ({
+  paths,
+  required: { fast: jobs, full: jobs },
+  ...selection,
+});
+export const CI_LANES = {
+  code: {
+    paths: [],
+    required: {
+      fast: ["build", "test-shard", "test-source"],
+      full: ["build", "test-shard"],
+    },
+  },
+  runtime: sameJobs([], ["windows-native-build", "package-e2e"]),
+  package: sameJobs(PATH_SCOPES.package, ["windows-curated"], {
+    testInputs: true,
+  }),
+  apple: sameJobs(PATH_SCOPES.apple, ["apple-artifacts"], { testInputs: true }),
+  fixtures: sameJobs([], ["conformance-fixtures"]),
+  readiness: sameJobs(PATH_SCOPES.readiness, ["reconstruction-readiness"]),
+  docs: sameJobs([], ["docs"]),
+  workflows: sameJobs([], ["static"]),
+  python: {
+    paths: PATH_SCOPES.python,
+    earlyAll: true,
+    required: { fast: ["python"], full: ["static-deep"] },
+  },
+  packet_capture: sameJobs(PATH_SCOPES.packet_capture, ["packet_capture"], {
+    testInputs: true,
+    earlyInputs: CAPTURE_SHARED_INPUTS,
+  }),
+  signal_recording: sameJobs(
+    PATH_SCOPES.signal_recording,
+    ["signal_recording"],
+    { testInputs: true, earlyInputs: CAPTURE_SHARED_INPUTS },
+  ),
+  reverse_tools: sameJobs(
+    PATH_SCOPES.reverse_tools,
+    ["reverse-tools-quality"],
+    { earlyAll: true },
+  ),
+  sqlite: sameJobs(PATH_SCOPES.sqlite, ["sqlite-runtime"], {
+    testInputs: true,
+  }),
+  browser: sameJobs(PATH_SCOPES.browser, ["browser"]),
+  binary_layout: sameJobs(PATH_SCOPES.binary_layout, ["binary_layout"]),
+  evm: sameJobs(PATH_SCOPES.evm, ["evm"]),
+  apk_signature: sameJobs(PATH_SCOPES.apk_signature, ["apk_signature"]),
+  javascript_recovery: sameJobs(PATH_SCOPES.javascript_recovery, [
+    "javascript_recovery",
   ]),
-];
+  recorded_crash: sameJobs(PATH_SCOPES.recorded_crash, ["recorded_crash"]),
+  web_network: sameJobs(PATH_SCOPES.web_network, ["web_network"]),
+  web_runtime: sameJobs(PATH_SCOPES.web_runtime, ["web_runtime"]),
+  web_source_map: sameJobs(PATH_SCOPES.web_source_map, ["web_source_map"]),
+  agentenv: sameJobs(PATH_SCOPES.agentenv, ["agentenv"]),
+  nativeaot: sameJobs(PATH_SCOPES.nativeaot, ["nativeaot"]),
+  ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"]),
+  website: sameJobs(PATH_SCOPES.website, ["website"], {
+    earlyInputs: [".agents/skills/reverse-engineer-anything/**"],
+  }),
+};
+// An input owner omitted from the registry must never silently lose a lane.
+for (const [name, paths] of Object.entries(PATH_SCOPES))
+  if (!Object.hasOwn(CI_LANES, name) || CI_LANES[name].paths !== paths)
+    throw new Error(`CI lane registry does not own input scope: ${name}`);
+export const CI_FLAGS = Object.keys(CI_LANES);
 
 // Verifier entrypoints that only manual, licensed, or self-hosted workflows
 // run. No selected CI lane executes them, so their edits need only the static

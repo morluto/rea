@@ -175,9 +175,9 @@ it.each([
     require('node:fs').readFileSync('also-wrong');
   `);
   expect(ir.configurationOperations).toEqual([]);
-  expect(
-    ir.bindings.find(({ name }) => name === "fs")?.provenance.status,
-  ).not.toBe("module");
+  const binding = ir.bindings.find(({ name }) => name === "fs");
+  expect(binding).toBeDefined();
+  expect(binding?.provenance.status).not.toBe("module");
 });
 
 it("keeps local loader reassignment separate from the ambient loader", () => {
@@ -677,3 +677,58 @@ it("retains an earlier captured function after its object method is replaced", (
     { kind: "acquire", method: "open" },
   ]);
 });
+
+it.each([
+  "import { readFile } from 'node:fs/promises'; readFile('config.json');",
+  "import fs from 'node:fs/promises'; fs.readFile('config.json');",
+  "import fs from 'node:fs'; fs.promises.readFile('config.json');",
+  "const { readFile } = require('fs/promises'); readFile('config.json');",
+  "const fsp = require('node:fs/promises'); fsp.readFile('config.json');",
+  "const fs = require('node:fs'); fs.promises.readFile('config.json');",
+])(
+  "recovers configuration file reads from promise-based fs APIs: %s",
+  (source) => {
+    const ir = analyzeCommonJsSemanticFixture(source);
+    expect(ir.configurationOperations).toMatchObject([
+      {
+        kind: "file",
+        key: "config.json",
+        resolution: "complete",
+      },
+    ]);
+  },
+);
+
+it("recovers partial configuration file reads from promise-based fs APIs with dynamic path", () => {
+  const ir = analyzeCommonJsSemanticFixture(
+    "import { readFile } from 'node:fs/promises'; readFile(getConfigPath());",
+  );
+  expect(ir.configurationOperations).toMatchObject([
+    {
+      kind: "file",
+      key: null,
+      resolution: "partial",
+    },
+  ]);
+});
+
+it("invalidates promise-based configuration file reads after mutation", () => {
+  const ir = analyzeCommonJsSemanticFixture(
+    "const fs = require('fs'); fs.promises.readFile = custom; const fsp = require('fs/promises'); fsp.readFile('wrong');",
+  );
+  expect(ir.configurationOperations).toEqual([]);
+});
+
+it.each([
+  "const { readFileSync } = require('fs/promises'); readFileSync('config.json');",
+  "const { readFileSync } = require('node:fs/promises'); readFileSync('config.json');",
+  "import { readFileSync } from 'node:fs/promises'; readFileSync('config.json');",
+  "import fs from 'node:fs/promises'; fs.readFileSync('config.json');",
+  "const fs = require('node:fs'); fs.promises.readFileSync('config.json');",
+])(
+  "does not treat nonexistent readFileSync on promise-based fs as configuration read: %s",
+  (source) => {
+    const ir = analyzeCommonJsSemanticFixture(source);
+    expect(ir.configurationOperations).toEqual([]);
+  },
+);
