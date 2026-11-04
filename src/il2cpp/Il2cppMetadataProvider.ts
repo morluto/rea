@@ -91,7 +91,9 @@ const failureForPrimary = (
         ...fixedAllowanceOptions(
           cause.reason === "wasm-memory-capacity"
             ? "The wasm32 linear-memory reconstruction allowance"
-            : "The IL2CPP native-link allowance",
+            : cause.reason === "wasm-module-capacity"
+              ? "The wasm32 module parser allowance"
+              : "The IL2CPP native-link allowance",
           cause.reason === "native-type-text-capacity"
             ? "parser"
             : cause.reason === "wasm-memory-capacity"

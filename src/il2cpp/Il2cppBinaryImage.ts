@@ -160,7 +160,7 @@ function* openWasmImageSteps(bytes: Buffer): Generator<void, NativeImage> {
         cause.kind === "capacity"
           ? rebuilding
             ? "wasm-memory-capacity"
-            : "native-index-capacity"
+            : "wasm-module-capacity"
           : cause.kind === "unsupported"
             ? "unsupported-container"
             : "malformed-container",

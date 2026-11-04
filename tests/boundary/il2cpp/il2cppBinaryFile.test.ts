@@ -9,6 +9,7 @@ import {
   readUInt32,
 } from "../../../src/il2cpp/Il2cppBinaryImage.js";
 import { expect, it } from "vitest";
+import { WASM_MODULE_LIMITS } from "../../../src/wasm/WasmModuleImage.js";
 import { linkIl2cppBinarySteps } from "../../../src/il2cpp/Il2cppBinaryFile.js";
 import {
   drain,
@@ -2045,6 +2046,28 @@ it("reports wasm data spread over more than the reconstruction allowance as capa
   // Two one-byte segments 1 GiB apart in a 1 GiB + 64 KiB memory.
   expect(failure(wasmMemoryModule(16385, [1], [0x40000010, [1]]))).toEqual({
     reason: "wasm-memory-capacity",
+    kind: "capacity",
+  });
+});
+
+it("reports a wasm module past a parser count cap as wasm module capacity", () => {
+  // A data section that declares one segment more than the reader keeps.
+  const data = leb128(WASM_MODULE_LIMITS.dataSegments + 1);
+  const module = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    11,
+    ...leb128(data.length),
+    ...data,
+  ]);
+  expect(failure(module)).toEqual({
+    reason: "wasm-module-capacity",
     kind: "capacity",
   });
 });
