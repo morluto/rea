@@ -450,12 +450,13 @@ const stdioMode = (
 };
 
 /**
- * Node's `fork` requires an explicit `stdio` array to carry the IPC channel. An
- * array that provably omits `"ipc"` throws ERR_CHILD_PROCESS_IPC_REQUIRED
- * synchronously, before any child process exists, so it is not a spawn at all.
- * A string `stdio` is normalised with `"ipc"` appended, so only the array form
- * can omit it; a spread or unreadable element may still supply the channel and
- * is therefore left alone.
+ * Node's `fork` requires an explicit `stdio` array to carry exactly one IPC
+ * channel. An array that provably omits `"ipc"` throws
+ * ERR_CHILD_PROCESS_IPC_REQUIRED, and one that names `"ipc"` twice throws
+ * ERR_IPC_ONE_PIPE; both throws are synchronous, before any child process
+ * exists, so such a call is not a spawn at all. A string `stdio` is normalised
+ * with a single `"ipc"` appended, so only the array form can be wrong; a spread
+ * or unreadable element may still change the count and is therefore left alone.
  */
 const forkRejectsStdioArray = (
   candidate: SpawnCandidate,
@@ -477,10 +478,11 @@ const forkRejectsStdioArray = (
   );
   if (literals.some((literal) => literal === undefined || !literal.found))
     return false;
-  return !literals.some(
+  const ipcCount = literals.filter(
     (literal) =>
       literal !== undefined && literal.found && literal.value === "ipc",
-  );
+  ).length;
+  return ipcCount !== 1;
 };
 
 /**
