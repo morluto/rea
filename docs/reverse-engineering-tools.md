@@ -158,7 +158,10 @@ error, and Evidence or the launch failure keeps them as
 as when a script's interpreter is missing or not executable, is one a native
 search moves past. At `ESTALE` or `ENODEV`, glibc's search moves past it and
 musl's stops, so the host decides. The command then also runs as selected,
-with the version unknown, and a limitation names that file. An explicitly selected path has no
+with the version unknown, and a limitation names that file. Evidence or the
+launch failure keeps it as `executable_lookup_candidate`, with its error as
+`executable_lookup_code` and its digest as `executable_lookup_candidate_sha256`,
+without claiming that it ran. An explicitly selected path has no
 later candidate, so the command runs that path, and Evidence or the launch
 failure keeps its path and SHA-256. When the host refuses to inspect an
 explicitly selected path (`EACCES` or `EPERM`), the command runs that path with

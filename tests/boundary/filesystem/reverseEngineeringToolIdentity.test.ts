@@ -716,6 +716,11 @@ posix.each([
       expect(result.value.parameters).toMatchObject({
         provider_executable: "rizin",
         provider_identity: "assumed",
+        executable_lookup_candidate: join(broken, "rizin"),
+        executable_lookup_code: code,
+        executable_lookup_candidate_sha256: await sha256Of(
+          join(broken, "rizin"),
+        ),
       });
       expect(result.value.parameters).not.toHaveProperty(
         "provider_executable_path",
@@ -848,6 +853,44 @@ posix.each(["ESTALE", "ENODEV"] as const)(
           limitation.includes(executable) && limitation.includes(code),
       ),
     ).toBe(true);
+  },
+);
+
+posix(
+  "keeps the file the lookup found as a candidate when the command by name cannot launch either",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    // The found script does not start, and neither does the launch by name.
+    const run = vi.fn(
+      async (
+        _command: string,
+        _args: readonly string[],
+        _options?: ExecFileOutputOptions,
+      ): Promise<never> => {
+        throw Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+      },
+    );
+    const service = new TestReverseEngineeringService({
+      run,
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: "rizin", PATH: dirname(executable) },
+    });
+    const result = await service.executeRizinCommand({ path, command: "iI" });
+    if (result.ok) throw new Error("Expected the launch to fail");
+    expect(run.mock.calls.map(([command]) => command)).toEqual([
+      executable,
+      "rizin",
+    ]);
+    expect(result.error.diagnostics).toMatchObject({
+      provider_executable: "rizin",
+      executable_lookup_candidate: executable,
+      executable_lookup_code: "ENOENT",
+      executable_lookup_candidate_sha256: await sha256Of(executable),
+    });
+    // No candidate is claimed as the file that ran.
+    expect(result.error.diagnostics).not.toHaveProperty(
+      "provider_executable_path",
+    );
   },
 );
 

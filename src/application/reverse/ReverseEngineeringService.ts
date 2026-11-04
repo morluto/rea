@@ -1085,14 +1085,21 @@ export class ReverseEngineeringService {
     if (!outcome.ok) return err(outcome.error.retainDiagnostics(parameters));
     const completed = outcome.value;
     // A spawned PATH search moves past a file that fails to start this way,
-    // so the command runs as selected and the host decides what runs. An
-    // explicitly selected path has no later candidate, so the command runs
-    // that path and keeps what the lookup and hash observed.
+    // so the command runs as selected and the host decides what runs, keeping
+    // that file as a candidate rather than as what ran. An explicitly selected
+    // path has no later candidate, so the command runs that path and keeps what
+    // the lookup and hash observed.
     if (completed.status === "not-started")
       return ok(
         lookup.selectedPath === undefined
           ? unidentified(
               `${lookup.path}, which the lookup found, did not start (${completed.code}), as when a script's interpreter is missing or not executable; the command runs \`${profile.executable}\` as selected, so the host decides what runs`,
+              profile.executable,
+              {
+                executable_lookup_candidate: lookup.path,
+                executable_lookup_code: completed.code,
+                executable_lookup_candidate_sha256: sha256,
+              },
             )
           : unidentified(
               `${lookup.path} did not start (${completed.code}), as when a script's interpreter is missing or not executable`,
