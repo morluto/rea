@@ -300,18 +300,18 @@ try {
   assert.equal(invalid.stdout, "");
   assert.match(invalid.stderr, /encoded data|utf-8/iu);
 
-  // Stdin-backed files report size zero to stat(): the actual stream must
-  // enforce the same budget before UTF-8 decoding or JSON parsing.
+  // Unbounded Unix devices report size zero to stat(), like pipes.
+  // Enforce the limit on bytes read, before UTF-8 decoding or JSON parsing.
   if (process.platform !== "win32") {
     const symbolsPipe = spawnSync(process.execPath, [
       command,
-      "--symbols", "/dev/stdin",
+      "--symbols", "/dev/zero",
       "--inventory", rawInventoryPath,
       "--format", "sym",
       "--source-base", settings.sourceBase,
       "--analysis-base", settings.analysisBase,
       "--target-sha256", targetSha256,
-    ], { input: Buffer.alloc(1024 * 1024 + 1, 0x20), encoding: "utf8" });
+    ], { encoding: "utf8" });
     assert.notEqual(symbolsPipe.status, 0);
     assert.equal(symbolsPipe.stdout, "");
     assert.match(symbolsPipe.stderr, /Input exceeds size limit/u);
@@ -319,12 +319,12 @@ try {
     const inventoryPipe = spawnSync(process.execPath, [
       command,
       "--symbols", symbolsPath,
-      "--inventory", "/dev/stdin",
+      "--inventory", "/dev/zero",
       "--format", "sym",
       "--source-base", settings.sourceBase,
       "--analysis-base", settings.analysisBase,
       "--target-sha256", targetSha256,
-    ], { input: Buffer.alloc(32 * 1024 * 1024 + 1, 0x20), encoding: "utf8" });
+    ], { encoding: "utf8" });
     assert.notEqual(inventoryPipe.status, 0);
     assert.equal(inventoryPipe.stdout, "");
     assert.match(inventoryPipe.stderr, /Input exceeds size limit/u);
