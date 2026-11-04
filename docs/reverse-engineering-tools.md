@@ -65,10 +65,10 @@ Before a normal close, REA checks for live GDB thread groups. If one remains and
 
 ```text
 start_gdb_session {"inferior_tty":"/dev/pts/7"}
-gdb_console {"session_id":"…","command":"file ./program"}
-gdb_console {"session_id":"…","command":"info files"}
-gdb_session_status {"session_id":"…"}
-close_gdb_session {"session_id":"…"}
+gdb_console {"session_id":"��","command":"file ./program"}
+gdb_console {"session_id":"��","command":"info files"}
+gdb_session_status {"session_id":"��"}
+close_gdb_session {"session_id":"��"}
 ```
 
 ## Rizin
@@ -95,8 +95,10 @@ of falling back. Restart REA after changing its launch environment; these are
 not `update_analysis_settings` options. For MCP, set the values in the client's
 REA registration and restart that server.
 
-These settings do not change the fixed initial-prompt or owned-cleanup waits,
-Rizin's fixed frame and frame-count limits, or one-shot command limits. GDB
+These settings also apply to one-shot `rea debug-with-gdb` and
+`rea debug-with-rizin` commands. They do not change the fixed initial-prompt
+or owned-cleanup waits, Rizin's fixed frame and frame-count limits, or the
+limits of `inspect_with_objdump` and `execute_rizin_command`. GDB
 initialization and normal-close detach MI requests use the configured command
 deadline, so a shorter selection can also time out those control commands.
 Startup/detach control replies have a separate 16 MiB allowance that a smaller command-output setting
