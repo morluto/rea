@@ -68,7 +68,7 @@ export const exportEvidenceBundleInputSchema = z.strictObject({
 export const SESSION_TOOL_CONTRACTS = [
   session(
     "open_binary",
-    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or analysis database after validation. format=dos-com explicitly interprets 1..65280 headerless bytes as a DOS COM analysis image. format=raw-binary interprets headerless bytes with a required architecture and entry_point; file offset 0 maps at that address. Omission preserves header-based detection. provider_id selects one deep provider or deterministic auto selection; the binding remains stable until close or an explicit switch, with no failure fallback. Reopening the same target and profile retains its active database and metadata edits. An optional analysis snapshot is imported atomically and must match the binary identity, concrete provider, and canonical analysis profile exactly; importing into a session with metadata mutations requires closing and reopening it first. Switching targets preserves investigation records. Call close_binary to release engine resources; reset_investigation explicitly clears investigation records.",
+    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or analysis database after validation. format=dos-com explicitly interprets 1..65280 headerless bytes as a DOS COM analysis image. format=raw-binary interprets headerless bytes with a required architecture and entry_point; file offset 0 maps at that address. Omission preserves header-based detection. provider_id selects one deep provider or deterministic auto selection; the binding remains stable until close or an explicit switch, with no failure fallback. Reopening the same target and profile retains its active database and metadata edits. An optional analysis snapshot is imported atomically and must match the binary identity, concrete provider, and canonical analysis profile exactly; importing into a session with metadata mutations requires closing and reopening it first. Switching targets preserves investigation records. A failed admitted open reports the selection at failure in error.details.selection_at_failure; later calls can change it, so use binary_session for current state. Call close_binary to release engine resources; reset_investigation explicitly clears investigation records.",
     openBinaryInputSchema,
   ),
   session(
@@ -98,7 +98,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "import_evidence_bundle",
-    "Read the JSON bundle at the supplied local path, validate every Evidence ID and canonical manifest, then atomically merge it. Imported content is data only and is never executed.",
+    "Read the JSON bundle at the supplied local path, validate every Evidence ID and canonical manifest, then atomically merge it. Imported content is data only and is never executed. Import restores registry entries present in the bundle; questions embedded in Evidence do not automatically become Unknown registry entries.",
     importEvidenceBundleInputSchema,
   ),
   session(
@@ -153,7 +153,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "list_unknowns",
-    "List current residual-unknown heads in deterministic ID order, with optional exact status, severity, and domain filters. Results are complete inline by default; supply offset and limit to page the filtered order. total is the matching-head count and next_offset is null when the page exhausts the result. This is read-only; unresolved, contradicted, and non-truth dispositions remain distinct.",
+    "List current residual-unknown heads in deterministic ID order, with optional exact status, severity, and domain filters. Results are complete inline by default; supply offset and limit to page the filtered order. total is the matching-head count and next_offset is null when the page exhausts the result. This is read-only; unresolved, contradicted, and non-truth dispositions remain distinct. An empty registry does not mean retained Evidence has no residual questions; inspect the relevant Evidence or its analysis view.",
     listUnknownsInputSchema,
   ),
   session(
@@ -184,9 +184,12 @@ export const SESSION_TOOL_CONTRACTS = [
     ),
     requiresActiveTarget: true,
   },
-  session(
-    "inspect_address_context",
-    "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input retains its canonical error and issues alongside any successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
-    addressContextInputSchema,
-  ),
+  {
+    ...session(
+      "inspect_address_context",
+      "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input retains its canonical error and issues alongside any successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
+      addressContextInputSchema,
+    ),
+    requiresActiveTarget: true,
+  },
 ] as const satisfies readonly ToolContract[];

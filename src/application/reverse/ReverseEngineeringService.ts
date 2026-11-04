@@ -549,7 +549,7 @@ export class ReverseEngineeringService {
               ? "REA_OBJDUMP_COMMAND"
               : "REA_RIZIN_COMMAND";
           earlyFailure = new AnalysisCapabilityUnavailableError(
-            provider,
+            profile.identity.id,
             operation,
             `Unable to run configured command (${String(code ?? "unknown error")})`,
             {
@@ -708,10 +708,10 @@ export class ReverseEngineeringService {
     const limitations = [
       ...(absolutePath === undefined
         ? [
-            "The objdump version is not reported; the output lists BFD targets advertised by the installed tool and does not establish support for the selected artifact.",
+            "The objdump implementation and version are unknown. The captured output is the selected command's response and does not establish support for an artifact.",
           ]
         : [
-            "The executable version and supported formats are reported as unknown because no reliable version probe was performed.",
+            "The executable implementation, version and supported formats are unknown because no reliable identity probe was performed.",
           ]),
       "A non-zero process exit is preserved as an observed command result.",
       ...(operation === "inspect_with_objdump" &&
@@ -759,9 +759,7 @@ export class ReverseEngineeringService {
             `Command completion is unknown because the operation failed with ${failure._tag}: ${failure.message}`,
           ]),
       ...(absolutePath === undefined
-        ? [
-            "This output lists BFD targets advertised by the installed objdump and is independent of the selected artifact.",
-          ]
+        ? []
         : [
             "When both are available, pre-run and post-run digests detect artifact changes across the provider call but cannot prove the exact bytes consumed during the call.",
           ]),

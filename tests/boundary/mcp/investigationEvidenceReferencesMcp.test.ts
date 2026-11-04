@@ -108,7 +108,10 @@ it("keeps input capacity limits while composing dossiers that cannot be resent i
     arguments: { ...selection, functions: [source] },
   });
   expect(parseMcpToolError(inline)).toMatchObject({
-    error: { code: "resource_constraint" },
+    error: {
+      code: "resource_constraint",
+      remediation: { action: expect.stringContaining("retained-evidence") },
+    },
   });
   const retained = await client.callTool({
     name: "build_call_path",

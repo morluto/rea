@@ -13,7 +13,7 @@ import { processTest } from "../../support/process/processFixture.js";
 // Records once if the lane's root disappears while this stand-in browser still runs.
 const browserSource = `
 import { appendFileSync, existsSync, readdirSync } from "node:fs";
-const rootExists = () => readdirSync(process.env.OWNER_TMP).some((name) => name.startsWith("rea-request-e2e-"));
+const rootExists = () => readdirSync(process.env.OWNER_TMP).some((name) => name.startsWith(process.env.OWNER_ROOT_PREFIX));
 let seen = false;
 setInterval(() => {
   if (existsSync(process.env.OWNER_RELEASE)) process.exit(0);
@@ -77,82 +77,105 @@ const releaseBrowser = async (release: string, ready: string) => {
 
 // The stand-in CLI and browser are authored; the lane, its owner, the private root
 // and process cleanup are real. No browser capture is simulated or claimed.
-processTest.skipIf(process.platform === "win32")(
-  "stops a failed capture's CLI and the browser it launched before removing the request lane's root",
-  { timeout: 40_000 },
-  async ({ processes }) => {
-    const root = await createTestTempDirectory("rea-browser-request-owner-");
-    const tmp = join(root, "tmp");
-    await mkdir(tmp);
-    const cli = join(root, "cli.mjs");
-    const browser = join(root, "browser.mjs");
-    const ready = join(root, "ready.json");
-    const release = join(root, "release-browser");
-    const events = join(root, "events.jsonl");
-    const driver = join(root, "driver.mjs");
-    await writeFile(cli, cliSource);
-    await writeFile(browser, browserSource);
-    const lane = pathToFileURL(
-      resolve("scripts/lib/browser-request-e2e.mjs"),
-    ).href;
-    const observations = pathToFileURL(
-      resolve("dist/process/ProcessOwnershipObservation.js"),
-    ).href;
-    const tree = pathToFileURL(
-      resolve("dist/process/ProcessOwnershipProcessTree.js"),
-    ).href;
-    await writeFile(
-      driver,
-      `
+for (const { name, module, verify, rootPrefix } of [
+  {
+    name: "request",
+    module: "browser-request-e2e.mjs",
+    verify: "verifyBrowserRequestSteps",
+    rootPrefix: "rea-request-e2e-",
+  },
+  {
+    name: "source-map",
+    module: "browser-source-map-e2e.mjs",
+    verify: "verifyBrowserSourceMap",
+    rootPrefix: "rea-browser-source-map-",
+  },
+]) {
+  processTest.skipIf(process.platform === "win32")(
+    `stops a failed capture's CLI and browser before removing the ${name} lane's root`,
+    { timeout: 40_000 },
+    async ({ processes }) => {
+      const root = await createTestTempDirectory(`rea-browser-${name}-owner-`);
+      const tmp = join(root, "tmp");
+      await mkdir(tmp);
+      const cli = join(root, "cli.mjs");
+      const browser = join(root, "browser.mjs");
+      const ready = join(root, "ready.json");
+      const release = join(root, "release-browser");
+      const events = join(root, "events.jsonl");
+      const driver = join(root, "driver.mjs");
+      const compiler = join(root, "compiler.mjs");
+      // This lifecycle probe stops at CLI failure, before browser or map proof.
+      await writeFile(
+        compiler,
+        'export const version = "0.25.10"; export const transform = async (code) => ({ code, map: "{}" }); export const stop = () => {};',
+      );
+      await writeFile(cli, cliSource);
+      await writeFile(browser, browserSource);
+      const lane = pathToFileURL(resolve("scripts/lib", module)).href;
+      const observations = pathToFileURL(
+        resolve("dist/process/ProcessOwnershipObservation.js"),
+      ).href;
+      const tree = pathToFileURL(
+        resolve("dist/process/ProcessOwnershipProcessTree.js"),
+      ).href;
+      await writeFile(
+        driver,
+        `
 import { readFile, readdir } from "node:fs/promises";
-import { verifyBrowserRequestSteps } from ${JSON.stringify(lane)};
+import { ${verify} } from ${JSON.stringify(lane)};
 import { systemProcessOwnershipHost } from ${JSON.stringify(observations)};
 import { liveProcesses } from ${JSON.stringify(tree)};
 let failure;
 try {
-  await verifyBrowserRequestSteps("/rea-unlaunched-browser", process.env.OWNER_CLI);
+  await ${verify}("/rea-unlaunched-browser", process.env.OWNER_CLI);
 } catch (cause) {
   failure = { name: cause?.name ?? typeof cause, message: cause?.message ?? String(cause) };
 }
 const { pids } = JSON.parse(await readFile(process.env.OWNER_READY, "utf8"));
 const live = liveProcesses(await systemProcessOwnershipHost.listProcesses()).filter(({ pid }) => pids.includes(pid)).map(({ pid }) => pid);
-const roots = (await readdir(process.env.OWNER_TMP)).filter((name) => name.startsWith("rea-request-e2e-"));
+const roots = (await readdir(process.env.OWNER_TMP)).filter((name) => name.startsWith(process.env.OWNER_ROOT_PREFIX));
 process.stdout.write(JSON.stringify({ pids, live, roots, failure }));
 `,
-    );
-    try {
-      const result = await processes.run(process.execPath, [driver], {
-        timeoutMs: 30_000,
-        env: {
-          ...process.env,
-          TMPDIR: tmp,
-          OWNER_TMP: tmp,
-          OWNER_CLI: cli,
-          OWNER_BROWSER_ENTRY: browser,
-          OWNER_READY: ready,
-          OWNER_RELEASE: release,
-          OWNER_EVENTS: events,
-        },
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      const report = reportSchema.parse(JSON.parse(result.stdout));
-      expect(report.live).toEqual([]);
-      const receipts = await readFile(events, "utf8").catch(
-        (cause: unknown) => {
-          if (
-            cause instanceof Error &&
-            "code" in cause &&
-            cause.code === "ENOENT"
-          )
-            return "";
-          throw cause;
-        },
       );
-      expect(receipts).toBe("");
-      expect(report.roots).toEqual([]);
-      expect(report.failure.message).toMatch(/output exceeded/u);
-    } finally {
-      await releaseBrowser(release, ready);
-    }
-  },
-);
+      try {
+        const result = await processes.run(process.execPath, [driver], {
+          timeoutMs: 30_000,
+          env: {
+            ...process.env,
+            TMPDIR: tmp,
+            OWNER_TMP: tmp,
+            OWNER_ROOT_PREFIX: rootPrefix,
+            REA_WEB_SOURCE_MAP_COMPILER: compiler,
+            OWNER_CLI: cli,
+            OWNER_BROWSER_ENTRY: browser,
+            OWNER_READY: ready,
+            OWNER_RELEASE: release,
+            OWNER_EVENTS: events,
+          },
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        const report = reportSchema.parse(JSON.parse(result.stdout));
+        expect(report.live).toEqual([]);
+        const receipts = await readFile(events, "utf8").catch(
+          (cause: unknown) => {
+            if (
+              cause instanceof Error &&
+              "code" in cause &&
+              cause.code === "ENOENT"
+            )
+              return "";
+            throw cause;
+          },
+        );
+        expect(receipts).toBe("");
+        expect(report.roots).toEqual([]);
+        expect(report.failure.message).toMatch(
+          /output exceeded|maxBuffer length exceeded/u,
+        );
+      } finally {
+        await releaseBrowser(release, ready);
+      }
+    },
+  );
+}

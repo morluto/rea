@@ -269,8 +269,8 @@ APK for the negative check. No engine or external tool is involved. Record:
 Flutter Gallery 2.9.2 (112 MB, arm64-v8a / armeabi-v7a / x86_64) — every
 ABI reports the same agreeing snapshot hash
 (`65817c30a78bb44c3dc3771876b6010a`, two sections each) read 20 bytes after
-the Dart snapshot magic, per-ABI engine GNU build-ids, no labeled Dart
-version string (expected for a release engine build), and the Android
+the Dart snapshot magic, per-ABI engine GNU build-ids, an unlabeled
+Dart-shaped version candidate, and the Android
 clang/LLVM toolchain line; the AOT inspection locates all four snapshot
 symbols through the dynamic symbol table on both ELF64 and ELF32 images,
 validates the data-section headers, agrees with the identification hash,
@@ -284,7 +284,7 @@ prefixes, with no private local-file dependency. The verifier now compares
 compiled CLI and stdio MCP Evidence on every ABI, including data-header kind
 and declared lengths. Add
 `--expectations scripts/fixtures/flutter-gallery-expectations.json` for the
-documented Gallery APK to assert its pinned digest, hash, exact engine labels
+documented Gallery APK to assert its pinned digest, hash, exact engine strings
 and per-ABI URI counts. The verifier requires complete structural snapshot
 coverage, reports bounded pool coverage as partial/unverified, and reports
 exact labels/counts on other APKs unverified without an expectations file.
@@ -458,6 +458,11 @@ Kuna 1.989 passed the real-provider lane on macOS arm64 with the generated
 symbol-bearing and stripped Mach-O fixtures, including cold and warm reads,
 references, and cleanup. Linux, other hosts, and the larger 1.833 target matrix
 were not verified with 1.989.
+
+Kuna 1.990 passed the real-provider lane on macOS arm64 with the generated
+symbol-bearing and stripped Mach-O fixtures, including cold and warm reads,
+references, timeout recovery, and cleanup. Linux, other hosts, and the larger
+1.833 target matrix were not verified with 1.990.
 
 ## DOS Ghidra analysis
 

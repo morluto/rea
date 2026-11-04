@@ -63,11 +63,7 @@ it("retains a selected snapshot descriptor through MCP cleanup discovery and sam
   let retained: OwnedFileHandle | undefined;
   let restoreClose = () => {};
   try {
-    const originalEvidence = await saveSelectedSnapshot(
-      mcp,
-      first,
-      snapshotPath,
-    );
+    const original = await saveSelectedSnapshot(mcp, first, snapshotPath);
     const snapshotBytes = await readFile(snapshotPath);
     const snapshot = parseAnalysisSnapshot(
       JSON.parse(snapshotBytes.toString("utf8")),
@@ -165,14 +161,15 @@ it("retains a selected snapshot descriptor through MCP cleanup discovery and sam
       (await mcp.callTool(query)).structuredContent,
     );
     expect(replayEvidence).toEqual({
-      ...originalEvidence,
+      ...original,
       evidence_id: expect.any(String),
+      evidence_links: [original.evidence_id],
       limitations: [
-        ...originalEvidence.limitations,
+        ...original.limitations,
         "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
       ],
     });
-    expect(replayEvidence.evidence_id).not.toBe(originalEvidence.evidence_id);
+    expect(replayEvidence.evidence_id).not.toBe(original.evidence_id);
     expect(starts).toBe(priorStarts);
     expect(calls).toEqual(priorCalls);
     expect(Buffer.compare(await readFile(snapshotPath), snapshotBytes)).toBe(0);

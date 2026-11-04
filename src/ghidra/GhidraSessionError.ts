@@ -190,9 +190,13 @@ const createGhidraSessionError = (failure: {
 /** Bridge input failures share classification with their domain error projection. */
 export const isGhidraInputFailureCode = (code: string | undefined): boolean =>
   code === "invalid_request" ||
+  code === "invalid_regex_pattern" ||
   code === "not_found" ||
-  code === "ambiguous_file_offset" ||
-  code === "ambiguous_procedure";
+  code === "procedure_not_found" ||
+  code === "file_offset_unmapped" ||
+  code === "procedure_ambiguous" ||
+  code === "file_offset_ambiguous" ||
+  code === "ambiguous";
 
 /** Bind session-failure construction to its causal diagnostic scope. */
 export const bindGhidraSessionFailure =

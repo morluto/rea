@@ -46,33 +46,49 @@ export const machoSubtypeRank = (
   return rank < 0 ? policy.subtypes.length : rank;
 };
 
-/** Return a tool selector only for an explicitly supported CPU subtype. */
-export const machoKnownCodeSignSelector = (
+/** codesign's architecture name for one FAT CPU identity, when known. */
+const codeSignArchitectureName = (
   cpuType: number,
   cpuSubtype: number,
 ): string | undefined => {
   const capabilities = (cpuSubtype >>> 24) & 0xff;
-  // arm64e pointer authentication and x86_64 LIB64 have known tool selectors.
-  // Other capability variants may have distinct names; do not collapse them.
+  const base = machoCpuSubtypeBase(cpuSubtype);
+  // codesign names arm64e by its base subtype whatever its versioned
+  // pointer-authentication ABI (CPU_SUBTYPE_PTRAUTH_ABI plus a version), and
+  // x86_64 LIB64 as x86_64. Other capability variants may have distinct
+  // names; do not collapse them.
   if (
     capabilities !== 0 &&
-    !(
-      cpuType === 0x0100000c &&
-      machoCpuSubtypeBase(cpuSubtype) === 2 &&
-      capabilities === 0x80
-    ) &&
-    !(
-      cpuType === 0x01000007 &&
-      machoCpuSubtypeBase(cpuSubtype) === 3 &&
-      capabilities === 0x80
-    )
+    !(cpuType === 0x0100000c && base === 2 && (capabilities & 0xf0) === 0x80) &&
+    !(cpuType === 0x01000007 && base === 3 && capabilities === 0x80)
   )
     return undefined;
   return Object.values(MACHO_ARCHITECTURE_POLICIES)
     .find((policy) => policy.cpuType === cpuType)
-    ?.subtypes.find(
-      ({ subtype }) => subtype === machoCpuSubtypeBase(cpuSubtype),
-    )?.name;
+    ?.subtypes.find(({ subtype }) => subtype === base)?.name;
+};
+
+/**
+ * Return the codesign selector that names exactly the FAT slice at `index`.
+ * codesign resolves a name to the first slice in table order with that CPU
+ * type and base subtype, whatever its capability bits. A later slice sharing
+ * them has no exact selector, even behind an earlier variant whose own name
+ * is unknown.
+ */
+export const machoKnownCodeSignSelector = (
+  slices: readonly { readonly cpuType: number; readonly cpuSubtype: number }[],
+  index: number,
+): string | undefined => {
+  const slice = slices[index];
+  if (slice === undefined) return undefined;
+  const base = machoCpuSubtypeBase(slice.cpuSubtype);
+  return slices.findIndex(
+    (other) =>
+      other.cpuType === slice.cpuType &&
+      machoCpuSubtypeBase(other.cpuSubtype) === base,
+  ) === index
+    ? codeSignArchitectureName(slice.cpuType, slice.cpuSubtype)
+    : undefined;
 };
 
 /** Keep the selected lipo record, including its container coordinates. */
