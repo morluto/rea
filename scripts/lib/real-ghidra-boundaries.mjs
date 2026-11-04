@@ -46,7 +46,7 @@ export async function verifyGhidraBoundaries(
   }
   let successfulCalls = 0;
   let rejectedCalls = 0;
-  const call = async (name, args = {}) => {
+  const checkedReply = async (name, args = {}) => {
     const reply = await client.callTool({ name, arguments: args }, options);
     const result = requireMcpOperationResult(reply, name);
     const validate = validators.get(name);
@@ -66,8 +66,13 @@ export async function verifyGhidraBoundaries(
         `${name} omitted defined-string coverage`,
       );
     successfulCalls++;
-    return result;
+    return { reply, result };
   };
+  const call = async (name, args = {}) =>
+    (await checkedReply(name, args)).result;
+  // Validated complete Evidence for checks outside the operation result.
+  const evidence = async (name, args = {}) =>
+    (await checkedReply(name, args)).reply.structuredContent;
   const invalid = async (name, args, diagnostic) => {
     const reply = await client.callTool({ name, arguments: args }, options);
     assert.equal(
@@ -499,6 +504,9 @@ export async function verifyGhidraBoundaries(
   // Prime both inventories before editing so stale names cannot hide in caches.
   await call("list_names");
   await call("list_procedures");
+  const traceInput = { procedure: address, max_depth: 0, max_functions: 1 };
+  const traceBefore = await evidence("trace_native_values", traceInput);
+  const sourceBefore = traceBefore.normalized_result.procedures[0].evidence_id;
   const changes = {
     procedure: address,
     name: "dead",
@@ -512,6 +520,16 @@ export async function verifyGhidraBoundaries(
     comment: changes.comment,
     inline_comment: changes.inline_comment,
   });
+  const traceAfter = await evidence("trace_native_values", traceInput);
+  const sourceAfter = traceAfter.normalized_result.procedures[0].evidence_id;
+  assert.notEqual(sourceBefore, sourceAfter);
+  const sourceProcedure = (evidenceId) =>
+    call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id: evidenceId },
+      view: { kind: "native", facet: "procedure", offset: 0, limit: 1 },
+    });
+  assert.equal((await sourceProcedure(sourceBefore)).item.name, name);
+  assert.equal((await sourceProcedure(sourceAfter)).item.name, changes.name);
   const regexPattern = "^(a|aa)*b$";
   const regexFailure = await client.callTool(
     {
@@ -760,6 +778,7 @@ export async function verifyGhidraBoundaries(
   });
   await verifyGhidraNamespaceAnnotations({
     call,
+    evidence,
     reject: invalid,
     target,
     entrypoint,

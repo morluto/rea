@@ -278,7 +278,7 @@ cliTest(
       header[2] = 0x0d;
       header[3] = 0x0a;
       await writeFile(path, Buffer.concat([header, marshal]));
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -295,7 +295,7 @@ cliTest(
     for (const magic of [3392, 3394]) {
       const path = join(root, `${magic}.pyc`);
       await writeFile(path, Buffer.concat([pythonPycHeader(magic), marshal]));
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -354,7 +354,7 @@ cliTest(
         path,
         Buffer.concat([pythonPycHeader(magic), marshalCode(layout, fields)]),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -413,7 +413,7 @@ cliTest(
         path,
         Buffer.concat([pythonPycHeader(magic), marshalCode(layout, fields)]),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -458,6 +458,7 @@ cliTest(
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = completePycEvidenceSchema.parse(result.json);
     expect(evidence.normalized_result.code_objects[0]?.firstlineno).toBe(-1);
+    expect(evidence.normalized_result.code_objects[1]?.firstlineno).toBe(-7);
     expect(evidence.normalized_result.code_objects[0]?.consts).toContainEqual({
       kind: "code",
       name: "inner",
@@ -502,7 +503,7 @@ cliTest(
           }),
         ]),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -552,18 +553,15 @@ cliTest(
           marshalCode(testCase.layout, { consts: [frozenSet, dict] }),
         ]),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const evidence = completePycEvidenceSchema.parse(result.json);
-      expect(
-        evidence.normalized_result.code_objects[0]?.consts.map((value) =>
-          value.kind === "frozenset" || value.kind === "dict"
-            ? value.length
-            : null,
-        ),
-      ).toEqual(testCase.lengths);
+      expect(evidence.normalized_result.code_objects[0]?.consts).toEqual([
+        { kind: "frozenset", length: testCase.lengths[0] },
+        { kind: "dict", length: testCase.lengths[1] },
+      ]);
     }
   },
 );
@@ -633,7 +631,7 @@ cliTest(
           marshalCode(testCase.layout, { consts: [frozenSet, dict] }),
         ]),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -664,7 +662,7 @@ cliTest(
           }),
         ]),
       );
-      const rawResult = await cli.run({
+      const rawResult = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", rawPath, "--json"],
       });
       expect(rawResult.exitCode, rawResult.stderr).toBe(0);

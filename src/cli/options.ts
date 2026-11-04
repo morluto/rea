@@ -33,8 +33,12 @@ export const snapshotSelectionOption = z
   .optional()
   .describe("Load and update a local analysis snapshot");
 
-/** Explicit interpretation for headerless native executable formats. */
+/**
+ * Explicit interpretation for headerless native executable formats. Flash
+ * dumps take their offsets on the artifact commands instead.
+ */
 export const formatSelectionOption = executableFormatHintSchema
+  .exclude(["esp-flash-image"])
   .optional()
   .describe(
     "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
