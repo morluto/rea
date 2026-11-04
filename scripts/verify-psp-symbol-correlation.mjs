@@ -306,54 +306,33 @@ try {
   assert.equal(invalid.stdout, "");
   assert.match(invalid.stderr, /encoded data|utf-8/iu);
 
-  // Unbounded Unix devices report size zero to stat(), like pipes.
-  // Enforce the limit on bytes read, before UTF-8 decoding or JSON parsing.
-  if (process.platform !== "win32") {
-    const symbolsPipe = spawnSync(
+  // A shell pipe has zero stat size. Feed it a finite over-limit input
+  // and bound the child so a broken reader cannot hang or exhaust the runner.
+  if (process.platform === "linux") {
+    const pipe = (source, bytes) => spawnSync("bash", [
+      "-c",
+      'set -o pipefail; head -c "$1" /dev/zero | "$2" "$3" --symbols "$4" --inventory "$5" --format sym --source-base "$6" --analysis-base "$7" --target-sha256 "$8"',
+      "psp-symbol-fixture",
+      String(bytes),
       process.execPath,
-      [
-        command,
-        "--symbols",
-        "/dev/zero",
-        "--inventory",
-        rawInventoryPath,
-        "--format",
-        "sym",
-        "--source-base",
-        settings.sourceBase,
-        "--analysis-base",
-        settings.analysisBase,
-        "--target-sha256",
-        targetSha256,
-      ],
-      { encoding: "utf8" },
-    );
-    assert.notEqual(symbolsPipe.status, 0);
-    assert.equal(symbolsPipe.stdout, "");
-    assert.match(symbolsPipe.stderr, /Input exceeds size limit/u);
+      command,
+      source === "symbols" ? "/dev/stdin" : symbolsPath,
+      source === "inventory" ? "/dev/stdin" : rawInventoryPath,
+      settings.sourceBase,
+      settings.analysisBase,
+      targetSha256,
+    ], { encoding: "utf8", timeout: 15_000, maxBuffer: 1024 * 1024 });
 
-    const inventoryPipe = spawnSync(
-      process.execPath,
-      [
-        command,
-        "--symbols",
-        symbolsPath,
-        "--inventory",
-        "/dev/zero",
-        "--format",
-        "sym",
-        "--source-base",
-        settings.sourceBase,
-        "--analysis-base",
-        settings.analysisBase,
-        "--target-sha256",
-        targetSha256,
-      ],
-      { encoding: "utf8" },
-    );
-    assert.notEqual(inventoryPipe.status, 0);
-    assert.equal(inventoryPipe.stdout, "");
-    assert.match(inventoryPipe.stderr, /Input exceeds size limit/u);
+    for (const [source, bytes] of [
+      ["symbols", 1024 * 1024 + 1],
+      ["inventory", 32 * 1024 * 1024 + 1],
+    ]) {
+      const result = pipe(source, bytes);
+      assert.equal(result.error, undefined, result.error?.message);
+      assert.notEqual(result.status, 0);
+      assert.equal(result.stdout, "");
+      assert.match(result.stderr, /Input exceeds size limit/u);
+    }
   }
 } finally {
   await rm(scratch, { recursive: true, force: true });
