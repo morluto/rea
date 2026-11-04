@@ -1,23 +1,23 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
+import { SNAPSHOT_REPLAY_LIMITATION } from "../dist/application/binary/AnalysisSnapshotCache.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import {
   parsePspReadelfMips,
   assertPspLoadedImage,
 } from "../tests/conformance/ghidra/psp-fixture.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import {
   createVerifierRun,
   completeVerifierRun,
@@ -43,7 +43,7 @@ if (ghidra.status !== "available")
   throw new Error("Ghidra prerequisite unavailable: " + JSON.stringify(ghidra));
 
 const run = createVerifierRun();
-const execute = promisify(execFile);
+const commands = await createVerifierCommands();
 const workspace = await mkdtemp(join(tmpdir(), "rea-psp-indirect-"));
 const runtime = join(workspace, "runtime");
 const origin = fileURLToPath(
@@ -72,7 +72,7 @@ try {
   }
 
   const subprocess = (command, args, timeout = 60000) =>
-    execute(command, args, {
+    commands.exec(command, args, {
       cwd: workspace,
       env: { ...process.env, LANG: "C", LC_ALL: "C" },
       timeout,
@@ -211,9 +211,11 @@ try {
       true,
       "Native API boundary unavailable: " + symbol,
     );
-    const branches = boundary.available
-      ? (boundary.unresolved_indirect_branches ?? [])
-      : [];
+    const branches = boundary.unresolved_indirect_branches;
+    assert.ok(
+      Array.isArray(branches),
+      "Unresolved branch inspection missing: " + symbol,
+    );
     const unresolved = branches.find(
       (b) => BigInt(b.branch_address) === BigInt(address),
     );
@@ -238,6 +240,11 @@ try {
         branches.length,
         1,
         "Expected exactly one unresolved jump for " + symbol,
+      );
+      assert.deepEqual(
+        unresolved.listing_targets,
+        [],
+        "Computed branch unexpectedly has listing targets: " + symbol,
       );
       assert.ok(
         unresolved.evidence.some(
@@ -319,14 +326,16 @@ try {
     provider_id: "ghidra",
     snapshot_path: snapshotPath,
   });
-  const replayed = (
-    await call("inspect_native_api", {
-      procedure: symbols.rea_psp_computed_dispatch,
-    })
-  ).value;
+  const replayed = await call("inspect_native_api", {
+    procedure: symbols.rea_psp_computed_dispatch,
+  });
+  assert.ok(
+    replayed.evidence?.limitations.includes(SNAPSHOT_REPLAY_LIMITATION),
+    "Expected native API Evidence replayed from the saved snapshot",
+  );
   assert.ok(originalDispatchInspection, "Original API result missing");
-  assert.deepEqual(replayed, originalDispatchInspection);
-  assert.ok(Array.isArray(replayed.residual_unknowns));
+  assert.deepEqual(replayed.value, originalDispatchInspection);
+  assert.ok(Array.isArray(replayed.value.residual_unknowns));
   await call("close_binary");
   assert.equal(digest(await readFile(targetPath)), targetSha);
 
@@ -360,6 +369,11 @@ try {
   }
   try {
     if (transport !== undefined) await transport.close();
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    await commands.close();
   } catch (error) {
     failures.push(error);
   }
