@@ -19,12 +19,12 @@ export const GDB_TOOL_CONTRACTS = [
     ...toolContractMetadata("start_gdb_session"),
     kind: "native-provider",
     description:
-      "Start a BYO GDB process in MI3 mode when available, suppress startup files, and disable auto-loading. Persistent GDB sessions are available only on Linux, where REA can verify live inferior output descriptors through /proc before detaching; macOS descriptor verification is not implemented, and Windows Job Object cleanup can terminate debugger inferiors. Optionally set inferior_tty to a caller-selected terminal for future inferior runs; REA verifies the setting through GDB/MI before the session becomes ready. The selected terminal must remain available after GDB exits. A live inferior can be detached during close only while this durable output sink remains verified. The session persists in this REA MCP server process and receives an explicit session ID.",
+      "Start a BYO GDB process in MI3 mode when available, suppress startup files, and disable auto-loading. Persistent GDB sessions are available only on Linux, where REA verifies live inferior descriptors through /proc before detaching; macOS descriptor verification is not implemented, and Windows Job Object cleanup can terminate debugger inferiors. Optionally set inferior_tty to a caller-selected terminal for future inferior runs; REA verifies the setting through GDB/MI before the session becomes ready. Before detach, inferior stdin must be the selected TTY, /dev/null, or an open regular file; a closed fd 0 is accepted only after stable PID/start-time checks around repeated absence observations. When stdin is the selected TTY, the inferior may consume terminal input as well as write output. The TTY must remain available after GDB exits. A live inferior can be detached during close only while its output TTY remains verified. The session persists in this REA MCP server process and receives an explicit session ID.",
     inputSchema: z.strictObject({
       inferior_tty: localPathStringSchema
         .optional()
         .describe(
-          "Caller-selected terminal path for future inferior runs. GDB must report the exact configured path before the session is ready.",
+          "Caller-selected terminal path for future inferior runs. GDB must report the exact configured path before the session is ready. A live inferior may read input from this terminal.",
         ),
     }),
     outputSchema: z.strictObject({
@@ -92,7 +92,7 @@ export const GDB_TOOL_CONTRACTS = [
     ...toolContractMetadata("close_gdb_session"),
     kind: "native-provider",
     description:
-      "Close the owned GDB process after verifying the inferior state. When one live thread group has a verified durable output TTY, REA automatically detaches it, which may resume target execution; otherwise close reports that a disposition is required. REA never kills attached or remote targets as part of debugger cleanup. In a shared MCP server, this admitted close retires any active binary-analysis session; after target effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
+      "Close the owned GDB process after verifying the inferior state. When one live thread group has a verified durable output TTY and stdin is the selected TTY, /dev/null, an open regular file, or consistently absent with stable PID/start-time checks, REA automatically detaches it, which may resume target execution; a target using the selected TTY as stdin may consume terminal input. Otherwise close reports that a disposition is required. REA never kills attached or remote targets as part of debugger cleanup. In a shared MCP server, this admitted close retires any active binary-analysis session; after target effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
     inputSchema: z.strictObject({ session_id: sessionId }),
     outputSchema: z.strictObject({
       target_state: z.enum(["none_observed", "unknown"]),

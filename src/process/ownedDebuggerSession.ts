@@ -93,7 +93,11 @@ const DETACH_TIMEOUT_MS = 1_000;
 const MAX_LATE_DEBUGGER_OUTPUT_BYTES = 64 * 1024;
 export type OwnedDebuggerDetachResult =
   | { readonly status: "no-inferior" }
-  | { readonly status: "detached"; readonly outputSink: "durable" };
+  | {
+      readonly status: "detached";
+      readonly outputSink: "durable";
+      readonly inputSink: "durable" | "not-inherited";
+    };
 export interface OwnedInferiorIdentity {
   readonly pid: string;
   readonly startTime: string;
@@ -117,7 +121,7 @@ export const readLinuxProcessStartTime: ProcessStartTimeReader = async (
       typeof cause === "object" &&
       cause !== null &&
       "code" in cause &&
-      cause.code === "ENOENT"
+      (cause.code === "ENOENT" || cause.code === "ESRCH")
     )
       return null;
     throw cause;
@@ -125,6 +129,7 @@ export const readLinuxProcessStartTime: ProcessStartTimeReader = async (
   const parsed = parseLinuxProcessStat(stat);
   if (parsed === undefined || parsed.pid !== Number(pid))
     throw new Error(`Inferior PID ${pid} has an unreadable process identity.`);
+  if (parsed.lifecycle === "zombie" || parsed.lifecycle === "dead") return null;
   return parsed.startTime;
 };
 
@@ -150,6 +155,7 @@ const detachOutcomes = new WeakMap<
   object,
   "confirmed" | "unconfirmed" | "inferior-ended"
 >();
+const stopAttempts = new WeakMap<object, Promise<OwnedDebuggerStopResult>>();
 
 const isVerifiedDetachResult = (
   result: unknown,
@@ -160,7 +166,10 @@ const isVerifiedDetachResult = (
     ("status" in result &&
       result.status === "detached" &&
       "outputSink" in result &&
-      result.outputSink === "durable"));
+      result.outputSink === "durable" &&
+      "inputSink" in result &&
+      (result.inputSink === "durable" ||
+        result.inputSink === "not-inherited")));
 
 const waitForInferiorDetach = async (
   session: object,
@@ -170,9 +179,11 @@ const waitForInferiorDetach = async (
   if (attempt === undefined) {
     // Providers may use `this` to access their command transport.
     const pending = Promise.resolve().then(() => detach.call(session));
-    const tracked = pending.then(
+    let tracked!: Promise<OwnedDebuggerDetachResult>;
+    tracked = pending.then(
       (result) => {
-        detachAttempts.delete(session);
+        if (detachAttempts.get(session) === tracked)
+          detachAttempts.delete(session);
         detachOutcomes.set(
           session,
           isVerifiedDetachResult(result) ? "confirmed" : "unconfirmed",
@@ -180,7 +191,8 @@ const waitForInferiorDetach = async (
         return result;
       },
       (cause: unknown) => {
-        detachAttempts.delete(session);
+        if (detachAttempts.get(session) === tracked)
+          detachAttempts.delete(session);
         detachOutcomes.set(session, "unconfirmed");
         throw cause;
       },
@@ -188,7 +200,7 @@ const waitForInferiorDetach = async (
     attempt = tracked;
     detachAttempts.set(session, tracked);
   }
-  let timer!: NodeJS.Timeout;
+  let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       attempt,
@@ -197,7 +209,7 @@ const waitForInferiorDetach = async (
       }),
     ]);
   } finally {
-    clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
   }
 };
 
@@ -261,7 +273,7 @@ const finishExitedDebuggerSession = async (
  * The caller must permanently close command admission before the first attempt;
  * retries retain completed detach facts while process termination is pending.
  */
-export const stopOwnedDebuggerProcess = async (
+const performOwnedDebuggerStop = async (
   session: OwnedDebuggerProcess,
   debuggerName: string,
   options: { readonly platform?: NodeJS.Platform } = {},
@@ -299,6 +311,16 @@ export const stopOwnedDebuggerProcess = async (
       "already_exited",
     );
   }
+  try {
+    session.supervisor.limitAdditionalOutputBytes(
+      MAX_LATE_DEBUGGER_OUTPUT_BYTES,
+    );
+  } catch (cause: unknown) {
+    return {
+      status: "incomplete",
+      reason: `Owned ${debuggerName} output capture could not be bounded while the debugger remains active: ${cause instanceof Error ? cause.message : String(cause)}`,
+    };
+  }
   if (platform === "win32")
     return {
       status: "incomplete",
@@ -330,7 +352,7 @@ export const stopOwnedDebuggerProcess = async (
         detachOutcomes.set(session, "unconfirmed");
         return {
           status: "incomplete",
-          reason: `Owned ${debuggerName} provider did not confirm no inferior or detachment with a durable output sink.`,
+          reason: `Owned ${debuggerName} provider did not confirm no inferior, or detachment with both a durable output sink and a durable or non-inherited input sink.`,
         };
       }
       detachOutcomes.set(session, "confirmed");
@@ -363,6 +385,25 @@ export const stopOwnedDebuggerProcess = async (
     platform,
     "stopped",
   );
+};
+
+/** Share one complete shutdown attempt so overlapping callers cannot detach or signal twice. */
+export const stopOwnedDebuggerProcess = (
+  session: OwnedDebuggerProcess,
+  debuggerName: string,
+  options: { readonly platform?: NodeJS.Platform } = {},
+): Promise<OwnedDebuggerStopResult> => {
+  const existing = stopAttempts.get(session);
+  if (existing !== undefined) return existing;
+
+  let tracked!: Promise<OwnedDebuggerStopResult>;
+  tracked = performOwnedDebuggerStop(session, debuggerName, options).finally(
+    () => {
+      if (stopAttempts.get(session) === tracked) stopAttempts.delete(session);
+    },
+  );
+  stopAttempts.set(session, tracked);
+  return tracked;
 };
 
 /** What closing all sessions needs from a session it may have to retain. */

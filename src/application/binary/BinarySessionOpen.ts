@@ -12,8 +12,8 @@ import {
   snapshotMatchesTarget,
   snapshotTarget,
   type SnapshotBindingMismatch,
+  type AnalysisSnapshot,
 } from "../../domain/analysisSnapshot.js";
-import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {

@@ -404,7 +404,7 @@ it("retains exit-7 output when abort follows the observed exit", async () => {
   }
 });
 
-it("keeps cancellation when abort is observed before a later child exit", async () => {
+it("keeps cancellation primary while cleanup stops an aborted child", async () => {
   const controller = new AbortController();
   let childExit: Promise<number | null> | undefined;
   const launch = launcherFor(
@@ -445,7 +445,8 @@ it("keeps cancellation when abort is observed before a later child exit", async 
     expect(error).toBeInstanceOf(AnalysisCancelledError);
     expect(error.cause).toBeNull();
     expect(error.capturedOutput).toBeUndefined();
-    expect(await childExit).toBe(7);
+    // Cleanup may stop the owned child with a signal, which reports a null code.
+    expect([7, null]).toContain(await childExit);
   } finally {
     await worker.close();
   }
