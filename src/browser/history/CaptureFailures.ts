@@ -1,6 +1,7 @@
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   bindArtifactFileCleanup,
@@ -168,26 +169,30 @@ export const historicalCaptureFailure = (
       cause.reason === "format" ||
       cause.reason === "path")
   )
-    return new AnalysisInputError(OPERATION, { cause }, [
-      {
-        path: inputPath,
-        reason: cause.reason === "limit" ? "out_of_range" : "invalid_format",
-        message:
-          cause.reason === "limit"
-            ? `${cause.message}. Select a ${sourceLabel} within the ${String(WEB_NETWORK_CAPTURE_LIMITS.inputBytes)}-byte input budget. This release has no runtime override. capture_timeout_ms does not raise it.`
-            : cause.message,
-        ...(cause.reason === "limit"
-          ? {
-              expected: {
-                [descriptorRead
-                  ? "maximum_descriptor_set_bytes"
-                  : "maximum_capture_bytes"]:
-                  WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
-              },
-            }
-          : {}),
-      },
-    ]);
+    return new AnalysisInputError(
+      OPERATION,
+      { cause, ...stableArtifactInputRecovery(cause) },
+      [
+        {
+          path: inputPath,
+          reason: cause.reason === "limit" ? "out_of_range" : "invalid_format",
+          message:
+            cause.reason === "limit"
+              ? `${cause.message}. Select a ${sourceLabel} within the ${String(WEB_NETWORK_CAPTURE_LIMITS.inputBytes)}-byte input budget. This release has no runtime override. capture_timeout_ms does not raise it.`
+              : cause.message,
+          ...(cause.reason === "limit"
+            ? {
+                expected: {
+                  [descriptorRead
+                    ? "maximum_descriptor_set_bytes"
+                    : "maximum_capture_bytes"]:
+                    WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+                },
+              }
+            : {}),
+        },
+      ],
+    );
   if (
     phase !== "decoder" &&
     cause instanceof Error &&
