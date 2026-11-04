@@ -2009,6 +2009,27 @@ describe("ReleaseExposureReader source spellings", () => {
     ]);
   });
 
+  it.each(["payload.json", "payload.map", "payload.js.map"])(
+    "keeps a nested ASAR an ASAR lists as %s unknown",
+    async (name) => {
+      const root = await createTestTempDirectory("rea-release-nested-asar-");
+      const inner = asarArchive([
+        { name: "app.js.map", bytes: embeddedSourceMap() },
+      ]);
+      await writeFile(
+        join(root, "app.asar"),
+        asarArchive([{ name, bytes: inner }]),
+      );
+      const scanned = await inspect(join(root, "app.asar"));
+      expect(scanned.source_maps).toMatchObject({ embedded: 0, unparsed: 0 });
+      expect(scanned.coverage).toBe("unknown");
+      expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+      expect(scanned.limitations).toContain(
+        `Nested package ${name} was not expanded.`,
+      );
+    },
+  );
+
   it("reopens a decomposed compressed .NET member", async () => {
     const stored = deflateRawSync(Buffer.from(key));
     const root = await createTestTempDirectory("rea-release-exposure-nfd-");

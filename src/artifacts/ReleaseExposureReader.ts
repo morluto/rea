@@ -562,10 +562,9 @@ const scanOccurrences = async (
     await examineMember(state, input, {
       logical,
       format: nativeFormat ?? format,
-      kind: ownerMemberKind(
-        occurrence.format_metadata,
-        occurrence.artifact_kind,
-      ),
+      kind:
+        ownerStatedKind(occurrence.format_metadata) ?? occurrence.artifact_kind,
+      kindStated: ownerStatedKind(occurrence.format_metadata) !== null,
       encrypted: occurrence.encrypted,
       declaredSize: occurrence.declared_size,
       location,
@@ -831,6 +830,11 @@ interface MemberView {
   readonly logical: string;
   readonly format: string;
   readonly kind: string;
+  /**
+   * The package owner established `kind` from its own records. Inventory's
+   * path roles, such as `resource` for `payload.json`, are only name hints.
+   */
+  readonly kindStated: boolean;
   readonly encrypted: boolean;
   /** Full member size its owner declared, when one did. */
   readonly declaredSize: number | null;
@@ -860,16 +864,22 @@ const canDeclareMap = (member: MemberRole): boolean =>
   holdsScripts(member) || isCssMember(member);
 
 /**
- * The role a package reader states for its entry. A Bun sourcemap region is
- * named `.bunmap`, so its name alone does not say it is a source map.
+ * The role a package reader states for its entry, or null when it states none.
+ * A Bun sourcemap region is named `.bunmap`, and a SEA entry's code path need
+ * not name a script, so their names alone do not say what they are.
  */
-const ownerMemberKind = (
+const ownerStatedKind = (
   metadata: ArtifactOccurrence["format_metadata"],
-  kind: string,
-): string =>
-  metadata?.kind === "bun-standalone-entry" && metadata.region === "sourcemap"
-    ? "source-map"
-    : kind;
+): string | null => {
+  if (
+    metadata?.kind === "bun-standalone-entry" &&
+    metadata.region === "sourcemap"
+  )
+    return "source-map";
+  if (metadata?.kind === "node-sea-entry" && metadata.role === "main-script")
+    return "javascript";
+  return null;
+};
 
 const asNativeFormat = (
   format: string | null | undefined,
@@ -926,6 +936,7 @@ const examineSelectedFile = async (
     logical: basename(input.path),
     format: rootFormat,
     kind: "file",
+    kindStated: false,
     encrypted: false,
     declaredSize: bytes.length,
     location: input.path,
@@ -966,7 +977,7 @@ const examineMember = async (
       readable = await examinePackagedBinary(state, member, context);
   } else if (map) readable = await examineMapMember(state, member, context);
   else if (isText(member.logical, member.kind))
-    readable = await examineTextMember(state, member, context, listed.kind);
+    readable = await examineTextMember(state, member, context);
   else if (packageFormat !== null)
     readable = await examinePackagedBinary(state, member, context);
   else
@@ -1249,7 +1260,6 @@ const examineTextMember = async (
   state: ScanState,
   member: MemberView,
   context: ScanContext,
-  listedKind = member.kind,
 ): Promise<boolean> => {
   // CSS can declare inline maps, but the directive parser only handles JavaScript.
   if (isCssMember(member)) state.skippedMaps += 1;
@@ -1263,10 +1273,7 @@ const examineTextMember = async (
   const loaded = await member.read(
     Math.min(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES, remaining),
   );
-  const packaged = packagedFormatOfRead(
-    { ...member, kind: listedKind },
-    loaded,
-  );
+  const packaged = packagedFormatOfRead(member, loaded);
   if (packaged !== null) {
     state.textBytes += state.memberBytesRead - bytesReadBefore;
     if (packaged !== "asar")
@@ -1354,15 +1361,15 @@ const envProgram = (args: string[]): string | undefined => {
 /**
  * A name is not a format: a package member called `payload.json` or
  * `payload.js.map` can be a PE or an ASAR, and a script or map declaration
- * names whatever is at its target. The route's own read decides, so real text
- * and maps cost no further read. A kind the owner stated is kept; a promoted
- * member passes the kind it was listed with.
+ * names whatever is at its target, and inventory's role for a member is a
+ * guess from that name. The route's own read decides, so real text and maps
+ * cost no further read. Only a kind the package owner stated is kept.
  */
 const packagedFormatOfRead = (
   member: MemberView,
   loaded: MemberRead,
 ): NativeFormat | "asar" | null => {
-  if (member.packageFormat === null || member.kind !== "file") return null;
+  if (member.packageFormat === null || member.kindStated) return null;
   if (loaded.kind === "unread") return null;
   const header = loaded.kind === "bytes" ? loaded.bytes : loaded.prefix;
   if (header === null) return null;
@@ -2134,16 +2141,12 @@ const scanUnexpandedContainer = async (
     if (hasCompanionName(entry.path)) state.companionPaths.add(location);
     noteUnfollowedMapLink(state, entry.kind, entry.path, location);
     if (entry.kind !== "file") continue;
-    // A SEA entry's code path need not name a script, so its role says what it is.
-    const seaMainScript =
-      entry.formatMetadata?.kind === "node-sea-entry" &&
-      entry.formatMetadata.role === "main-script";
+    const stated = ownerStatedKind(entry.formatMetadata);
     await examineMember(state, input, {
       logical: entry.path,
-      format: seaMainScript ? "javascript-bundle" : "file",
-      kind: seaMainScript
-        ? "javascript"
-        : ownerMemberKind(entry.formatMetadata, "file"),
+      format: stated === "javascript" ? "javascript-bundle" : "file",
+      kind: stated ?? "file",
+      kindStated: stated !== null,
       encrypted: entry.encrypted,
       declaredSize: entry.declaredSize,
       location,
