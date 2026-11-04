@@ -475,24 +475,25 @@ export const staticObjectProperty = (
   readStaticObjectProperty(staticObjectPropertySource(object, isNullish), name);
 
 /** Prove a literal's effective own member is a method, independent of its prototype. */
-export const staticObjectOwnMethod = (
+export const staticObjectOwnMethodReader = (
   object: t.Node,
-  name: string,
-): boolean => {
-  if (!t.isObjectExpression(object)) return false;
+): ((name: string) => boolean) => {
+  if (!t.isObjectExpression(object)) return () => false;
+  const methods = new Map<string, boolean>();
   const members = staticObjectMembers(object, 0);
   for (let index = members.length - 1; index >= 0; index--) {
     const member = members[index]!;
     if (member.kind === "prototype-setter") continue;
-    if (member.kind === "unknown") return false;
+    if (member.kind === "unknown") break;
     if (member.kind !== "property") continue;
-    if (member.key === null) return false;
-    if (member.key === name)
-      return (
-        t.isObjectMethod(member.property) && member.property.kind === "method"
+    if (member.key === null) break;
+    if (!methods.has(member.key))
+      methods.set(
+        member.key,
+        t.isObjectMethod(member.property) && member.property.kind === "method",
       );
   }
-  return false;
+  return (name) => methods.get(name) === true;
 };
 
 export type StaticObjectPropertyNames =

@@ -343,6 +343,9 @@ it.each([
 );
 
 const CLASSIC_GLOBAL_ACTIVATIONS = [
+  "const { root } = { root: globalThis, createWindow() {} }; const early = root.createWindow; early();",
+  "let root; ({ root } = { root: globalThis, createWindow() {} }); const early = root.createWindow; early();",
+  "const { nested: { root } } = { nested: { root: globalThis }, createWindow() {} }; root.createWindow();",
   "function fail() { throw globalThis; } try { fail(); } catch ({ createWindow: start }) { start(); }",
   "function fail() { throw globalThis; } try { if (true) fail(); } catch ({ createWindow: start }) { start(); }",
   "const args = [globalThis, 'createWindow']; Reflect.get.apply(Reflect, args)();",
@@ -427,6 +430,42 @@ it.each([
     ],
   });
 });
+
+it.each([64, 128])(
+  "bounds own-method key visits for %i repeated reads",
+  (size) => {
+    const source = `const { BrowserWindow } = require('electron');
+      const box = { createWindow() {}, ${Array.from({ length: size }, (_, i) => `p${i}: 0`).join(",")} };
+      ${"box.createWindow; box.unrelated;".repeat(size)}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();`;
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("fixture did not parse");
+    const statement = parsed.program.body[1];
+    if (statement?.type !== "VariableDeclaration")
+      throw new Error("fixture changed");
+    const object = statement.declarations[0]?.init;
+    if (object?.type !== "ObjectExpression") throw new Error("fixture changed");
+    let keyVisits = 0;
+    for (const property of object.properties) {
+      if (property.type === "SpreadElement") continue;
+      const key = property.key;
+      Object.defineProperty(property, "key", {
+        configurable: true,
+        get: () => {
+          keyVisits += 1;
+          return key;
+        },
+      });
+    }
+    expect(
+      analyzeParsedJavaScriptStaticSource(source, parsed).electron
+        .browser_windows[0],
+    ).toMatchObject({ web_preferences_status: "object-literal" });
+    expect(keyVisits).toBeLessThanOrEqual(32 * (size + 1));
+  },
+);
 
 describe("Classic-script global function activation", () => {
   it.each([

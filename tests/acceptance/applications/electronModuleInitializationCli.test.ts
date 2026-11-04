@@ -241,6 +241,12 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const activations = {
       reflectedApply:
         "const args = [globalThis, 'createWindow']; Reflect.get.apply(Reflect, args)();",
+      projectedReceiver:
+        "const { root } = { root: globalThis, createWindow() {} }; const early = root.createWindow; early();",
+      assignedReceiver:
+        "let root; ({ root } = { root: globalThis, createWindow() {} }); const early = root.createWindow; early();",
+      nestedReceiver:
+        "const { nested: { root } } = { nested: { root: globalThis }, createWindow() {} }; root.createWindow();",
       catchPropagated:
         "function fail() { throw globalThis; } try { fail(); } catch ({ createWindow: start }) { start(); }",
       catchNested:
@@ -290,7 +296,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const windows = result.graph.nodes.filter(
       ({ kind }) => kind === "browser-window",
     );
-    expect(windows).toHaveLength(28);
+    expect(windows).toHaveLength(34);
     for (const source of Object.keys(files).filter((name) =>
       name.endsWith(".js"),
     )) {

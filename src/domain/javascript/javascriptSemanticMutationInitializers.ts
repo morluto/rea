@@ -16,7 +16,7 @@ import {
 
 import {
   staticObjectProperty,
-  staticObjectOwnMethod,
+  staticObjectOwnMethodReader,
   semanticStaticPropertyKey,
   semanticWriteSiteReadsFirst,
   unwrapJavaScriptExpression,
@@ -936,6 +936,15 @@ const moduleFunctionFirstRead = (
     const classicScript =
       t.isProgram(program) && javaScriptRuntimeContext(program) === "unknown";
     const globalReceivers = new WeakMap<t.Node, boolean | null>();
+    const ownMethodReaders = new WeakMap<t.Node, (name: string) => boolean>();
+    const ownMethodAtSource = (node: t.Node, name: string): boolean => {
+      let read = ownMethodReaders.get(node);
+      if (read === undefined) {
+        read = staticObjectOwnMethodReader(node);
+        ownMethodReaders.set(node, read);
+      }
+      return read(name);
+    };
     type PrototypeOwner = "Object" | "Array" | "String" | "Function";
     const receiverPrototypeOwners = new WeakMap<
       t.Node,
@@ -1366,7 +1375,8 @@ const moduleFunctionFirstRead = (
             );
             const ownMethod =
               selected !== null &&
-              (staticObjectOwnMethod(receiver, selected) ||
+              functions.has(selected) &&
+              (ownMethodAtSource(receiver, selected) ||
                 (state !== undefined &&
                   t.isIdentifier(receiver) &&
                   (() => {
@@ -1382,7 +1392,8 @@ const moduleFunctionFirstRead = (
                       return false;
                     return (
                       binding.initializers.length === 1 &&
-                      staticObjectOwnMethod(
+                      binding.initializers[0]!.projection.length === 0 &&
+                      ownMethodAtSource(
                         unwrapJavaScriptExpression(
                           binding.initializers[0]!.node,
                         ).node,
