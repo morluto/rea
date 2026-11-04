@@ -5,8 +5,14 @@ import { expect, it } from "vitest";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  withEvidenceCallerInputPath,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
+import { createImmutableEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { silentLogger } from "../../../src/logger.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
@@ -14,6 +20,7 @@ import {
   withAdmittedAnalysis,
   type WithAdmittedAnalysis,
 } from "../../../src/server/analysisAdmission.js";
+import { createServer } from "../../../src/server/createServer.js";
 import { registerEvidenceTools } from "../../../src/server/registerEvidenceTools.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
@@ -140,3 +147,66 @@ it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
     }
   },
 );
+
+it("preserves the selected path when reusing an identical observation for a different file", async () => {
+  const directory = await createTestTempDirectory("rea-reused-subject-");
+  const first = join(directory, "first.com");
+  const second = join(directory, "second.com");
+  const bytes = Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]);
+  await writeFile(first, bytes);
+  await writeFile(second, bytes);
+  const provider = {
+    id: "fixture",
+    name: "Fixture analysis provider",
+    version: "1",
+  };
+  const router = createTestProviderRouter(
+    () => ({
+      execute: async () => ok(createAnalysisExecution(["0x200"], provider)),
+      close: async () => ok(null),
+    }),
+    {
+      resolveAnalysisProfile: async () =>
+        ok({ profile: createAnalysisProfile(provider, {}) }),
+    },
+  );
+  const session = new BinarySession(router);
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "reused-subject", version: "1" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(st);
+    await client.connect(ct);
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const r = await client.callTool({ name, arguments: args });
+      expect(r.isError).not.toBe(true);
+      return r.structuredContent;
+    };
+    await call("open_binary", { path: first, format: "dos-com" });
+    const before = await call("procedure_callees", { procedure: "0x100" });
+    await call("open_binary", { path: second, format: "dos-com" });
+    const after = await call("procedure_callees", { procedure: "0x100" });
+    expect(before).toMatchObject({
+      subject: { name: "first.com", local_path: first },
+    });
+    expect(after).toMatchObject({
+      subject: { name: "second.com", local_path: second },
+    });
+    expect(parseEvidence(after).evidence_id).toEqual(
+      parseEvidence(before).evidence_id,
+    );
+    expect(
+      session.importEvidenceBundle(
+        createImmutableEvidenceBundle([
+          withEvidenceCallerInputPath(parseEvidence(after), "earlier-input"),
+        ]),
+      ).ok,
+    ).toBe(true);
+    const sameTarget = await call("procedure_callees", { procedure: "0x100" });
+    expect(sameTarget).not.toHaveProperty("caller_input_path");
+  } finally {
+    await client.close();
+    await server.close();
+    await session.close();
+  }
+});
