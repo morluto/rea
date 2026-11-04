@@ -344,7 +344,7 @@ const escapeTableCell = (value: string): string =>
     .replace(/\r\n|\r|\n/g, "<br>");
 
 const encodeMarkdownWhitespace = (whitespace: string): string =>
-  whitespace.replace(/ /g, "&#32;").replace(/\t/g, "&#9;");
+  whitespace.replace(/\s/g, (character) => `&#${character.charCodeAt(0)};`);
 
 /** Heading and paragraph facts are literal data, including block syntax. */
 const escapeMarkdownText = (value: string): string =>
@@ -357,10 +357,11 @@ const escapeMarkdownText = (value: string): string =>
 const markdownHeading = (path: readonly string[]): string =>
   `## ${escapeMarkdownText(path.join("."))}\n\n`;
 
-/** Encode literal text for a Markdown table cell, including edge whitespace. */
+/** Encode edge spacing that Markdown can represent as character references. */
 export const encodeMarkdownTableCell = (value: string): string =>
-  escapeTableCell(value).replace(/^[ \t]+|[ \t]+$/g, (whitespace) =>
-    encodeMarkdownWhitespace(whitespace),
+  escapeTableCell(value).replace(
+    /^[\t \p{Z}\ufeff]+|[\t \p{Z}\ufeff]+$/gu,
+    encodeMarkdownWhitespace,
   );
 
 const renderTable = (
