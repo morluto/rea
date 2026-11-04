@@ -32,6 +32,7 @@ import { desktopViewRequestSchema } from "./desktopApplicationView.js";
 import { javascriptModuleReferencesRequestSchema } from "./javascriptModuleReferences.js";
 import { javascriptFactsViewRequestSchema } from "./javascriptFactsView.js";
 import { evidenceSchema } from "../evidence.js";
+import { declareEvidenceReferenceAlternative } from "../evidenceInputContract.js";
 import { apiSurfaceViewSchema } from "./webNetworkApiSurfaceView.js";
 import { evmViewRequestSchema } from "./evmInterfaceView.js";
 import { artifactInventoryViewRequestSchema } from "./artifactInventoryView.js";
@@ -117,14 +118,16 @@ inlineEvidenceInputSchema._zod.processJSONSchema =
   evidenceSchema._zod.processJSONSchema;
 
 /** Unauthenticated inline input, an exact same-session retained reference, or one local Evidence file. */
-export const analysisViewSourceSchema = z.discriminatedUnion("kind", [
-  retainedEvidenceReferenceSchema,
-  z.strictObject({
-    kind: z.literal("inline"),
-    evidence: inlineEvidenceInputSchema,
-  }),
-  evidenceFileReferenceSchema,
-]);
+export const analysisViewSourceSchema = declareEvidenceReferenceAlternative(
+  z.discriminatedUnion("kind", [
+    retainedEvidenceReferenceSchema,
+    z.strictObject({
+      kind: z.literal("inline"),
+      evidence: inlineEvidenceInputSchema,
+    }),
+    evidenceFileReferenceSchema,
+  ]),
+);
 
 /** Public inspect_analysis_view input. */
 export const inspectAnalysisViewInputSchema = z.strictObject({
