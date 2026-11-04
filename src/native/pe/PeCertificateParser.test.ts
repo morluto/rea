@@ -678,6 +678,8 @@ it.each(["signature", "public-key", "issuer-id", "subject-id"] as const)(
       readAsn1(
         derSeq(
           derSeq(
+            // Unique identifiers need v2 or v3.
+            der(0xa0, derInt(2)),
             derInt(1),
             SHA256_ALG,
             name,
@@ -764,6 +766,48 @@ it("rejects a certificate missing subjectPublicKeyInfo or signatureValue", () =>
       ),
     ),
   ).toThrow(/trailing fields/u);
+});
+
+it("accepts only RFC 5280 certificate versions and the fields each allows", () => {
+  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+  const version = (value: number) => der(0xa0, derInt(value));
+  const uniqueId = der(0x81, Buffer.from([0]));
+  const extensions = der(0xa3, derSeq());
+  const certificate = (head: Buffer[], tail: Buffer[]) =>
+    readAsn1(
+      derSeq(
+        derSeq(
+          ...head,
+          derInt(1),
+          SHA256_ALG,
+          name,
+          validity,
+          name,
+          spki,
+          ...tail,
+        ),
+        SHA256_ALG,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  for (const [head, tail, message] of [
+    [[version(3)], [], /version is not v1, v2 or v3/u],
+    [[version(0xff)], [], /version is not v1, v2 or v3/u],
+    [[], [uniqueId], /issuerUniqueID requires version 2 or 3/u],
+    [[], [extensions], /extensions require version 3/u],
+    [[version(1)], [extensions], /extensions require version 3/u],
+  ] as const)
+    expect(() => parseCertificate(certificate([...head], [...tail]))).toThrow(
+      message,
+    );
+  for (const [head, tail] of [
+    [[], []],
+    [[version(1)], [uniqueId]],
+    [[version(2)], [uniqueId, extensions]],
+  ] as const)
+    expect(
+      parseCertificate(certificate([...head], [...tail])).subject.text,
+    ).toBe("commonName=Fixture");
 });
 
 it("rejects a UTF8String name that is not valid UTF-8", () => {

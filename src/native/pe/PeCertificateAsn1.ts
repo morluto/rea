@@ -390,14 +390,18 @@ const requireSubjectPublicKeyInfo = (node: Asn1BerNode): void => {
 };
 
 // issuerUniqueID [1], subjectUniqueID [2], and extensions [3] are optional
-// and ordered. Anything else is not a TBSCertificate field.
+// and ordered. Anything else is not a TBSCertificate field. RFC 5280
+// 4.1.2.8-4.1.2.9: unique identifiers need v2 or v3; extensions need v3.
 const finishTbsCertificate = (
   children: readonly Asn1BerNode[],
   start: number,
+  version: number,
 ): void => {
   let cursor = start;
   const issuerUniqueId = children[cursor];
   if (issuerUniqueId?.tag === 0x81) {
+    if (version < 1)
+      return fail("TBSCertificate issuerUniqueID requires version 2 or 3.");
     requireBitStringContent(
       issuerUniqueId.content,
       "TBSCertificate issuerUniqueID",
@@ -406,6 +410,8 @@ const finishTbsCertificate = (
   }
   const subjectUniqueId = children[cursor];
   if (subjectUniqueId?.tag === 0x82) {
+    if (version < 1)
+      return fail("TBSCertificate subjectUniqueID requires version 2 or 3.");
     requireBitStringContent(
       subjectUniqueId.content,
       "TBSCertificate subjectUniqueID",
@@ -414,6 +420,8 @@ const finishTbsCertificate = (
   }
   const extensions = children[cursor];
   if (extensions?.tag === 0xa3) {
+    if (version !== 2)
+      return fail("TBSCertificate extensions require version 3.");
     const body = extensions.children[0];
     if (
       extensions.children.length !== 1 ||
@@ -454,15 +462,22 @@ export const parseCertificate = (
   requireBitString(signatureValue, "Certificate signatureValue");
   const tbsChildren = sequence(tbs, "TBSCertificate");
   let index = 0;
-  const version = tbsChildren[0];
-  if (version?.tag === 0xa0) {
-    const versionNumber = version.children[0];
+  // An omitted version is the DEFAULT v1, encoded as 0.
+  let version = 0;
+  const versionField = tbsChildren[0];
+  if (versionField?.tag === 0xa0) {
+    const versionNumber = versionField.children[0];
     if (
-      version.children.length !== 1 ||
+      versionField.children.length !== 1 ||
       versionNumber === undefined ||
       versionNumber.tag !== 0x02
     )
       return fail("TBSCertificate version is not an INTEGER.");
+    // RFC 5280 4.1.2.1: v1(0), v2(1) or v3(2), one minimal octet each.
+    const [value] = versionNumber.content;
+    if (versionNumber.content.length !== 1 || value === undefined || value > 2)
+      return fail("TBSCertificate version is not v1, v2 or v3.");
+    version = value;
     index = 1;
   }
   const serial = tbsChildren[index];
@@ -485,7 +500,7 @@ export const parseCertificate = (
     );
   algorithmOid(tbsSignature);
   requireSubjectPublicKeyInfo(subjectPublicKeyInfo);
-  finishTbsCertificate(tbsChildren, index + 6);
+  finishTbsCertificate(tbsChildren, index + 6, version);
   const validityChildren = sequence(validity, "Validity");
   const notBefore = validityChildren[0];
   const notAfter = validityChildren[1];
