@@ -475,7 +475,7 @@ Chrome CI include this verifier. See [module relationships](website-module-trace
 ## Agent evaluation and conformance records
 
 Evaluate native, JavaScript, managed and browser investigation tasks through a
-real local Codex CLI with:
+real local agent CLI with:
 
 ```bash
 npm run verify:agent
@@ -486,11 +486,11 @@ are development verification code under `tests/evaluation/model-evals/`. The
 source-owned evaluator runs alongside the compiled REA tools; it is excluded
 from the shipped runtime package.
 
-The lane runs scenarios sequentially in standalone Codex (`--no-daemon`) with a
-disposable HOME and CODEX_HOME under `~/.cache/rea-agent-evaluations/`. Set
-`REA_AGENT_EVAL_ROOT` to choose another parent directory outside the OS temporary
-directory: current Codex refuses helper aliases under `/tmp`, preventing shell
-commands and skill reads even if MCP works. Each owned run directory is removed
+The lane runs scenarios sequentially in a disposable client home under
+`~/.cache/rea-agent-evaluations/`. Codex remains the default; set
+`REA_AGENT_EVAL_CLIENT=claude-code` or `REA_AGENT_EVAL_CLIENT=gemini-cli` to
+select Claude Code or Gemini CLI. Set `REA_AGENT_EVAL_ROOT` to choose another
+parent directory outside the OS temporary directory. Each owned run directory is removed
 after verification unless fixture retention is requested. Commands share the
 owned-process supervisor: native ownership preparation has its own bounded
 deadline before each short command budget, and timeouts join bounded process-tree
@@ -502,11 +502,12 @@ exceeding these diagnostic budgets fails explicitly. Scenario JSON events stream
 to the evaluator without retaining a second raw stdout copy. Cleanup attempts the
 remaining run tree even if auth removal fails, and reports unresolved cleanup
 together with the original verification failure. The lane
-installs the packaged skill and MCP registration through public `rea setup`,
+installs the selected client's packaged skill and MCP registration through public `rea setup`,
 rather than copying a skill into a project that also inherits the caller's
-skills and configuration. Only authentication is copied, when present, and it
-is removed after confirmed process cleanup even with
-`REA_AGENT_EVAL_KEEP_FIXTURES=true`. No user configuration,
+skills and configuration. Only Codex's authentication file is copied, when
+present; API-key authentication for Claude Code and Gemini CLI remains in the
+caller environment. Copied authentication is removed after confirmed process
+cleanup even with `REA_AGENT_EVAL_KEEP_FIXTURES=true`. No user configuration,
 rules, plugins or history is copied; shell snapshots and additional agents are
 disabled. Existing API-key environment authentication remains available.
 The native provider scenario preapproves only `open_binary` and
@@ -525,7 +526,8 @@ scenario IDs. `asar-zh` exercises the packaged desktop rubric from a Chinese
 request. `javascript-module-view` exercises summary analysis, module paging and
 item inspection in a tree with unrelated modules; its routing and text checks
 remain heuristic, so review the retained transcript for selector choice and
-coverage claims. Set `REA_CODEX_CLI` to an installed Codex executable and
+coverage claims. Set `REA_CODEX_CLI`, `REA_AGENT_EVAL_CLAUDE_COMMAND`, or
+`REA_AGENT_EVAL_GEMINI_COMMAND` to the selected executable and
 `REA_AGENT_EVAL_MODEL` to an account-supported model. Use an external resource
 limit for the whole process tree when testing on a constrained host; a Node
 heap limit alone does not bound client and child-process memory.
@@ -593,7 +595,8 @@ presence. These metrics can still accept fabricated prose and must not be read
 as factual assessments. Set `REA_AGENT_EVAL_TRANSCRIPT_DIR` to retain complete
 tool results and final answers for review.
 
-Report schema version 4 adds negative routing scenarios with nullable
+Report schema version 4 adds the top-level `client` and `clientVersion` fields
+for cross-client comparison; Codex remains the default. It also adds negative routing scenarios with nullable
 `expectedFirstTool` and a `targetClarificationPassed` outcome. Consumers must
 allow an expected absence of REA calls; this does not make an analysis scenario
 pass without its required tools. Native provider records additionally report

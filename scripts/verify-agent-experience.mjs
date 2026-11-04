@@ -34,6 +34,13 @@ const { evaluateCodexEvents } = await tsImport(
     .href,
   import.meta.url,
 );
+const { normalizeAgentEvents } = await tsImport(
+  new URL(
+    "../tests/evaluation/model-evals/AgentTranscript.ts",
+    import.meta.url,
+  ).href,
+  import.meta.url,
+);
 const { MISSING_TARGET_SCENARIO, nativeProviderScenario } = await tsImport(
   new URL(
     "../tests/evaluation/model-evals/AgentEvaluationScenarios.ts",
@@ -62,9 +69,27 @@ const { summarizeFactualCorrectness } = await tsImport(
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const verifierRun = createVerifierRun();
+const client = process.env.REA_AGENT_EVAL_CLIENT ?? "codex";
 const timeoutMs = Number(process.env.REA_AGENT_EVAL_TIMEOUT_MS ?? 480_000);
 const codex = process.env.REA_CODEX_CLI ?? "codex";
+const clientCommand =
+  client === "codex"
+    ? codex
+    : client === "claude-code"
+      ? process.env.REA_AGENT_EVAL_CLAUDE_COMMAND ?? "claude"
+      : process.env.REA_AGENT_EVAL_GEMINI_COMMAND ?? "gemini";
+const setupClient =
+  client === "claude-code"
+    ? "claude_code"
+    : client === "gemini-cli"
+      ? "gemini_cli"
+      : "codex";
 const optionalModel = process.env.REA_AGENT_EVAL_MODEL;
+
+if (!["codex", "claude-code", "gemini-cli"].includes(client))
+  throw new Error(
+    "REA_AGENT_EVAL_CLIENT must be one of codex, claude-code, or gemini-cli",
+  );
 
 if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 10_000)
   throw new Error("REA_AGENT_EVAL_TIMEOUT_MS must be an integer >= 10000");
@@ -79,11 +104,15 @@ const evaluationRoot = await mkdtemp(join(evaluationParent, "run-"));
 const fixtureRoot = join(evaluationRoot, "targets");
 const account = join(evaluationRoot, "account");
 const codexHome = join(evaluationRoot, "codex");
+const claudeConfig = join(evaluationRoot, "claude");
+const geminiHome = join(evaluationRoot, "gemini");
 const authPath = join(codexHome, "auth.json");
-const skillDestination = join(
-  account,
-  ".agents/skills/reverse-engineer-anything",
-);
+const skillDestination =
+  client === "codex"
+    ? join(account, ".agents/skills/reverse-engineer-anything")
+    : client === "claude-code"
+      ? join(claudeConfig, "skills/reverse-engineer-anything")
+      : join(geminiHome, ".agents/skills/reverse-engineer-anything");
 const evaluationEnvironment = {
   ...Object.fromEntries(
     Object.entries(process.env).filter(
@@ -93,6 +122,10 @@ const evaluationEnvironment = {
   HOME: account,
   USERPROFILE: account,
   CODEX_HOME: codexHome,
+  CLAUDE_CONFIG_DIR: claudeConfig,
+  GEMINI_CLI_HOME: geminiHome,
+  GEMINI_CLI_SYSTEM_SETTINGS_PATH: join(geminiHome, "system-settings.json"),
+  GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(geminiHome, "system-defaults.json"),
   XDG_CONFIG_HOME: join(account, ".config"),
   XDG_DATA_HOME: join(account, ".local/share"),
   XDG_CACHE_HOME: join(account, ".cache"),
@@ -102,21 +135,30 @@ const evaluationEnvironment = {
 
 const commands = createAgentEvaluationCommands({
   codex,
+  claude: process.env.REA_AGENT_EVAL_CLAUDE_COMMAND ?? "claude",
+  gemini: process.env.REA_AGENT_EVAL_GEMINI_COMMAND ?? "gemini",
   evaluationRoot,
   evaluationEnvironment,
   optionalModel,
   timeoutMs,
   repositoryRoot,
 });
-const { runCodex, runProcess, readCommandVersion } = commands;
+const {
+  runCodex,
+  runClaude,
+  runGemini,
+  runProcess,
+  readAgentVersion,
+} = commands;
 
 await withVerifierCleanup(
   async () => {
-    const codexVersion = await readCommandVersion(codex);
     await Promise.all([
       mkdir(fixtureRoot, { recursive: true }),
       mkdir(account),
       mkdir(codexHome, { mode: 0o700 }),
+      mkdir(claudeConfig, { mode: 0o700 }),
+      mkdir(geminiHome, { mode: 0o700 }),
     ]);
     // Reuse authentication only. User config, plugins, rules, history and skills
     // must not make a fresh installed-skill trial pass accidentally.
@@ -130,6 +172,13 @@ await withVerifierCleanup(
       if (cause?.code !== "ENOENT") throw cause;
       // Environment/API-key authentication can work without a local auth file.
     }
+    await writeFile(join(geminiHome, "system-settings.json"), "{}\n", {
+      mode: 0o600,
+    });
+    await writeFile(join(geminiHome, "system-defaults.json"), "{}\n", {
+      mode: 0o600,
+    });
+    const clientVersion = await readAgentVersion(client, evaluationEnvironment);
     await writeFile(
       join(codexHome, "config.toml"),
       'approval_policy = "never"\nsandbox_mode = "read-only"\nweb_search = "disabled"\n[features]\nmulti_agent = false\nshell_snapshot = false\n[history]\npersistence = "none"\n',
@@ -142,7 +191,7 @@ await withVerifierCleanup(
           join(repositoryRoot, "scripts/rea.mjs"),
           "setup",
           "--client",
-          "codex",
+          setupClient,
           approval,
           "--json",
         ],
@@ -295,11 +344,19 @@ await withVerifierCleanup(
       );
     const results = [];
     for (const scenario of scenarios) {
-      process.stderr.write(`Running Codex agent evaluation: ${scenario.id}\n`);
+      process.stderr.write(
+        `Running ${client} agent evaluation: ${scenario.id}\n`,
+      );
       const fixtureId = scenario.fixtureScenarioId ?? scenario.id;
       const fixtureClaims = agentFixtureClaims(fixtureId, targets);
       const answerInstructions = agentFixtureAnswerInstructions(fixtureId);
-      const execution = await runCodex(
+      const runAgent =
+        client === "claude-code"
+          ? runClaude
+          : client === "gemini-cli"
+            ? runGemini
+            : runCodex;
+      const execution = await runAgent(
         answerInstructions.length === 0
           ? scenario.prompt
           : `${scenario.prompt}\n\nThis closed factual rubric needs complete producer Evidence in the transcript. Request complete detail on each initial inspection or analysis when supported; summary or view records alone are not accepted by this rubric.\n\n${answerInstructions}`,
@@ -318,7 +375,7 @@ await withVerifierCleanup(
         );
       }
       const metrics = evaluateCodexEvents(
-        execution.events,
+        normalizeAgentEvents(client, execution.events),
         scenario.expectedFirstTool,
         {
           requireEvidence: scenario.requiresEvidence,
@@ -367,13 +424,17 @@ await withVerifierCleanup(
       evaluationScope: "routing_workflow_and_configured_fixture_claims",
       factualCorrectness,
       verifier_run: await completeVerifierRun(verifierRun),
-      codex,
-      codexVersion,
+      codex: client === "codex" ? codex : null,
+      codexVersion: client === "codex" ? clientVersion : null,
+      client,
+      clientCommand,
+      clientVersion,
       model: optionalModel ?? null,
       installation: {
-        method: "rea_setup_codex",
+        method: `rea_setup_${setupClient}`,
         isolatedHome: true,
-        isolatedCodexHome: true,
+        isolatedCodexHome: client === "codex",
+        isolatedClientHome: true,
         skillVersion: PRODUCT_IDENTITY.skillVersion,
         authentication: "caller_auth_only_removed_after_run",
       },
