@@ -80,7 +80,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ...FUNCTION_WORKFLOW_TOOL_CONTRACTS,
   enhanced(
     "trace_feature",
-    "Search provider string and procedure inventories for the complete literal query, preserving spaces, then query xrefs at each matched start address. References to interior string bytes are not searched. An empty result or truncated: false does not prove there are no references. Preserve an explicit unavailable owner for a non-retryable containment capability refusal; reference kinds remain unknown.",
+    "Search provider string and procedure inventories for the complete literal query, preserving spaces, then query xrefs at each matched start address. References to interior bytes of strings and procedures are not searched. An empty result or truncated: false does not prove there are no references. Preserve an explicit unavailable owner for a non-retryable containment capability refusal; reference kinds remain unknown.",
     enhancedInputSchemas.trace_feature,
   ),
   enhanced(

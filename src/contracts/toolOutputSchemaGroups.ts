@@ -274,7 +274,7 @@ const literalTraceOutput = evidenceResultOf(
         }),
       )
       .describe(
-        "References to matched start addresses only; references to interior string bytes are not searched. Empty does not establish absence.",
+        "References to matched start addresses only; references to interior bytes of strings and procedures are not searched. Empty does not establish absence.",
       ),
     truncated: z
       .boolean()

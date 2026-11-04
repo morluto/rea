@@ -340,7 +340,9 @@ describe("trace_feature reference coverage", () => {
     expect(output.normalized_result).toEqual(expectedTrace([], [], ["0x10"]));
     expect(output.limitations).toContain(TRACE_FEATURE_REFERENCE_LIMITATION);
     expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(/start address/);
-    expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(/interior string bytes/);
+    expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(
+      /interior bytes of strings and procedures/,
+    );
     expect(TRACE_FEATURE_REFERENCE_LIMITATION).toMatch(/truncated: false/);
   });
 
