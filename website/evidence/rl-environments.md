@@ -10,7 +10,7 @@ The behavior and commands come from the REA
 [quickstart](https://github.com/morluto/rea/blob/447907f2808877d3a7de62c382e256f55d08e5ac/docs/agent-environments-quickstart.md),
 [environment reference](https://github.com/morluto/rea/blob/447907f2808877d3a7de62c382e256f55d08e5ac/docs/agent-environments.md),
 and [implementation index](https://github.com/morluto/rea/blob/447907f2808877d3a7de62c382e256f55d08e5ac/docs/specs/agent-environments/README.md).
-The compatibility version is the repository's pinned AgentEnv `0.9.1431` lane,
+The compatibility version is the repository's pinned AgentEnv `0.9.1334` lane,
 not a claim about other framework versions. AgentEnv's
 [installation instructions](https://github.com/scaleapi/agentenv-framework#install)
 were checked when preparing the page.
