@@ -180,6 +180,7 @@ it("filters forwarding aliases and reuses exact-address xrefs without inventory 
 
 it("distinguishes exact xrefs from recorded pointer rows to forwarding aliases", async () => {
   const { open } = await session("rea-kuna-pointer-alias-", {
+    version: { stdout: "kuna 1.990\n" },
     pointerAliasReferences: true,
   });
   const client = open();
