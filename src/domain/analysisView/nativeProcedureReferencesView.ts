@@ -255,11 +255,23 @@ export const projectNativeProcedureReferencesView = (
     const resolve = (value: z.infer<typeof procedureIdentitySchema> | null) => {
       if (value === null) return { kind: "null" as const };
       const comma = endpoints.length + pending.length > 0 ? 1 : 0;
-      const size =
-        jsonValueByteLength(
-          value as JsonValue,
-          Math.max(0, PAGE_BYTES - bytes - extra),
-        ) + comma;
+      const measured = jsonValueByteLength(
+        value as JsonValue,
+        Math.max(0, PAGE_BYTES - bytes - extra),
+      );
+      const size = measured + comma;
+      // A value whose JSON is already larger than every identity string cannot
+      // be the selected procedure or a stored endpoint. Reject it before
+      // allocating its canonical form.
+      let longestKey = selected.length;
+      for (const known of endpointIndexes.keys())
+        if (known.length > longestKey) longestKey = known.length;
+      for (const known of pendingKeys)
+        if (known.length > longestKey) longestKey = known.length;
+      if (bytes + extra + size > PAGE_BYTES && measured > longestKey) {
+        overflow = true;
+        return undefined;
+      }
       const key = canonicalJson(value);
       if (key === selected) return { kind: "selected-procedure" as const };
       const existing = endpointIndexes.get(key);
