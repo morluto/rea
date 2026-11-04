@@ -40,6 +40,13 @@ signer identifier facts. A signer identified by subject key identifier reports
 that value as `subject_key_identifier_hex`. Other certificate types keep
 `pkcs7` null.
 
+Certificates and issuer-and-serial signers report `serial_negative` alongside
+the existing `serial_hex`. Read both fields to distinguish signed INTEGERs.
+For example, INTEGER contents `0080` and `80` both render as `serial_hex: "80"`,
+with `serial_negative: false` and `true`, respectively. A signer identified by
+key identifier reports null. Older Evidence omits the sign, which remains
+unknown for those records.
+
 Each signer reports `unsigned_attribute_oids`: null means the field was absent,
 and an array lists the types when present. Older retained Evidence may omit the
 field. Unsigned attribute contents, including nested signatures and timestamp

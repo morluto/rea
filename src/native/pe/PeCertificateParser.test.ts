@@ -464,6 +464,7 @@ it("keeps subjectKeyIdentifier bytes on the signer", () => {
   expect(report.entries[0]?.pkcs7?.signers[0]).toMatchObject({
     issuer: null,
     serial_hex: null,
+    serial_negative: null,
     subject_key_identifier_hex: "00abcd",
   });
   expect(peCertificatesSchema.safeParse(report).success).toBe(true);
@@ -525,12 +526,13 @@ const malformedSerials = [
   [0xff, 0xff],
 ] as const;
 const minimalSerials = [
-  [[0x00], "00"],
-  [[0x7f], "7f"],
-  [[0x00, 0x80], "80"],
-  [[0xff], "ff"],
-  [[0xff, 0x7f], "ff7f"],
-  [[0x11, 0x22, 0x33, 0x44], "11223344"],
+  [[0x00], "00", false],
+  [[0x7f], "7f", false],
+  [[0x00, 0x80], "80", false],
+  [[0x80], "80", true],
+  [[0xff], "ff", true],
+  [[0xff, 0x7f], "ff7f", true],
+  [[0x11, 0x22, 0x33, 0x44], "11223344", false],
 ] as const;
 const serialName = derSeq(
   derSet(
@@ -565,8 +567,11 @@ it("rejects empty and non-minimal certificate serialNumber INTEGERs", () => {
       () => parseCertificate(certificate(serial)),
       JSON.stringify(serial),
     ).toThrow(/TBSCertificate serialNumber INTEGER is (empty|not minimally)/u);
-  for (const [serial, hex] of minimalSerials)
-    expect(parseCertificate(certificate(serial)).serial_hex).toBe(hex);
+  for (const [serial, hex, negative] of minimalSerials)
+    expect(parseCertificate(certificate(serial))).toMatchObject({
+      serial_hex: hex,
+      serial_negative: negative,
+    });
 });
 
 it("rejects empty and non-minimal SignerInfo serialNumber INTEGERs", () => {
@@ -594,11 +599,11 @@ it("rejects empty and non-minimal SignerInfo serialNumber INTEGERs", () => {
     ).toThrow(
       /SignerInfo issuerAndSerialNumber serialNumber INTEGER is (empty|not minimally)/u,
     );
-  for (const [serial, hex] of minimalSerials)
+  for (const [serial, hex, negative] of minimalSerials)
     expect(
       parse(peCertificateFixture(false, payload(serial))).entries[0]?.pkcs7
-        ?.signers[0]?.serial_hex,
-    ).toBe(hex);
+        ?.signers[0],
+    ).toMatchObject({ serial_hex: hex, serial_negative: negative });
 });
 
 it("fails a truncated issuerAndSerialNumber instead of dropping the signer", () => {

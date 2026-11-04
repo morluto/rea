@@ -143,6 +143,7 @@ export const parsePeCertificates = (
               payload.subarray(certificate.start, certificate.end),
             ),
             serial_hex: certificate.serial_hex,
+            serial_negative: certificate.serial_negative,
             issuer: {
               text: certificate.issuer.text,
               attributes: [...certificate.issuer.attributes],
@@ -171,6 +172,7 @@ export const parsePeCertificates = (
                     attributes: [...signer.issuer.attributes],
                   },
             serial_hex: signer.serial_hex,
+            serial_negative: signer.serial_negative,
             subject_key_identifier_hex: signer.subject_key_identifier_hex,
             authenticated_attributes: signer.authenticated_attributes,
             unsigned_attribute_oids:
