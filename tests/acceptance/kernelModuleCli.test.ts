@@ -42,6 +42,42 @@ cliTest(
   },
 );
 
+for (const [name, field, bytes] of [
+  [".init.text", "init_text", 4],
+  [".exit.text", "exit_text", 1],
+] as const) {
+  cliTest(
+    `discloses a duplicate ${name} through the public CLI`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-kernel-module-duplicate-text-",
+      );
+      const path = join(root, "duplicate.ko");
+      await writeFile(
+        path,
+        kernelModuleFixture({
+          extraTextSections: [{ name, body: Buffer.alloc(8, 0x90) }],
+        }),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-kernel-module", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = toolContract("inspect_kernel_module").outputSchema.parse(
+        result.json,
+      );
+      expect(evidence.normalized_result[field]).toMatchObject({
+        status: "present",
+        bytes,
+      });
+      expect(evidence.normalized_result.limitations).toContain(
+        `Multiple ${name} sections are declared; the first is examined.`,
+      );
+      expect(evidence.normalized_result.coverage.status).toBe("complete");
+    },
+  );
+}
+
 cliTest(
   "resolves a relative kernel module path against the working directory",
   async ({ cli }) => {

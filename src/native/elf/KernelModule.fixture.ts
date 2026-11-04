@@ -94,6 +94,10 @@ export interface KernelModuleFixtureOptions {
   readonly ksymtab?: Buffer | null;
   readonly initText?: Buffer | null;
   readonly exitText?: Buffer | null;
+  readonly extraTextSections?: readonly {
+    readonly name: ".init.text" | ".exit.text";
+    readonly body: Buffer;
+  }[];
   /** Null omits the trailer. Undefined appends a consistent PKCS#7 trailer. */
   readonly signature?: Buffer | null;
   /** Declare a second `.modinfo` section with the same bytes. */
@@ -166,6 +170,8 @@ export const kernelModuleFixture = (
     ".exit.text",
     chosen(options.exitText, () => Buffer.from([0xc3])),
   );
+  for (const section of options.extraTextSections ?? [])
+    add(section.name, section.body);
   const shared = options.sharedNameSections;
   if (shared !== undefined)
     for (let index = 0; index < shared.count; index++)

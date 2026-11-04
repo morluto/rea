@@ -122,6 +122,8 @@ it.each([
   ]);
   expect(report.init_text).toMatchObject({ status: "present", bytes: 4 });
   expect(report.exit_text).toMatchObject({ status: "present", bytes: 1 });
+  expect(report.limitations.join(" ")).not.toContain("Multiple .init.text");
+  expect(report.limitations.join(" ")).not.toContain("Multiple .exit.text");
   expect(report.signature).toMatchObject({
     status: "present",
     reason: null,
@@ -327,6 +329,25 @@ it("examines the first of two .modinfo sections and records the duplicate", () =
     "Multiple .modinfo sections are declared; the first is examined.",
   );
 });
+
+it.each([
+  [".init.text", "init_text", 4],
+  [".exit.text", "exit_text", 1],
+] as const)(
+  "discloses a second %s while keeping the first section",
+  (name, field, bytes) => {
+    const report = parse(
+      kernelModuleFixture({
+        extraTextSections: [{ name, body: Buffer.alloc(8, 0x90) }],
+      }),
+    );
+    expect(report[field]).toMatchObject({ status: "present", bytes });
+    expect(report.limitations).toContain(
+      `Multiple ${name} sections are declared; the first is examined.`,
+    );
+    expect(report.coverage.status).toBe("complete");
+  },
+);
 
 it("does not decode compressed, nobits, or out-of-file metadata sections", () => {
   const compressed = kernelModuleFixture();
