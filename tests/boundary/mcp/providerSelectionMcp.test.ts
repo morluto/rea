@@ -12,6 +12,7 @@ import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 
 import {
@@ -579,13 +580,18 @@ const expectQueuedOpenReceipt = async (
       }
       return result;
     });
+  // Launch after the release gate exists so a failed assertion still joins it.
+  const failedSwitch = call("open_binary", {
+    path: second,
+    provider_id: "beta",
+    snapshot_path: snapshotPath,
+  });
   try {
-    const failedSwitch = call("open_binary", {
-      path: second,
-      provider_id: "beta",
-      snapshot_path: snapshotPath,
-    });
-    await failedSettled.promise;
+    await awaitAcknowledgement(
+      failedSettled.promise,
+      failedSwitch,
+      "failed snapshot open",
+    );
     const nextReply = await call("open_binary", {
       path: second,
       provider_id: "beta",
@@ -603,6 +609,7 @@ const expectQueuedOpenReceipt = async (
     ).toEqual(expectedOpenSelection(first, sha("first fixture")));
   } finally {
     deliverFailure.resolve();
+    await failedSwitch.catch(() => undefined);
     intercept.mockRestore();
   }
 };
