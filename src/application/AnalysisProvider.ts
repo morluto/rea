@@ -30,6 +30,8 @@ import {
 export interface ExecutionOptions {
   /** Ephemeral state shared only by one composed workflow. */
   readonly workScope?: AnalysisWorkScope;
+  /** A single CLI answer bound to its isolated target, not a persistent default document. */
+  readonly snapshotContext?: "one-shot-target";
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
   /**
