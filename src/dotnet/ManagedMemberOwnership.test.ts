@@ -7,6 +7,7 @@ import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 import { memberDeclaringTypeRowLookup } from "./ManagedMemberOwnership.js";
 import { memberListIndexSize } from "./ManagedMemberPointers.js";
 import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+import { readTypeDefinitionRowFacts } from "./ManagedTypeDefinitionRows.js";
 import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
   buildManagedMemberPointerFixture,
@@ -114,6 +115,22 @@ describe("managed declaring type ownership", () => {
     expect(lookup(65_535)).toBe(65_535);
     expect(memberDeclaringTypeRowLookup(bytes, layout, 6, facts)).toBe(lookup);
     expect([lookup(0), lookup(count + 1)]).toEqual([0, 0]);
+  });
+
+  it("leaves ownership unassigned when list starts decrease across an invalid row", () => {
+    const bytes = buildManagedPeFixture({ additionalEmptyTypes: 2 });
+    const layout = metadataLayout(bytes);
+    const starts = [2, 0, 1];
+    starts.forEach((start, index) => {
+      const row = readTypeDefinitionRowFacts(bytes, layout, index + 1);
+      bytes.writeUInt16LE(start, row.fieldListOffset);
+      bytes.writeUInt16LE(start, row.methodListOffset);
+    });
+    const facts = readTypeMemberListFacts(bytes, layout);
+    const fieldLookup = memberDeclaringTypeRowLookup(bytes, layout, 4, facts);
+    const methodLookup = memberDeclaringTypeRowLookup(bytes, layout, 6, facts);
+    expect(fieldLookup(1)).toBe(0);
+    expect(methodLookup(1)).toBe(0);
   });
 
   it("admits ownership storage before allocation and retains failed admission", () => {

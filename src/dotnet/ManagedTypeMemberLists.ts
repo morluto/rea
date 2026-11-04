@@ -94,29 +94,49 @@ export const readTypeMemberListFacts = (
   }
   const nonmonotonicFields = new Set<number>();
   const nonmonotonicMethods = new Set<number>();
-  for (let index = 0; index + 1 < rows.length; index += 1) {
-    const current = rows[index];
-    const next = rows[index + 1];
-    if (current === undefined || next === undefined) continue;
-    for (const [name, before, after, affected] of [
-      ["FieldList", current.field, next.field, nonmonotonicFields],
-      ["MethodList", current.method, next.method, nonmonotonicMethods],
-    ] as const)
+  let lastValidField: { index: number; start: TypeMemberListStart } | null =
+    null;
+  let lastValidMethod: { index: number; start: TypeMemberListStart } | null =
+    null;
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row === undefined) continue;
+    if (row.field.value !== null) {
       if (
-        before.value !== null &&
-        after.value !== null &&
-        after.value < before.value
+        lastValidField !== null &&
+        lastValidField.start.value !== null &&
+        row.field.value < lastValidField.start.value
       ) {
-        managedDecodeBudget(layout).reserve(512, after.offset);
-        affected.add(index);
-        affected.add(index + 1);
+        managedDecodeBudget(layout).reserve(512, row.field.offset);
+        for (let i = lastValidField.index; i <= index; i += 1)
+          nonmonotonicFields.add(i);
         issues.push({
           code: "invalid-row",
-          scope: `metadata.TypeDef:${metadataToken(2, index + 2)}`,
-          offset: after.offset,
-          detail: `TypeDef ${name} start ${String(after.raw)} decreases from preceding start ${String(before.raw)}; adjacent member ranges are unknown`,
+          scope: `metadata.TypeDef:${metadataToken(2, index + 1)}`,
+          offset: row.field.offset,
+          detail: `TypeDef FieldList start ${String(row.field.raw)} decreases from preceding start ${String(lastValidField.start.raw)}; adjacent member ranges are unknown`,
         });
       }
+      lastValidField = { index, start: row.field };
+    }
+    if (row.method.value !== null) {
+      if (
+        lastValidMethod !== null &&
+        lastValidMethod.start.value !== null &&
+        row.method.value < lastValidMethod.start.value
+      ) {
+        managedDecodeBudget(layout).reserve(512, row.method.offset);
+        for (let i = lastValidMethod.index; i <= index; i += 1)
+          nonmonotonicMethods.add(i);
+        issues.push({
+          code: "invalid-row",
+          scope: `metadata.TypeDef:${metadataToken(2, index + 1)}`,
+          offset: row.method.offset,
+          detail: `TypeDef MethodList start ${String(row.method.raw)} decreases from preceding start ${String(lastValidMethod.start.raw)}; adjacent member ranges are unknown`,
+        });
+      }
+      lastValidMethod = { index, start: row.method };
+    }
   }
   const entries: TypeMemberListEntry[] = rows.map((entry, index) => {
     const next = rows[index + 1];

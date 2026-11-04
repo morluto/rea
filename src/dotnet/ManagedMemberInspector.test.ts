@@ -23,6 +23,7 @@ import {
   type ManagedMethod,
 } from "./ManagedMemberInspectorCore.js";
 import { decodeInstructions } from "./ManagedMemberInstructionDecoder.js";
+import { readTypeDefinitionRowFacts } from "./ManagedTypeDefinitionRows.js";
 import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 import { managedTypeReferences } from "./ManagedTypeReferences.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
@@ -2256,6 +2257,81 @@ describe("managed TypeDef list ordering", () => {
           code: "invalid-row",
           detail: expect.stringContaining(
             "MethodList start 1 decreases from preceding start 2",
+          ),
+        }),
+      ],
+    });
+  });
+
+  it("leaves ownership unknown and reports decreasing starts across an invalid row", () => {
+    const bytes = buildManagedPeFixture({
+      additionalEmptyTypes: 2,
+    });
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("fixture has no CLI header");
+    const { rva, size } = pe.cli.metadata;
+    const layout = readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(rva, size, "cli.metadata"),
+      size,
+    );
+    const starts = [2, 0, 1];
+    starts.forEach((start, index) => {
+      const row = readTypeDefinitionRowFacts(bytes, layout, index + 1);
+      bytes.writeUInt16LE(start, row.fieldListOffset);
+      bytes.writeUInt16LE(start, row.methodListOffset);
+    });
+
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.types[2]?.field_list).toEqual({
+      first_row: null,
+      last_row: null,
+      count: 0,
+    });
+    expect(result.types[2]?.method_list).toEqual({
+      first_row: null,
+      last_row: null,
+      count: 0,
+    });
+    expect(result.fields.map(({ declaring_type }) => declaring_type)).toEqual([
+      null,
+    ]);
+    expect(result.methods.map(({ declaring_type }) => declaring_type)).toEqual([
+      null,
+    ]);
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: [
+        expect.objectContaining({
+          code: "invalid-row",
+          scope: "metadata.TypeDef:0x02000002",
+          detail: expect.stringContaining(
+            "TypeDef FieldList start 0 is outside the one-based list range",
+          ),
+        }),
+        expect.objectContaining({
+          code: "invalid-row",
+          scope: "metadata.TypeDef:0x02000002",
+          detail: expect.stringContaining(
+            "TypeDef MethodList start 0 is outside the one-based list range",
+          ),
+        }),
+        expect.objectContaining({
+          code: "invalid-row",
+          scope: "metadata.TypeDef:0x02000003",
+          detail: expect.stringContaining(
+            "TypeDef FieldList start 1 decreases from preceding start 2",
+          ),
+        }),
+        expect.objectContaining({
+          code: "invalid-row",
+          scope: "metadata.TypeDef:0x02000003",
+          detail: expect.stringContaining(
+            "TypeDef MethodList start 1 decreases from preceding start 2",
           ),
         }),
       ],
