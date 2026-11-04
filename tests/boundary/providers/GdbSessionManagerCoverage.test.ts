@@ -3672,8 +3672,18 @@ it("keeps the session usable after an oversized stream record is dropped", async
     expect(executed.value.result.console).toContain("before");
     expect(executed.value.result.completion_status).toBe("complete");
     expect(executed.value.result.output_truncated).toBe(true);
-    expect(executed.value.evidence.limitations.join(" ")).toContain(
-      "Retained MI records reached the 16777216 byte or 16384 record cap. This release has no runtime override. Output completeness is unknown.",
+    const limitations = executed.value.evidence.limitations.join(" ");
+    expect(limitations).toContain(
+      "Retained MI records reached the 16777216 byte command-output cap or the 16384 record cap.",
+    );
+    expect(limitations).toContain(
+      "The effective REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES value is 16777216 bytes (source default; default 16777216 bytes,",
+    );
+    expect(limitations).toContain(
+      "Set REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES in the environment that starts REA",
+    );
+    expect(limitations).toContain(
+      "The record cap has no separate setting. Output completeness is unknown.",
     );
   }
   const second = await manager.execute(started.value.session_id, "after-drop");
