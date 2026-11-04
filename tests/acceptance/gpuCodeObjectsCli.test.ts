@@ -1367,9 +1367,24 @@ it("does not interpret non-AMD ELF flags as AMD processor declarations through M
 });
 
 it.each([
-  { container: "65,536-element array", length: 65536, map: false, inspection: "inventory" },
-  { container: "65,537-element array", length: 65537, map: false, inspection: "capacity" },
-  { container: "65,537-pair map", length: 65537, map: true, inspection: "capacity" },
+  {
+    container: "65,536-element array",
+    length: 65536,
+    map: false,
+    inspection: "inventory",
+  },
+  {
+    container: "65,537-element array",
+    length: 65537,
+    map: false,
+    inspection: "capacity",
+  },
+  {
+    container: "65,537-pair map",
+    length: 65537,
+    map: true,
+    inspection: "capacity",
+  },
 ])(
   "reports a valid AMDGPU note with a $container as $inspection through MCP",
   async ({ length, map, inspection }) => {

@@ -598,9 +598,12 @@ it.each([
 ])(
   "classifies a valid AMDGPU note with a $container as $inspection",
   async ({ metadata, inspection }) => {
-    const result = await inspect(amdFixture(false, amdMetadataNoteFixture(metadata)), {
-      analysis: "inventory",
-    });
+    const result = await inspect(
+      amdFixture(false, amdMetadataNoteFixture(metadata)),
+      {
+        analysis: "inventory",
+      },
+    );
     if (!result.ok) throw result.error;
     const object = result.value.objects.find(({ kind }) => kind === "amdgpu");
     expect(object).toMatchObject({ inspection });
