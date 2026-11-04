@@ -1,5 +1,6 @@
 import {
   declaredSensitiveValues,
+  INCUR_BUILTIN_FLAGS,
   splitIncurBuiltinArguments,
 } from "./cliBuiltinArguments.js";
 import { redactExplicitText } from "./domain/explicitSensitiveValues.js";
@@ -121,8 +122,22 @@ export const parseCliOutputArguments = (
   arguments_: readonly string[],
 ): ParsedCliOutputArguments => {
   let format: CliOutputFormat = "toon";
-  let rootVersion = false;
-  let versionEligible = true;
+  const versionArguments = arguments_.includes("--version")
+    ? splitIncurBuiltinArguments(arguments_)
+    : undefined;
+  const rootVersion = versionArguments?.flags.has("--version") === true;
+  // The shared split owns timing spellings, values, and the -- boundary.
+  // Of the Incur builtins, only JSON and timing can accompany this report.
+  const versionEligible =
+    versionArguments !== undefined &&
+    versionArguments.command.length === 0 &&
+    versionArguments.outputValues.every(({ flag }) => flag === "--format") &&
+    [...versionArguments.flags].every(
+      (flag) =>
+        flag === "--json" ||
+        flag === "--timings" ||
+        !INCUR_BUILTIN_FLAGS.has(flag),
+    );
   let formatExplicit = false;
   let filterOutput: string | undefined;
   let columns: readonly string[] | undefined;
@@ -174,18 +189,6 @@ export const parseCliOutputArguments = (
   };
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
-    // Only these flags can accompany a formatted root version request.
-    // Valued output flags consume their data below before the next iteration.
-    if (argument === "--version") {
-      const next = arguments_[index + 1];
-      if (next === undefined || next.startsWith("-")) rootVersion = true;
-      else versionEligible = false;
-    } else if (
-      argument !== "--json" &&
-      argument !== "--format" &&
-      argument !== "--timings"
-    )
-      versionEligible = false;
     // Incur scans builtins across `--` and reads spaced value forms, which
     // normalizeCliArguments has produced. Mirror those effective values.
     if (argument === "--json") {
