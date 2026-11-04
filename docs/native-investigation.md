@@ -509,8 +509,10 @@ resources it owns stops the trace: the result is that provider's own
 `cleanup_incomplete` failure with its resources and any bound cleanup retry, and the work
 admitted before the stop is retained as partial Evidence with a located unknown
 at the stopping read. A successful seed without a native def-use
-model still returns its procedure and an explicit coverage unknown. A new trace
-can retry failed selectors.
+model still returns its procedure and an explicit coverage unknown. An unrecorded
+facet stays unknown; when the provider explicitly reports unavailability, the trace
+retains its reason. REA's Kuna provider explicitly reports that it does not supply
+native def-use observations. A new trace can retry failed selectors.
 
 Paging and traversal completeness are separate facts. `page_truncated` means the
 page omits retained nodes, and the edges they source, before `offset` or after
@@ -1464,7 +1466,7 @@ procedures. The CLI equivalent is
 Use `start`/`end` to constrain the inclusive address window, and continue with
 `next_cursor` until `complete` is true. Inspect `searched` for page coverage and
 skipped uninitialized blocks. A missing match does not establish absence from
-uninitialized memory or across block boundaries. See
+uninitialized or excluded memory. See
 [Ghidra byte search](ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
 

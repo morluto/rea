@@ -1357,3 +1357,15 @@ it("revises the trace_feature workflow profile so earlier results are not replay
     "other workflows keep their profile",
   ).toEqual(workflowAnalysisProfile(profile));
 });
+
+it("binds native value-trace absence semantics without changing other workflows", () => {
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const valueTrace = workflowAnalysisProfile(profile, "trace_native_values");
+  expect(valueTrace.parameters.value_flow_absence).toBe(
+    "recorded-versus-unavailable-v1",
+  );
+  expect(valueTrace.digest).not.toBe(workflowAnalysisProfile(profile).digest);
+  expect(workflowAnalysisProfile(profile, "trace_call_path")).toEqual(
+    workflowAnalysisProfile(profile),
+  );
+});
