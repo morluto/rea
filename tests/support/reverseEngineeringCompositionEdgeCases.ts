@@ -327,7 +327,7 @@ const registerSharedReverseEngineeringEdgeCasesPart3 = (): void => {
             ...(code === "ETIMEDOUT" ? { timeoutMs: 120_000 } : {}),
             ...(code === "EACCES" || code === "EPERM"
               ? {
-                  providerId: "objdump",
+                  providerId: "objdump.command",
                   diagnostics: {
                     boundary: "provider-launch",
                     command: "objdump",
@@ -337,7 +337,7 @@ const registerSharedReverseEngineeringEdgeCasesPart3 = (): void => {
               : {}),
             ...(code === "unknown"
               ? {
-                  providerId: "objdump",
+                  providerId: "objdump.command",
                   reason: "Unable to run configured command (unknown error)",
                 }
               : {}),
@@ -425,7 +425,7 @@ const registerSharedReverseEngineeringEdgeCasesPart4 = (): void => {
           ok: false,
           error: {
             _tag: "AnalysisCapabilityUnavailableError",
-            providerId: "objdump",
+            providerId: "objdump.command",
             diagnostics: {
               boundary: "provider-launch",
               command: "objdump",
@@ -535,7 +535,7 @@ const registerSharedReverseEngineeringEdgeCasesPart5 = (): void => {
         ok: false,
         error: {
           _tag: "AnalysisCapabilityUnavailableError",
-          providerId: "objdump",
+          providerId: "objdump.command",
           reason: "Unable to run configured command (ENOENT)",
           cause: { message: "launch failed" },
         },

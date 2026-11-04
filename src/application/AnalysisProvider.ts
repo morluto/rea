@@ -30,6 +30,8 @@ import {
 export interface ExecutionOptions {
   /** Ephemeral state shared only by one composed workflow. */
   readonly workScope?: AnalysisWorkScope;
+  /** A single CLI answer bound to its isolated target, not a persistent default document. */
+  readonly snapshotContext?: "one-shot-target";
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
   /**
@@ -258,8 +260,10 @@ type CapabilityAvailability =
       readonly available: false;
       readonly reason: string;
       readonly availabilityCode?: ProviderRejectionCode;
+      /** Provider-owned explanation and recovery for an attempted operation. */
+      readonly userMessage?: string;
       /**
-       * Repair instruction from the readiness owner that made this operation
+       * Recovery instruction from the owner that made this operation
        * unavailable. Static capability facts omit it.
        */
       readonly remediation?: string;

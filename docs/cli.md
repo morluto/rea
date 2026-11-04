@@ -39,6 +39,17 @@ pass an absolute path. REA reads and authenticates the file, then projects it
 like retained Evidence, so a large file is bounded by the file reader rather
 than charged as inline input.
 
+An argument that accepts inline JSON or a JSON file path also accepts `-`, which
+reads the request from standard input, so a generated request needs no
+temporary file:
+
+```bash
+jq -nc '{source: {kind: "evidence-file", path: "app-evidence.json"}, view: {kind: "summary"}}' | rea inspect-analysis-view -
+```
+
+Standard input is read once as a single UTF-8 JSON document without a
+byte-order mark, and it is limited to 8 MiB. Put a larger request in a file.
+
 Local file inspection commands reject empty paths and NUL bytes before resolving
 relative inputs, auxiliary files or output destinations. An empty string never
 selects the working directory; use an explicit `.` when selecting that directory
@@ -637,6 +648,11 @@ rea analyze /absolute/path/to/program --provider ghidra --snapshot /absolute/pat
 ```
 
 An exact CLI cache hit is normally read before starting a provider process.
+`decompile --provider ghidra --snapshot ...` also retains its single selected
+Program's pseudocode result, even without an explicit document selector. Old
+snapshots that contain only the Evidence need one new query to add that replay
+entry. This does not retain every body from `decompile-all` or make a persistent
+session's implicit document replayable.
 On Windows, Ghidra first admits the selected source through its native snapshot
 owner, so replay can start that provider.
 In MCP, `open_binary` accepts `snapshot_path` to import a snapshot atomically
@@ -1196,9 +1212,12 @@ treated as malformed.
 exact array path with `--filter-output` and provide comma-separated direct
 scalar columns with `--columns`; column order is the output column order:
 
+For an artifact inventory request that selects the `occurrences` collection
+and includes `logical_path` and `artifact_id` in its view fields:
+
 ```bash
 rea inspect-analysis-view request.json --format csv \
-  --filter-output normalized_result.rows --columns name,address
+  --filter-output normalized_result.items --columns logical_path,artifact_id
 ```
 
 The first line is a REA metadata record,
