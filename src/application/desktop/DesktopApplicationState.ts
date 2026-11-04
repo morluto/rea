@@ -407,25 +407,21 @@ const inspectState = async (
   const names = applicationNames(capture);
   const facts = roleFacts(capture);
   const changes = indexChanges(capture);
-  const paths = await withRetainedContent(
-    folder,
-    OPERATION,
-    async (content) => {
-      const context: ViewContext = {
-        content,
-        readers,
-        names,
-        signal,
-        changes,
-        baseline: baselineDigests(capture),
-        checkpoints: capture.state.checkpoints.length,
-      };
-      const described: DesktopStatePath[] = [];
-      for (const path of statePaths(capture, changes))
-        described.push(await describePath(capture, path, facts, context));
-      return described;
-    },
-  );
+  const paths = await withRetainedContent(folder, async (content) => {
+    const context: ViewContext = {
+      content,
+      readers,
+      names,
+      signal,
+      changes,
+      baseline: baselineDigests(capture),
+      checkpoints: capture.state.checkpoints.length,
+    };
+    const described: DesktopStatePath[] = [];
+    for (const path of statePaths(capture, changes))
+      described.push(await describePath(capture, path, facts, context));
+    return described;
+  });
   const result: DesktopApplicationState = {
     capture: {
       evidence_id: evidence.evidence_id,
@@ -438,7 +434,14 @@ const inspectState = async (
     },
     application_names: [...names],
     paths,
-    limitations: STATE_LIMITATIONS,
+    limitations: [
+      ...STATE_LIMITATIONS,
+      ...(capture.state.state_directories === undefined
+        ? [
+            "The capture does not record its state directories as walked, so files in a symlinked state directory may be classed as documents.",
+          ]
+        : []),
+    ],
   };
   return createEvidence(undefined, DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-state",

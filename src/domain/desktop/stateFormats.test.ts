@@ -97,6 +97,13 @@ describe("captured data safety and fidelity", () => {
     });
   });
 
+  it("keeps whitespace runs a leaf's comments separate", () => {
+    expect(xmlView("<a> <!--x--> <!--y--> </a>")).toEqual({
+      root: { name: "a", attributes: {}, children: [" ", " ", " "] },
+      truncated: false,
+    });
+  });
+
   it("marks a tree cut at the depth limit as truncated", () => {
     const deep = `${"<n>".repeat(70)}${"</n>".repeat(70)}`;
     expect(xmlView(deep)).toMatchObject({ truncated: true });

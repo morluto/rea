@@ -161,8 +161,11 @@ export const desktopApplicationCaptureSchema = z.strictObject({
   state: z.strictObject({
     roots: z.array(z.string().min(1)).min(1),
     content_roots: z.array(z.string().min(1)),
-    /** The application's state directories as walked, in their physical spelling. */
-    state_directories: z.array(z.string().min(1)),
+    /**
+     * The application's state directories as walked, in their physical
+     * spelling; absent from captures written before it was recorded.
+     */
+    state_directories: z.array(z.string().min(1)).optional(),
     /** At least the baseline; a cancelled capture can stop there. */
     checkpoints: z.array(desktopCheckpointSchema).min(1),
     content_files: z.int().min(0),

@@ -99,7 +99,9 @@ export const roleFacts = (
   const { application, session, state, host } = capture;
   const named = application.state_directories.map((entry) => entry.path);
   // A symlinked state directory is walked, and its files recorded, under its physical spelling.
-  const stateDirectories = [...new Set([...named, ...state.state_directories])];
+  const stateDirectories = [
+    ...new Set([...named, ...(state.state_directories ?? [])]),
+  ];
   const stateTails = named
     .map(hiddenTail)
     .filter((tail): tail is string => tail !== null);
