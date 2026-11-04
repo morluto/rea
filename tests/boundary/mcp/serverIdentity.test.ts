@@ -22,10 +22,8 @@ import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import {
-  expandToolAvailability,
-  sessionProvider,
-} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createServerIdentity } from "../../../src/serverIdentity.js";
@@ -394,9 +392,15 @@ describe("live server identity over MCP", () => {
             server.catalogIdentity.digests.combined_sha256,
         },
       });
-      const status = z
-        .object({ result: sessionProvider })
-        .parse(response.structuredContent).result;
+      const statusSchema = sessionOutputSchemas.binary_session;
+      const status = statusSchema.parse(response.structuredContent).result;
+      expect(status.open).toBe(false);
+      for (const open of ["invalid", true]) {
+        expect(
+          statusSchema.safeParse({ result: { ...status, open } }).success,
+          `invalid session lifecycle state: ${String(open)}`,
+        ).toBe(false);
+      }
       expect(status.server_identity.catalog).toEqual(server.catalogIdentity);
       expect(status.server_identity.alignment).toMatchObject({
         state: "aligned",
@@ -499,7 +503,7 @@ const activeTargetReasons = async (
     arguments: {},
   });
   const availability = expandToolAvailability(
-    z.object({ result: sessionProvider }).parse(status.structuredContent).result
+    sessionOutputSchemas.binary_session.parse(status.structuredContent).result
       .tool_availability,
   );
   return Object.fromEntries(
@@ -514,9 +518,9 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
     name: "binary_session",
     arguments: { detail: "complete" },
   });
-  const status = z
-    .object({ result: sessionProvider })
-    .parse(identity.structuredContent).result;
+  const status = sessionOutputSchemas.binary_session.parse(
+    identity.structuredContent,
+  ).result;
   expect(Object.keys(status.server_identity.catalog).sort()).toEqual([
     "counts",
     "digests",
@@ -567,9 +571,9 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
     name: "binary_session",
     arguments: { expected_package_version: "1.2.0" },
   });
-  const parsed = z
-    .object({ result: sessionProvider })
-    .parse(status.structuredContent);
+  const parsed = sessionOutputSchemas.binary_session.parse(
+    status.structuredContent,
+  );
   expect({
     result: {
       ...parsed.result,

@@ -119,10 +119,15 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
         new AnalysisCapabilityUnavailableError(
           "native-module-resolver",
           OPERATION,
-          "missing_browser_executable",
+          executable === undefined
+            ? "missing_browser_executable"
+            : "invalid_browser_executable",
           {
             userMessage:
               "Provide an absolute REA_BROWSER_EXECUTABLE for a caller-supplied Chromium browser supporting import.meta.resolve. REA installs no browser.",
+            ...(executable === undefined
+              ? {}
+              : { diagnostics: { executable } }),
           },
         ),
       );

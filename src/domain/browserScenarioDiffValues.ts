@@ -74,12 +74,14 @@ const normalizationInputSchema = z
 
 /** Input for step-aligned comparison of two browser scenario captures. */
 export const compareBrowserScenariosInputSchema = z.strictObject({
-  before_scenario: retainedBrowserScenarioCaptureSchema.describe(
-    "Earlier complete normalized_result from capture_browser_scenario.",
-  ),
-  after_scenario: retainedBrowserScenarioCaptureSchema.describe(
-    "Later complete normalized_result from capture_browser_scenario.",
-  ),
+  before_scenario: retainedBrowserScenarioCaptureSchema
+    .describe(
+      "Earlier complete normalized_result from capture_browser_scenario.",
+    )
+    .meta({ "x-rea-complete-observation": true }),
+  after_scenario: retainedBrowserScenarioCaptureSchema
+    .describe("Later complete normalized_result from capture_browser_scenario.")
+    .meta({ "x-rea-complete-observation": true }),
   normalization: normalizationInputSchema
     .default({ rules: [] })
     .describe("Exact-literal rules committed in the comparison result."),

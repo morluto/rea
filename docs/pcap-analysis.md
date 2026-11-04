@@ -81,9 +81,13 @@ Its separate inferred truncation lengths do not replace that limit; an unset
 file-header limit remains `null`.
 
 Addresses count once per packet, including loopback and nested IP occurrences.
-DNS addresses are associated only with one question in the same response packet;
-additional records may be included, so this does not prove final resolution.
-Ambiguous addresses remain in a separate inventory. Protocol distribution counts
+DNS address attribution requires one question in one response and complete,
+consistent RR owner/type and section counts. Only answer-section A/AAAA records
+matching that question (or its unambiguous answer-section CNAME chain) are
+associated, with the requested address type respected. Authority, additional,
+unrelated, malformed, and ambiguous addresses remain in the unattributed
+inventory and make coverage partial. These packet-local relationships do not
+prove final resolution or destination authenticity. Protocol distribution counts
 exact nonempty `frame.protocols` stack strings. Frames for which TShark reports
 an empty stack, including zero-length packets, still contribute to the packet
 count without adding a protocol row. An all-empty stack inventory can have
@@ -102,6 +106,17 @@ URI leaves coverage partial. The HTTP URI profile covers HTTP/1 and HTTP/2;
 HTTP/3 URI semantics are unexamined. All admitted URI fields share the same
 credential exclusion and source-value retention rules.
 Counts preserve distinct observed source URIs before omission or coalescing.
+
+Failed capture-summary TShark commands apply the same HTTP URI policy to
+retained JSON diagnostics, including cancellation, output-limit and cleanup
+failures. JSON spelling outside the excluded credential spans is preserved.
+An unfinished or malformed JSON token and its following suffix are withheld,
+with `captured_output.truncated: true`; complete preceding fields remain
+available. Diagnostic byte counts and output allowances describe original
+producer input, before credential exclusion. Caller-selected packet-field tools
+continue to return their selected recorded values.
+Origin-form request targets and HTTP/2 `:path` values retain path semantics,
+including leading double slashes and userinfo-like text within the path.
 `coverage: "partial"` records unresolved DNS attribution or URI item loss;
 component credential exclusion is also counted explicitly. Diagnostics retain
 both tool stderr streams. Recorded fields do not establish decrypted payloads,

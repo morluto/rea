@@ -52,7 +52,13 @@ it("reports truncated cyclic causes in serializable diagnostics", () => {
     cause,
   ).diagnostics;
 
-  expect(JSON.stringify(diagnostics)).toContain('"cause_truncated":true');
+  const serialized = JSON.parse(JSON.stringify(diagnostics)) as {
+    failure_cause: unknown;
+  };
+  let nested = serialized.failure_cause;
+  while (typeof nested === "object" && nested !== null && "cause" in nested)
+    nested = nested.cause;
+  expect(nested).toMatchObject({ cause_truncated: true });
 });
 
 it("keeps bounded compiler and nested launcher outcomes in diagnostics", () => {

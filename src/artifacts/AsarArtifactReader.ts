@@ -18,6 +18,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 import {
+  ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
   sameArtifactEntry,
@@ -25,7 +26,11 @@ import {
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
-import { admitAsarHeader, readAsarHeader } from "./AsarHeader.js";
+import {
+  admitAsarHeader,
+  readAsarHeader,
+  type AsarHeaderExtents,
+} from "./AsarHeader.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { FileHandleChunkStream } from "../filesystem/readFileHandleChunks.js";
 import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
@@ -45,9 +50,8 @@ import { readAsarListing, type AsarListedEntry } from "./AsarListing.js";
  */
 export class AsarArtifactReader implements ArtifactReader {
   readonly format = "asar" as const;
-  #archiveSize: number | undefined;
+  #extents: AsarHeaderExtents | undefined;
   #selectedCanonicalSource: string | undefined;
-  #headerSize: number | undefined;
   readonly #entries = new Map<string, AsarEntryState>();
   readonly #ownedHandles = new Map<SharedAsarFileHandle, OwnedAsarHandle>();
   #snapshot: { readonly path: string; readonly sha256: string } | undefined;
@@ -68,18 +72,13 @@ export class AsarArtifactReader implements ArtifactReader {
         this.#resetArchiveState();
         this.#entries.clear();
         const admitted = await this.#admitHeader(snapshotPath, signal);
-        this.#archiveSize = admitted.archiveBytes;
-        this.#headerSize = admitted.headerBytes;
+        this.#extents = {
+          archiveBytes: admitted.archiveBytes,
+          headerBytes: admitted.headerBytes,
+          jsonBytes: admitted.jsonBytes,
+        };
         assertAsarReadActive(signal);
-        const ordered = await readAsarListing(admitted.header, signal);
-        const archiveMetadata = await lstat(snapshotPath);
-        if (!archiveMetadata.isFile() || archiveMetadata.isSymbolicLink())
-          throw new ArtifactReaderFailure(
-            "format",
-            "ASAR container is not a regular file",
-          );
-        this.#archiveSize = archiveMetadata.size;
-        return ordered;
+        return readAsarListing(admitted.header, signal);
       }, signal);
     } catch (cause: unknown) {
       throw asarFailure(this.path, "inventory", cause);
@@ -196,8 +195,8 @@ export class AsarArtifactReader implements ArtifactReader {
     signal?: AbortSignal,
   ): Promise<Readable> {
     const { facts, entry: producedEntry } = state;
-    const archiveSize = this.#archiveSize;
-    const headerSize = this.#headerSize;
+    const archiveSize = this.#extents?.archiveBytes;
+    const headerSize = this.#extents?.headerBytes;
     const offset = facts.packedOffset;
     const start =
       offset === undefined || headerSize === undefined
@@ -602,8 +601,7 @@ export class AsarArtifactReader implements ArtifactReader {
   }
 
   #resetArchiveState(): void {
-    this.#archiveSize = undefined;
-    this.#headerSize = undefined;
+    this.#extents = undefined;
   }
 }
 
@@ -644,9 +642,9 @@ const asarUnpackedEntryFailure = (
 ): ArtifactReaderFailure => {
   if (cause instanceof ArtifactReaderFailure) return cause;
   if (entry.unpacked && isMissingFile(cause))
-    return new ArtifactReaderFailure(
-      "unavailable",
+    return new ArtifactEntryContentUnavailable(
       `ASAR unpacked entry bytes are unavailable: ${entry.path}`,
+      "ASAR unpacked companion bytes were unavailable; no content hash or child artifact was produced.",
       { cause },
       artifactIntegrityDetails(entry.path, entry.declaredIntegrity, null, true),
     );

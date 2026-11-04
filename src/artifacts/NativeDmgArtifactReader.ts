@@ -36,7 +36,8 @@ export const DMG_EXISTING_ATTACHMENT_RECOVERY =
   "hdiutil refused a private read-only DMG attachment after listing an existing attachment of this image path. If it is still attached, ask its owner to release it when safe, then retry. REA does not borrow or detach existing attachments.";
 const DMG_CHECKSUM_ABSENT_LIMITATION =
   "hdiutil verify found no stored checksum in this disk image, so its integrity was not verified; the root SHA-256 identifies the inventoried bytes.";
-const VERIFY_SETTLE_DELAYS_MS = [250, 500] as const;
+const VERIFY_TRANSIENT_DELAY_MS = 250;
+const VERIFY_UNKNOWN_SETTLE_DELAYS_MS = [250, 500] as const;
 // APFS ejects and busy reporting can lag a detach attempt.
 const DETACH_SETTLE_DELAYS_MS = [250, 500, 1000] as const;
 const delay = (milliseconds: number): Promise<void> =>
@@ -202,6 +203,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     const prefix = basename(this.path);
     const entries = directory
       .entries(signal, {
+        onCoverage: (coverage) => options?.onCoverage?.(coverage),
         onOmission: (omission) =>
           options?.onOmission?.({
             ...omission,
@@ -544,7 +546,13 @@ export class NativeDmgArtifactReader implements ArtifactReader {
               },
             );
         }
-        const delayMs = VERIFY_SETTLE_DELAYS_MS[attempt];
+        // An explicit resource refusal can outlast the initial settle window
+        // after image creation. Its retries share the existing command deadline;
+        // an ambiguous localized refusal keeps only the short diagnostic probe.
+        const delayMs =
+          cause.verifyDiagnostic === "Resource temporarily unavailable"
+            ? VERIFY_TRANSIENT_DELAY_MS
+            : VERIFY_UNKNOWN_SETTLE_DELAYS_MS[attempt];
         // Retry only the producer's explicit transient diagnostic, or a localized
         // refusal of a readable target that may be the same, before any mount.
         if (

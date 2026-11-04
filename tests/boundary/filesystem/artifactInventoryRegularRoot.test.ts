@@ -6,6 +6,7 @@ import {
   rename,
   rm,
   writeFile,
+  mkdir,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -25,6 +26,24 @@ import {
   arArchive,
   fatImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
+
+it.skipIf(process.platform === "win32").each(["file", "directory"])(
+  "rejects invalid native traversal before canonicalizing a %s inventory root",
+  async (kind) => {
+    const root = await createTestTempDirectory(
+      "rea-inventory-native-selection-",
+    );
+    await writeFile(join(root, "blocker"), "regular file");
+    const path = join(root, "target");
+    if (kind === "directory") await mkdir(path);
+    else await writeFile(path, "target bytes");
+    await expect(
+      inventoryArtifact(`${root}/blocker/../target`),
+    ).rejects.toMatchObject({ code: "ENOTDIR" });
+    const valid = await inventoryArtifact(path);
+    expect(valid.manifest.root_format).toBe(kind);
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "rejects a FIFO artifact root without waiting for a writer",

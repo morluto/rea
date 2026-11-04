@@ -55,6 +55,17 @@ describe("provider-neutral inclusive function body evidence", () => {
       }).success,
     ).toBe(false);
   });
+  it("rejects malformed address-space labels rather than certifying body coverage", () => {
+    expect(
+      functionBodySchema.safeParse({
+        ...observed(),
+        ranges: [{ start: "ram space:0x1000", end: "ram space:0x1000" }],
+        total_bytes: 1,
+        span_bytes: 1,
+        non_contiguous: false,
+      }).success,
+    ).toBe(false);
+  });
   it("allows an observed empty set without manufacturing entry membership", () => {
     expect(
       procedureIdentitySchema.safeParse({

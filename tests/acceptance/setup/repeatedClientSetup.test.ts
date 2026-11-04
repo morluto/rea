@@ -88,6 +88,7 @@ cliTest(
       "rea-explicit-detected-clients-",
     );
     await mkdir(join(home, ".codex"));
+    await mkdir(join(home, ".grokbot"));
     const run = (selection: readonly string[], mode: string) =>
       cli.run({
         arguments: ["setup", ...selection, "--skill=false", "--json", mode],

@@ -1,6 +1,6 @@
 import { setImmediate } from "node:timers/promises";
-import { z } from "zod";
 
+import { asarNodeSchema } from "./AsarNode.js";
 import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
 import { assertAsarReadActive } from "./AsarFailure.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -9,22 +9,7 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 const MAX_LISTING_BYTES = 64 * 1024 * 1024;
 const BLOCK_INTEGRITY_LIMITATION =
   "ASAR block integrity declarations were not validated. Whole-file digest comparison does not establish block integrity or Electron runtime acceptance.";
-const nodeSchema = z.looseObject({
-  files: z
-    .custom<Record<string, unknown>>(
-      (value) =>
-        value !== null && typeof value === "object" && !Array.isArray(value),
-    )
-    .optional(),
-  link: z.string().optional(),
-  size: z.number().nonnegative().safe().optional(),
-  offset: z.string().optional(),
-  unpacked: z.boolean().optional(),
-  executable: z.boolean().optional(),
-  integrity: z
-    .looseObject({ algorithm: z.string(), hash: z.string() })
-    .optional(),
-});
+
 type AsarListedFacts = Pick<
   ArtifactEntry,
   "declaredIntegrity" | "executable" | "unpacked"
@@ -56,7 +41,7 @@ export const readAsarListing = async (
   header: unknown,
   signal?: AbortSignal,
 ): Promise<AsarListedEntry[]> => {
-  const root = nodeSchema.parse(header);
+  const root = asarNodeSchema.parse(header);
   if (root.files === undefined)
     throw new ArtifactReaderFailure("format", "ASAR root has no files table");
   const entries: AsarListedEntry[] = [];
@@ -104,7 +89,7 @@ export const readAsarListing = async (
     // occurrence even when the engine can share a string prefix.
     admitRetainedBytes(units * 2 + 256);
     const path = frame.parent.length === 0 ? name : `${frame.parent}/${name}`;
-    const metadata = nodeSchema.parse(raw);
+    const metadata = asarNodeSchema.parse(raw);
     if (
       metadata.files === undefined &&
       metadata.link === undefined &&

@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -177,7 +178,7 @@ it("retains cancelled source read ownership until service close retries it", asy
     "web-module-artifacts",
     "trace_web_module_imports",
     new AbortController().signal,
-  );
+  ).then(projectCliAnalysisResult);
   expect(finalized).toMatchObject({
     code: "cleanup_incomplete",
     details: { resources: [sourcePath] },
@@ -355,7 +356,9 @@ it("preserves both web cleanup owners' resources, diagnostics and recovery actio
       },
     },
   );
-  const projected = [artifacts, resolver].map(projectAnalysisError);
+  const projected = [artifacts, resolver].map((failure) =>
+    projectAnalysisError(failure),
+  );
   await expect(service.close()).rejects.toMatchObject({
     cleanupResources: ["artifact-root", "shared-resource", "resolver-root"],
     diagnostics: { failures: projected },

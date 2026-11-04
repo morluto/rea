@@ -196,8 +196,9 @@ const kimiDirectory = ({ home, env }: ClientPathContext): string =>
 const qoderDirectory = ({ home, env }: ClientPathContext): string =>
   env.QODER_CONFIG_DIR || join(home, ".qoder");
 
-const factoryDirectory = ({ home }: ClientPathContext): string =>
-  join(home, ".factory");
+/** Droid's override selects the home containing .factory, including personal skills. */
+const factoryDirectory = ({ home, env }: ClientPathContext): string =>
+  join(env.FACTORY_HOME_OVERRIDE || home, ".factory");
 
 /** Match Qwen Code's home override, including tilde and cwd-relative paths. */
 const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
@@ -684,9 +685,9 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "hermes",
     displayName: "Hermes",
     skillPath: (context: ClientPathContext) =>
-      join(hermesDirectory(context), "skills"),
+      appendCallerPath(hermesDirectory(context), "skills"),
     configPath: (context: ClientPathContext) =>
-      join(hermesDirectory(context), "config.yaml"),
+      appendCallerPath(hermesDirectory(context), "config.yaml"),
     markerPath: hermesDirectory,
     format: "hermes",
   },

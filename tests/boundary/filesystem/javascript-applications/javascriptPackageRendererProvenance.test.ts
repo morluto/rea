@@ -39,13 +39,8 @@ it.each(["renderer", "browser", "module"] as const)(
       }),
     );
     const metadata = graph.nodes.find(({ kind }) => kind === "package");
-    expect(metadata?.observations).toContainEqual(
-      expect.objectContaining({
-        properties: expect.objectContaining({
-          renderer: "entry.js",
-          renderer_declarations: { [field]: "entry.js" },
-        }),
-      }),
+    expect(metadata?.observations[0]?.properties).not.toHaveProperty(
+      "renderer",
     );
     expect(graph.edges).toContainEqual(
       expect.objectContaining({
@@ -71,7 +66,6 @@ it("keeps present browser mappings distinct from absent renderer metadata when m
   });
   const metadata = graph.nodes.find(({ kind }) => kind === "package");
   expect(metadata?.observations[0]?.properties).toMatchObject({
-    renderer: "entry.js",
     renderer_declarations: {
       browser: { status: "non-string" },
       module: "entry.js",
@@ -91,7 +85,6 @@ it("retains simultaneous string declarations while keeping renderer priority", a
   });
   const metadata = graph.nodes.find(({ kind }) => kind === "package");
   expect(metadata?.observations[0]?.properties).toMatchObject({
-    renderer: "entry.js",
     renderer_declarations: {
       renderer: "entry.js",
       browser: "browser.js",

@@ -190,6 +190,52 @@ sdkInfo:
   });
 });
 
+describe("parseApktoolYml Apktool 2.9+ metadata dialect", () => {
+  // Source-derived from ApkInfo.write, VersionInfo.write and YamlWriter at
+  // Apktool v2.9.0 and v2.12.1, whose string escaping matches 3.0.3.
+  const yml = (version: string, versionName: string) =>
+    [
+      `version: ${version}`,
+      "apkFileName: app-release.apk",
+      "isFrameworkApk: false",
+      "usesFramework:",
+      "  ids:",
+      "  - 1",
+      "  tag: null",
+      "sdkInfo:",
+      "  minSdkVersion: 24",
+      "  targetSdkVersion: 34",
+      "packageInfo:",
+      "  forcedPackageId: 127",
+      "  renameManifestPackage: null",
+      "versionInfo:",
+      "  versionCode: 7",
+      `  versionName: ${versionName}`,
+      "sharedLibrary: false",
+      "sparseResources: false",
+      "doNotCompress:",
+      "- arsc",
+      "",
+    ].join("\n");
+
+  it.each([
+    ["2.9.0", "1.0 #beta", "1.0 #beta"],
+    ["2.9.3", String.raw`release \"quoted\"`, 'release "quoted"'],
+    ["2.12.1", "1.0: beta", "1.0: beta"],
+    ["2.12.1", "", ""],
+  ])(
+    "reads Apktool %s version string %j as its writer escaped it",
+    (version, source, expected) => {
+      expect(parseApktoolYml(yml(version, source))).toEqual({
+        versionName: expected,
+        versionCode: "7",
+        minSdkVersion: "24",
+        targetSdkVersion: "34",
+      });
+    },
+  );
+});
+
 describe("parseManifestPackage", () => {
   it("reads the package attribute from a decoded manifest", () => {
     const manifest =

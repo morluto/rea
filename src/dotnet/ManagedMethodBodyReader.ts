@@ -34,10 +34,16 @@ const bodyStatus = (
   decodedIssue: string | null,
   truncatedInstructions: number,
   exceptionRegions: ReturnType<typeof parseExceptionRegions> | null,
+  localSigFailure: "malformed" | "partial" | null,
 ): "malformed" | "partial" | "present" => {
-  if (decodedIssue !== null || exceptionRegions?.status === "malformed")
+  if (
+    decodedIssue !== null ||
+    exceptionRegions?.status === "malformed" ||
+    localSigFailure === "malformed"
+  )
     return "malformed";
-  if (truncatedInstructions > 0) return "partial";
+  if (truncatedInstructions > 0 || localSigFailure === "partial")
+    return "partial";
   return "present";
 };
 
@@ -261,9 +267,22 @@ export const methodBody = (
         }
       }
     }
-    const status =
-      localSigFailure ??
-      bodyStatus(decoded.issue, decoded.truncated, exceptionRegions);
+    const status = bodyStatus(
+      decoded.issue,
+      decoded.truncated,
+      exceptionRegions,
+      localSigFailure,
+    );
+    // Independent decoding failures must survive together. Present malformed
+    // instruction/section facts before local-signature limitations.
+    const bodyIssues = [
+      decoded.issue,
+      exceptionRegions?.status === "malformed" ? exceptionRegions.issue : null,
+      localSigIssue,
+      decoded.truncated > 0
+        ? "Instruction decoding stopped before the end of the method body"
+        : null,
+    ].filter((issue): issue is string => issue !== null);
     const body: ManagedMethodBody = {
       status,
       header_format: header.format,
@@ -283,15 +302,7 @@ export const methodBody = (
       opcode_counts: opcodeCounts,
       anchors,
       exception_regions: exceptionRegions?.regions ?? [],
-      issue:
-        localSigIssue ??
-        decoded.issue ??
-        (exceptionRegions?.status === "malformed"
-          ? exceptionRegions.issue
-          : null) ??
-        (decoded.truncated > 0
-          ? "Instruction decoding stopped before the end of the method body"
-          : null),
+      issue: bodyIssues.length > 0 ? bodyIssues.join("; ") : null,
     };
     const admittedBody = admitManagedProjection(body, context.budget);
     const tokenInstructions: ParsedTokenInstruction[] = [];

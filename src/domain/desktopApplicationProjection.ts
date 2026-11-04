@@ -2,6 +2,9 @@ import { IL2CPP_METADATA_VERSIONS } from "./il2cpp/il2cppMetadata.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import type { DesktopApplication, DesktopFile } from "./desktopApplication.js";
 
+/** The most next probes this projection derives from any one fact. */
+export const DESKTOP_PROBES_PER_FACT = 2;
+
 /** Interpret only the facts admitted by the directory reader, never target bytes. */
 export const projectDesktopApplication = (
   files: readonly DesktopFile[],
@@ -102,6 +105,12 @@ export const projectDesktopApplication = (
     files.filter((file) => has(file, "godot-pck-header")),
     "A standalone or trailer-located Godot pack header was observed; pack contents and encryption are unexamined.",
   );
+  for (const file of files.filter((file) => has(file, "unityfs-header")))
+    probe(
+      "open_binary",
+      file,
+      "A UnityFS AssetBundle header was observed; member contents and encryption are unexamined.",
+    );
   candidate(
     "gamemaker",
     files.filter((file) => has(file, "gamemaker-form-header")),

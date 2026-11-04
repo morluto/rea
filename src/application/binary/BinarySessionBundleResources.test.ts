@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -14,7 +14,10 @@ import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
 import { bundleResourceRootSchema } from "../../domain/apple/bundleResourceRoot.js";
-import { AnalysisSnapshotMismatchError } from "../../domain/evidenceErrors.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorRemediationAction } from "../../domain/analysisErrorPresentation.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { ResourceSnapshotMismatchError } from "../../domain/evidenceErrors.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -36,6 +39,24 @@ const binaryIdentity: ProviderIdentity = {
 };
 const temporaryDirectories: string[] = [];
 
+const expectResourceSnapshotRefusal = (
+  error: AnalysisError,
+  operation: "export" | "import",
+): void => {
+  expect(error).toBeInstanceOf(ResourceSnapshotMismatchError);
+  expect(error).toMatchObject({
+    _tag: "EvidenceIntegrityError",
+    operation,
+  });
+  const projected = projectAnalysisError(error);
+  expect(projected.code).toBe("evidence_integrity_mismatch");
+  expect(projected.category).toBe("integrity_mismatch");
+  expect(projected.retryable).toBe(false);
+  expect(projected.remediation).toEqual({
+    action: analysisErrorRemediationAction(error),
+  });
+};
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories
@@ -43,6 +64,35 @@ afterEach(async () => {
       .map((path) => rm(path, { recursive: true, force: true })),
   );
 });
+
+it.skipIf(process.platform === "win32")(
+  "refuses invalid selected traversal before creating a bundle resource client",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-resource-selected-"));
+    temporaryDirectories.push(root);
+    await mkdir(join(root, "Fixture.app"));
+    await writeFile(
+      join(root, "Fixture.app", "Info.plist"),
+      "<plist><dict/></plist>",
+    );
+    await writeFile(join(root, "regular"), "file");
+    let created = false;
+    const session = new BinarySession(
+      SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), []),
+      new InvestigationRecords(),
+      {
+        createClient: () => {
+          created = true;
+          throw new Error("Invalid selection must not create a client");
+        },
+      },
+    );
+    const selected = `${root}/regular/../Fixture.app`;
+    await expect(stat(selected)).rejects.toMatchObject({ code: "ENOTDIR" });
+    expect((await session.openBundleResources(selected)).ok).toBe(false);
+    expect(created).toBe(false);
+  },
+);
 
 it("opens a resource-only bundle without executable identity and keeps snapshot operations inapplicable", async () => {
   const rootPath = await mkdtemp(join(tmpdir(), "rea-resource-session-"));
@@ -108,13 +158,17 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
     resource_root: { canonical_path: opened.value.canonicalPath },
   });
   const snapshot = session.exportAnalysisSnapshot();
-  expect(snapshot.ok).toBe(false);
-  if (!snapshot.ok)
-    expect(snapshot.error).toBeInstanceOf(AnalysisSnapshotMismatchError);
+  if (snapshot.ok)
+    throw new Error("resource session exported a binary snapshot");
+  expectResourceSnapshotRefusal(snapshot.error, "export");
   const imported = session.importAnalysisSnapshot({} as AnalysisSnapshot);
-  expect(imported.ok).toBe(false);
-  if (!imported.ok)
-    expect(imported.error).toBeInstanceOf(AnalysisSnapshotMismatchError);
+  if (imported.ok)
+    throw new Error("resource session imported a binary snapshot");
+  expectResourceSnapshotRefusal(imported.error, "import");
+  expect(await session.status()).toMatchObject({
+    open: true,
+    session_kind: "bundle_resources",
+  });
   const closedResult = await session.close();
   expect(closedResult.ok).toBe(true);
   expect(closed).toBe(true);

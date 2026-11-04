@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -347,7 +348,7 @@ test.each([false, true])(
         "binwalk",
         "inspect_firmware_regions",
         new AbortController().signal,
-      );
+      ).then(projectCliAnalysisResult);
       expect(delivered).toMatchObject({ code: "cleanup_incomplete" });
       expect(JSON.stringify(delivered).split("binwalk 3.1.0")).toHaveLength(2);
     }

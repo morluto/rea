@@ -1,8 +1,10 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { webBundleDeliveryOptions } from "./javascriptRouteDelivery.js";
 import {
-  parseJavaScriptRouteDelivery,
-  webBundleDeliveryOptions,
-} from "./javascriptRouteDelivery.js";
-import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
+  deliverCliAnalysisEvidence,
+  parseCliAnalysisEvidenceDelivery,
+} from "./analysisEvidenceDelivery.js";
+import { webRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { Cli, z } from "incur";
 
@@ -86,7 +88,7 @@ const registerTargetList = (
             provider.identity().id,
             "list_browser_targets",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -143,7 +145,7 @@ const registerPageInspection = (
             provider.identity().id,
             "inspect_web_page",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -180,9 +182,10 @@ const registerBundleAnalysis = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "analyze-web-bundle", async () => {
-          const delivery = parseJavaScriptRouteDelivery(
+          const delivery = parseCliAnalysisEvidenceDelivery(
             "analyze_web_bundle",
             options,
+            webRoutesDeliverySchema,
           );
           if (!delivery.ok) return projectAnalysisError(delivery.error);
           const provider = createBrowserObservationProvider();
@@ -281,7 +284,7 @@ const registerObservationSession = (
             provider.identity().id,
             "observe_web_session",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

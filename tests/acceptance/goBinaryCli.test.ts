@@ -23,6 +23,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 
 cliTest(
@@ -61,7 +62,7 @@ cliTest(
           },
         });
         expect(response.isError, JSON.stringify(response)).not.toBe(true);
-        expect(response.structuredContent).toEqual(evidence);
+        expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
       } else {
         const expected = {
           code: "invalid_request",
@@ -131,7 +132,7 @@ cliTest(
             item.fixture.headerOffset,
         ).toBeGreaterThan(maximum + 32);
         expect(response.isError, JSON.stringify(response)).not.toBe(true);
-        expect(response.structuredContent).toEqual(evidence);
+        expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
       } else {
         const code =
           item.outcome === "resource"
@@ -283,7 +284,7 @@ cliTest(
       infos.push(evidence.normalized_result.build_info);
       const response = await call("inspect_go_binary", { path });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     }
     expect(infos[1]).toEqual(infos[0]);
     await client.ping();
@@ -328,7 +329,11 @@ for (const bits of [32, 64] as const) {
 
           const response = await call("inspect_go_binary", { path });
           expect(response.isError, JSON.stringify(response)).not.toBe(true);
-          expect(response.structuredContent).toEqual(evidence);
+          expectCliMcpEvidenceParity(
+            evidence,
+            response.structuredContent,
+            path,
+          );
         }
 
         expect(buildInfos[1]).toEqual(buildInfos[0]);
@@ -386,7 +391,7 @@ cliTest(
         build_info: null,
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     }
     await client.ping();
   },

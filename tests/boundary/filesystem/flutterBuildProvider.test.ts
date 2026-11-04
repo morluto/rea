@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { createReadStream } from "node:fs";
 import {
   open,
@@ -397,7 +398,7 @@ it.each([
     const workspace =
       stage === "root"
         ? null
-        : (expect.stringMatching(/\/rea-flutter-[^/]+$/u) as unknown);
+        : (expect.stringMatching(/[/\\]rea-flutter-[^/\\]+$/u) as unknown);
     const location = { workspace_path: workspace, path: workspace };
     expect(projectAnalysisError(result.error)).toMatchObject(
       code === "ENOSPC"
@@ -781,7 +782,7 @@ it("retains failed snapshot cleanup and retries it on close", async () => {
     "flutter",
     "identify_flutter_build",
     new AbortController().signal,
-  );
+  ).then(projectCliAnalysisResult);
   expect(result).toMatchObject({
     code: "cleanup_incomplete",
     details: {
@@ -1235,6 +1236,31 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     expect(removeRoot).toHaveBeenCalledTimes(1);
   },
 );
+
+it("qualifies unlabeled Dart-shaped strings as candidates", async () => {
+  const candidate = "1.2.3 (stable) (unrelated string)";
+  const path = await buildApk("dart-pattern.apk", [
+    { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
+    {
+      path: "lib/arm64-v8a/libflutter.so",
+      bytes: Buffer.concat([libflutter(), Buffer.from(`\0${candidate}\0`)]),
+    },
+  ]);
+  const provider = new FlutterBuildProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.execute({
+    operation: "identify_flutter_build",
+    input: { path },
+  });
+  if (!result.ok) throw result.error;
+  const value = flutterResultSchemas.identify_flutter_build.parse(
+    result.value.result,
+  );
+  expect(value.abis[0]?.libflutter.dart_version).toBe(candidate);
+  expect(result.value.limitations.join(" ")).toContain(
+    "a matching unrelated string may be reported",
+  );
+});
 
 it("reports omitted Dart labels independently of toolchain labels", async () => {
   const path = await buildApk("dart-label.apk", [

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  objcImplementationClassName,
   nativeMetadataEvidenceSchema,
   nativeMetadataLocationSchema,
   type ObjcSwiftMetadata,
@@ -351,7 +352,7 @@ export const joinInterfaceBuilderDispatch = (
         candidate.method_type === "instance" &&
         candidate.selector === selector &&
         (className === null ||
-          candidate.class_name.replace(/\([^)]*\)$/u, "") === className),
+          objcImplementationClassName(candidate) === className),
     );
     const implementation = candidates.length === 1 ? candidates[0] : undefined;
     const edgeId = `dispatch:${selectorNodeId}:${className ?? owner?.id ?? "unknown"}:${selector}`;
@@ -390,7 +391,8 @@ export const joinInterfaceBuilderDispatch = (
         name: `${implementation.class_name} ${selector}`,
         location: {
           address: implementation.implementation_address,
-          file_offset: implementation.location.file_offset,
+          // The implementation location identifies the method record, not its code.
+          file_offset: null,
         },
         attributes: {
           class_name: implementation.class_name,

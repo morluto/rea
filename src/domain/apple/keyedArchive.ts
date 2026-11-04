@@ -30,8 +30,8 @@ export class KeyedArchiveKindError extends TypeError {
 export const keyedArchiveInputSchema = z.strictObject({
   path: localPathStringSchema.default("."),
   root: z.string().optional(),
-  offset: z.int().min(0).default(0),
-  limit: z.int().min(1).max(20_000).default(20_000),
+  offset: z.number().int().min(0).default(0),
+  limit: z.number().int().min(1).max(20_000).default(20_000),
 });
 const linkSchema = z.strictObject({
   source: z.int().nonnegative().nullable(),

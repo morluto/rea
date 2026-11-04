@@ -32,9 +32,9 @@ it.each([true, false])(
         workspaceRoot: rawRoot,
       }),
     );
-    const before = await readdir(root);
+    const before = (await readdir(root)).sort();
     const inspection = await inspectIdaRegistration(path, resourceScope);
-    const after = await readdir(root);
+    const after = (await readdir(root)).sort();
     expect(inspection.available).toBe(exists);
     expect(
       inspection.checks.find(({ name }) => name === "private_workspace")
@@ -62,7 +62,7 @@ it.skipIf(process.platform === "win32")(
         workspaceRoot: selected,
       }),
     );
-    const before = await readdir(root);
+    const before = (await readdir(root)).sort();
     const inspection = await inspectIdaRegistration(path, resourceScope);
     expect(inspection.available).toBe(false);
     const check = inspection.checks.find(
@@ -71,38 +71,40 @@ it.skipIf(process.platform === "win32")(
     expect(check).toMatchObject({ ok: false, code: "invalid_configuration" });
     expect(check?.detail).toContain(selected);
     expect(check?.detail).toContain("ENOTDIR");
-    expect(await readdir(root)).toEqual(before);
+    expect((await readdir(root)).sort()).toEqual(before);
     expect(await readdir(workspace)).toEqual([]);
   },
 );
 
-it("marks an unusable system temporary parent unavailable when workspaceRoot is omitted", async () => {
-  if (process.platform === "win32") return;
-  const root = await mkdtemp(join(tmpdir(), "rea-ida-default-parent-"));
-  roots.push(root);
-  const path = join(root, "registration.json");
-  const unusableDefault = join(root, "not-a-directory");
-  await writeFile(unusableDefault, "file");
-  await writeFile(
-    path,
-    JSON.stringify({ command: "python", mode: "headless" }),
-  );
-  const previous = process.env.TMPDIR;
-  process.env.TMPDIR = unusableDefault;
-  try {
-    const inspection = await inspectIdaRegistration(path, resourceScope);
-    expect(inspection.available).toBe(false);
-    expect(
-      inspection.checks.find(({ name }) => name === "private_workspace"),
-    ).toMatchObject({
-      ok: false,
-      code: "invalid_configuration",
-    });
-  } finally {
-    if (previous === undefined) delete process.env.TMPDIR;
-    else process.env.TMPDIR = previous;
-  }
-});
+it.skipIf(process.platform === "win32")(
+  "marks an unusable system temporary parent unavailable when workspaceRoot is omitted",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-ida-default-parent-"));
+    roots.push(root);
+    const path = join(root, "registration.json");
+    const unusableDefault = join(root, "not-a-directory");
+    await writeFile(unusableDefault, "file");
+    await writeFile(
+      path,
+      JSON.stringify({ command: "python", mode: "headless" }),
+    );
+    const previous = process.env.TMPDIR;
+    process.env.TMPDIR = unusableDefault;
+    try {
+      const inspection = await inspectIdaRegistration(path, resourceScope);
+      expect(inspection.available).toBe(false);
+      expect(
+        inspection.checks.find(({ name }) => name === "private_workspace"),
+      ).toMatchObject({
+        ok: false,
+        code: "invalid_configuration",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previous;
+    }
+  },
+);
 it("keeps IDA configuration for setup without copying transport credentials or claiming runtime verification", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-ida-doctor-"));
   roots.push(root);

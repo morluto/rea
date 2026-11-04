@@ -123,11 +123,16 @@ const configurationDetails = (
   }
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return null;
-  const fileMethod = builtinMethod(node.callee, context.state, [
-    "fs",
-    "node:fs",
-  ]);
-  return fileMethod === "readFile" || fileMethod === "readFileSync"
+  const fsMethod = builtinMethod(node.callee, context.state, ["fs", "node:fs"]);
+  const isFileRead =
+    fsMethod === "readFile" ||
+    fsMethod === "readFileSync" ||
+    (fsMethod === null &&
+      builtinMethod(node.callee, context.state, [
+        "fs/promises",
+        "node:fs/promises",
+      ]) === "readFile");
+  return isFileRead
     ? {
         kind: "file",
         key: literalString(node.arguments[0]),
@@ -223,6 +228,17 @@ const collectRequests = (
     const method = requestMethod(node, context.state);
     if (method === null) return;
     const endpoint = requestEndpoint(node);
+    // `http.get`/`http.request` parse a string target with `new URL` before the
+    // request exists, so a literal that is not an absolute URL throws
+    // `ERR_INVALID_URL` synchronously — an options object cannot rescue it.
+    // `fetch` and `WebSocket` are host globals a browser resolves against the
+    // document URL, so their spellings stay as reported.
+    if (
+      endpoint !== null &&
+      (method === "get" || method === "request") &&
+      !URL.canParse(endpoint)
+    )
+      return;
     output.push({
       node,
       operation: {

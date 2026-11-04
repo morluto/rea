@@ -6,6 +6,7 @@ import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
   artifactFileCompletion,
+  artifactSelectedPathErrno,
   withArtifactFileHandle,
   assertArtifactReadActive,
 } from "./ArtifactFileOperation.js";
@@ -52,11 +53,7 @@ const afterValidation = async <T>(
   try {
     return await read();
   } catch (cause) {
-    if (
-      cause instanceof Error &&
-      "code" in cause &&
-      ["ENOENT", "ENOTDIR", "ELOOP"].includes(String(cause.code))
-    )
+    if (artifactSelectedPathErrno(cause) !== undefined)
       throw new ArtifactReaderFailure(
         "integrity",
         `Artifact changed ${stage}: ${path}`,

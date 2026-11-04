@@ -1,6 +1,13 @@
-import { EvidenceFileError } from "../../src/domain/evidenceErrors.js";
+import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
+import {
+  AnalysisSnapshotMismatchError,
+  EvidenceFileError,
+} from "../../src/domain/evidenceErrors.js";
+import { analysisErrorRemediationAction } from "../../src/domain/analysisErrorPresentation.js";
 import { err, ok as resultOk } from "../../src/domain/result.js";
 import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { parseConfig } from "../../src/config/parseConfig.js";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -68,7 +75,7 @@ it("requires a durable summary destination before acquiring a managed session", 
     undefined,
     undefined,
     { detail: "summary" },
-  );
+  ).then(projectCliAnalysisResult);
   expect(result).toMatchObject({
     code: "invalid_request",
     details: {
@@ -97,7 +104,9 @@ it.each([
       { detail: "summary", evidenceBundlePath: "/fixture/bundle.json" },
     ] as const;
     // @ts-expect-error JavaScript callers can bypass managed-members-only delivery.
-    const result = await runProviderAnalysis(...invocation);
+    const result = await runProviderAnalysis(...invocation).then(
+      projectCliAnalysisResult,
+    );
     expect(result).toMatchObject({
       code: "invalid_request",
       details: {
@@ -117,7 +126,9 @@ describe("one-shot analysis factory boundary", () => {
     const interruptListeners = process.listenerCount("SIGINT");
     const terminateListeners = process.listenerCount("SIGTERM");
     await expect(
-      runDirectAnalysis(factories.dependencies, path, "read_bytes", {}),
+      runDirectAnalysis(factories.dependencies, path, "read_bytes", {}).then(
+        projectCliAnalysisResult,
+      ),
     ).rejects.toBe(failure);
     expect(factories.clientsClosed()).toBe(1);
     expect(process.listenerCount("SIGINT")).toBe(interruptListeners);
@@ -136,7 +147,7 @@ describe("one-shot analysis factory boundary", () => {
       "read_bytes",
       {},
       { signal: controller.signal },
-    );
+    ).then(projectCliAnalysisResult);
     expect(result).toMatchObject({
       error: "Analysis failed",
       code: "cancelled",
@@ -194,7 +205,7 @@ describe("one-shot analysis factory boundary", () => {
           "inspect_native_dispatch_metadata",
           {},
           { snapshotPath },
-        ),
+        ).then(projectCliAnalysisResult),
       ).rejects.toBe(expected);
       expect(factories.sessions).toEqual([]);
     },
@@ -227,7 +238,7 @@ describe("one-shot analysis factory boundary", () => {
         path,
         tool,
         arguments_,
-      );
+      ).then(projectCliAnalysisResult);
       expect(result).toMatchObject({
         operation: tool,
         normalized_result: { operation: tool },
@@ -256,7 +267,7 @@ describe("one-shot analysis factory boundary", () => {
         path,
         tool,
         {},
-      );
+      ).then(projectCliAnalysisResult);
       expect(result).toMatchObject({ operation: tool });
       expect(factories.clientsClosed()).toBe(1);
     },
@@ -279,7 +290,7 @@ it("preserves a managed execution profile in direct analysis Evidence", async ()
     path,
     "inspect_managed_artifact",
     {},
-  );
+  ).then(projectCliAnalysisResult);
   expect(evidence).toMatchObject({ analysis_profile: profile });
 });
 
@@ -298,7 +309,7 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
       "read_bytes",
       {},
       { snapshotPath },
-    ),
+    ).then(projectCliAnalysisResult),
   ).not.toHaveProperty("code");
   const mismatch = await runDirectAnalysis(
     factories.dependencies,
@@ -306,12 +317,26 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
     "read_bytes",
     {},
     { snapshotPath },
-  );
+  ).then(projectCliAnalysisResult);
+  const sha = async (input: string) =>
+    createHash("sha256")
+      .update(await readFile(input))
+      .digest("hex");
   expect(mismatch).toMatchObject({
     code: "evidence_integrity_mismatch",
     remediation: {
-      action:
-        "Run analysis without this snapshot, then save a fresh snapshot using the intended artifact, provider, and analysis profile.",
+      action: analysisErrorRemediationAction(
+        new AnalysisSnapshotMismatchError(""),
+      ),
+    },
+    details: {
+      binding_mismatch: {
+        target: {
+          snapshot: { sha256: await sha(path) },
+          selected: { sha256: await sha(other) },
+        },
+        profile_comparison: "not_compared",
+      },
     },
   });
   expect(
@@ -321,7 +346,7 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
       "read_bytes",
       {},
       { snapshotPath },
-    ),
+    ).then(projectCliAnalysisResult),
   ).not.toHaveProperty("code");
 });
 
@@ -362,7 +387,7 @@ it("retries snapshot file cleanup before final close even when a published ident
     "read_bytes",
     {},
     { snapshotPath: join(dirname(path), "excluded.snapshot") },
-  );
+  ).then(projectCliAnalysisResult);
   expect(events[0]).toBe("file-cleanup");
   expect(events).toContain("session-close");
   expect(result).toMatchObject({ details: { published: true, bytes: 42 } });

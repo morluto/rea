@@ -5,10 +5,13 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  projectAnalysisError,
+  projectAnalysisErrorWithoutCapturedOutput,
+} from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 
 /** Finish a one-shot CLI operation while retaining primary results through close. */
@@ -30,9 +33,11 @@ export const finishAnalysisCommand = async <
       observation: AnalysisPartialObservation,
     ) => Value | undefined;
   } = {},
-): Promise<Value | ReturnType<typeof projectAnalysisError>> => {
+): Promise<Result<Value, ReturnType<typeof projectAnalysisError>>> => {
+  // The command releases its provider resources and runtime before the caller
+  // reads this result, so guidance needing a continuing session is omitted.
   const projectFailure = (error: AnalysisError) =>
-    projectAnalysisError(options.redactFailure?.(error) ?? error);
+    projectAnalysisError(options.redactFailure?.(error) ?? error, "invocation");
   let result: Result<Value, AnalysisError>;
   let cleanup: AnalysisError | undefined;
   try {
@@ -52,6 +57,15 @@ export const finishAnalysisCommand = async <
     !result.ok && options.failureProjection === "initial"
       ? projectFailure(result.error)
       : undefined;
+  const initialDiagnosticFailure =
+    initialFailure !== undefined &&
+    !result.ok &&
+    result.error.capturedOutput !== undefined
+      ? projectAnalysisErrorWithoutCapturedOutput(
+          options.redactFailure?.(result.error) ?? result.error,
+          "invocation",
+        )
+      : initialFailure;
   try {
     // Resource owners may resolve their retained errors during close. This
     // adapter cannot infer resolution of a producer's earlier cleanup failure.
@@ -78,8 +92,10 @@ export const finishAnalysisCommand = async <
     }
   }
   await dispatchQueuedInterrupts();
-  if (initialFailure !== undefined) return initialFailure;
+  if (initialFailure !== undefined && cleanup === undefined)
+    return err(initialFailure);
   if (
+    initialFailure === undefined &&
     !result.ok &&
     result.error instanceof ProviderCleanupError &&
     !result.error.cleanupIncomplete &&
@@ -126,5 +142,25 @@ export const finishAnalysisCommand = async <
           ).bindCleanupDependencies([result.error, cleanup]),
     };
   }
-  return result.ok ? result.value : projectFailure(result.error);
+  if (result.ok) return ok(result.value);
+  const failure = projectFailure(result.error);
+  const diagnostics = failure.details?.diagnostics;
+  return err(
+    initialFailure === undefined || cleanup === undefined
+      ? failure
+      : {
+          ...failure,
+          details: {
+            ...failure.details,
+            diagnostics: {
+              ...(typeof diagnostics === "object" &&
+              diagnostics !== null &&
+              !Array.isArray(diagnostics)
+                ? diagnostics
+                : {}),
+              primary_error: initialDiagnosticFailure ?? initialFailure,
+            },
+          },
+        },
+  );
 };

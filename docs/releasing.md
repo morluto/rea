@@ -349,7 +349,10 @@ tag remains in main's ancestry. Keep the released tag unchanged.
 
 The synchronization must include `.release-please-manifest.json`,
 `package.json`, both root versions in `package-lock.json`, `CHANGELOG.md`,
-`server.json`, and the versioned documentation examples. Run
+`server.json`, both plugin manifests (`.claude-plugin/plugin.json` and
+`.codex-plugin/plugin.json`), the Codex server declaration (`.codex-plugin/mcp.json`), both
+marketplaces (`.claude-plugin/marketplace.json` and
+`.agents/plugins/marketplace.json`), and the versioned documentation examples. Run
 `npm run docs:generate`, `npm run docs:check`, and the release configuration
 tests against the combined tree. After the merge, verify that the released
 tag is an ancestor of main:
@@ -383,3 +386,18 @@ tag. Do not dispatch a fresh publish phase to repair an already-created
 release: Release Please will not create the same release again. Do not move
 the tag, delete the release, or unpublish npm as a retry. A defective public
 package requires a reviewed correction and a new version.
+
+### Plugin artifact metadata
+
+Package verification selects files with npm, then packs an owned staging directory.
+The release manifest omits development dependencies and development-only overrides;
+its generated `npm-shrinkwrap.json` preserves the runtime dependency resolutions
+and integrity values from `package-lock.json`. Runtime or unresolved overrides
+fail packaging rather than being dropped. Source metadata is never rewritten.
+The archive bundles production dependencies because Codex fetches npm plugins
+without installing dependencies. The producer includes all locked PTY platform
+archives after checking their integrity, without re-resolving the runtime tree.
+Optional Frida stays outside the bundle so ordinary npm installation can retain
+its host-specific installer. This also lets Claude install locked dependencies under its plugin policy while
+retaining development security overrides. Both plugin marketplaces select the
+same qualified npm artifact, which the release workflow publishes unchanged.
