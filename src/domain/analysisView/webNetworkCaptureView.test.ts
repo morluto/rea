@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
@@ -859,14 +859,32 @@ it.each([
 ])(
   "indexes %s million-character facet pointer by its headline prefix only",
   (_label, pointer, request) => {
-    const reported = nativePreview(
-      "mitmproxy",
-      { method: "GET", path: "/a" },
-      {
-        response: { http_version: "HTTP/1.1", reason: "OK" },
-        sidecars: [{ pointer, producer_type: "integer", literal: "1" }],
-      },
-    ).items[0]?.reported;
+    // Count set additions, not elapsed time or heap, so every Node version
+    // catches a regression. Only the pointer and strings cut from it are this
+    // long here; indexing every ancestor added one per "/" it held.
+    let longAdditions = 0;
+    const add = Set.prototype.add;
+    const addSpy = vi.spyOn(Set.prototype, "add").mockImplementation(function (
+      this: Set<unknown>,
+      value: unknown,
+    ) {
+      if (typeof value === "string" && value.length > 1_000) longAdditions++;
+      return add.call(this, value);
+    });
+    let reported: unknown;
+    try {
+      reported = nativePreview(
+        "mitmproxy",
+        { method: "GET", path: "/a" },
+        {
+          response: { http_version: "HTTP/1.1", reason: "OK" },
+          sidecars: [{ pointer, producer_type: "integer", literal: "1" }],
+        },
+      ).items[0]?.reported;
+    } finally {
+      addSpy.mockRestore();
+    }
+    expect(longAdditions).toBe(0);
     expect(reported).toEqual({
       type: "http",
       request,
