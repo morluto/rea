@@ -54,6 +54,17 @@ export interface AnalysisCleanupObservation {
   readonly resources: readonly string[];
 }
 
+/** Publication stopped after a workflow produced its Evidence. Counts describe
+ * question occurrences, not distinct Unknown identities. */
+export interface WorkflowUnknownPublication {
+  readonly evidence_id: string;
+  readonly evidence_retention: "retained" | "unverified";
+  readonly total_questions: number;
+  readonly created_questions: number;
+  readonly existing_questions: number;
+  readonly next_question_index: number;
+}
+
 /**
  * How long the adapter delivering a failure keeps REA's runtime and provider
  * session for its caller. An MCP connection continues: later calls reuse the
@@ -162,6 +173,7 @@ export abstract class AnalysisError extends Error {
   readonly userCategory: "cancelled" | undefined = undefined;
   readonly executionFailure: string | undefined = undefined;
   partialObservation: AnalysisPartialObservation | undefined;
+  workflowUnknownPublication: WorkflowUnknownPublication | undefined;
 
   get cleanupPrimary(): AnalysisError | undefined {
     return this.#cleanupPrimary;
@@ -304,6 +316,14 @@ export abstract class AnalysisError extends Error {
   /** Retain a completed observation when a later step fails. */
   retainPartialObservation(observation: AnalysisPartialObservation): this {
     this.partialObservation ??= observation;
+    return this;
+  }
+
+  /** Preserve the exact committed prefix when automatic question publication stops. */
+  retainWorkflowUnknownPublication(
+    publication: WorkflowUnknownPublication,
+  ): this {
+    this.workflowUnknownPublication ??= Object.freeze({ ...publication });
     return this;
   }
 }

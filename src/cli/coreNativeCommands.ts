@@ -182,7 +182,8 @@ export const registerCoreNativeCommands = (
       ),
   });
   cli.command(CLI_COMMANDS.readBytes, {
-    description: "Read exact provider memory bytes at one analysis address",
+    description:
+      "Read provider memory bytes; Ghidra memory may include loader fixups and differ from file bytes",
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
       address: z.string().describe("Exact provider memory address"),
@@ -207,7 +208,8 @@ export const registerCoreNativeCommands = (
       ),
   });
   cli.command(CLI_COMMANDS.addressToFileOffset, {
-    description: "Resolve an analysis address to its original file byte offset",
+    description:
+      "Map one analysis address to a file offset; memory bytes may differ and ranges may not be contiguous",
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
       address: z.string().describe("Exact provider memory address"),

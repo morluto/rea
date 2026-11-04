@@ -1511,6 +1511,7 @@ export class BinarySession
           operation: name,
           parameters: arguments_,
           execution: retained,
+          evidence: this.evidenceForAnalysis(evidence.evidence_id) ?? evidence,
         });
       return ok(retained);
     }
