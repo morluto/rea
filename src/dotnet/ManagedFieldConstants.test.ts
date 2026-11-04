@@ -192,9 +192,12 @@ it("does not invent an inspected constant on historical member Evidence", () => 
   expect(historical.fields[0]).not.toHaveProperty("constant");
 });
 
-it.each([7, 8])(
-  "retains the common coded-index diagnostic for invalid parent %s",
-  (parentRaw) => {
+it.each([
+  { parentRaw: 7, reason: "tag 3" },
+  { parentRaw: 8, reason: "row 2" },
+])(
+  "retains the coded-index diagnostic for invalid parent $parentRaw",
+  ({ parentRaw, reason }) => {
     const bytes = buildManagedPeFixture({
       fields: [{ name: "Default", flags: 0x8056 }],
       constants: [
@@ -226,7 +229,7 @@ it.each([7, 8])(
         expect.objectContaining({
           code: "invalid-row",
           scope: "metadata.Constant",
-          detail: parent.reason,
+          detail: expect.stringContaining(reason),
         }),
       ]),
     );

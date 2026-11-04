@@ -14,6 +14,10 @@ import {
   resolveOccurrenceParents,
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
+import { createAsarHeaderSignatureProbe } from "../AsarHeader.js";
+import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
@@ -26,6 +30,7 @@ import {
 } from "../../domain/firmware/uf2.fixture.js";
 
 import { classifyArtifactBytesAtPath } from "../../../tests/fixtures/artifactClassification.js";
+import { asarHeaderBytes } from "../../../tests/fixtures/asarHeader.js";
 import {
   ESP32C3_APP_SEGMENTS,
   esp8266Image,
@@ -70,6 +75,42 @@ it("classifies original DOS header padding as an executable", () => {
   expect(classifyArtifactBytesAtPath("legacy.exe", bytes)).toEqual({
     kind: "executable",
     format: "dos-mz",
+  });
+});
+
+it("projects the parsed ASAR header size when admission rejects an archive", () => {
+  const bytes = asarHeaderBytes("{}", { padding: Buffer.alloc(8, 0x20) });
+  const headerBytes = bytes.readUInt32LE(4);
+  const probe = createAsarHeaderSignatureProbe({
+    maximumBytes: headerBytes - 1,
+    source: "setting",
+  });
+  probe.write(bytes);
+  const asarHeader = probe.finish(bytes.length);
+  expect(asarHeader).toMatchObject({
+    state: "limit",
+    extents: { headerBytes },
+  });
+
+  let failure: unknown;
+  try {
+    classifyArtifactContent(
+      "app.asar",
+      { prefix: bytes, asarHeader },
+      bytes.length,
+    );
+  } catch (cause) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  if (!(failure instanceof ArtifactReaderFailure))
+    throw new Error("ASAR admission failure was not classified");
+
+  const projected = projectAnalysisError(
+    translateArtifactFailure("inspect_artifact", failure),
+  );
+  expect(projected.details?.limit).toMatchObject({
+    required_value: headerBytes,
   });
 });
 

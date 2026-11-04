@@ -346,8 +346,9 @@ the complete tool inventory grouped by current status. Expand each group's
 overrides them; availability, reasons, remediation, and modes remain inline.
 Provider candidates keep availability and target-support status, code, and
 reason. `omitted_fields` names what the summary leaves out; `{"detail":
-"complete"}` adds provider diagnostics, candidate capability sets, and tool
-surface, `effects`, and `annotations`. Those arrays name true flags from fixed
+"complete"}` adds each unavailable candidate's `remediation`, provider
+diagnostics, candidate capability sets, and tool surface, `effects`, and
+`annotations`. Those arrays name true flags from fixed
 vocabularies, so an omitted known flag is false. `tools/list` remains the
 canonical source for full tool schemas when target or provider state changes.
 
@@ -706,6 +707,13 @@ Virtual member offsets are not physical carrier locations. Format 6–8 readers
 cache one decoded block and support retained filtered/paged views. No
 decryption or SerializedFile object decoding is provided. See
 [UnityFS](https://github.com/morluto/rea/blob/main/docs/unityfs.md).
+
+WeChat mini-program packages (`.wxapkg` files with `0xBE`/`0xED` marks) list
+members with declared names and absolute carrier offsets; member bytes are
+stored verbatim. `V1MMWX` PC-client packages report `encrypted` directory
+status with unknown coverage and are refused on extraction; no decryption is
+attempted. See
+[wxapkg](https://github.com/morluto/rea/blob/main/docs/wxapkg.md).
 
 U-Boot legacy uImages use the same inspection/extraction workflows. Prefer a
 retained summary and selected inventory views for header facts or component
