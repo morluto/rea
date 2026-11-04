@@ -28,7 +28,8 @@ state through `data/add`, `data/get` and `data/reset`.
 - The seed is the baseline version of every state view path under `paths`,
   copied from retained content after its digest is checked; text files have the
   captured home path respelled when seeded. Baseline dconf keys of the
-  application are loaded with `dconf load /`.
+  application are compiled into the user's dconf database with `dconf-cli`,
+  without D-Bus.
 - The README and the result state the agentenv-framework release the class was
   checked against (0.9.1431), and that the seed is real user data.
 

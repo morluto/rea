@@ -1,3 +1,9 @@
+import {
+  PYTHON_DATA_HOOKS,
+  PYTHON_HELPERS,
+  PYTHON_IMPORTS,
+  PYTHON_MODULE_NAMES,
+} from "./appExportPython.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 
 /** agentenv-framework release the exported class was checked against. */
@@ -13,7 +19,7 @@ export interface DesktopAppExportPlan {
   readonly packageVersion: string | null;
   readonly command: readonly string[];
   readonly windowClass: string;
-  /** Home-relative folders the app owns for data add, get and reset. */
+  /** Home-relative paths the app owns for data add, get and reset. */
   readonly paths: readonly string[];
   readonly capturedHome: string;
   /** Home-relative files copied into the computer's home before the first launch. */
@@ -27,18 +33,25 @@ export interface DesktopAppExportPlan {
   readonly captureEvidenceId: string;
 }
 
-/** A lowercase environment name built from a desktop entry id or program. */
-export const environmentName = (source: string): string =>
-  source
-    .split(".")
-    .at(-1)
-    ?.toLowerCase()
-    .replace(/[^a-z0-9]+/gu, "-")
-    .replace(/^-+|-+$/gu, "")
-    .slice(0, 48) || "app";
+/** A lowercase environment name from a desktop entry id or program, prefixed `app-` when the name check refuses it. */
+export const environmentName = (
+  source: string,
+  accepted: (name: string) => boolean,
+): string => {
+  const name =
+    source
+      .split(".")
+      .at(-1)
+      ?.toLowerCase()
+      .replace(/[^a-z0-9]+/gu, "-")
+      .replace(/^-+/u, "")
+      .slice(0, 48)
+      .replace(/-+$/u, "") || "app";
+  return accepted(name) ? name : `app-${name}`;
+};
 
-/** Capitalized names Python reserves, which a class cannot take. */
-const PYTHON_RESERVED = new Set(["None", "True", "False"]);
+/** Names a class cannot take: Python's capitalized keywords and the module's own names. */
+const TAKEN_NAMES = new Set(["None", "True", "False", ...PYTHON_MODULE_NAMES]);
 
 /** A Python class name for the environment. */
 export const className = (name: string): string => {
@@ -50,12 +63,27 @@ export const className = (name: string): string => {
       )
       .join("")
       .replace(/^(?=\d)/u, "App") || "App";
-  return PYTHON_RESERVED.has(candidate) ? `${candidate}App` : candidate;
+  return TAKEN_NAMES.has(candidate) ? `${candidate}App` : candidate;
 };
 
+/** The class module's file; the framework imports it under its stem, which must not shadow another module. */
+export const appModuleFile = (name: string): string =>
+  `${name.replaceAll("-", "_")}_app.py`;
+
+/** Home folders other applications keep files in too, so an app never owns one whole. */
+const SHARED_FOLDERS = new Set([
+  "",
+  ".config",
+  ".local",
+  ".local/share",
+  ".local/state",
+  ".cache",
+]);
+
 /**
- * The folders the app owns: the state directory holding each state file, or
- * a document's folder. Nested folders collapse into the outermost one.
+ * The paths the app owns: the state directory holding each state file, or
+ * a document's folder; a file directly in the home or a shared folder is
+ * owned as itself. Nested paths collapse into the outermost one.
  */
 export const ownedPaths = (
   stateFiles: readonly string[],
@@ -63,16 +91,16 @@ export const ownedPaths = (
   stateDirectories: readonly string[],
 ): readonly string[] => {
   const folders = new Set<string>();
-  // A file directly in the home is owned as itself, since its folder is the home.
-  const folderOf = (file: string) =>
-    file.includes("/") ? file.split("/").slice(0, -1).join("/") : file;
+  const owner = (file: string, folder: string) =>
+    SHARED_FOLDERS.has(folder) ? file : folder;
+  const folderOf = (file: string) => file.split("/").slice(0, -1).join("/");
   for (const file of stateFiles) {
     const directory = stateDirectories.find((candidate) =>
       isWithinAny(file, [candidate]),
     );
-    folders.add(directory ?? folderOf(file));
+    folders.add(owner(file, directory ?? folderOf(file)));
   }
-  for (const file of documents) folders.add(folderOf(file));
+  for (const file of documents) folders.add(owner(file, folderOf(file)));
   const sorted = [...folders].filter((folder) => folder.length > 0).sort();
   return sorted.filter(
     (folder) =>
@@ -87,7 +115,8 @@ const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /**
- * The launch command for the computer. Arguments under the captured home are
+ * The launch command for the computer. Arguments that are or start with a
+ * path under the captured home, and `<option>=<path>` values that do, are
  * respelled under the computer user's `$HOME` through `sh -c`, since the
  * declared command is not expanded by a shell.
  */
@@ -96,15 +125,24 @@ export const launchCommand = (
   capturedHome: string,
   workingDirectory: string,
 ): readonly string[] => {
-  const prefix = `${capturedHome}/`;
-  const respell = (path: string) =>
+  const underHome = (path: string) =>
     path === capturedHome
       ? `"$HOME"`
-      : path.startsWith(prefix)
-        ? `"$HOME"/${shellQuote(path.slice(prefix.length))}`
-        : shellQuote(path);
-  // A relative argument meant the captured working directory, so try to start
-  // there; a missing folder must not stop the app from booting.
+      : path.startsWith(`${capturedHome}/`)
+        ? `"$HOME"/${shellQuote(path.slice(capturedHome.length + 1))}`
+        : undefined;
+  const respell = (argument: string) => {
+    const equals = argument.indexOf("=");
+    const value =
+      equals > 0 ? underHome(argument.slice(equals + 1)) : undefined;
+    return (
+      underHome(argument) ??
+      (value === undefined
+        ? undefined
+        : `${shellQuote(argument.slice(0, equals + 1))}${value}`)
+    );
+  };
+  // The framework launches from the app's folder; a missing working directory must not stop the boot.
   const relative = argv
     .slice(1)
     .some(
@@ -113,22 +151,15 @@ export const launchCommand = (
         !argument.startsWith("/") &&
         !argument.startsWith("-"),
     );
-  const directory =
-    workingDirectory === capturedHome || !relative
-      ? undefined
-      : respell(workingDirectory);
-  if (
-    directory === undefined &&
-    !argv.some((argument) => argument.startsWith(prefix))
-  )
+  const respelled = argv.map(respell);
+  if (!relative && respelled.every((argument) => argument === undefined))
     return argv;
-  const command = `exec ${argv.map(respell).join(" ")}`;
+  const command = `exec ${argv.map((argument, index) => respelled[index] ?? shellQuote(argument)).join(" ")}`;
+  const directory = underHome(workingDirectory) ?? shellQuote(workingDirectory);
   return [
     "sh",
     "-c",
-    directory === undefined
-      ? command
-      : `cd ${directory} 2>/dev/null; ${command}`,
+    relative ? `cd ${directory} 2>/dev/null; ${command}` : command,
   ];
 };
 
@@ -141,159 +172,11 @@ const pyList = (values: readonly string[]): string =>
 export const renderEnvToml = (plan: DesktopAppExportPlan): string =>
   [
     `type = "computer_app"`,
-    `module = ${py(`${plan.name}.py:${plan.className}`)}`,
+    `module = ${py(`${appModuleFile(plan.name)}:${plan.className}`)}`,
     `computer = "ubuntu-24.04"`,
     `driver = "reference"`,
     "",
   ].join("\n");
-
-/** Python helpers the class uses to seed the home and read typed views. */
-const PYTHON_HELPERS = String.raw`
-XML_SUFFIXES = (".xml", ".xbel", ".plist", ".svg", ".ui")
-KEYFILE_SUFFIXES = (".ini", ".conf", ".cfg", ".desktop", ".keyfile", ".rc")
-MAX_ROWS = 500
-MAX_LINES = 5000
-MAX_XML_NODES = 5000
-MAX_XML_DEPTH = 64
-
-
-def _seed_home(home: Path) -> None:
-    """Copy the captured files into this computer's home; only text files have the captured home path respelled."""
-    seed = HERE / "seed"
-    for source in sorted(seed.rglob("*")) if seed.is_dir() else []:
-        if not source.is_file():
-            continue
-        relative = source.relative_to(seed).as_posix()
-        target = home / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        data = source.read_bytes()
-        if relative in TEXT_SEEDS:
-            data = data.decode("utf-8").replace(CAPTURED_HOME, str(home)).encode("utf-8")
-        target.write_bytes(data)
-
-
-def _load_dconf(home: Path) -> None:
-    """Load the application's dconf keys as they were before the capture."""
-    if DCONF:
-        subprocess.run(["dconf", "load", "/"], input=DCONF.replace(CAPTURED_HOME, str(home)), text=True, check=False)
-
-
-def _cell(value):
-    return {"blob_hex": value.hex()} if isinstance(value, bytes) else value
-
-
-def _sqlite(path: Path) -> dict:
-    tables, truncated = {}, False
-    with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as db:
-        names = [row[0] for row in db.execute("select name from sqlite_master where type = 'table' and name not like 'sqlite_%'")]
-        for name in names:
-            quoted = '"' + name.replace('"', '""') + '"'
-            cursor = db.execute(f"select * from {quoted} limit {MAX_ROWS + 1}")
-            rows = [[_cell(value) for value in row] for row in cursor]
-            tables[name] = {"columns": [column[0] for column in cursor.description],
-                            "rows": rows[:MAX_ROWS], "truncated": len(rows) > MAX_ROWS}
-            truncated = truncated or len(rows) > MAX_ROWS
-    return {"format": "sqlite", "view": {"tables": tables}, "truncated": truncated}
-
-
-def _view(path: Path) -> dict:
-    """A typed JSON view of one file, read the way REA's state view reads it; truncated says the view is partial."""
-    data = path.read_bytes()
-    if data.startswith(b"SQLite format 3\x00"):
-        return _sqlite(path)
-    if b"\x00" in data[:8192]:
-        return {"format": "binary", "view": None, "truncated": False}
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return {"format": "binary", "view": None, "truncated": False}
-    stripped, name = text.lstrip(), path.name.lower()
-    if name.endswith(".json") or stripped[:1] in ("{", "["):
-        try:
-            return {"format": "json", "view": json.loads(text), "truncated": False}
-        except ValueError:
-            pass
-    if name.endswith(XML_SUFFIXES) or stripped.startswith("<?xml"):
-        try:
-            budget = {"remaining": MAX_XML_NODES, "truncated": False}
-            view = _xml(ElementTree.fromstring(text), False, 0, budget)
-            return {"format": "xml", "view": view, "truncated": budget["truncated"]}
-        except ElementTree.ParseError:
-            pass
-    if name.endswith(KEYFILE_SUFFIXES) or any(line.strip().startswith("[") and line.strip().endswith("]") for line in text.splitlines()):
-        return {"format": "keyfile", "view": {"groups": _keyfile(text)}, "truncated": False}
-    lines = text.splitlines()
-    return {"format": "text", "view": {"lines": lines[:MAX_LINES], "line_count": len(lines)},
-            "truncated": len(lines) > MAX_LINES}
-
-
-def _xml(element, preserve: bool, depth: int, budget: dict) -> dict:
-    """An element with its attributes, text and children, cut at REA's node and depth limits; whitespace between
-    elements is formatting unless preserved."""
-    budget["remaining"] -= 1
-    space = element.get("{http://www.w3.org/XML/1998/namespace}space")
-    preserve = space == "preserve" if space in ("preserve", "default") else preserve
-    leaf = len(element) == 0
-
-    def kept(text):
-        return bool(text) and (preserve or leaf or text.strip() != "")
-
-    children = [element.text] if kept(element.text) else []
-    for child in element:
-        if budget["remaining"] <= 0 or depth >= MAX_XML_DEPTH:
-            budget["truncated"] = True
-            break
-        children.append(_xml(child, preserve, depth + 1, budget))
-        if kept(child.tail):
-            children.append(child.tail)
-    return {"name": element.tag, "attributes": dict(element.attrib), "children": children}
-
-
-def _keyfile(text: str) -> dict:
-    groups, group = {}, ""
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line[0] in "#;":
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            group = line[1:-1]
-            groups.setdefault(group, {})
-        elif "=" in line:
-            key, _, value = line.partition("=")
-            groups.setdefault(group, {})[key.strip()] = value.strip()
-    return groups
-
-
-def _views(home: Path, paths: list) -> dict:
-    """A view of every file under the app's paths, keyed by its home-relative path."""
-    files = {}
-    for owned in paths:
-        root = home / owned
-        candidates = [root] if root.is_file() else sorted(root.rglob("*")) if root.is_dir() else []
-        for path in candidates:
-            if path.is_file() and not path.is_symlink():
-                try:
-                    files[str(path.relative_to(home))] = _view(path)
-                except (OSError, sqlite3.Error, RecursionError) as error:
-                    files[str(path.relative_to(home))] = {"format": None, "view": None, "error": str(error)}
-    return files
-`;
-
-/** The computer app class: install, launch, owned paths, seed and data hooks. */
-const DATA_HOOKS = `
-    @add_data
-    async def add_files(self, parts: list) -> None:
-        await add(parts, self.paths)
-
-    @get_data
-    async def get_files(self, write_namespace=None) -> list:
-        files = await get(self.paths, write_namespace)
-        return [*files, DataPart(data={"state": _views(Path.home(), self.paths)})]
-
-    @reset_data
-    async def reset_files(self) -> None:
-        await reset(self.paths)
-`;
 
 /** The class body: data hooks only for owned paths, and captured settings either way. */
 const classBody = (plan: DesktopAppExportPlan): string => {
@@ -312,7 +195,7 @@ const classBody = (plan: DesktopAppExportPlan): string => {
             _seed_home(Path.home())
             _load_dconf(Path.home())
         keep_initial(self.paths)
-${DATA_HOOKS}`;
+${PYTHON_DATA_HOOKS}`;
   if (plan.dconf.length > 0)
     return `    """${title}, launched at boot with its captured settings. It owns no files, so it serves no data operations."""
 
@@ -332,19 +215,7 @@ Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at 
 The seed is the user's state before the capture: keep this bundle local.
 """
 
-from __future__ import annotations
-
-import json
-import sqlite3
-import subprocess
-import xml.etree.ElementTree as ElementTree
-from pathlib import Path
-
-from agentenv_protocol import add_data, get_data, reset_data
-from agentenv_protocol.computer import ComputerAppEnvironment, Launch, Packages, Ready, computer_app, linux
-from agentenv_protocol.computer.app_data import INITIAL, add, get, keep_initial, reset
-from agentenv_protocol.types import DataPart
-
+${PYTHON_IMPORTS}
 HERE = Path(__file__).resolve().parent
 CAPTURED_HOME = ${py(plan.capturedHome)}
 PATHS = ${pyList(plan.paths)}
@@ -354,7 +225,7 @@ ${PYTHON_HELPERS}
 
 @computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ["amd64", "arm64"]}])
 @linux(
-    packages=Packages(apt=[${py(plan.aptPackage)}]),
+    packages=Packages(apt=${pyList(plan.dconf.length === 0 ? [plan.aptPackage] : [plan.aptPackage, "dconf-cli"])}),
     launch=Launch(at="boot", command=${pyList(plan.command)}, window={"class": ${py(plan.windowClass)}}, ready=Ready(window=True)),
     paths=PATHS,
     skill="SKILL.md",
@@ -407,7 +278,7 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 Run it with \`agent-env run <this folder>\`.
 
 The seed is the user's real data. Keep this bundle local; do not publish it.
-${plan.dconf.length === 0 ? "" : "dconf keys are loaded once when the app first starts; `data/reset` does not restore them.\n"}`;
+${plan.dconf.length === 0 ? "" : "dconf keys are compiled into the user's dconf database, with `dconf-cli`, once when the app first starts; `data/reset` does not restore them.\n"}`;
 
 /** A smoke task that deploys the app. */
 export const renderSmokeTask = (plan: DesktopAppExportPlan): string =>
