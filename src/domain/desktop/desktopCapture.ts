@@ -65,6 +65,8 @@ const packageSchema = z.strictObject({
   architecture: z.string().nullable(),
   /** Package sources listing the installed version; empty for local installs. */
   sources: z.array(z.string()),
+  /** The `o=` origin apt reports for each entry of `sources`, by index; null when it reports none. */
+  source_origins: z.array(z.string().nullable()).optional(),
   package_lists_present: z.boolean().nullable(),
 });
 
@@ -190,6 +192,31 @@ export const desktopApplicationCaptureSchema = z.strictObject({
 export type DesktopApplicationCapture = z.infer<
   typeof desktopApplicationCaptureSchema
 >;
+
+/** Checkpoint names the capture gives its own checkpoints. */
+export const RESERVED_CHECKPOINT_NAMES: ReadonlySet<string> = new Set([
+  "baseline",
+  "stop",
+  "time-limit",
+  "exit",
+]);
+
+/**
+ * Why a requested checkpoint name cannot be used, or undefined when it can.
+ * An omitted name is always accepted; the session names the checkpoint.
+ */
+export const checkpointNameRefusal = (
+  name: string | undefined,
+  taken: ReadonlySet<string>,
+): string | undefined => {
+  if (name === undefined) return undefined;
+  if (name.length === 0) return "A checkpoint name cannot be empty.";
+  if (RESERVED_CHECKPOINT_NAMES.has(name))
+    return `The checkpoint name ${name} is reserved for the capture's own checkpoints.`;
+  if (taken.has(name))
+    return `A checkpoint named ${name} was already recorded.`;
+  return undefined;
+};
 
 /** Bounds the CLI applies unless the caller lowers or raises them. */
 export const DESKTOP_CAPTURE_DEFAULTS = {

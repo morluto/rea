@@ -19,6 +19,13 @@ export interface ObservedWindow extends X11WindowProperties {
   readonly id: string;
 }
 
+/** One client-list read: the windows, or why they could not be listed. */
+export type WindowSample =
+  | { readonly state: "listed"; readonly windows: readonly ObservedWindow[] }
+  | { readonly state: "display_unreadable" }
+  /** The window manager does not publish `_NET_CLIENT_LIST` (EWMH). */
+  | { readonly state: "no_client_list" };
+
 /** `xprop` could not be started at all. */
 export class XpropUnavailableError extends Error {
   constructor(readonly command: string) {
@@ -67,18 +74,19 @@ export class X11WindowObserver {
     }
   }
 
-  /** The current client list, or undefined when the display cannot be read. */
+  /** The current client list, or why it cannot be read. */
   async sample(
     refresh: (window: ObservedWindow) => boolean,
     signal?: AbortSignal,
-  ): Promise<readonly ObservedWindow[] | undefined> {
+  ): Promise<WindowSample> {
     const root = await this.#xprop(
       ["-root", "-notype", "_NET_CLIENT_LIST"],
       signal,
     );
-    if (root === undefined) return undefined;
-    const windows: ObservedWindow[] = [];
+    if (root === undefined) return { state: "display_unreadable" };
     const ids = parseX11ClientList(root);
+    if (ids === undefined) return { state: "no_client_list" };
+    const windows: ObservedWindow[] = [];
     for (const id of this.#known.keys())
       if (!ids.includes(id)) this.#known.delete(id);
     for (const id of ids) {
@@ -104,6 +112,6 @@ export class X11WindowObserver {
       this.#known.set(id, { properties, reads: (cached?.reads ?? 0) + 1 });
       windows.push({ id, ...properties });
     }
-    return windows;
+    return { state: "listed", windows };
   }
 }

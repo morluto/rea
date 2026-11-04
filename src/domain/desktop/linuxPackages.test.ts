@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   isAppImageHeader,
   packageFromPath,
+  parseAptPolicyOrigins,
   parseAptPolicySources,
   parseDpkgOwners,
   parseDpkgStatus,
@@ -69,6 +70,56 @@ describe("parseAptPolicySources", () => {
         ].join("\n"),
       ),
     ).toEqual([]);
+  });
+});
+
+describe("parseAptPolicyOrigins", () => {
+  const policy = [
+    "Package files:",
+    " 100 /var/lib/dpkg/status",
+    "     release a=now",
+    " 500 http://ppa.launchpad.net/mozillateam/ppa/ubuntu noble/main arm64 Packages",
+    "     release v=24.04,o=LP-PPA-mozillateam,a=noble,n=noble,l=Firefox ESR and security updates,c=main,b=arm64",
+    "     origin ppa.launchpad.net",
+    " 500 https://packages.example.com/apt stable/main arm64 Packages",
+    "     release a=stable,c=main,b=arm64",
+    "     origin packages.example.com",
+    " 500 http://mirror.example.edu/ubuntu-ports noble-updates/universe arm64 Packages",
+    "     release v=24.04,o=Ubuntu,a=noble-updates,n=noble,l=Ubuntu,c=universe,b=arm64",
+    "     origin mirror.example.edu",
+    " 500 http://ports.ubuntu.com/ubuntu-ports noble/universe arm64 Packages",
+    "     release v=24.04,o=Ubuntu,a=noble,n=noble,l=Ubuntu,c=universe,b=arm64",
+    "     origin ports.ubuntu.com",
+    "Pinned packages:",
+    "     firefox -> 128.5.0esr+build1-0ubuntu0.24.04.1~mt1 with priority 1001",
+  ].join("\n");
+
+  it("reads the origin apt reports for each package file", () => {
+    expect(Object.fromEntries(parseAptPolicyOrigins(policy))).toEqual({
+      "/var/lib/dpkg/status": null,
+      "http://ppa.launchpad.net/mozillateam/ppa/ubuntu noble/main arm64 Packages":
+        "LP-PPA-mozillateam",
+      "https://packages.example.com/apt stable/main arm64 Packages": null,
+      "http://mirror.example.edu/ubuntu-ports noble-updates/universe arm64 Packages":
+        "Ubuntu",
+      "http://ports.ubuntu.com/ubuntu-ports noble/universe arm64 Packages":
+        "Ubuntu",
+    });
+  });
+
+  it("keys origins by the source text the package policy lists", () => {
+    const [source] = parseAptPolicySources(
+      [
+        "mousepad:",
+        "  Installed: 0.6.1-1build2",
+        "  Candidate: 0.6.1-1build2",
+        "  Version table:",
+        " *** 0.6.1-1build2 500",
+        "        500 http://ports.ubuntu.com/ubuntu-ports noble/universe arm64 Packages",
+        "        100 /var/lib/dpkg/status",
+      ].join("\n"),
+    );
+    expect(parseAptPolicyOrigins(policy).get(source ?? "")).toBe("Ubuntu");
   });
 });
 
