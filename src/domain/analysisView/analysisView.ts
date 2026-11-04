@@ -3,6 +3,7 @@ import {
   NATIVE_OBSERVATION_OPERATIONS,
 } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
+import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
 import { projectApkSignatureView } from "./apkSignatureView.js";
@@ -304,6 +305,7 @@ const retain = (
 ): readonly [string, RetainedViewProjector] => [operation, project];
 
 const retainedViewProjectors = new Map<string, RetainedViewProjector>([
+  retain("inspect_native_instruction", projectNativeInstructionReferencesView),
   retain("trace_feature", projectNativeFeatureTraceView),
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
@@ -442,6 +444,7 @@ export const projectAnalysisView = (
     parent.operation === "match_native_functions"
       ? NATIVE_FUNCTION_MATCHING_PREDICATE
       : parent.operation === "analyze_function" ||
+          parent.operation === "inspect_native_instruction" ||
           parent.operation === "trace_feature" ||
           parent.operation === "batch_decompile" ||
           isNativeObservationOperation(parent.operation) ||
