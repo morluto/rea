@@ -4,17 +4,6 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { WASM_MODULE_LIMITS } from "../../../src/wasm/WasmModuleImage.js";
-
-const wasmLeb128 = (value: number): number[] => {
-  const out: number[] = [];
-  do {
-    let byte = value & 0x7f;
-    value >>>= 7;
-    if (value !== 0) byte |= 0x80;
-    out.push(byte);
-  } while (value !== 0);
-  return out;
-};
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   AnalysisCancelledError,
@@ -45,6 +34,17 @@ afterEach(() => {
 });
 
 /** One-shot inspections keep the real reader's cleanup at one test boundary. */
+const wasmLeb128 = (value: number): number[] => {
+  const out: number[] = [];
+  do {
+    let byte = value & 0x7f;
+    value >>>= 7;
+    if (value !== 0) byte |= 0x80;
+    out.push(byte);
+  } while (value !== 0);
+  return out;
+};
+
 const inspectMetadata = async (path: string, limit?: number) => {
   const provider = new Il2cppMetadataProvider(limit);
   try {
@@ -910,7 +910,10 @@ it("names the wasm32 module parser allowance when a wasm module passes a count c
   const path = join(root, "global-metadata.dat");
   const binaryPath = join(root, "build.wasm");
   const count = WASM_MODULE_LIMITS.dataSegments + 1;
-  const data = [...wasmLeb128(count), ...new Array<number>(count).fill(0)];
+  const data = [
+    ...wasmLeb128(count),
+    ...Array.from({ length: count }, () => 0),
+  ];
   await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
   await writeFile(
     binaryPath,
@@ -934,6 +937,8 @@ it("names the wasm32 module parser allowance when a wasm module passes a count c
     if (result.ok) throw new Error("expected a capacity refusal");
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("resource_constraint");
+    expect(projected.retryable).toBe(false);
+    expect(JSON.stringify(projected)).toContain('"resource":"capacity"');
     expect(projected.message).toMatch(/^wasm-module-capacity: /);
     expect(JSON.stringify(projected)).toContain(
       "The wasm32 module parser allowance is a fixed count",

@@ -258,6 +258,30 @@ describe("readWasmModuleImage", () => {
       ]),
     );
     expect(failure(tooManySlots)[0]).toBe("capacity");
+    // One byte short of the declared counts is already a damaged section.
+    expect(
+      failure(
+        module(
+          section(11, [
+            ...u32(dataCount),
+            ...Array<number>(dataCount - 1).fill(0),
+          ]),
+        ),
+      )[0],
+    ).toBe("malformed");
+    expect(
+      failure(
+        module(
+          section(9, [
+            1,
+            0x00,
+            ...offset(0),
+            ...u32(slotCount),
+            ...Array<number>(slotCount - 1).fill(0),
+          ]),
+        ),
+      )[0],
+    ).toBe("malformed");
     // The same counts over bodies that cannot hold them are damaged sections.
     expect(failure(module(section(11, u32(dataCount))))[0]).toBe("malformed");
     expect(
