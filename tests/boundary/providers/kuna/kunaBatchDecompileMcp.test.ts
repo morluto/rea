@@ -93,7 +93,7 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     // profile commits only analysis inputs. Composed and retained views must
     // preserve the same warning for agents reading those results.
     const verificationWarning =
-      "Kuna 1.833 is not REA's verified 1.989 release";
+      "Kuna 1.833 is not REA's verified 1.990 release";
     expect(batch.limitations).toContainEqual(
       expect.stringContaining(verificationWarning),
     );

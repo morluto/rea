@@ -51,6 +51,34 @@ const stringInventoryLimitation =
 const searchLimitation =
   "Regex mode uses Java Pattern semantics. Matcher or compiler stack exhaustion returns a resource constraint without closing the session; literal mode avoids regex recursion and returns complete matching values.";
 
+/** Attached to an empty xrefs result: absence of resolved references is not proof. */
+export const ghidraEmptyXrefsLimitation =
+  "Ghidra's ReferenceManager returned no actionable references to this address in this session. An empty list reflects what this analysis resolved, not proof that the address is unreferenced; synthetic entry-point references are omitted. No independent in-product cross-check exists for this empty result: surrounding disassembly can confirm direct references at a code address, and data or string addresses need an external disassembly scan (for example otool -tV, pairing adrp with add or ldr) before concluding there are no xrefs.";
+
+/** Attached to an empty incoming-reference facet of a function result. */
+export const ghidraEmptyIncomingReferencesLimitation =
+  "Ghidra's ReferenceManager returned no actionable incoming references for this function in this session. An empty incoming list reflects what this analysis resolved, not proof that nothing references this function; synthetic entry-point references are omitted. Incoming references have no independent in-product check and require scanning other code (for example an external otool -tV adrp/add pairing) before concluding there are none.";
+
+/**
+ * Attached to an empty incoming-reference facet of an analyzed-function
+ * dossier, which omits synthetic entry-point references and excludes sources
+ * inside the function's own body.
+ */
+export const ghidraEmptyDossierIncomingLimitation =
+  "Ghidra's ReferenceManager returned no actionable incoming references from outside this function's body in this session. An empty incoming list reflects what this analysis resolved, not proof that nothing references this function: synthetic entry-point references are omitted before the dossier's body filter, and sources inside the body are excluded (a self-recursive call is one), so the list can be empty even when such edges exist. In-body edges remain visible in the outgoing references and disassembly, and procedure_references(incoming) reads the same ReferenceManager stream without the in-body exclusion (it omits synthetic entry-point references as well) to separate the cases. Sources outside the program's observed references still require an external scan (for example otool -tV, pairing adrp with add or ldr) before concluding there are none.";
+
+/** Attached to an empty outgoing-reference facet of an external function. */
+export const ghidraEmptyExternalOutgoingLimitation =
+  "Ghidra's ReferenceManager returned no actionable outgoing references for this external function in this session. An external function's defining body is not part of this program database, so its outgoing list cannot describe what the function references: this program's call sites (its incoming references and callers) and the defining artifact are the checks before concluding anything about its behavior.";
+
+/** Attached to an empty outgoing-reference facet of a function result. */
+export const ghidraEmptyOutgoingReferencesLimitation =
+  "Ghidra's ReferenceManager returned no actionable outgoing references for this function in this session. An empty outgoing list reflects what this analysis resolved, not proof that the function references nothing; synthetic entry-point references are omitted. The function's own disassembly is an independent check for direct outgoing references before concluding there are none.";
+
+/** Attached to an empty outgoing-reference list of one instruction result. */
+export const ghidraEmptyInstructionOutgoingLimitation =
+  "Ghidra's ReferenceManager returned no actionable outgoing references from this instruction in this session. An empty list reflects what this analysis resolved, not proof that the instruction references nothing. The instruction's own disassembly is an independent check for direct outgoing references (a direct operand naming a target with no recorded reference contradicts the empty result) before concluding there are none.";
+
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
   operation: string,
@@ -248,6 +276,10 @@ export const existingProjectCapabilities = (
         available: false,
         reason: "Existing Ghidra project sessions are read-only.",
         availabilityCode: "open_options_invalid",
+        userMessage:
+          "This Ghidra project session is read-only; the requested edit was not applied.",
+        remediation:
+          "Continue inspecting the selected project. To make session-only edits, start a separate REA session with REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME unset, then open a fresh Ghidra import. It is a separate ephemeral analysis and does not preserve the selected project's state.",
       };
     return { ...capability, limitations };
   });
