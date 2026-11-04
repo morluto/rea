@@ -2,7 +2,7 @@
 ---
 
 
-## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-03)
+## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-04)
 
 
 ### ⚠ BREAKING CHANGES
@@ -73,6 +73,7 @@
 * **debugger:** share GDB and Rizin session caps as REA_ settings ([#8056](https://github.com/morluto/rea/issues/8056)) ([4a8d8f7](https://github.com/morluto/rea/commit/4a8d8f72b354dc96a8d1bce06da4bf6c7eda33ec))
 * **dotnet:** expose field constant defaults ([#8015](https://github.com/morluto/rea/issues/8015)) ([1ddee10](https://github.com/morluto/rea/commit/1ddee1089b2300dc8220ade654cc73cd74d46a74))
 * **electron:** report custom URL protocol registrations ([47fa6ab](https://github.com/morluto/rea/commit/47fa6ab3795d547207001ffb01643c0aa39dcad8))
+* **elf:** decode Linux core dump process and memory mapping notes ([#8830](https://github.com/morluto/rea/issues/8830)) ([e75d1c7](https://github.com/morluto/rea/commit/e75d1c741ccf3e3ce6ff1e4533b60febde6543ec))
 * **environment:** serve query numbers, counted values and made objects ([#7332](https://github.com/morluto/rea/issues/7332)) ([40b9c03](https://github.com/morluto/rea/commit/40b9c03f996270e944ff07cafb63be15ce903708))
 * **environment:** serve sorted creates, listed references and toggles ([#7600](https://github.com/morluto/rea/issues/7600)) ([51ad845](https://github.com/morluto/rea/commit/51ad84516e55153c2d22704044f6d2b7de8a6fb4))
 * **environment:** serve the writes callers make without recorded form fields ([#7260](https://github.com/morluto/rea/issues/7260)) ([7bc6c5b](https://github.com/morluto/rea/commit/7bc6c5bf61deee59c93e3398d4726a9cb5df981c))
