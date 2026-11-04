@@ -12,6 +12,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { fixedAllowanceRemediation } from "../../../src/domain/fixedAllowanceRemediation.js";
 import { Il2cppMetadataProvider } from "../../../src/il2cpp/Il2cppMetadataProvider.js";
 import { Il2cppGhidraSeedWriter } from "../../../src/il2cpp/Il2cppGhidraSeedWriter.js";
 import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
@@ -935,15 +936,18 @@ it("names the wasm32 module parser allowance when a wasm module passes a count c
   try {
     const result = await provider.inspect({ path, binary_path: binaryPath });
     if (result.ok) throw new Error("expected a capacity refusal");
-    const projected = projectAnalysisError(result.error);
-    expect(projected.code).toBe("resource_constraint");
-    expect(projected.retryable).toBe(false);
-    expect(JSON.stringify(projected)).toContain('"resource":"capacity"');
-    expect(projected.message).toMatch(/^wasm-module-capacity: /);
-    expect(JSON.stringify(projected)).toContain(
-      "The wasm32 module parser allowance is a fixed count",
-    );
-    expect(JSON.stringify(projected)).not.toContain("native-link");
+    const allowance = "The wasm32 module parser allowance";
+    expect(result.error).toMatchObject({
+      fixedAllowance: { name: allowance, kind: "count" },
+      retryable: false,
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      message: expect.stringMatching(/^wasm-module-capacity: /),
+      remediation: { action: fixedAllowanceRemediation(allowance, "count") },
+      details: { resource: "capacity" },
+    });
   } finally {
     await provider.close();
   }
