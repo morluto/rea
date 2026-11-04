@@ -5,10 +5,12 @@ import {
   parseExecutableHeader,
 } from "../binaryTarget.js";
 import {
+  decodeMachoFixedWordFields,
   readMachoHeaderDeclarations,
   readMachoLinkeditDataCommand,
   readMachoLoadCommandDeclarations,
   readMachoLoadCommandTableHeader,
+  readMachoSymtabCommand,
 } from "./machoLoadCommands.js";
 
 it.each([
@@ -120,4 +122,23 @@ it("reads linkedit data fields and refuses a truncated command", () => {
     dataSize: 0x56,
   });
   expect(readMachoLinkeditDataCommand(body.subarray(0, 15), true)).toBeNull();
+});
+
+it("reads symtab fields through the shared fixed-word decoder", () => {
+  const body = Buffer.alloc(24);
+  body.writeUInt32BE(0x2, 0);
+  body.writeUInt32BE(24, 4);
+  body.writeUInt32BE(0x100, 8);
+  body.writeUInt32BE(3, 12);
+  body.writeUInt32BE(0x200, 16);
+  body.writeUInt32BE(0x40, 20);
+  const fields = { symoff: 0x100, nsyms: 3, stroff: 0x200, strsize: 0x40 };
+  expect(readMachoSymtabCommand(body, false)).toEqual(fields);
+  expect(decodeMachoFixedWordFields(0x2, body.subarray(8), false)).toEqual(
+    fields,
+  );
+  expect(readMachoSymtabCommand(body.subarray(0, 23), false)).toBeNull();
+  expect(decodeMachoFixedWordFields(0x19, body.subarray(8), false)).toBe(
+    undefined,
+  );
 });

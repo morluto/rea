@@ -3,6 +3,7 @@ import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
 import {
   MACHO_HEADER_FLAGS_OFFSET,
   readMachoLinkeditDataCommand,
+  readMachoSymtabCommand,
 } from "../../domain/apple/machoLoadCommands.js";
 import type { MachoSliceEncryption } from "../../domain/apple/machoEncryption.js";
 import {
@@ -542,17 +543,9 @@ const stackRow = (
       null,
       "LC_SYMTAB is absent, so stack protector use is unknown.",
     );
-  if (symtab.body.byteLength < 24)
-    malformed("Mach-O LC_SYMTAB command is truncated");
-  const view = new DataView(
-    symtab.body.buffer,
-    symtab.body.byteOffset,
-    symtab.body.byteLength,
-  );
-  const symoff = view.getUint32(8, true);
-  const nsyms = view.getUint32(12, true);
-  const stroff = view.getUint32(16, true);
-  const strsize = view.getUint32(20, true);
+  const fields = readMachoSymtabCommand(symtab.body, true);
+  if (fields === null) malformed("Mach-O LC_SYMTAB command is truncated");
+  const { symoff, nsyms, stroff, strsize } = fields;
   // One oversized symbol table must not drop the header rows or sibling slices.
   if (nsyms > MAX_BINARY_HARDENING_TABLE_ENTRIES) return unknownStackBudget();
   const width = wide ? 16 : 12;
