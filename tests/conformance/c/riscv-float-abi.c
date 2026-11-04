@@ -171,6 +171,20 @@ __attribute__((noinline)) _Float16 rea_riscv_abi_half(_Float16 value)
 }
 
 void (*volatile rea_riscv_abi_spread_callback)(struct rea_riscv_abi_spread, int);
+
+/* A shape __rea_ilp32f does express, which the refusal must not name: a
+ * bit-field counts by its width, so a float and a one-bit field of a 64-bit
+ * type take fa0 and a0. */
+struct rea_riscv_abi_bits {
+    float value;
+    unsigned long long bit : 1;
+};
+
+__attribute__((noinline)) struct rea_riscv_abi_bits rea_riscv_abi_bits(struct rea_riscv_abi_bits value, int tag)
+{
+    value.bit = (unsigned long long)tag & 1u;
+    return value;
+}
 #endif
 #define REA_RISCV_ABI_CALLERS(sel) (rea_riscv_abi_caller(sel) ^ rea_riscv_abi_single_caller(sel))
 #else

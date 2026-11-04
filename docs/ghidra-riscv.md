@@ -267,14 +267,18 @@ the class the psABI gives it. The script refuses the policy when any signature
 passes a type the prototype misplaces:
 
 - a structure the new rule would split that the psABI passes in integer
-  registers, such as the three above;
+  registers, such as the three above, or a C++ structure with a nonzero array
+  of empty classes, which GCC and Clang do not ignore when they flatten it;
 - a type the psABI places in float registers where the prototype cannot:
   `_Float16`, a packed structure whose `float` is not 4-byte aligned, or an
   over-aligned structure of more than 8 bytes.
 
-The check treats typed functions and function-pointer types alike; Ghidra's
-decompiler computes the storage at an indirect call from the prototype. A
-refusal names up to eight signatures, and REA then refuses the session.
+A bit-field counts by its width, not its declared type, so a `float` beside
+`unsigned long long b : 1` takes a float and an integer register. The check
+treats typed functions and function-pointer types alike; Ghidra's decompiler
+computes the storage at an indirect call from the prototype. A refusal counts
+every misplaced signature and names up to eight, and REA then refuses the
+session.
 
 Not modelled:
 
@@ -370,8 +374,10 @@ assembly sources:
   functions.
 - The single-float build with `REA_RISCV_ABI_UNMODELLED`, which adds a
   function that passes and returns a three-field structure, a `_Float16`
-  function, and a function-pointer type that passes the three-field
-  structure.
+  function, a function-pointer type that passes the three-field structure,
+  and, from `riscv-float-abi-empty.cpp`, a function that passes a structure
+  with an array of one empty class. It also adds a function that passes a
+  `float` beside a one-bit field of a 64-bit type, which the policy admits.
 
 Independent LLVM readelf observations establish ELF declarations,
 `Tag_RISCV_arch` and symbol addresses. Public CLI and stdio MCP workflows verify
@@ -405,7 +411,8 @@ For the soft- and single-float builds the lane also checks:
 - Retained Evidence states the prototype outcome; the stripped builds have no
   function definitions.
 - The unmodelled build is admitted by its headers, then refused over MCP and
-  the CLI with the bridge's reason, which names its three signatures.
+  the CLI with the bridge's reason, which names its four refused signatures
+  and not the bit-field function.
 
 Header-mutated copies check admission. The RV32 double-float image relabelled as
 soft-float (`e_flags` `0x1`) or single-float (`0x3`), refused before these

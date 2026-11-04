@@ -331,7 +331,8 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
    */
   private String misplacedSignatures(
       PrototypeModel model, Policy policy, List<Function> callables, Set<FunctionDefinition> pointed) {
-    List<String> refused = new ArrayList<>();
+    // The counts cover every refusal; only the shown examples are kept.
+    List<String> examples = new ArrayList<>();
     int functions = 0;
     for (Function function : callables) {
       if (function.isThunk()) continue;
@@ -343,7 +344,8 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
           misplaced.add(parameter.getFormalDataType().getName());
       if (misplaced.isEmpty()) continue;
       functions += 1;
-      refused.add(function.getName(true) + " (" + String.join(", ", misplaced) + ")");
+      if (examples.size() < REFUSAL_EXAMPLES)
+        examples.add(shortened(function.getName(true) + " (" + String.join(", ", misplaced) + ")"));
     }
     int definitions = 0;
     for (FunctionDefinition definition : pointed) {
@@ -355,20 +357,23 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
           misplaced.add(argument.getDataType().getName());
       if (misplaced.isEmpty()) continue;
       definitions += 1;
-      refused.add(
-          "function-pointer type " + definition.getName() + " (" + String.join(", ", misplaced)
-              + ")");
+      if (examples.size() < REFUSAL_EXAMPLES)
+        examples.add(
+            shortened(
+                "function-pointer type " + definition.getName() + " ("
+                    + String.join(", ", misplaced) + ")"));
     }
-    if (refused.isEmpty()) return null;
-    List<String> examples = new ArrayList<>();
-    for (String example : refused.subList(0, Math.min(REFUSAL_EXAMPLES, refused.size())))
-      examples.add(
-          example.length() <= REFUSAL_EXAMPLE_LENGTH
-              ? example
-              : example.substring(0, REFUSAL_EXAMPLE_LENGTH - 3) + "...");
+    if (functions + definitions == 0) return null;
     return counted(functions, "function") + " and " + counted(definitions, "function-pointer type")
         + " pass by-value types whose psABI storage " + policy.prototype() + " cannot express: "
-        + String.join("; ", examples) + (refused.size() > examples.size() ? "; and others." : ".");
+        + String.join("; ", examples)
+        + (functions + definitions > examples.size() ? "; and others." : ".");
+  }
+
+  private static String shortened(String example) {
+    return example.length() <= REFUSAL_EXAMPLE_LENGTH
+        ? example
+        : example.substring(0, REFUSAL_EXAMPLE_LENGTH - 3) + "...";
   }
 
   /** Whether the prototype gives a first argument or return of this type another class. */
@@ -418,8 +423,10 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
 
   /**
    * Collect the psABI's flattened fields, true for a float of at most 32 bits. False when a
-   * field makes the value use the integer convention: a union, a pointer, a value over 32 bits,
-   * or a third field. Empty members, zero-length arrays and zero-width bit-fields are ignored.
+   * field makes the value use the integer convention: a union, a pointer, a value or bit-field
+   * over 32 bits, a third field, or a nonzero array of elements without fields, such as C++
+   * empty classes, which GCC and Clang do not ignore. Empty members, zero-length arrays and
+   * zero-width bit-fields are ignored.
    */
   private static boolean flatten(DataType type, List<Boolean> fields) {
     type = strip(type);
@@ -428,7 +435,8 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
         if (component.getLength() == 0) continue;
         if (component.getDataType() instanceof BitFieldDataType bitField) {
           if (bitField.getBitSize() == 0) continue;
-          if (bitField.getBaseDataType().getLength() > 4) return false;
+          // The width counts, not the declared type: `unsigned long long b : 1` is one word.
+          if (bitField.getBitSize() > 32) return false;
           fields.add(false);
         } else if (!flatten(component.getDataType(), fields)) return false;
         if (fields.size() > 2) return false;
@@ -436,8 +444,13 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
       return true;
     }
     if (type instanceof Array array) {
-      for (int index = 0; index < array.getNumElements(); index += 1)
-        if (!flatten(array.getDataType(), fields) || fields.size() > 2) return false;
+      int count = array.getNumElements();
+      if (count == 0) return true;
+      // One element's fields stand for every element, so a long array costs one visit.
+      List<Boolean> element = new ArrayList<>();
+      if (!flatten(array.getDataType(), element) || element.isEmpty()) return false;
+      if (fields.size() + (long) count * element.size() > 2) return false;
+      for (int index = 0; index < count; index += 1) fields.addAll(element);
       return true;
     }
     if (type instanceof Union union) return union.getNumDefinedComponents() == 0;

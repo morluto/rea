@@ -137,9 +137,10 @@ const verifyUnmodelledRefusal = async () => {
   assert.deepEqual(resolved.value.riscv, fixture.riscv);
   const reasons = [
     "policy ilp32f-prototype-v1 refused this image",
-    "2 functions and 1 function-pointer type pass by-value types whose psABI storage __rea_ilp32f cannot express",
+    "3 functions and 1 function-pointer type pass by-value types whose psABI storage __rea_ilp32f cannot express",
     "rea_riscv_abi_spread (returns rea_riscv_abi_spread, rea_riscv_abi_spread)",
     "rea_riscv_abi_half (returns _Float16, _Float16)",
+    "rea_riscv_abi_empties (returns rea_riscv_abi_empties, rea_riscv_abi_empties)",
     "function-pointer type _func_void_rea_riscv_abi_spread_int (rea_riscv_abi_spread)",
   ];
   const lifecycle = async (name, args = {}) =>
@@ -161,6 +162,8 @@ const verifyUnmodelledRefusal = async () => {
     ),
   );
   for (const reason of reasons) assert.ok(error.includes(reason), error);
+  // A bit-field counts by its width, so this float-and-integer shape fits.
+  assert.ok(!error.includes("rea_riscv_abi_bits"), error);
   await lifecycle("close_binary");
   await assert.rejects(
     execute(

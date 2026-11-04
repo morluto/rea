@@ -38,7 +38,7 @@ const BUILDS = {
   },
   // The same build with the shapes __rea_ilp32f cannot express.
   unmodelled: {
-    sources: FLOAT_ABI_SOURCES,
+    sources: [...FLOAT_ABI_SOURCES, "../c/riscv-float-abi-empty.cpp"],
     march: () => "rv32imafc_zicsr_zifencei",
     mabi: () => "ilp32f",
     defines: ["REA_RISCV_ABI_UNMODELLED"],
