@@ -1,6 +1,6 @@
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, posix, resolve } from "node:path";
+import { dirname, join, posix, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -563,7 +563,64 @@ describe("Pi project-scoped partial overrides", () => {
       config_path: projectConfigPath,
     });
   });
+});
 
+describe("Pi project-scoped inherited environment validation", () => {
+  it("reports user-scoped invalid status when trusted project partial override inherits invalid user environment", async () => {
+    const home = await createTestTempDirectory("rea-pi-project-home-");
+    const projectDir = await createTestTempDirectory("rea-pi-project-cwd-");
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+    await trustPiProject(home, projectDir);
+
+    const client = supportedClients(home).find(({ name }) => name === "pi");
+    if (client === undefined) throw new Error("missing pi client");
+
+    await mkdir(dirname(client.configPath), { recursive: true });
+    await writeFile(
+      client.configPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "npx",
+            args: ["-y", "rea-agents@1.0.0", "mcp"],
+            env: {
+              REA_GHIDRA_STARTUP_TIMEOUT_MS: "invalid-number",
+            },
+          },
+        },
+      }),
+    );
+
+    const projectConfigDir = join(projectDir, ".pi");
+    await mkdir(projectConfigDir, { recursive: true });
+    const projectConfigPath = resolve(projectConfigDir, "mcp.json");
+    await writeFile(
+      projectConfigPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            enabled: true,
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      environment: {},
+    });
+    const piStatus = statuses.find(({ client: c }) => c === "pi");
+    expect(piStatus).toMatchObject({
+      client: "pi",
+      state: "invalid",
+      config_path: client.configPath,
+    });
+    expect(piStatus?.scope).toBeUndefined();
+    expect(piStatus?.remediation).toContain(client.configPath);
+    expect(piStatus?.remediation).not.toContain(projectConfigPath);
+  });
+});
+
+describe("Pi standalone partial override validation", () => {
   it("reports invalid with project-scoped remediation for a standalone partial override without a user registration", async () => {
     const home = await createTestTempDirectory("rea-pi-project-home-");
     const projectDir = await createTestTempDirectory("rea-pi-project-cwd-");

@@ -296,6 +296,37 @@ export const effectiveClientConfiguration = (
   };
 };
 
+const contributingEnvironmentSource = (
+  sources: readonly ClientConfigurationSource[],
+  error: ConfigurationError,
+  platform: NodeJS.Platform = process.platform,
+): ClientConfigurationSource | undefined => {
+  const rejectedSettings = new Set(
+    error.settings.flatMap(({ setting }) => {
+      const normalized = platform === "win32" ? setting.toUpperCase() : setting;
+      const stripped = normalized.includes(".")
+        ? normalized.slice(normalized.indexOf(".") + 1)
+        : normalized;
+      return [normalized, stripped];
+    }),
+  );
+  return [...sources].reverse().find((doc) => {
+    const server = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
+    if (!isObject(server)) return false;
+    const env = isObject(server[doc.environmentKey])
+      ? server[doc.environmentKey]
+      : isObject(server.environment)
+        ? server.environment
+        : isObject(server.env)
+          ? server.env
+          : undefined;
+    if (!isObject(env)) return false;
+    return Object.keys(env).some((key) =>
+      rejectedSettings.has(platform === "win32" ? key.toUpperCase() : key),
+    );
+  });
+};
+
 const isPiPartialServerOverride = (
   entry: unknown,
 ): entry is Record<string, unknown> =>
@@ -563,10 +594,24 @@ export const readEffectiveClientRegistrationConfiguration = async (
             "effective",
             platform,
           );
-          if (!effectiveEnv.ok)
+          if (!effectiveEnv.ok) {
+            const contributingDoc = isProjectLauncher
+              ? undefined
+              : contributingEnvironmentSource(
+                  nativeSources.value,
+                  effectiveEnv.error,
+                  platform,
+                );
+            const errorPath =
+              contributingDoc?.sourcePath ??
+              (isProjectLauncher ? projectPath : client.configPath);
+            const errorScope: ClientRegistrationScope = isProjectLauncher
+              ? "project"
+              : "user";
             return err(
-              invalidEnvironment(projectPath, effectiveEnv.error, "project"),
+              invalidEnvironment(errorPath, effectiveEnv.error, errorScope),
             );
+          }
           return ok({
             document: effectiveDoc,
             configPath: projectPath,
@@ -630,14 +675,27 @@ export const readEffectiveClientRegistrationConfiguration = async (
           "effective",
           platform,
         );
-        if (!effectiveEnv.ok)
-          return err(
-            invalidEnvironment(
-              winningProjectDoc.sourcePath,
-              effectiveEnv.error,
-              "project",
-            ),
+        if (!effectiveEnv.ok) {
+          const contributingDoc = contributingEnvironmentSource(
+            allSources,
+            effectiveEnv.error,
+            platform,
           );
+          const isProjectSource =
+            contributingDoc !== undefined
+              ? projectSources.some(
+                  (proj) => proj.sourcePath === contributingDoc.sourcePath,
+                )
+              : true;
+          const errorPath =
+            contributingDoc?.sourcePath ?? winningProjectDoc.sourcePath;
+          const errorScope: ClientRegistrationScope = isProjectSource
+            ? "project"
+            : "user";
+          return err(
+            invalidEnvironment(errorPath, effectiveEnv.error, errorScope),
+          );
+        }
         const launcherDoc = [...allSources].reverse().find((doc) => {
           const s = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
           return isObject(s) && Object.hasOwn(s, "command");
