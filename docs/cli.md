@@ -1392,6 +1392,16 @@ Reports TLS callbacks and size-covered load-config fields without execution.
 Use `--max-callbacks` and `--max-file-bytes` to set read budgets. See
 [PE TLS and load configuration](pe-load-config.md).
 
+### PE Rich header
+
+```sh
+rea inspect-pe-rich-header /absolute/path/to/application.exe --json
+```
+
+Reports the Rich header's product IDs, builds and use counts, and whether its
+checksum reproduces the stored key, without execution. Use `--max-entries` and
+`--max-file-bytes` to set read budgets. See [PE Rich header](pe-rich-header.md).
+
 Bun standalone executables use the existing `inspect-artifact` and
 `extract-artifact` commands to inventory and materialize embedded source,
 sourcemaps and bytecode without running the executable. See

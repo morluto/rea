@@ -155,6 +155,18 @@ mitigations carry `evidence_kind: "inferred"`; enforcement remains unobserved.
 See
 [PE TLS callbacks and load configuration](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
 
+## PE Rich header
+
+Use `inspect_pe_rich_header` for an explicit local PE32/PE32+ image when the
+question is which Microsoft toolchain built it, or whether its Rich header was
+edited after linking. No `open_binary`, Windows SDK, or target execution is
+required. The CLI equivalent is `inspect-pe-rich-header PATH`. Preserve artifact
+SHA-256, the record's file range, the key, and each product ID, build and use
+count. `checksum.matches` compares the stored key with the linker checksum over
+the DOS header, stub and entries; a mismatch does not show which bytes changed.
+Product IDs are not mapped to tool names. See
+[PE Rich header](https://github.com/morluto/rea/blob/main/docs/pe-rich-header.md).
+
 ## ELF note tables
 
 Use `inspect_elf_notes` for an explicit local ELF32/ELF64 image when the

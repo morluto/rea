@@ -45,6 +45,10 @@ import {
   peImportsSchema,
 } from "../../domain/native/peImports.js";
 import {
+  inspectPeRichHeaderInputSchema,
+  peRichHeaderSchema,
+} from "../../domain/native/peRichHeader.js";
+import {
   inspectElfNotesInputSchema,
   elfNotesSchema,
 } from "../../domain/native/elfNotes.js";
@@ -203,6 +207,21 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     examples: [
       {
         title: "Inspect PE import and delay-load identities",
+        input: { path: "/artifacts/application.exe" },
+      },
+    ],
+  },
+  {
+    name: "inspect_pe_rich_header",
+    ...toolContractMetadata("inspect_pe_rich_header"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local PE32/PE32+ image's Rich header without executing it or opening a disassembler. Finds the last DWORD-aligned Rich footer before the PE signature, walks back to its DanS marker, and returns the record's file range, XOR key, decoded padding, each @comp.id product ID, build number and use count, and whether the linker checksum over the DOS header, stub and entries reproduces the key. Product IDs are not mapped to tool or Visual Studio names. A missing footer is observed absence, not proof the image was built without Microsoft tools; a footer without its DanS marker or with a partial entry is reported as malformed. Reads a stable regular file; malformed PE headers and an exhausted entry budget return no partial success. Portable on supported Node hosts; no Windows SDK or engine installation required.",
+    inputSchema: inspectPeRichHeaderInputSchema,
+    outputSchema: evidenceResultOf(peRichHeaderSchema),
+    examples: [
+      {
+        title: "Inspect the linker records in a PE Rich header",
         input: { path: "/artifacts/application.exe" },
       },
     ],

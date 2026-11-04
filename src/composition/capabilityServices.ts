@@ -66,6 +66,7 @@ import {
   createPeLoadConfigService,
   createPeCertificatesService,
   createPeImportsService,
+  createPeRichHeaderService,
   createNativeExportsService,
   createPeResourcesService,
   createRecordedCrashService,
@@ -340,6 +341,7 @@ const modules = {
   peLoadConfig: service(() => createPeLoadConfigService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
+  peRichHeader: service(() => createPeRichHeaderService()),
   electronFuses: service(
     ({ options }) => options.electronFuses ?? createElectronFuseService(),
   ),

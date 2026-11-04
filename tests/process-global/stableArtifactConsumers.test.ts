@@ -113,6 +113,7 @@ import { AppleIpsProvider } from "../../src/native/apple/AppleIpsProvider.js";
 import { KernelModuleProvider } from "../../src/native/elf/KernelModuleProvider.js";
 import { PeCertificatesProvider } from "../../src/native/pe/PeCertificatesProvider.js";
 import { PeImportsProvider } from "../../src/native/pe/PeImportsProvider.js";
+import { PeRichHeaderProvider } from "../../src/native/pe/PeRichHeaderProvider.js";
 import { NativeExportsProvider } from "../../src/native/exports/NativeExportsProvider.js";
 import { BeamProvider } from "../../src/erlang/BeamProvider.js";
 import { inspectElfNotesInputSchema } from "../../src/domain/native/elfNotes.js";
@@ -120,6 +121,7 @@ import { inspectAppleIpsInputSchema } from "../../src/domain/native/appleIps.js"
 import { inspectKernelModuleInputSchema } from "../../src/domain/native/kernelModule.js";
 import { inspectPeCertificatesInputSchema } from "../../src/domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../../src/domain/native/peImports.js";
+import { inspectPeRichHeaderInputSchema } from "../../src/domain/native/peRichHeader.js";
 import { inspectNativeExportsInputSchema } from "../../src/domain/native/nativeExports.js";
 import { inspectErlangBeamInputSchema } from "../../src/domain/erlang/beam.js";
 import { ModelArtifactProvider } from "../../src/model/ModelArtifactProvider.js";
@@ -1001,6 +1003,7 @@ const stableArtifactProviders = [
   ["PE certificates", () => new PeCertificatesProvider()],
   ["PE load configuration", () => new PeLoadConfigProvider()],
   ["PE imports", () => new PeImportsProvider()],
+  ["PE Rich header", () => new PeRichHeaderProvider()],
   ["native exports", () => new NativeExportsProvider()],
   ["Python pyc", () => new PythonPycProvider()],
 ] as const;
@@ -1044,6 +1047,11 @@ const inspectFileFailure = (
   if (provider instanceof PeLoadConfigProvider)
     return provider.inspect(
       inspectPeLoadConfigInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof PeRichHeaderProvider)
+    return provider.inspect(
+      inspectPeRichHeaderInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof PeImportsProvider)

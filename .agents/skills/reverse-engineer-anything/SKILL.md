@@ -273,6 +273,13 @@ explicit path or endpoint and do not need it.
   linker declarations, not proof of enforcement. A missing directory is observed
   absence of that declaration. See the
   [PE load configuration guide](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
+- PE Rich header: `inspect_pe_rich_header` with the explicit local PE32/PE32+
+  file. This built-in target-free inspection requires no Windows SDK. Preserve
+  the record range, key, each product ID, build and use count, and whether the
+  checksum reproduces the key. Product IDs are not tool or Visual Studio names.
+  A missing record is observed absence, not proof of a non-Microsoft toolchain.
+  See the
+  [PE Rich header guide](https://github.com/morluto/rea/blob/main/docs/pe-rich-header.md).
 - ELF note tables: `inspect_elf_notes` with the explicit local ELF32/ELF64
   file. This built-in target-free inspection requires no disassembler. Preserve
   PT_NOTE and SHT_NOTE ranges, owners, types, descriptor SHA-256, and GNU

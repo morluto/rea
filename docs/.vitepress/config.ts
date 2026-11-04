@@ -35,6 +35,7 @@ export default defineConfig({
           { text: "PE certificates", link: "/pe-certificates" },
           { text: "PE imports", link: "/pe-imports" },
           { text: "PE TLS/load config", link: "/pe-load-config" },
+          { text: "PE Rich header", link: "/pe-rich-header" },
           { text: "ELF notes", link: "/elf-notes" },
           { text: "Apple IPS crash reports", link: "/apple-ips" },
           { text: "Linux kernel modules", link: "/kernel-modules" },
