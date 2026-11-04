@@ -21,6 +21,8 @@ const plan: DesktopAppExportPlan = {
   paths: [".config/Mousepad", "Documents"],
   capturedHome: "/home/ada",
   seedFiles: ["Documents/todo.txt"],
+  textSeeds: ["Documents/todo.txt"],
+  unseededFiles: [],
   dconf: "",
   captureEvidenceId: "ev_1",
 };
@@ -31,6 +33,8 @@ describe("names", () => {
     expect(environmentName("My App!")).toBe("my-app");
     expect(className("gnu-cash")).toBe("GnuCash");
     expect(className("7zip")).toBe("App7zip");
+    expect(className("none")).toBe("NoneApp");
+    expect(className("true")).toBe("TrueApp");
   });
 });
 
@@ -44,14 +48,38 @@ describe("ownedPaths", () => {
       ),
     ).toEqual([".config/app", "Documents"]);
   });
+
+  it("owns a file directly in the home as itself", () => {
+    expect(ownedPaths(["books.gnucash"], [], [])).toEqual(["books.gnucash"]);
+  });
 });
 
 describe("launchCommand", () => {
   it("keeps commands without home paths and respells home arguments under $HOME", () => {
-    expect(launchCommand(["mousepad"], "/home/ada")).toEqual(["mousepad"]);
+    expect(launchCommand(["mousepad"], "/home/ada", "/home/ada")).toEqual([
+      "mousepad",
+    ]);
     expect(
-      launchCommand(["mousepad", "/home/ada/Documents/it's.txt"], "/home/ada"),
+      launchCommand(
+        ["mousepad", "/home/ada/Documents/it's.txt"],
+        "/home/ada",
+        "/home/ada",
+      ),
     ).toEqual(["sh", "-c", `exec 'mousepad' "$HOME"/'Documents/it'"'"'s.txt'`]);
+  });
+
+  it("starts in the captured working directory so relative arguments keep their meaning", () => {
+    expect(
+      launchCommand(
+        ["notes", "today.md"],
+        "/home/ada",
+        "/home/ada/project/docs",
+      ),
+    ).toEqual([
+      "sh",
+      "-c",
+      `cd "$HOME"/'project/docs' && exec 'notes' 'today.md'`,
+    ]);
   });
 });
 
@@ -65,5 +93,25 @@ describe("renderers", () => {
   it("declares data hooks only when the app owns paths", () => {
     expect(renderAppClass(plan)).toContain("keep_initial(self.paths)");
     expect(renderAppClass({ ...plan, paths: [] })).not.toContain("@get_data");
+  });
+
+  it("loads captured dconf settings even without owned paths", () => {
+    const module = renderAppClass({
+      ...plan,
+      paths: [],
+      dconf: "[org/app]\nwrap=true\n",
+    });
+    expect(module).toContain("_load_dconf(Path.home())");
+    expect(module).not.toContain("@get_data");
+  });
+
+  it("names only text seeds for home path respelling", () => {
+    expect(
+      renderAppClass({
+        ...plan,
+        seedFiles: ["a.db", "b.txt"],
+        textSeeds: ["b.txt"],
+      }),
+    ).toContain('TEXT_SEEDS = frozenset(["b.txt"])');
   });
 });

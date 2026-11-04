@@ -35,11 +35,13 @@ owned paths, seed files and written files.
 The class declares:
 
 - `Packages(apt=[...])` with the package the capture found. The export refuses
-  applications not installed from a package archive (local `.deb`, snap,
-  flatpak, AppImage), since the computer could not install them.
+  applications not installed from the Ubuntu 24.04 archive (local `.deb`, a
+  third-party repository, snap, flatpak, AppImage), since the computer could not
+  install them by name.
 - A launch at boot with the captured command, ready when a window of the
   captured class appears. Arguments under the captured home are respelled under
-  the computer user's `$HOME`. The export refuses a capture that saw no
+  the computer user's `$HOME`, and the command starts in the captured working
+  directory when that was not the home. The export refuses a capture that saw no
   application window.
 - `paths`: the state directories holding the application's state files and the
   folders holding its documents, nested folders collapsed.
@@ -51,9 +53,13 @@ The class declares:
   text lines). An application with no observed state declares no paths and no
   hooks.
 
-Seeded text files have the captured home path respelled to the computer's
-home. The application's dconf keys at the baseline, if any, are loaded once
-with `dconf load /`; `data/reset` does not restore them.
+Seeded text files (text, JSON, key files and XML in the state view) have the
+captured home path respelled to the computer's home; other files are copied as
+captured. A file under the owned paths whose starting bytes the capture did not
+retain is not seeded; the result lists it in `unseeded_files` and the README
+names it. The application's dconf keys at the baseline, if any, are loaded once
+with `dconf load /`, also for an application that owns no files; `data/reset`
+does not restore them.
 
 The seed is the user's real data. Keep the bundle local and do not publish it.
 The class was checked against agentenv-framework 0.9.1431 with

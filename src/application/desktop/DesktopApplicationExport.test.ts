@@ -31,6 +31,7 @@ describe("exportDesktopApplication", () => {
       environment: "notes",
       paths: [".config/notes", ".local/share/notes", "Documents"],
       seed_files: [".config/notes/settings.ini", ".local/share/notes/notes.db"],
+      unseeded_files: [],
     });
     expect(
       await readFile(join(directory, "envs/notes/env.toml"), "utf8"),

@@ -4,7 +4,9 @@ import { dirname } from "node:path";
 import { Readable } from "node:stream";
 
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
+import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
@@ -38,9 +40,15 @@ import {
   DESKTOP_PROVIDER,
   desktopOperationFailure,
 } from "./DesktopCaptureRefusals.js";
-import { RetainedContent } from "./DesktopRetainedContent.js";
+import { withRetainedContent } from "./DesktopRetainedContent.js";
 
 const OPERATION = "export_desktop_application";
+/** The computer base is Ubuntu 24.04, so only its archive's packages install by name. */
+const UBUNTU_NOBLE_SOURCE =
+  /^https?:\/\/(?:[a-z0-9.-]+\.)?(?:archive|ports|security)\.ubuntu\.com\/\S* noble(?:-updates|-security|-backports)?\//u;
+/** Largest seed file the export copies; the state view reads only 64 MiB. */
+const SEED_MAX_BYTES = 1024 * 1024 * 1024;
+const TEXT_FORMATS = new Set(["text", "json", "keyfile", "xml"]);
 
 /** What the caller asked to export, after CLI parsing. */
 export interface DesktopExportRequest {
@@ -56,6 +64,7 @@ export interface DesktopExportResult {
   readonly framework_version: string;
   readonly paths: readonly string[];
   readonly seed_files: readonly string[];
+  readonly unseeded_files: readonly string[];
   readonly dconf_groups: number;
   readonly files: readonly string[];
   readonly limitations: readonly string[];
@@ -114,12 +123,12 @@ const planExport = (
   if (
     installed.kind !== "deb" ||
     installed.name === null ||
-    installed.sources.length === 0
+    !installed.sources.some((source) => UBUNTU_NOBLE_SOURCE.test(source))
   )
     throw refuse(
-      `The application is not installed from a Debian package archive (${installed.kind}${installed.name === null ? "" : ` ${installed.name}`}), so the computer cannot install it.`,
+      `The application is not installed from the Ubuntu 24.04 package archive (${installed.kind}${installed.name === null ? "" : ` ${installed.name}`}; sources: ${installed.sources.join(", ") || "none"}), so the computer cannot install it.`,
       "capture",
-      "Capture an application installed with apt from the distribution archive.",
+      "Capture an application installed with apt from the Ubuntu 24.04 archive.",
     );
   const window = session.window_match;
   if (window === null)
@@ -161,27 +170,37 @@ const planExport = (
     homePaths("document"),
     stateDirectories,
   );
-  const seedFiles = state.paths
-    .filter(
-      (path) =>
-        path.home_path !== null &&
-        path.format !== "dconf" &&
-        isWithinAny(path.home_path, paths) &&
-        path.versions[0]?.present === true &&
-        path.versions[0].sha256 !== null,
-    )
-    .map((path) => path.home_path ?? "");
+  // Files that existed before the capture under the owned paths.
+  const initial = state.paths.filter(
+    (path) =>
+      path.home_path !== null &&
+      path.format !== "dconf" &&
+      isWithinAny(path.home_path, paths) &&
+      path.versions[0]?.present === true,
+  );
+  const seeded = initial.filter((path) => path.versions[0]?.sha256 !== null);
+  const seedFiles = seeded.map((path) => path.home_path ?? "");
   return {
     name: source,
     className: className(source),
     title: application.desktop_entry?.name ?? source,
     aptPackage: installed.name.split(":")[0] ?? installed.name,
     packageVersion: installed.version,
-    command: launchCommand(application.argv, home),
+    command: launchCommand(
+      application.argv,
+      home,
+      application.working_directory,
+    ),
     windowClass: window.class,
     paths,
     capturedHome: home,
     seedFiles,
+    textSeeds: seeded
+      .filter((path) => TEXT_FORMATS.has(path.versions[0]?.format ?? ""))
+      .map((path) => path.home_path ?? ""),
+    unseededFiles: initial
+      .filter((path) => path.versions[0]?.sha256 === null)
+      .map((path) => path.home_path ?? ""),
     dconf: baselineDconf(state).text,
     captureEvidenceId: evidenceId,
   };
@@ -193,17 +212,31 @@ const EXPORT_LIMITATIONS = [
   "Binary state files are seeded as captured; only text files have the captured home path respelled.",
 ];
 
+/**
+ * Write the bundle through the safe output tree. Its handles are released
+ * through a resource scope, so a failed release keeps its owner and is
+ * reported with the write's own outcome, as the environment exporter does.
+ */
 const writeBundle = async (
   directory: string,
   files: readonly { readonly path: string; readonly bytes: Buffer }[],
   signal: AbortSignal | undefined,
 ): Promise<void> => {
   await mkdir(dirname(directory), { recursive: true, mode: 0o700 });
+  const resources = new ArtifactResourceScope();
   let tree: SafeOutputTree | undefined;
+  let outcome:
+    | { readonly kind: "completed" }
+    | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    tree = await SafeOutputTree.create(directory, process.platform, {
-      acceptExistingEmpty: true,
-    });
+    try {
+      tree = await SafeOutputTree.create(directory, process.platform, {
+        acceptExistingEmpty: true,
+      });
+    } catch (cause: unknown) {
+      if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
+      throw cause;
+    }
     for (const file of files) {
       signal?.throwIfAborted();
       await tree.write(file.path, Readable.from([file.bytes]), {
@@ -212,12 +245,59 @@ const writeBundle = async (
       });
     }
     await tree.commit(signal);
+    outcome = { kind: "completed" };
   } catch (cause: unknown) {
-    throw outputDirectoryAdmissionRefusal(OPERATION, "directory", cause);
-  } finally {
-    await tree?.closeHandles();
+    outcome = { kind: "failed", cause };
   }
+  const owner = tree;
+  if (owner !== undefined) {
+    const closed = await resources.release({
+      kind: "lease",
+      resource: directory,
+      lease: { release: () => owner.closeHandles() },
+    });
+    if (closed.kind === "failed")
+      throw resources.cleanupFailure(outcome, [closed]);
+  }
+  if (outcome.kind === "failed")
+    throw outputDirectoryAdmissionRefusal(
+      OPERATION,
+      "directory",
+      outcome.cause,
+    );
 };
+
+/** The seed files' verified bytes, read through an owner closed on every exit. */
+const readSeeds = (
+  request: DesktopExportRequest,
+  plan: DesktopAppExportPlan,
+  state: DesktopApplicationState,
+  signal: AbortSignal | undefined,
+) =>
+  withRetainedContent(
+    request.capture,
+    OPERATION,
+    async (content) => {
+      const seeds: { readonly path: string; readonly bytes: Buffer }[] = [];
+      for (const seed of plan.seedFiles) {
+        const digest = state.paths.find((path) => path.home_path === seed)
+          ?.versions[0]?.sha256;
+        const bytes =
+          digest === null || digest === undefined
+            ? undefined
+            : await content.read(digest, signal);
+        if (bytes === undefined)
+          throw refuse(
+            `The retained content of ~/${seed} is missing, larger than the export's 1 GiB seed limit, or does not match its digest.`,
+            "capture",
+            "Capture the application again, or leave the file out of its state paths.",
+          );
+        seeds.push({ path: `envs/${plan.name}/seed/${seed}`, bytes });
+      }
+      return seeds;
+    },
+    SEED_MAX_BYTES,
+  );
 
 const runExport = async (
   request: DesktopExportRequest,
@@ -238,7 +318,6 @@ const runExport = async (
     stateEvidence.normalized_result,
   );
   const plan = planExport(request, capture, state, evidence.evidence_id);
-  const content = new RetainedContent(request.capture);
   const environment = `envs/${plan.name}`;
   const text = (path: string, content: string) => ({
     path,
@@ -250,33 +329,26 @@ const runExport = async (
     text(`${environment}/${plan.name}.py`, renderAppClass(plan)),
     text(`${environment}/SKILL.md`, renderSkill(plan)),
     text("tasks/smoke.json", renderSmokeTask(plan)),
+    ...(await readSeeds(request, plan, state, signal)),
   ];
-  for (const seed of plan.seedFiles) {
-    const version = state.paths.find((path) => path.home_path === seed)
-      ?.versions[0];
-    const bytes =
-      version?.sha256 === null || version?.sha256 === undefined
-        ? undefined
-        : await content.read(version.sha256, signal);
-    if (bytes === undefined)
-      throw refuse(
-        `The retained content of ~/${seed} is missing or does not match its digest.`,
-        "capture",
-        "Capture the application again.",
-      );
-    files.push({ path: `${environment}/seed/${seed}`, bytes });
-  }
   await writeBundle(request.directory, files, signal);
-  await content.close();
   return {
     directory: request.directory,
     environment: plan.name,
     framework_version: DESKTOP_EXPORT_FRAMEWORK_VERSION,
     paths: plan.paths,
     seed_files: plan.seedFiles,
+    unseeded_files: plan.unseededFiles,
     dconf_groups: baselineDconf(state).groups,
     files: files.map((file) => file.path),
-    limitations: EXPORT_LIMITATIONS,
+    limitations: [
+      ...EXPORT_LIMITATIONS,
+      ...(plan.unseededFiles.length === 0
+        ? []
+        : [
+            `${String(plan.unseededFiles.length)} file(s) under the owned paths existed before the capture but were not retained, so they are not seeded.`,
+          ]),
+    ],
     capture_evidence_id: evidence.evidence_id,
   };
 };
@@ -301,6 +373,7 @@ export const exportDesktopApplication = async (
         ...result,
         paths: [...result.paths],
         seed_files: [...result.seed_files],
+        unseeded_files: [...result.unseeded_files],
         files: [...result.files],
         limitations: [...result.limitations],
       },
