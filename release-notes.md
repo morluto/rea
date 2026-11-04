@@ -1060,6 +1060,7 @@
 * **electron:** consolidate handler presence coverage in public workflows ([19082ac](https://github.com/morluto/rea/commit/19082acddbb3ddab5e381274ca38dcecbc292723))
 * **electron:** remove duplicate graph protocol fixture ([e8cb717](https://github.com/morluto/rea/commit/e8cb71740b40a574a328d3cc778784662090c2ac))
 * **elf:** cover big-endian ABI notes through CLI and MCP ([#8803](https://github.com/morluto/rea/issues/8803)) ([9a68ce5](https://github.com/morluto/rea/commit/9a68ce57a0891551c3494bcdb945f81a987aadd6))
+* **firmware:** cover S-record high address workflows ([#8897](https://github.com/morluto/rea/issues/8897)) ([25b62db](https://github.com/morluto/rea/commit/25b62db838bca5305ef540ae33980778b0918017))
 * **firmware:** keep producer fixtures within supported Node limits ([#7048](https://github.com/morluto/rea/issues/7048)) ([b75419b](https://github.com/morluto/rea/commit/b75419b61e2e11760993b3e60046633e2532cbc4))
 * **firmware:** pin the staging ceiling at the request boundary ([#7775](https://github.com/morluto/rea/issues/7775)) ([4671947](https://github.com/morluto/rea/commit/4671947c97bb661b3507b7691f57227a2757a44f))
 * **ghidra:** expect carved MIPS copies to be refused at target opening ([#8227](https://github.com/morluto/rea/issues/8227)) ([091892d](https://github.com/morluto/rea/commit/091892dfedd9f50cc68c7bbb63e44d5ca1754fcb))
