@@ -128,7 +128,8 @@ const projectionDependsOnCallerLifetime = (error: AnalysisError): boolean => {
     if (
       node.limit !== undefined ||
       node.continuingCallerGuidance !== undefined ||
-      node.invocationDiagnostics !== undefined
+      node.invocationDiagnostics !== undefined ||
+      node.workflowUnknownPublication !== undefined
     )
       return true;
   return false;
