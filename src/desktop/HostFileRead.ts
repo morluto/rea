@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises";
+
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import {
   NonRegularFileReadError,
@@ -41,3 +43,7 @@ export const readHostFile = async (
       : "unreadable";
   }
 };
+
+/** Whether a host path names a regular file, following links. */
+export const isHostFile = async (path: string): Promise<boolean> =>
+  (await stat(path).catch(() => undefined))?.isFile() === true;

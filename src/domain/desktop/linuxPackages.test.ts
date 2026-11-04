@@ -4,6 +4,7 @@ import {
   isAppImageHeader,
   packageFromPath,
   parseAptPolicyOrigins,
+  parseAptPolicyPackageSources,
   parseAptPolicySources,
   parseDpkgOwners,
   parseDpkgStatus,
@@ -120,6 +121,48 @@ describe("parseAptPolicyOrigins", () => {
       ].join("\n"),
     );
     expect(parseAptPolicyOrigins(policy).get(source ?? "")).toBe("Ubuntu");
+  });
+});
+
+describe("parseAptPolicyPackageSources", () => {
+  it("lists every version's sources of each package, as Ubuntu 24.04 prints several at once", () => {
+    const updates =
+      "http://ports.ubuntu.com/ubuntu-ports noble-updates/main arm64 Packages";
+    const security =
+      "http://ports.ubuntu.com/ubuntu-ports noble-security/main arm64 Packages";
+    const noble =
+      "http://ports.ubuntu.com/ubuntu-ports noble/main arm64 Packages";
+    const typora = "https://downloads.typora.io/linux ./ Packages";
+    // `apt-cache policy libnss3 typora nosuchpkg`; apt prints nothing for an unknown name.
+    const output = [
+      "libnss3:",
+      "  Installed: 2:3.98-1ubuntu0.3",
+      "  Candidate: 2:3.98-1ubuntu0.3",
+      "  Version table:",
+      " *** 2:3.98-1ubuntu0.3 500",
+      `        500 ${updates}`,
+      `        500 ${security}`,
+      "        100 /var/lib/dpkg/status",
+      "     2:3.98-1build1 500",
+      `        500 ${noble}`,
+      "typora:",
+      "  Installed: 1.14.9-1",
+      "  Candidate: 1.14.9-1",
+      "  Version table:",
+      " *** 1.14.9-1 500",
+      `        500 ${typora}`,
+      "        100 /var/lib/dpkg/status",
+      "     1.14.8-1 500",
+      `        500 ${typora}`,
+      "",
+    ].join("\n");
+
+    expect(parseAptPolicyPackageSources(output)).toEqual(
+      new Map([
+        ["libnss3", [updates, security, noble]],
+        ["typora", [typora]],
+      ]),
+    );
   });
 });
 

@@ -21,12 +21,16 @@ export const admitApplication = (
   capture: DesktopApplicationCapture,
   environment: string,
 ) => {
-  const install = exportInstall(capture.application.package, environment);
+  const install = exportInstall(
+    capture.application.package,
+    environment,
+    capture.host.architecture,
+  );
   if (!install.ok)
     throw refuse(
       install.error,
       "capture",
-      "Capture an application installed with apt from the Ubuntu 24.04 archive, or from a vendor repository on a host where apt trusts its key and gpgv is installed.",
+      "Capture an application installed with apt from the Ubuntu 24.04 archive, or from a vendor repository reached over http or https on an amd64 or arm64 host where apt trusts its key and gpgv is installed.",
     );
   const window = capture.session.window_match;
   if (window === null)

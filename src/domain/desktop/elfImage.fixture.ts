@@ -4,6 +4,8 @@ export interface ElfImageSpec {
   readonly needed?: readonly string[];
   readonly rpath?: string;
   readonly runpath?: string;
+  /** Extra DT_NEEDED entries naming the first needed string again. */
+  readonly repeatNeeded?: number;
   /** Without a PT_DYNAMIC segment, as a static executable. */
   readonly static?: boolean;
   /** Leave the DT_NULL terminator out. */
@@ -30,6 +32,10 @@ export const elfImage = (spec: ElfImageSpec): Buffer => {
       : [[15n, offsetOf(spec.rpath)] as [bigint, bigint]]),
     ...(spec.needed ?? []).map(
       (name) => [1n, offsetOf(name)] as [bigint, bigint],
+    ),
+    ...Array.from(
+      { length: spec.repeatNeeded ?? 0 },
+      () => [1n, offsetOf(spec.needed?.[0] ?? "")] as [bigint, bigint],
     ),
     ...(spec.runpath === undefined
       ? []

@@ -1,4 +1,8 @@
+import { posix } from "node:path";
+
 import type { Result } from "../result.js";
+import { fromUbuntuNobleArchive } from "./appExportInstall.js";
+import { isWithinAny } from "./desktopStateDiff.js";
 import type { ElfDependencies } from "./elfDependencies.js";
 
 /** One library `ldconfig -p` lists from the dynamic linker cache. */
@@ -20,7 +24,7 @@ export const parseLinkerCache = (output: string): readonly LinkerCacheEntry[] =>
           {
             soname: groups.soname,
             flags: (groups.flags ?? "").split(",").map((flag) => flag.trim()),
-            path: groups.path,
+            path: posix.normalize(groups.path),
           },
         ];
   });
@@ -48,22 +52,42 @@ const cachedPath = (
   )?.path;
 };
 
-const directoryOf = (path: string): string =>
-  path.slice(0, Math.max(path.lastIndexOf("/"), 1));
+/** A loaded object and the object whose DT_NEEDED loaded it, as ld.so links them. */
+interface LoadedObject {
+  readonly path: string;
+  readonly dependencies: ElfDependencies;
+  readonly loader: LoadedObject | undefined;
+}
 
-const isWithin = (path: string, folder: string): boolean =>
-  path === folder || path.startsWith(`${folder === "/" ? "" : folder}/`);
-
-/** RUNPATH or RPATH directories with `$ORIGIN` expanded; relative and other dynamic-token paths are left out. */
-const searchDirectories = (
-  object: string,
-  dependencies: ElfDependencies,
+/** Absolute directories with `$ORIGIN` expanded to the owner's folder; relative and other dynamic-token paths are left out. */
+const expanded = (
+  owner: string,
+  directories: readonly string[],
 ): readonly string[] =>
-  dependencies.searchPaths
+  directories
     .map((path) =>
-      path.replace(/\$(?:ORIGIN|\{ORIGIN\})/gu, directoryOf(object)),
+      path.replace(/\$(?:ORIGIN|\{ORIGIN\})/gu, posix.dirname(owner)),
     )
-    .filter((path) => path.startsWith("/") && !path.includes("$"));
+    .filter((path) => path.startsWith("/") && !path.includes("$"))
+    .map((path) => posix.normalize(path));
+
+/**
+ * Where ld.so looks for an object's needed libraries before its cache: an
+ * object without RUNPATH uses the RPATH of itself and of each object up its
+ * loader chain to the executable, and then its RUNPATH.
+ */
+const searchDirectories = (object: LoadedObject): readonly string[] => {
+  const rpaths: string[] = [];
+  if (object.dependencies.runpath === undefined)
+    for (let at: LoadedObject | undefined = object; at; at = at.loader)
+      rpaths.push(...expanded(at.path, at.dependencies.rpath));
+  return [
+    ...new Set([
+      ...rpaths,
+      ...expanded(object.path, object.dependencies.runpath ?? []),
+    ]),
+  ];
+};
 
 /** Host reads the closure walk needs. */
 export interface LibraryWalkHost {
@@ -80,7 +104,7 @@ export interface LibraryClosure {
     readonly soname: string;
     readonly path: string;
   }[];
-  /** Sonames found neither in a RUNPATH or RPATH directory nor in the linker cache. */
+  /** Sonames found neither in an RPATH or RUNPATH directory nor in the linker cache. */
   readonly missing: readonly string[];
   /** Libraries whose own dependencies could not be read. */
   readonly unreadable: readonly {
@@ -92,8 +116,9 @@ export interface LibraryClosure {
 }
 
 /**
- * Walk DT_NEEDED from the executable: each soname is looked up in the
- * needing object's RUNPATH or RPATH directories, then the linker cache.
+ * Walk DT_NEEDED breadth first from the executable: each soname is looked up
+ * in the RPATH and RUNPATH directories ld.so searches for the needing object,
+ * then the linker cache. Paths are normalized before any containment check.
  * Libraries in the executable's own folder are the application's and are
  * walked but not listed. At most `limit` sonames are resolved.
  */
@@ -103,8 +128,9 @@ export const libraryClosure = async (
   host: LibraryWalkHost,
   limit: number,
 ): Promise<LibraryClosure> => {
-  const ownFolder = directoryOf(executable.path);
-  const queue = [executable];
+  const root = { ...executable, path: posix.normalize(executable.path) };
+  const ownFolder = posix.dirname(root.path);
+  const queue: LoadedObject[] = [{ ...root, loader: undefined }];
   const seen = new Set<string>();
   const closure = {
     libraries: [] as { soname: string; path: string }[],
@@ -113,24 +139,27 @@ export const libraryClosure = async (
     truncated: false,
   };
   for (const object of queue) {
-    const directories = searchDirectories(object.path, object.dependencies);
+    const directories = searchDirectories(object);
     for (const soname of object.dependencies.needed) {
       if (seen.has(soname)) continue;
       if (seen.size >= limit) return { ...closure, truncated: true };
       seen.add(soname);
-      let path = soname.startsWith("/") ? soname : undefined;
-      for (const directory of soname.includes("/") ? [] : directories)
-        if (path === undefined && (await host.isFile(`${directory}/${soname}`)))
-          path = `${directory}/${soname}`;
+      let path = soname.startsWith("/") ? posix.normalize(soname) : undefined;
+      for (const directory of soname.includes("/") ? [] : directories) {
+        const candidate = posix.join(directory, soname);
+        if (path === undefined && (await host.isFile(candidate)))
+          path = candidate;
+      }
       path ??= cachedPath(cache, soname, object.dependencies.machine);
       if (path === undefined) {
         closure.missing.push(soname);
         continue;
       }
-      if (!isWithin(path, ownFolder)) closure.libraries.push({ soname, path });
+      if (!isWithinAny(path, [ownFolder]))
+        closure.libraries.push({ soname, path });
       const dependencies = await host.dependencies(path);
       if (dependencies.ok)
-        queue.push({ path, dependencies: dependencies.value });
+        queue.push({ path, dependencies: dependencies.value, loader: object });
       else closure.unreadable.push({ path, reason: dependencies.error });
     }
   }
@@ -149,3 +178,36 @@ export const libraryPackageNames = (
         .filter((name) => name !== ownPackage.split(":")[0]),
     ),
   ].sort();
+
+/**
+ * Library packages the computer can install, and the rest: a package is
+ * installable when some version of it comes from the Ubuntu 24.04 archive
+ * or from one of the vendor sources the export declares.
+ */
+export const installableLibraryPackages = (
+  names: readonly string[],
+  available: {
+    /** The sources of every version of each package, from `apt-cache policy`. */
+    readonly sources: ReadonlyMap<string, readonly string[]>;
+    /** The `o=` origin of each source; undefined when apt could not be asked, so only Canonical's hosts count. */
+    readonly origins: ReadonlyMap<string, string | null> | undefined;
+    readonly declared: ReadonlySet<string>;
+  },
+): { readonly installable: string[]; readonly uninstallable: string[] } => {
+  const installable: string[] = [];
+  const uninstallable: string[] = [];
+  for (const name of names) {
+    const sources = available.sources.get(name) ?? [];
+    const offered =
+      sources.some((source) => available.declared.has(source)) ||
+      fromUbuntuNobleArchive(
+        sources,
+        available.origins === undefined
+          ? undefined
+          : sources.map((source) => available.origins?.get(source) ?? null),
+      );
+    if (offered) installable.push(name);
+    else uninstallable.push(name);
+  }
+  return { installable, uninstallable };
+};

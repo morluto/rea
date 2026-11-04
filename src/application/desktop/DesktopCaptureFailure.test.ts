@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { DesktopSessionCleanupError } from "../../desktop/DesktopApplicationSession.js";
-import { failedCaptureError } from "./DesktopCaptureFailure.js";
+import { failedCaptureError, projectFailure } from "./DesktopCaptureFailure.js";
 
 describe("failedCaptureError", () => {
   it("returns the failure itself when everything was cleaned up", () => {
@@ -50,5 +51,37 @@ describe("failedCaptureError", () => {
 
     expect(error.cleanupPrimary).toBe(failure);
     expect(error.userMessage).toContain("bad input");
+  });
+});
+
+describe("projectFailure", () => {
+  it("keeps the owner of a resource the inventory could not release", async () => {
+    const resources = new ArtifactResourceScope();
+    let attempts = 0;
+    const removed = await resources.release({
+      kind: "lease",
+      resource: "/tmp/rea-apt-keys-1",
+      lease: {
+        release: () => {
+          attempts += 1;
+          return attempts === 1
+            ? Promise.reject(new Error("busy"))
+            : Promise.resolve();
+        },
+      },
+    });
+    if (removed.kind !== "failed") throw new Error("expected a failed release");
+
+    const failure = resources.cleanupFailure({ kind: "completed" }, [removed]);
+
+    const error = projectFailure(failure, undefined);
+
+    expect(error).toBeInstanceOf(ProviderAdapterError);
+    expect(error.cleanupResources).toEqual(["/tmp/rea-apt-keys-1"]);
+    await Promise.all(
+      failure.cleanupLeases?.map((lease) => lease.release()) ?? [],
+    );
+    expect(attempts).toBe(2);
+    expect(error.cleanupIncomplete).toBe(false);
   });
 });

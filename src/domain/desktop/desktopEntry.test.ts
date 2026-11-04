@@ -117,7 +117,7 @@ describe("unwrapDesktopCommand", () => {
         "BAMF_DESKTOP_FILE_HINT=/x.desktop",
         "/snap/bin/firefox",
       ]),
-    ).toEqual({ kind: "direct", program: "/snap/bin/firefox" });
+    ).toEqual({ kind: "direct", program: "/snap/bin/firefox", index: 2 });
   });
 
   it("recognises flatpak launchers and their application id", () => {

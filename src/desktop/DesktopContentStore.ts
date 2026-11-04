@@ -127,10 +127,12 @@ export class DesktopContentStore {
     return stored;
   }
 
-  /** Store bytes already read, such as a verified apt key; over the remaining budget they are omitted. */
+  /** Store bytes already read, such as a verified apt key; over the per-file limit or the remaining budget they are omitted. */
   async retainBytes(bytes: Buffer): Promise<RetainOutcome> {
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const size = bytes.byteLength;
+    if (size > this.#maxFileBytes)
+      return { kind: "omitted", reason: "too_large" };
     if (this.#stored.has(sha256)) return { kind: "retained", sha256, size };
     if (size > this.#remainingBytes)
       return { kind: "omitted", reason: "budget_exhausted" };

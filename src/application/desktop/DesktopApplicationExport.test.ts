@@ -235,6 +235,8 @@ const vendorCapture = (
             uri: "https://downloads.typora.io/linux",
             suite: "./",
             components: [],
+            architectures: [],
+            release: "stable",
             signing_key: signingKey,
             ...(signingKey === null
               ? { signing_key_reason: "gpgv is not installed" }
@@ -289,8 +291,9 @@ describe("exportDesktopApplication from a vendor repository", () => {
       "utf8",
     );
     expect(module).toContain(
-      'packages=Packages(apt=["typora", "libgbm1", "libnss3"]),\n    sources=[AptSource(apt="https://downloads.typora.io/linux", suite="./", components=[], key="apt-keys/typora.gpg")],',
+      'packages=Packages(apt=["typora/stable", "libgbm1", "libnss3"]),\n    sources=[AptSource(apt="https://downloads.typora.io/linux", suite="./", components=[], key="apt-keys/typora.gpg")],',
     );
+    expect(module).toContain('"arch": ["amd64"]');
     expect(module).toContain(
       `command=["sh", "-c", "exec 'typora' '--no-sandbox' \\"$HOME\\"/'Documents/today.txt'"]`,
     );

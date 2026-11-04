@@ -119,34 +119,57 @@ source list means the version came from a local `.deb` or the package lists
 are missing, which `package_lists_present` tells apart.
 
 Each source whose origin is not `Ubuntu` is also recorded in
-`apt_repositories`, with the sources file entry that configures it
-(`sources_file`, `uri`, `suite` and `components`; no components for a flat
-repository such as Typora's `deb https://downloads.typora.io/linux ./`) and
-the key that signs it. The key is found by verification, not by name: the
-candidates are the entry's `signed-by` keyrings, or else every `.gpg` and
-`.asc` key in `/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`, and each is
-checked with `gpgv` against the repository's signed release in
-`/var/lib/apt/lists` (`InRelease`, or `Release` with `Release.gpg`). Each
-candidate is copied, an armored key decoded to a binary keyring, into a
-private temporary folder that is removed afterwards. The key that verifies is
-recorded in `signing_key` with its path, SHA-256, format (`binary` or
-`armored`) and fingerprint, and its bytes are retained under `content/`. When
-no candidate verifies, `gpgv` is missing, apt holds no signed release, no
-sources entry matches, or the entry's `Signed-By` holds the key itself,
-`signing_key` is null and `signing_key_reason` says why.
+`apt_repositories`. `apt-get indextargets` names the sources file entry apt
+read it from and its release, so flat repositories match too, whether their
+suite is `./` (Typora's `deb https://downloads.typora.io/linux ./`) or `/`
+(pkgs.k8s.io's). The record holds that entry (`sources_file`, `uri`, `suite`,
+`components`, none for a flat repository, and `architectures`, the entry's
+`arch=` or `Architectures:` restriction, empty when it has none), `release`,
+the release's Suite (apt's `a=`) or else its Codename, and the key that signs
+it. The key is found by verification, not by name: the candidates are the
+entry's `signed-by` keyrings, or else every `.gpg` and `.asc` key in
+`/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`, and each is checked with
+`gpgv` against the release's `InRelease` (or `Release` with `Release.gpg`)
+beside its index in apt's lists folder. A key counts when gpgv reports a
+valid signature by it and no bad, expired, revoked or unverifiable signature
+by it, whatever gpgv's exit status: a release also signed by a key the host
+lacks makes gpgv fail. Each candidate is copied, an armored key decoded to a
+binary keyring, into a private temporary folder that is removed afterwards; a
+folder REA cannot remove fails the capture with the folder as its cleanup
+resource. The key that verifies is recorded in `signing_key` with its path,
+SHA-256, format (`binary` or `armored`) and primary fingerprint, and its bytes
+are retained under `content/`. A key file holding one key is retained as it
+is; from one holding several, such as a legacy `/etc/apt/trusted.gpg`, only
+the transferable key with the verifying fingerprint is retained, in binary, so
+the bundle trusts no other key. When no candidate verifies, `gpgv` is
+missing, apt holds no signed release, no sources entry matches, the entry's
+`Signed-By` holds the key itself, or the key is larger than
+`--max-file-bytes` or the content budget, `signing_key` is null and
+`signing_key_reason` says why. Ubuntu Pro's ESM repositories (origins such as
+`UbuntuESMApps`, host `esm.ubuntu.com`) are not checked: apt reaches them only
+with the host's Ubuntu Pro credentials, which a computer does not have.
 
-`library_packages` lists the packages that own the shared libraries the
-executable loads at start. REA reads DT_NEEDED from the resolved executable
-and from each library it finds, looks each soname up in the needing image's
-RUNPATH or RPATH (with `$ORIGIN` expanded) and then in the `ldconfig -p` cache
-entries for the executable's machine, and asks `dpkg-query -S` for each
-library's package. Libraries in the executable's own folder belong to the
-application: they are walked but not listed, and neither is the application's
-own package. Sonames found nowhere are listed in `missing_libraries`, and
-libraries no package owns in `unpackaged_libraries`. `library_packages_reason`
-says why the lists are incomplete: the executable is not an ELF image (a
-launcher script, for example), `ldconfig` or `dpkg-query` is missing, a
-library could not be read, or the walk stopped after 512 libraries.
+When the installed version has apt sources and none is the Ubuntu 24.04
+archive, `library_packages` lists the packages that own the shared libraries
+the executable loads at start; the walk runs beside the repository check, and
+not at all for an archive package, whose export does not use it. REA reads
+DT_NEEDED from the resolved executable and from each library it finds, and
+looks each soname up as ld.so does: in the RPATH of the needing image and of
+each image up its chain of loaders to the executable when the needing image
+has no RUNPATH, then in its RUNPATH (with `$ORIGIN` expanded and paths
+normalized), and then in the `ldconfig -p` cache entries for the executable's
+machine. It asks `dpkg-query -S` for each library's package. Libraries in the
+executable's own folder belong to the application: they are walked but not
+listed, and neither is the application's own package. One batched
+`apt-cache policy` then keeps only the packages the Ubuntu 24.04 archive or a
+recorded vendor repository with a verified key offers; the rest, such as
+packages from a PPA or a local `.deb`, are listed in
+`uninstallable_library_packages`. Sonames found nowhere are listed in
+`missing_libraries`, and libraries no package owns in `unpackaged_libraries`.
+`library_packages_reason` says why the lists are incomplete: the executable is
+not an ELF image (a launcher script, for example), `ldconfig`, `dpkg-query` or
+`apt-cache` is missing, a library could not be read or names more than 512
+libraries, or the walk stopped after 512 libraries.
 
 Snaps, flatpaks and
 AppImages are recognised from their paths, and flatpaks also from a

@@ -1,4 +1,4 @@
-import { realpath, stat } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 
 import type { DesktopPackage } from "../domain/desktop/desktopCapture.js";
 import {
@@ -6,32 +6,35 @@ import {
   type ElfDependencies,
 } from "../domain/desktop/elfDependencies.js";
 import {
+  installableLibraryPackages,
   libraryClosure,
   libraryPackageNames,
   parseLinkerCache,
 } from "../domain/desktop/libraryPackages.js";
 import {
   ownershipCandidates,
+  parseAptPolicyPackageSources,
   parseDpkgOwners,
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { isRefusedRead } from "./HostFileRead.js";
+import { isHostFile, isRefusedRead } from "./HostFileRead.js";
 import { succeeded, type QueryRunner } from "./HostQuery.js";
 
 /** The library fields of a Debian package's inventory. */
-export type LibraryPackages = Required<
-  Pick<
-    DesktopPackage,
-    "library_packages" | "missing_libraries" | "unpackaged_libraries"
-  >
-> &
-  Pick<DesktopPackage, "library_packages_reason">;
+export type LibraryPackages = {
+  readonly [
+    Name in "library_packages" | "missing_libraries" | "unpackaged_libraries"
+  ]: NonNullable<DesktopPackage[Name]>;
+} & Pick<
+  DesktopPackage,
+  "library_packages_reason" | "uninstallable_library_packages"
+>;
 
 /** Libraries resolved per executable; an Electron app loads about a hundred. */
 const MAX_LIBRARIES = 512;
-const OWNER_BATCH = 200;
+const QUERY_BATCH = 200;
 
 const elfDependencies = async (
   path: string,
@@ -55,9 +58,6 @@ const elfDependencies = async (
   }
 };
 
-const isFile = async (path: string): Promise<boolean> =>
-  (await stat(path).catch(() => undefined))?.isFile() === true;
-
 /** `ldconfig -p`, which a user's PATH may not reach in /sbin. */
 const linkerCache = async (
   runQuery: QueryRunner,
@@ -79,8 +79,8 @@ const packageOwners = async (
   // dpkg-query reads an argument with glob characters as a pattern.
   const literal = paths.filter((path) => !/[*?[\\]/u.test(path));
   const owners = new Map<string, readonly string[]>();
-  for (let start = 0; start < literal.length; start += OWNER_BATCH) {
-    const batch = literal.slice(start, start + OWNER_BATCH);
+  for (let start = 0; start < literal.length; start += QUERY_BATCH) {
+    const batch = literal.slice(start, start + QUERY_BATCH);
     const outcome = await runQuery("dpkg-query", ["-S", ...batch], signal);
     if (outcome === "missing") return err("dpkg-query is not installed");
     if (outcome === "failed") return err("dpkg-query -S did not finish");
@@ -135,7 +135,10 @@ export const inspectLibraryPackages = async (
   const closure = await libraryClosure(
     { path: executable, dependencies: root.value },
     parseLinkerCache(cache),
-    { dependencies: (path) => elfDependencies(path, signal), isFile },
+    {
+      dependencies: (path) => elfDependencies(path, signal),
+      isFile: isHostFile,
+    },
     MAX_LIBRARIES,
   );
   const located = await Promise.all(
@@ -172,5 +175,66 @@ export const inspectLibraryPackages = async (
     missing_libraries: [...closure.missing].sort(),
     unpackaged_libraries: unpackaged.sort(),
     ...(reason === undefined ? {} : { library_packages_reason: reason }),
+  };
+};
+
+/** The sources of every version of each package, from batched `apt-cache policy`; undefined when apt could not be asked. */
+const packageSources = async (
+  names: readonly string[],
+  runQuery: QueryRunner,
+  signal: AbortSignal | undefined,
+): Promise<ReadonlyMap<string, readonly string[]> | undefined> => {
+  const sources = new Map<string, readonly string[]>();
+  for (let start = 0; start < names.length; start += QUERY_BATCH) {
+    const output = succeeded(
+      await runQuery(
+        "apt-cache",
+        ["policy", ...names.slice(start, start + QUERY_BATCH)],
+        signal,
+      ),
+    );
+    if (output === undefined) return undefined;
+    for (const [name, listed] of parseAptPolicyPackageSources(output))
+      sources.set(name, listed);
+  }
+  return sources;
+};
+
+/**
+ * Keep the library packages the computer can install: those some version of
+ * which the Ubuntu 24.04 archive or a declared vendor source offers, as
+ * `apt-cache policy` lists them; the rest are recorded as uninstallable.
+ */
+export const installableLibraries = async (
+  libraries: LibraryPackages,
+  available: {
+    readonly origins: ReadonlyMap<string, string | null> | undefined;
+    readonly declared: ReadonlySet<string>;
+  },
+  runQuery: QueryRunner,
+  signal: AbortSignal | undefined,
+): Promise<LibraryPackages> => {
+  const names = libraries.library_packages;
+  const sources =
+    names.length === 0
+      ? new Map<string, readonly string[]>()
+      : await packageSources(names, runQuery, signal);
+  if (sources === undefined)
+    return {
+      ...libraries,
+      library_packages: [],
+      uninstallable_library_packages: [],
+      library_packages_reason: [
+        libraries.library_packages_reason,
+        `apt-cache policy did not say where ${names.join(", ")} come from, so none of them is installed`,
+      ]
+        .filter((reason) => reason !== undefined)
+        .join("; "),
+    };
+  const split = installableLibraryPackages(names, { ...available, sources });
+  return {
+    ...libraries,
+    library_packages: split.installable,
+    uninstallable_library_packages: split.uninstallable,
   };
 };

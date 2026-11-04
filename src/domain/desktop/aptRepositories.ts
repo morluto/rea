@@ -1,6 +1,8 @@
 /** One `deb` entry of an apt sources file for one URI and suite. */
 export interface AptSourceEntry {
   readonly file: string;
+  /** apt's number for the entry: a one-line entry's line, a deb822 entry's stanza, counted from 1. */
+  readonly position: number;
   /** Without trailing slashes, as `apt-cache policy` prints it. */
   readonly uri: string;
   readonly suite: string;
@@ -19,8 +21,11 @@ const ARMOR_END = "-----END PGP PUBLIC KEY BLOCK-----";
 const listValues = (value: string | undefined): readonly string[] =>
   (value ?? "").split(/[\s,]+/u).filter((part) => part.length > 0);
 
+const withoutTrailingSlashes = (uri: string): string =>
+  uri.replace(/\/+$/u, "");
+
 const entries = (
-  file: string,
+  at: { readonly file: string; readonly position: number },
   fields: {
     readonly uris: readonly string[];
     readonly suites: readonly string[];
@@ -32,8 +37,8 @@ const entries = (
   const inlineKey = signedBy.includes(ARMOR_BEGIN);
   return fields.uris.flatMap((uri) =>
     fields.suites.map((suite) => ({
-      file,
-      uri: uri.replace(/\/+$/u, ""),
+      ...at,
+      uri: withoutTrailingSlashes(uri),
       suite,
       components: suite.endsWith("/") ? [] : [...fields.components],
       architectures: listValues(fields.options.get("arch")),
@@ -51,7 +56,7 @@ export const parseOneLineSources = (
   text: string,
   file: string,
 ): readonly AptSourceEntry[] =>
-  text.split("\n").flatMap((line) => {
+  text.split("\n").flatMap((line, index) => {
     const groups = ONE_LINE.exec(line.replace(/#.*$/u, "").trim())?.groups;
     if (groups?.uri === undefined || groups.suite === undefined) return [];
     const options = new Map(
@@ -62,12 +67,15 @@ export const parseOneLineSources = (
           : [];
       }),
     );
-    return entries(file, {
-      uris: [groups.uri],
-      suites: [groups.suite],
-      components: listValues(groups.components),
-      options,
-    });
+    return entries(
+      { file, position: index + 1 },
+      {
+        uris: [groups.uri],
+        suites: [groups.suite],
+        components: listValues(groups.components),
+        options,
+      },
+    );
   });
 
 /** Fields of one deb822 paragraph by lowercase name; continuation lines keep their line breaks. */
@@ -93,43 +101,111 @@ const paragraphs = (text: string): ReadonlyMap<string, string>[] => {
   return found;
 };
 
-/** The `deb` entries of a deb822 `.sources` file; disabled paragraphs are skipped. */
+/** The `deb` entries of a deb822 `.sources` file; disabled paragraphs are skipped but still counted. */
 export const parseDeb822Sources = (
   text: string,
   file: string,
 ): readonly AptSourceEntry[] =>
-  paragraphs(text).flatMap((fields) => {
+  paragraphs(text).flatMap((fields, index) => {
     if (
       !listValues(fields.get("types")).includes("deb") ||
       fields.get("enabled")?.toLowerCase() === "no"
     )
       return [];
-    return entries(file, {
-      uris: listValues(fields.get("uris")),
-      suites: listValues(fields.get("suites")),
-      components: listValues(fields.get("components")),
-      options: new Map([
-        ["signed-by", fields.get("signed-by") ?? ""],
-        ["arch", fields.get("architectures") ?? ""],
-      ]),
-    });
+    return entries(
+      { file, position: index + 1 },
+      {
+        uris: listValues(fields.get("uris")),
+        suites: listValues(fields.get("suites")),
+        components: listValues(fields.get("components")),
+        options: new Map([
+          ["signed-by", fields.get("signed-by") ?? ""],
+          ["arch", fields.get("architectures") ?? ""],
+        ]),
+      },
+    );
+  });
+
+/** One index `apt-get indextargets` lists, with the release facts apt read for it. */
+export interface AptIndexTarget {
+  /** The index as `apt-cache policy` prints it. */
+  readonly description: string;
+  /** The sources file and position of the entry apt read it from. */
+  readonly sourcesFile: string;
+  readonly position: number;
+  readonly repoUri: string;
+  /** The suite as the entry writes it; empty for the flat suite `/`. */
+  readonly release: string;
+  /** The URI of the folder holding the release's InRelease, Release and Release.gpg. */
+  readonly baseUri: string;
+  /** The index file in apt's lists folder, where the release files are too. */
+  readonly filename: string;
+  readonly origin: string | null;
+  /** The release's Suite (apt's `a=`) and Codename (`n=`). */
+  readonly suite: string | null;
+  readonly codename: string | null;
+}
+
+const SOURCES_ENTRY = /^(?<file>\/.*):(?<position>[1-9]\d*)$/u;
+
+/** The index targets of `apt-get indextargets` output; a paragraph missing a field REA needs is skipped. */
+export const parseAptIndexTargets = (
+  output: string,
+): readonly AptIndexTarget[] =>
+  paragraphs(output).flatMap((fields) => {
+    const at = SOURCES_ENTRY.exec(fields.get("sourcesentry") ?? "")?.groups;
+    const description = fields.get("description");
+    const repoUri = fields.get("repo-uri");
+    const baseUri = fields.get("base-uri");
+    const filename = fields.get("filename");
+    if (
+      at?.file === undefined ||
+      at.position === undefined ||
+      description === undefined ||
+      repoUri === undefined ||
+      baseUri === undefined ||
+      filename?.startsWith("/") !== true
+    )
+      return [];
+    const optional = (name: string) => fields.get(name) || null;
+    return [
+      {
+        description,
+        sourcesFile: at.file,
+        position: Number(at.position),
+        repoUri,
+        release: fields.get("release") ?? "",
+        baseUri,
+        filename,
+        origin: optional("origin"),
+        suite: optional("suite"),
+        codename: optional("codename"),
+      },
+    ];
   });
 
 /**
- * The entry a source from `apt-cache policy` comes from: `<uri> <suite>/<component> <arch> Packages`,
- * or `<uri> <suite> Packages` for a flat repository.
+ * The sources entry an index target comes from: the one at its file and
+ * position, or for a deb822 stanza with several URIs or suites, the one with
+ * its URI and suite.
  */
-export const sourceEntryFor = (
-  source: string,
+export const entryForTarget = (
+  target: AptIndexTarget,
   candidates: readonly AptSourceEntry[],
-): AptSourceEntry | undefined =>
-  candidates.find(({ uri, suite, components }) =>
-    components.length === 0
-      ? source.startsWith(`${uri} ${suite} `)
-      : components.some((component) =>
-          source.startsWith(`${uri} ${suite}/${component} `),
-        ),
+): AptSourceEntry | undefined => {
+  const at = candidates.filter(
+    (entry) =>
+      entry.file === target.sourcesFile && entry.position === target.position,
   );
+  if (at.length <= 1) return at[0];
+  const uri = withoutTrailingSlashes(target.repoUri);
+  return at.find(
+    (entry) =>
+      entry.uri === uri &&
+      (entry.suite === target.release ||
+        (entry.suite === "/" && target.release === "")),
+  );
+};
 
 const QUOTED = new Set('\\|{}[]<>"^~_=!@#$%^&*');
 
@@ -151,23 +227,45 @@ export const aptListFileName = (uri: string): string => {
   return quoted.replaceAll("/", "_");
 };
 
-/** The lists-directory prefix of an entry's release files: append `InRelease`, `Release` or `Release.gpg`. */
-export const aptReleaseFilePrefix = (entry: AptSourceEntry): string =>
-  aptListFileName(
-    entry.components.length === 0
-      ? `${entry.uri}/${entry.suite}`
-      : `${entry.uri}/dists/${entry.suite}/`,
-  );
+/** Ubuntu Pro's ESM repositories, which apt reaches only with the host's Ubuntu Pro credentials. */
+export const isUbuntuProRepository = (
+  origin: string | null,
+  uri: string | null,
+): boolean =>
+  (origin ?? "").startsWith("UbuntuESM") ||
+  /^https?:\/\/esm\.ubuntu\.com(?:[/:]|$)/iu.test(uri ?? "");
 
-/** The primary key fingerprint of a good signature in `gpgv --status-fd` output. */
-export const validSignatureFingerprint = (
-  status: string,
-): string | undefined => {
-  for (const line of status.split("\n")) {
+/** A good signature's signing and primary key fingerprints, uppercase. */
+export interface ValidSignature {
+  readonly signing: string;
+  readonly primary: string;
+}
+
+const UNTRUSTED_SIGNATURE =
+  /^\[GNUPG:\] (?:BADSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|ERRSIG) (?<key>[0-9A-Fa-f]+)(?: |$)/u;
+
+/**
+ * The first VALIDSIG in `gpgv --status-fd` output whose key no bad, expired,
+ * revoked or unverifiable signature names. gpgv's exit status is not used: a
+ * release also signed by a key the keyring lacks makes gpgv fail.
+ */
+export const validSignature = (status: string): ValidSignature | undefined => {
+  const lines = status.split("\n").map((line) => line.trim());
+  const untrusted = lines.flatMap((line) => {
+    const key = UNTRUSTED_SIGNATURE.exec(line)?.groups?.key;
+    return key === undefined ? [] : [key.toUpperCase()];
+  });
+  const names = (fingerprint: string, key: string) =>
+    fingerprint.startsWith(key) || fingerprint.endsWith(key);
+  for (const line of lines) {
     const fields = /^\[GNUPG:\] VALIDSIG (?<fields>.+)$/u
-      .exec(line.trim())
+      .exec(line)
       ?.groups?.fields?.split(" ");
-    if (fields !== undefined) return fields[9] ?? fields[0];
+    const signing = fields?.[0]?.toUpperCase();
+    if (signing === undefined) continue;
+    const primary = (fields?.[9] ?? signing).toUpperCase();
+    if (!untrusted.some((key) => names(signing, key) || names(primary, key)))
+      return { signing, primary };
   }
   return undefined;
 };

@@ -77,8 +77,13 @@ const aptRepositorySchema = z.strictObject({
   suite: z.string().nullable(),
   /** Empty for a flat repository. */
   components: z.array(z.string()),
+  /** The entry's architecture restriction; empty when it names none. */
+  architectures: z.array(z.string()),
+  /** The release's Suite (apt's `a=`), or else its Codename, which `<package>/<release>` selects; null when unknown. */
+  release: z.string().nullable(),
+  /** The verified key; the key file itself, or the one key of it that verified. */
   signing_key: aptSigningKeySchema.nullable(),
-  /** Why no signing key was verified. */
+  /** Why no signing key was verified, or why the repository was not checked. */
   signing_key_reason: z.string().optional(),
 });
 export type AptRepository = z.infer<typeof aptRepositorySchema>;
@@ -97,6 +102,8 @@ const packageSchema = z.strictObject({
   apt_repositories: z.array(aptRepositorySchema).optional(),
   /** Packages owning the shared libraries the executable loads, without the application's own package. */
   library_packages: z.array(z.string()).optional(),
+  /** Library packages neither the Ubuntu 24.04 archive nor a declarable vendor repository offers, left out of `library_packages`. */
+  uninstallable_library_packages: z.array(z.string()).optional(),
   /** Sonames the executable needs that the host's dynamic linker cache does not list. */
   missing_libraries: z.array(z.string()).optional(),
   /** Libraries found on the host that no package owns. */

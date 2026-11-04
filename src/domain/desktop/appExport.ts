@@ -17,11 +17,15 @@ export interface DesktopAppExportPlan {
   readonly className: string;
   readonly title: string;
   readonly aptPackage: string;
+  /** The vendor release the package is taken from; null to install it by name. */
+  readonly aptRelease: string | null;
   readonly packageVersion: string | null;
   /** Packages of the libraries the executable loads, installed after the app's own. */
   readonly libraryPackages: readonly string[];
   /** Vendor repositories to install from; empty for the Ubuntu archive. */
   readonly aptSources: readonly ExportAptSource[];
+  /** The Debian architectures the app supports. */
+  readonly architectures: readonly string[];
   /** Whether the app is Electron, whose launch then runs without Chromium's sandbox. */
   readonly electron: boolean;
   readonly command: readonly string[];
@@ -213,10 +217,16 @@ ${PYTHON_DATA_HOOKS}`;
   return `    """${title}, launched at boot. No state was observed, so it serves no data operations."""\n`;
 };
 
+/** The package as apt takes it: `name`, or `name/release` for a vendor release. */
+const installName = (plan: DesktopAppExportPlan): string =>
+  plan.aptRelease === null
+    ? plan.aptPackage
+    : `${plan.aptPackage}/${plan.aptRelease}`;
+
 /** The app's package, its library packages and dconf-cli when settings are loaded. */
 const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
   ...new Set([
-    plan.aptPackage,
+    installName(plan),
     ...plan.libraryPackages,
     ...(plan.dconf.length === 0 ? [] : ["dconf-cli"]),
   ]),
@@ -249,7 +259,7 @@ DCONF = ${py(plan.dconf)}
 TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
 ${PYTHON_HELPERS}
 
-@computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ["amd64", "arm64"]}])
+@computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ${pyList(plan.architectures)}}])
 @linux(
     packages=Packages(apt=${pyList(aptPackages(plan))}),${aptSources(plan)}
     launch=Launch(at="boot", command=${pyList(plan.command)}, window={"class": ${py(plan.windowClass)}}, ready=Ready(window=True)),
@@ -313,8 +323,8 @@ Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.
 (capture Evidence \`${plan.captureEvidenceId}\`). It was checked against agentenv-framework
 ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
-- \`envs/${plan.name}/\` is a computer app on the \`ubuntu-24.04\` base with the \`reference\` driver. It installs
-  \`${plan.aptPackage}\` from ${installedFrom(plan)}, launches \`${plan.command.join(" ")}\` at boot and is ready
+- \`envs/${plan.name}/\` is a computer app on the \`ubuntu-24.04\` base with the \`reference\` driver, for
+  ${plan.architectures.map((architecture) => `\`${architecture}\``).join(" and ")}. It installs \`${installName(plan)}\` from ${installedFrom(plan)}, launches \`${plan.command.join(" ")}\` at boot and is ready
   when a window of class \`${plan.windowClass}\` appears.${installNotes(plan)}
 - Owned paths: ${plan.paths.length === 0 ? "none" : plan.paths.map((path) => `\`~/${path}\``).join(", ")}.
   \`data/get\` returns their files and a typed JSON view of each; \`data/reset\` restores the seed.

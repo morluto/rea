@@ -148,7 +148,12 @@ export const expandDesktopExec = (
 
 /** How an expanded command reaches the application binary. */
 export type DesktopCommandWrapper =
-  | { readonly kind: "direct"; readonly program: string }
+  | {
+      readonly kind: "direct";
+      readonly program: string;
+      /** The program's position in the command. */
+      readonly index: number;
+    }
   | { readonly kind: "flatpak"; readonly application_id: string | null };
 
 /** Skip `env NAME=value` prefixes and recognise `flatpak run` launchers. */
@@ -167,5 +172,5 @@ export const unwrapDesktopCommand = (
       .find((token) => !token.startsWith("-") && !token.startsWith("@@"));
     return { kind: "flatpak", application_id: application ?? null };
   }
-  return { kind: "direct", program };
+  return { kind: "direct", program, index };
 };

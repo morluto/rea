@@ -17,10 +17,12 @@ export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
 export interface ElfDependencies {
   readonly machine: number;
   readonly bits: 32 | 64;
-  /** DT_NEEDED sonames in order. */
+  /** Distinct DT_NEEDED sonames in order. */
   readonly needed: readonly string[];
-  /** DT_RUNPATH directories, or DT_RPATH ones when there is no DT_RUNPATH, as written. */
-  readonly searchPaths: readonly string[];
+  /** DT_RUNPATH directories as written; undefined without DT_RUNPATH. */
+  readonly runpath: readonly string[] | undefined;
+  /** DT_RPATH directories as written; empty with DT_RUNPATH, which makes ld.so ignore them. */
+  readonly rpath: readonly string[];
 }
 
 const PT_LOAD = 1;
@@ -33,6 +35,9 @@ const DT_RUNPATH = 29n;
 const MAX_PROGRAM_HEADER_BYTES = 1024 * 1024;
 const MAX_DYNAMIC_BYTES = 1024 * 1024;
 const MAX_STRING_BYTES = 4096;
+/** Distinct strings decoded per image: the library walk's own limit, and a few search path entries. */
+const MAX_NEEDED = 512;
+const MAX_SEARCH_PATHS = 16;
 
 const readExactly = async (
   read: ReadAt,
@@ -98,16 +103,16 @@ const programHeaders = async (
   return ok(headers);
 };
 
-/** DT_NEEDED and search path string offsets, and the string table's address and size. */
+/** Distinct DT_NEEDED and search path string offsets, and the string table's address and size. */
 const dynamicTags = (
   table: Buffer,
   bits: 32 | 64,
   little: boolean,
 ): Result<
   {
-    readonly needed: readonly bigint[];
-    readonly runpath: readonly bigint[];
-    readonly rpath: readonly bigint[];
+    readonly needed: ReadonlySet<bigint>;
+    readonly runpath: ReadonlySet<bigint>;
+    readonly rpath: ReadonlySet<bigint>;
     readonly strtab: bigint | undefined;
     readonly strsz: bigint | undefined;
   },
@@ -115,12 +120,17 @@ const dynamicTags = (
 > => {
   const width = bits === 64 ? 16 : 8;
   const found = {
-    needed: [] as bigint[],
-    runpath: [] as bigint[],
-    rpath: [] as bigint[],
+    needed: new Set<bigint>(),
+    runpath: new Set<bigint>(),
+    rpath: new Set<bigint>(),
     strtab: undefined as bigint | undefined,
     strsz: undefined as bigint | undefined,
   };
+  const lists = new Map([
+    [DT_NEEDED, { offsets: found.needed, limit: MAX_NEEDED }],
+    [DT_RUNPATH, { offsets: found.runpath, limit: MAX_SEARCH_PATHS }],
+    [DT_RPATH, { offsets: found.rpath, limit: MAX_SEARCH_PATHS }],
+  ]);
   for (let at = 0; at + width <= table.length; at += width) {
     const entry = readElfDynamicEntry(
       table.subarray(at, at + width),
@@ -130,14 +140,51 @@ const dynamicTags = (
     if (!entry.ok) return err(entry.error.message);
     const { tag, value } = entry.value;
     if (tag === 0n) return ok(found);
-    if (tag === DT_NEEDED) found.needed.push(value);
-    else if (tag === DT_RUNPATH) found.runpath.push(value);
-    else if (tag === DT_RPATH) found.rpath.push(value);
-    else if (tag === DT_STRTAB) found.strtab = value;
+    const list = lists.get(tag);
+    if (list !== undefined) {
+      list.offsets.add(value);
+      if (list.offsets.size > list.limit)
+        return err(
+          `ELF dynamic table names more than ${String(list.limit)} distinct ${tag === DT_NEEDED ? "needed libraries" : "search paths"}`,
+        );
+    } else if (tag === DT_STRTAB) found.strtab = value;
     else if (tag === DT_STRSZ) found.strsz = value;
   }
   return err("ELF dynamic table has no DT_NULL terminator");
 };
+
+/** The strings at the given offsets of the dynamic string table at file offset `at`, `bytes` long. */
+const dynamicStrings = async (
+  read: ReadAt,
+  file: { readonly size: number; readonly at: bigint; readonly bytes: bigint },
+  offsets: ReadonlySet<bigint>,
+): Promise<Result<readonly string[], string>> => {
+  const values: string[] = [];
+  for (const offset of offsets) {
+    if (offset >= file.bytes)
+      return err("ELF dynamic string lies outside its table");
+    const length =
+      BigInt(MAX_STRING_BYTES) < file.bytes - offset
+        ? BigInt(MAX_STRING_BYTES)
+        : file.bytes - offset;
+    const window = await readExactly(read, file.at + offset, length, file.size);
+    const value =
+      window === undefined
+        ? null
+        : elfStringTableText(
+            observeElfStringTableEntry(window, 0, MAX_STRING_BYTES),
+          );
+    if (value === null) return err("ELF dynamic string is truncated");
+    values.push(value);
+  }
+  return ok(values);
+};
+
+const directories = (paths: readonly string[]): readonly string[] => [
+  ...new Set(
+    paths.flatMap((path) => path.split(":")).filter((path) => path.length > 0),
+  ),
+];
 
 /**
  * The sonames an ELF image needs and the directories its RUNPATH or RPATH
@@ -155,9 +202,9 @@ export const readElfDependencies = async (
   const little = fixed.value.byteOrder === "little";
   const headers = await programHeaders(read, header, size, bits);
   if (!headers.ok) return headers;
+  const none = { machine, bits, needed: [], runpath: undefined, rpath: [] };
   const dynamic = headers.value.find((program) => program.type === PT_DYNAMIC);
-  if (dynamic === undefined)
-    return ok({ machine, bits, needed: [], searchPaths: [] });
+  if (dynamic === undefined) return ok(none);
   if (dynamic.fileSize > BigInt(MAX_DYNAMIC_BYTES))
     return err("ELF dynamic table is too large");
   const table = await readExactly(read, dynamic.offset, dynamic.fileSize, size);
@@ -173,38 +220,23 @@ export const readElfDependencies = async (
           strtab,
         );
   if (stringsAt === undefined || strsz === undefined)
-    return needed.length + runpath.length + rpath.length === 0
-      ? ok({ machine, bits, needed: [], searchPaths: [] })
+    return needed.size + runpath.size + rpath.size === 0
+      ? ok(none)
       : err("ELF dynamic string table is not mapped from the file");
-  const text = async (offset: bigint): Promise<Result<string, string>> => {
-    if (offset >= strsz)
-      return err("ELF dynamic string lies outside its table");
-    const length =
-      BigInt(MAX_STRING_BYTES) < strsz - offset
-        ? BigInt(MAX_STRING_BYTES)
-        : strsz - offset;
-    const window = await readExactly(read, stringsAt + offset, length, size);
-    const value =
-      window === undefined
-        ? null
-        : elfStringTableText(
-            observeElfStringTableEntry(window, 0, MAX_STRING_BYTES),
-          );
-    return value === null ? err("ELF dynamic string is truncated") : ok(value);
-  };
-  const strings: string[] = [];
-  for (const offset of [...needed, ...(runpath.length > 0 ? runpath : rpath)]) {
-    const value = await text(offset);
-    if (!value.ok) return value;
-    strings.push(value.value);
-  }
+  const strings = { size, at: stringsAt, bytes: strsz };
+  const names = await dynamicStrings(read, strings, needed);
+  if (!names.ok) return names;
+  const search = await dynamicStrings(
+    read,
+    strings,
+    runpath.size > 0 ? runpath : rpath,
+  );
+  if (!search.ok) return search;
   return ok({
     machine,
     bits,
-    needed: strings.slice(0, needed.length),
-    searchPaths: strings
-      .slice(needed.length)
-      .flatMap((paths) => paths.split(":"))
-      .filter((path) => path.length > 0),
+    needed: [...new Set(names.value)],
+    runpath: runpath.size > 0 ? directories(search.value) : undefined,
+    rpath: runpath.size > 0 ? [] : directories(search.value),
   });
 };

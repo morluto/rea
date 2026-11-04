@@ -17,9 +17,11 @@ const plan: DesktopAppExportPlan = {
   className: "Mousepad",
   title: "Mousepad",
   aptPackage: "mousepad",
+  aptRelease: null,
   packageVersion: "0.6.1",
   libraryPackages: [],
   aptSources: [],
+  architectures: ["amd64", "arm64"],
   electron: false,
   command: ["mousepad"],
   windowClass: "Mousepad",
@@ -176,11 +178,13 @@ describe("renderers", () => {
     ).toContain('TEXT_SEEDS = frozenset(["b.txt"])');
   });
 
-  it("declares a vendor repository with its key, and library packages after the app's", () => {
+  it("declares a vendor repository with its key, the app from its release, the host's architecture, and library packages after the app's", () => {
     const typora: DesktopAppExportPlan = {
       ...plan,
       name: "typora",
       aptPackage: "typora",
+      aptRelease: "stable",
+      architectures: ["arm64"],
       libraryPackages: ["libgbm1", "libnss3"],
       aptSources: [
         {
@@ -198,12 +202,19 @@ describe("renderers", () => {
     const module = renderAppClass(typora);
 
     expect(module).toContain(
-      'packages=Packages(apt=["typora", "libgbm1", "libnss3", "dconf-cli"]),\n    sources=[AptSource(apt="https://downloads.typora.io/linux", suite="./", components=[], key="apt-keys/typora.gpg")],',
+      'packages=Packages(apt=["typora/stable", "libgbm1", "libnss3", "dconf-cli"]),\n    sources=[AptSource(apt="https://downloads.typora.io/linux", suite="./", components=[], key="apt-keys/typora.gpg")],',
     );
+    expect(module).toContain(
+      '@computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ["arm64"]}])',
+    );
+    expect(renderAppClass(plan)).toContain('"arch": ["amd64", "arm64"]');
     expect(module).toContain(
       "from agentenv_protocol.computer import AptSource,",
     );
     const readme = renderReadme(typora);
+    expect(readme).toContain(
+      "for\n  `arm64`. It installs `typora/stable` from",
+    );
     expect(readme).toContain(
       "from the apt repository `https://downloads.typora.io/linux` (suite `./`), trusting `apt-keys/typora.gpg`",
     );

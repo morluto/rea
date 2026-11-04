@@ -34,6 +34,7 @@ MAX_ROWS = 500
 MAX_LINES = 5000
 MAX_XML_NODES = 5000
 MAX_XML_DEPTH = 64
+SQLITE_BUSY_S = 0.25
 
 
 def _respelled(text: str, home: Path) -> str:
@@ -110,7 +111,7 @@ def _table(db, name: str, primary_key: list) -> dict:
 
 def _sqlite(path: Path) -> dict:
     """The database's ordinary tables, in schema order, up to REA's table and row limits."""
-    with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0)) as db:
+    with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=SQLITE_BUSY_S)) as db:
         kinds = dict(db.execute("select name, type from pragma_table_list where schema = 'main'"))
         names = [name for (name,) in db.execute("select name from sqlite_schema where type = 'table'")
                  if kinds.get(name) == "table"]

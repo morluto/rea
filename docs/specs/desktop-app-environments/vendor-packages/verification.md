@@ -12,35 +12,67 @@ plus the Electron runtime libraries and gnupg.
 - `npm run typecheck`, `lint`, `lint:typed`, `format:check`, `knip` (after
   `build:cached`, which its `#…-worker` imports resolve into), `jscpd`,
   `docs:check`, `verify:test-discovery` and `verify:architecture-guards`:
-  passed, with no lint or typed-lint diagnostics and no duplicate blocks in
-  the touched files.
+  passed, with no lint or typed-lint diagnostics in the touched files; jscpd
+  reports one 8-line block, the private folder's release in `GpgvKeyCheck`,
+  which follows `DesktopApplicationState`'s use of `ArtifactResourceScope`.
 - `npx vitest run src/domain/desktop src/application/desktop src/desktop
   src/process/TokenOwnedTermination.test.ts` on macOS and in the container,
   and the CLI boundary tests `cliInputSchemaRequired`, `cliToolCoverage` and
   `cliStartupImports`: passed.
 - New tests: the sources parsers on Ubuntu 24.04's own `ubuntu.sources`,
-  Typora's flat entry and `[arch=… signed-by=…]` options; apt list file
-  names; gpgv VALIDSIG and ERRSIG status from the container; ASCII armor;
-  DT_NEEDED, RUNPATH over RPATH, static and malformed images; the library walk
-  on `ldconfig -p` lines from the container; the inventory with a fake query
-  runner (binary and armored keys, gpgv and ldconfig missing, no key
-  verifying); key retention within and over the content budget; the install
-  decision and its limitations; the renderers; the export service writing a
-  vendor bundle and refusing an unverified key. On Linux, the library
-  inventory maps the node binary's libraries with the host's `ldconfig` and
-  `dpkg-query`.
+  Typora's flat entry and `[arch=… signed-by=…]` options, with apt's entry
+  positions; `apt-get indextargets` output from the containers for Typora's
+  `./`, pkgs.k8s.io's `/` and Ubuntu's suites, and the release file names it
+  gives; gpgv status for a release signed by two keys and checked with one
+  (exit 2), and bad, expired and revoked signatures; the OpenPGP keyring
+  splitter on GnuPG-made keys, OpenPGP.js rewrites of them with new-format
+  headers, and refused malformed packets; ASCII armor; DT_NEEDED, RUNPATH
+  over RPATH, a table repeating one name 60,000 times and one naming 513;
+  the library walk on `ldconfig -p` lines from the container, a normalized
+  `$ORIGIN/..` path and inherited RPATH; `apt-cache policy` for several
+  packages; the inventory with a fake query runner (binary, armored and
+  multi-key keyrings, a flat `/` suite, an ESM repository, gpgv and ldconfig
+  missing, no key verifying, an archive package not walked, a PPA library
+  package set aside); with real gpgv, the two-signature release and a
+  two-key keyring; a keyring folder whose removal fails keeping its owner,
+  and the capture's failure keeping it; key retention within and over the
+  content budget and the per-file limit; the install decision (one source per
+  URI and suite, the release, the host's architecture, an `env`-wrapped
+  Electron launch) and its limitations; the renderers; the exported `_sqlite`
+  under python3 waiting out a 20 ms write lock and reporting a lasting one in
+  about 0.3 s; the export service writing a vendor bundle and refusing an
+  unverified key. On Linux, the library inventory maps the node binary's
+  libraries with the host's `ldconfig` and `dpkg-query`.
 
 ## Typora
 
 - The inventory, run as a normal user in the container, recorded the
-  repository from `/etc/apt/sources.list.d/typora.list` with
-  `/etc/apt/trusted.gpg.d/typora.gpg` (fingerprint
+  repository from `/etc/apt/sources.list.d/typora.list` with release
+  `stable` and `/etc/apt/trusted.gpg.d/typora.gpg` (fingerprint
   `4AC441BE68B4ADAB7439FBF9BA300B7755AFCFAE`) verified by gpgv against
-  `downloads.typora.io_linux_._InRelease`, 85 library packages, no missing or
-  unpackaged libraries, in 1.3 s, and left no temporary folder. With the key
-  converted to an armored `typora.asc`, and with it moved to
-  `/usr/share/keyrings/typora.gpg` named by `[signed-by=…]`, the same key was
-  verified.
+  `downloads.typora.io_linux_._InRelease`, 85 library packages all offered by
+  the Ubuntu archive, no missing or unpackaged libraries, in 2.2 s, and left
+  no temporary folder. With the key converted to an armored `typora.asc`, and
+  with it moved to `/usr/share/keyrings/typora.gpg` named by
+  `[signed-by=…]`, the same key was verified. With the key appended to a
+  legacy `/etc/apt/trusted.gpg` after Ubuntu's 2018 archive key, only
+  Typora's key was retained, byte for byte the original file
+  (`06bbbb36…`).
+- With pkgs.k8s.io's flat `/` repository added
+  (`deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg]
+  https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /`) and kubectl installed, the
+  inventory matched policy's `https://pkgs.k8s.io/core:/stable:/v1.30/deb
+  Packages` to that entry (suite `/`, release `deb`, the codename, since its
+  Release has no Suite) and gpgv verified its key against
+  `pkgs.k8s.io_core:_stable:_v1.30_deb_InRelease`.
+- apt in the container: `apt-get install -s --reinstall typora/stable`
+  selected 1.14.9-1 from `Typora:stable`, `kubectl/deb` selected kubectl from
+  pkgs.k8s.io, and an unknown release failed with `Release 'nosuch' for
+  'typora' was not found`. Two deb822 sources for Typora's URI and suite with
+  different `Signed-By` keyrings, as agentenv would write duplicate
+  `AptSource`s, failed with `Conflicting values set for option Signed-By`.
+  `apt-get indextargets` counted deb822 stanzas from 1, a disabled one
+  included, and printed no Signed-By, which the sources entry still gives.
 - A capture of Typora editing `~/Documents/trip.md` (launched with
   `--no-sandbox`, which the container needs) retained the key under
   `content/06bbbb36…`. The export wrote `envs/typora/apt-keys/typora.gpg` with
@@ -78,6 +110,11 @@ unchanged with `agent-env run <bundle> --keep --no-emulate` on local Docker
   byte for byte.
 
 ## Limits of this verification
+
+- The agentenv computer run above used the bundle exported before the review
+  round: `Packages(apt=["typora", …])` and both architectures. The pinned
+  `typora/stable`, single-architecture bundle was checked with apt in the
+  container but not deployed.
 
 - The export's own `--no-sandbox` insertion was checked in tests; the real
   capture already had it, since Typora does not start in the container

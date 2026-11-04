@@ -26,6 +26,8 @@ const withKey = (): DesktopApplicationInventory => {
           uri: "https://downloads.typora.io/linux",
           suite: "./",
           components: [],
+          architectures: [],
+          release: "stable",
           signing_key: {
             path: "/etc/apt/trusted.gpg.d/typora.gpg",
             sha256: SHA256,
@@ -38,9 +40,9 @@ const withKey = (): DesktopApplicationInventory => {
   };
 };
 
-const store = async (maxBytes: number) => {
+const store = async (maxBytes: number, maxFileBytes = 1024) => {
   const folder = await createTestTempDirectory("desktop-keys-");
-  const content = new DesktopContentStore(folder, 1024, maxBytes);
+  const content = new DesktopContentStore(folder, maxFileBytes, maxBytes);
   await content.prepare();
   return { folder, content };
 };
@@ -63,19 +65,36 @@ describe("retainSigningKeys", () => {
     expect(content.files).toBe(1);
   });
 
-  it("records a key the content budget cannot hold as unverified", async () => {
-    const { content } = await store(4);
+  it.each([
+    {
+      limit: "content budget",
+      maxBytes: 4,
+      maxFileBytes: 1024,
+      reason: "did not fit the capture's content budget",
+    },
+    {
+      limit: "per-file limit",
+      maxBytes: 1024,
+      maxFileBytes: 4,
+      reason: "is larger than the capture's per-file limit (--max-file-bytes)",
+    },
+  ])(
+    "records a key over the $limit as unverified without storing it",
+    async ({ maxBytes, maxFileBytes, reason }) => {
+      const { content } = await store(maxBytes, maxFileBytes);
 
-    const retained = await retainSigningKeys(
-      withKey(),
-      new Map([[SHA256, KEY]]),
-      content,
-    );
+      const retained = await retainSigningKeys(
+        withKey(),
+        new Map([[SHA256, KEY]]),
+        content,
+      );
 
-    expect(retained.package.apt_repositories?.[0]).toMatchObject({
-      signing_key: null,
-      signing_key_reason: expect.stringContaining("content budget"),
-    });
-    expect(content.omissions).toEqual([]);
-  });
+      expect(retained.package.apt_repositories?.[0]).toMatchObject({
+        signing_key: null,
+        signing_key_reason: `the verified key /etc/apt/trusted.gpg.d/typora.gpg ${reason}, so it was not retained`,
+      });
+      expect(content.files).toBe(0);
+      expect(content.omissions).toEqual([]);
+    },
+  );
 });

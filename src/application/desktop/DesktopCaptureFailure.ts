@@ -1,3 +1,4 @@
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -9,6 +10,7 @@ import { discardCaptureFile } from "./DesktopCaptureOutput.js";
 import {
   DESKTOP_OPERATION,
   DESKTOP_PROVIDER,
+  desktopOperationFailure,
   unavailable,
 } from "./DesktopCaptureRefusals.js";
 
@@ -139,6 +141,14 @@ export const projectFailure = (
   signal: AbortSignal | undefined,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
+  // A resource the inventory could not release stays reported, with its owner.
+  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
+    return desktopOperationFailure(
+      cause,
+      signal,
+      DESKTOP_OPERATION,
+      "Desktop capture",
+    );
   if (signal?.aborted === true)
     return new AnalysisCancelledError(DESKTOP_OPERATION, {
       cause: signal.reason,

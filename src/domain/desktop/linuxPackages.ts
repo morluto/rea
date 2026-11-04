@@ -77,6 +77,37 @@ export const parseAptPolicySources = (output: string): readonly string[] => {
   return sources;
 };
 
+const POLICY_PACKAGE = /^(?<name>\S+):$/u;
+
+/**
+ * The sources of every version of each package `apt-cache policy <names…>`
+ * lists, by the name it heads the package with; a name apt does not know is
+ * left out, as apt prints nothing for it.
+ */
+export const parseAptPolicyPackageSources = (
+  output: string,
+): ReadonlyMap<string, readonly string[]> => {
+  const packages = new Map<string, string[]>();
+  let current: string[] | undefined;
+  for (const line of output.split("\n")) {
+    const name = POLICY_PACKAGE.exec(line)?.groups?.name;
+    if (name !== undefined) {
+      current = [];
+      packages.set(name, current);
+      continue;
+    }
+    const source = POLICY_SOURCE.exec(line)?.groups?.source?.trim();
+    if (
+      current !== undefined &&
+      source !== undefined &&
+      source !== DPKG_STATUS_SOURCE &&
+      !current.includes(source)
+    )
+      current.push(source);
+  }
+  return packages;
+};
+
 const GLOBAL_POLICY_SOURCE = /^ -?\d+ (?<source>.+)$/u;
 const GLOBAL_POLICY_RELEASE = /^ +release (?<fields>.*)$/u;
 

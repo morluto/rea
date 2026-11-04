@@ -229,9 +229,11 @@ const planExport = (
     className: className(source),
     title: application.desktop_entry?.name ?? source,
     aptPackage: install.aptPackage,
+    aptRelease: install.release,
     packageVersion: application.package.version,
     libraryPackages: install.libraryPackages,
     aptSources: install.sources,
+    architectures: install.architectures,
     electron,
     command: launchCommand(
       electronLaunchArguments(application.argv, electron),

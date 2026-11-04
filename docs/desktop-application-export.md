@@ -46,23 +46,38 @@ an `App` suffix.
 
 The class declares:
 
-- `Packages(apt=[...])` with the package the capture found. For a vendor
-  package its library packages follow, so a package that leaves out
-  dependencies on the libraries it loads, as Typora's Electron package does,
-  still starts; an archive package's declared dependencies are trusted as they
-  are. The package must come from the
-  Ubuntu 24.04 archive or a mirror of it, or from a vendor apt repository whose
-  signing key the capture verified and retained. A source counts as the archive
-  when apt reports its origin as `Ubuntu` for a noble suite; a capture made
-  before origins were recorded counts only Canonical's own archive hosts.
+- `Packages(apt=[...])` with the package the capture found. A vendor package
+  is named `<package>/<release>`, its repository's release (the Suite apt
+  reports as `a=`, or else its Codename), so apt takes it from that repository
+  even when the Ubuntu archive offers a higher version or epoch, as noble's
+  transitional `firefox` does over packages.mozilla.org's; it is named alone
+  when the release names neither. Its library packages follow, so a package
+  that leaves out dependencies on the libraries it loads, as Typora's Electron
+  package does, still starts; library packages the capture found neither the
+  Ubuntu 24.04 archive nor a declared repository offers are left out, with a
+  limitation. An archive package's declared dependencies are trusted as they
+  are. The package must come from the Ubuntu 24.04 archive or a mirror of it,
+  or from a vendor apt repository whose signing key the capture verified and
+  retained. A source counts as the archive when apt reports its origin as
+  `Ubuntu` for a noble suite; a capture made before origins were recorded
+  counts only Canonical's own archive hosts.
 - For a vendor repository, `sources=[AptSource(apt=..., suite=...,
   components=[...], key="apt-keys/<name>.gpg")]`, with the retained key copied
   to that path (`.asc` when it is armored, which agentenv tells by its
-  content). A repository whose key the capture did not verify is refused with
-  its reason; when another verified repository lists the same version it is
-  left out instead, with a limitation. The export also refuses local `.deb`
-  files, snaps, flatpaks, AppImages and captures that recorded no repositories,
-  since the computer could not install them by name.
+  content). apt takes one key per URI and suite, so sources that share them,
+  such as one repository listed for two architectures, are declared once, with
+  their components merged; one with a different key is left out. A repository
+  whose key the capture did not verify, an Ubuntu Pro (ESM) repository, one
+  not reached over http or https, or one whose `arch=` restriction leaves out
+  the capture host's architecture is refused with its reason; when another
+  usable repository lists the same version it is left out instead, with a
+  limitation. The export also refuses local `.deb` files, snaps, flatpaks,
+  AppImages and captures that recorded no repositories, since the computer
+  could not install them by name.
+- `@computer_app(supports=...)` with both `amd64` and `arm64` for an archive
+  package, which the archive serves for both, and only the capture host's
+  architecture for a vendor package, since its repository may serve no other.
+  A vendor package captured on any other architecture is refused.
 - A launch at boot with the captured command, ready when a window of the
   captured class appears. Arguments that are the captured home or under it, and
   `<option>=<path>` values under it, are respelled under the computer user's
@@ -126,7 +141,9 @@ and are not read. Known differences remain:
   they count as one node.
 - dconf databases are reported as binary, since REA reads them with `dconf`.
 - SQLite databases are read in place, read-only, rather than from a staged copy;
-  a table or column name that is not UTF-8 gives the file an `error`.
+  a write lock the running app holds is waited out for a quarter of a second
+  and then gives the file an `error`, and so does a table or column name that
+  is not UTF-8.
 - JSON integers beyond 2^53 keep their exact value, and nesting deeper than
   Python's recursion limit gives the file an `error`.
 

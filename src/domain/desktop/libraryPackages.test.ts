@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { err, ok } from "../result.js";
 import type { ElfDependencies } from "./elfDependencies.js";
 import {
+  installableLibraryPackages,
   libraryClosure,
   libraryPackageNames,
   parseLinkerCache,
@@ -21,12 +22,14 @@ const LINKER_CACHE = [
 
 const elf = (
   needed: readonly string[],
-  searchPaths: readonly string[] = [],
+  rpath: readonly string[] = [],
+  runpath?: readonly string[],
 ): ElfDependencies => ({
   machine: 183,
   bits: 64,
   needed,
-  searchPaths,
+  runpath,
+  rpath: runpath === undefined ? rpath : [],
 });
 
 const TYPORA = "/usr/share/typora/Typora";
@@ -113,6 +116,99 @@ describe("libraryClosure", () => {
         },
       ],
       truncated: true,
+    });
+  });
+});
+
+describe("libraryClosure search paths", () => {
+  const app = (dependencies: ElfDependencies) => ({
+    path: "/opt/app/bin/app",
+    dependencies,
+  });
+
+  it("normalizes $ORIGIN/.. before telling the app's own folder from system libraries", async () => {
+    const closure = await libraryClosure(
+      {
+        path: "/usr/bin/tool",
+        dependencies: elf(["libtool.so.1"], ["$ORIGIN/../lib"]),
+      },
+      [],
+      host({ "/usr/lib/libtool.so.1": elf([]) }),
+      10,
+    );
+
+    expect(closure.libraries).toEqual([
+      { soname: "libtool.so.1", path: "/usr/lib/libtool.so.1" },
+    ]);
+  });
+
+  it("searches the executable's RPATH for its libraries' own needs unless they have a RUNPATH", async () => {
+    const images = {
+      "/opt/app/lib/libcore.so": elf(["libhelper.so"]),
+      "/opt/app/lib/libhelper.so": elf([]),
+    };
+    const inherited = await libraryClosure(
+      app(elf(["libcore.so"], ["$ORIGIN/../lib"])),
+      [],
+      host(images),
+      10,
+    );
+    const ownRunpath = await libraryClosure(
+      app(elf(["libcore.so"], ["$ORIGIN/../lib"])),
+      [],
+      host({
+        ...images,
+        "/opt/app/lib/libcore.so": elf(["libhelper.so"], [], ["/nowhere"]),
+      }),
+      10,
+    );
+    const runpathOnly = await libraryClosure(
+      app(elf(["libcore.so"], [], ["$ORIGIN/../lib"])),
+      [],
+      host(images),
+      10,
+    );
+
+    expect(inherited).toMatchObject({
+      libraries: [
+        { soname: "libcore.so", path: "/opt/app/lib/libcore.so" },
+        { soname: "libhelper.so", path: "/opt/app/lib/libhelper.so" },
+      ],
+      missing: [],
+    });
+    expect(ownRunpath.missing).toEqual(["libhelper.so"]);
+    expect(runpathOnly.missing).toEqual(["libhelper.so"]);
+  });
+});
+
+describe("installableLibraryPackages", () => {
+  const NOBLE =
+    "http://ports.ubuntu.com/ubuntu-ports noble/main arm64 Packages";
+  const PPA =
+    "https://ppa.launchpadcontent.net/a/b/ubuntu noble/main arm64 Packages";
+  const TYPORA = "https://downloads.typora.io/linux ./ Packages";
+
+  it("keeps packages the Ubuntu 24.04 archive or a declared repository offers", () => {
+    expect(
+      installableLibraryPackages(
+        ["libnss3", "libfoo", "typora-helper", "libgone"],
+        {
+          sources: new Map([
+            ["libnss3", [PPA, NOBLE]],
+            ["libfoo", [PPA]],
+            ["typora-helper", [TYPORA]],
+          ]),
+          origins: new Map([
+            [NOBLE, "Ubuntu"],
+            [PPA, "LP-PPA-a-b"],
+            [TYPORA, "typora.io"],
+          ]),
+          declared: new Set([TYPORA]),
+        },
+      ),
+    ).toEqual({
+      installable: ["libnss3", "typora-helper"],
+      uninstallable: ["libfoo", "libgone"],
     });
   });
 });
