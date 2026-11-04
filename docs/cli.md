@@ -281,6 +281,17 @@ Format versions 6 through 8 retain header, block and directory facts with
 none/LZ4/LZ4HC block decompression. See [UnityFS](unityfs.md) for encryption
 and LZMA coverage boundaries.
 
+Inspect a WeChat mini-program package without WeChat or an unpacker:
+
+```sh
+rea inspect-artifact app.wxapkg --detail summary --evidence_output evidence.json --json
+rea extract-artifact app.wxapkg --json
+```
+
+Plaintext packages retain header, table and member facts with verbatim member
+bytes. `V1MMWX` packages are detected as encrypted coverage and refused on
+extraction. See [wxapkg](wxapkg.md) for layout and coverage boundaries.
+
 Inspect an ESP32-family app or bootloader image without esptool:
 
 ```sh
@@ -623,6 +634,9 @@ Saved snapshots include only cache entries whose subject identifies the selected
 target. Unbound observations and observations of child artifacts remain available
 in the open session and its Evidence bundle; they are excluded from the target's
 saved replay entries without changing their subjects.
+The snapshot also retains available Evidence linked by selected records, including
+transitive sources with an unbound or different subject. Those sources are not
+replay entries for the selected target. Unrelated records remain excluded.
 
 Snapshots retain eligible target-scoped question histories in full, including
 mutation Evidence recorded while another target was active. Observations and
@@ -694,6 +708,10 @@ results and Evidence. These are cached observations, not a saved provider
 database: only eligible exact queries can reuse a result, and new or live
 queries can still require provider startup. The CLI uses the same snapshot
 format and preserves these records when loading and updating it.
+When an MCP session replays a provider observation, its delivered Evidence identifies
+the original observation through `evidence_links` and reports that the
+provider was not rerun. The original and its available source records remain
+in the investigation bundle.
 
 ## Import, export and compare Evidence
 

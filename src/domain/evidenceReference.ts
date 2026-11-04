@@ -4,6 +4,7 @@ import { absoluteLocalPathStringSchema } from "./localPath.js";
 import {
   declareBorrowedEvidenceInput,
   declareEvidenceInput,
+  declareEvidenceReferenceAlternative,
 } from "./evidenceInputContract.js";
 
 /** Exact reference to Evidence already retained by the current session. */
@@ -49,8 +50,7 @@ export const borrowEvidenceArray = () => {
 };
 
 /** Evidence input, or one record read from a local Evidence file or bundle. */
-export const evidenceSourceInputSchema = z.union([
-  ...evidenceInputSchema.options,
-  evidenceFileReferenceSchema,
-]);
+export const evidenceSourceInputSchema = declareEvidenceReferenceAlternative(
+  z.union([...evidenceInputSchema.options, evidenceFileReferenceSchema]),
+);
 export type EvidenceSourceInput = z.output<typeof evidenceSourceInputSchema>;
