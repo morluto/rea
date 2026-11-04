@@ -539,6 +539,7 @@
 * **mcp:** require allowed hosts for non-loopback HTTP binds ([#7172](https://github.com/morluto/rea/issues/7172)) ([aa6c1d4](https://github.com/morluto/rea/commit/aa6c1d49fd8db201cb5619c90bee2899452dfed7))
 * **mcp:** return a compact binary_session status by default ([#7127](https://github.com/morluto/rea/issues/7127)) ([5a22ae6](https://github.com/morluto/rea/commit/5a22ae6bc8bae6cadd25aa5a6635a3c219d17b82))
 * **mcp:** summarize copied browser observations in input declarations ([#7469](https://github.com/morluto/rea/issues/7469)) ([d6f88be](https://github.com/morluto/rea/commit/d6f88becd531cabafca1d968b89cf7fc77a80041))
+* **mcp:** surface byte search for encoded literals ([#8817](https://github.com/morluto/rea/issues/8817)) ([5a11bf0](https://github.com/morluto/rea/commit/5a11bf09a5b8420584d097e0069194bb08c8a3d0))
 * **model:** recognize safetensors ZIP signature collisions ([#7816](https://github.com/morluto/rea/issues/7816)) ([52617bd](https://github.com/morluto/rea/commit/52617bd50e34726f490d5a458587685e7f9b2fb9))
 * **native:** accept walkable Mach-O command tables ([#8002](https://github.com/morluto/rea/issues/8002)) ([45cc935](https://github.com/morluto/rea/commit/45cc935964ce71f6d5c98ddfa78f7230463af94a))
 * **native:** account export and version text in UTF-8 bytes ([74d5cab](https://github.com/morluto/rea/commit/74d5cab372150fe2d816980ef34ef315c5f9f1fa))
