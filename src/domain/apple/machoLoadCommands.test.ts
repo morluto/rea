@@ -117,11 +117,25 @@ it("reads linkedit data fields and refuses a truncated command", () => {
   const body = Buffer.alloc(16);
   body.writeUInt32LE(0x1234, 8);
   body.writeUInt32LE(0x56, 12);
-  expect(readMachoLinkeditDataCommand(body, true)).toEqual({
+  expect(readMachoLinkeditDataCommand(0x1d, body, true)).toEqual({
     dataOffset: 0x1234,
     dataSize: 0x56,
   });
-  expect(readMachoLinkeditDataCommand(body.subarray(0, 15), true)).toBeNull();
+  expect(
+    readMachoLinkeditDataCommand(0x1d, body.subarray(0, 15), true),
+  ).toBeNull();
+  // The layout comes from the shared fixed-word table, so other layouts refuse.
+  expect(readMachoLinkeditDataCommand(0x2, Buffer.alloc(24), true)).toBeNull();
+});
+
+it("reads big-endian linkedit data fields", () => {
+  const body = Buffer.alloc(16);
+  body.writeUInt32BE(0x1234, 8);
+  body.writeUInt32BE(0x56, 12);
+  expect(readMachoLinkeditDataCommand(0x1d, body, false)).toEqual({
+    dataOffset: 0x1234,
+    dataSize: 0x56,
+  });
 });
 
 it("reads symtab fields through the shared fixed-word decoder", () => {

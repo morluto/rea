@@ -271,17 +271,24 @@ export const readMachoSymtabCommand = (
   return { symoff, nsyms, stroff, strsize };
 };
 
-/** `linkedit_data_command`: cmd, cmdsize, dataoff, datasize. Null when truncated. */
+/**
+ * `linkedit_data_command` fields from an admitted command body. Null when
+ * truncated or when `command` does not use the linkedit_data_command layout.
+ */
 export const readMachoLinkeditDataCommand = (
+  command: number,
   body: Uint8Array,
   littleEndian: boolean,
 ): { readonly dataOffset: number; readonly dataSize: number } | null => {
-  if (body.byteLength < 16) return null;
-  const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
-  return {
-    dataOffset: view.getUint32(8, littleEndian),
-    dataSize: view.getUint32(12, littleEndian),
-  };
+  const fields = decodeMachoFixedWordFields(
+    command,
+    body.subarray(8),
+    littleEndian,
+  );
+  if (fields === null || fields === undefined) return null;
+  const { dataoff, datasize } = fields;
+  if (dataoff === undefined || datasize === undefined) return null;
+  return { dataOffset: dataoff, dataSize: datasize };
 };
 
 export type MachoCommandStringFailure =

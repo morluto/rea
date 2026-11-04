@@ -772,7 +772,7 @@ const decodeCommand = (
     return;
   }
   if (command === LC_CODE_SIGNATURE) {
-    if (readMachoLinkeditDataCommand(body, true) === null)
+    if (readMachoLinkeditDataCommand(LC_CODE_SIGNATURE, body, true) === null)
       throw new MachoFormatIssue(
         "malformed",
         `load command ${index} is too short for LC_CODE_SIGNATURE`,

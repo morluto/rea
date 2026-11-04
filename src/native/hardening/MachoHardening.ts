@@ -336,7 +336,7 @@ const admitCodeSignature = (
   { body, index }: MachoLoadCommand,
   sliceSize: number,
 ): void => {
-  const data = readMachoLinkeditDataCommand(body, true);
+  const data = readMachoLinkeditDataCommand(LC_CODE_SIGNATURE, body, true);
   if (data === null)
     return malformed(
       `load command ${index} is too short for LC_CODE_SIGNATURE`,
