@@ -124,6 +124,36 @@ describe("inspectDesktopApplicationState", () => {
     });
   });
 
+  it("treats unchanged files in a symlinked state directory as application state", async () => {
+    // ~/.config/linked is a symlink; the capture walked and recorded it as ~/dotfiles/linked.
+    const physical = `${HOME}/dotfiles/linked`;
+    const base = extended({
+      baseline: [retained(`${physical}/theme.ini`, "[ui]\nwrap=false\n")],
+    });
+    const folder = await writeCaptureFolder({
+      ...base,
+      application: {
+        ...base.application,
+        state_directories: [
+          ...base.application.state_directories,
+          { path: `${HOME}/.config/linked`, exists_at_start: true },
+        ],
+      },
+      state: {
+        ...base.state,
+        content_roots: [...base.state.content_roots, physical],
+        state_directories: [...base.state.state_directories, physical],
+      },
+    });
+
+    const byPath = await statePathsOf(folder);
+
+    expect(byPath.get("dotfiles/linked/theme.ini")).toMatchObject({
+      role: "application_state",
+      reasons: ["state_directory"],
+    });
+  });
+
   it("refuses to read a database whose write-ahead log was not retained", async () => {
     const database = `${HOME}/.config/notes/log.db`;
     const folder = await writeCaptureFolder(

@@ -97,10 +97,10 @@ export const roleFacts = (
   capture: DesktopApplicationCapture,
 ): DesktopRoleFacts => {
   const { application, session, state, host } = capture;
-  const stateDirectories = application.state_directories.map(
-    (entry) => entry.path,
-  );
-  const stateTails = stateDirectories
+  const named = application.state_directories.map((entry) => entry.path);
+  // A symlinked state directory is walked, and its files recorded, under its physical spelling.
+  const stateDirectories = [...new Set([...named, ...state.state_directories])];
+  const stateTails = named
     .map(hiddenTail)
     .filter((tail): tail is string => tail !== null);
   return {

@@ -327,6 +327,7 @@ const runCapture = async (
     state: {
       roots: [...scope.roots],
       content_roots: [...scope.contentRoots],
+      state_directories: [...scope.stateDirectories],
       checkpoints: recorder.checkpoints,
       content_files: store.files,
       content_bytes: store.bytes,

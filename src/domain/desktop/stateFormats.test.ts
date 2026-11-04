@@ -74,9 +74,11 @@ describe("captured data safety and fidelity", () => {
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
-  it("keeps XML text exactly and preserved whitespace", () => {
+  it("keeps XML text and leaf whitespace exactly, dropping only formatting between elements", () => {
     expect(
-      xmlView('<a><b> x </b><c xml:space="preserve">  </c><d>\n  </d></a>'),
+      xmlView(
+        '<a>\n  <b> x </b><c xml:space="preserve">  </c><d>\n  </d>\n</a>',
+      ),
     ).toEqual({
       root: {
         name: "a",
@@ -88,7 +90,7 @@ describe("captured data safety and fidelity", () => {
             attributes: { "xml:space": "preserve" },
             children: ["  "],
           },
-          { name: "d", attributes: {}, children: [] },
+          { name: "d", attributes: {}, children: ["\n  "] },
         ],
       },
       truncated: false,
