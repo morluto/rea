@@ -372,7 +372,9 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pe-imports-legacy-");
     const call = await cli.sharedMcpCall!();
-    for (const malformed of [false, true]) {
+    for (const kind of ["valid", "thunk", "optional"]) {
+      const malformed = kind === "thunk";
+      const badOptional = kind === "optional";
       const bytes = peImportImage({
         bits: 32,
         delayVirtualAddresses: true,
@@ -386,7 +388,10 @@ cliTest(
       const at = peImportFixtureOffset(bytes.readUInt32LE(152 + 96 + 13 * 8));
       const intRva = bytes.readUInt32LE(at + 16) - 0x10000000;
       if (malformed) bytes.writeUInt32LE(0x1000, peImportFixtureOffset(intRva));
-      const path = join(root, malformed ? "bad-thunk.exe" : "legacy.exe");
+      if (badOptional)
+        for (const offset of [8, 20, 24])
+          bytes.writeUInt32LE(0x1000, at + offset);
+      const path = join(root, kind + ".exe");
       await writeFile(path, bytes);
       const result = await cli.run({
         arguments: ["inspect-pe-imports", path, "--json"],
@@ -408,9 +413,9 @@ cliTest(
           name: "ADVAPI32.dll",
           attributes: 0,
           import_name_table_rva: intRva,
-          module_handle_rva: 0,
-          bound_import_rva: 0,
-          unload_information_table_rva: 0,
+          module_handle_rva: badOptional ? null : 0,
+          bound_import_rva: badOptional ? null : 0,
+          unload_information_table_rva: badOptional ? null : 0,
           functions: malformed
             ? [{ ordinal: 12, thunk_hex: "8000000c" }]
             : [
@@ -426,7 +431,7 @@ cliTest(
               ],
         });
         expect(report.coverage).toMatchObject({
-          status: malformed ? "partial" : "complete",
+          status: malformed || badOptional ? "partial" : "complete",
           imports: 2,
           delay_imports: malformed ? 1 : 2,
         });
@@ -436,7 +441,12 @@ cliTest(
             code: "malformed_entry",
             location: "0x1000",
           });
-        else expect(report.issues).toEqual([]);
+        else if (badOptional) {
+          expect(report.issues).toHaveLength(3);
+          expect(
+            report.issues.every((issue) => issue.code === "malformed_entry"),
+          ).toBe(true);
+        } else expect(report.issues).toEqual([]);
       }
       expect((await readFile(path)).equals(bytes)).toBe(true);
     }

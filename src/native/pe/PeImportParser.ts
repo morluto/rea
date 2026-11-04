@@ -480,12 +480,14 @@ export const parsePeImports = async (
       if (descriptor === null) break;
       consume(spans, descriptor, DELAY_DESCRIPTOR_BYTES);
       const attributes = reader.u32(descriptor);
-      let nameRva = reader.u32(descriptor + 4);
-      let moduleHandleRva = reader.u32(descriptor + 8);
-      let importAddressTableRva = reader.u32(descriptor + 12);
-      let importNameTableRva = reader.u32(descriptor + 16);
-      let boundImportRva = reader.u32(descriptor + 20);
-      let unloadInformationTableRva = reader.u32(descriptor + 24);
+      let nameRva: number | null = reader.u32(descriptor + 4);
+      let moduleHandleRva: number | null = reader.u32(descriptor + 8);
+      let importAddressTableRva: number | null = reader.u32(descriptor + 12);
+      let importNameTableRva: number | null = reader.u32(descriptor + 16);
+      let boundImportRva: number | null = reader.u32(descriptor + 20);
+      let unloadInformationTableRva: number | null = reader.u32(
+        descriptor + 24,
+      );
       const timeDateStamp = reader.u32(descriptor + 28);
       if (
         attributes === 0 &&
@@ -511,35 +513,45 @@ export const parsePeImports = async (
         continue;
       }
       if (virtualAddresses) {
-        const toRva = (address: number): number => {
+        const toRva = (
+          address: number,
+          fieldOffset: number,
+          label: string,
+        ): number | null => {
           if (address === 0) return 0;
-          if (BigInt(address) < base)
-            throw new BinaryFormatFailure(
-              "malformed",
-              "Legacy delay-load VA " +
+          if (BigInt(address) < base) {
+            issues.push({
+              code: "malformed_entry",
+              location: hex(descriptorRva + fieldOffset),
+              message:
+                "Legacy delay-load " +
+                label +
+                " VA " +
                 hex(address) +
                 " is below the image base " +
                 hex(base),
-            );
+            });
+            return null;
+          }
           return Number(BigInt(address) - base);
         };
-        try {
-          nameRva = toRva(nameRva);
-          moduleHandleRva = toRva(moduleHandleRva);
-          importAddressTableRva = toRva(importAddressTableRva);
-          importNameTableRva = toRva(importNameTableRva);
-          boundImportRva = toRva(boundImportRva);
-          unloadInformationTableRva = toRva(unloadInformationTableRva);
-        } catch (cause) {
-          issues.push({
-            code: "malformed_entry",
-            location: hex(descriptorRva),
-            message: failureMessage(cause),
-          });
-          continue;
-        }
+        nameRva = toRva(nameRva, 4, "DLL name");
+        moduleHandleRva = toRva(moduleHandleRva, 8, "module handle");
+        importAddressTableRva = toRva(
+          importAddressTableRva,
+          12,
+          "import address table",
+        );
+        importNameTableRva = toRva(importNameTableRva, 16, "import name table");
+        boundImportRva = toRva(boundImportRva, 20, "bound import table");
+        unloadInformationTableRva = toRva(
+          unloadInformationTableRva,
+          24,
+          "unload information table",
+        );
       }
-      const name = readName(nameRva, "Delay-load DLL name");
+      const name =
+        nameRva === null ? null : readName(nameRva, "Delay-load DLL name");
       delayImports.push({
         index,
         name,
@@ -553,21 +565,23 @@ export const parsePeImports = async (
         time_date_stamp: timeDateStamp,
         location: { offset: descriptor, bytes: DELAY_DESCRIPTOR_BYTES },
         functions:
-          importAddressTableRva === 0
-            ? missingTable(
-                descriptorRva,
-                "Delay-load descriptor has a zero import address table RVA; its functions are not decoded",
-              )
-            : importNameTableRva === 0
+          importAddressTableRva === null || importNameTableRva === null
+            ? []
+            : importAddressTableRva === 0
               ? missingTable(
                   descriptorRva,
-                  "Delay-load descriptor has a zero import name table RVA; its address table holds loader thunks rather than names, so its functions are not decoded",
+                  "Delay-load descriptor has a zero import address table RVA; its functions are not decoded",
                 )
-              : await readFunctions(
-                  importNameTableRva,
-                  importAddressTableRva,
-                  virtualAddresses,
-                ),
+              : importNameTableRva === 0
+                ? missingTable(
+                    descriptorRva,
+                    "Delay-load descriptor has a zero import name table RVA; its address table holds loader thunks rather than names, so its functions are not decoded",
+                  )
+                : await readFunctions(
+                    importNameTableRva,
+                    importAddressTableRva,
+                    virtualAddresses,
+                  ),
       });
     }
     delayDirectoryResult = {

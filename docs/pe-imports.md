@@ -78,7 +78,14 @@ coverage with `issues`. A descriptor whose required table RVA is zero (a
 standard `FirstThunk`, or a delay-load import address or name table) is
 reported as `malformed_entry` with no functions, never as a complete empty
 inventory. Legacy virtual addresses below the preferred image base produce
-partial coverage with an issue instead of wrapping into an RVA. PE32+
+partial coverage with a field-specific issue instead of wrapping into an RVA.
+The affected delay-descriptor RVA is `null` (unknown), distinct from an encoded
+zero (absent). Other readable descriptor fields and imports are retained. An
+invalid DLL-name pointer leaves the name unknown; an invalid required import
+table pointer leaves functions undecoded. Invalid optional module-handle, bound,
+or unload pointers do not prevent reading the import tables. Consumers must
+handle nullable delay-descriptor RVAs. Historical numeric values remain valid.
+PE32+
 descriptors using the legacy virtual-address form remain `unsupported_form`;
 only the PE32 legacy form is decoded.
 

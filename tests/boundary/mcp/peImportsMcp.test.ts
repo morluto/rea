@@ -7,6 +7,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   peImportImage,
+  peImportFixtureOffset,
   peImportDirectoryAtRva,
   peImportDirectoryMappingStops,
 } from "../../fixtures/binaryDiagnostics/peImports.js";
@@ -56,6 +57,43 @@ mcpTest(
       expect(
         evidence.normalized_result.imports[0]?.functions.map((row) => row.name),
       ).toEqual(["GetProcAddress", "ExitProcess"]);
+      const legacyBytes = peImportImage({
+        bits: 32,
+        delayVirtualAddresses: true,
+        delayDlls: [
+          {
+            name: "ADVAPI32.dll",
+            functions: [{ name: "RegOpenKeyExW" }, { ordinal: 12 }],
+          },
+        ],
+      });
+      const descriptor = peImportFixtureOffset(
+        legacyBytes.readUInt32LE(152 + 96 + 13 * 8),
+      );
+      for (const offset of [8, 20, 24])
+        legacyBytes.writeUInt32LE(0x1000, descriptor + offset);
+      const legacyPath = join(root, "legacy-optional.exe");
+      await writeFile(legacyPath, legacyBytes);
+      const legacyResponse = await client.callTool({
+        name: "inspect_pe_imports",
+        arguments: { path: legacyPath },
+      });
+      expect(legacyResponse.isError).not.toBe(true);
+      expect(
+        ajv.validate(outputSchema, legacyResponse.structuredContent),
+        JSON.stringify(ajv.errors),
+      ).toBe(true);
+      const legacy = toolContract("inspect_pe_imports").outputSchema.parse(
+        legacyResponse.structuredContent,
+      ).normalized_result;
+      expect(legacy.delay_imports[0]).toMatchObject({
+        name: "ADVAPI32.dll",
+        module_handle_rva: null,
+        bound_import_rva: null,
+        unload_information_table_rva: null,
+        functions: [{ name: "RegOpenKeyExW" }, { ordinal: 12 }],
+      });
+      expect(legacy.coverage.status).toBe("partial");
       for (const [label, bytes, rva] of [
         ["rva", peImportDirectoryAtRva("standard", 0xfffffff0), 0xfffffff0],
         ["mapping", peImportDirectoryMappingStops("standard", 0), 0x40000000],

@@ -747,13 +747,26 @@ it("decodes PE32 delay VAs into RVAs while preserving raw thunks and standard im
   expect(report.imphash.md5).toBe("92cef6cc91a85825f3c8a0516517c66f");
 });
 
-it.each([4, 8, 12, 16, 20, 24])(
-  "does not wrap a legacy descriptor VA below the image base at field %s",
-  async (field) => {
+it.each([
+  [4, "name_rva"],
+  [8, "module_handle_rva"],
+  [12, "import_address_table_rva"],
+  [16, "import_name_table_rva"],
+  [20, "bound_import_rva"],
+  [24, "unload_information_table_rva"],
+] as const)(
+  "retains readable facts after an invalid legacy address at field %s",
+  async (field, name) => {
     const bytes = legacyDelayImage();
     bytes.writeUInt32LE(0x1000, legacyDescriptorOffset(bytes) + field);
     const report = await parse(bytes);
-    expect(report.delay_imports).toEqual([]);
+    const dll = report.delay_imports[0];
+    expect(dll?.[name]).toBeNull();
+    expect(dll?.name).toBe(field === 4 ? null : "ADVAPI32.dll");
+    expect(dll?.functions.map((f) => f.name ?? f.ordinal)).toEqual(
+      field === 12 || field === 16 ? [] : ["RegOpenKeyExW", 12],
+    );
+    expect(peImportsSchema.safeParse(report).success).toBe(true);
     expect(report.coverage.status).toBe("partial");
     expect(report.issues).toContainEqual(
       expect.objectContaining({
@@ -802,4 +815,20 @@ it("charges decoded legacy thunks against the shared function budget", async () 
   await expect(
     parsePeImports(bytes, artifact(bytes), { ...input, max_functions: 3 }),
   ).rejects.toThrow(PeImportLimitFailure);
+});
+
+it("keeps independent address failures and readable imports in the same descriptor", async () => {
+  const bytes = legacyDelayImage();
+  const at = legacyDescriptorOffset(bytes);
+  for (const offset of [8, 20, 24]) bytes.writeUInt32LE(0x1000, at + offset);
+  const report = peImportsSchema.parse(await parse(bytes));
+  expect(report.delay_imports[0]).toMatchObject({
+    name: "ADVAPI32.dll",
+    module_handle_rva: null,
+    bound_import_rva: null,
+    unload_information_table_rva: null,
+  });
+  expect(report.delay_imports[0]?.functions).toHaveLength(2);
+  expect(report.issues).toHaveLength(3);
+  expect(new Set(report.issues.map((issue) => issue.location)).size).toBe(3);
 });
