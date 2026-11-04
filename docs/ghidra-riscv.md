@@ -437,14 +437,15 @@ For the soft- and single-float builds the lane also checks:
 - Retained Evidence states the prototype outcome; the stripped builds have no
   function definitions.
 - The unmodelled build is admitted by its headers, then refused over MCP and
-  the CLI with the bridge's reason, which names its five refused signatures
-  and not the bit-field function.
+  the CLI with the bridge's reason, which names its refused signatures and not
+  the `float[2]` or bit-field functions.
 
 Header-mutated copies check admission. The RV32 double-float image relabelled as
-soft-float (`e_flags` `0x1`) or single-float (`0x3`), refused before these
-lanes, is admitted through them over CLI and MCP. The soft-float image
-relabelled as single-float lacks F and is refused; RV64 soft- and single-float
-and unsupported high bits are refused with their reasons. Failures retain the
+soft-float (`e_flags` `0x1`), refused before that lane, is admitted through it
+over CLI and MCP. Relabelled as single-float (`0x3`) it declares D and is
+refused. The soft-float image relabelled as single-float lacks F and is refused;
+RV64 soft- and single-float and unsupported high bits are refused with their
+reasons. Failures retain the
 diagnostic workspace; successful runs remove it and report the observed process
 lineage.
 
