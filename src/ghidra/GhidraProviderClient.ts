@@ -74,6 +74,7 @@ import {
   isGhidraFunctionOperation,
   parseGhidraFunctionInput,
   parseGhidraFunctionResult,
+  type GhidraFunctionOperation,
 } from "./GhidraFunctionValues.js";
 import {
   isGhidraInventoryOperation,
@@ -103,6 +104,12 @@ import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import {
   ghidraHealthLimitations,
+  ghidraEmptyXrefsLimitation,
+  ghidraEmptyIncomingReferencesLimitation,
+  ghidraEmptyDossierIncomingLimitation,
+  ghidraEmptyExternalOutgoingLimitation,
+  ghidraEmptyInstructionOutgoingLimitation,
+  ghidraEmptyOutgoingReferencesLimitation,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
@@ -154,6 +161,111 @@ interface GhidraExecutionMetadata {
   readonly locations?: readonly EvidenceLocation[];
   readonly relationshipCoverage?: RelationshipCoverage;
 }
+
+/** The ReferenceManager observation record of one function-reference result. */
+const referenceObservationRecord = (
+  normalized: JsonValue,
+): Readonly<Record<string, JsonValue>> | undefined =>
+  typeof normalized === "object" &&
+  normalized !== null &&
+  !Array.isArray(normalized)
+    ? (normalized as Readonly<Record<string, JsonValue>>)
+    : undefined;
+
+const isEmptyArray = (value: JsonValue | undefined | null): boolean =>
+  Array.isArray(value) && value.length === 0;
+
+/**
+ * Caveats for the empty reference directions observed in one record: each
+ * empty facet is qualified independently, because the provider's empty answer
+ * is unresolved, not proof of absence for that direction. External functions
+ * (no local body) and the in-body-filtered dossier incoming list get wording
+ * that matches what was actually observed.
+ */
+const isExternalProcedureRecord = (
+  record: Readonly<Record<string, JsonValue>>,
+): boolean => {
+  const procedure = referenceObservationRecord(record.procedure ?? null);
+  const classification =
+    procedure === undefined
+      ? undefined
+      : referenceObservationRecord(procedure.classification ?? null);
+  return classification?.external === true;
+};
+
+const incomingCaveat = (external: boolean): string =>
+  external
+    ? ghidraEmptyIncomingReferencesLimitation
+    : ghidraEmptyDossierIncomingLimitation;
+
+const outgoingCaveat = (external: boolean): string =>
+  external
+    ? ghidraEmptyExternalOutgoingLimitation
+    : ghidraEmptyOutgoingReferencesLimitation;
+
+const emptyReferenceDirectionCaveats = (
+  record: Readonly<Record<string, JsonValue>>,
+): readonly string[] => {
+  const external = isExternalProcedureRecord(record);
+  return [
+    ...(isEmptyArray(record.incoming_references)
+      ? [incomingCaveat(external)]
+      : []),
+    ...(isEmptyArray(record.outgoing_references)
+      ? [outgoingCaveat(external)]
+      : []),
+  ];
+};
+
+/** Caveat for a procedure_references result that resolved no references. */
+const emptyProcedureReferencesCaveat = (
+  record: Readonly<Record<string, JsonValue>>,
+): string | undefined => {
+  if (!isEmptyArray(record.references)) return undefined;
+  return record.direction === "outgoing"
+    ? outgoingCaveat(isExternalProcedureRecord(record))
+    : ghidraEmptyIncomingReferencesLimitation;
+};
+
+/**
+ * Caveats for an empty ReferenceManager observation, in limitation order:
+ * the provider's empty answer is unresolved, not proof of absence. xrefs
+ * reports per address; the function-reference facets per empty direction.
+ */
+const emptyReferenceCaveat = (
+  operation: GhidraFunctionOperation,
+  normalized: JsonValue,
+): readonly string[] => {
+  if (operation === "xrefs")
+    return isEmptyArray(normalized) ? [ghidraEmptyXrefsLimitation] : [];
+  const record = referenceObservationRecord(normalized);
+  if (record === undefined) return [];
+  if (operation === "procedure_references") {
+    const caveat = emptyProcedureReferencesCaveat(record);
+    return caveat === undefined ? [] : [caveat];
+  }
+  if (operation === "analyze_function")
+    return emptyReferenceDirectionCaveats(record);
+  if (operation === "annotate_native_function") {
+    const dossier = referenceObservationRecord(record.dossier ?? null);
+    return dossier === undefined ? [] : emptyReferenceDirectionCaveats(dossier);
+  }
+  if (operation === "inspect_native_instruction") {
+    // The incoming list and the outgoing references are independent
+    // ReferenceManager facets; each empty facet is qualified on its own.
+    // The outgoing list is only collected for a decoded instruction — other
+    // statuses return before the ReferenceManager is queried at all.
+    return [
+      ...(isEmptyArray(record.incoming_references)
+        ? [ghidraEmptyXrefsLimitation]
+        : []),
+      ...(record.status === "decoded" && isEmptyArray(record.references)
+        ? [ghidraEmptyInstructionOutgoingLimitation]
+        : []),
+    ];
+  }
+  return [];
+};
 
 /** Build one AnalysisClient for an admitted Ghidra target and profile. */
 export const createGhidraProviderClient = (input: {
@@ -846,6 +958,21 @@ export const createGhidraProviderClient = (input: {
         : parseGhidraInventoryResult(operation, called.value);
       if (!result.ok) return result;
       let { value: normalized, ...observation } = result.value;
+      let executionMetadata: GhidraExecutionMetadata = observation;
+      const unresolvedReferences = isGhidraFunctionOperation(operation)
+        ? emptyReferenceCaveat(operation, normalized)
+        : [];
+      if (unresolvedReferences.length > 0) {
+        // An empty list is the provider's observation, not proof: distinguish
+        // "no references were resolved" from "there are no references".
+        executionMetadata = {
+          ...executionMetadata,
+          limitations: [
+            ...(executionMetadata.limitations ?? []),
+            ...unresolvedReferences,
+          ],
+        };
+      }
       if (
         (operation === "search_procedures" || operation === "search_strings") &&
         input.value.mode === "literal" &&
@@ -856,7 +983,7 @@ export const createGhidraProviderClient = (input: {
           normalized,
           input.value.pattern,
         );
-        observation = { ...observation, rawResult: called.value };
+        executionMetadata = { ...executionMetadata, rawResult: called.value };
       }
       if (
         operation === "inspect_native_data_type" &&
@@ -881,7 +1008,10 @@ export const createGhidraProviderClient = (input: {
           const metadata = nativeAotOwner?.readTypeDetail(address);
           if (metadata !== undefined) {
             // Preserve the database reply independently of the derived overlay.
-            observation = { ...observation, rawResult: called.value };
+            executionMetadata = {
+              ...executionMetadata,
+              rawResult: called.value,
+            };
             normalized = jsonValueSchema.parse({
               ...normalized,
               metadata_recovery: metadata,
@@ -889,7 +1019,7 @@ export const createGhidraProviderClient = (input: {
           }
         }
       }
-      return ok(projectExecution(operation, normalized, observation));
+      return ok(projectExecution(operation, normalized, executionMetadata));
     },
     executeIfReady: async (operation, parameters, options) => {
       if (operation !== "list_documents" && operation !== "list_procedures")

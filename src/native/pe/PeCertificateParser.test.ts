@@ -515,6 +515,92 @@ it("keeps subjectKeyIdentifier bytes on the signer", () => {
   ).toThrow(/decoded budget/u);
 });
 
+// X.690 8.3.1 and 8.3.2 apply under BER as well as DER.
+const malformedSerials = [
+  [],
+  [0x00, 0x00],
+  [0x00, 0x7f],
+  [0x00, 0x00, 0x80],
+  [0xff, 0x80],
+  [0xff, 0xff],
+] as const;
+const minimalSerials = [
+  [[0x00], "00"],
+  [[0x7f], "7f"],
+  [[0x00, 0x80], "80"],
+  [[0xff], "ff"],
+  [[0xff, 0x7f], "ff7f"],
+  [[0x11, 0x22, 0x33, 0x44], "11223344"],
+] as const;
+const serialName = derSeq(
+  derSet(
+    derSeq(
+      der(0x06, Buffer.from([0x55, 0x04, 0x03])),
+      der(0x0c, Buffer.from("Fixture")),
+    ),
+  ),
+);
+
+it("rejects empty and non-minimal certificate serialNumber INTEGERs", () => {
+  const certificate = (serial: readonly number[]) =>
+    readAsn1(
+      derSeq(
+        derSeq(
+          der(0x02, Buffer.from(serial)),
+          SHA256_ALG,
+          serialName,
+          derSeq(
+            der(0x17, Buffer.from("250101000000Z")),
+            der(0x17, Buffer.from("260101000000Z")),
+          ),
+          serialName,
+          derSeq(SHA256_ALG, der(0x03, Buffer.from([0]))),
+        ),
+        SHA256_ALG,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  for (const serial of malformedSerials)
+    expect(
+      () => parseCertificate(certificate(serial)),
+      JSON.stringify(serial),
+    ).toThrow(/TBSCertificate serialNumber INTEGER is (empty|not minimally)/u);
+  for (const [serial, hex] of minimalSerials)
+    expect(parseCertificate(certificate(serial)).serial_hex).toBe(hex);
+});
+
+it("rejects empty and non-minimal SignerInfo serialNumber INTEGERs", () => {
+  const payload = (serial: readonly number[]) =>
+    contentInfo(
+      derSeq(
+        derInt(1),
+        derSet(SHA256_ALG),
+        derSeq(DATA_OID),
+        derSet(
+          derSeq(
+            derInt(1),
+            derSeq(serialName, der(0x02, Buffer.from(serial))),
+            SHA256_ALG,
+            SHA256_ALG,
+            der(0x04, Buffer.from([1])),
+          ),
+        ),
+      ),
+    );
+  for (const serial of malformedSerials)
+    expect(
+      () => parse(peCertificateFixture(false, payload(serial))),
+      JSON.stringify(serial),
+    ).toThrow(
+      /SignerInfo issuerAndSerialNumber serialNumber INTEGER is (empty|not minimally)/u,
+    );
+  for (const [serial, hex] of minimalSerials)
+    expect(
+      parse(peCertificateFixture(false, payload(serial))).entries[0]?.pkcs7
+        ?.signers[0]?.serial_hex,
+    ).toBe(hex);
+});
+
 it("fails a truncated issuerAndSerialNumber instead of dropping the signer", () => {
   const signer = derSeq(
     derInt(1),
