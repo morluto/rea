@@ -269,12 +269,18 @@ export const scanBinaryPlistScalars = (
   if (countRaw > BigInt(capacity)) return result(true);
   const count = Number(countRaw);
   if (referenceWidth < 1) return result(true);
+  const offsetTableEnd = offsetTable + count * offsetWidth;
   const objectOffsets: number[] = [];
   let incomplete = false;
   for (let index = 0; index < count; index += 1) {
     const rawOffset = sourceLayout.objectOffset(index);
     const offset = rawOffset > safeMaximum ? undefined : Number(rawOffset);
-    if (offset === undefined || offset < 8 || offset >= offsetTable) {
+    if (
+      offset === undefined ||
+      offset < 8 ||
+      offset >= trailer ||
+      (offset >= offsetTable && offset < offsetTableEnd)
+    ) {
       incomplete = true;
       continue;
     }
@@ -286,7 +292,7 @@ export const scanBinaryPlistScalars = (
     const encodedEnd = binaryPlistObjectEnd(
       bytes,
       offset,
-      trailer,
+      offset < offsetTable ? offsetTable : trailer,
       referenceWidth,
     );
     if (encodedEnd === undefined) {
@@ -324,6 +330,7 @@ export const scanBinaryPlistScalars = (
     const marker = bytes[offset] ?? 0;
     const type = marker >> 4;
     if (type === 3 && marker === 0x33) {
+      if (offset + 9 > offsetTable) incomplete = true;
       continue;
     }
     if (type !== 1 && type !== 2) continue;

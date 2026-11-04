@@ -144,6 +144,35 @@ describe("keyed archive scalar projection", () => {
     );
   });
 
+  it("preserves exact integer precision when a string follows the offset table", () => {
+    const hex =
+      "62706c6973743030d4010203040506070b59246172636869766572582476657273696f6e58246f626a656374735424746f705f100f4e534b65796564417263686976657212000186a0a308090a55246e756c6c5568656c6c6f130020000000000001d10c0d54726f6f74800208111b242d3244494d7a5962656a5568656c6c6f0000000000000101000000000000000e0000000000000000000000000000006c";
+    const bytes = Buffer.from(hex, "hex");
+    const graph = decodeKeyedArchiveBytes(bytes, {
+      root: "root",
+      offset: 0,
+      limit: 10,
+    });
+
+    expect(graph.objects).toContainEqual(
+      expect.objectContaining({
+        id: 2,
+        status: "observed",
+        value: { $plist_type: "integer", decimal: "9007199254740993" },
+      }),
+    );
+    expect(graph.objects).toContainEqual(
+      expect.objectContaining({
+        id: 1,
+        status: "observed",
+        value: "hello",
+      }),
+    );
+    expect(graph.limitations).not.toContainEqual(
+      expect.stringMatching(/metadata could not be completely observed/u),
+    );
+  });
+
   it("rejects a reachable date whose payload enters the offset table", () => {
     expect(() =>
       decodeKeyedArchiveBytes(binaryArchiveDateCrossingOffsetTable(), {
