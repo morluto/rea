@@ -1,7 +1,6 @@
 import {
   nativeAddressListSchema,
   nativeObservationSourceSchemas,
-  traceContainingProcedureSchema,
 } from "../domain/native/nativeObservation.js";
 import { overviewInventoryCoverageSchema } from "../domain/native/inventoryCoverage.js";
 import {
@@ -10,6 +9,7 @@ import {
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  nativeFeatureTraceSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   artifactInventorySummaryViewResultSchema,
@@ -18,7 +18,7 @@ import {
   managedArtifactSummaryViewResultSchema,
   managedMemberSummaryViewResultSchema,
 } from "../domain/analysisView/analysisView.js";
-import { literalFeatureMatchSchema } from "../domain/native/literalFeatureMatch.js";
+import { literalFeatureTraceSchema } from "../domain/native/literalFeatureTrace.js";
 import { byteEntropySchema } from "../domain/native/byteEntropy.js";
 import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
 import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
@@ -263,33 +263,9 @@ export const officialOutputSchemas = {
   xrefs: evidenceResultOf(nativeAddressListSchema),
 } as const satisfies Readonly<Record<string, z.ZodObject>>;
 
-const literalTraceOutput = evidenceResultOf(
-  z.object({
-    query: z.string(),
-    search_mode: z.literal("literal"),
-    matches: z.array(literalFeatureMatchSchema),
-    references: z.array(
-      z.object({
-        target_address: z.string(),
-        source_address: z.string(),
-        containing_procedure: traceContainingProcedureSchema,
-        source_classifications: z
-          .array(
-            z.strictObject({
-              kind: z.literal("stored_pointer"),
-              provenance: z.string(),
-              width: z.int().positive(),
-            }),
-          )
-          .exactOptional()
-          .describe(
-            "Provider-reported source classifications; omission means none were supplied. The list need not exhaust all kinds.",
-          ),
-      }),
-    ),
-    truncated: z.boolean(),
-    residual_unknowns: z.array(z.string()),
-  }),
+const literalTraceOutput = analysisDetailOutputSchemaOf(
+  literalFeatureTraceSchema,
+  nativeFeatureTraceSummaryViewResultSchema,
 );
 
 const callPathTraceOutput = evidenceResultOf(

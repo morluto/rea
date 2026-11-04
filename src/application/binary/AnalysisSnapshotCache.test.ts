@@ -777,7 +777,9 @@ describe("analysis snapshot cache policy", () => {
       );
     },
   );
+});
 
+describe("document-scoped snapshot admission", () => {
   it("retains caller observations without a document while refusing to replay them", () => {
     const descriptor: CapabilityDescriptor = {
       operation: "procedure_callers",
@@ -829,6 +831,35 @@ describe("analysis snapshot cache policy", () => {
         document: "fixture",
       }),
     ).toBe(true);
+    const ghidra = {
+      ...pseudocode,
+      provider: { ...pseudocode.provider, id: "ghidra" },
+    };
+    expect(
+      isSnapshotCacheable("procedure_pseudo_code", ghidra, parameters),
+    ).toBe(false);
+    expect(
+      isSnapshotCacheable(
+        "procedure_pseudo_code",
+        ghidra,
+        parameters,
+        "one-shot-target",
+      ),
+    ).toBe(true);
+    for (const refused of [
+      pseudocode,
+      { ...ghidra, cachePolicy: "live" as const },
+      { ...ghidra, effects: { ...ghidra.effects, mutatesArtifact: true } },
+      { ...ghidra, effects: { ...ghidra.effects, changesPermissions: true } },
+    ])
+      expect(
+        isSnapshotCacheable(
+          "procedure_pseudo_code",
+          refused,
+          parameters,
+          "one-shot-target",
+        ),
+      ).toBe(false);
   });
 });
 
@@ -1218,6 +1249,71 @@ it("does not replay pre-envelope call graphs under the revised workflow profile"
   ).toBe(false);
 });
 
+it("keeps older value-trace Evidence as history without replaying its source IDs", () => {
+  const cache = new AnalysisSnapshotCache();
+  const target = ANALYSIS_SNAPSHOT_TARGET;
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const operation = "trace_native_values" as const;
+  const parameters = { procedure: "0x1000" };
+  const oldProfile = workflowAnalysisProfile(profile);
+  const oldResult = {
+    seed: "0x1000",
+    target_sha256: target.sha256,
+    nodes: [],
+    edges: [],
+    procedures: [
+      {
+        address: "0x1000",
+        depth: 0,
+        evidence_id: `ev_${"a".repeat(64)}`,
+        provider: profile.provider.id,
+        analysis_profile_digest: profile.digest,
+      },
+    ],
+    unknowns: [],
+    total_nodes: 0,
+    total_edges: 0,
+    decompilations: 1,
+    next_offset: null,
+    page_truncated: false,
+    traversal: { status: "complete" },
+    truncated: false,
+    limitations: [],
+  };
+  const execution = {
+    ...createAnalysisExecution(oldResult, REA_WORKFLOW_PROVIDER, {
+      subject: target,
+    }),
+    analysisProfile: oldProfile,
+  };
+  cache.recordWorkflow({ target, profile, operation, parameters, execution });
+  const evidence = createEvidence(target, REA_WORKFLOW_PROVIDER, {
+    operation,
+    parameters,
+    result: oldResult,
+    confidence: "derived",
+    analysisProfile: oldProfile,
+  });
+  const exported = cache.export(
+    target,
+    profile,
+    createEvidenceBundle([evidence]),
+  );
+  if (!exported.ok) throw exported.error;
+  const snapshot = parseAnalysisSnapshot(exported.value);
+  expect(snapshot.evidence_bundle.records).toContainEqual(evidence);
+  expect(
+    snapshotEvidenceForQuery(snapshot, {
+      target,
+      bindingProfile: profile,
+      operation,
+      parameters,
+      provider: REA_WORKFLOW_PROVIDER,
+      evidenceProfile: workflowAnalysisProfile(profile, operation),
+    }),
+  ).toBeUndefined();
+});
+
 it("declines source-bearing snapshot entries while replaying omitted and empty source controls", () => {
   const cache = new AnalysisSnapshotCache();
   const target = ANALYSIS_SNAPSHOT_TARGET;
@@ -1357,4 +1453,16 @@ it("revises the trace_feature workflow profile so earlier results are not replay
     workflowAnalysisProfile(profile, "trace_call_path"),
     "other workflows keep their profile",
   ).toEqual(workflowAnalysisProfile(profile));
+});
+
+it("binds native value-trace absence semantics without changing other workflows", () => {
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const valueTrace = workflowAnalysisProfile(profile, "trace_native_values");
+  expect(valueTrace.parameters.value_flow_absence).toBe(
+    "recorded-versus-unavailable-v1",
+  );
+  expect(valueTrace.digest).not.toBe(workflowAnalysisProfile(profile).digest);
+  expect(workflowAnalysisProfile(profile, "trace_call_path")).toEqual(
+    workflowAnalysisProfile(profile),
+  );
 });

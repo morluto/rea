@@ -36,6 +36,7 @@ import type {
   AnalysisExecution,
   AnalysisOperation,
   CapabilityDescriptor,
+  ExecutionOptions,
 } from "../AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
@@ -94,6 +95,16 @@ const replayDocumentSelected = (
   !DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
   typeof parameters.document === "string";
 
+/** Ghidra's private Program belongs to this one-shot target; GUI defaults do not. */
+const isOneShotPseudocode = (
+  operation: AnalysisOperation,
+  descriptor: CapabilityDescriptor | undefined,
+  context: ExecutionOptions["snapshotContext"],
+): boolean =>
+  context === "one-shot-target" &&
+  operation === "procedure_pseudo_code" &&
+  descriptor?.provider.id === "ghidra";
+
 /**
  * Caller and callee walks omit `document`. Their observations are still
  * Evidence. Other document-scoped reads, including `procedure_pseudo_code`
@@ -112,14 +123,18 @@ export const isSourceEvidenceRetainable = (
   operation: AnalysisOperation,
   descriptor: CapabilityDescriptor | undefined,
   parameters: Readonly<Record<string, JsonValue>>,
-  options: { readonly requiresSourceEvidence?: boolean } = {},
+  options: {
+    readonly snapshotContext?: ExecutionOptions["snapshotContext"];
+    readonly requiresSourceEvidence?: boolean;
+  } = {},
 ): descriptor is CapabilityDescriptor =>
   !STATEFUL_OPERATIONS.has(operation) &&
   !RESOURCE_SCOPED_OPERATIONS.has(operation) &&
   (!DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
     typeof parameters.document === "string" ||
     DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation) ||
-    options.requiresSourceEvidence === true) &&
+    options.requiresSourceEvidence === true ||
+    isOneShotPseudocode(operation, descriptor, options.snapshotContext)) &&
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&
@@ -133,9 +148,13 @@ export const isSnapshotCacheable = (
   operation: AnalysisOperation,
   descriptor: CapabilityDescriptor | undefined,
   parameters: Readonly<Record<string, JsonValue>>,
+  context?: ExecutionOptions["snapshotContext"],
 ): descriptor is CapabilityDescriptor =>
-  isSourceEvidenceRetainable(operation, descriptor, parameters) &&
-  replayDocumentSelected(operation, parameters) &&
+  isSourceEvidenceRetainable(operation, descriptor, parameters, {
+    snapshotContext: context,
+  }) &&
+  (replayDocumentSelected(operation, parameters) ||
+    isOneShotPseudocode(operation, descriptor, context)) &&
   descriptor.cachePolicy !== "live";
 
 /** Windows Ghidra must admit the selected source through its native snapshot owner. */
@@ -544,6 +563,7 @@ export class AnalysisSnapshotCache {
     readonly operation: AnalysisOperation;
     readonly parameters: Readonly<Record<string, JsonValue>>;
     readonly execution: AnalysisExecution;
+    readonly evidence?: Evidence;
   }): void {
     const { target, profile, operation, parameters, execution } = input;
     this.select(target, profile);
@@ -591,6 +611,9 @@ export class AnalysisSnapshotCache {
     else
       this.#replayBindings.set(entry.query_id, {
         evidenceId: execution.evidenceId,
+        ...(input.evidence === undefined
+          ? {}
+          : { sourceEvidence: Object.freeze([input.evidence]) }),
       });
   }
 

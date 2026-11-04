@@ -3,7 +3,7 @@ import type { z } from "zod";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { TraceContainingProcedure } from "../domain/native/nativeObservation.js";
+import type { LiteralFeatureReference } from "../domain/native/literalFeatureTrace.js";
 import { err, type Result } from "../domain/result.js";
 import {
   enhancedInputSchemas,
@@ -18,7 +18,8 @@ export interface PartialEnhancedFailure {
   readonly partialResult: JsonValue;
 }
 export type EnhancedOutcome =
-  Result<JsonValue, AnalysisError> | PartialEnhancedFailure;
+  | Result<JsonValue, AnalysisError>
+  | PartialEnhancedFailure;
 export type EnhancedResult = Promise<EnhancedOutcome>;
 
 /** Keep the stopping failure primary while retaining the admitted result. */
@@ -26,17 +27,7 @@ export const failedWithPartialResult = (
   error: AnalysisError,
   partialResult: JsonValue,
 ): PartialEnhancedFailure => ({ ok: false, error, partialResult });
-export type TraceReference = {
-  readonly target_address: string;
-  readonly source_address: string;
-  readonly containing_procedure: TraceContainingProcedure;
-  /** Omission means the provider supplied no classification for this site. */
-  readonly source_classifications?: {
-    readonly kind: "stored_pointer";
-    readonly provenance: string;
-    readonly width: number;
-  }[];
-};
+export type TraceReference = LiteralFeatureReference;
 
 /** One enhanced call whose input was parsed at its owning adapter boundary. */
 export type ValidatedEnhancedCall = {
