@@ -543,6 +543,7 @@
 * **json:** preserve configuration and capture data at admission ([4ca3032](https://github.com/morluto/rea/commit/4ca3032e7fe323bda8ad1a55af102ab99a5d39c1))
 * **kuna:** bind cache exports to their producing inputs ([8b7ee48](https://github.com/morluto/rea/commit/8b7ee48a46ba4176f4bf19225dc6c80efb020335))
 * **kuna:** bind cached export reads to verified file state ([bf876ef](https://github.com/morluto/rea/commit/bf876efbaa48a0e6edb515c65b0682175cb9441d))
+* **kuna:** clarify single-function fallback evidence ([#8742](https://github.com/morluto/rea/issues/8742)) ([9a79ee8](https://github.com/morluto/rea/commit/9a79ee8e9e2995bd9845e4929ed2f74c9b890516))
 * **kuna:** give actionable lookup recovery ([#8656](https://github.com/morluto/rea/issues/8656)) ([d496d80](https://github.com/morluto/rea/commit/d496d803a4f50dc82248db0630042894c1136d00))
 * **kuna:** keep timeout recovery from changing workers ([#8687](https://github.com/morluto/rea/issues/8687)) ([193e01a](https://github.com/morluto/rea/commit/193e01abb15917cb4d1ac0f630645f526c02754c))
 * **kuna:** omit Mach-O data symbols from the procedure inventory ([#8335](https://github.com/morluto/rea/issues/8335)) ([a36c9dd](https://github.com/morluto/rea/commit/a36c9dd9c8d2ff1a1a3d1d16ad30753b84b7946d))
@@ -595,6 +596,7 @@
 * **native:** classify legacy MZ signatures before COFF ([6941d5a](https://github.com/morluto/rea/commit/6941d5ab92059299761e7508e83aba28aa4123f6))
 * **native:** explain categories whose class reference names no class ([#8006](https://github.com/morluto/rea/issues/8006)) ([124e97e](https://github.com/morluto/rea/commit/124e97eac591724cfc22435f01d586f334789706))
 * **native:** find procedures by the secondary names exact lookup accepts ([#8520](https://github.com/morluto/rea/issues/8520)) ([44b6384](https://github.com/morluto/rea/commit/44b638400940d24b24b3a73add010933ca4fc9fb))
+* **native:** guide unreadable journal recovery ([#8809](https://github.com/morluto/rea/issues/8809)) ([fdfc210](https://github.com/morluto/rea/commit/fdfc21087916c0a1e90974447b777b6d69895acb))
 * **native:** keep UI handler offsets distinct from method records ([22c493a](https://github.com/morluto/rea/commit/22c493ad5c9d2fc9825e28ab0f6cf9fb1fdf0871))
 * **native:** order Objective-C category records ([21f12b8](https://github.com/morluto/rea/commit/21f12b896e5968c201dcf437cbc42534ba29a075))
 * **native:** own Mach-O load commands in binary reader ([#7952](https://github.com/morluto/rea/issues/7952)) ([640e19d](https://github.com/morluto/rea/commit/640e19d79d13c8aa767909cdbac64556f6879f46))
@@ -826,6 +828,7 @@
 * **workers:** retain cancellation through final cleanup ([c66729e](https://github.com/morluto/rea/commit/c66729eca902a21dd70f50ce107fec7598be0f31))
 * **xml:** reject ambiguous namespace attribute identities ([#7785](https://github.com/morluto/rea/issues/7785)) ([edc908a](https://github.com/morluto/rea/commit/edc908af582d757e427c55eafe1a02fa0c42c0eb))
 * **xml:** reject ambiguous namespace attribute identities ([#7991](https://github.com/morluto/rea/issues/7991)) ([35ea02d](https://github.com/morluto/rea/commit/35ea02d27ed1900f6080ad5cb1c6f86d7e87dd05))
+* **xrefs:** guide symbol lookup recovery ([#8753](https://github.com/morluto/rea/issues/8753)) ([eac28b2](https://github.com/morluto/rea/commit/eac28b20478094ecdeb196b7301f80bbe6efd758))
 * **xrefs:** trust provider address validation ([5241428](https://github.com/morluto/rea/commit/52414282b95b560f1c11a2f694ac03fceceeebe5))
 * **zip:** validate admitted source throughout reads ([e7f29f8](https://github.com/morluto/rea/commit/e7f29f8b8f36acfccc10003ef3d6f50ace0f0431))
 
