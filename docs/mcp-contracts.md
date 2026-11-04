@@ -500,10 +500,12 @@ result's `_meta`, whether the call succeeded or failed:
 ```
 
 The marker is declared once per tool contract (`returnsTargetContent`) and is
-on by default: `export_evidence_bundle`, `record_unknown`, `search_guidance`,
-and `read_guidance_section` omit it. The first two contain only REA session
-state or caller-supplied values; the guidance tools return REA's own installed
-documentation, not text from an analysis target. Tools whose results or errors
+on by default: `inspect_analysis_settings`, `update_analysis_settings`,
+`export_evidence_bundle`, `record_unknown`, `guided_workflows`,
+`search_guidance`, and `read_guidance_section` omit it. The first four contain
+only REA session state or caller-supplied values; the workflow and guidance
+tools return REA's own installed workflows and documentation, not text from an
+analysis target. Tools whose results or errors
 can include provider, launcher, or device output stay marked, including
 `binary_session` (provider failure
 reasons and availability diagnostics), `close_binary` (provider cleanup
@@ -1705,7 +1707,9 @@ JSON Schema:
 
 - Annotation prose leaves the advertised form: nested property descriptions,
   literal examples, defaults, and titles are dropped. The root keeps its
-  description because it states the accepted input groups.
+  description because it states the accepted input groups. A root `detail`
+  property keeps its description because it selects between complete Evidence
+  and a bounded summary.
 - Schema-local references are inlined within the budget. Kimi Code expands
   references before sending provider requests, so sharing definitions cannot
   establish the provider-facing size. Expansion stops at the budget before
