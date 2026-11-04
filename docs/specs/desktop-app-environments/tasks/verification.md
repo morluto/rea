@@ -1,6 +1,6 @@
 # Verification
 
-Run on 2026-11-04 on top of the vendor packages branch (`b364f4e95`): gates
+Run on 2026-11-04 on top of the vendor packages branch (`7a6ac88ab`): gates
 and source tests on macOS with Node v22.23.1 and Python 3.11; Linux tests in
 the `rea-desktop-e2e` Ubuntu 24.04 arm64 container with Node v24.22.1 and
 Python 3.12.3; agentenv-framework 0.9.1431 from the runner virtual
@@ -12,13 +12,10 @@ environment, with local Docker for the computer run.
   then `knip`, `jscpd`, `docs:check`, `verify:test-discovery` and
   `verify:architecture-guards`: passed, with no lint, typed-lint or
   duplication findings in the new or touched files.
-- `docs:build` stops at line 24 of the vendor packages spec, a code span with
-  an angle-bracket placeholder broken across lines, fixed on its own branch.
-  A copy of the docs tree with that line escaped builds, including the new
-  guide and this step's spec pages.
+- `docs:build`: passed, including the new guide and this step's spec pages.
 - `npx vitest run src/domain/desktop src/application/desktop src/desktop`:
-  257 passed and 14 skipped on macOS; 270 passed and 1 skipped in the
-  container.
+  258 passed and 14 skipped on macOS; with the two Python boundary tests, 273
+  passed and 1 skipped in the container.
 - CLI boundary tests `cliInputSchemaRequired`, `cliToolCoverage` and
   `cliStartupImports`, `setupSkill`, and the Python boundary tests
   `desktopExportPython` and `desktopTaskPython` (macOS and container): passed.
@@ -66,6 +63,24 @@ app through the computer's card at `/svc/mousepad` under the run's grant. On
 the seed it scored 0 (`milk-listed` false, `bread-kept` true); after
 `load_artifact` put the captured end-state `todo.txt` in `Documents` it
 scored 1. Both sandboxes were torn down.
+
+A fresh capture of the same edit, exported with a task of three checks
+(`milk` and `bread` present, `one-milk` counting exactly one "buy milk"
+line), was then run without an agent and driven through the computer's own
+input tools:
+
+- `agent-env run --dry-run` of the bundle planned the eval's one task,
+  `add-milk`, with Claude Code as the solver.
+- A probe task (`deploy_env`, then the exported verifier) ran with `--keep`:
+  the `env_outcome_verifier` step scored 0, recording `milk` and `one-milk`
+  false and `bread` true.
+- On that computer, `computer_click`, `computer_key` and `computer_type`
+  added "buy milk" in Mousepad and saved it with Control+S. The exported
+  `verify.py`, called under the computer's control-token grant as the step
+  calls it, then passed all three checks. A second "buy milk" line failed
+  only `one-milk` (2 lines), and after `data/reset` the checks read as on the
+  seed again.
+- The sandbox was torn down with no container left.
 
 ## Limits of this verification
 
