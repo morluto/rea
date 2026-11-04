@@ -10,6 +10,7 @@ import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import {
   HOME,
   capture,
+  change,
   checkpoint,
   readers,
   retained,
@@ -52,6 +53,37 @@ const exportWithSources = async (
     },
   });
   return result;
+};
+
+/** Export the fixture capture walked under other spellings, with its baseline files and files created later. */
+const exportWalked = (walk: {
+  readonly home?: string;
+  readonly stateDirectories: readonly string[];
+  readonly baseline: readonly ReturnType<typeof retained>[];
+  readonly created?: readonly (readonly [string, string])[];
+}) => {
+  const local = capture();
+  const home = walk.home ?? HOME;
+  const created = walk.created ?? [];
+  return exportCapture({
+    ...local,
+    host: { ...local.host, home },
+    state: {
+      ...local.state,
+      roots: [home],
+      content_roots: [...walk.stateDirectories],
+      state_directories: [...walk.stateDirectories],
+      checkpoints: [
+        checkpoint("baseline", "baseline", [], [...walk.baseline]),
+        checkpoint(
+          "edited",
+          "request",
+          created.map(([path, text]) => change(path, { after: text })),
+          created.map(([path, text]) => retained(path, text)),
+        ),
+      ],
+    },
+  });
 };
 
 /** A SafeOutputTree method as it is before a spy replaces it. */
@@ -195,6 +227,76 @@ describe("exportDesktopApplication", () => {
       unseeded_files: [".local/share/notes/cache.bin"],
     });
     expect(result.limitations.join("\n")).toContain("/media/usb");
+  });
+});
+
+describe("exportDesktopApplication home paths", () => {
+  const settings = "[ui]\nwrap=false\n";
+  const seed = (directory: string, path: string) =>
+    readFile(join(directory, "envs/notes/seed", path), "utf8");
+
+  it("keeps a file under a symlinked home at its path under the walked home", async () => {
+    const home = "/data/ada";
+    const { result, directory } = await exportWalked({
+      home,
+      stateDirectories: [`${home}/.config/notes`, `${home}/.local/share/notes`],
+      baseline: [retained(`${home}/.config/notes/profiles/a.ini`, settings)],
+    });
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      paths: [".config/notes"],
+      seed_files: [".config/notes/profiles/a.ini"],
+    });
+    expect(await seed(directory, ".config/notes/profiles/a.ini")).toBe(
+      settings,
+    );
+  });
+
+  it("does not pair walked state directories by position when the capture lists a different number", async () => {
+    const { result } = await exportWalked({
+      stateDirectories: [
+        `${HOME}/.config/notes`,
+        "/data/notes",
+        `${HOME}/.local/share/notes`,
+      ],
+      baseline: [retained("/data/notes/notes.db", "SQLite format 3\0v1")],
+    });
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({ seed_files: [] });
+  });
+
+  it("respells a file in nested walked state directories by the innermost", async () => {
+    const { result } = await exportWalked({
+      stateDirectories: ["/data/notes", "/data/notes/share"],
+      baseline: [
+        retained("/data/notes/settings.ini", settings),
+        retained("/data/notes/share/notes.db", "SQLite format 3\0v1"),
+      ],
+    });
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      paths: [".config/notes", ".local/share/notes"],
+      seed_files: [".config/notes/settings.ini", ".local/share/notes/notes.db"],
+    });
+  });
+
+  it("keeps the file present before the capture when two map to one home path and names the other", async () => {
+    const later = `${HOME}/.config/notes/settings.ini`;
+    const { result, directory } = await exportWalked({
+      stateDirectories: ["/data/notes", `${HOME}/.local/share/notes`],
+      baseline: [retained("/data/notes/settings.ini", settings)],
+      created: [[later, "[ui]\nwrap=true\n"]],
+    });
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      seed_files: [".config/notes/settings.ini"],
+    });
+    expect(await seed(directory, ".config/notes/settings.ini")).toBe(settings);
+    expect(result.limitations.join("\n")).toContain(`leaves out ${later}`);
   });
 });
 

@@ -16,6 +16,7 @@ import {
   fromUbuntuNobleArchive,
   DESKTOP_EXPORT_FRAMEWORK_VERSION,
   appModuleFile,
+  capturedHomePath,
   className,
   environmentName,
   launchCommand,
@@ -25,7 +26,9 @@ import {
   renderReadme,
   renderSkill,
   renderSmokeTask,
+  stateFilesByHomePath,
   type DesktopAppExportPlan,
+  type HomePathCollision,
 } from "../../domain/desktop/appExport.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import {
@@ -123,51 +126,13 @@ type FailedRelease = Extract<
   { readonly kind: "failed" }
 >;
 
-const homeRelative = (home: string, path: string) =>
-  path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
-
-/** A capture path in its logical spelling; the capture lists physical state directories in the logical ones' order. */
-const logicalSpelling = (capture: DesktopApplicationCapture) => {
-  const logical = capture.application.state_directories;
-  const renamed = (capture.state.state_directories ?? []).flatMap(
-    (physical, index) => {
-      const path = logical[index]?.path;
-      return path === undefined || path === physical
-        ? []
-        : [{ physical, logical: path }];
-    },
-  );
-  return (path: string): string => {
-    const directory = renamed.find(({ physical }) =>
-      isWithinAny(path, [physical]),
-    );
-    return directory === undefined
-      ? path
-      : `${directory.logical}${path.slice(directory.physical.length)}`;
-  };
-};
-
-/** The state view's files by logical home path; dconf databases are settings, not files. */
-const filesByHomePath = (
-  capture: DesktopApplicationCapture,
-  state: DesktopApplicationState,
-): ReadonlyMap<string, StatePath> => {
-  const spell = logicalSpelling(capture);
-  const files = new Map<string, StatePath>();
-  for (const path of state.paths) {
-    const home = homeRelative(capture.host.home, spell(path.path));
-    if (home !== null && path.format !== "dconf") files.set(home, path);
-  }
-  return files;
-};
-
 /** Files under the owned paths that existed before the capture without retained bytes, in the state view or omitted. */
 const unseededFiles = (
   capture: DesktopApplicationCapture,
+  homePath: (path: string) => string | null,
   files: ReadonlyMap<string, StatePath>,
   paths: readonly string[],
 ): readonly string[] => {
-  const spell = logicalSpelling(capture);
   const listed = [...files]
     .filter(
       ([home, path]) =>
@@ -177,7 +142,7 @@ const unseededFiles = (
     )
     .map(([home]) => home);
   const omitted = capture.state.omitted_content
-    .map(({ path }) => homeRelative(capture.host.home, spell(path)))
+    .map(({ path }) => homePath(path))
     .filter(
       (home): home is string =>
         home !== null && isWithinAny(home, paths) && !files.has(home),
@@ -220,6 +185,7 @@ const planExport = (
 ): {
   readonly plan: DesktopAppExportPlan;
   readonly seeds: ReadonlyMap<string, string>;
+  readonly collisions: readonly HomePathCollision[];
 } => {
   const { application, host } = capture;
   const { aptPackage, windowClass } = admitApplication(capture);
@@ -237,14 +203,18 @@ const planExport = (
       "name",
       "Pass --name with lowercase letters, digits and hyphens.",
     );
-  const files = filesByHomePath(capture, state);
+  const homePath = capturedHomePath(capture);
+  const { files, collisions } = stateFilesByHomePath(state.paths, homePath);
   const withRole = (role: string) =>
     [...files].filter(([, path]) => path.role === role).map(([home]) => home);
   const paths = ownedPaths(
     withRole("application_state"),
     withRole("document"),
-    application.state_directories
-      .map((entry) => homeRelative(host.home, entry.path))
+    [
+      ...application.state_directories.map((entry) => entry.path),
+      ...(capture.state.state_directories ?? []),
+    ]
+      .map(homePath)
       .filter((path): path is string => path !== null),
   );
   const seeds = new Map<string, string>();
@@ -272,11 +242,11 @@ const planExport = (
     capturedHome: host.home,
     seedFiles: [...seeds.keys()].sort(),
     textSeeds: textSeeds.sort(),
-    unseededFiles: unseededFiles(capture, files, paths),
+    unseededFiles: unseededFiles(capture, homePath, files, paths),
     dconf: baselineDconf(state).text,
     captureEvidenceId: evidenceId,
   };
-  return { plan, seeds };
+  return { plan, seeds, collisions };
 };
 
 const EXPORT_LIMITATIONS = [
@@ -402,7 +372,7 @@ const runExport = async (
   const state = desktopApplicationStateSchema.parse(
     stateEvidence.normalized_result,
   );
-  const { plan, seeds } = planExport(
+  const { plan, seeds, collisions } = planExport(
     request,
     capture,
     state,
@@ -443,6 +413,10 @@ const runExport = async (
       : [
           `The application held files open in ${opened.join(", ")}, whose starting content the capture did not retain, so nothing there is seeded.`,
         ]),
+    ...collisions.map(
+      ({ home, kept, dropped }) =>
+        `${dropped} and ${kept} both map to ~/${home}; the export uses ${kept} and leaves out ${dropped}.`,
+    ),
   ];
   const result: DesktopExportResult = {
     directory: request.directory,
