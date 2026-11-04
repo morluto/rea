@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { DesktopApplicationCapture } from "../domain/desktop/desktopCapture.js";
 import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -43,7 +44,7 @@ export class DesktopContentStore {
   readonly #storedSizes = new Set<number>();
   readonly #omissions: Omission[] = [];
   /** Handles whose close failed; kept owned so `close` can retry them. */
-  readonly #unclosed: OwnedFileHandle[] = [];
+  readonly #unclosed = new ArtifactResourceScope();
   /** The partial file being written, removed by `discard` if it was left. */
   #writing: string | undefined;
   #remainingBytes: number;
@@ -80,12 +81,12 @@ export class DesktopContentStore {
     return this.#directory;
   }
 
-  /** Retry every handle whose close failed during a read; rejects if one still fails. */
-  async close(): Promise<void> {
-    while (this.#unclosed.length > 0) {
-      await this.#unclosed[0]?.close();
-      this.#unclosed.shift();
-    }
+  /**
+   * Retry every handle whose close failed during a read. A handle that fails
+   * again stays owned, and the rejection carries its exact cleanup lease.
+   */
+  close(): Promise<void> {
+    return this.#unclosed.retryCleanup();
   }
 
   /**
@@ -160,8 +161,8 @@ export class DesktopContentStore {
       return { kind: "omitted", reason: "budget_exhausted" };
     const options = {
       symlinks: "reject" as const,
-      retainFailedClose: (owner: OwnedFileHandle) => {
-        this.#unclosed.push(owner);
+      retainFailedClose: (handle: OwnedFileHandle) => {
+        this.#unclosed.retain({ kind: "file-handle", resource: path, handle });
       },
       ...(signal === undefined ? {} : { signal }),
     };

@@ -73,7 +73,9 @@ cannot be verified after a second attempt, the capture is still written, and
 the command then fails, naming the run token and process group that may
 remain. Interrupting the command (Ctrl-C) ends the session the same way
 without a further checkpoint; the capture is still written with end reason
-`cancelled`, and the command exits with status 130.
+`cancelled`, and the command exits with status 130. Interrupted before the
+application is launched, the command writes no capture and removes the
+content it had retained.
 
 If the capture fails for any other reason before `capture.json` is written,
 the application is closed the same way and the content already retained is

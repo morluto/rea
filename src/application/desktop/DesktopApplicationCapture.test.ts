@@ -1,13 +1,21 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { desktopApplicationCaptureSchema } from "../../domain/desktop/desktopCapture.js";
 import type { SessionRequest } from "../../desktop/DesktopApplicationSession.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   captureDesktopApplication,
   type DesktopCaptureRequest,
@@ -189,6 +197,27 @@ describe("captureDesktopApplication refusals", () => {
     expect(JSON.stringify(failed)).toContain("report failed");
     expect(await readdir(output)).toEqual([]);
   });
+
+  it("removes what it wrote when cancelled before writing the capture", async () => {
+    const { root, environment } = await fixture();
+    const output = join(root, "out");
+    const controller = new AbortController();
+
+    const cancelled = await captureDesktopApplication(
+      request(output),
+      {
+        ...host(environment),
+        report: async (message) => {
+          if (message.startsWith("Recording the starting state"))
+            controller.abort(new Error("caller cancelled"));
+        },
+      },
+      controller.signal,
+    );
+
+    expect(cancelled).toMatchObject({ code: "cancelled" });
+    expect(await readdir(output)).toEqual([]);
+  });
 });
 
 describe.skipIf(process.platform !== "linux")(
@@ -349,6 +378,62 @@ describe.skipIf(process.platform !== "linux")(
         }),
       ]);
     }, 30_000);
+  },
+);
+
+describe.skipIf(process.platform !== "linux")(
+  "captureDesktopApplication retained-file cleanup on Linux",
+  () => {
+    it.each([1, 2])(
+      "publishes the capture when a retained file's close fails %i time(s), reporting a handle still owned",
+      async (closeFailures) => {
+        const { root, home, environment } = await fixture();
+        const output = join(root, "out");
+        const statePath = join(home, ".config/fakeapp/state.ini");
+        let failed: FileHandle | undefined;
+        // The first close after the baseline starts is the retained file's.
+        const failBaselineClose = () =>
+          vi
+            .spyOn(OwnedFileHandle.prototype, "close")
+            .mockImplementationOnce(function (this: OwnedFileHandle) {
+              failed = this.handle;
+              const close = vi.spyOn(this.handle, "close");
+              for (let failure = 0; failure < closeFailures; failure += 1)
+                close.mockRejectedValueOnce(new Error("close denied"));
+              return this.close();
+            });
+
+        let result: Awaited<ReturnType<typeof captureDesktopApplication>>;
+        try {
+          result = await captureDesktopApplication(request(output), {
+            ...host(environment, () =>
+              readFileSyncSafe(statePath) === "count=1\n"
+                ? { kind: "stop" }
+                : undefined,
+            ),
+            report: async (message) => {
+              if (message === "Recording the starting state.")
+                failBaselineClose();
+            },
+          });
+        } finally {
+          vi.restoreAllMocks();
+          await failed?.close();
+        }
+
+        expect(failed).toBeDefined();
+        expect(await readdir(output)).toContain("capture.json");
+        if (closeFailures === 1) {
+          expect(result).not.toHaveProperty("error");
+          return;
+        }
+        expect(result).toMatchObject({
+          code: "cleanup_incomplete",
+          details: { cleanup: "incomplete", resources: [statePath] },
+        });
+      },
+      30_000,
+    );
   },
 );
 

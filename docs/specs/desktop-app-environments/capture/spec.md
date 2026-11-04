@@ -78,7 +78,7 @@ folder to build the environment; this step builds nothing.
   the launch group. Cancellation ends the session without further
   checkpoints, releases the application the same way, and still writes the
   capture with end reason `cancelled`; cancellation before launch writes no
-  capture. Any other failure before `capture.json` is written releases the
+  capture and removes the retained content. Any other failure before `capture.json` is written releases the
   application the same way and removes the retained content; processes or
   files that remain are reported as cleanup facts with the failure.
 - The Evidence uses provider `rea-desktop` version 1, operation
