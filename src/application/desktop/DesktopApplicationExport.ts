@@ -13,6 +13,7 @@ import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCre
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
+  fromUbuntuNobleArchive,
   DESKTOP_EXPORT_FRAMEWORK_VERSION,
   appModuleFile,
   className,
@@ -51,13 +52,6 @@ import {
 } from "./DesktopRetainedContent.js";
 
 const OPERATION = "export_desktop_application";
-/**
- * The computer base is Ubuntu 24.04, so only its archive's packages install by
- * name: an Ubuntu archive or mirror serving a noble suite and an Ubuntu
- * component, but not a Launchpad PPA.
- */
-const UBUNTU_NOBLE_SOURCE =
-  /^\S+:\/\/(?!ppa\.launchpad(?:content)?\.net\/)\S*ubuntu\S* noble(?:-updates|-security|-backports)?\/(?:main|restricted|universe|multiverse) /u;
 /** Largest seed file the export copies; the state view reads only 64 MiB. */
 const SEED_MAX_BYTES = 1024 * 1024 * 1024;
 const TEXT_FORMATS = new Set(["text", "json", "keyfile", "xml"]);
@@ -197,10 +191,10 @@ const admitApplication = (capture: DesktopApplicationCapture) => {
   if (
     installed.kind !== "deb" ||
     installed.name === null ||
-    !installed.sources.some((source) => UBUNTU_NOBLE_SOURCE.test(source))
+    !fromUbuntuNobleArchive(installed.sources, installed.source_origins)
   )
     throw refuse(
-      `The application is not installed from the Ubuntu 24.04 package archive (${installed.kind}${installed.name === null ? "" : ` ${installed.name}`}; sources: ${installed.sources.join(", ") || "none"}), so the computer cannot install it.`,
+      `The application is not installed from the Ubuntu 24.04 package archive (${installed.kind}${installed.name === null ? "" : ` ${installed.name}`}; sources: ${installed.sources.join(", ") || "none"}; apt origins: ${installed.source_origins?.map((origin) => origin ?? "none").join(", ") ?? "not recorded"}), so the computer cannot install it.`,
       "capture",
       "Capture an application installed with apt from the Ubuntu 24.04 archive.",
     );
@@ -375,16 +369,16 @@ const writeFiles = async (
   for (const [seed, digest] of bundle.seeds) {
     signal?.throwIfAborted();
     const bytes = await content.read(digest, signal);
-    if (bytes === undefined)
+    if (!bytes.ok)
       throw refuse(
-        `The retained content of ~/${seed} is missing, larger than the export's 1 GiB seed limit, or does not match its digest.`,
+        `The retained content of ~/${seed} ${bytes.error}.`,
         "capture",
         "Capture the application again, or leave the file out of its state paths.",
       );
     await tree.write(
       seedPath(bundle.plan, seed),
-      Readable.from([bytes]),
-      { bytes: bytes.length, sha256: digest },
+      Readable.from([bytes.value]),
+      { bytes: bytes.value.length, sha256: digest },
       signal,
     );
   }

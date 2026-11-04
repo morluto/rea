@@ -6,6 +6,29 @@ import {
 } from "./appExportPython.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 
+const NOBLE_SUITE =
+  / noble(?:-updates|-security|-backports)?\/(?:main|restricted|universe|multiverse) /u;
+/** Canonical's own archive hosts, for captures made before apt origins were recorded. */
+const CANONICAL_ARCHIVE =
+  /^https?:\/\/(?:[a-z]{2}\.)?(?:archive|ports|security)\.ubuntu\.com\//u;
+
+/**
+ * Whether apt installed the package from the Ubuntu 24.04 archive, which the
+ * computer installs from by name: a noble suite whose apt origin is Ubuntu,
+ * so mirrors count and PPAs or other repositories do not.
+ */
+export const fromUbuntuNobleArchive = (
+  sources: readonly string[],
+  origins: readonly (string | null)[] | undefined,
+): boolean =>
+  sources.some(
+    (source, index) =>
+      NOBLE_SUITE.test(source) &&
+      (origins === undefined
+        ? CANONICAL_ARCHIVE.test(source)
+        : origins[index] === "Ubuntu"),
+  );
+
 /** agentenv-framework release the exported class was checked against. */
 export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1431";
 

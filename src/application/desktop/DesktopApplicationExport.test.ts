@@ -35,13 +35,20 @@ const exportCapture = async (
 };
 
 /** Export the fixture capture with its package's apt sources replaced. */
-const exportWithSources = async (sources: readonly string[]) => {
+const exportWithSources = async (
+  sources: readonly string[],
+  origins?: readonly (string | null)[],
+) => {
   const local = capture();
   const { result } = await exportCapture({
     ...local,
     application: {
       ...local.application,
-      package: { ...local.application.package, sources: [...sources] },
+      package: {
+        ...local.application.package,
+        sources: [...sources],
+        ...(origins === undefined ? {} : { source_origins: [...origins] }),
+      },
     },
   });
   return result;
@@ -93,12 +100,15 @@ describe("exportDesktopApplication", () => {
   });
 
   it.each([
-    [[]],
-    [["https://ppa.launchpadcontent.net/a/b/ubuntu noble/main amd64 Packages"]],
+    [[], []],
+    [
+      ["https://ppa.launchpadcontent.net/a/b/ubuntu noble/main amd64 Packages"],
+      ["LP-PPA-a-b"],
+    ],
   ])(
     "refuses an application not installed from the Ubuntu 24.04 archive (%j)",
-    async (sources) => {
-      const refused = await exportWithSources(sources);
+    async (sources, origins) => {
+      const refused = await exportWithSources(sources, origins);
 
       expect(refused instanceof Error ? refused.message : "").toContain(
         "export_desktop_application",
@@ -107,9 +117,10 @@ describe("exportDesktopApplication", () => {
   );
 
   it("accepts an application from an Ubuntu 24.04 mirror", async () => {
-    const result = await exportWithSources([
-      "http://mirror.local/ubuntu noble/universe amd64 Packages",
-    ]);
+    const result = await exportWithSources(
+      ["http://mirror.local/ubuntu noble/universe amd64 Packages"],
+      ["Ubuntu"],
+    );
 
     expect(result).not.toBeInstanceOf(Error);
   });

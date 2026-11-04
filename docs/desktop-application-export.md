@@ -48,7 +48,9 @@ The class declares:
 - `Packages(apt=[...])` with the package the capture found. The export refuses
   applications not installed from the Ubuntu 24.04 archive or a mirror of it
   (local `.deb`, a PPA or other third-party repository, snap, flatpak,
-  AppImage), since the computer could not install them by name.
+  AppImage), since the computer could not install them by name. A source counts
+  when apt reports its origin as `Ubuntu` for a noble suite; a capture made
+  before origins were recorded counts only Canonical's own archive hosts.
 - A launch at boot with the captured command, ready when a window of the
   captured class appears. Arguments that are the captured home or under it, and
   `<option>=<path>` values under it, are respelled under the computer user's

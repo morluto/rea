@@ -21,10 +21,10 @@ installed from PyPI into a virtual environment.
 (`--argument /home/ada/Documents/todo.txt`) while `xdotool` added `buy milk`
 and saved; the capture was exported, then checked with agentenv:
 
-- The export wrote `envs/mousepad/{env.toml, mousepad.py, SKILL.md,
+- The export wrote `envs/mousepad/{env.toml, mousepad_app.py, SKILL.md,
   seed/Documents/todo.txt}`, `tasks/smoke.json` and `README.md`. Owned paths:
   `.config/Mousepad` and `Documents`; seed: `Documents/todo.txt`.
-- `python -m agentenv_protocol.computer._declare . mousepad.py Mousepad`
+- `python -m agentenv_protocol.computer._declare . mousepad_app.py Mousepad`
   exited 0 and declared apt `mousepad`, the launch with window class
   `Mousepad` and a window ready check, both paths, the skill file and
   `data/add`, `data/get` and `data/reset`.
@@ -35,6 +35,10 @@ and saved; the capture was exported, then checked with agentenv:
   `Documents/todo.txt` on the capture host was `["buy bread", "buy milk"]`;
   seeding a fresh home wrote `Documents/todo.txt` with `buy bread`; the launch
   command is `sh -c "exec 'mousepad' \"$HOME\"/'Documents/todo.txt'"`.
+- The generated dconf loader, run on its own: on a fresh home it compiled the
+  captured keys into `~/.config/dconf/user`; over an existing database the
+  captured keys won and other groups stayed; with no `dconf` binary it printed
+  one warning and returned.
 
 ## Limits of this verification
 

@@ -4,6 +4,7 @@ import {
   appModuleFile,
   className,
   environmentName,
+  fromUbuntuNobleArchive,
   launchCommand,
   ownedPaths,
   renderAppClass,
@@ -171,5 +172,41 @@ describe("renderers", () => {
         textSeeds: ["b.txt"],
       }),
     ).toContain('TEXT_SEEDS = frozenset(["b.txt"])');
+  });
+});
+
+describe("fromUbuntuNobleArchive", () => {
+  const mirror = "http://mirror.local/ubuntu noble/universe amd64 Packages";
+  const ports =
+    "http://ports.ubuntu.com/ubuntu-ports noble/universe arm64 Packages";
+
+  it("trusts apt's origin, so mirrors count and other repositories do not", () => {
+    expect(fromUbuntuNobleArchive([mirror], ["Ubuntu"])).toBe(true);
+    expect(
+      fromUbuntuNobleArchive(
+        [
+          "https://ppa.launchpadcontent.net/a/b/ubuntu noble/main amd64 Packages",
+        ],
+        ["LP-PPA-a-b"],
+      ),
+    ).toBe(false);
+    expect(
+      fromUbuntuNobleArchive(
+        ["https://dl.winehq.org/wine-builds/ubuntu noble/main amd64 Packages"],
+        [null],
+      ),
+    ).toBe(false);
+    expect(
+      fromUbuntuNobleArchive(
+        ["http://archive.ubuntu.com/ubuntu jammy/universe amd64 Packages"],
+        ["Ubuntu"],
+      ),
+    ).toBe(false);
+  });
+
+  it("accepts only Canonical's hosts when the capture recorded no origins", () => {
+    expect(fromUbuntuNobleArchive([ports], undefined)).toBe(true);
+    expect(fromUbuntuNobleArchive([mirror], undefined)).toBe(false);
+    expect(fromUbuntuNobleArchive([], [])).toBe(false);
   });
 });
