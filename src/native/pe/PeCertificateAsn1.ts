@@ -389,6 +389,31 @@ const requireSubjectPublicKeyInfo = (node: Asn1BerNode): void => {
   requireBitString(key, "SubjectPublicKeyInfo subjectPublicKey");
 };
 
+// RFC 5280 4.1 and 4.2: an Extension is extnID, an optional critical BOOLEAN
+// and an extnValue OCTET STRING. A certificate MUST NOT repeat an extnID.
+const requireExtensions = (extensions: readonly Asn1BerNode[]): void => {
+  const seen = new Set<string>();
+  for (const extension of extensions) {
+    const fields = sequence(extension, "TBSCertificate extension");
+    const extnId = fields[0];
+    const critical = fields.length === 3 ? fields[1] : undefined;
+    const extnValue = fields[fields.length - 1];
+    if (
+      (fields.length !== 2 && fields.length !== 3) ||
+      extnId?.tag !== 0x06 ||
+      (critical !== undefined &&
+        (critical.tag !== 0x01 || critical.content.length !== 1)) ||
+      extnValue?.tag !== 0x04
+    )
+      return fail(
+        "TBSCertificate extension is not an OID, optional BOOLEAN, and OCTET STRING.",
+      );
+    const oid = decodeOid(extnId.content);
+    if (seen.has(oid)) return fail(`TBSCertificate repeats extension ${oid}.`);
+    seen.add(oid);
+  }
+};
+
 // issuerUniqueID [1], subjectUniqueID [2], and extensions [3] are optional
 // and ordered. Anything else is not a TBSCertificate field.
 const finishTbsCertificate = (
@@ -421,6 +446,7 @@ const finishTbsCertificate = (
       body.tag !== 0x30
     )
       return fail("TBSCertificate extensions are not a SEQUENCE.");
+    requireExtensions(body.children);
     cursor += 1;
   }
   if (cursor !== children.length)

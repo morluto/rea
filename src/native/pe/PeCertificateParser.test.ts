@@ -1060,3 +1060,59 @@ it("rejects a certificate whose signatureAlgorithm differs from its TBS signatur
     parseCertificate(certificate(SHA256_ALG)).signature_algorithm_oid,
   ).toBe("2.16.840.1.101.3.4.2.1");
 });
+
+it("rejects malformed and repeated certificate extensions", () => {
+  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+  const certificate = (...extensions: Buffer[]) =>
+    readAsn1(
+      derSeq(
+        derSeq(
+          der(0xa0, derInt(2)),
+          derInt(1),
+          SHA256_ALG,
+          name,
+          validity,
+          name,
+          spki,
+          der(0xa3, derSeq(...extensions)),
+        ),
+        SHA256_ALG,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  const ski = der(0x06, Buffer.from([0x55, 0x1d, 0x0e]));
+  const skiValue = der(0x04, Buffer.from([0x04, 0x01, 0xaa]));
+  const basicConstraints = der(0x06, Buffer.from([0x55, 0x1d, 0x13]));
+  const basicConstraintsValue = der(0x04, Buffer.from([0x30, 0x00]));
+  const critical = (...content: number[]) => der(0x01, Buffer.from(content));
+  for (const extension of [
+    derInt(1),
+    derSeq(ski),
+    derSeq(skiValue),
+    derSeq(ski, derInt(1)),
+    derSeq(ski, derInt(1), skiValue),
+    derSeq(ski, critical(0xff, 0xff), skiValue),
+    derSeq(ski, skiValue, critical(0xff)),
+    derSeq(ski, skiValue, der(0x05, Buffer.alloc(0))),
+  ])
+    expect(() => parseCertificate(certificate(extension))).toThrow(
+      /TBSCertificate extension/u,
+    );
+  expect(() =>
+    parseCertificate(
+      certificate(
+        derSeq(ski, skiValue),
+        derSeq(basicConstraints, basicConstraintsValue),
+        derSeq(ski, skiValue),
+      ),
+    ),
+  ).toThrow(/repeats extension 2\.5\.29\.14/u);
+  expect(
+    parseCertificate(
+      certificate(
+        derSeq(ski, skiValue),
+        derSeq(basicConstraints, critical(0xff), basicConstraintsValue),
+      ),
+    ).subject.text,
+  ).toBe("commonName=Fixture");
+});
