@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **ghidra:** Ghidra analysis snapshots from earlier byte-search policies are refused; reopen the target and create a new snapshot. Historical Evidence remains importable.
 * **mcp:** distinguish unavailable batch pseudocode ([#8737](https://github.com/morluto/rea/issues/8737))
 * Snapshot-shaped bundle import failures use invalid_request rather than evidence_integrity_mismatch.
 * **browser:** hosts where Chromium cannot create its sandbox, such as root users and Linux containers without user namespaces or a setuid sandbox, now fail to launch until REA_BROWSER_NO_SANDBOX=true is set.
@@ -450,6 +451,7 @@
 * **ghidra:** require Windows cleanup ownership ([a6a69ec](https://github.com/morluto/rea/commit/a6a69ec63e0b9f2742d9b39534e2dfc02b6a0814))
 * **ghidra:** retain relocation symbol observations ([#8531](https://github.com/morluto/rea/issues/8531)) ([df25bc8](https://github.com/morluto/rea/commit/df25bc8068b4d62c0e8db2b38648648ed831ae0e))
 * **ghidra:** scope rejected-input diagnostics to their request ([#7140](https://github.com/morluto/rea/issues/7140)) ([6381aa0](https://github.com/morluto/rea/commit/6381aa0b1dcb7092673db5ac739af57ce220ed37))
+* **ghidra:** search adjacent initialized memory blocks ([#8840](https://github.com/morluto/rea/issues/8840)) ([dd4b83c](https://github.com/morluto/rea/commit/dd4b83c220d1d68bbcfc6c0bf72730c91993889c))
 * **ghidra:** unify Unicode literal search semantics ([0d1d6e8](https://github.com/morluto/rea/commit/0d1d6e858d35803c342cbf6ab47723a4dc714a96))
 * **ghidra:** update the host no-return probe for the current bridge ([#8462](https://github.com/morluto/rea/issues/8462)) ([1df7ac9](https://github.com/morluto/rea/commit/1df7ac9320cb8cfbabb5fa3b2ca02f3a86b2c376))
 * **gpu:** preserve omitted metadata in projected views ([dfe6aaf](https://github.com/morluto/rea/commit/dfe6aaf6dafc34d4132508285b6e166cf95cfa33))
