@@ -54,33 +54,37 @@ const exists = (path: string) =>
     () => false,
   );
 
-describe("exportDesktopApplication with a task", () => {
+/** The capture with the note present before the edit but its bytes not retained. */
+const unretainedNoteCapture = () => {
+  const base = capture();
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((checkpoint) => ({
+        ...checkpoint,
+        changes: checkpoint.changes.map((entry) =>
+          entry.path === NOTE_PATH
+            ? {
+                ...entry,
+                kind: "modified" as const,
+                before: {
+                  type: "file" as const,
+                  size: 4,
+                  mode: 0o644,
+                  mtime_ns: "1",
+                  sha256: null,
+                },
+              }
+            : entry,
+        ),
+      })),
+    },
+  };
+};
+
+describe("exportDesktopApplication with a task's seed", () => {
   it("treats a file present but not retained at the baseline as absent on the seed, as the computer starts", async () => {
-    const base = capture();
-    const unretained = {
-      ...base,
-      state: {
-        ...base.state,
-        checkpoints: base.state.checkpoints.map((checkpoint) => ({
-          ...checkpoint,
-          changes: checkpoint.changes.map((entry) =>
-            entry.path === NOTE_PATH
-              ? {
-                  ...entry,
-                  kind: "modified" as const,
-                  before: {
-                    type: "file" as const,
-                    size: 4,
-                    mode: 0o644,
-                    mtime_ns: "1",
-                    sha256: null,
-                  },
-                }
-              : entry,
-          ),
-        })),
-      },
-    };
     const scratch = await createTestTempDirectory("desktop-task-");
     const path = join(scratch, "task.json");
     await writeFile(
@@ -90,7 +94,7 @@ describe("exportDesktopApplication with a task", () => {
 
     const result = await exportDesktopApplication(
       {
-        capture: await writeCaptureFolder(unretained),
+        capture: await writeCaptureFolder(unretainedNoteCapture()),
         directory: join(scratch, "bundle"),
         name: undefined,
         tasks: [path],
@@ -103,7 +107,9 @@ describe("exportDesktopApplication with a task", () => {
       '"failing_on_seed":["check-1"]',
     );
   });
+});
 
+describe("exportDesktopApplication with a task", () => {
   it("adds the task, its verifier and the eval once the seed fails and the end passes", async () => {
     const { result, directory } = await exportWithTasks(
       task([
