@@ -43,9 +43,13 @@ import {
 import { withRetainedContent } from "./DesktopRetainedContent.js";
 
 const OPERATION = "export_desktop_application";
-/** The computer base is Ubuntu 24.04, so only its archive's packages install by name. */
+/**
+ * The computer base is Ubuntu 24.04, so only its archive's packages install by
+ * name: an Ubuntu archive or mirror serving a noble suite and an Ubuntu
+ * component, but not a Launchpad PPA.
+ */
 const UBUNTU_NOBLE_SOURCE =
-  /^https?:\/\/(?:[a-z0-9.-]+\.)?(?:archive|ports|security)\.ubuntu\.com\/\S* noble(?:-updates|-security|-backports)?\//u;
+  /^\S+:\/\/(?!ppa\.launchpad(?:content)?\.net\/)\S*ubuntu\S* noble(?:-updates|-security|-backports)?\/(?:main|restricted|universe|multiverse) /u;
 /** Largest seed file the export copies; the state view reads only 64 MiB. */
 const SEED_MAX_BYTES = 1024 * 1024 * 1024;
 const TEXT_FORMATS = new Set(["text", "json", "keyfile", "xml"]);
@@ -276,7 +280,6 @@ const readSeeds = (
 ) =>
   withRetainedContent(
     request.capture,
-    OPERATION,
     async (content) => {
       const seeds: { readonly path: string; readonly bytes: Buffer }[] = [];
       for (const seed of plan.seedFiles) {

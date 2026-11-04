@@ -103,9 +103,20 @@ export const launchCommand = (
       : path.startsWith(prefix)
         ? `"$HOME"/${shellQuote(path.slice(prefix.length))}`
         : shellQuote(path);
-  // A relative argument meant the captured working directory, so start there.
+  // A relative argument meant the captured working directory, so try to start
+  // there; a missing folder must not stop the app from booting.
+  const relative = argv
+    .slice(1)
+    .some(
+      (argument) =>
+        argument.length > 0 &&
+        !argument.startsWith("/") &&
+        !argument.startsWith("-"),
+    );
   const directory =
-    workingDirectory === capturedHome ? undefined : respell(workingDirectory);
+    workingDirectory === capturedHome || !relative
+      ? undefined
+      : respell(workingDirectory);
   if (
     directory === undefined &&
     !argv.some((argument) => argument.startsWith(prefix))
@@ -115,7 +126,9 @@ export const launchCommand = (
   return [
     "sh",
     "-c",
-    directory === undefined ? command : `cd ${directory} && ${command}`,
+    directory === undefined
+      ? command
+      : `cd ${directory} 2>/dev/null; ${command}`,
   ];
 };
 
@@ -140,6 +153,8 @@ XML_SUFFIXES = (".xml", ".xbel", ".plist", ".svg", ".ui")
 KEYFILE_SUFFIXES = (".ini", ".conf", ".cfg", ".desktop", ".keyfile", ".rc")
 MAX_ROWS = 500
 MAX_LINES = 5000
+MAX_XML_NODES = 5000
+MAX_XML_DEPTH = 64
 
 
 def _seed_home(home: Path) -> None:
@@ -200,7 +215,9 @@ def _view(path: Path) -> dict:
             pass
     if name.endswith(XML_SUFFIXES) or stripped.startswith("<?xml"):
         try:
-            return {"format": "xml", "view": _xml(ElementTree.fromstring(text)), "truncated": False}
+            budget = {"remaining": MAX_XML_NODES, "truncated": False}
+            view = _xml(ElementTree.fromstring(text), False, 0, budget)
+            return {"format": "xml", "view": view, "truncated": budget["truncated"]}
         except ElementTree.ParseError:
             pass
     if name.endswith(KEYFILE_SUFFIXES) or any(line.strip().startswith("[") and line.strip().endswith("]") for line in text.splitlines()):
@@ -210,8 +227,10 @@ def _view(path: Path) -> dict:
             "truncated": len(lines) > MAX_LINES}
 
 
-def _xml(element, preserve: bool = False) -> dict:
-    """An element with its attributes, text and children; whitespace between elements is formatting unless preserved."""
+def _xml(element, preserve: bool, depth: int, budget: dict) -> dict:
+    """An element with its attributes, text and children, cut at REA's node and depth limits; whitespace between
+    elements is formatting unless preserved."""
+    budget["remaining"] -= 1
     space = element.get("{http://www.w3.org/XML/1998/namespace}space")
     preserve = space == "preserve" if space in ("preserve", "default") else preserve
     leaf = len(element) == 0
@@ -221,7 +240,10 @@ def _xml(element, preserve: bool = False) -> dict:
 
     children = [element.text] if kept(element.text) else []
     for child in element:
-        children.append(_xml(child, preserve))
+        if budget["remaining"] <= 0 or depth >= MAX_XML_DEPTH:
+            budget["truncated"] = True
+            break
+        children.append(_xml(child, preserve, depth + 1, budget))
         if kept(child.tail):
             children.append(child.tail)
     return {"name": element.tag, "attributes": dict(element.attrib), "children": children}
@@ -252,7 +274,7 @@ def _views(home: Path, paths: list) -> dict:
             if path.is_file() and not path.is_symlink():
                 try:
                     files[str(path.relative_to(home))] = _view(path)
-                except (OSError, sqlite3.Error) as error:
+                except (OSError, sqlite3.Error, RecursionError) as error:
                     files[str(path.relative_to(home))] = {"format": None, "view": None, "error": str(error)}
     return files
 `;

@@ -6,11 +6,33 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import {
-  HOME,
   capture,
   readers,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
+
+/** Export the fixture capture with its package's apt sources replaced. */
+const exportWithSources = async (sources: readonly string[]) => {
+  const local = capture();
+  const folder = await writeCaptureFolder({
+    ...local,
+    application: {
+      ...local.application,
+      package: { ...local.application.package, sources: [...sources] },
+    },
+  });
+  return exportDesktopApplication(
+    {
+      capture: folder,
+      directory: join(
+        await createTestTempDirectory("desktop-export-"),
+        "bundle",
+      ),
+      name: undefined,
+    },
+    readers,
+  );
+};
 
 describe("exportDesktopApplication", () => {
   it("writes a computer app bundle with owned paths and the baseline seed", async () => {
@@ -51,31 +73,25 @@ describe("exportDesktopApplication", () => {
     ).toBe("[ui]\nwrap=false\n");
   });
 
-  it("refuses an application not installed from a package archive", async () => {
-    const local = capture();
-    const folder = await writeCaptureFolder({
-      ...local,
-      application: {
-        ...local.application,
-        package: { ...local.application.package, sources: [] },
-      },
-    });
+  it.each([
+    [[]],
+    [["https://ppa.launchpadcontent.net/a/b/ubuntu noble/main amd64 Packages"]],
+  ])(
+    "refuses an application not installed from the Ubuntu 24.04 archive (%j)",
+    async (sources) => {
+      const refused = await exportWithSources(sources);
 
-    const refused = await exportDesktopApplication(
-      {
-        capture: folder,
-        directory: join(
-          await createTestTempDirectory("desktop-export-"),
-          "bundle",
-        ),
-        name: undefined,
-      },
-      readers,
-    );
+      expect(refused instanceof Error ? refused.message : "").toContain(
+        "export_desktop_application",
+      );
+    },
+  );
 
-    expect(refused instanceof Error ? refused.message : "").toContain(
-      "export_desktop_application",
-    );
-    expect(HOME).toBe("/home/ada");
+  it("accepts an application from an Ubuntu 24.04 mirror", async () => {
+    const result = await exportWithSources([
+      "http://mirror.local/ubuntu noble/universe amd64 Packages",
+    ]);
+
+    expect(result).not.toBeInstanceOf(Error);
   });
 });

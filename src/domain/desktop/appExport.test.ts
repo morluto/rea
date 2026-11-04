@@ -68,7 +68,7 @@ describe("launchCommand", () => {
     ).toEqual(["sh", "-c", `exec 'mousepad' "$HOME"/'Documents/it'"'"'s.txt'`]);
   });
 
-  it("starts in the captured working directory so relative arguments keep their meaning", () => {
+  it("tries the captured working directory only for relative arguments", () => {
     expect(
       launchCommand(
         ["notes", "today.md"],
@@ -78,8 +78,11 @@ describe("launchCommand", () => {
     ).toEqual([
       "sh",
       "-c",
-      `cd "$HOME"/'project/docs' && exec 'notes' 'today.md'`,
+      `cd "$HOME"/'project/docs' 2>/dev/null; exec 'notes' 'today.md'`,
     ]);
+    expect(
+      launchCommand(["notes", "--wrap"], "/home/ada", "/home/ada/project"),
+    ).toEqual(["notes", "--wrap"]);
   });
 });
 

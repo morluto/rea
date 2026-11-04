@@ -35,13 +35,14 @@ owned paths, seed files and written files.
 The class declares:
 
 - `Packages(apt=[...])` with the package the capture found. The export refuses
-  applications not installed from the Ubuntu 24.04 archive (local `.deb`, a
-  third-party repository, snap, flatpak, AppImage), since the computer could not
-  install them by name.
+  applications not installed from the Ubuntu 24.04 archive or a mirror of it
+  (local `.deb`, a PPA or other third-party repository, snap, flatpak,
+  AppImage), since the computer could not install them by name.
 - A launch at boot with the captured command, ready when a window of the
   captured class appears. Arguments under the captured home are respelled under
-  the computer user's `$HOME`, and the command starts in the captured working
-  directory when that was not the home. The export refuses a capture that saw no
+  the computer user's `$HOME`. When an argument is relative, the command tries
+  the captured working directory first, and still starts if that folder is
+  missing. The export refuses a capture that saw no
   application window.
 - `paths`: the state directories holding the application's state files and the
   folders holding its documents, nested folders collapsed.
