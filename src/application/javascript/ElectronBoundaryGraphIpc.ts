@@ -111,7 +111,17 @@ const addIpcRecord = (
     coverage,
     relation: record.finding.mode === "invoke" ? "invokes" : "sends",
     operation: "map-ipc-transmission",
+    ...(record.finding.side === "main"
+      ? {
+          limitations: [
+            "The destination is a source-level allocation; the receiving renderer, listener registration, and message delivery remain unverified.",
+          ],
+        }
+      : {}),
     properties: {
+      ...(record.finding.receiver === undefined
+        ? {}
+        : { receiver: record.finding.receiver }),
       side: record.finding.side,
       operation: record.finding.operation,
       channel: record.finding.channel,

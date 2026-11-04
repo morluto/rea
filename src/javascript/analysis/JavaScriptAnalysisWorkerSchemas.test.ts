@@ -10,6 +10,30 @@ import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSe
 import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterExpansion.js";
 import { aliasSelectionBudgetSource } from "../../../tests/fixtures/javascriptAliasSelectionBudget.js";
 
+it("requires destination allocation evidence when transferring main IPC sends", () => {
+  const facts =
+    analyzeJavaScriptStaticSource(`const {BrowserWindow}=require("electron");
+    const window=new BrowserWindow(); window.webContents.send("progress", 1);`);
+  expect(facts.electron.ipc).toHaveLength(1);
+  expect(
+    javaScriptWorkerStaticAnalysisSchema.parse(
+      JSON.parse(JSON.stringify(facts)),
+    ),
+  ).toEqual(facts);
+  const withoutReceiver = {
+    ...facts,
+    electron: {
+      ...facts.electron,
+      ipc: facts.electron.ipc.map(
+        ({ receiver: _receiver, ...finding }) => finding,
+      ),
+    },
+  };
+  expect(
+    javaScriptWorkerStaticAnalysisSchema.safeParse(withoutReceiver).success,
+  ).toBe(false);
+});
+
 it("preserves independent static coverage and historical unmeasured facts", () => {
   const facts = analyzeJavaScriptStaticSource("require(moduleName);");
   expect(

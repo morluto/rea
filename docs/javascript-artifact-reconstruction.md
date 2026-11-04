@@ -657,6 +657,26 @@ candidate. Dynamic channels are never paired, and multiple compatible handlers
 are reported as ambiguous without adding a caller-to-handler edge. A matching
 channel still does not prove registration order, reachability, or runtime use.
 
+Main-to-renderer `send` and `postMessage` calls on source-proven
+`BrowserWindow.webContents` and `webContents.mainFrame` receivers are retained
+with the constructor source range and receiver kind. Stable receiver aliases use
+the same mutation checks as scoped IPC registrations; lookalike, shadowed, or
+replaced receivers establish no Electron transmission. Each destination
+allocation has a separate channel identity, even when channel text matches.
+The graph retains a `sends` edge with source evidence, but does not pair it to
+an `ipcRenderer` listener: channel equality cannot establish which renderer
+receives the message. Dynamic channels remain unresolved. `sendToFrame`,
+`event.reply`, and dynamically obtained WebContents are not recovered by this
+allocation-based pass. `summary.ipc.main_transmissions` counts these observed
+send sites; absence in older saved Evidence means unmeasured, not zero.
+
+Proven native messaging methods and `loadFile`/`loadURL` on the window or its
+WebContents do not themselves invalidate the receiver's identity, so later
+sends on the same window remain visible. Loading also checks the WebContents
+methods to which Electron delegates. Arguments retain ordinary escape handling.
+Method replacement, receiver escape to unknown code, and prototype uncertainty
+still prevent native receiver proof.
+
 Native-addon call bindings consume the same loader identity and normalized
 arguments as dependency analysis, including optional calls. Local methods or
 parameters named `require` establish no native binding; `require.resolve` records
