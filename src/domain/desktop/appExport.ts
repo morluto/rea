@@ -186,6 +186,28 @@ export const stateFilesByHomePath = (
   return { files, collisions };
 };
 
+/** The state view's files by home path and the paths the app owns, as the export decides them. */
+export const exportedStateFiles = (
+  capture: DesktopApplicationCapture,
+  state: DesktopApplicationState,
+) => {
+  const homePath = capturedHomePath(capture);
+  const { files, collisions } = stateFilesByHomePath(state.paths, homePath);
+  const withRole = (role: string) =>
+    [...files].filter(([, path]) => path.role === role).map(([home]) => home);
+  const paths = ownedPaths(
+    withRole("application_state"),
+    withRole("document"),
+    [
+      ...capture.application.state_directories.map((entry) => entry.path),
+      ...(capture.state.state_directories ?? []),
+    ]
+      .map(homePath)
+      .filter((path): path is string => path !== null),
+  );
+  return { homePath, files, collisions, paths };
+};
+
 /** Text safe inside a Python triple-quoted docstring. */
 const docText = (value: string): string => value.replace(/["\\]/gu, "'");
 
@@ -382,8 +404,11 @@ const installNotes = (plan: DesktopAppExportPlan): string =>
     .map((line) => `\n${line}`)
     .join("");
 
-/** The bundle README: what was exported, how to run it, and what to keep in mind. */
-export const renderReadme = (plan: DesktopAppExportPlan): string =>
+/** The bundle README: what was exported, how to run it, and what to keep in mind; a task's section follows. */
+export const renderReadme = (
+  plan: DesktopAppExportPlan,
+  taskSection = "",
+): string =>
   `# ${plan.title} computer app
 
 Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.aptPackage}\` package
@@ -405,10 +430,10 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
   }
 - \`tasks/smoke.json\` deploys the app.
 
-Run it with \`agent-env run <this folder>\`.
+${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}
 
 The seed is the user's real data. Keep this bundle local; do not publish it.
-${plan.dconf.length === 0 ? "" : "dconf keys are compiled into the user's dconf database, with `dconf-cli`, once when the app first starts; `data/reset` does not restore them.\n"}`;
+${plan.dconf.length === 0 ? "" : "dconf keys are compiled into the user's dconf database, with `dconf-cli`, once when the app first starts; `data/reset` does not restore them.\n"}${taskSection}`;
 
 /** A smoke task that deploys the app. */
 export const renderSmokeTask = (plan: DesktopAppExportPlan): string =>

@@ -124,6 +124,12 @@ const registerDesktopExportCommand = (
         .describe(
           "Environment name; defaults to one derived from the application",
         ),
+      task: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Task file to validate against the capture and add with its verifier and eval; a capture yields one",
+        ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -143,7 +149,49 @@ const registerDesktopExportCommand = (
                     capture: absoluteCallerPath(args.capture),
                     directory: absoluteCallerPath(args.directory),
                     name: options.name,
+                    tasks: (options.task ?? []).map((path) =>
+                      absoluteCallerPath(path),
+                    ),
                   },
+                  readers,
+                  signal,
+                ),
+            );
+          },
+        ),
+      ),
+  });
+};
+
+/** Register the change summary an agent writes a task from. */
+const registerDesktopTaskCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  environment: NodeJS.ProcessEnv,
+): void => {
+  cli.command(CLI_COMMANDS.describeDesktopApplicationTask, {
+    description:
+      "Describe how a desktop application capture's files changed from the baseline to the end, with suggested checks and a task draft to complete for export-desktop-application --task",
+    args: z.object({
+      capture: z
+        .string()
+        .describe("Folder written by capture-desktop-application"),
+    }),
+    run: ({ args }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(
+          logger,
+          CLI_COMMANDS.describeDesktopApplicationTask,
+          async () => {
+            const { draftDesktopApplicationTask } =
+              await import("../application/desktop/DesktopTaskDraft.js");
+            return withStateReaders(
+              environment,
+              signal,
+              "describe_desktop_application_task",
+              (readers) =>
+                draftDesktopApplicationTask(
+                  absoluteCallerPath(args.capture),
                   readers,
                   signal,
                 ),
@@ -201,6 +249,7 @@ export const registerDesktopCaptureCommands = (
 ): void => {
   registerDesktopStateCommand(cli, logger, environment);
   registerDesktopExportCommand(cli, logger, environment);
+  registerDesktopTaskCommand(cli, logger, environment);
   cli.command(CLI_COMMANDS.captureDesktopApplication, {
     description:
       "Launch a Linux desktop application, watch it while it is used and record its windows and state at checkpoints read from stdin",

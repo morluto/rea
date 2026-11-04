@@ -32,7 +32,7 @@ const exportCapture = async (
     "bundle",
   );
   const result = await exportDesktopApplication(
-    { capture: folder, directory, name: undefined },
+    { capture: folder, directory, name: undefined, tasks: [] },
     readers,
     signal,
   );
@@ -290,7 +290,7 @@ const exportVendorCapture = async (local: DesktopApplicationCapture) => {
     "bundle",
   );
   const result = await exportDesktopApplication(
-    { capture: folder, directory, name: undefined },
+    { capture: folder, directory, name: undefined, tasks: [] },
     readers,
   );
   return { result, directory };

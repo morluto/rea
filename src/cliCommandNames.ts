@@ -153,6 +153,7 @@ export const CLI_COMMANDS = Object.freeze({
   captureDesktopApplication: "capture-desktop-application",
   inspectDesktopApplicationState: "inspect-desktop-application-state",
   exportDesktopApplication: "export-desktop-application",
+  describeDesktopApplicationTask: "describe-desktop-application-task",
   compareProcessCaptures: "compare-process-captures",
   listBrowserTargets: "list-browser-targets",
   inspectWebPage: "inspect-web-page",

@@ -8,7 +8,9 @@ confirmed. The workflow records the application once with
 again if a hint names a gap, then writes the bundle with
 `export_environment_bundle`. For a HAR the user already has, skip to
 [export](#export-and-hand-off) through `inspect_web_network_capture`, or use
-`rea environment-build <capture.har> <dir>`.
+`rea environment-build <capture.har> <dir>`. For a task in a desktop
+application's exported environment, read
+[its section](#tasks-for-a-desktop-application-environment).
 
 ## Before recording
 
@@ -285,3 +287,70 @@ See
 [agent environments](https://github.com/morluto/rea/blob/main/docs/agent-environments.md)
 for what the state, replay and the bundle establish, and
 [evidence workflows](evidence-workflows.md) for the manifest and state views.
+
+## Tasks for a desktop application environment
+
+Use this when the user has a folder from `rea capture-desktop-application` and
+wants a task for the environment `rea export-desktop-application` makes from
+it: a prompt for a computer-use agent and checks that grade what the agent
+left in the app's files. You write the prompt and the checks; REA validates
+the task against the capture and exports it. These commands are CLI only.
+
+### Describe the change
+
+Run `rea describe-desktop-application-task CAPTURE --format json`. Read:
+
+- `owned_paths`: the only paths whose files the app serves, so the only files
+  a check can read.
+- `files`: each file there whose state differs between the capture's first
+  and last version, with its `role`, the `baseline` and `final` versions and
+  the net `change`. Text changes list each added and removed line once, and
+  `line_counts` gives lines found at both ends whose count changed.
+- `task`: a draft whose `checks` are suggestions from the net change of the
+  documents the user worked on, or of the app's own state when no document
+  changed.
+
+### Write the prompt
+
+Say what the user wants done, in their words and the app's terms: "Add buy
+milk to my to-do list and save it". Never say how the file stores it: no
+paths the user would not name, line formats, XML, keys or SQL, and never the
+checks. Replace the draft's placeholder; the export refuses it.
+
+### Pick the checks
+
+Checks must express only the observed change:
+
+- Keep a suggestion only if it says what the user did. Drop those that follow
+  from how the app saves: a format rewrite, renumbered lines, counters. A
+  LibreCAD drawing gaining four holes was rewritten from DXF R12 to 2007, and
+  the draft suggests counts of `SECTION`, `ENDSEC` and `CIRCLE`; only
+  `CIRCLE` equals 9 is the user's change.
+- Never check unchanged content, whole files, or values the app stamps:
+  times, ids it assigns, window sizes. REA refuses ISO 8601 date-times; the
+  rest is your judgment.
+- Prefer a few robust checks: whole lines over positions, rows by meaningful
+  columns over generated ids, `at_least` when the user may add more.
+
+Kinds: `file_present` and `file_absent`; `lines_present` and `lines_absent`
+(`lines`); `line_count` (`exact` or `regex`, and `equals`, `at_least` or
+`at_most`); `value_equals` and `value_absent` (a JSON `pointer` into the view,
+such as `/groups/GROUP/KEY` for a key file); `row_present` and `row_absent`
+(`table`, `where` by column) and `row_count`. Each names its `file` as a path
+under the home. The
+[desktop application tasks](https://github.com/morluto/rea/blob/main/docs/desktop-application-tasks.md)
+guide has the exact rules.
+
+### Export the task
+
+Write the task as JSON with a `name`, the `prompt` and the `checks`, then run
+`rea export-desktop-application CAPTURE DIRECTORY --task TASK.json`. REA keeps
+the task only when its checks fail on the seed and all pass on the captured
+end state. A refusal names the check: one that fails on the end state does not
+match what the user left; "every check already passes on the seed" means no
+check captures the change.
+
+Tell the user the task's name, prompt and checks, and how to measure a solve
+rate: run `agent-env run DIRECTORY --task NAME --agent claude-code` with
+`--model MODEL` three times and count the runs reported `passed`. Do not run
+agents unless asked. The bundle's seed is the user's real data: keep it local.

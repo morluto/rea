@@ -1,0 +1,374 @@
+import type { JsonValue } from "../jsonValue.js";
+import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
+import { namesXmlNamespace, resolvePointer } from "./appTaskChecks.js";
+import type { DesktopStatePath } from "./desktopState.js";
+import { diffStateViews } from "./stateChanges.js";
+
+type Version = DesktopStatePath["versions"][number];
+type Suggestion = DesktopTaskCheckInput;
+
+/** Suggestions per file; an author picks among them. */
+const MAX_SUGGESTIONS = 10;
+const MAX_ITEMS = 200;
+const MAX_CHARS = 2000;
+
+const isRecord = (
+  value: JsonValue | null | undefined,
+): value is Record<string, JsonValue> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** A JSON value cut to a size an agent can read, and whether anything was cut. */
+const bounded = (
+  value: JsonValue | null,
+): { value: JsonValue | null; cut: boolean } => {
+  let cut = false;
+  const visit = (node: JsonValue): JsonValue => {
+    if (typeof node === "string" && node.length > MAX_CHARS) {
+      cut = true;
+      return `${node.slice(0, MAX_CHARS)}…`;
+    }
+    if (Array.isArray(node)) {
+      cut ||= node.length > MAX_ITEMS;
+      return node.slice(0, MAX_ITEMS).map(visit);
+    }
+    if (!isRecord(node)) return node;
+    const entries = Object.entries(node);
+    cut ||= entries.length > MAX_ITEMS;
+    return Object.fromEntries(
+      entries.slice(0, MAX_ITEMS).map(([key, item]) => [key, visit(item)]),
+    );
+  };
+  return { value: value === null ? null : visit(value), cut };
+};
+
+/** A version as the draft shows it; views only for the files the suggestions cover. */
+const draftVersion = (version: Version, withView: boolean) => {
+  const { value, cut } = bounded(withView ? version.view : null);
+  return {
+    checkpoint: version.checkpoint,
+    present: version.present,
+    format: version.format,
+    ...(withView ? { view: value, view_cut: cut } : {}),
+    view_error: version.view_error,
+  };
+};
+
+const linesOf = (version: Version): readonly string[] =>
+  isRecord(version.view) && Array.isArray(version.view.lines)
+    ? version.view.lines.filter((line) => typeof line === "string")
+    : [];
+
+const counts = (lines: readonly string[]) => {
+  const result = new Map<string, number>();
+  for (const line of lines) result.set(line, (result.get(line) ?? 0) + 1);
+  return result;
+};
+
+/** Lines found at both ends whose number of occurrences changed. */
+const lineCounts = (baseline: Version, final: Version) => {
+  const before = counts(linesOf(baseline));
+  return [...counts(linesOf(final))]
+    .filter(([line, n]) => (before.get(line) ?? n) !== n)
+    .map(([line, n]) => ({ line, baseline: before.get(line) ?? 0, final: n }));
+};
+
+const textSuggestions = (
+  file: string,
+  baseline: Version,
+  final: Version,
+): Suggestion[] => {
+  const before = new Set(baseline.present ? linesOf(baseline) : []);
+  const after = new Set(linesOf(final));
+  const added = [...after].filter((line) => !before.has(line));
+  const gone = [...before].filter((line) => !after.has(line));
+  const suggestions: Suggestion[] = [];
+  if (added.length > 0 && added.length <= MAX_SUGGESTIONS)
+    suggestions.push({ kind: "lines_present", file, lines: added });
+  const truncated = [baseline, final].some(
+    (version) => isRecord(version.view) && version.view.truncated === true,
+  );
+  if (truncated) return suggestions;
+  if (gone.length > 0 && gone.length <= MAX_SUGGESTIONS)
+    suggestions.push({ kind: "lines_absent", file, lines: gone });
+  // A line of digits and punctuation is usually a value a rewrite renumbers, not something the user made.
+  for (const { line, final: n } of lineCounts(baseline, final).filter(
+    ({ line }) => /\p{L}/u.test(line),
+  ))
+    suggestions.push({ kind: "line_count", file, exact: line, equals: n });
+  return suggestions;
+};
+
+const escapeToken = (token: string) =>
+  token.replaceAll("~", "~0").replaceAll("/", "~1");
+
+/** `group/key` entries of key file views as JSON pointers into the view. */
+const keyPointers = (
+  views: readonly (JsonValue | null)[],
+): ReadonlyMap<string, string> =>
+  new Map<string, string>(
+    views.flatMap((view) =>
+      Object.entries(
+        isRecord(view) && isRecord(view.groups) ? view.groups : {},
+      ).flatMap(([group, keys]) =>
+        Object.keys(isRecord(keys) ? keys : {}).map((key): [string, string] => [
+          `${group}/${key}`,
+          `/groups/${escapeToken(group)}/${escapeToken(key)}`,
+        ]),
+      ),
+    ),
+  );
+
+const valueSuggestions = (
+  file: string,
+  baseline: Version,
+  final: Version,
+): Suggestion[] => {
+  const format = final.format;
+  if (format !== "json" && format !== "xml" && format !== "keyfile") return [];
+  if (format === "xml" && [baseline.view, final.view].some(namesXmlNamespace))
+    return [];
+  const change = diffStateViews(format, baseline.view, final.view);
+  const pointers = keyPointers([baseline.view, final.view]);
+  const pointer = (entry: string) =>
+    format === "keyfile" ? pointers.get(entry) : entry;
+  const suggestions: Suggestion[] = [];
+  for (const entry of [...change.added, ...change.changed]) {
+    const at = pointer(entry);
+    const value = at === undefined ? undefined : resolvePointer(final.view, at);
+    if (
+      at !== undefined &&
+      at !== "" &&
+      value !== undefined &&
+      !isTimestamp(value)
+    )
+      suggestions.push({ kind: "value_equals", file, pointer: at, value });
+  }
+  for (const entry of change.removed) {
+    const at = pointer(entry);
+    if (at !== undefined && at !== "")
+      suggestions.push({ kind: "value_absent", file, pointer: at });
+  }
+  return suggestions;
+};
+
+interface TableView {
+  readonly columns: readonly string[];
+  readonly key: readonly string[];
+  readonly rows: readonly (readonly JsonValue[])[];
+}
+
+const tableViews = (version: Version): ReadonlyMap<string, TableView> => {
+  const tables = new Map<string, TableView>();
+  const view = version.present ? version.view : null;
+  if (!isRecord(view) || !isRecord(view.tables)) return tables;
+  for (const [name, table] of Object.entries(view.tables)) {
+    if (!isRecord(table) || table.truncated !== false) continue;
+    const strings = (value: JsonValue | undefined) =>
+      Array.isArray(value)
+        ? value.filter((item) => typeof item === "string")
+        : [];
+    tables.set(name, {
+      columns: strings(table.columns),
+      key: strings(table.primary_key),
+      rows: Array.isArray(table.rows) ? table.rows.filter(Array.isArray) : [],
+    });
+  }
+  return tables;
+};
+
+/** Column values of a row, without volatile values or the columns left out. */
+const rowWhere = (
+  table: TableView,
+  row: readonly JsonValue[],
+  keep: (column: string) => boolean,
+): Record<string, JsonValue> =>
+  Object.fromEntries(
+    table.columns.flatMap((column, index) => {
+      const value = row[index] ?? null;
+      return keep(column) && !isTimestamp(value) ? [[column, value]] : [];
+    }),
+  );
+
+const rowSuggestions = (
+  file: string,
+  baseline: Version,
+  final: Version,
+): Suggestion[] => {
+  const before = tableViews(baseline);
+  const suggestions: Suggestion[] = [];
+  const push = (
+    kind: "row_present" | "row_absent",
+    table: string,
+    where: Record<string, JsonValue>,
+  ) => {
+    if (Object.keys(where).length > 0)
+      suggestions.push({ kind, file, table, where });
+  };
+  for (const [name, table] of tableViews(final)) {
+    const old = before.get(name) ?? { ...table, rows: [] };
+    const identity = (view: TableView, row: readonly JsonValue[]) =>
+      JSON.stringify(
+        view.key.length === 0
+          ? row
+          : view.key.map((column) => row[view.columns.indexOf(column)] ?? null),
+      );
+    const oldRows = new Map(old.rows.map((row) => [identity(old, row), row]));
+    const newRows = new Map(
+      table.rows.map((row) => [identity(table, row), row]),
+    );
+    const keyed = (column: string) => table.key.includes(column);
+    for (const [id, row] of newRows) {
+      const previous = oldRows.get(id);
+      if (previous === undefined)
+        push(
+          "row_present",
+          name,
+          rowWhere(
+            table,
+            row,
+            (column) => table.key.length === 0 || !keyed(column),
+          ),
+        );
+      else if (JSON.stringify(previous) !== JSON.stringify(row))
+        push(
+          "row_present",
+          name,
+          rowWhere(
+            table,
+            row,
+            (column) =>
+              keyed(column) ||
+              JSON.stringify(row[table.columns.indexOf(column)]) !==
+                JSON.stringify(previous[old.columns.indexOf(column)]),
+          ),
+        );
+    }
+    for (const [id, row] of oldRows)
+      if (!newRows.has(id))
+        push(
+          "row_absent",
+          name,
+          rowWhere(
+            old,
+            row,
+            (column) => old.key.length === 0 || old.key.includes(column),
+          ),
+        );
+    if (old.rows.length !== table.rows.length)
+      suggestions.push({
+        kind: "row_count",
+        file,
+        table: name,
+        equals: table.rows.length,
+      });
+  }
+  return suggestions;
+};
+
+/** Checks that express how a file changed from its baseline to its final version. */
+const suggestedChecks = (
+  file: string,
+  baseline: Version,
+  final: Version,
+): readonly Suggestion[] => {
+  if (!final.present) return [{ kind: "file_absent", file }];
+  const created: Suggestion[] = baseline.present
+    ? []
+    : [{ kind: "file_present", file }];
+  const content =
+    final.format === "text"
+      ? textSuggestions(file, baseline, final)
+      : !baseline.present
+        ? []
+        : final.format === "sqlite"
+          ? rowSuggestions(file, baseline, final)
+          : valueSuggestions(file, baseline, final);
+  return [...created, ...content].slice(0, MAX_SUGGESTIONS);
+};
+
+/** How a file changed from its baseline to its final version, or undefined when it ends as it began. */
+const netChange = (baseline: Version, final: Version) => {
+  if (!baseline.present && !final.present) return undefined;
+  if (
+    baseline.present &&
+    final.present &&
+    baseline.sha256 !== null &&
+    baseline.sha256 === final.sha256
+  )
+    return undefined;
+  if (!baseline.present) return { kind: "created" };
+  if (!final.present) return { kind: "deleted" };
+  if (
+    baseline.view_error !== null ||
+    final.view_error !== null ||
+    baseline.format === null ||
+    final.format === null
+  )
+    return { kind: "unreadable" };
+  if (baseline.format !== final.format) return { kind: "format" };
+  if (final.format === "binary") return { kind: "content" };
+  const difference = diffStateViews(final.format, baseline.view, final.view);
+  if (
+    difference.added_count +
+      difference.removed_count +
+      difference.changed_count ===
+    0
+  )
+    return undefined;
+  if (final.format !== "text") return difference;
+  // The diff lists text lines as a multiset; the draft lists each line once.
+  return {
+    ...difference,
+    added: [...new Set(difference.added)],
+    removed: [...new Set(difference.removed)],
+    line_counts: lineCounts(baseline, final).slice(0, 100),
+  };
+};
+
+/** One changed file an author writes checks about. */
+export interface TaskDraftFile {
+  readonly file: string;
+  readonly role: DesktopStatePath["role"];
+  readonly baseline: ReturnType<typeof draftVersion>;
+  readonly final: ReturnType<typeof draftVersion>;
+  readonly change: NonNullable<ReturnType<typeof netChange>>;
+  readonly suggested: readonly Suggestion[];
+}
+
+/**
+ * Each file under the owned paths whose state differs between the baseline and
+ * the final version, with suggested checks for the files the user worked on:
+ * documents, or the app's own state when no document changed.
+ */
+export const draftTaskFiles = (
+  files: ReadonlyMap<string, DesktopStatePath>,
+  served: (home: string) => boolean,
+): readonly TaskDraftFile[] => {
+  const changed = [...files]
+    .filter(([home]) => served(home))
+    .flatMap(([home, path]) => {
+      const baseline = path.versions[0];
+      const final = path.versions.at(-1);
+      const change =
+        baseline === undefined || final === undefined
+          ? undefined
+          : netChange(baseline, final);
+      return change === undefined ||
+        baseline === undefined ||
+        final === undefined
+        ? []
+        : [{ home, path, baseline, final, change }];
+    })
+    .sort((left, right) => (left.home < right.home ? -1 : 1));
+  const role = changed.some(({ path }) => path.role === "document")
+    ? "document"
+    : "application_state";
+  return changed.map(({ home, path, baseline, final, change }) => ({
+    file: home,
+    role: path.role,
+    baseline: draftVersion(baseline, path.role === role),
+    final: draftVersion(final, path.role === role),
+    change,
+    suggested: path.role === role ? suggestedChecks(home, baseline, final) : [],
+  }));
+};

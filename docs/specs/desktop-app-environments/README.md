@@ -17,8 +17,10 @@ The work lands as one PR per step:
    card, skill and seed.
 5. Verification inside an agent environment computer: put, boot, ready, reset
    equals the seed, grader checks.
-6. Tasks from the observed kinds of change, with a reference agent's solve
-   rate.
+6. [Tasks](tasks/spec.md): an agent writes a prompt and declarative checks
+   from the observed change, REA keeps the task when the checks fail on the
+   seed and pass on the captured end state, and a run of the bundle measures
+   an agent's solve rate.
 7. Three applications end to end: Mousepad (plain files), GnuCash saving to
    SQLite, and Joplin (Electron, SQLite).
 8. [Vendor packages](vendor-packages/spec.md): closed-source applications from

@@ -14,17 +14,14 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   DESKTOP_EXPORT_FRAMEWORK_VERSION,
   appModuleFile,
-  capturedHomePath,
   className,
-  environmentName,
+  exportedStateFiles,
   launchCommand,
-  ownedPaths,
   renderAppClass,
   renderEnvToml,
   renderReadme,
   renderSkill,
   renderSmokeTask,
-  stateFilesByHomePath,
   type DesktopAppExportPlan,
   type HomePathCollision,
 } from "../../domain/desktop/appExport.js";
@@ -41,7 +38,6 @@ import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { isPortableBundleName } from "../environment/environmentBundle.js";
 import {
   inspectDesktopApplicationState,
   readDesktopCapture,
@@ -51,11 +47,16 @@ import {
   DESKTOP_PROVIDER,
   desktopOperationFailure,
 } from "./DesktopCaptureRefusals.js";
-import { admitApplication, refuse } from "./DesktopExportInstall.js";
+import {
+  admitApplication,
+  exportEnvironmentName,
+  refuse,
+} from "./DesktopExportInstall.js";
 import {
   withRetainedContent,
   type RetainedContent,
 } from "./DesktopRetainedContent.js";
+import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
 
 const OPERATION = "export_desktop_application";
 /** Largest seed file the export copies; the state view reads only 64 MiB. */
@@ -67,6 +68,8 @@ export interface DesktopExportRequest {
   readonly capture: string;
   readonly directory: string;
   readonly name: string | undefined;
+  /** Task files to validate and add; a capture yields at most one. */
+  readonly tasks: readonly string[];
 }
 
 /** What the export wrote. */
@@ -80,6 +83,7 @@ export interface DesktopExportResult {
   readonly dconf_groups: number;
   readonly files: readonly string[];
   readonly limitations: readonly string[];
+  readonly task: AdmittedTask["summary"] | null;
 }
 
 const isRecord = (
@@ -153,37 +157,15 @@ const planExport = (
   readonly seeds: ReadonlyMap<string, string>;
   readonly limitations: readonly string[];
   readonly collisions: readonly HomePathCollision[];
+  readonly files: ReadonlyMap<string, StatePath>;
 } => {
   const { application, host } = capture;
-  const source =
-    request.name ??
-    environmentName(
-      application.desktop_entry?.id ??
-        application.executable.path.split("/").at(-1) ??
-        "app",
-      isPortableBundleName,
-    );
-  if (!isPortableBundleName(source))
-    throw refuse(
-      `${source} is not a portable environment name.`,
-      "name",
-      "Pass --name with lowercase letters, digits and hyphens.",
-    );
+  const source = exportEnvironmentName(capture, request.name);
   const { install, windowClass } = admitApplication(capture, source);
   const electron = application.executable.electron_markers.length > 0;
-  const homePath = capturedHomePath(capture);
-  const { files, collisions } = stateFilesByHomePath(state.paths, homePath);
-  const withRole = (role: string) =>
-    [...files].filter(([, path]) => path.role === role).map(([home]) => home);
-  const paths = ownedPaths(
-    withRole("application_state"),
-    withRole("document"),
-    [
-      ...application.state_directories.map((entry) => entry.path),
-      ...(capture.state.state_directories ?? []),
-    ]
-      .map(homePath)
-      .filter((path): path is string => path !== null),
+  const { homePath, files, collisions, paths } = exportedStateFiles(
+    capture,
+    state,
   );
   const seeds = new Map<string, string>();
   const textSeeds: string[] = [];
@@ -224,7 +206,7 @@ const planExport = (
     application.package,
     electron,
   );
-  return { plan, seeds, limitations, collisions };
+  return { plan, seeds, limitations, collisions, files };
 };
 
 const EXPORT_LIMITATIONS = [
@@ -376,11 +358,16 @@ const runExport = async (
   const state = desktopApplicationStateSchema.parse(
     stateEvidence.normalized_result,
   );
-  const { plan, seeds, collisions, ...install } = planExport(
+  const { plan, seeds, collisions, files, ...install } = planExport(
     request,
     capture,
     state,
     evidence.evidence_id,
+  );
+  const admitted = await admitDesktopTask(
+    request.tasks,
+    { ...plan, files },
+    signal,
   );
   const copies = retainedCopies(plan, seeds);
   const environment = `envs/${plan.name}`;
@@ -389,11 +376,12 @@ const runExport = async (
     bytes: Buffer.from(content),
   });
   const generated = [
-    text("README.md", renderReadme(plan)),
+    text("README.md", renderReadme(plan, admitted?.readme)),
     text(`${environment}/env.toml`, renderEnvToml(plan)),
     text(`${environment}/${appModuleFile(plan.name)}`, renderAppClass(plan)),
     text(`${environment}/SKILL.md`, renderSkill(plan)),
     text("tasks/smoke.json", renderSmokeTask(plan)),
+    ...(admitted?.files ?? []).map((file) => text(file.path, file.content)),
   ];
   const unclosed = await withRetainedContent(
     request.capture,
@@ -437,6 +425,7 @@ const runExport = async (
       ...copies.map((copy) => copy.path),
     ],
     limitations,
+    task: admitted?.summary ?? null,
   };
   return { result, captureEvidenceId: evidence.evidence_id, unclosed };
 };
@@ -481,6 +470,7 @@ export const exportDesktopApplication = async (
       parameters: {
         capture_evidence_id: captureEvidenceId,
         named: request.name !== undefined,
+        tasks: request.tasks.length,
       },
       result: {
         ...result,

@@ -16,7 +16,9 @@ The export reads the capture and its [state view](desktop-application-state.md);
 it does not run the application. `--name` sets the environment name; otherwise
 it comes from the desktop entry id or the program, with an `app-` prefix when
 that name would not be a portable bundle name (for example all digits). The
-output directory must be new or empty.
+output directory must be new or empty. `--task` adds a task an agent wrote for
+the capture, once REA has validated it against the capture; see
+[desktop application tasks](desktop-application-tasks.md).
 
 The command returns Evidence with operation `export_desktop_application` and
 predicate type `rea.desktop-application-export`, listing the environment name,
@@ -36,6 +38,7 @@ Evidence; the bundle itself is complete.
 | `envs/<name>/seed/`     | The application's files from before the capture, by home-relative path                             |
 | `envs/<name>/apt-keys/` | The signing key of each vendor apt repository the app installs from                                |
 | `tasks/smoke.json`      | A task that deploys the app                                                                        |
+| `tasks/<task>.json`     | With `--task`: the agent's task, its verifier in `artifacts/` and the eval in `evals/`             |
 | `README.md`             | What was exported, from which capture, and what to keep in mind                                    |
 
 The class file is `<name>_app.py` with hyphens as underscores, for example
